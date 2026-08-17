@@ -98,6 +98,7 @@ import {
   shadowKernelOsFullscreenLeft,
   shadowKernelFullscreenSettleTimeout,
   shadowKernelBoundsChanged,
+  shadowKernelOverlayAttached,
 } from './window-kernel-shadow.js';
 
 /**
@@ -1503,6 +1504,49 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }
     } catch {
       /* Spaces write against a torn-down window — the machine already recorded intent */
+    }
+  }
+
+  /**
+   * Realize an `AttachOverlayTo` effect (`window-kernel.ts Effect`) — a second
+   * call site of the SAME frame math `emitBounds` above already uses for
+   * `BOUNDS_CHANGED.overlayFrame`, not new capability: resolve `hostId`
+   * through the hybrid registry, read its live outer bounds, and expand them
+   * (`expandToOverlayFrame` + `workAreaNearest`) into the frame the overlay
+   * should occupy.
+   *
+   * Reports through `shadowKernelOverlayAttached` — the `OverlayAttached`
+   * EVENT, never the `AttachOverlay` COMMAND — because this call runs from
+   * inside the executor's `performEffect`, mid-`pump()`, against a state that
+   * may not yet contain events the same transition already queued; a command
+   * decided there is the exact re-entrancy this effect exists to remove (see
+   * that helper's doc). Never feeds the old `window-state.ts` machine: that
+   * machine is on the deletion path and gains no new call sites.
+   *
+   * Reports an attach to `null` (detach) on every failure path — a missing
+   * `hostId`, a host not resolvable through the registry, or anything
+   * throwing (the window torn down mid-call) — same try/catch discipline as
+   * `emitBounds`: read once, report what actually happened, never leave the
+   * kernel's belief stuck on a request it cannot honor.
+   */
+  attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void {
+    const oldSnapshot = this.getSnapshot();
+    if (hostId === null) {
+      shadowKernelOverlayAttached(overlayId, null, oldSnapshot);
+      return;
+    }
+    const win = this.getNativeWindowFor(hostId);
+    if (!win) {
+      shadowKernelOverlayAttached(overlayId, null, oldSnapshot);
+      return;
+    }
+    try {
+      const bounds = win.getBounds();
+      const frame = expandToOverlayFrame(bounds, this.workAreaNearest(bounds));
+      shadowKernelOverlayAttached(overlayId, hostId, oldSnapshot, frame);
+    } catch {
+      /* host torn down mid-call — nothing left to attach to */
+      shadowKernelOverlayAttached(overlayId, null, oldSnapshot);
     }
   }
 

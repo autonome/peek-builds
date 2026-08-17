@@ -1307,7 +1307,29 @@ export type Effect =
    * to disambiguate; the assert that emits it emits a `RaiseWindow` in the same
    * transition, and that one carries the token for both.
    */
-  | { type: 'FocusContent'; id: WindowId };
+  | { type: 'FocusContent'; id: WindowId }
+  /**
+   * THE FIRST EFFECT THAT NAMES A RELATION, not a per-window operation — every
+   * other variant above says "do this to window `id`"; this one says "this
+   * overlay's host is now this window". Emitted by `react` as a diff of
+   * `topmostBaseLayerPageHost` across the transition (see that rule, placed
+   * first in `react`) — never a per-window state field on the overlay's own
+   * record.
+   *
+   * CARRIES NO FRAME. The frame needs a work-area read
+   * (`overlay-frame.ts expandToOverlayFrame` + the nearest display's work
+   * area), which this zero-value-import file cannot perform — the backend
+   * computes it and reports it back as an `OverlayAttached` event, the same
+   * one-hop-later shape every other OS-observed fact already takes here.
+   * `hostId: null` means detach.
+   *
+   * A REQUEST THE OUTSIDE MAY DECLINE, not an assertion the kernel enforces:
+   * `docs/design/window-manager.md` forbids a kernel invariant that makes
+   * attachment agree with stacking order, so this effect asks and the stored
+   * `overlayFor` relation is written only by the backend's report, one hop
+   * later, whatever it turns out to be.
+   */
+  | { type: 'AttachOverlayTo'; overlayId: WindowId; hostId: WindowId | null };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialState
@@ -2604,6 +2626,36 @@ export function evolve(state: State, ev: Event): State {
 
 export function react(prev: State, ev: Event, next: State): Effect[] {
   const effects: Effect[] = [];
+
+  // Overlay attach target (§ Effect.AttachOverlayTo): a structural diff of
+  // `topmostBaseLayerPageHost` across the transition — NEVER a comparison
+  // against the stored `overlayFor` relation. The latter shape
+  // (`next.overlayFor !== topmostBaseLayerPageHost(next)`) is a repair loop,
+  // and `docs/design/window-manager.md` forbids it: attachment and stacking
+  // order are ALLOWED to diverge, and enforcing agreement would mean either
+  // constraining order to follow attachment (a second ordering rule, itself
+  // forbidden) or constraining attachment to follow order (impossible).
+  // Nothing here re-emits, so every legitimate divergence survives.
+  //
+  // PLACED FIRST, ahead of the overlay-frame loop just below: the attach
+  // decides the frame, and a reveal must never paint at a stale one.
+  //
+  // The `isNew` arm is the boot seed, and it is a diff too — before this
+  // transition there was no such overlay record, after it there is. It
+  // exists because the overlay singleton is minted after windows may already
+  // be registered, and since nothing here re-emits, a steady-state
+  // divergence at boot would otherwise persist forever. It is a membership
+  // diff, the same shape as this function's other membership rules
+  // (`Close`, `Parent refocus`, below) — it is NOT a branch on `ev.type`.
+  const prevTarget = topmostBaseLayerPageHost(prev)?.id ?? null;
+  const nextTarget = topmostBaseLayerPageHost(next)?.id ?? null;
+  for (const r of next.order) {
+    if (!r.tracksBaseLayerTop) continue;
+    const isNew = !prev.order.some((w) => w.id === r.id);
+    if (prevTarget !== nextTarget || isNew) {
+      effects.push({ type: 'AttachOverlayTo', overlayId: r.id, hostId: nextTarget });
+    }
+  }
 
   // Overlay follow — FRAME (§ WindowRecord.overlayFrame): a structural diff
   // of the stored target frame `evolve` writes (`OverlayAttached`,

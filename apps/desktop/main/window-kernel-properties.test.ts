@@ -1122,6 +1122,19 @@ function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
     if (effect.type === 'DestroyAllGuests') continue;
+    // `AttachOverlayTo` names a RELATION, not a single window (§ Effect
+    // docblock) — `overlayId` and, when not a detach, `hostId` each get the
+    // same "still in next.order" check the rest of this function runs, just
+    // read off different fields than the generic `effect.id` lookup below.
+    if (effect.type === 'AttachOverlayTo') {
+      if (!next.order.some((w) => w.id === effect.overlayId)) {
+        violations.push(`AttachOverlayTo names an overlayId not present in order: ${JSON.stringify(effect)}`);
+      }
+      if (effect.hostId !== null && !next.order.some((w) => w.id === effect.hostId)) {
+        violations.push(`AttachOverlayTo names a hostId not present in order: ${JSON.stringify(effect)}`);
+      }
+      continue;
+    }
     const record = next.order.find((w) => w.id === effect.id);
     if (record === undefined) {
       if (effect.type === 'CloseWindow') continue;

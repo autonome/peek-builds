@@ -741,6 +741,16 @@ export class WindowKernelExecutor {
         this.trackAsyncEffect(teardown);
         return;
       }
+      case 'AttachOverlayTo': {
+        // No headless gate — an attach neither activates, takes key, nor
+        // brings a hidden window on screen (the same reasoning the `SetBounds`
+        // case above records for this family): it only asks the backend to
+        // frame `hostId`, and the visibility that follows is already gated
+        // elsewhere (the `ShowWindow`/`RaiseWindow` effects those transitions
+        // emit in their own right).
+        this.backend.attachOverlayTo(effect.overlayId, effect.hostId);
+        return;
+      }
       default: {
         const exhaustive: never = effect;
         void exhaustive;

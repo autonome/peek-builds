@@ -126,6 +126,9 @@ class RecordingBackend implements WindowBackend {
   setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
     this.record('setDesktopMembership', id, membership);
   }
+  attachOverlayTo(overlayId: BackendWindowId, hostId: BackendWindowId | null): void {
+    this.record('attachOverlayTo', overlayId, hostId);
+  }
 }
 
 /**
@@ -727,6 +730,26 @@ describe('effect performance', () => {
     backend.calls.length = 0;
     exec.dispatch({ type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' });
     assert.deepStrictEqual(backend.of('setDesktopMembership'), []);
+  });
+
+  it('drives an overlay attach through the port with both arguments, and a detach when the target goes null — no headless gate', () => {
+    const { exec, backend } = makeExecutor({ headless: true });
+    const hostA = wid(1);
+    const overlay = wid(2);
+    exec.dispatch(register(hostA, { kind: 'page-host', role: 'content' }));
+    exec.dispatch({ type: 'WindowShown', id: hostA });
+    exec.dispatch({ type: 'WindowContentOrderable', id: hostA });
+    backend.calls.length = 0;
+
+    // Registering the tracking record while hostA is already the attach
+    // target is the isNew/boot-seed arm (`window-kernel.ts react`) — the
+    // simplest transition that reaches this port method with a real host id.
+    exec.dispatch(register(overlay, { tracksBaseLayerTop: true }));
+    assert.deepStrictEqual(backend.of('attachOverlayTo').map((c) => c.args), [[overlay, hostA]]);
+
+    backend.calls.length = 0;
+    exec.dispatch({ type: 'WindowHidden', id: hostA });
+    assert.deepStrictEqual(backend.of('attachOverlayTo').map((c) => c.args), [[overlay, null]]);
   });
 
   // ── Teardown (§0.1.5) ─────────────────────────────────────────────────────

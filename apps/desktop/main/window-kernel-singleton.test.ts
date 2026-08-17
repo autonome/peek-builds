@@ -98,6 +98,9 @@ class FakeBackend implements WindowBackend {
   setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
     this.record('setDesktopMembership', id, membership);
   }
+  attachOverlayTo(overlayId: BackendWindowId, hostId: BackendWindowId | null): void {
+    this.record('attachOverlayTo', overlayId, hostId);
+  }
 }
 
 // `DestroyWindow` is one of the four teardown commands `decide` answers with

@@ -359,4 +359,29 @@ export interface WindowBackend {
    * to it: there is no platform-specific shape left to misinterpret.
    */
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void;
+
+  /**
+   * Realize the machine's request that `overlayId` frame `hostId` (the
+   * `AttachOverlayTo` effect, `window-kernel.ts Effect`) — a REQUEST, not an
+   * assertion: the kernel does not enforce that attachment agrees with
+   * stacking order (see that effect's doc), so a backend may decline it.
+   * Named off the intention, deliberately NOT a platform method name — same
+   * convention as `setFullscreen` / `pinAlwaysOnTop` / `setWindowBounds` /
+   * `setDesktopMembership`: the R2 mechanical check
+   * (`scripts/check-r2-window-ops.mjs`) greps the platform call names
+   * verbatim, and the port is a different namespace.
+   *
+   * `hostId: null` means detach. A backend resolves `hostId` internally and
+   * silently no-ops on an unknown/destroyed window — same fire-and-forget
+   * contract every other command on this port carries. The realized relation
+   * and its frame land back at the kernel one hop later, as an event (the
+   * frame needs a work-area read this port's caller may not perform itself —
+   * see the effect's doc), never as a return value: this port is COMMAND +
+   * EVENT, never QUERY.
+   *
+   * A backend whose platform has no notion of an attachable overlay chrome
+   * implements this as a no-op — every argument here still means something
+   * to it, there is no platform-specific shape left to misinterpret.
+   */
+  attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void;
 }

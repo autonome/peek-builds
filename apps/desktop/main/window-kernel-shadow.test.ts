@@ -99,6 +99,7 @@ class InertBackend implements WindowBackend {
   setStacking(_id: WindowId, _level: StackingLevel): void {}
   setWindowBounds(_id: WindowId, _rect: Rect): void {}
   setDesktopMembership(): void {}
+  attachOverlayTo(): void {}
 }
 
 /** Registers a plain window in the shadow kernel — enough for `AttachOverlay`'s existence checks, nothing more. */

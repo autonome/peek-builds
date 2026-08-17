@@ -154,6 +154,9 @@ class NoopKernelBackend implements WindowBackend {
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
     recordEffect('setDesktopMembership', id, membership);
   }
+  attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void {
+    recordEffect('attachOverlayTo', overlayId, hostId);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -706,6 +709,37 @@ export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId 
     hostId,
     ...(frame !== undefined ? { frame } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
+  });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Feed a completed `AttachOverlayTo` effect's realization straight into the
+ * kernel as the `OverlayAttached` EVENT — `hostId: null` is detach, same
+ * shape as `shadowKernelAttachOverlay` above, but dispatched rather than
+ * executed. Deliberately NOT routed through `shadowKernelAttachOverlay`'s
+ * `AttachOverlay` COMMAND: this report is the backend's answer to an effect
+ * the kernel itself asked for (`window-kernel.ts Effect.AttachOverlayTo`),
+ * issued from inside `WindowKernelExecutor.performEffect` while `pump()` may
+ * already be draining events queued by the same transition. A command
+ * decided from there would be judged against a state that does not yet
+ * contain those queued events — the exact re-entrancy the effect exists to
+ * remove — and a wrongly rejected command is invisible (`shadowExecute`
+ * logs a rejection only behind `DEBUG`). Dispatched as an event instead: a
+ * past-tense fact `evolve` cannot reject.
+ *
+ * `frame` is the freshly expanded overlay frame for `hostId`, computed by
+ * the backend at the same site that already computes it for
+ * `BOUNDS_CHANGED.overlayFrame` (see `WindowRecord.overlayFrame`'s doc).
+ * Omitted on a detach, or when the backend could not read the host's
+ * bounds.
+ */
+export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot, frame?: Rectangle): void {
+  shadowDispatch({
+    type: 'OverlayAttached',
+    overlayId,
+    hostId,
+    ...(frame !== undefined ? { frame } : {}),
   });
   compareAfterFeed(oldSnapshot);
 }

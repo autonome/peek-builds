@@ -2450,6 +2450,200 @@ describe('window-kernel: overlay follow — visibility and frame', () => {
   });
 });
 
+// ── react emits AttachOverlayTo — a diff of the attach target, never a
+// comparison against the stored overlayFor relation ────────────────────────
+//
+// `docs/design/overlay-attach-effect-plan.md` § 3. Every scene here registers
+// its own tracking record(s) rather than reusing `overlayFor`/`AttachOverlay`
+// fixtures from the describes above: this rule reads only `order` and
+// `tracksBaseLayerTop`, never the attachment relation those other describes
+// exercise.
+
+describe('window-kernel: react emits AttachOverlayTo off a diff of the attach target', () => {
+  const registerPageHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+  const registerTracker = (id: WindowId, opts: { tracksBaseLayerTop?: boolean } = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'browser',
+    layer: BASE_LAYER + 1,
+    canBecomeKey: true,
+    acceptsInput: false,
+    class: 'overlay',
+    role: 'overlay',
+    tracksBaseLayerTop: opts.tracksBaseLayerTop,
+  });
+  /** Visible AND orderable — the two facts `topmostBaseLayerPageHost` requires. */
+  const shown = (id: WindowId): Event[] => [
+    { type: 'WindowShown', id },
+    { type: 'WindowContentOrderable', id },
+  ];
+
+  it('the attach target changing emits exactly one AttachOverlayTo naming the tracking record and the NEW host id', () => {
+    const hostA = wid(1);
+    const hostB = wid(2);
+    const overlay = wid(3);
+    const state = fold(
+      [registerPageHost(hostA), ...shown(hostA), registerPageHost(hostB), ...shown(hostB), registerTracker(overlay, { tracksBaseLayerTop: true })],
+      initialState(),
+    );
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, hostB, 'precondition: hostB (registered later) is topmost');
+
+    // Hiding hostB is the transition under test — it flips the attach target
+    // from hostB to hostA, with the overlay record already present in both
+    // `prev` and `next` (so this is the target-diff arm, never the isNew
+    // arm — see the dedicated isNew test below).
+    const ev: Event = { type: 'WindowHidden', id: hostB };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.strictEqual(topmostBaseLayerPageHost(next)?.id, hostA, 'precondition: the target moved to hostA');
+
+    const attaches = effects.filter((e) => e.type === 'AttachOverlayTo');
+    assert.deepStrictEqual(attaches, [{ type: 'AttachOverlayTo', overlayId: overlay, hostId: hostA }]);
+  });
+
+  it('a transition that does not change the answer emits none', () => {
+    const hostA = wid(1);
+    const hostB = wid(2);
+    const overlay = wid(3);
+    const state = fold(
+      [registerPageHost(hostA), ...shown(hostA), registerPageHost(hostB), ...shown(hostB), registerTracker(overlay, { tracksBaseLayerTop: true })],
+      initialState(),
+    );
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, hostB, 'precondition');
+
+    // hostA's bounds move — hostB stays topmost, so the answer is unchanged.
+    const ev: Event = { type: 'BoundsChanged', id: hostA, bounds: { x: 1, y: 2, width: 3, height: 4 } };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.strictEqual(topmostBaseLayerPageHost(next)?.id, hostB, 'precondition: the answer did not move');
+
+    assert.ok(!effects.some((e) => e.type === 'AttachOverlayTo'), 'no AttachOverlayTo when the diff is empty');
+  });
+
+  it('the answer going to null emits hostId: null', () => {
+    const hostA = wid(1);
+    const overlay = wid(2);
+    const state = fold([registerPageHost(hostA), ...shown(hostA), registerTracker(overlay, { tracksBaseLayerTop: true })], initialState());
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, hostA, 'precondition');
+
+    const ev: Event = { type: 'WindowHidden', id: hostA };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.strictEqual(topmostBaseLayerPageHost(next), null, 'precondition: the target is now null');
+
+    const attaches = effects.filter((e) => e.type === 'AttachOverlayTo');
+    assert.deepStrictEqual(attaches, [{ type: 'AttachOverlayTo', overlayId: overlay, hostId: null }]);
+  });
+
+  it('registering a tracksBaseLayerTop record when a host already exists emits the seed attach (the isNew arm)', () => {
+    const hostA = wid(1);
+    const overlay = wid(2);
+    const prev = fold([registerPageHost(hostA), ...shown(hostA)], initialState());
+    assert.strictEqual(topmostBaseLayerPageHost(prev)?.id, hostA, 'precondition: a host already exists before the overlay is ever registered');
+
+    const ev = registerTracker(overlay, { tracksBaseLayerTop: true });
+    const next = evolve(prev, ev);
+    const effects = react(prev, ev, next);
+
+    // Registration also grows `order`, which independently re-triggers the
+    // unrelated stacking-replay loop (`orderChanged`) for hostA — filter to
+    // this rule's own effect rather than asserting the whole array.
+    const attaches = effects.filter((e) => e.type === 'AttachOverlayTo');
+    assert.deepStrictEqual(
+      attaches,
+      [{ type: 'AttachOverlayTo', overlayId: overlay, hostId: hostA }],
+      'the seed fires even though the target itself did not move — before this transition there was no such overlay record, after it there is',
+    );
+  });
+
+  it('a record WITHOUT tracksBaseLayerTop never receives one, and two tracking records both receive one', () => {
+    const hostA = wid(1);
+    const hostB = wid(2);
+    const plain = wid(3);
+    const trackerOne = wid(4);
+    const trackerTwo = wid(5);
+    const state = fold(
+      [
+        registerPageHost(hostA),
+        ...shown(hostA),
+        registerPageHost(hostB),
+        ...shown(hostB),
+        registerTracker(plain), // tracksBaseLayerTop absent
+        registerTracker(trackerOne, { tracksBaseLayerTop: true }),
+        registerTracker(trackerTwo, { tracksBaseLayerTop: true }),
+      ],
+      initialState(),
+    );
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, hostB, 'precondition');
+
+    const ev: Event = { type: 'WindowHidden', id: hostB };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.strictEqual(topmostBaseLayerPageHost(next)?.id, hostA, 'precondition: the target moved to hostA');
+
+    const attaches = effects.filter((e) => e.type === 'AttachOverlayTo');
+    assert.ok(!attaches.some((e) => e.overlayId === plain), 'a record without tracksBaseLayerTop never receives an AttachOverlayTo');
+    assert.deepStrictEqual(
+      attaches.map((e) => (e as { overlayId: WindowId; hostId: WindowId | null }).overlayId).sort(),
+      [trackerOne, trackerTwo].sort(),
+      'every tracksBaseLayerTop record gets its own AttachOverlayTo',
+    );
+    for (const e of attaches) {
+      assert.deepStrictEqual(e, { type: 'AttachOverlayTo', overlayId: (e as { overlayId: WindowId }).overlayId, hostId: hostA });
+    }
+  });
+
+  it('ordering: AttachOverlayTo appears before any SetBounds/ShowWindow in the returned array', () => {
+    const hostA = wid(1);
+    const overlay = wid(2);
+    // hostA is registered+orderable but NOT yet shown, and the tracker exists
+    // already — so showing hostA in one transition both flips the attach
+    // target (null -> hostA) AND emits hostA's own ShowWindow, in the SAME
+    // react call.
+    const state = fold(
+      [registerPageHost(hostA), { type: 'WindowContentOrderable', id: hostA }, registerTracker(overlay, { tracksBaseLayerTop: true })],
+      initialState(),
+    );
+    assert.strictEqual(topmostBaseLayerPageHost(state), null, 'precondition: hostA is not visible yet');
+
+    const ev: Event = { type: 'WindowShown', id: hostA };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.strictEqual(topmostBaseLayerPageHost(next)?.id, hostA, 'precondition: the target is now hostA');
+
+    const attachIdx = effects.findIndex((e) => e.type === 'AttachOverlayTo');
+    const showIdx = effects.findIndex((e) => e.type === 'ShowWindow');
+    assert.notStrictEqual(attachIdx, -1, 'precondition: an AttachOverlayTo was emitted');
+    assert.notStrictEqual(showIdx, -1, 'precondition: a ShowWindow was emitted');
+    assert.ok(attachIdx < showIdx, 'the attach request precedes the reveal it decides the frame for');
+  });
+
+  it('the op token is untouched: a transition whose ONLY effect is AttachOverlayTo does not advance opSeqCounter', () => {
+    const overlay = wid(1);
+    // No host, and no other window at all — the isNew arm still fires
+    // (hostId: null, nothing to attach to), and with no pre-existing visible
+    // window the unrelated stacking-replay loop has nothing to reinforce, so
+    // this really is the one and only effect the transition produces.
+    const prev = initialState();
+
+    const ev = registerTracker(overlay, { tracksBaseLayerTop: true });
+    const next = evolve(prev, ev);
+    const effects = react(prev, ev, next);
+
+    assert.deepStrictEqual(effects, [{ type: 'AttachOverlayTo', overlayId: overlay, hostId: null }], 'precondition: AttachOverlayTo is the only effect');
+    assert.strictEqual(next.opSeqCounter, prev.opSeqCounter, 'AttachOverlayTo issues no show/raise and must not stamp opSeq');
+  });
+});
+
 // ── Focus provenance: cause, and isStaleSelfEcho ────────────────────────────
 
 describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
