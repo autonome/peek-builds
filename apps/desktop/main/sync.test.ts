@@ -28,6 +28,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import { DATASTORE_VERSION } from '../version.js';
 
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-sync-events-server-'));
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -1199,5 +1200,222 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
     } finally {
       scaled.restore();
     }
+  });
+});
+
+// ==================== Datastore-version-bump reset must keep item identity (duplicate-row regression) ====================
+//
+// resetPerItemSyncState() used to clear BOTH syncedAt and syncId on a datastore-version
+// bump — the recovery a server-URL/profile change needs, but not what a version bump
+// needs: the row identity (`syncId`) on the SAME server is still valid, only what was
+// last pushed is stale. Clearing it anyway meant the next push sent the desktop's own
+// local id instead, which matches neither the server row's own id nor its stored syncId
+// column (db.js saveItem(), no content-based fallback on the sync path) for any item
+// that originated elsewhere (pushed by another device, or pulled down from the server) —
+// so the server inserted a duplicate row instead of updating the existing one. See
+// sync.ts resetPerItemSyncState()'s `clearSyncId` doc comment for the fix.
+describe('Datastore-version-bump reset must keep item identity (duplicate-row regression)', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-dsver-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `dsver-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    installRealServerFetch();
+
+    return { apiKey };
+  }
+
+  // Routes every call through the real app via app.request() — parses with the WHATWG
+  // URL API rather than stripping a literal base string, so it works unchanged for
+  // whichever server URL a given test passes syncAll() (the server-URL-change test
+  // deliberately passes a DIFFERENT one than the one syncAll() was previously called
+  // with, to trigger resetSyncStateIfServerChanged()).
+  function installRealServerFetch(): void {
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const parsed = new URL(url);
+      return serverApp.request(parsed.pathname + parsed.search, { method: init.method || 'GET', headers: init.headers, body: init.body });
+    }) as typeof fetch;
+  }
+
+  // Simulates total network failure — every request rejects before reaching the server.
+  // resetSyncStateIfServerChanged()/resetSyncStateIfDatastoreVersionChanged() both run
+  // synchronously, before syncAll()'s first network call, so a run that fails this way
+  // still applies the reset; it just never gets far enough for the push stages to
+  // overwrite what the reset itself wrote (syncedAt/syncId, the event/tag push
+  // watermarks) — letting the tests below read the reset's own effect directly,
+  // undisturbed by anything downstream of it.
+  function installAlwaysFailingFetch(): void {
+    globalThis.fetch = (async () => {
+      throw new Error('simulated total network failure');
+    }) as typeof fetch;
+  }
+
+  async function fetchServerItems(apiKey: string): Promise<Array<{ id: string; content: string | null }>> {
+    const res = await serverApp.request('/items', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { items: Array<{ id: string; content: string | null }> };
+    return json.items;
+  }
+
+  /** Force the next syncAll() onto the datastore-version-changed path by back-dating the
+   * client's own recorded DATASTORE_VERSION — the signal
+   * resetSyncStateIfDatastoreVersionChanged() reads (see its doc comment in sync.ts). */
+  function backdateStoredDatastoreVersion(): void {
+    const db = datastore.getDb();
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES ('sync-lastSyncDatastoreVersion', 'sync', 'lastSyncDatastoreVersion', ?, ?)
+    `).run(JSON.stringify(DATASTORE_VERSION - 1), Date.now());
+  }
+
+  function readFeatureSetting(key: string): unknown {
+    const db = datastore.getDb();
+    const row = db.prepare(`
+      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = ?
+    `).get(key) as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : undefined;
+  }
+
+  it('a version-bump sync updates the existing server row instead of duplicating it, for an item that originated elsewhere', async () => {
+    const { apiKey } = setup('regression');
+
+    // Seed the server directly with an item carrying a syncId from a DIFFERENT device —
+    // the "originated elsewhere" case: neither the server row's own id nor its stored
+    // syncId column will ever match this desktop's own local id.
+    const seedRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'text', content: 'from another device', tags: [], sync_id: 'other-device-local-id-001' }),
+    });
+    const { id: serverItemId } = (await seedRes.json()) as { id: string };
+
+    // First sync: pulls the seeded item down. mergeServerItem() inserts it locally with
+    // syncId = the server's own row id — this is what "hold it locally" means for an
+    // item that originated elsewhere. Also establishes the client's own
+    // lastSyncDatastoreVersion baseline (first-sync path, no reset triggered).
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(
+      (await fetchServerItems(apiKey)).length,
+      1,
+      'sanity: exactly one row on the server before the version-bump sync'
+    );
+
+    const db = datastore.getDb();
+    const localBefore = db.prepare("SELECT syncId FROM items WHERE type = 'text'").get() as { syncId: string };
+    assert.strictEqual(localBefore.syncId, serverItemId, 'sanity: the pulled item is linked to the server row by syncId');
+
+    // Simulate a datastore version bump between app launches.
+    backdateStoredDatastoreVersion();
+
+    // Second sync: takes the version-changed reset path, then re-pushes the item.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const itemsAfter = await fetchServerItems(apiKey);
+    assert.strictEqual(
+      itemsAfter.length,
+      1,
+      'a version-bump sync must update the existing server row, not insert a duplicate'
+    );
+    assert.strictEqual(
+      itemsAfter[0].id,
+      serverItemId,
+      'the single remaining row must still be the original server row, not a new one'
+    );
+  });
+
+  it('a version-bump reset clears syncedAt but leaves syncId populated, and resets the event/tag push watermarks to 0', async () => {
+    const { apiKey } = setup('version-bump-scope');
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'version bump scope item', '{}', '', 0, ?, ?, 0)
+    `).run('local-version-bump-scope-item', now, now);
+
+    // Baseline sync: pushes the item, establishing a non-empty syncId and a non-zero
+    // syncedAt/lastEventPushAt/lastTagPushAt to contrast against after the reset.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
+    assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+    assert.notStrictEqual(readFeatureSetting('lastEventPushAt'), 0, 'sanity: baseline push advanced the event watermark past 0');
+    assert.notStrictEqual(readFeatureSetting('lastTagPushAt'), 0, 'sanity: baseline push advanced the tag watermark past 0');
+
+    backdateStoredDatastoreVersion();
+    installAlwaysFailingFetch();
+
+    // The run fails at the first network call (pull), right after the reset runs — see
+    // installAlwaysFailingFetch()'s doc comment for why that leaves the reset's own
+    // writes readable, undisturbed by the push stages.
+    await assert.rejects(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const afterReset = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.strictEqual(afterReset.syncId, baseline.syncId, 'version-bump reset must leave syncId populated — the row identity is still valid on the same server');
+    assert.strictEqual(afterReset.syncedAt, 0, 'version-bump reset must clear syncedAt so the item is re-pushed');
+    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'version-bump reset must reset the event push watermark to 0 (schema catch-up — see resetPerItemSyncState() doc comment)');
+    assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'version-bump reset must reset the tag push watermark to 0, for the same schema catch-up reason');
+  });
+
+  it('a server-URL-change reset still clears both syncedAt and syncId, and resets the event/tag push watermarks to 0', async () => {
+    const { apiKey } = setup('server-change-scope');
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'server change scope item', '{}', '', 0, ?, ?, 0)
+    `).run('local-server-change-scope-item', now, now);
+
+    // Baseline sync against FAKE_SERVER_URL — records it as the last-known server, so a
+    // later sync against a DIFFERENT url is a genuine "server changed" signal.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-server-change-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
+    assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+
+    installAlwaysFailingFetch();
+
+    const CHANGED_SERVER_URL = `${FAKE_SERVER_URL}-changed`;
+    // The run fails at the first network call, right after the reset runs — same
+    // reasoning as the version-bump test above.
+    await assert.rejects(() => sync.syncAll(CHANGED_SERVER_URL, apiKey));
+
+    const afterReset = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-server-change-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.strictEqual(afterReset.syncId, '', 'server-URL-change reset must clear syncId — the old value has no meaning on a different server');
+    assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
+    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'server-URL-change reset must reset the event push watermark to 0');
+    assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
   });
 });

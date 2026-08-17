@@ -1618,33 +1618,60 @@ function breakCycle(db: ReturnType<typeof getDb>, cycleIds: string[]): void {
  * Clear per-item sync markers so the next push resends every live item, and reset the
  * profile's high-water mark so the next pull re-fetches everything the server has.
  * Shared by resetSyncStateIfServerChanged() and resetSyncStateIfDatastoreVersionChanged()
- * — same recovery, different trigger.
+ * — same trigger shape ("start over"), but NOT the same scope of reset: see `clearSyncId`.
+ *
+ * `clearSyncId` decides whether `syncId` — the item's record of which SERVER row it
+ * corresponds to — is wiped along with `syncedAt`, or left alone:
+ * - Server/profile change (`clearSyncId: true`): a different server has different row
+ *   ids, so the old syncId means nothing there and must go. The next push has nothing
+ *   to match and INSERTs fresh rows, which is correct — there is nothing on the new
+ *   server to UPDATE yet.
+ * - Datastore-version bump (`clearSyncId: false`): same server, same row ids — the
+ *   version bump only makes what was last pushed stale, not the row identity. Clearing
+ *   syncId here was the bug: the server's saveItem() (db.js) matches a pushed item ONLY
+ *   by row id or the stored syncId, with no content fallback, so a re-push with syncId
+ *   blanked sends the desktop's own local id instead — which matches nothing for an item
+ *   that originated elsewhere (pushed by another device, or pulled down from the server)
+ *   — and the server inserts a duplicate row rather than updating the existing one.
+ *   Clearing `syncedAt` alone is enough to force the re-push; the row identity doesn't
+ *   need to move.
  */
-function resetPerItemSyncState(profileId: string): void {
+function resetPerItemSyncState(profileId: string, clearSyncId: boolean): void {
   const db = getDb();
-  db.prepare(`
-    UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
-  `).run();
+  if (clearSyncId) {
+    db.prepare(`
+      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
+    `).run();
+  } else {
+    db.prepare(`
+      UPDATE items SET syncedAt = 0 WHERE deletedAt = 0
+    `).run();
+  }
   updateLastSyncTime(profileId, 0);
 
-  // Clearing every item's syncId above means pushEventsToServer()'s own
-  // "blocked" scan (WHERE i.syncId = '') would — for exactly one run —
-  // see every item as newly blocked and pull the event watermark back to
-  // cover them. But that scan only protects events whose parent is STILL
-  // blocked at the moment it runs; an item that regains its syncId from
-  // THIS SAME run's own item push (pushToServer always runs immediately
-  // before pushEventsToServer) looks already-resolved by the time the scan
-  // runs, so events excluded by an already-advanced watermark from BEFORE
-  // this reset would never be rescued. Reset the event watermark to 0
-  // explicitly, the same "start over" the item watermark above gets.
+  // Event watermark: reset to 0 either way, but for two independent reasons — only one
+  // of which applies when clearSyncId is false:
+  // - clearSyncId path only: clearing every item's syncId above means
+  //   pushEventsToServer()'s own "blocked" scan (WHERE i.syncId = '') would — for
+  //   exactly one run — see every item as newly blocked and pull the event watermark
+  //   back to cover them. But that scan only protects events whose parent is STILL
+  //   blocked at the moment it runs; an item that regains its syncId from THIS SAME
+  //   run's own item push (pushToServer always runs immediately before
+  //   pushEventsToServer) looks already-resolved by the time the scan runs, so events
+  //   excluded by an already-advanced watermark from BEFORE this reset would never be
+  //   rescued. This does not arise when syncId is left alone — no item goes blocked.
+  // - Either path: a datastore-version bump can add required_sync_columns to
+  //   item_events the same way it can to items/tags, and the event-push query only
+  //   re-sends rows with createdAt past the watermark — an event already pushed under
+  //   the old schema would stay out of that set forever without this reset. Same
+  //   reasoning as the tag watermark below.
   saveEventPushWatermark(0);
 
-  // Tags have no such "blocked" window — a tag isn't gated on any other
-  // entity's sync state the way an event is gated on its parent item's syncId
-  // — but the same "start over" applies for the same underlying reason: the
-  // tag-push query only re-sends rows changed since the last tag push, so
-  // without this reset every tag already on the server would keep whatever
-  // metadata shape the OLD version last sent, forever.
+  // Tags have no "blocked" window — a tag isn't gated on any other entity's sync state
+  // the way an event is gated on its parent item's syncId — but the same "start over"
+  // applies for the schema-catch-up reason above: the tag-push query only re-sends rows
+  // changed since the last tag push, so without this reset every tag already on the
+  // server would keep whatever metadata shape the OLD version last sent, forever.
   saveTagPushWatermark(0);
 }
 
@@ -1687,7 +1714,8 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
 
   if (urlChanged || profileChanged) {
     DEBUG && console.log(`[sync] Server changed (url: '${storedUrl}' -> '${serverUrl}', profile: '${storedProfileId}' -> '${currentProfileId}') — resetting per-item sync state`);
-    resetPerItemSyncState(activeProfile.id);
+    // A different server has different row ids — the old syncId is meaningless there.
+    resetPerItemSyncState(activeProfile.id, true);
     return true;
   }
 
@@ -1702,13 +1730,17 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
  * an item already synced under the old schema stays out of that set forever, so it
  * would never re-push the columns a DATASTORE_VERSION bump just added (the re-push
  * problem: see docs/sync-coverage-gaps.md §1, and the required_sync_columns addition
- * in packages/schema/v1.json this version bump accompanies). This reuses the exact
- * recovery resetSyncStateIfServerChanged() already has for "start over" — it just
- * triggers off a different signal: the client's OWN previously-recorded
- * DATASTORE_VERSION, not the server's. It runs independent of (and before)
- * serverFetch()'s header check, which only refuses sync outright on a live mismatch
- * against the server's reported version — it can't retroactively resend items that
- * synced before this code existed.
+ * in packages/schema/v1.json this version bump accompanies). This triggers the same
+ * "start over" recovery resetSyncStateIfServerChanged() has, off a different signal —
+ * the client's OWN previously-recorded DATASTORE_VERSION, not the server's — but NOT
+ * the same scope: it is still the same server, so the item's `syncId` (which SERVER row
+ * it is) stays valid and must be kept, not cleared (see resetPerItemSyncState()'s
+ * `clearSyncId` doc comment — clearing it here was the duplicate-row bug: the server
+ * can only match a re-push by row id or syncId, so a re-push carrying neither matches
+ * nothing and inserts a second row for any item that originated elsewhere). It runs
+ * independent of (and before) serverFetch()'s header check, which only refuses sync
+ * outright on a live mismatch against the server's reported version — it can't
+ * retroactively resend items that synced before this code existed.
  */
 function resetSyncStateIfDatastoreVersionChanged(): boolean {
   const db = getDb();
@@ -1741,7 +1773,8 @@ function resetSyncStateIfDatastoreVersionChanged(): boolean {
 
   if (storedVersion !== DATASTORE_VERSION) {
     DEBUG && console.log(`[sync] Datastore version changed (${storedVersion || '(untracked)'} -> ${DATASTORE_VERSION}) — resetting per-item sync state`);
-    resetPerItemSyncState(activeProfile.id);
+    // Same server, same row ids — only what was last pushed is stale, so keep syncId.
+    resetPerItemSyncState(activeProfile.id, false);
     saveSyncDatastoreVersion();
     return true;
   }
