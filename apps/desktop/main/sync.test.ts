@@ -382,6 +382,206 @@ describe('Event push watermark — cross-run stranding regression', () => {
   });
 });
 
+describe('Sync progress log — sync:progress emission and the bounded ring buffer', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  /** Same shape as the event-sync describe block's setup() above: a fresh
+   * profile + fetch stub routed to the real server in-process, optionally
+   * rejecting the first POST /events chunk outright. */
+  function setup(name: string, opts: { failFirstEventPushOnce?: boolean } = {}) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `progresslog-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    let eventChunkFailedOnce = false;
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+
+      if (
+        opts.failFirstEventPushOnce &&
+        !eventChunkFailedOnce &&
+        method === 'POST' &&
+        reqPath.startsWith('/events')
+      ) {
+        eventChunkFailedOnce = true;
+        return new Response(JSON.stringify({ error: 'simulated chunk rejection' }), { status: 400 });
+      }
+
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  it('a full syncAll run emits stage-start and stage-finish entries for all six stages, in order', async () => {
+    const { apiKey } = setup('six-stages');
+
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const boundaryKeys = sync.getSyncLog()
+      .filter((e) => e.phase === 'start' || e.phase === 'finish')
+      .map((e) => `${e.stage}:${e.phase}`);
+
+    // Nothing to pull/push in this run, so no throttled item-push progress
+    // entries land between push-items' own start/finish — the sequence
+    // below is exactly syncAll()'s own stage order, bracketed by the run
+    // itself.
+    assert.deepStrictEqual(boundaryKeys, [
+      'run:start',
+      'pull-tags:start', 'pull-tags:finish',
+      'pull-items:start', 'pull-items:finish',
+      'pull-events:start', 'pull-events:finish',
+      'push-tags:start', 'push-tags:finish',
+      'push-items:start', 'push-items:finish',
+      'push-events:start', 'push-events:finish',
+      'run:finish',
+    ]);
+  });
+
+  it('item-push progress is throttled: a run pushing many items emits far fewer progress entries than items, and the last entry carries the true final count', async () => {
+    const { apiKey } = setup('item-throttle');
+
+    const ITEM_COUNT = 250;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-throttle-item-${i}`, `throttle test item ${i}`, now, now);
+    }
+
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const progressEntries = sync.getSyncLog().filter((e) => e.stage === 'push-items' && e.phase === 'progress');
+
+    assert.ok(
+      progressEntries.length > 0 && progressEntries.length < ITEM_COUNT / 10,
+      `expected a throttled number of progress entries, got ${progressEntries.length} for ${ITEM_COUNT} items`
+    );
+    const last = progressEntries[progressEntries.length - 1];
+    assert.ok(
+      last.message.includes(`${ITEM_COUNT} / ${ITEM_COUNT}`),
+      `expected the last progress entry to carry the true final count, got: ${last.message}`
+    );
+  });
+
+  it('a dropped malformed event and a rejected chunk each produce a log entry', async () => {
+    const { apiKey } = setup('dropped-and-failed', { failFirstEventPushOnce: true });
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Progress log series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-progresslog-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    // A well-formed event (rides in the batch the fetch stub rejects once —
+    // exercises the rejected-chunk log entry) and a malformed one (dropped
+    // before it ever reaches a request — exercises the dropped-event entry).
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-progresslog-good', localItemId, 1, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, 'not-a-number', '{}', ?)
+    `).run('evt-progresslog-bad', localItemId, 2, now + 10);
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+
+    const dropped = log.find((e) => e.stage === 'push-events' && e.phase === 'dropped');
+    assert.ok(dropped, 'expected a dropped-event log entry for the malformed row');
+    assert.ok(
+      dropped!.message.includes('evt-progresslog-bad'),
+      `expected the dropped entry to name the row, got: ${dropped!.message}`
+    );
+
+    const chunkFailure = log.find((e) => e.stage === 'push-events' && e.phase === 'error');
+    assert.ok(chunkFailure, 'expected a log entry for the rejected chunk');
+  });
+
+  it('the buffer is bounded across a long run and is cleared at the start of a new run', async () => {
+    const { apiKey } = setup('bounded-buffer');
+
+    // Fill the buffer well past its cap through the exact bounded-buffer
+    // path production log calls use — no need for thousands of real network
+    // round trips to prove the ring buffer trims.
+    for (let i = 0; i < 1000; i++) {
+      sync.__logSyncProgressForTest('push-items', 'progress', `synthetic entry ${i}`);
+    }
+    const filled = sync.getSyncLog();
+    assert.ok(filled.length < 1000, 'expected the ring buffer to have trimmed older entries');
+    assert.strictEqual(
+      filled[filled.length - 1].message,
+      'synthetic entry 999',
+      'the buffer must keep the MOST RECENT entries, not the oldest'
+    );
+    const cappedLength = filled.length;
+
+    // A second flood must not grow the buffer further.
+    for (let i = 0; i < 500; i++) {
+      sync.__logSyncProgressForTest('push-items', 'progress', `synthetic entry b${i}`);
+    }
+    assert.strictEqual(sync.getSyncLog().length, cappedLength, 'the buffer must stay bounded, not grow further');
+
+    // A new syncAll() run must start from an empty log, not append to the
+    // synthetic flood above.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const afterRun = sync.getSyncLog();
+    assert.ok(
+      afterRun.every((e) => !e.message.startsWith('synthetic entry')),
+      'syncAll() must clear the previous run\'s log, not append to it'
+    );
+    assert.strictEqual(afterRun[0].stage, 'run');
+    assert.strictEqual(afterRun[0].phase, 'start');
+  });
+
+  it('emitting progress with no renderer listening does not throw', () => {
+    // No BrowserWindow / pubsub broadcaster exists in this plain `node
+    // --test` environment — the exact "no renderer listening" case a real
+    // desktop run hits when Settings isn't open.
+    assert.doesNotThrow(() => {
+      sync.__logSyncProgressForTest('run', 'start', 'no listener test');
+    });
+  });
+});
+
 describe('Tag metadata sync — push/pull/merge', () => {
   before(async () => {
     ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));

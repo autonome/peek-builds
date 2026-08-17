@@ -157,6 +157,7 @@ import {
   getSyncConfig,
   setSyncConfig,
   getSyncStatus,
+  getSyncLog,
   pullFromServer,
   pushToServer,
   pullTagsFromServer,
@@ -5011,6 +5012,28 @@ export function registerTileIpcHandlers(): void {
     try {
       const status = getSyncStatus();
       return { success: true, data: status };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Read-only snapshot of the CURRENT run's progress log (sync.ts's bounded
+  // ring buffer). Lets the Settings panel show what already happened when
+  // opened mid-run instead of an empty log; live updates arrive separately
+  // over the `sync:progress` pubsub topic sync.ts publishes at each stage
+  // boundary.
+  registerTileIpc('tile:sync:get-log', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:get-log', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:get-log' };
+    }
+    try {
+      return { success: true, data: getSyncLog() };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

@@ -2037,6 +2037,10 @@ function buildAPI(): Record<string, unknown> {
     getConfig: () => ipcRenderer.invoke('tile:sync:get-config', { token: tileToken }),
     setConfig: (config: unknown) => ipcRenderer.invoke('tile:sync:set-config', { token: tileToken, config }),
     getStatus: () => ipcRenderer.invoke('tile:sync:status', { token: tileToken }),
+    // Current run's progress log (bounded ring buffer in sync.ts). Consumed
+    // by the Settings sync panel on load, alongside a live `sync:progress`
+    // pubsub subscription for updates while a run is in flight.
+    getLog: () => ipcRenderer.invoke('tile:sync:get-log', { token: tileToken }),
     pull: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:pull', { token: tileToken, since: options?.since }),
     push: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:push', { token: tileToken, since: options?.since }),
   };

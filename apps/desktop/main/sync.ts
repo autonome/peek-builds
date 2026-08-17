@@ -38,6 +38,81 @@ import {
   updateLastSyncTime,
   enableSync,
 } from './profiles.js';
+import { publish, getSystemAddress } from './pubsub.js';
+
+// ==================== Sync Progress Log ====================
+//
+// Observability for the Settings sync panel: a full syncAll() run against a
+// large dataset is a single opaque "Syncing…" button press today, with
+// nothing shown until it either completes or throws. This gives a live
+// status line and a per-run log without touching what syncAll() actually
+// does — every call below is additive logging around the existing stages.
+
+/** The six sync stages plus the overall run, matching syncAll()'s own
+ * ordering (tag pull, item pull, event pull, tag push, item push, event
+ * push). */
+export type SyncStage =
+  | 'run'
+  | 'pull-tags' | 'pull-items' | 'pull-events'
+  | 'push-tags' | 'push-items' | 'push-events';
+
+export type SyncProgressPhase = 'start' | 'progress' | 'finish' | 'error' | 'dropped';
+
+export interface SyncProgressEntry {
+  ts: number;
+  stage: SyncStage;
+  phase: SyncProgressPhase;
+  message: string;
+}
+
+// Ring buffer of the CURRENT run's progress entries. A few hundred is
+// enough to hold every stage boundary plus the throttled item-push
+// progress entries for a run, without growing unbounded across an
+// 11k-item push — see logSyncProgress()'s trim below.
+const SYNC_LOG_MAX_ENTRIES = 300;
+let syncLog: SyncProgressEntry[] = [];
+
+/** Drop the current run's log. Called once, at the start of syncAll() —
+ * NOT by the standalone pull/push stage functions, which can also run
+ * outside syncAll() (the Settings "Pull"/"Push" buttons) and shouldn't
+ * blow away a log an open panel is mid-way through showing. */
+function resetSyncLog(): void {
+  syncLog = [];
+}
+
+/**
+ * Record one entry in the current run's log, and publish it live so an
+ * open Settings panel updates in real time. `publish()` is a no-op when
+ * nothing is subscribed (pubsub.ts `deliver()` iterates an empty
+ * subscriber set and returns) — a sync run never waits on, or even checks
+ * for, a renderer being open.
+ */
+function logSyncProgress(stage: SyncStage, phase: SyncProgressPhase, message: string): void {
+  const entry: SyncProgressEntry = { ts: Date.now(), stage, phase, message };
+  syncLog.push(entry);
+  if (syncLog.length > SYNC_LOG_MAX_ENTRIES) {
+    syncLog.splice(0, syncLog.length - SYNC_LOG_MAX_ENTRIES);
+  }
+  publish(getSystemAddress(), 'sync:progress', entry);
+}
+
+/**
+ * Snapshot of the current run's progress log. `tile:sync:get-log` (see
+ * tile-ipc.ts) reads this so the Settings panel can render what already
+ * happened when opened mid-run, rather than starting from an empty log.
+ * Returns a copy — callers must not mutate the live buffer.
+ */
+export function getSyncLog(): SyncProgressEntry[] {
+  return syncLog.slice();
+}
+
+/** @internal Test hook: append an entry through the exact same
+ * bounded-buffer + publish path logSyncProgress() uses, without needing a
+ * real sync stage to run — lets tests exercise ring-buffer trimming at
+ * production scale without thousands of network round trips. */
+export function __logSyncProgressForTest(stage: SyncStage, phase: SyncProgressPhase, message: string): void {
+  logSyncProgress(stage, phase, message);
+}
 
 // ==================== Settings Storage ====================
 
@@ -574,6 +649,16 @@ interface PushResult {
   failed: number;
 }
 
+// Item push is one sequential HTTP request per item — ~11k requests on a
+// full re-push. Logging every one would flood the log/pubsub channel, so
+// progress is throttled to whichever of these fires first: this many items
+// done, or this much time elapsed since the last progress entry. The time
+// bound matters as much as the count bound here — a slow link can take
+// far longer than ITEM_PUSH_PROGRESS_INTERVAL_MS to move
+// ITEM_PUSH_PROGRESS_EVERY items, and the live status line must still move.
+const ITEM_PUSH_PROGRESS_EVERY = 100;
+const ITEM_PUSH_PROGRESS_INTERVAL_MS = 3000;
+
 /**
  * Push unsynced local items to server
  *
@@ -631,6 +716,11 @@ export async function pushToServer(
   let pushed = 0;
   let failed = 0;
 
+  // Throttle state for the item-push progress line — see
+  // ITEM_PUSH_PROGRESS_EVERY/_INTERVAL_MS above.
+  let lastProgressCount = 0;
+  let lastProgressAt = Date.now();
+
   for (const item of items) {
     try {
       await pushSingleItem(serverUrl, apiKey, item);
@@ -639,6 +729,25 @@ export async function pushToServer(
       DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, (error as Error).message);
       failed++;
     }
+
+    const done = pushed + failed;
+    const now = Date.now();
+    if (
+      done - lastProgressCount >= ITEM_PUSH_PROGRESS_EVERY ||
+      now - lastProgressAt >= ITEM_PUSH_PROGRESS_INTERVAL_MS
+    ) {
+      logSyncProgress('push-items', 'progress', `Pushing items — ${done} / ${items.length}`);
+      lastProgressCount = done;
+      lastProgressAt = now;
+    }
+  }
+
+  // Always emit one final progress entry with the true final count, even
+  // when the run ends inside a throttle window that would otherwise have
+  // suppressed it — the live status line must never be left showing a
+  // stale count after the loop is actually done.
+  if (items.length > 0) {
+    logSyncProgress('push-items', 'progress', `Pushing items — ${pushed + failed} / ${items.length}`);
   }
 
   DEBUG && console.log(`[sync] Push complete: ${pushed} pushed, ${failed} failed`);
@@ -919,6 +1028,14 @@ export async function pushEventsToServer(
       `[sync] Dropped ${droppedRows.length} malformed event(s) from push (missing id/itemId or ` +
       `non-finite occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
     );
+    // Surfaced in the Settings sync log too — a silently dropped event is
+    // exactly what the user needs to see, not just what DEBUG logging sees.
+    logSyncProgress(
+      'push-events',
+      'dropped',
+      `Dropped ${droppedRows.length} malformed event(s) (missing id/itemId or non-finite ` +
+      `occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
+    );
   }
 
   // Tracks the oldest createdAt among events that did NOT make it to the server this
@@ -978,6 +1095,11 @@ export async function pushEventsToServer(
       DEBUG && console.log(
         `[sync] Event push chunk failed (${batch.length} events), will retry next run:`,
         (error as Error).message
+      );
+      logSyncProgress(
+        'push-events',
+        'error',
+        `Chunk of ${batch.length} event(s) rejected, will retry next run: ${(error as Error).message}`
       );
       trackNotDelivered(batch);
       failed += batch.length;
@@ -1696,6 +1818,11 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
 
   DEBUG && console.log('[sync] Starting full sync...');
 
+  // Reset the progress log for THIS run — see resetSyncLog()'s doc comment
+  // for why this lives here rather than in the individual stage functions.
+  resetSyncLog();
+  logSyncProgress('run', 'start', 'Sync started');
+
   let pulled = 0;
   let pushed = 0;
   let conflicts = 0;
@@ -1705,31 +1832,41 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     // (by name, via its `tags` array) must find that tag already shaped
     // locally — slug/color/parentId/description/metadata — rather than only
     // the bare row getOrCreateTag() would otherwise create on demand.
+    logSyncProgress('pull-tags', 'start', 'Pulling tags…');
     const tagPullResult = await pullTagsFromServer(serverUrl, apiKey, config.lastSyncTime);
     pulled = tagPullResult.pulled;
+    logSyncProgress('pull-tags', 'finish', `Pulled ${tagPullResult.pulled} tag(s)`);
 
     // Pull items (to get any server changes)
+    logSyncProgress('pull-items', 'start', 'Pulling items…');
     const pullResult = await pullFromServer(serverUrl, apiKey, config.lastSyncTime);
     pulled += pullResult.pulled;
     conflicts = pullResult.conflicts;
+    logSyncProgress('pull-items', 'finish', `Pulled ${pullResult.pulled} item(s), ${pullResult.conflicts} conflict(s)`);
 
     // Event pull runs AFTER item pull: it resolves each event's server itemId
     // against a local item's syncId, so any item newly pulled above must
     // already exist locally before its events can be addressed.
+    logSyncProgress('pull-events', 'start', 'Pulling events…');
     const eventPullResult = await pullEventsFromServer(serverUrl, apiKey, config.lastSyncTime);
     pulled += eventPullResult.pulled;
+    logSyncProgress('pull-events', 'finish', `Pulled ${eventPullResult.pulled} event(s)`);
 
     // Tag push runs BEFORE item push for the same reason pull runs it first:
     // pushSingleItem() sends tag NAMES only, so ordering doesn't create a
     // dependency the way events depend on their parent item's syncId — this
     // is about the server shaping tag rows correctly (metadata attached)
     // before whichever device the tags travel to actually pulls them back.
+    logSyncProgress('push-tags', 'start', 'Pushing tags…');
     const tagPushResult = await pushTagsToServer(serverUrl, apiKey);
     pushed = tagPushResult.pushed;
+    logSyncProgress('push-tags', 'finish', `Pushed ${tagPushResult.pushed} tag(s)`);
 
     // Then push local item changes
+    logSyncProgress('push-items', 'start', 'Pushing items…');
     const pushResult = await pushToServer(serverUrl, apiKey, config.lastSyncTime);
     pushed += pushResult.pushed;
+    logSyncProgress('push-items', 'finish', `Pushed ${pushResult.pushed} item(s), ${pushResult.failed} failed`);
 
     // Event push runs AFTER item push for the same reason: a locally-created
     // item needs the syncId its own push just assigned before its events can
@@ -1746,6 +1883,7 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     // single failing chunk (see its doc comment); this catches anything that
     // still escapes it and records it as a stage failure instead.
     let eventPushError: string | null = null;
+    logSyncProgress('push-events', 'start', 'Pushing events…');
     try {
       const eventPushResult = await pushEventsToServer(serverUrl, apiKey);
       pushed += eventPushResult.pushed;
@@ -1755,9 +1893,11 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
       if (eventPushResult.failed > 0) {
         eventPushError = `${eventPushResult.failed} event(s) failed to push`;
       }
+      logSyncProgress('push-events', 'finish', `Pushed ${eventPushResult.pushed} event(s), ${eventPushResult.failed} failed`);
     } catch (error) {
       eventPushError = error instanceof Error ? error.message : String(error);
       DEBUG && console.error('[sync] Event push stage failed, rest of sync still recorded:', error);
+      logSyncProgress('push-events', 'error', `Event push stage failed: ${eventPushError}`);
     }
 
     // Update last sync time AFTER push completes — using Date.now() ensures
@@ -1781,6 +1921,8 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
       lastSyncErrorAt = 0;
     }
 
+    logSyncProgress('run', 'finish', `Sync complete: ${pulled} pulled, ${pushed} pushed, ${conflicts} conflicts`);
+
     return {
       pulled,
       pushed,
@@ -1791,6 +1933,7 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     DEBUG && console.error('[sync] Sync failed:', error);
     lastSyncError = error instanceof Error ? error.message : String(error);
     lastSyncErrorAt = Date.now();
+    logSyncProgress('run', 'error', `Sync failed: ${lastSyncError}`);
     throw error;
   }
 }

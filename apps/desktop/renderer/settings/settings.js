@@ -2056,6 +2056,10 @@ const renderSyncSettings = async () => {
   let config = { serverUrl: '', apiKey: '', autoSync: false };
   let status = { configured: false, lastSync: 0, pendingCount: 0 };
   let isSyncing = false;
+  // Entries loaded from the main-process ring buffer (tile:sync:get-log) plus
+  // any that arrive live over the `sync:progress` pubsub topic — see the
+  // log section built further down.
+  const logEntries = [];
 
   // Load initial config and status
   try {
@@ -2178,6 +2182,17 @@ const renderSyncSettings = async () => {
   pendingLine.className = 'help-text';
   statusContainer.appendChild(pendingLine);
 
+  // Live status line — the CURRENT stage of an in-flight run (e.g.
+  // "Now: Pushing items — 4,213 / 11,355"), driven by the `sync:progress`
+  // pubsub events sync.ts publishes at each stage boundary and at throttled
+  // intervals during the item push. Hidden whenever no run is in flight —
+  // set by handleSyncProgressEntry() below, seeded from the on-load log
+  // fetch so opening the panel mid-run shows the current stage immediately.
+  const liveStatusLine = document.createElement('div');
+  liveStatusLine.className = 'help-text';
+  liveStatusLine.style.cssText = 'margin-top: 4px; display: none; font-weight: 500; color: var(--text-primary);';
+  statusContainer.appendChild(liveStatusLine);
+
   // Error line — only shown when the most recent syncAll threw. The
   // background color of the whole status block also goes red so the
   // failure is hard to miss without having to scan text.
@@ -2232,6 +2247,21 @@ const renderSyncSettings = async () => {
 
   // Initial status update
   await updateStatus();
+
+  // Reflects one `sync:progress` entry in the live status line. A run
+  // finishing or failing hides the line (nothing "current" left to show)
+  // and refreshes the static status block above so pending count / last
+  // sync / last error don't wait for the next manual button press.
+  const handleSyncProgressEntry = (entry) => {
+    if (entry.stage === 'run' && (entry.phase === 'finish' || entry.phase === 'error')) {
+      liveStatusLine.style.display = 'none';
+      liveStatusLine.textContent = '';
+      updateStatus();
+      return;
+    }
+    liveStatusLine.textContent = `Now: ${entry.message}`;
+    liveStatusLine.style.display = '';
+  };
 
   container.appendChild(statusSection);
 
@@ -2384,7 +2414,104 @@ const renderSyncSettings = async () => {
   helpText.textContent = 'Pull downloads new items from the server. Push uploads local items. Sync All does both.';
   syncSection.appendChild(helpText);
 
+  // Per-run sync log — collapsed by default. One timestamped line per stage
+  // start/finish, throttled item-push progress, dropped events, and stage
+  // failures — everything sync.ts's `sync:progress` events carry. Backed by
+  // the main process's bounded ring buffer for the CURRENT run
+  // (tile:sync:get-log), so opening this panel mid-run shows what already
+  // happened instead of an empty log; a run that has never happened (or a
+  // restart mid-run, which clears the buffer) just shows an empty log.
+  const logWrap = document.createElement('div');
+  logWrap.style.marginTop = '16px';
+
+  const logToggle = document.createElement('button');
+  logToggle.type = 'button';
+  logToggle.style.cssText = `
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 0;
+  `;
+  logWrap.appendChild(logToggle);
+
+  const logList = document.createElement('div');
+  logList.style.cssText = `
+    display: none;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.6;
+  `;
+  logWrap.appendChild(logList);
+
+  let logExpanded = false;
+  const updateLogToggleLabel = () => {
+    logToggle.textContent = logExpanded
+      ? 'Hide sync log ▾'
+      : `Show sync log (${logEntries.length}) ▸`;
+  };
+  updateLogToggleLabel();
+
+  logToggle.addEventListener('click', () => {
+    logExpanded = !logExpanded;
+    logList.style.display = logExpanded ? 'block' : 'none';
+    updateLogToggleLabel();
+    if (logExpanded) logList.scrollTop = logList.scrollHeight;
+  });
+
+  // Appends one entry to both the in-memory array and the visible list.
+  // Auto-scrolls only while expanded — an operator scrolled up to read an
+  // earlier line shouldn't get yanked to the bottom by a background run.
+  const appendLogEntry = (entry) => {
+    logEntries.push(entry);
+
+    const line = document.createElement('div');
+    const time = new Date(entry.ts).toLocaleTimeString();
+    line.textContent = `[${time}] ${entry.stage}: ${entry.message}`;
+    if (entry.phase === 'error') {
+      line.style.color = 'var(--base08, #cc241d)';
+    } else if (entry.phase === 'dropped') {
+      line.style.color = 'var(--base0A, #d79921)';
+    }
+    logList.appendChild(line);
+
+    updateLogToggleLabel();
+    if (logExpanded) logList.scrollTop = logList.scrollHeight;
+  };
+
+  syncSection.appendChild(logWrap);
+
   container.appendChild(syncSection);
+
+  // Load whatever the current run's log already holds (empty if no run has
+  // happened yet, or if the app restarted mid-run — the ring buffer is
+  // in-memory only), then subscribe for live updates. The last loaded entry
+  // seeds the live status line too, so a panel opened mid-run shows the
+  // current stage immediately rather than waiting for the next event.
+  try {
+    const logResult = await api.sync.getLog();
+    if (logResult.success && Array.isArray(logResult.data)) {
+      logResult.data.forEach(appendLogEntry);
+      if (logEntries.length > 0) {
+        handleSyncProgressEntry(logEntries[logEntries.length - 1]);
+      }
+    }
+  } catch (err) {
+    console.error('[settings] Failed to load sync log:', err);
+  }
+
+  api.subscribe('sync:progress', (entry) => {
+    appendLogEntry(entry);
+    handleSyncProgressEntry(entry);
+  });
 
   // Profile Sync section
   const profileSyncSection = document.createElement('div');
