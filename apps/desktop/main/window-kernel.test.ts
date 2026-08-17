@@ -808,6 +808,28 @@ describe('window-kernel: CloseOrHideWindow', () => {
     assert.deepStrictEqual(keyWindow(dup), firstKey, 'the duplicate does not repair key');
   });
 
+  it('a duplicate WindowHidden clears a pendingHidden mark idempotently — order stays byte-identical on the repeat', () => {
+    // Same shape as the case above, but the window carries a `pendingHidden`
+    // mark (a teardown was decided before the confirming hide arrived) — the
+    // fact this test exists to protect: the SECOND `WindowHidden` must not
+    // re-diff the mark's clear into a different-looking record than the first
+    // one already produced.
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'WindowDestroyRequested', id: wid(1) },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.pendingHidden, true, 'precondition: the teardown marked it doomed');
+
+    const hideEvent: Event = { type: 'WindowHidden', id: wid(1) };
+    const first = evolve(state, hideEvent);
+    assert.strictEqual(first.order.find((w) => w.id === wid(1))?.pendingHidden, false, 'the confirming echo clears the mark');
+
+    const dup = evolve(first, hideEvent);
+    assert.deepStrictEqual(react(first, hideEvent, dup), [], 'no effects from the duplicate');
+    assert.deepStrictEqual(dup.order, first.order, 'order is byte-identical to after the first hide');
+  });
+
   it('a non-keepLive window is closed and removed from order', () => {
     const state = fold(
       [
@@ -1320,6 +1342,37 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     const effects = react(state, ev, next);
 
     assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }], 'U is skipped, B is raised');
+  });
+
+  it('a successor already marked pendingHidden (a teardown already decided) is skipped in favour of one that is not', () => {
+    // C (content, eligible) sits below B (content, but doomed — a teardown
+    // was decided for it, and the OS has not confirmed anything yet) which
+    // sits below A (key). Hiding A leaves B topmost by position, but a
+    // doomed window is not a legitimate raise target — raising it would be
+    // an activating show onto a window already committed to teardown.
+    const C = wid(1);
+    const B = wid(2);
+    const A = wid(3);
+    const state = fold([
+      registerContent(C),
+      registerContent(B),
+      registerContent(A),
+      { type: 'WindowShown', id: C },
+      { type: 'WindowShown', id: B },
+      { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+      { type: 'WindowDestroyRequested', id: B },
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [C, B, A], 'precondition: B sits above C, A on top');
+    assert.strictEqual(state.order.find((w) => w.id === B)?.pendingHidden, true, 'precondition: B is doomed');
+    assert.strictEqual(isContentWindow(state.order.find((w) => w.id === B)!), false, 'precondition: pendingHidden excludes B from isContentWindow');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: C, opSeq: next.opSeqCounter }], 'B is skipped, C is raised');
   });
 
   it('while appActive is false, the same hide raises nothing and mints no token', () => {
@@ -2121,6 +2174,29 @@ describe('window-kernel: overlay attachment', () => {
     );
   });
 
+  it('closing the host also clears a pendingHidden mark the detached overlay itself carried', () => {
+    // The overlay singleton can itself be mid-teardown (its own destroy
+    // decided, no confirming echo yet) while still attached to a host that
+    // closes first. The mechanical detach must not leave the overlay
+    // permanently marked doomed, or it would vanish from
+    // `isBaseLayerPageHost`/`topmostBaseLayerPageHost` forever — the original
+    // overlay-attach defect, inverted onto this field.
+    const registered = fold(registerHostsAndOverlay(), initialState());
+    const attached = fold(
+      [{ type: 'OverlayAttached', overlayId, hostId: hostA }, { type: 'WindowShown', id: overlayId }],
+      registered,
+    );
+    const doomed = evolve(attached, { type: 'WindowDestroyRequested', id: overlayId });
+    assert.strictEqual(doomed.order.find((w) => w.id === overlayId)?.pendingHidden, true, 'precondition: the overlay itself is doomed');
+
+    const closeEv: Event = { type: 'WindowClosed', id: hostA };
+    const closed = evolve(doomed, closeEv);
+
+    const overlay = closed.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.overlayFor, undefined, 'overlay is detached');
+    assert.strictEqual(overlay.pendingHidden, false, 'the doomed mark is cleared along with the detach');
+  });
+
   it('attaching neither writes key nor reorders order', () => {
     const state = fold([...registerHostsAndOverlay(), { type: 'OsFocusGained', id: hostB }], initialState());
     const orderBefore = state.order.map((w) => w.id);
@@ -2698,6 +2774,27 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
     const record = reshown.order.find((w) => w.id === wid(4))!;
     assert.strictEqual(record.visible, true);
     assert.strictEqual(record.hiddenByAppBlur, false);
+  });
+
+  it('AppActivated does not re-show a window a teardown has since marked pendingHidden', () => {
+    // The hud-shaped window is swept hidden by an app resign, and while it
+    // sits off screen a teardown is decided for it before the OS has
+    // confirmed anything. The next activation must not resurrect a window
+    // the machine has already committed to tearing down onto the screen.
+    const before = fold(registerPrimaryAndHud(), initialState());
+    const resigned = evolve(before, { type: 'AppResigned' });
+    const settled = evolve(resigned, { type: 'AppResignSettled' });
+    const swept = settled.order.find((w) => w.id === wid(2))!;
+    assert.strictEqual(swept.visible, false, 'precondition: the sweep hid it');
+    assert.strictEqual(swept.hiddenByAppBlur, true, 'precondition: hidden by the app-blur sweep');
+
+    const doomed = evolve(settled, { type: 'WindowContentCloseRequested', id: wid(2) });
+    assert.strictEqual(doomed.order.find((w) => w.id === wid(2))?.pendingHidden, true, 'precondition: a teardown has now been decided');
+
+    const activated = evolve(doomed, { type: 'AppActivated' });
+    const record = activated.order.find((w) => w.id === wid(2))!;
+    assert.strictEqual(record.visible, false, 'a doomed window must not be resurrected onto the screen by an app activation');
+    assert.strictEqual(record.hiddenByAppBlur, true, 'the mark is left set — nothing has happened to make the hide untrue');
   });
 
   it('AppResignSettled arriving when not armed is inert', () => {
@@ -4038,6 +4135,24 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     const second = wid(2);
     const state = fold([registerPageHost(first), ...shown(first), registerPageHost(second), ...shown(second)]);
     assert.strictEqual(topmostBaseLayerPageHost(state)?.id, second);
+  });
+
+  it('a doomed page host (a teardown already decided) is not the attach target, even though it is topmost by position', () => {
+    const first = wid(1);
+    const second = wid(2);
+    const state = fold([
+      registerPageHost(first),
+      ...shown(first),
+      registerPageHost(second),
+      ...shown(second),
+      { type: 'WindowDestroyRequested', id: second },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === second)?.pendingHidden, true, 'precondition: second is doomed');
+    assert.strictEqual(
+      topmostBaseLayerPageHost(state)?.id,
+      first,
+      'attaching the shared chrome overlay singleton to a doomed host is the original overlay-attach defect family',
+    );
   });
 });
 

@@ -156,6 +156,41 @@ export interface WindowRecord {
   role?: string;
 
   visible: boolean;
+  /**
+   * THE MACHINE'S OWN BELIEF that this window is going away, ahead of the
+   * OS's confirmation — distinct from `visible`, which keeps meaning strictly
+   * "what the OS last reported" and is written only by the backend's
+   * shown/hidden echo. That echo is queued behind whatever the executor's
+   * pump is already draining, so a rule reading `visible` alone can act on a
+   * window the machine has already decided to tear down: raise it as a
+   * successor, attach the shared chrome overlay to it, resurrect it on app
+   * activation. This field is the separate lived fact those rules need.
+   *
+   * SET by the three window-naming teardown arms (`WindowDestroyRequested`,
+   * `WindowContentCloseRequested`, `WindowDirectCloseRequested`) — see
+   * `evolve`'s TEARDOWN section for why `GuestTeardownRequested` does NOT set
+   * it: that teardown names no window, and inferring which records own
+   * guests is not something the kernel can know. NOT set for a
+   * transient-autoclose dismissal victim either (`selectTransientAutoclose`)
+   * — that selector is a pure query `react` runs off `next`, and marking a
+   * victim here would make the sweep consume its own output.
+   *
+   * CLEARED by `WindowShown` (mirrors the `hiddenByAppBlur` clear on that
+   * same arm) and by `WindowHidden` (the confirming echo — the fact has done
+   * its job). `WindowClosed` needs no clear for the closed record itself (it
+   * leaves `order` entirely), but DOES clear it on any record it mechanically
+   * detaches (`overlayFor === ev.id`) — otherwise the shared chrome overlay
+   * would carry a stale mark forever and vanish from
+   * `isBaseLayerPageHost`/`topmostBaseLayerPageHost` for good, the original
+   * overlay-attach defect inverted.
+   *
+   * ACCEPTED RESIDUE: a destroy the backend never completes produces neither
+   * a `WindowClosed` nor a `WindowHidden`, so the mark can persist forever.
+   * There is deliberately no repair path — a repair would mean the machine
+   * inferring a teardown's outcome instead of being told it, which is exactly
+   * the belief-versus-reality discipline `visible` exists to keep honest.
+   */
+  pendingHidden?: boolean;
   /** Open order (not use order) — assigned once at registration, never re-derived. */
   openSeq: number;
   parentId?: WindowId;
@@ -1459,6 +1494,11 @@ export function evolve(state: State, ev: Event): State {
           // re-registration mid-sweep must not lose the mark AppActivated
           // needs to know which windows to re-show.
           ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
+          // A lived fact (teardown-in-flight), same reasoning — a producer
+          // re-announcing a window's declared properties (`ipc.ts` does this
+          // routinely) knows nothing about an in-flight teardown, so it must
+          // never be taken from the event.
+          ...(existing.pendingHidden !== undefined ? { pendingHidden: existing.pendingHidden } : {}),
           // A lived fact (first-responder mirror), same reasoning — the
           // window's content did not lose or gain first responder because a
           // producer re-registered it, and dropping the field here would
@@ -1603,6 +1643,10 @@ export function evolve(state: State, ev: Event): State {
             ...w,
             visible: true,
             ...(w.hiddenByAppBlur === true ? { hiddenByAppBlur: false } : {}),
+            // Any genuine show clears a doomed mark too — the OS just put
+            // this window back on screen, so whatever teardown asked for it
+            // did not (yet) happen. See `WindowRecord.pendingHidden`'s doc.
+            ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
           });
           return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq };
         }),
@@ -1631,7 +1675,14 @@ export function evolve(state: State, ev: Event): State {
       // `WindowShown` uses above for the same reason.
       const target = state.order.find((w) => w.id === ev.id);
       const hidesGenuinely = target !== undefined && target.visible === true;
-      const order = state.order.map((w) => (w.id === ev.id ? { ...w, visible: false } : w));
+      // The confirming echo clears a doomed mark, genuine or not — this is
+      // the report a teardown was waiting for. Written the same conditional
+      // way `WindowShown`'s clear is, so a repeat pass (the mark already
+      // `false`) touches nothing and stays byte-identical — see the pinned
+      // duplicate-`WindowHidden` test.
+      const order = state.order.map((w) =>
+        w.id === ev.id ? { ...w, visible: false, ...(w.pendingHidden === true ? { pendingHidden: false } : {}) } : w,
+      );
       const successor =
         hidesGenuinely && state.key === ev.id && state.appActive === true
           ? topmost({ ...state, order }, isContentWindow)
@@ -1656,11 +1707,25 @@ export function evolve(state: State, ev: Event): State {
       // writes the visibility fact itself, the same treatment the
       // `OverlayAttached` arm's own detach path gives it, rather than
       // leaving a stale `visible: true` for a queued sweep to act on before
-      // the backend's native-hide echo can correct it.
+      // the backend's native-hide echo can correct it. The detached record's
+      // own `pendingHidden` is cleared in the SAME map for the same reason:
+      // the overlay singleton is never itself the doomed window here (its
+      // HOST is), so a stale mark left on it would exclude the shared chrome
+      // overlay from `isBaseLayerPageHost`/`topmostBaseLayerPageHost` forever
+      // — the original overlay-attach defect, inverted onto this field.
       const closedRec = state.order.find((w) => w.id === ev.id);
       const filtered = state.order
         .filter((w) => w.id !== ev.id)
-        .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined, ...(w.visible ? { visible: false } : {}) } : w));
+        .map((w) =>
+          w.overlayFor === ev.id
+            ? {
+                ...w,
+                overlayFor: undefined,
+                ...(w.visible ? { visible: false } : {}),
+                ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
+              }
+            : w,
+        );
       // Parent refocus (ported from `window-state.ts`'s `WINDOW_CLOSED` arm —
       // the deleted `main.ts browser-window-created -> 'closed' ->
       // parentWin.focus()` block): a closing window whose parent is still
@@ -1892,7 +1957,7 @@ export function evolve(state: State, ev: Event): State {
       const latchedRecord = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
       const assertsFocus =
         latchedRecord !== undefined &&
-        (latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
+        admitsFocusAssert(latchedRecord, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
 
       // FULLSCREEN RECONCILE SWEEP (ported from `window-state.ts`'s
       // `APP_ACTIVATED` arm, which pushed one reconcile effect per in-flight
@@ -2317,7 +2382,17 @@ export function evolve(state: State, ev: Event): State {
     }
 
     // TEARDOWN (§0.1.5) — four arms, one shape: record the request on
-    // `lastTeardown` (the fact `react` diffs) and change nothing else.
+    // `lastTeardown` (the fact `react` diffs) and change nothing else about
+    // the window model, with one addition on the three arms that NAME a
+    // window: mark that record `pendingHidden` (see the field's doc) — the
+    // machine has now decided the window is going away, ahead of the OS's
+    // confirming `WindowShown`/`WindowHidden`/`WindowClosed`. The write is a
+    // `.map` that simply matches nothing for an id absent from `order`,
+    // which is exactly what the commands' unknown-window exemption requires
+    // downstream. `GuestTeardownRequested` marks no record: it names no
+    // window at all (process-wide, iterating the guest map directly — see
+    // `TeardownRequest`'s doc), and inferring which records own guests is not
+    // something the kernel can know.
     //
     // Membership is deliberately untouched. `WindowClosed` is the sole event
     // that shrinks `order` (RULE 1), and it arrives on its own as the native
@@ -2331,6 +2406,7 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowDestroyRequested': {
       return {
         ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
         lastTeardown: { kind: 'destroy-window', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
@@ -2339,6 +2415,7 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowContentCloseRequested': {
       return {
         ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
         lastTeardown: { kind: 'close-content', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
@@ -2347,13 +2424,15 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowDirectCloseRequested': {
       return {
         ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
         lastTeardown: { kind: 'close-window-direct', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
     }
 
     case 'GuestTeardownRequested': {
-      // No `id` to store — the request is process-wide.
+      // No `id` to store — the request is process-wide, and no record can be
+      // marked `pendingHidden` for the same reason (see the section doc above).
       return {
         ...state,
         lastTeardown: { kind: 'destroy-all-guests', seq: nextTeardownSeq(state) },
@@ -2382,11 +2461,13 @@ export function evolve(state: State, ev: Event): State {
       // still records the request (the field is a record of what was asked)
       // and simply matches no record to stamp.
       //
-      // Mirrors `react`'s emission exactly: `react` only raises a `visible`
-      // target (an off-screen `RaiseWindow` would activate and show it), so
-      // the stamp has to require the same thing or the two would disagree
-      // about whether this transition issued an op at all.
-      const issuesRaise = state.order.some((w) => w.id === ev.id && w.visible);
+      // Mirrors `react`'s emission exactly: `react` only raises a `visible`,
+      // non-doomed target (an off-screen `RaiseWindow` would activate and
+      // show it; a doomed one would raise a window already committed to
+      // teardown), so the stamp has to require the same thing or the two
+      // would disagree about whether this transition issued an op at all —
+      // see `admitsFocusAssert`, the one place that condition lives.
+      const issuesRaise = state.order.some((w) => w.id === ev.id && admitsFocusAssert(w, w.visible));
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
@@ -2859,16 +2940,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // structural, not branches on `ev.type` — the rule holds identically for an
   // assert fed in directly and for one `decide` translated from a command.
   //
-  // GATED ON `visible`, not merely present in `next.order`. Every other
-  // `RaiseWindow` emitter in this function carries an eligibility predicate;
-  // `backend.raiseWindow` is an activating show, so without this test an
-  // assert naming an off-screen window would pull it onto the screen and
-  // take key. `evolve`'s `FocusAssertRequested` and `AppActivated` arms stamp
-  // `lastOpSeq` under the textually identical condition — see their comments.
+  // GATED ON `admitsFocusAssert`, not merely present in `next.order`. Every
+  // other `RaiseWindow` emitter in this function carries an eligibility
+  // predicate; `backend.raiseWindow` is an activating show, so without this
+  // test an assert naming an off-screen OR doomed window would pull it onto
+  // the screen and take key. `evolve`'s `FocusAssertRequested` and
+  // `AppActivated` arms stamp `lastOpSeq` under this exact condition — see
+  // `admitsFocusAssert`'s own doc for why the three share one helper.
   const focusAssert = next.lastFocusAssert;
   if (focusAssert !== null && focusAssert.seq !== prev.lastFocusAssert?.seq) {
     const record = next.order.find((w) => w.id === focusAssert.id);
-    if (record !== undefined && record.visible) {
+    if (record !== undefined && admitsFocusAssert(record, record.visible)) {
       effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
       // `isContentWindow` rather than `kind === 'page-host'` (the old arm's
       // own test): this kernel's content predicate is the one that answers
@@ -3209,6 +3291,14 @@ export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette
  *
  *   - `visible`        the surviving half of `isEligibleFront`. Nothing off
  *                      screen is what the user is working in.
+ *   - `!pendingHidden` the machine's own belief that this window is going
+ *                      away, ahead of the OS's confirming echo (see that
+ *                      field's doc). This predicate drives the successor
+ *                      raise, the parent-refocus handoff, and the
+ *                      focus-assert gate (`admitsFocusAssert`) — every one of
+ *                      those is an activating show, so admitting a doomed
+ *                      window here would raise a window the machine has
+ *                      already committed to tearing down.
  *   - `canBecomeKey`   the `focusable: false` half. The OS genuinely will
  *                      never give such a window key, so it can never be what
  *                      the user is working in. This clause alone excludes the
@@ -3295,6 +3385,7 @@ export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette
  */
 export function isContentWindow(record: WindowRecord): boolean {
   if (!record.visible) return false;
+  if (record.pendingHidden) return false;
   if (!record.canBecomeKey) return false;
   return roleIn(CONTENT_ROLES, record.role);
 }
@@ -3382,9 +3473,22 @@ export function isFrontEligibleWindow(record: WindowRecord): boolean {
  * `isContentWindow` and the `SetStacking` emission (`react`) already apply: a
  * hidden window is not on screen to frame, and a page-host the OS cannot yet
  * z-order (before its first composited frame) cannot be the overlay's target.
+ *
+ * `!pendingHidden` for the same reason `isContentWindow` carries it: the
+ * machine's own belief that this window is going away, ahead of the OS's
+ * confirming echo (see that field's doc). Attaching the shared chrome
+ * overlay singleton to a doomed host is the original overlay-attach defect
+ * family this predicate exists to close.
  */
 export function isBaseLayerPageHost(r: WindowRecord): boolean {
-  return r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && (roleIn(CONTENT_ROLES, r.role) || r.role === 'quick-view');
+  return (
+    r.kind === 'page-host' &&
+    r.visible &&
+    !r.pendingHidden &&
+    r.orderable &&
+    r.layer === BASE_LAYER &&
+    (roleIn(CONTENT_ROLES, r.role) || r.role === 'quick-view')
+  );
 }
 
 /**
@@ -3569,12 +3673,19 @@ export function selectTransientAutoclose(
  *
  * A dangling `overlayFor` cannot reach here — `WindowClosed` mechanically
  * detaches every overlay naming the closed host.
+ *
+ * BOTH SIDES REFUSE A DOOMED WINDOW too (see `WindowRecord.pendingHidden`'s
+ * doc): the record itself, because an app activation must not resurrect a
+ * window the machine has already decided to tear down onto the screen; and
+ * the overlay's host, because revealing chrome over a doomed host is the
+ * same defect the fullscreen-host refusal above already guards against.
  */
 function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
   if (record.hiddenByAppBlur !== true) return false;
+  if (record.pendingHidden) return false;
   if (record.overlayFor === undefined) return true;
   const host = state.order.find((w) => w.id === record.overlayFor);
-  return host !== undefined && host.visible && host.fsMode.name === 'normal';
+  return host !== undefined && host.visible && !host.pendingHidden && host.fsMode.name === 'normal';
 }
 
 export function isAppResignSweepEligible(record: WindowRecord): boolean {
@@ -3583,4 +3694,34 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
   if (record.layer <= BASE_LAYER) return false;
   if (roleIn(TRANSIENT_ROLES, record.role)) return false;
   return true;
+}
+
+/**
+ * Whether a focus-family raise may legitimately land on this record — the
+ * ONE condition `evolve`'s `AppActivated` and `FocusAssertRequested` arms
+ * each stamp `lastOpSeq` on, and `react`'s focus-assert rule gates its
+ * `RaiseWindow` on. All three used to restate this by hand;
+ * `window-kernel-properties.test.ts checkOpSeqInvariants` requires
+ * `opSeqCounter` to advance by exactly 1 iff the transition emits at least
+ * one focus-family effect, which is what makes a drift between the three
+ * copies a real bug rather than a style nit — this helper is the one place
+ * that can no longer drift, because there is only one place.
+ *
+ * `visible` is supplied by the caller rather than read off `record`, because
+ * `AppActivated` tests POST-RE-SHOW visibility (`record.visible === true ||
+ * appBlurRevealAdmits(state, record)`, not `record`'s own pre-transition
+ * value — see that arm's own doc), while `FocusAssertRequested` and
+ * `react`'s rule both test the record's own current value directly.
+ *
+ * `pendingHidden` is read off `record` directly in every case: a window the
+ * machine has already decided to tear down is never a legitimate raise
+ * target, however visible it currently reads — asserting focus onto it is an
+ * activating show onto a window already gone (see that field's doc). The
+ * property generator reaches a focus assert on a content window only 3 times
+ * in 84 runs (`window-kernel-properties.test.ts`, measured), far too rarely
+ * to catch a hand-restated copy drifting apart from the other two — this
+ * helper, not the generator, is what protects the invariant here.
+ */
+export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {
+  return visible && !record.pendingHidden;
 }

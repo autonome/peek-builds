@@ -660,12 +660,28 @@ function checkInvariants(state: State, prev?: State): string[] {
       violations.push(`malformed contentFocused for ${record.id}: ${JSON.stringify(record.contentFocused)}`);
     }
 
+    // `pendingHidden` (this slice): absent or boolean — a shape check only.
+    // Deliberately NOT a "never decays back to absent" clause the way
+    // `contentFocused`/`keepLive`/`overlayFrame`/`bounds` get below: clearing
+    // is legitimate for this field (`WindowShown`/`WindowHidden`/`WindowClosed`
+    // all clear it — see `WindowRecord.pendingHidden`'s doc), so a decay
+    // invariant here would be flagging correct behavior. The re-registration
+    // merge protection for this field rests entirely on the hand-built
+    // "the re-registration merge preserves every lived fact" describe below,
+    // with no generator backstop.
+    if (record.pendingHidden !== undefined && typeof record.pendingHidden !== 'boolean') {
+      violations.push(`malformed pendingHidden for ${record.id}: ${JSON.stringify(record.pendingHidden)}`);
+    }
+
     // The content predicate is SOUND: everything it admits is visible, can
     // hold key, and declares a document-like role. Restated independently
     // (like the role sets below) so this is a check, not a tautology.
     if (isContentWindow(record)) {
       if (!record.visible || !record.canBecomeKey) {
         violations.push(`isContentWindow admitted a hidden or non-key-capable window: ${record.id}`);
+      }
+      if (record.pendingHidden) {
+        violations.push(`isContentWindow admitted a pendingHidden window: ${record.id}`);
       }
       if (record.role === undefined || !CONTENT_ROLES_EXPECTED.has(record.role)) {
         violations.push(`isContentWindow admitted a non-content role for ${record.id}: ${JSON.stringify(record.role)}`);
@@ -1462,6 +1478,12 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     { type: 'OverlayAttached', overlayId: id, hostId: host, frame: { x: 10, y: 20, width: 30, height: 40 } },
     { type: 'ContentFirstResponderChanged', id, held: false },
     { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
+    // Sets `pendingHidden` without removing the record from `order` — a
+    // teardown REQUEST, not the confirming `WindowClosed`. Without this the
+    // assertion below is vacuous for that field, exactly how `keepLive`,
+    // `parentId`, `overlayFrame` and `bounds` were each silently dropped
+    // before.
+    { type: 'WindowDestroyRequested', id },
   ];
 
   it('a re-registration that names none of them changes no lived fact', () => {
@@ -1484,6 +1506,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // re-registration must not clobber a lived bounds mirror with a stale
     // construction-time seed (see `WindowRegistered`'s merge arm doc).
     assert.deepStrictEqual(nextRecord.bounds, { x: 1, y: 2, width: 3, height: 4 });
+    // Explicitly: the `pendingHidden` mark the teardown request set survives
+    // too — a producer re-announcing a window's declared properties knows
+    // nothing about an in-flight teardown (see the field's own doc).
+    assert.strictEqual(nextRecord.pendingHidden, true);
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
 
@@ -1503,6 +1529,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.strictEqual(record.escapeMode, 'ignore');
     assert.strictEqual(record.keepLive, true);
     assert.strictEqual(record.parentId, host);
+    assert.strictEqual(record.pendingHidden, true);
   });
 
   it('the hiddenByAppBlur mark survives a re-registration mid-sweep', () => {
@@ -1524,7 +1551,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // than merely present.
     const before = fold(livedLog());
     const record = before.order.find((w) => w.id === id)!;
-    const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds'): State => {
+    const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds' | 'pendingHidden'): State => {
       const mutilated: Record<string, unknown> = { ...record };
       delete mutilated[field];
       return {
@@ -1543,6 +1570,11 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.deepStrictEqual(checkInvariants(strip('bounds'), before), [
       `bounds decayed back to absent for ${id}`,
     ]);
+    // `pendingHidden` is the deliberate exception (see `checkInvariants`' own
+    // comment): clearing it is legitimate kernel behavior, not a merge bug,
+    // so stripping it back to absent must NOT be named as a violation the way
+    // the three fields above are.
+    assert.deepStrictEqual(checkInvariants(strip('pendingHidden'), before), []);
   });
 });
 
