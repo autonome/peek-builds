@@ -836,6 +836,14 @@ function checkInvariants(state: State, prev?: State): string[] {
       if (nextRecord !== undefined && prevRecord.overlayFrame !== undefined && nextRecord.overlayFrame === undefined) {
         violations.push(`overlayFrame decayed back to absent for ${prevRecord.id}`);
       }
+      // Same rule for `bounds`, for the same reason: once the OS (or a
+      // registration seed) has reported a rect, "nothing reported" is no
+      // longer true — a re-registration merge dropping it is the same bug
+      // class that once dropped `keepLive`/`overlayFrame`, and it is exactly
+      // what left `Maximize` with nothing to restore to.
+      if (nextRecord !== undefined && prevRecord.bounds !== undefined && nextRecord.bounds === undefined) {
+        violations.push(`bounds decayed back to absent for ${prevRecord.id}`);
+      }
     }
   }
 
@@ -1472,6 +1480,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // Explicitly: the frame `OverlayAttached` wrote survives too — the gap
     // this describe was extended to close.
     assert.deepStrictEqual(nextRecord.overlayFrame, { x: 10, y: 20, width: 30, height: 40 });
+    // Explicitly: the bounds `BoundsChanged` wrote survives too — a
+    // re-registration must not clobber a lived bounds mirror with a stale
+    // construction-time seed (see `WindowRegistered`'s merge arm doc).
+    assert.deepStrictEqual(nextRecord.bounds, { x: 1, y: 2, width: 3, height: 4 });
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
 
@@ -1512,7 +1524,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // than merely present.
     const before = fold(livedLog());
     const record = before.order.find((w) => w.id === id)!;
-    const strip = (field: 'contentFocused' | 'escapeMode'): State => {
+    const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds'): State => {
       const mutilated: Record<string, unknown> = { ...record };
       delete mutilated[field];
       return {
@@ -1527,6 +1539,9 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     ]);
     assert.deepStrictEqual(checkInvariants(strip('escapeMode'), before), [
       `escapeMode was silently stripped from ${id}`,
+    ]);
+    assert.deepStrictEqual(checkInvariants(strip('bounds'), before), [
+      `bounds decayed back to absent for ${id}`,
     ]);
   });
 });

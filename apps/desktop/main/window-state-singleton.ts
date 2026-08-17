@@ -174,6 +174,15 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
   const settledSnapshot = getWindowOsAdapter().getOwner().snapshot();
+  // The old machine's `registerWindow` (`window-os-adapter.ts`) already
+  // seeded its own bounds mirror from this same registration's
+  // `initialBounds` read — `settledSnapshot` reflects that, so reading it
+  // back here carries the same value through to the kernel's seed rather
+  // than re-deriving it. On a re-registration this is the old machine's
+  // OWN settled value (lived bounds preserved, or `initialBounds` filled
+  // into an empty mirror) — exactly the fill-only-if-empty rule the
+  // kernel's merge arm applies again on its own side.
+  const registeredRecord = settledSnapshot.windows.find((w) => w.id === id);
   shadowKernelRegisterWindow({
     id,
     kind: spec.kind,
@@ -185,6 +194,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.parentId != null ? { parentId: spec.parentId } : {}),
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
+    ...(registeredRecord?.bounds !== undefined ? { bounds: registeredRecord.bounds } : {}),
   }, settledSnapshot);
   // The divergence comparator now runs INSIDE `shadowKernelRegisterWindow`
   // itself (`window-kernel-shadow.ts`), against the old machine's
@@ -200,8 +210,8 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // reflects it. Import the same fact into the shadow: its `RegisterWindow`
   // command just above always creates the record `visible: false`, so
   // without this a ctor-shown window's shadow record can never become
-  // visible either.
-  const registeredRecord = settledSnapshot.windows.find((w) => w.id === id);
+  // visible either. Reuses `registeredRecord` from the bounds seed above —
+  // same snapshot, same lookup.
   if (registeredRecord?.visible) {
     // `pumpShownEvent` (`window-os-adapter.ts registerWindow`) always dispatches
     // the old machine's `WINDOW_SHOWN` with `focused: true` — this import

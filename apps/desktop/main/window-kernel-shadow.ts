@@ -333,6 +333,8 @@ export interface ShadowRegisterWindowSpec {
    * the raw value and this function narrows it.
    */
   escapeMode?: string;
+  /** See `RegisterWindow.bounds`'s doc — the construction-time rect, when the caller has one. */
+  bounds?: Rectangle;
 }
 
 /**
@@ -356,6 +358,7 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
     ...(spec.parentId !== undefined ? { parentId: spec.parentId } : {}),
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode === 'ignore' ? { escapeMode: 'ignore' as const } : {}),
+    ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);

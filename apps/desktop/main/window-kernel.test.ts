@@ -1782,6 +1782,63 @@ describe('window-kernel: geometry', () => {
     assert.strictEqual(restoredRec.bounds, undefined);
   });
 
+  it('a window registered with construction-time bounds restores to them on maximize/unmaximize, even with no move or resize in between (RegisterWindow.bounds seed)', () => {
+    // The `459ed219` sibling: a window placed at construction fires no
+    // native resize or move, so without a seed `bounds` stays undefined
+    // until the first gesture — and `preMaxBounds is null when unseeded`
+    // above stays a real, valid case (a registration truly carrying no
+    // bounds). This is the seeded case: registration itself is the only
+    // event that ever reports this window's rect before Maximize runs.
+    const seeded: Rectangle = { x: 10, y: 20, width: 300, height: 400 };
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', bounds: seeded }],
+      initialState(),
+    );
+    assert.deepStrictEqual(state.order.find((w) => w.id === wid(1))?.bounds, seeded, 'the construction-time rect seeds the mirror at registration');
+
+    const maxDecision = decide(state, { type: 'Maximize', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in maxDecision);
+    const maximized = fold(maxDecision.events, state);
+    assert.deepStrictEqual(maximized.order.find((w) => w.id === wid(1))?.preMaxBounds, seeded, 'stashed from the seeded mirror');
+
+    const unmaxDecision = decide(maximized, { type: 'Unmaximize', id: wid(1), expectedVersion: maximized.version });
+    assert.ok('events' in unmaxDecision);
+    assert.ok(
+      unmaxDecision.events.some((e) => e.type === 'BoundsChanged'),
+      'a seeded window has a stash to restore, so Unmaximize must write bounds back — the bug this pins had nothing to restore to',
+    );
+    const restored = fold(unmaxDecision.events, maximized);
+    assert.deepStrictEqual(restored.order.find((w) => w.id === wid(1))?.bounds, seeded, 'restored to the bounds the window was constructed with');
+  });
+
+  it('a re-registration carrying stale construction-time bounds does not clobber bounds the OS has since reported', () => {
+    // `ipc.ts`'s real-tile-launch path registers each window twice; the
+    // second pass still carries the same construction-time rect the first
+    // one did. `bounds` is a LIVED fact once the OS has reported one, so the
+    // seed may only fill an empty mirror — never overwrite a lived one.
+    const constructionBounds: Rectangle = { x: 0, y: 0, width: 100, height: 100 };
+    const registered: Event = {
+      type: 'WindowRegistered',
+      id: wid(1),
+      kind: 'page-host',
+      layer: 0,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      bounds: constructionBounds,
+    };
+    const moved: Rectangle = { x: 500, y: 500, width: 200, height: 200 };
+    const state = fold([registered, { type: 'BoundsChanged', id: wid(1), bounds: moved }], initialState());
+    assert.deepStrictEqual(state.order.find((w) => w.id === wid(1))?.bounds, moved, 'the OS has since reported a real position');
+
+    const reRegistered = evolve(state, registered);
+    assert.deepStrictEqual(
+      reRegistered.order.find((w) => w.id === wid(1))?.bounds,
+      moved,
+      'the lived bounds survive — the stale construction-time seed must not overwrite them',
+    );
+  });
+
   it('DisplayChanged: held while blocked, last projection wins, discarded (not flushed) by an explicit write, flushed only when both axes clear', () => {
     const state = fold(registerTwo(), initialState());
     // registerTwo() windows start hidden with fsMode 'normal' — visibility

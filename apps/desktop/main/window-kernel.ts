@@ -676,6 +676,8 @@ export type Event =
       keepLive?: boolean;
       /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
       escapeMode?: 'ignore';
+      /** See `RegisterWindow.bounds`'s doc — carried through unchanged by `decide`. */
+      bounds?: Rectangle;
     }
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
@@ -927,6 +929,16 @@ export type Command =
       keepLive?: boolean;
       /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
       escapeMode?: 'ignore';
+      /**
+       * The window's construction-time rect, computed at the dispatch site
+       * (this file keeps zero value imports) — seeds `WindowRecord.bounds`
+       * so a window maximized before its first native resize/move has
+       * something to restore to (see `WindowRecord.bounds`'s doc for why
+       * that mirror is otherwise empty until the first gesture). Optional
+       * for the same reason `AttachOverlay.frame` is: a caller with nothing
+       * to seed just registers without it.
+       */
+      bounds?: Rectangle;
       expectedVersion: number;
     }
   /**
@@ -1416,7 +1428,14 @@ export function evolve(state: State, ev: Event): State {
           maximized: existing.maximized,
           preMaxBounds: existing.preMaxBounds,
           pendingProjectedBounds: existing.pendingProjectedBounds,
-          ...(existing.bounds !== undefined ? { bounds: existing.bounds } : {}),
+          // `bounds` is a LIVED fact once the OS has reported one, so a
+          // re-registration must not clobber it — `ipc.ts`'s real-tile-launch
+          // path registers each window twice, and a second registration
+          // carrying stale construction-time bounds must not overwrite
+          // geometry the OS has since reported. The event's `bounds` seed
+          // only fills an EMPTY mirror, exactly like the fresh-record branch
+          // below — never an already-lived one.
+          ...(existing.bounds !== undefined ? { bounds: existing.bounds } : ev.bounds !== undefined ? { bounds: ev.bounds } : {}),
           // A lived fact (desktop membership), same reasoning as `overlayFor`
           // below — re-registration must not forget which desktops the
           // window was asked to belong to, and must not turn a real answer
@@ -1495,8 +1514,13 @@ export function evolve(state: State, ev: Event): State {
         // starts false and flips via `WindowContentOrderable`.
         orderable: ev.kind === 'browser',
         fsMode: { name: 'normal' },
-        // Fresh geometry facts (this slice) — no rect has ever been
-        // reported, nothing is stashed, nothing pinned, nothing held.
+        // Seeded from the caller's construction-time rect when supplied (see
+        // `RegisterWindow.bounds`'s doc) — the sole other writer of this
+        // mirror is the backend's native resize/move echo, and a window
+        // placed at construction fires neither until its first gesture.
+        ...(ev.bounds !== undefined ? { bounds: ev.bounds } : {}),
+        // Fresh geometry facts (this slice) — nothing is stashed, nothing
+        // pinned, nothing held, regardless of whether `bounds` was seeded.
         maximized: false,
         preMaxBounds: null,
         // `desktopMembership` is deliberately NOT seeded — registration is
@@ -2889,6 +2913,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.parentId !== undefined ? { parentId: cmd.parentId } : {}),
           ...(cmd.keepLive !== undefined ? { keepLive: cmd.keepLive } : {}),
           ...(cmd.escapeMode !== undefined ? { escapeMode: cmd.escapeMode } : {}),
+          ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
         },
       ],
     };
