@@ -88,7 +88,15 @@ describe('Event push watermark — cross-run stranding regression', () => {
    * succeeds on retry" case pushToServer()'s own per-item try/catch already
    * has to tolerate in production.
    */
-  function setup(name: string, opts: { failFirstItemPushMarker?: string } = {}) {
+  function setup(name: string, opts: {
+    failFirstItemPushMarker?: string;
+    // Fails the FIRST POST /events request outright (a 400, regardless of
+    // body content) — simulates a whole chunk rejected by the server/network,
+    // independent of the per-event validation `failFirstItemPushMarker`-style
+    // marker matching exercises. Only fires once per setup(), same shape as
+    // the item-push flake above.
+    failFirstEventPushOnce?: boolean;
+  } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
     profiles.initProfilesDb(desktopDir);
@@ -100,6 +108,7 @@ describe('Event push watermark — cross-run stranding regression', () => {
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     let failedOnce = false;
+    let eventChunkFailedOnce = false;
     globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
       const url = typeof input === 'string' ? input : String(input);
       const reqPath = url.replace(FAKE_SERVER_URL, '');
@@ -115,6 +124,16 @@ describe('Event push watermark — cross-run stranding regression', () => {
       ) {
         failedOnce = true;
         return new Response(JSON.stringify({ error: 'simulated network failure' }), { status: 500 });
+      }
+
+      if (
+        opts.failFirstEventPushOnce &&
+        !eventChunkFailedOnce &&
+        method === 'POST' &&
+        reqPath.startsWith('/events')
+      ) {
+        eventChunkFailedOnce = true;
+        return new Response(JSON.stringify({ error: 'simulated chunk rejection' }), { status: 400 });
       }
 
       return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
@@ -240,6 +259,126 @@ describe('Event push watermark — cross-run stranding regression', () => {
       'an event created while a push is in flight must not be permanently skipped by ' +
       'the watermark that same push advances to afterward'
     );
+  });
+
+  it('a malformed event is dropped, the rest of the batch reaches the server, and syncAll does not throw — and the drop does not strand the row past repair', async () => {
+    const { apiKey } = setup('malformed-event-dropped');
+
+    // Parent item already synced on both sides, same shape as 'mid-run-race'
+    // above, so this test isolates event validation with no item-push noise.
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Malformed event series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-malformed-series-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-good', localItemId, 1, now, now);
+
+    // Simulates the NaN an unparseable RSS <pubDate> produces (see
+    // features/feeds/background.js): occurredAt is declared NOT NULL, so
+    // node:sqlite rejects a literal NULL/NaN outright — a non-numeric string
+    // is the value shape that actually lands in the column (SQLite's dynamic
+    // typing stores it as-is) and fails the exact same `Number.isFinite`
+    // check on the way back out.
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, 'not-a-number', '{}', ?)
+    `).run('evt-bad', localItemId, 2, now + 10);
+
+    // Run 1: syncAll must complete without throwing even though one event in
+    // the batch is malformed — the server 400s the WHOLE request if a bad row
+    // rides along (apps/server/index.js POST /events), so the malformed row
+    // must never reach the request body.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-good'],
+      'run 1: the well-formed event must reach the server; the malformed one must be dropped, not block the batch'
+    );
+
+    // Run 2: repair the bad row to a valid timestamp. If the watermark had
+    // advanced past its createdAt during run 1 (the row was dropped, not
+    // pushed), this event would be permanently excluded from every future
+    // run's query even after the underlying data is fixed.
+    db.prepare(`UPDATE item_events SET occurredAt = ? WHERE id = ?`).run(now + 10, 'evt-bad');
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-bad', 'evt-good'],
+      'run 2: the repaired event must now reach the server — a dropped row must not be stranded past repair'
+    );
+  });
+
+  it('a chunk the server rejects does not prevent lastSyncTime from advancing, and its events retry on the next run', async () => {
+    const { apiKey } = setup('event-chunk-rejected', { failFirstEventPushOnce: true });
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Chunk-rejected series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-chunk-rejected-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-chunk-rejected', localItemId, 1, now, now);
+
+    const profileBefore = profiles.getActiveProfile();
+    assert.strictEqual(profileBefore.lastSyncAt || 0, 0, 'precondition: this profile has never synced');
+
+    // Run 1: the event push chunk is rejected outright (simulated 400). The
+    // sync run as a whole must still complete without throwing — event push
+    // is isolated as its own stage — so updateLastSyncTime/saveSyncServerConfig
+    // still run and the failure surfaces as a stage error instead of aborting.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const profileAfterRun1 = profiles.getActiveProfile();
+    assert.ok(
+      (profileAfterRun1.lastSyncAt || 0) > 0,
+      'run 1: lastSyncTime must still be written even though the event chunk was rejected'
+    );
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      [],
+      'run 1: the rejected chunk must not have reached the server'
+    );
+    const statusAfterRun1 = sync.getSyncStatus();
+    assert.ok(statusAfterRun1.lastError, 'run 1: the event-push stage failure must be recorded as a sync error');
+
+    // Run 2: the same chunk now succeeds (the fetch stub only rejects once) —
+    // the failed chunk's events must have stayed eligible, not been swept past
+    // by a watermark that advanced despite never delivering them.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-chunk-rejected'],
+      'run 2: the previously-rejected event must now reach the server'
+    );
+    const statusAfterRun2 = sync.getSyncStatus();
+    assert.strictEqual(statusAfterRun2.lastError, null, 'run 2: a fully successful run must clear the prior stage error');
   });
 });
 
@@ -480,5 +619,186 @@ describe('Tag metadata sync — push/pull/merge', () => {
     };
     assert.strictEqual(local.color, '#111111', 'the older server value must not overwrite the newer local one');
     assert.strictEqual(local.description, 'Local description');
+  });
+});
+
+describe('IPC entry points — tile:sync:push / tile:sync:pull must run all three stages', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  /** Same shape as the other describe blocks' setup() — no failure injection
+   * needed here, this block is about stage coverage, not retry safety. */
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-ipc-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `ipcsync-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  async function fetchServerEventIds(apiKey: string): Promise<string[]> {
+    const res = await serverApp.request('/events/since/0', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { events: Array<{ id: string }> };
+    return json.events.map((e) => e.id).sort();
+  }
+
+  async function fetchServerTagNames(apiKey: string): Promise<string[]> {
+    const res = await serverApp.request('/tags/since/0', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { tags: Array<{ name: string }> };
+    return json.tags.map((t) => t.name).sort();
+  }
+
+  async function fetchServerItems(apiKey: string): Promise<Array<{ id: string; type: string }>> {
+    const res = await serverApp.request('/items', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { items: Array<{ id: string; type: string }> };
+    return json.items;
+  }
+
+  /**
+   * Replays tile-ipc.ts's `tile:sync:push` handler body: tag push, then item
+   * push, then event push, then updateLastSyncTime — in that order, with the
+   * SAME real sync.ts/profiles.ts functions the registered handler calls.
+   *
+   * This is a replay, not an invocation of the registered `ipcMain.handle`
+   * closure itself — that closure lives behind tile-ipc.ts's static
+   * `import { ipcMain, ... } from 'electron'`, which throws at module-parse
+   * time under ELECTRON_RUN_AS_NODE (electron's named ESM exports are empty;
+   * see tile-ipc-gate.ts's own comment on the same gotcha), so tile-ipc.ts
+   * cannot be imported outside a full, live Electron app process — not under
+   * plain `node --test`, and not under `electron --test` either. Given that
+   * wall, this proves the fix for the wiring bug (the handler used to call
+   * pushToServer() alone, silently skipping tags and events) the same way
+   * feature-install-handler.test.ts's `runInstallHandler` already does for
+   * an equivalent "handler needs a live app to invoke directly" gap: drive
+   * the exact real collaborators, in the handler's exact order.
+   */
+  async function replayTileSyncPush(serverUrl: string, apiKey: string, since: number) {
+    const tagPushResult = await sync.pushTagsToServer(serverUrl, apiKey);
+    const itemPushResult = await sync.pushToServer(serverUrl, apiKey, since);
+    const eventPushResult = await sync.pushEventsToServer(serverUrl, apiKey);
+    const activeProfile = profiles.getActiveProfile();
+    profiles.updateLastSyncTime(activeProfile.id, Date.now());
+    return {
+      tagsPushed: tagPushResult.pushed,
+      itemsPushed: itemPushResult.pushed,
+      eventsPushed: eventPushResult.pushed,
+    };
+  }
+
+  /** Mirror of replayTileSyncPush() for `tile:sync:pull` — see that function's
+   * doc comment for why this is a replay and not a direct closure call. */
+  async function replayTileSyncPull(serverUrl: string, apiKey: string, since: number) {
+    const tagPullResult = await sync.pullTagsFromServer(serverUrl, apiKey, since);
+    const itemPullResult = await sync.pullFromServer(serverUrl, apiKey, since);
+    const eventPullResult = await sync.pullEventsFromServer(serverUrl, apiKey, since);
+    const activeProfile = profiles.getActiveProfile();
+    profiles.updateLastSyncTime(activeProfile.id, Date.now());
+    return {
+      tagsPulled: tagPullResult.pulled,
+      itemsPulled: itemPullResult.pulled,
+      eventsPulled: eventPullResult.pulled,
+    };
+  }
+
+  it('tile:sync:push pushes tags, items, AND events — not just items', async () => {
+    const { apiKey } = setup('push-all-three');
+
+    const db = datastore.getDb();
+    const now = Date.now();
+
+    db.prepare(`
+      INSERT INTO tags (id, name, slug, color, parentId, description, metadata, createdAt, updatedAt, frequency, lastUsed, frecencyScore)
+      VALUES (?, ?, '', '#999999', '', '', '{}', ?, ?, 0, 0, 0)
+    `).run('local-ipc-push-tag', 'ipc-push-tag', now, now);
+
+    const itemId = 'local-ipc-push-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', '', 0, ?, ?, 0)
+    `).run(itemId, now, now);
+
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-ipc-push', itemId, 1, now, now);
+
+    const result = await replayTileSyncPush(FAKE_SERVER_URL, apiKey, 0);
+    assert.ok(result.tagsPushed > 0, 'tag stage must have pushed something');
+    assert.ok(result.itemsPushed > 0, 'item stage must have pushed something');
+    assert.ok(result.eventsPushed > 0, 'event stage must have pushed something — the wiring bug skipped this entirely');
+
+    assert.deepStrictEqual(await fetchServerTagNames(apiKey), ['ipc-push-tag'], 'the tag must have reached the server');
+    const serverItems = await fetchServerItems(apiKey);
+    assert.strictEqual(serverItems.length, 1, 'the item must have reached the server');
+    assert.strictEqual(serverItems[0].type, 'series');
+    assert.deepStrictEqual(await fetchServerEventIds(apiKey), ['evt-ipc-push'], 'the event must have reached the server');
+  });
+
+  it('tile:sync:pull pulls tags, items, AND events — not just items (mirror of the push test)', async () => {
+    const { apiKey } = setup('pull-all-three');
+
+    await serverApp.request('/tags', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ tags: [{ name: 'ipc-pull-tag', createdAt: Date.now(), updatedAt: Date.now() }] }),
+    });
+
+    const itemRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'IPC pull series' } }),
+    });
+    const { id: serverItemId } = (await itemRes.json()) as { id: string };
+
+    await serverApp.request('/events', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({
+        events: [{ id: 'evt-ipc-pull', itemId: serverItemId, occurredAt: Date.now(), createdAt: Date.now() }],
+      }),
+    });
+
+    const result = await replayTileSyncPull(FAKE_SERVER_URL, apiKey, 0);
+    assert.ok(result.tagsPulled > 0, 'tag stage must have pulled something');
+    assert.ok(result.itemsPulled > 0, 'item stage must have pulled something');
+    assert.ok(result.eventsPulled > 0, 'event stage must have pulled something — the mirror-image wiring bug skipped this entirely');
+
+    const db = datastore.getDb();
+    const localTag = db.prepare('SELECT * FROM tags WHERE name = ?').get('ipc-pull-tag');
+    assert.ok(localTag, 'the tag must exist locally after pull');
+
+    const localItem = db.prepare('SELECT * FROM items WHERE syncId = ?').get(serverItemId) as { id: string } | undefined;
+    assert.ok(localItem, 'the item must exist locally after pull');
+
+    const localEvent = db.prepare('SELECT * FROM item_events WHERE id = ?').get('evt-ipc-pull');
+    assert.ok(localEvent, 'the event must exist locally after pull');
   });
 });

@@ -152,7 +152,18 @@ import { checkSettingsForeignAllowed } from './tile-settings-foreign-enforcement
 import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
 import { createLoopbackServer } from './oauth-loopback.js';
-import { syncAll, getSyncConfig, setSyncConfig, getSyncStatus, pullFromServer, pushToServer } from './sync.js';
+import {
+  syncAll,
+  getSyncConfig,
+  setSyncConfig,
+  getSyncStatus,
+  pullFromServer,
+  pushToServer,
+  pullTagsFromServer,
+  pullEventsFromServer,
+  pushTagsToServer,
+  pushEventsToServer,
+} from './sync.js';
 import {
   listProfiles,
   createProfile,
@@ -5024,19 +5035,30 @@ export function registerTileIpcHandlers(): void {
 
       const since = args.since !== undefined ? args.since : config.lastSyncTime;
       const syncTime = Date.now();
+
+      // Mirrors syncAll()'s pull order — tags, then items, then events — not just
+      // pushToServer()'s counterpart below: this handler used to pull items only,
+      // silently skipping tags and events despite advancing lastSyncTime as if the
+      // whole run had completed. Tag pull before item pull so an incoming item's
+      // `tags` array resolves against already-shaped tag rows; event pull after item
+      // pull so each event's server itemId has a local item (with syncId) to resolve
+      // against.
+      const tagPullResult = await pullTagsFromServer(config.serverUrl, config.apiKey, since);
       const result = await pullFromServer(config.serverUrl, config.apiKey, since);
+      const eventPullResult = await pullEventsFromServer(config.serverUrl, config.apiKey, since);
 
       const activeProfile = getActiveProfile();
       updateLastSyncTime(activeProfile.id, syncTime);
 
-      if (result.pulled > 0) {
+      const pulled = tagPullResult.pulled + result.pulled + eventPullResult.pulled;
+      if (pulled > 0) {
         publish('system', 'sync:pull-completed', {
-          pulled: result.pulled,
+          pulled,
           conflicts: result.conflicts,
         });
       }
 
-      return { success: true, data: result };
+      return { success: true, data: { pulled, conflicts: result.conflicts } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -5061,12 +5083,22 @@ export function registerTileIpcHandlers(): void {
 
       const since = args.since !== undefined ? args.since : config.lastSyncTime;
       const syncTime = Date.now();
+
+      // Mirrors syncAll()'s push order — tags, then items, then events. This handler
+      // (the Settings "Push to Server" button) used to call pushToServer() alone,
+      // silently skipping the tag and event stages while still advancing
+      // lastSyncTime as though the push had fully completed. Tag push before item
+      // push, event push after item push — same dependency reasons as syncAll()
+      // (event push needs the syncId item push just assigned).
+      const tagPushResult = await pushTagsToServer(config.serverUrl, config.apiKey);
       const result = await pushToServer(config.serverUrl, config.apiKey, since);
+      const eventPushResult = await pushEventsToServer(config.serverUrl, config.apiKey);
 
       const activeProfile = getActiveProfile();
       updateLastSyncTime(activeProfile.id, syncTime);
 
-      return { success: true, data: result };
+      const pushed = tagPushResult.pushed + result.pushed + eventPushResult.pushed;
+      return { success: true, data: { pushed, failed: result.failed } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

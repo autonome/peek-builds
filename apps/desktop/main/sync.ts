@@ -751,6 +751,13 @@ const MAX_EVENTS_PER_PUSH = 500;
 
 interface EventPushResult {
   pushed: number;
+  // Count of events dropped from THIS run's batch because their chunk's
+  // serverFetch failed (network error, non-2xx, etc.) — NOT malformed rows
+  // dropped before ever being sent (those are logged, not counted here; see
+  // pushEventsToServer()'s doc comment). Mirrors pushToServer()'s own
+  // `failed` field — same "isolate and count, don't abort" shape, applied to
+  // whole chunks instead of individual items.
+  failed: number;
 }
 
 interface EventPullResult {
@@ -861,9 +868,49 @@ export async function pushEventsToServer(
 
   DEBUG && console.log(`[sync] Found ${rows.length} events to push`);
 
+  // A malformed row (a missing id/itemId, or an occurredAt/createdAt that isn't a
+  // finite number — e.g. the NaN an unparseable RSS <pubDate> produces, which binds
+  // as NULL) would otherwise ride along in a batch and get the WHOLE request 400'd
+  // by the server's own per-event validation (apps/server/index.js POST /events),
+  // poisoning every subsequent run since the batch never changes. Drop it before it
+  // ever reaches the request, and log it loudly — a silently dropped event is worse
+  // than a loud one, since nothing else will ever point at the bad row.
+  const validRows: typeof rows = [];
+  const droppedRows: typeof rows = [];
+  for (const row of rows) {
+    if (!row.id || !row.itemSyncId || !Number.isFinite(row.occurredAt) || !Number.isFinite(row.createdAt)) {
+      droppedRows.push(row);
+    } else {
+      validRows.push(row);
+    }
+  }
+  if (droppedRows.length > 0) {
+    console.log(
+      `[sync] Dropped ${droppedRows.length} malformed event(s) from push (missing id/itemId or ` +
+      `non-finite occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
+    );
+  }
+
+  // Tracks the oldest createdAt among events that did NOT make it to the server this
+  // run — dropped rows (above) and rows from a chunk whose serverFetch failed (below).
+  // The watermark computed at the end must never advance past this, the same way it
+  // already never advances past the oldest blocked (parent-not-synced) event: either
+  // one silently skipped past would abandon that event, unrepairable even after the
+  // underlying data (or the server) is fixed.
+  let notDeliveredMinCreatedAt: number | null = null;
+  const trackNotDelivered = (batch: typeof rows) => {
+    for (const row of batch) {
+      if (notDeliveredMinCreatedAt === null || row.createdAt < notDeliveredMinCreatedAt) {
+        notDeliveredMinCreatedAt = row.createdAt;
+      }
+    }
+  };
+  trackNotDelivered(droppedRows);
+
   let pushed = 0;
-  for (let i = 0; i < rows.length; i += MAX_EVENTS_PER_PUSH) {
-    const batch = rows.slice(i, i + MAX_EVENTS_PER_PUSH);
+  let failed = 0;
+  for (let i = 0; i < validRows.length; i += MAX_EVENTS_PER_PUSH) {
+    const batch = validRows.slice(i, i + MAX_EVENTS_PER_PUSH);
     const events = batch.map((row) => {
       let metadata: Record<string, unknown> | undefined;
       if (row.metadata && row.metadata !== '{}') {
@@ -885,13 +932,26 @@ export async function pushEventsToServer(
     });
 
     const path = `/events?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
-    const response = await serverFetch<{ received: number; saved: number }>(
-      serverUrl,
-      apiKey,
-      path,
-      { method: 'POST', body: { events } }
-    );
-    pushed += response.saved;
+    try {
+      const response = await serverFetch<{ received: number; saved: number }>(
+        serverUrl,
+        apiKey,
+        path,
+        { method: 'POST', body: { events } }
+      );
+      pushed += response.saved;
+    } catch (error) {
+      // One failing chunk must not abandon the remaining chunks — each chunk is an
+      // independent request, so a transient failure on chunk N has no bearing on
+      // whether chunk N+1 will succeed. The failed chunk's events stay eligible for
+      // the next run via notDeliveredMinCreatedAt below.
+      DEBUG && console.log(
+        `[sync] Event push chunk failed (${batch.length} events), will retry next run:`,
+        (error as Error).message
+      );
+      trackNotDelivered(batch);
+      failed += batch.length;
+    }
   }
 
   // Events whose parent item still has no syncId were excluded from the
@@ -913,16 +973,20 @@ export async function pushEventsToServer(
   // captureTime (very possible: captureTime is read microseconds before this
   // point, well under the 1ms Date.now() resolution) would fail the next
   // run's `>` check despite never having been sent, the same stranding this
-  // watermark exists to prevent. Symmetric with the blocked-event term below.
+  // watermark exists to prevent. Symmetric with the blocked-event and
+  // not-delivered terms below.
   let newWatermark = captureTime - 1;
   if (blocked.minCreatedAt !== null && blocked.minCreatedAt !== undefined) {
     newWatermark = Math.min(newWatermark, blocked.minCreatedAt - 1);
   }
+  if (notDeliveredMinCreatedAt !== null) {
+    newWatermark = Math.min(newWatermark, notDeliveredMinCreatedAt - 1);
+  }
   saveEventPushWatermark(newWatermark);
 
-  DEBUG && console.log(`[sync] Event push complete: ${pushed} saved, watermark -> ${newWatermark}`);
+  DEBUG && console.log(`[sync] Event push complete: ${pushed} saved, ${failed} failed, watermark -> ${newWatermark}`);
 
-  return { pushed };
+  return { pushed, failed };
 }
 
 /**
@@ -1638,12 +1702,35 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     // be pushed. Unlike items, it does not take config.lastSyncTime — it
     // tracks its own watermark (see pushEventsToServer()'s doc comment for
     // why the shared one is unsafe for events).
-    const eventPushResult = await pushEventsToServer(serverUrl, apiKey);
-    pushed += eventPushResult.pushed;
+    //
+    // Isolated in its own try/catch, unlike every stage above: it is the LAST
+    // stage, so letting it throw out to the outer catch would skip
+    // updateLastSyncTime()/saveSyncServerConfig() below and strand the
+    // watermarks the tag/item pushes above already earned — the exact
+    // "one bad stage poisons a run that otherwise made real progress" failure
+    // this guards against. pushEventsToServer() itself already isolates a
+    // single failing chunk (see its doc comment); this catches anything that
+    // still escapes it and records it as a stage failure instead.
+    let eventPushError: string | null = null;
+    try {
+      const eventPushResult = await pushEventsToServer(serverUrl, apiKey);
+      pushed += eventPushResult.pushed;
+      // A non-zero `failed` means at least one chunk was rejected — isolated
+      // internally (the events stay eligible for the next run), but still a
+      // real failure the user should be able to see, not silent progress.
+      if (eventPushResult.failed > 0) {
+        eventPushError = `${eventPushResult.failed} event(s) failed to push`;
+      }
+    } catch (error) {
+      eventPushError = error instanceof Error ? error.message : String(error);
+      DEBUG && console.error('[sync] Event push stage failed, rest of sync still recorded:', error);
+    }
 
     // Update last sync time AFTER push completes — using Date.now() ensures
     // the high-water mark is after any server-side timestamps set during push,
-    // preventing the next pull from echoing back items we just pushed.
+    // preventing the next pull from echoing back items we just pushed. Runs
+    // regardless of eventPushError — items and tags having landed is real
+    // progress and must be recorded even when the event stage failed.
     const syncTime = Date.now();
     const activeProfile = getActiveProfile();
     updateLastSyncTime(activeProfile.id, syncTime);
@@ -1651,9 +1738,14 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
 
     DEBUG && console.log(`[sync] Sync complete: ${pulled} pulled, ${pushed} pushed, ${conflicts} conflicts`);
 
-    // Clear any stale error from a previous failed run.
-    lastSyncError = null;
-    lastSyncErrorAt = 0;
+    if (eventPushError) {
+      lastSyncError = eventPushError;
+      lastSyncErrorAt = Date.now();
+    } else {
+      // Clear any stale error from a previous failed run.
+      lastSyncError = null;
+      lastSyncErrorAt = 0;
+    }
 
     return {
       pulled,
