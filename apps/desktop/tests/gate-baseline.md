@@ -2,7 +2,7 @@
 
 `yarn test:desktop:electron` cannot go green on Linux. A portion of its specs assert macOS
 window-server behaviour or headless paint suppression that this platform cannot produce, and a
-further group fails to an overlay renderer-subscription race that is timing-dependent.
+further group fails to an overlay-publish defect that is timing-dependent.
 
 **Judging a change against this gate means diffing the failing spec set against the list below,
 not reading the failure count.** The count moves between identical runs, so counting alone reports
@@ -85,10 +85,16 @@ fix; both states have been observed on an unchanged tree.
 
 ## Causes
 
-- **overlay race** — the renderer subscribes after the handoff is published and the
-  `did-finish-load` re-send never lands. Identified by a single diagnostic string: `overlay
-  renderer never became usable: moduleReady=…, activeHandoffApplied=…`. Twelve specs share it,
-  which makes it the largest single lever on this gate.
+- **overlay race** — identified by a single diagnostic string: `overlay renderer never became
+  usable: moduleReady=…, activeHandoffApplied=…`. Twelve specs share it, which makes it the
+  largest single lever on this gate. The renderer's first-load subscription race this
+  diagnostic once named — the handoff publishing before the renderer subscribes, recovered by
+  a `did-finish-load` re-send — is closed (`hybrid-overlay.ts wireOverlayReady()` answers the
+  renderer's own post-subscribe `page-overlay:ready` declaration instead). This cluster's
+  continued failures are now attributed to a second, undiagnosed defect: a subsequent
+  activation's handoff (or a content event) fails to land on the renderer even after it is
+  demonstrably subscribed (`docs/design/window-manager.md` § 4.3 dim 3b), not to first-load
+  subscription timing.
 - **headless paint** — `scripts/playwright-with-display.sh` unsets `HEADLESS`/`PEEK_HEADLESS` on
   Linux, because windows must render into Xvfb or Chromium's hidden page-visibility state hangs
   RAF-based waits. Specs asserting the headless paint-suppression path therefore cannot pass here

@@ -141,9 +141,15 @@ instead of skipping, and `cmd-url-window-reuse.spec.ts` adds a real-focus assert
 **Known Linux failure, pre-existing on `main`:** `page-layout.spec.ts` "navbar can be revealed
 while the host is maximized" and "double-click navbar triggers maximize" both time out in
 `waitOverlayReady` (`tests/helpers/hybrid-page.ts`) with `moduleReady: true` and
-`activeHandoffApplied: false` — the `page-overlay:active` handoff publishes before the overlay
-renderer subscribes and the `did-finish-load` re-send never lands. Reproduced on unmodified
-`main`, so it is environmental, not a branch regression.
+`activeHandoffApplied: false`. The overlay renderer's first-load subscription race this
+signature once named — the `page-overlay:active` handoff publishing before the renderer
+subscribes, recovered by a `did-finish-load` re-send — is closed: a late subscriber is now
+answered by its own post-subscribe declaration (`page-overlay:ready`, answered by
+`hybrid-overlay.ts wireOverlayReady()`) rather than by a load event it can arrive after. The
+failure signature can still appear, because of a second, undiagnosed overlay-publish defect
+that gates a subsequent activation's handoff even after the renderer is demonstrably
+subscribed (`docs/design/window-manager.md` § 4.3 dim 3b). Reproduced on unmodified `main`,
+so it is environmental, not a branch regression.
 
 **What Linux cannot verify at all:** native fullscreen, Spaces, key-window and app-activation
 behavior, and every live focus observation. A Linux-green result on a focus- or

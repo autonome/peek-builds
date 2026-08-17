@@ -3044,6 +3044,34 @@ allowlisted separately under §5 step 8, not this dimension; it is likewise clos
 mechanism it counted is gone, so the number is stale, and no replacement count has been
 taken.
 
+**Measured: a second overlay-publish defect, undiagnosed, gates the six window-operation
+patterns.** The overlay renderer's first-load subscription race — `sendActiveHandoff`
+publishing `page-overlay:active` before the renderer's module finishes loading and
+subscribing — was real and is now closed (commit `c7e9f4a5`, `hybrid-overlay.ts
+wireOverlayReady()` answering the renderer's own post-subscribe `page-overlay:ready`
+declaration instead of the old `did-finish-load` re-send). Closing it was not the
+bottleneck: the six-pattern batch (~62 tests) holds at 16 failed / 46 passed, same failing
+names, across four full runs — including runs against profile names never used before,
+which rules out profile and code-cache contamination as the explanation.
+
+The defect that does gate the batch, undiagnosed: a SUBSEQUENT activation's
+`page-overlay:active` publish — or a content event — fails to land on the overlay renderer
+after the renderer is already demonstrably subscribed and has previously painted
+correctly. First observed at `hybrid-overlay.spec.ts` "active handoff paints navbar for A,
+swaps to B, clears on null", where the second `setActive` retarget (A → B) never reaches
+the renderer; also seen in the intermittent second-check failure of "content events repaint
+the active window navbar (nav-state, title)". It fails identically with and without the
+first-load fix, on fresh profiles.
+
+Why it matters beyond the tests: while this defect is live the six-pattern batch cannot be
+read, and reading that batch is what gates restoring the minimal-stacking commit (`7df51e2c`
+is its revert — see the show/hide loop measurements above).
+
+**A measurement trap worth stating plainly:** the single-test repros for the first-load race
+do NOT reproduce in isolation on this box — 3 of 3 and 6 of 6 passed pre-fix on separate
+attempts — only under the full batch. Any future work here must measure under the batch; an
+isolated green proves nothing.
+
 **4. Visibility lifecycle** — TO ABSORB. *(Top divergence risk #2.)*
 Today: `WindowRecord.visible` (a mirror only) plus live `isVisible()` plus
 `params.keepLive`. `closeOrHideWindow` and `tile:window:hide` hand-dispatch
