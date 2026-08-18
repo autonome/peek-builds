@@ -92,8 +92,10 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
   // returns the OVERLAY and the old handler closed just the chrome, leaving the
   // page visible. The fix makes the close resolver overlay-aware. The
   // overlay-IS-focused state needs real OS focus (unobservable headless — see the
-  // CLAUDE.md LESSON), so the redirect DECISION is unit-tested
-  // (resolveCloseTargetId); HERE we verify the WIRING that feeds it — that
+  // CLAUDE.md LESSON), so the redirect DECISION is unit-tested against
+  // `windows.ts resolveFocusedWindowIdForClose`, which skips the overlay because
+  // `window-kernel.ts isFrontEligibleWindow` excludes satellite roles; HERE we
+  // verify the WIRING that feeds it — that
   // initHybridOverlay registered the overlay-id provider against the real
   // singleton, so the resolver can tell the overlay apart from a page-host.
   test('the registry recognises the live overlay window (cmd+W redirect wiring)', async () => {

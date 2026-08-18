@@ -16,8 +16,11 @@ import { sleep } from '../helpers/window-utils';
 //
 // Layering — what each test home covers:
 //   - The pure resolution logic, INCLUDING the hybrid-tracked-id-wins case that
-//     was the actual bug, is unit-tested in main/izui-roles.test.ts
-//     (`resolveFocusedVisibleWindowId`). Real OS focus for a hybrid BaseWindow is
+//     was the actual bug, is unit-tested in main/window-state.test.ts and
+//     main/window-kernel.test.ts, which is where the assertions of the deleted
+//     `resolveFocusedVisibleWindowId` cascade landed when
+//     `window-kernel.ts isContentWindow` over `order` replaced it. Real OS
+//     focus for a hybrid BaseWindow is
 //     UNOBSERVABLE under macOS-headless, so that pure layer is the only place the
 //     hybrid-specific decision can be pinned deterministically.
 //   - command-execution.spec.ts drives `cmd:execute:tag` end-to-end, but every

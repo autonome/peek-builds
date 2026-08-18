@@ -2690,8 +2690,10 @@ function installTestBridge(): void {
      * focused BrowserWindow (address bar/widgets open) the close resolver
      * redirects to the active hybrid host instead of closing the chrome alone.
      * (The overlay-IS-focused case itself needs real OS focus — unobservable
-     * headless — so the redirect decision is covered by the `resolveCloseTargetId`
-     * unit; this verifies the wiring that feeds it.)
+     * headless — so the redirect decision is covered by the
+     * `windows.ts resolveFocusedWindowIdForClose` unit, which skips the overlay
+     * because `window-kernel.ts isFrontEligibleWindow` excludes satellite roles;
+     * this verifies the wiring that feeds it.)
      */
     isHybridOverlayWindowId(id: number): boolean {
       return overlayWin != null && !overlayWin.isDestroyed() && overlayWin.id === id;

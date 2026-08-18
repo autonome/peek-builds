@@ -3634,16 +3634,18 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      // The window-state machine's `front` IS "the focused visible window":
+      // The kernel's topmost content window IS "the focused visible window":
       // it collapses the old S1 tracked-id + S2 active-hybrid + the 7-input
-      // `resolveFocusedVisibleWindowId` cascade into one arbitrated authority.
-      // Satellites (the command palette / modal issuers, the chrome + switcher
-      // overlays) can never be `front`, so the modal-exclusion and overlay
-      // redirects that resolver did are now structural. A focused hybrid host
-      // (a BaseWindow `getFocusedWindow()` returns null for) is `front` too.
+      // `resolveFocusedVisibleWindowId` cascade (all three since deleted) into
+      // one arbitrated authority, `window-kernel.ts isContentWindow` scanned
+      // over `order`. Satellites (the command palette / modal issuers, the
+      // chrome + switcher overlays) are excluded by role, so the
+      // modal-exclusion and overlay redirects that resolver did are now
+      // structural. A focused hybrid host (a BaseWindow `getFocusedWindow()`
+      // returns null for) answers here too.
       //
       // The renderer-facing id surface stays ELECTRON-numeric until the
-      // id-space collapse lands, so resolve the machine's front back to its
+      // id-space collapse lands, so resolve the kernel's window id back to its
       // native window's id at this seam.
       const front = getTopmostContentWindowId();
       const frontWin = front != null ? getNativeWindowFor(front) : null;
