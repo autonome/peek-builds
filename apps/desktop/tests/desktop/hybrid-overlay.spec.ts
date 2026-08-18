@@ -287,10 +287,10 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayChromeState();
-          return s ? { noActive: s.noActive, url: s.url } : null;
+          return s ? { noActive: s.noActive, url: s.url, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
         }),
       )
-      .toEqual({ noActive: true, url: '' });
+      .toEqual(expect.objectContaining({ noActive: true, url: '', attached: null }));
   });
 
   test('navbar intents drive the active content WebContents (navigate/back/reload)', async () => {
@@ -878,10 +878,10 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayPanelState();
-          return s ? { noActive: s.noActive, hasData: s.pageInfo?.hasData } : null;
+          return s ? { noActive: s.noActive, hasData: s.pageInfo?.hasData, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
         }),
       )
-      .toEqual({ noActive: true, hasData: false });
+      .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));
   });
 
   test('entities panel renders active-URL entities and swaps on retarget', async () => {
@@ -1126,10 +1126,10 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayNotesWidgetState();
-          return s ? { noActive: s.noActive, hasData: s.notes?.hasData } : null;
+          return s ? { noActive: s.noActive, hasData: s.notes?.hasData, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
         }),
       )
-      .toEqual({ noActive: true, hasData: false });
+      .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));
   });
 
   test('OpenSearch widget appears for active windowId, foreign ignored, clears on retarget', async () => {

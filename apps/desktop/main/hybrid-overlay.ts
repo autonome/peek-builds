@@ -1206,6 +1206,35 @@ function installTestBridge(): void {
       return overlayHostOsId();
     },
     /**
+     * Diagnostic for the overlay-attach race (`docs/design/window-manager.md`
+     * § 4.3.1). `activeId()` alone answers "is the overlay still attached",
+     * which is where the earlier measurements stopped; this answers WHY, by
+     * reporting the kernel records the attach query actually reads. The
+     * predicate the drain in `setActive` filters on (`isBaseLayerPageHost`)
+     * and the one `topmostBaseLayerPageHost` scans are distinct, and a host
+     * that satisfies the second but not the first is invisible to every
+     * assertion the suite has today.
+     */
+    attachDiagnostic(): unknown {
+      const state = getShadowKernelExecutor().getState();
+      const host = overlayWmId == null ? null : hostForOverlay(state, overlayWmId);
+      return {
+        overlayWmId,
+        attachedTo: host ? host.id : null,
+        pageHosts: state.order
+          .filter((r) => r.kind === 'page-host')
+          .map((r) => ({
+            id: r.id,
+            osId: getNativeWindowFor(r.id)?.id ?? null,
+            role: r.role,
+            layer: r.layer,
+            visible: r.visible,
+            orderable: r.orderable,
+            pendingHidden: r.pendingHidden,
+          })),
+      };
+    },
+    /**
      * Focus-group verification: replace the registry's overlay-focus provider
      * with one that reads the bridge's simulated `simOverlayFocused`, so the
      * deferred blur decision sees the overlay as focused when we say it is

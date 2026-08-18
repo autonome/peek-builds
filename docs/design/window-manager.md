@@ -50,7 +50,8 @@ ordinary test. Write-up: "The restore-time maximize seed never reached the kerne
 
 What remains open on this branch is not code defects but unrun verification and undiagnosed
 intermittents: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks, none
-recorded as passing), the overlay race present on both platforms (§4.3.1), the
+recorded as passing), the overlay race present on both platforms (§4.3.1 — on macOS its mechanism
+is now measured and the mechanism §4.3.1 originally proposed is refuted), the
 `session-restore-hybrid-focus` intermittent, the decisions in §0.1.10, and the retirement of
 `window-state.ts` / `window-os-adapter.ts`. `yarn test:desktop:electron` has never run over this
 branch.
@@ -3574,6 +3575,47 @@ renderer demonstrably ready (`tests/helpers/hybrid-page.ts waitOverlayReady` suc
 "overlay renderer never became usable" diagnostic never appears), and the detach has never been
 observed. Reading the whole `overlayChromeState()` at the poll inside a full-file run settles it
 — `noActive: true` confirms the chain, a correct `url` refutes it.
+
+#### The stated mechanism is REFUTED, and the macOS failure is a missing detach
+
+Measured 2026-08-18 on macOS, packaged, three batches (4 + 4 + 6 runs) at the tip carrying the
+`SeedMaximized` fix. Failure counts per run: 1,1,0,0 · 0,0,0,1 · 3,3,1,0,2,2. Every failure in
+every batch, across four different tests, is **one signature**: a test that ends with
+`b.setActive(null)` and polls for the chrome to clear finds `noActive: false` and holds it for the
+full 10s timeout. It never recovers, so it is a stuck state and not a slow one.
+
+Instrumenting those polls settles the mechanism. The bridge grew `attachDiagnostic()`
+(`hybrid-overlay.ts installTestBridge`), which reports the kernel records the attach query reads;
+the polls now carry it, and assert `attached: null` alongside `noActive: true`. At the failing
+poll:
+
+- `attachedTo` is **non-null** — the kernel still has the overlay attached to a host.
+- The most recently activated page host is still `visible: true, orderable: true, layer: 0,
+  role: 'content'` — fully `isBaseLayerPageHost`, so `topmostBaseLayerPageHost` correctly answers
+  it and `react` correctly emits no detach.
+- The host activated BEFORE it is `visible: false`, correctly drained.
+
+**That refutes the mechanism proposed above.** The proposal was a spurious *detach*:
+`topmostBaseLayerPageHost` answering null, `AttachOverlayTo(overlay, null)`, chrome detached,
+`noActive: true` where a url was expected. The measured failure is the exact opposite — a *missing*
+detach, with `noActive` stuck at `false`. The renderer, the handoff delivery and the
+`SetStacking`/`pendingStackingFocus` chain are all exonerated for this failure: no message was
+dropped, because no message was ever due. The kernel's view is self-consistent throughout.
+
+So the defect is upstream of the overlay entirely: after `setActive(null)`, a base-layer page host
+is still visible in the kernel that the bridge's drain was supposed to hide. The drain
+(`installTestBridge`'s `setActive`) hides every record matching `isBaseLayerPageHost` in ONE
+snapshot, deliberately not re-reading between hides. Not yet proven, and the next thing to test:
+a hide of the `key` record makes `react` emit `RaiseWindow(topmost(next, isContentWindow))`, that
+raise is realized by `electron-window-backend.ts` `raiseWindow`/`showWindow`, and both feed
+`shadowKernelWindowShown` back into the kernel — so a raise provoked by one hide in the drain can
+re-show a record a later hide in the same drain has already cleared. Whether that lands before or
+after depends on effect-flush timing, which is what a one-in-two failure rate looks like.
+
+Proving it needs an event/effect timeline at the drain, not another state snapshot: the snapshots
+now agree run to run and have said all they can. Note also that the four affected tests span
+different `describe` blocks and therefore different app instances, so this is one defect and not a
+per-test staging bug.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 
