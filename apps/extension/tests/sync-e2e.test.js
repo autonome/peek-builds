@@ -14,6 +14,7 @@ import { initialize, close, data, sync, setConfig } from '../engine.js';
 import { ensureDefaultProfile, getCurrentProfile, enableSync } from '../profiles.js';
 import { importAllHistory } from '../history.js';
 import { importAllBookmarks } from '../bookmarks.js';
+import { DATASTORE_VERSION, PROTOCOL_VERSION } from '../sync/version.js';
 
 // Helper to build a mock Response
 function jsonResponse(body, status = 200, headers = {}) {
@@ -21,8 +22,8 @@ function jsonResponse(body, status = 200, headers = {}) {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'X-Peek-Datastore-Version': '1',
-      'X-Peek-Protocol-Version': '1',
+      'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
+      'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
       ...headers,
     },
   });
