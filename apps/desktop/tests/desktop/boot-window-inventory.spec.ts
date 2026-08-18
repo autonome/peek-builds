@@ -138,32 +138,17 @@ test.describe('Boot Window Inventory @desktop', () => {
     return result.id as number;
   }
 
-  test('fixed background inventory vs per-page-host cost', async () => {
-    // CANVAS-ONLY structural measurement — skipped now that hybrid is the only page-host.
-    // The PER-PAGE-HOST half of this test asserts the canvas page-host SHAPE:
-    // each opened page-host is a window whose URL contains `peek://app/page/`
-    // (the canvas shell) PLUS exactly one embedded `<webview>` webContents
-    // (expectations at the bottom: pageHostWindows===K, pageHostWebviews===K,
-    // and the deterministic wait that polls for K `peek://app/page/` windows +
-    // K `getType()==='webview'` WCs). In the current (hybrid-only) architecture
-    // a page-host is an OPAQUE WebContentsView inside a BaseWindow: the host
-    // window's URL is the real http(s) content URL (no `peek://app/page/`
-    // shell) and there is NO `<webview>` (the content WC type is
-    // 'browserView'). So the page-host poll never satisfies (60s timeout) and
-    // the per-page structural counts can't hold — this is a fundamental
-    // measurement-shape difference, NOT a product bug. Hybrid page-host
-    // enumeration/structure is covered by hybrid-windows-feature.spec.ts and
-    // hybrid-overlay.spec.ts; a hybrid boot-inventory measurement (1 BaseWindow
-    // + 1 WebContentsView per page, no shell/webview) is a separate rewrite.
-    // TODO(pagehost-hybrid): port the per-page-host cost measurement to the
-    // hybrid shape. Tracked for Batch D.
-    // (The FIXED boot-count regression guard still passes — observed FIXED
-    // windows=3 — but it's interleaved with the canvas per-page asserts, so
-    // the whole test is skipped rather than partially masked.)
-    test.skip(
-      await hybridBridgePresent(app),
-      'canvas-only page-host structural measurement (peek://app/page/ shell + embedded <webview>); hybrid page-hosts have neither (TODO Batch D rewrite)',
-    );
+  test('fixed boot inventory: no new resident tile sneaks into the boot set', async () => {
+    // The FIXED half, split out of the per-page-host measurement below so it
+    // runs under hybrid. It was previously interleaved with that measurement's
+    // canvas-only structural asserts, so the skip that had to cover those also
+    // masked this guard — the whole file reported a skip and guarded nothing.
+    // Nothing here is page-host-shape dependent: it counts the boot window set
+    // and asserts what must not be in it.
+    //
+    // This test must stay FIRST in the file. It reads the boot inventory, and
+    // the measurement below opens four page-hosts that would contaminate it.
+
     // ── 1. Deterministically wait for boot to settle ──────────────────────
     // Poll the live window set (MAIN process) until every expected
     // resident-tile URL is present. No timers — this resolves the instant the
@@ -194,8 +179,75 @@ test.describe('Boot Window Inventory @desktop', () => {
       console.log(`[boot-inv] wc ${wc.id} [${wc.type}] ${wc.url}`);
     }
 
-    const fixedWindowCount = fixed.windowCount;
-    const fixedWcCount = fixed.webContentsCount;
+    // peeks is now lazy: its background window must NOT be in the boot set.
+    const peeksAtBoot = fixed.windows.some((w) => w.url.includes('peek://peeks/'));
+    expect(peeksAtBoot).toBe(false);
+
+    // slides is now lazy too: its background window must NOT be in the boot set.
+    const slidesAtBoot = fixed.windows.some((w) => w.url.includes('peek://slides/'));
+    expect(slidesAtBoot).toBe(false);
+
+    // ── 3. Regression assertion on the FIXED background-window count ───────
+    // Observed fixed count, macOS 2026-08-18, hybrid: 4.
+    // Breakdown:
+    //   - peek://app/background.html         core orchestrator
+    //   - peek://app/settings/settings.html  settings host present at boot
+    //   - peek://test/index.html             E2E test-fixture renderer
+    //                                        (test-only; only when E2E_TEST=true)
+    //   - peek://app/page/overlay.html       the shared chrome overlay
+    //                                        (`hybrid-overlay.ts`), hidden
+    // The overlay is the one that was never recorded here: this guard was
+    // written for the canvas era and last observed 3, before the overlay
+    // became a resident boot window. It is a single shared window for all
+    // page-hosts, not per-page, so it belongs in the FIXED half.
+    // The PRODUCTION fixed background-window count is 2 (core + overlay); the
+    // other two are settings + the test fixture. There are NO resident
+    // feature bg tiles left. mcp-server, windows, websearch, peeks and slides
+    // are all lazy (no resident entry) and none is in the boot set; windows
+    // wakes on its global hotkey via the main-side feature-shortcut-registrar
+    // publishing cmd:execute:windows, websearch wakes on the core
+    // `page:search-engine-discovered` lazyEvent, peeks wakes on its
+    // `cli:peek-open` lazyEvent, and slides wakes on its `cli:slide-open`
+    // lazyEvent (peeks/slides fired by their static-default global wake
+    // hotkeys registered at boot by the registrar).
+    // Ceiling is the observed count exactly, so a NEW resident tile sneaking
+    // into the boot set fails the test. It used to carry +1 of slack, which is
+    // what let the overlay land here unnoticed; the slack is not restored.
+    expect(fixed.windowCount).toBeLessThanOrEqual(4);
+  });
+
+  test('per-page-host cost', async () => {
+    // CANVAS-ONLY structural measurement — skipped now that hybrid is the only page-host.
+    // This test asserts the canvas page-host SHAPE:
+    // each opened page-host is a window whose URL contains `peek://app/page/`
+    // (the canvas shell) PLUS exactly one embedded `<webview>` webContents
+    // (expectations at the bottom: pageHostWindows===K, pageHostWebviews===K,
+    // and the deterministic wait that polls for K `peek://app/page/` windows +
+    // K `getType()==='webview'` WCs). In the current (hybrid-only) architecture
+    // a page-host is an OPAQUE WebContentsView inside a BaseWindow: the host
+    // window's URL is the real http(s) content URL (no `peek://app/page/`
+    // shell) and there is NO `<webview>` (the content WC type is
+    // 'browserView'). So the page-host poll never satisfies (60s timeout) and
+    // the per-page structural counts can't hold — this is a fundamental
+    // measurement-shape difference, NOT a product bug. Hybrid page-host
+    // enumeration/structure is covered by hybrid-windows-feature.spec.ts and
+    // hybrid-overlay.spec.ts; a hybrid boot-inventory measurement (1 BaseWindow
+    // + 1 WebContentsView per page, no shell/webview) is a separate rewrite.
+    // TODO(pagehost-hybrid): port the per-page-host cost measurement to the
+    // hybrid shape. Tracked for Batch D. The FIXED boot-count regression guard
+    // that used to sit inside this test is now its own test above, so this skip
+    // no longer masks it.
+    test.skip(
+      await hybridBridgePresent(app),
+      'canvas-only page-host structural measurement (peek://app/page/ shell + embedded <webview>); hybrid page-hosts have neither (TODO Batch D rewrite)',
+    );
+
+    // Baseline for the gross-delta log below. Boot has already settled — the
+    // fixed-inventory test above waited for it, and Playwright runs this file's
+    // tests in order in a single worker against one app instance.
+    const before = await captureInventory();
+    const fixedWindowCount = before.windowCount;
+    const fixedWcCount = before.webContentsCount;
 
     // ── 3. Open K=4 page-hosts and re-capture ─────────────────────────────
     const K = 4;
@@ -257,35 +309,5 @@ test.describe('Boot Window Inventory @desktop', () => {
     // exactly K host windows and 2K webContents (host window wc + webview wc).
     expect(pageHostWindows).toBe(K);
     expect(pageHostWebviews).toBe(K);
-
-    // peeks is now lazy: its background window must NOT be in the boot set.
-    const peeksAtBoot = fixed.windows.some((w) => w.url.includes('peek://peeks/'));
-    expect(peeksAtBoot).toBe(false);
-
-    // slides is now lazy too: its background window must NOT be in the boot set.
-    const slidesAtBoot = fixed.windows.some((w) => w.url.includes('peek://slides/'));
-    expect(slidesAtBoot).toBe(false);
-
-    // ── 4. Regression assertion on the FIXED background-window count ───────
-    // Observed fixed count after mcp-server, windows, websearch, peeks AND
-    // slides were all made lazy (epic d8e7efa5): 3.
-    // Breakdown:
-    //   - peek://app/background.html         core orchestrator
-    //   - peek://app/settings/settings.html  settings host present at boot
-    //   - peek://test/index.html             E2E test-fixture renderer
-    //                                        (test-only; only when E2E_TEST=true)
-    // So the PRODUCTION fixed background-window count is now 1 (core only);
-    // the extra 2 here are settings + the test fixture. There are NO resident
-    // feature bg tiles left. mcp-server, windows, websearch, peeks and slides
-    // are all lazy (no resident entry) and none is in the boot set; windows
-    // wakes on its global hotkey via the main-side feature-shortcut-registrar
-    // publishing cmd:execute:windows, websearch wakes on the core
-    // `page:search-engine-discovered` lazyEvent, peeks wakes on its
-    // `cli:peek-open` lazyEvent, and slides wakes on its `cli:slide-open`
-    // lazyEvent (peeks/slides fired by their static-default global wake
-    // hotkeys registered at boot by the registrar).
-    // Ceiling is observed+1 (= 4) so a NEW resident tile sneaking into the
-    // boot set fails the test.
-    expect(fixedWindowCount).toBeLessThanOrEqual(4);
   });
 });
