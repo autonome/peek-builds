@@ -57,6 +57,7 @@ yarn server:test     # Run the test suite
 
 **Unified Items**
 - `POST /items` - Create any item type
+- `POST /items/batch` - Create/update up to 500 items in one transaction, with a per-row result
 - `GET /items` - List items (optional `?type=` filter)
 - `DELETE /items/:id` - Delete an item
 - `PATCH /items/:id/tags` - Update tags

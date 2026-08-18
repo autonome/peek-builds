@@ -44,9 +44,13 @@ All platforms use the same unified types:
 
 1. Query items where `syncedAt = 0` (never synced) OR `updatedAt > syncedAt` (modified since last sync)
    - Includes soft-deleted items (those with `deletedAt` set) so tombstones propagate
-2. For each item: `POST /items` with type, content, tags
-   - If item has `deletedAt`: include it in the push payload so the server records the tombstone
-3. On success: update local `syncId` and `syncedAt`
+   - Skips an item parked by a permanent rejection (`syncError` set) until its `updatedAt` moves past `syncErrorAt`
+2. `POST /items/batch` in chunks, each item carrying type, content, tags and its own local id
+   - If an item has `deletedAt`: include it in the push payload so the server records the tombstone
+   - The response is per row, so one refused item does not cost the rest of the chunk
+   - A server without that route answers 404, and the run falls back to `POST /items` per item
+   - Images always take the single-item route: their payload is base64 in `content`
+3. On success: update local `syncId` and `syncedAt` from that item's result
 
 ### Conflict Resolution
 
@@ -62,7 +66,8 @@ All endpoints accept a `?profile={uuid}` parameter (defaults to `default`):
 GET  /items?profile=<uuid>&includeDeleted=true  # All items (with tombstones)
 GET  /items/since/:timestamp?profile=<uuid>     # Items modified after timestamp (always includes tombstones)
 GET  /items/:id?profile=<uuid>                  # Single item
-POST /items?profile=<uuid>                      # Create/update item (supports deleted_at for tombstones)
+POST /items?profile=<uuid>                      # Create/update one item (supports deleted_at for tombstones)
+POST /items/batch?profile=<uuid>                # Create/update many items in one transaction, per-row results
 PATCH /items/:id/tags?profile=<uuid>            # Update tags
 DELETE /items/:id?profile=<uuid>                # Hard delete item
 ```
