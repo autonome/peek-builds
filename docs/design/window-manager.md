@@ -3044,8 +3044,30 @@ allowlisted separately under §5 step 8, not this dimension; it is likewise clos
 mechanism it counted is gone, so the number is stale, and no replacement count has been
 taken.
 
-**Measured: a second overlay-publish defect, undiagnosed, gates the six window-operation
-patterns.** The overlay renderer's first-load subscription race — `sendActiveHandoff`
+**Measured and CLOSED: the defect that gated the six window-operation patterns was never a
+publish that failed to land.** It was a correct retarget undone one beat later. The measured
+chain, end to end: hiding the front page-host lets the platform hand focus to another window
+— on Linux the primary workspace window — and `electron-window-backend.ts` reported that
+focus as fresh OS evidence, so `OsFocusGained` moved that window to the top of `order`.
+`topmostBaseLayerPageHost` reads the topmost front-eligible record and requires it to BE a
+page-host, so it answered null, `react`'s diff emitted `AttachOverlayTo(overlay, null)`, and
+the chrome detached. The renderer had already received the new window's handoff and painted
+it; the clear arrived ~10ms later, so the navbar read empty for the rest of the test.
+
+Closed by arming the hide the same way `setStacking` is already armed
+(`electron-window-backend.ts pendingHideProvokedFocus`): a focus the platform provokes as a
+side effect of a native call the machine made is not evidence about what the user chose. The
+six-pattern batch went 16-17 failed / 45-46 passed to 3 failed / 59 passed, and the 45-test
+overlay file to 45 passed. The three that remain are unrelated and fail with the suppression
+disabled too.
+
+Two beliefs recorded here before the diagnosis were wrong and are corrected by it: the
+publish does reach the renderer (verified by logging receipt inside the renderer's own
+`page-overlay:active` subscriber), and the failure is not confined to a SUBSEQUENT publish —
+a repeat of the same topic (`repeat Cmd+L (press 2)`) failed the same way, because what
+breaks is the detach that follows, not the publish.
+
+**The historical first-load subscription race** — `sendActiveHandoff`
 publishing `page-overlay:active` before the renderer's module finishes loading and
 subscribing — was real and is now closed (commit `c7e9f4a5`, `hybrid-overlay.ts
 wireOverlayReady()` answering the renderer's own post-subscribe `page-overlay:ready`
@@ -3054,23 +3076,12 @@ bottleneck: the six-pattern batch (~62 tests) holds at 16 failed / 46 passed, sa
 names, across four full runs — including runs against profile names never used before,
 which rules out profile and code-cache contamination as the explanation.
 
-The defect that does gate the batch, undiagnosed: a SUBSEQUENT activation's
-`page-overlay:active` publish — or a content event — fails to land on the overlay renderer
-after the renderer is already demonstrably subscribed and has previously painted
-correctly. First observed at `hybrid-overlay.spec.ts` "active handoff paints navbar for A,
-swaps to B, clears on null", where the second `setActive` retarget (A → B) never reaches
-the renderer; also seen in the intermittent second-check failure of "content events repaint
-the active window navbar (nav-state, title)". It fails identically with and without the
-first-load fix, on fresh profiles.
-
-Why it matters beyond the tests: while this defect is live the six-pattern batch cannot be
-read, and reading that batch is what gates restoring the minimal-stacking commit (`7df51e2c`
-is its revert — see the show/hide loop measurements above).
-
-**A measurement trap worth stating plainly:** the single-test repros for the first-load race
-do NOT reproduce in isolation on this box — 3 of 3 and 6 of 6 passed pre-fix on separate
-attempts — only under the full batch. Any future work here must measure under the batch; an
-isolated green proves nothing.
+**The measurement trap, revised.** The first-load race's single-test repros did not
+reproduce in isolation — 3 of 3 and 6 of 6 passed pre-fix — which is what made the full
+batch the only trusted measurement. That is no longer true of this cluster: the retarget
+failure reproduces in the 45-test `Hybrid Chrome Overlay` file on its own, and even as a
+single test on its own, which is what made it tractable. Check the narrower run first; it
+costs 1 minute against the batch's 5-8.
 
 **4. Visibility lifecycle** — TO ABSORB. *(Top divergence risk #2.)*
 Today: `WindowRecord.visible` (a mirror only) plus live `isVisible()` plus
