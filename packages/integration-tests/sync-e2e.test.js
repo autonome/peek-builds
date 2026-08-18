@@ -31,6 +31,7 @@ let serverProcess = null;
 let serverTempDir = null;
 let desktopTempDir = null;
 let apiKey = null;
+let serverProfileId = null;
 
 // ==================== Helpers ====================
 
@@ -154,9 +155,16 @@ async function initDesktopDatastore() {
   // Initialize datastore
   datastore.initDatabase(dbPath);
 
+  // Register a profile on the server and point sync at it. Both the sync module
+  // and serverRequest() must address this same profile id: an id the server has
+  // never seen gets its own isolated profile (apps/server/users.js
+  // resolveProfileId()), so two different ids means two invisible datasets.
+  serverProfileId = await createServerProfile('E2E');
+  log(`Server profile: ${serverProfileId}`);
+
   // Enable sync for the default profile
   const activeProfile = profiles.getActiveProfile();
-  profiles.enableSync(activeProfile.id, apiKey, activeProfile.id);
+  profiles.enableSync(activeProfile.id, apiKey, serverProfileId);
 
   // Configure sync settings
   sync.setSyncConfig({
@@ -180,6 +188,26 @@ async function cleanupDesktop() {
 }
 
 // Server API helpers
+
+/**
+ * Create a server profile and return its UUID
+ */
+async function createServerProfile(name) {
+  const res = await fetch(`${BASE_URL}/profiles`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Failed to create profile: ${JSON.stringify(data)}`);
+  }
+  return data.profile.id;
+}
+
 async function serverRequest(method, path, body = null) {
   const authHeader = `Bearer ${apiKey}`;
   const options = {
@@ -194,8 +222,11 @@ async function serverRequest(method, path, body = null) {
     options.body = JSON.stringify(body);
   }
 
-  log(`Request: ${method} ${path}, Auth: ${authHeader.substring(0, 20)}...`);
-  const res = await fetch(`${BASE_URL}${path}`, options);
+  const separator = path.includes('?') ? '&' : '?';
+  const url = `${BASE_URL}${path}${separator}profile=${serverProfileId}`;
+
+  log(`Request: ${method} ${url}, Auth: ${authHeader.substring(0, 20)}...`);
+  const res = await fetch(url, options);
   const data = await res.json();
 
   if (!res.ok) {
