@@ -26,6 +26,14 @@ hash.
 
     PROFILE=<a profile of your own> PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true yarn start
 
+Once it's up, stage a known starting state instead of hand-arranging one:
+
+    PEEK_PROFILE=<the same profile> node scripts/signoff-stage.mjs
+
+It closes the startup settings window, opens two visually distinct pages (ALPHA/BRAVO, served
+locally over `http://127.0.0.1:8777`) as page windows, and prints an inventory of what's open.
+Leave it running — it keeps serving the two pages for the duration of the run.
+
 Then drive the checks below by hand and, at the end, grep that profile's `logs/main.log` for
 `[window-kernel-shadow] divergence`.
 
@@ -53,14 +61,33 @@ observations with the gesture that produced them; do not treat them as a pass/fa
   Expect it; it is not a leak.
 - **Live test pages must be visually distinct.** A restored profile can come back with a dozen
   identical pages. Use inline `data:` URLs with large unique labels.
+- **The shared address bar is pointer-driven, not focus-driven.** `overlay.js` shows it on a
+  `mousemove` hit-test against the top trigger zone and arms a 400ms hide timer once the pointer
+  leaves it; keyboard focus inside the URL field is the only focus that matters otherwise. Any
+  check about the address bar's visibility requires holding the pointer in the trigger zone across
+  the gesture — parked anywhere else, it is always hidden regardless of what has keyboard focus.
+- **A settings window opens on every boot** from `defaults.prefs.startupFeature`
+  (`apps/desktop/renderer/config.js`), skipped only when a session snapshot exists. It must be
+  closed before staging, or it sits in every inventory as an extra row. `scripts/signoff-stage.mjs`
+  closes it explicitly rather than relying on an env lever: `PEEK_AUTOOPEN_EXT` (any value)
+  suppresses both session restore and the startup-feature fallback in the same branch
+  (`apps/desktop/main/entry.ts`), and a `PROFILE` starting with `test` makes `isTestProfile()` true
+  and skips session restore (`main/config.ts`, `main/session.ts`) — but that one does NOT suppress
+  the startup window, since `entry.ts` still publishes `session:open-startup` when nothing was
+  restored. Both exist and are worth knowing about, but a deliberately malformed/repurposed env
+  value is a side effect that could change out from under this doc; an explicit close is honest.
 
 ## What needs a human eye
 
 No automated check can reach any of these. For each, record what happened, not whether it "passed".
 
-1. **The address bar follows the app.** Switch away from Peek with a page open — the address-bar
-   strip must leave the screen with it. Switch back — it must return, and the question is whether
-   it returns *in front of* the page or behind it. Behind means the re-pin decision is wrong.
+1. **The overlay window follows the app.** This check is about the shared chrome overlay WINDOW
+   (`hybrid-overlay.ts` `overlayWin`) and its re-pin/z-order decision, not about whether the navbar
+   strip inside it happens to be visible — that part is pointer-driven (see the trap above) and is
+   usually hidden regardless. Switch away from Peek with a page open — the overlay window must
+   leave the screen with it. Switch back — it must return, and the question is whether it returns
+   *in front of* the page or behind it. Behind means the re-pin decision is wrong. To actually see
+   the navbar strip during this check, hold the pointer in the top trigger zone across the switch.
 2. **The address bar survives losing its page.** Open a page so the bar appears, get to a state
    with no page frontmost, then open a page again. The bar must come back. It was previously
    destroyed on this path and returned only as a different window.
