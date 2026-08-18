@@ -205,7 +205,9 @@ const createTableStatements = `
     frecencyScore INTEGER DEFAULT 0,
     title TEXT DEFAULT '',
     domain TEXT DEFAULT '',
-    favicon TEXT DEFAULT ''
+    favicon TEXT DEFAULT '',
+    syncError TEXT DEFAULT '',
+    syncErrorAt INTEGER DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
@@ -496,6 +498,7 @@ export function initDatabase(dbPath: string): Db {
   migrateTagNavigationHistory();
   migrateExtensionSettingsToFeatureSettings();
   migrateItemThumbnailColumn();
+  migrateItemSyncErrorColumns();
   migrateEventPushedAtColumn();
   migrateTagsUniqueIndex();
   dropLegacyAddressTables();
@@ -2533,6 +2536,43 @@ function migrateItemThumbnailColumn(): void {
     } catch (error) {
       DEBUG && console.log('main', `Item thumbnail column migration:`, (error as Error).message);
     }
+  }
+}
+
+/**
+ * Add items.syncError / items.syncErrorAt — the record of a push the server
+ * permanently rejected, so it stops being retried on every run forever.
+ *
+ * `syncErrorAt` holds the item's `updatedAt` at the moment of the rejection, and
+ * push skips the item only while `updatedAt` has not moved past it. That is what
+ * makes the park self-clearing: every edit path in this file bumps `updatedAt`,
+ * so an item the user fixes is eligible again without any of those paths having
+ * to know that parking exists. (Mobile's equivalent, peek-core sync.rs
+ * mark_item_sync_failed(), instead nulls its own `sync_error` column from each
+ * update statement — one missed statement there is an item that silently never
+ * syncs again.)
+ *
+ * Both columns are local bookkeeping, declared `"sync": false` in
+ * packages/schema/v1.json — never sent on the wire, no column on the server, no
+ * datastore version bump.
+ */
+function migrateItemSyncErrorColumns(): void {
+  if (!db) return;
+
+  const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
+  const names = new Set(columns.map((col) => col.name));
+
+  try {
+    if (!names.has('syncError')) {
+      DEBUG && console.log('main', 'Adding syncError column to items table');
+      db.exec(`ALTER TABLE items ADD COLUMN syncError TEXT DEFAULT ''`);
+    }
+    if (!names.has('syncErrorAt')) {
+      DEBUG && console.log('main', 'Adding syncErrorAt column to items table');
+      db.exec(`ALTER TABLE items ADD COLUMN syncErrorAt INTEGER DEFAULT 0`);
+    }
+  } catch (error) {
+    DEBUG && console.log('main', `Item syncError column migration:`, (error as Error).message);
   }
 }
 

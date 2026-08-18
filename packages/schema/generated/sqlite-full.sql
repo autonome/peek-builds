@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS items (
   frecencyScore INTEGER DEFAULT 0,
   title TEXT DEFAULT '',
   domain TEXT DEFAULT '',
-  favicon TEXT DEFAULT ''
+  favicon TEXT DEFAULT '',
+  syncError TEXT DEFAULT '',
+  syncErrorAt INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);

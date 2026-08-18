@@ -743,7 +743,7 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     const permanentEntry = failureEntries.find((e) => e.message.includes('local-permanent-item'));
     assert.ok(permanentEntry, `expected an entry naming the 4xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
     assert.ok(
-      permanentEntry!.message.includes('will not succeed until the item changes'),
+      permanentEntry!.message.includes('parked until the item changes'),
       `expected the 4xx failure to be worded as permanent, got: ${permanentEntry!.message}`
     );
 
@@ -1953,5 +1953,134 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
     assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
     assert.strictEqual(eventPushedAt(), 0, 'server-URL-change reset must clear every event delivery stamp — a different server has none of them');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
+  });
+});
+
+describe('An item the server permanently rejects is parked until it changes', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  /**
+   * Same harness as the blocks above — fresh desktop datastore and profile,
+   * fresh server-side user, every call routed to the real server app in-process.
+   * No injected failure: the rejection these tests turn on is a real one from
+   * the real route, since CONTENT_REQUIRED_TYPES in apps/server/index.js answers
+   * a `url` item with no content with a 400.
+   */
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-park-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `park-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      return serverApp.request(reqPath, {
+        method: init.method || 'GET',
+        headers: init.headers,
+        body: init.body,
+      });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  function readPark(itemId: string): { syncError: string; syncErrorAt: number } {
+    return datastore.getDb().prepare(`
+      SELECT syncError, syncErrorAt FROM items WHERE id = ?
+    `).get(itemId) as { syncError: string; syncErrorAt: number };
+  }
+
+  /** A `url` item with no content — the server rejects it with a 400, every time. */
+  function insertUnsyncableItem(id: string, updatedAt: number): void {
+    datastore.getDb().prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', '', '{}', '', 0, ?, ?, 0)
+    `).run(id, updatedAt, updatedAt);
+  }
+
+  it('stops being re-pushed after the rejection', async () => {
+    const { apiKey } = setup('rejected-once');
+    const now = Date.now();
+    insertUnsyncableItem('local-unsyncable-item', now);
+
+    const firstRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(firstRun.failed, 1, 'sanity: the server must actually reject this item');
+
+    const park = readPark('local-unsyncable-item');
+    assert.ok(
+      park.syncError.startsWith('Server error 400:'),
+      `the server's own message must be recorded, so the log can say why; got ${JSON.stringify(park.syncError)}`
+    );
+    assert.strictEqual(park.syncErrorAt, now, 'the park records the updatedAt it was rejected at, which is what a later edit has to move past');
+
+    const secondRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(
+      secondRun.failed,
+      0,
+      'a parked item must not be sent again — retrying a row the server has already refused, on every run forever, is what this replaces'
+    );
+    assert.strictEqual(secondRun.pushed, 0, 'and nothing else should have gone out either');
+  });
+
+  it('is eligible again as soon as it is edited, with no edit path having to know about parking', async () => {
+    const { apiKey } = setup('edited-after-rejection');
+    const now = Date.now();
+    insertUnsyncableItem('local-fixable-item', now);
+
+    await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.notStrictEqual(readPark('local-fixable-item').syncError, '', 'sanity: the first push parked it');
+
+    // What any edit does: new content, and updatedAt moves. Nothing here clears
+    // the park explicitly — moving past syncErrorAt is what un-parks it.
+    datastore.getDb().prepare(`
+      UPDATE items SET content = ?, updatedAt = ? WHERE id = ?
+    `).run('https://example.com/fixed', now + 1000, 'local-fixable-item');
+
+    const afterEdit = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(afterEdit.pushed, 1, 'the edited item must be pushed — a park that outlives the problem is silent data loss');
+    assert.strictEqual(afterEdit.failed, 0);
+
+    const park = readPark('local-fixable-item');
+    assert.strictEqual(park.syncError, '', 'a successful push clears the recorded rejection');
+    assert.strictEqual(park.syncErrorAt, 0);
+  });
+
+  it('is not parked by a network failure, which an unchanged retry can clear', async () => {
+    const { apiKey } = setup('transient-failure');
+    const now = Date.now();
+    datastore.getDb().prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', 'https://example.com/fine', '{}', '', 0, ?, ?, 0)
+    `).run('local-transient-item', now, now);
+
+    globalThis.fetch = (async () => {
+      throw new Error('simulated total network failure');
+    }) as typeof fetch;
+
+    const failedRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(failedRun.failed, 1, 'sanity: the push must have failed');
+    assert.strictEqual(
+      readPark('local-transient-item').syncError,
+      '',
+      'a timeout or dropped link says nothing about the row itself, so the item must stay eligible'
+    );
   });
 });

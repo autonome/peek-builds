@@ -768,14 +768,16 @@ export async function pushToServer(
     // Also include deleted tombstones that need to be pushed
     items = db.prepare(`
       SELECT * FROM items
-      WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
-         OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)
+      WHERE ((deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
+         OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt))
+        AND (syncError = '' OR updatedAt > syncErrorAt)
     `).all() as Item[];
   } else {
     // Full: all items that haven't been synced
     items = db.prepare(`
       SELECT * FROM items
       WHERE deletedAt = 0 AND syncedAt = 0
+        AND (syncError = '' OR updatedAt > syncErrorAt)
     `).all() as Item[];
   }
 
@@ -810,6 +812,13 @@ export async function pushToServer(
       const message = (error as Error).message;
       DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
       failed++;
+      // A 4xx means the server looked at this exact row and refused it, so the
+      // same body next run cannot do better — park it until the item itself
+      // changes. Anything else is the server or the link being unavailable,
+      // which an unchanged retry can clear on its own.
+      if (isPermanentPushFailure(message)) {
+        parkRejectedItem(item.id, item.updatedAt, message);
+      }
       const ids = failuresByReason.get(message);
       if (ids) {
         ids.push(item.id);
@@ -848,7 +857,7 @@ export async function pushToServer(
   if (failuresByReason.size > 0) {
     const { permanent, transient } = partitionByPermanence(failuresByReason);
     for (const line of groupFailuresByReason(permanent, 'item')) {
-      logSyncProgress('push-items', 'error', `Item push rejected, will not succeed until the item changes — ${line}`);
+      logSyncProgress('push-items', 'error', `Item push rejected, parked until the item changes — ${line}`);
     }
     for (const line of groupFailuresByReason(transient, 'item')) {
       logSyncProgress('push-items', 'error', `Item push failed, will retry next run — ${line}`);
@@ -947,13 +956,37 @@ async function pushSingleItem(
     { method: 'POST', body }
   );
 
-  // Update local item with sync info and set syncedAt to track when we synced
+  // Update local item with sync info and set syncedAt to track when we synced.
+  // Clearing syncError here is what un-parks an item the server used to reject:
+  // the row has just been accepted, so whatever the old rejection said about it
+  // is no longer true.
   const now = Date.now();
   db.prepare(`
-    UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
+    UPDATE items SET syncId = ?, syncedAt = ?, syncError = '', syncErrorAt = 0 WHERE id = ?
   `).run(response.id, now, item.id);
 
   DEBUG && console.log(`[sync] Pushed item ${item.id} → ${response.id}`);
+}
+
+/**
+ * Park an item the server permanently rejected, so it stops being re-pushed on
+ * every run for as long as it stays unchanged.
+ *
+ * `syncErrorAt` is the item's own `updatedAt` at the moment of the rejection, and
+ * the push query skips the item only while `updatedAt` has not moved past it —
+ * so any later edit un-parks it automatically, without every edit path in
+ * datastore.ts having to know that parking exists. A push that later succeeds
+ * clears both columns (pushSingleItem() above).
+ *
+ * Deliberately NOT a reason to stop pulling, or to hide the item: it is local
+ * data the user still owns, and the sync log still names it and says the retry
+ * will not help until it changes.
+ */
+function parkRejectedItem(itemId: string, updatedAt: number, message: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE items SET syncError = ?, syncErrorAt = ? WHERE id = ?
+  `).run(message, updatedAt, itemId);
 }
 
 // ==================== Event Sync (item_events: series/feed observations) ====================
@@ -1746,13 +1779,17 @@ function breakCycle(db: ReturnType<typeof getDb>, cycleIds: string[]): void {
  */
 function resetPerItemSyncState(profileId: string, clearSyncId: boolean): void {
   const db = getDb();
+  // Both branches also clear syncError/syncErrorAt: a parked item was rejected by
+  // one server under one schema version, and the reset means at least one of those
+  // has changed. Keeping the park would silently exclude the item from the very
+  // re-push the reset exists to force.
   if (clearSyncId) {
     db.prepare(`
-      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
+      UPDATE items SET syncedAt = 0, syncId = '', syncError = '', syncErrorAt = 0 WHERE deletedAt = 0
     `).run();
   } else {
     db.prepare(`
-      UPDATE items SET syncedAt = 0 WHERE deletedAt = 0
+      UPDATE items SET syncedAt = 0, syncError = '', syncErrorAt = 0 WHERE deletedAt = 0
     `).run();
   }
   updateLastSyncTime(profileId, 0);

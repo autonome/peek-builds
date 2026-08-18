@@ -52,6 +52,12 @@ pub struct SchemaItems {
     pub domain: String,
     /// Favicon URL
     pub favicon: String,
+    #[serde(rename = "syncError")]
+    /// Client-local: the server's own message from a push it permanently rejected ('' = not rejected). Never sent on the wire
+    pub sync_error: String,
+    #[serde(rename = "syncErrorAt")]
+    /// Client-local: the item's updatedAt at the moment of that rejection. Push skips the item only while updatedAt has not moved past this, so any later edit retries it automatically
+    pub sync_error_at: i64,
 }
 
 /// Tag definitions with frecency tracking
