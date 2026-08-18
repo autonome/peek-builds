@@ -61,6 +61,11 @@ it (full backend path)" failed 4/4 source-only and 2/2 packaged on the branch ag
 on `main`, and `apps/desktop/tests/gate-baseline.md` lists it **unclassified**. The cause is not a
 kernel defect: the spec encoded behaviour the kernel deliberately changed.
 
+*(That test no longer exists under this name — it was renamed and rewritten to assert the opened
+window's classification, and now reads "regression: a page opened FROM a palette-role opener is
+classified content, never child-content". The measurements in this section are kept as the dated
+record that led to the rewrite.)*
+
 Traced live: the spec's own `paletteWindow.evaluate` opens `peek://search/home.html`; that page
 takes key; `window-kernel.ts selectTransientAutoclose` dismisses the palette; and the `evaluate`
 call rejects because the page it was running in was destroyed. The reported

@@ -60,7 +60,7 @@ this list plus the intermittent list below.
 | `hybrid-overlay.spec.ts` | repeat Cmd+L (press 2) re-reveals + refocuses the navbar in the overlay renderer | overlay race |
 | `hybrid-show-activate.spec.ts` | applied show path is focus-free under headless | headless paint |
 | `hybrid-transient-on-blur.spec.ts` | opening (focusing) a second hybrid quick-view closes the first | unclassified |
-| `izui-escape.spec.ts` | ESC on a page opened FROM a palette-role opener does NOT close it | unclassified |
+| `izui-escape.spec.ts` | a page opened FROM a palette-role opener is classified content, never child-content | unclassified — see note |
 | `page-layout.spec.ts` | navbar can be revealed while the host is maximized | overlay race |
 | `peeks-lazy-wake.spec.ts` | the default Option+0 wake hotkey is registered at boot without the renderer | unclassified |
 | `permission-prompt.spec.ts` | geolocation request renders overlay prompt with origin + favicon; Deny resolves PERMISSION_DENIED | overlay race |
@@ -122,6 +122,11 @@ fix; both states have been observed on an unchanged tree.
   occurrences share that shape.
 - **unclassified** — no diagnostic ties these to any cause above. They reproduced in both runs, so
   they are deterministic rather than flaky, and each is a candidate for a real fix.
+- **the `izui-escape.spec.ts` row** was recorded under the test's former name, *"regression: ESC on
+  a page opened FROM a palette-role opener does NOT close it (full backend path)"*. That test was
+  renamed and rewritten: its Escape assertion was vacuous, and the guard is now the opened window's
+  classification. The row above carries the current name. Whether it still fails on Linux is
+  **unverified** — the rewrite has only been run on macOS, where it passes 6/6 packaged, twice.
 
 ## Refreshing this file
 
