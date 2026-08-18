@@ -1266,9 +1266,8 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
       `);
     });
 
-    // The editor closes, and the datastore holds what was typed. (The preview
-    // still shows the pre-edit text until something reloads the pane — the save
-    // is fire-and-forget and the in-memory note isn't updated with it.)
+    // The editor closes, the preview reflects what was typed immediately, and
+    // the datastore holds it too.
     await expect
       .poll(async () =>
         app.evaluateMain!(async () => {
@@ -1277,6 +1276,15 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
         }),
       )
       .toBe(false);
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`document.querySelector('#notes-panel .notes-content-preview').textContent`);
+        }),
+      )
+      .toBe('after edit');
 
     await expect
       .poll(async () =>

@@ -432,6 +432,11 @@ export class PageNotesPane {
           this._editingId = null;
           this._pendingEditId = null;
           this._editorState = null;
+          // Update the in-memory copy before re-rendering — _render() reads
+          // from this._notes, and the save below is fire-and-forget, so
+          // without this the preview would flash the pre-edit content until
+          // something else triggered a reload.
+          note.content = value;
           this._updateNote(note.id, value);
           this._render();
         });
