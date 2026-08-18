@@ -2554,17 +2554,20 @@ function migrateItemThumbnailColumn(): void {
  *
  * No datastore version bump: pushedAt is never sent on the wire and the server
  * has no such column, so nothing another client or the server sees changes.
+ *
+ * Takes an optional database so a node test can drive it against an in-memory
+ * one, the same way migrateEmptyTextCleanup() does.
  */
-function migrateEventPushedAtColumn(): void {
-  if (!db) return;
+export function migrateEventPushedAtColumn(database: Db | null = db): void {
+  if (!database) return;
 
-  const columns = db.prepare(`PRAGMA table_info(item_events)`).all() as { name: string }[];
+  const columns = database.prepare(`PRAGMA table_info(item_events)`).all() as { name: string }[];
   const hasPushedAt = columns.some((col) => col.name === 'pushedAt');
   if (hasPushedAt) return;
 
   DEBUG && console.log('main', 'Adding pushedAt column to item_events table');
   try {
-    db.exec(`ALTER TABLE item_events ADD COLUMN pushedAt INTEGER NOT NULL DEFAULT 0`);
+    database.exec(`ALTER TABLE item_events ADD COLUMN pushedAt INTEGER NOT NULL DEFAULT 0`);
   } catch (error) {
     DEBUG && console.log('main', `item_events pushedAt column migration:`, (error as Error).message);
     return;
@@ -2573,12 +2576,12 @@ function migrateEventPushedAtColumn(): void {
   // Gated on the column being absent, so the backfill runs exactly once — on the
   // same run that adds the column, before any push can read it.
   try {
-    const row = db.prepare(`
+    const row = database.prepare(`
       SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
     `).get() as { value: string } | undefined;
     const watermark = row && row.value ? JSON.parse(row.value) : 0;
     if (typeof watermark === 'number' && Number.isFinite(watermark) && watermark > 0) {
-      const result = db.prepare(`
+      const result = database.prepare(`
         UPDATE item_events SET pushedAt = ? WHERE createdAt <= ?
       `).run(watermark, watermark);
       DEBUG && console.log('main', `Backfilled ${result.changes} already-pushed event(s) from the old watermark`);
