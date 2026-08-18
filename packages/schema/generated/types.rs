@@ -157,4 +157,7 @@ pub struct SchemaItemEvents {
     #[serde(rename = "createdAt")]
     /// Creation timestamp (Unix ms)
     pub created_at: i64,
+    #[serde(rename = "pushedAt")]
+    /// Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself
+    pub pushed_at: i64,
 }

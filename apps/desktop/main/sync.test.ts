@@ -155,15 +155,14 @@ describe('Event push watermark — cross-run stranding regression', () => {
     return json.items.length;
   }
 
-  /** Reads back the watermark pushEventsToServer() just saved (see
-   * saveEventPushWatermark() in sync.ts — same feature_settings row read by
-   * the version-bump-reset describe block's own readFeatureSetting()). */
-  function readEventPushWatermark(): number {
+  /** Reads back the delivery stamp pushEventsToServer() writes on each event it
+   * got the server to accept (item_events.pushedAt; 0 means never delivered). */
+  function readEventPushedAt(eventId: string): number {
     const db = datastore.getDb();
     const row = db.prepare(`
-      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
-    `).get() as { value: string } | undefined;
-    return row ? JSON.parse(row.value) : 0;
+      SELECT pushedAt FROM item_events WHERE id = ?
+    `).get(eventId) as { pushedAt: number } | undefined;
+    return row ? row.pushedAt : 0;
   }
 
   it('an item whose push fails on run 1 still gets its events synced once its own push succeeds on run 2', async () => {
@@ -393,12 +392,12 @@ describe('Event push watermark — cross-run stranding regression', () => {
     assert.strictEqual(statusAfterRun2.lastError, null, 'run 2: a fully successful run must clear the prior stage error');
   });
 
-  it('a deleted never-synced item does not pin the watermark, but a live never-synced item still does', async () => {
-    const { apiKey } = setup('deleted-vs-live-blocked-item');
+  it('an item that can never sync strands only its own events, and a second run re-pushes nothing', async () => {
+    const { apiKey } = setup('unsyncable-item-strands-only-itself');
 
     // Parent item already synced on both sides, so its event is eligible for
-    // this run regardless of the watermark — it is what proves the watermark
-    // actually moved (or didn't) past the blocked items' events below.
+    // this run — it is what proves the two unsynced items below hold back only
+    // their own events, not everything created after them.
     const createRes = await serverApp.request('/items', {
       method: 'POST',
       headers: authHeaders(apiKey),
@@ -410,9 +409,9 @@ describe('Event push watermark — cross-run stranding regression', () => {
     const now = Date.now();
 
     // Oldest: a DELETED item that never synced (syncId === ''). It never will —
-    // pushToServer() only sends a tombstone whose syncId is already set — so its
-    // event must not pin the watermark (see the deletedAt = 0 term's comment above
-    // the blocked-event query in sync.ts).
+    // pushToServer() only sends a tombstone whose syncId is already set — which is
+    // exactly the case that used to pin a global watermark forever and make every
+    // run re-push the entire event tail behind it.
     const deletedItemId = 'local-deleted-never-synced-item';
     db.prepare(`
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
@@ -423,9 +422,8 @@ describe('Event push watermark — cross-run stranding regression', () => {
       VALUES (?, ?, NULL, ?, ?, '{}', ?)
     `).run('evt-deleted-item-old', deletedItemId, 1, now, now);
 
-    // Middle: a LIVE item that never synced yet — could still sync on a later
-    // run, so its event MUST keep pinning the watermark, same as before this
-    // change.
+    // Middle: a LIVE item that never synced yet — it could still sync on a later
+    // run, so its event must stay eligible rather than being written off.
     const liveItemId = 'local-live-never-synced-item';
     const liveEventCreatedAt = now + 10;
     db.prepare(`
@@ -437,8 +435,8 @@ describe('Event push watermark — cross-run stranding regression', () => {
       VALUES (?, ?, NULL, ?, ?, '{}', ?)
     `).run('evt-live-item-old', liveItemId, 2, liveEventCreatedAt, liveEventCreatedAt);
 
-    // Newest: an event on the already-synced item — the one whose fate the
-    // watermark actually controls.
+    // Newest: an event on the already-synced item — the one that must get
+    // through despite being created after both blocked events.
     const syncedItemId = 'local-blocked-watermark-synced-item';
     const syncedEventCreatedAt = now + 20;
     db.prepare(`
@@ -455,26 +453,35 @@ describe('Event push watermark — cross-run stranding regression', () => {
     assert.deepStrictEqual(
       await fetchServerEventIds(apiKey),
       ['evt-synced-item-new'],
-      'only the already-synced item\'s event should reach the server this run — the other two are still blocked'
+      'only the already-synced item\'s event should reach the server this run — the other two have no server item to belong to yet'
     );
 
-    const watermark = readEventPushWatermark();
     assert.ok(
-      watermark >= now,
-      `the deleted never-synced item's event (createdAt ${now}) must not pin the watermark below itself — ` +
-      `it can never get a syncId, so holding it down would strand every event after it forever; got watermark ${watermark}`
+      readEventPushedAt('evt-synced-item-new') > 0,
+      'the delivered event must be stamped, so no later run sends it again'
     );
-    assert.ok(
-      watermark < liveEventCreatedAt,
-      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must still pin the watermark below ` +
-      `itself — it could still sync on a later run, so this protection must stay intact; got watermark ${watermark}`
+    assert.strictEqual(
+      readEventPushedAt('evt-deleted-item-old'),
+      0,
+      `the deleted never-synced item's event (createdAt ${now}) must stay unstamped and eligible — but it holds back nothing else`
+    );
+    assert.strictEqual(
+      readEventPushedAt('evt-live-item-old'),
+      0,
+      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must stay eligible — its item could still sync on a later run`
     );
 
-    // Confirm the consequence, not just the number: on the next run, nothing
-    // new is selected — the synced item's event was already delivered, and
-    // the watermark sitting at/above its createdAt (not held down by the
-    // deleted item) means it is correctly not re-selected either.
-    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    // The regression this replaces a global watermark to prevent: with one, an
+    // item that can never sync held the watermark below its own event forever,
+    // so every subsequent run re-selected and re-pushed the entire event tail
+    // after it — 24,000 events per run, measured against production. Per-event
+    // stamps mean run 2 has nothing to send at all.
+    const secondRun = await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    assert.strictEqual(
+      secondRun.pushed,
+      0,
+      'run 2 must push nothing — an unsyncable item must not make already-delivered events eligible again'
+    );
     assert.deepStrictEqual(
       await fetchServerEventIds(apiKey),
       ['evt-synced-item-new'],
@@ -1855,7 +1862,7 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
     );
   });
 
-  it('a version-bump reset clears syncedAt but leaves syncId populated, and resets the event/tag push watermarks to 0', async () => {
+  it('a version-bump reset clears syncedAt but leaves syncId populated, and clears the event stamps and tag watermark', async () => {
     const { apiKey } = setup('version-bump-scope');
 
     const db = datastore.getDb();
@@ -1864,16 +1871,27 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
       VALUES (?, 'text', 'version bump scope item', '{}', '', 0, ?, ?, 0)
     `).run('local-version-bump-scope-item', now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, 'version bump scope event', NULL, ?, '{}', ?)
+    `).run('evt-version-bump-scope', 'local-version-bump-scope-item', now, now);
 
-    // Baseline sync: pushes the item, establishing a non-empty syncId and a non-zero
-    // syncedAt/lastEventPushAt/lastTagPushAt to contrast against after the reset.
+    const eventPushedAt = (): number => {
+      const row = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?')
+        .get('evt-version-bump-scope') as { pushedAt: number } | undefined;
+      return row ? row.pushedAt : 0;
+    };
+
+    // Baseline sync: pushes the item and its event, establishing a non-empty syncId,
+    // a non-zero syncedAt, a stamped event and a non-zero lastTagPushAt to contrast
+    // against after the reset.
     await sync.syncAll(FAKE_SERVER_URL, apiKey);
 
     const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
       { syncId: string; syncedAt: number };
     assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
     assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
-    assert.notStrictEqual(readFeatureSetting('lastEventPushAt'), 0, 'sanity: baseline push advanced the event watermark past 0');
+    assert.notStrictEqual(eventPushedAt(), 0, 'sanity: baseline push stamped the event as delivered');
     assert.notStrictEqual(readFeatureSetting('lastTagPushAt'), 0, 'sanity: baseline push advanced the tag watermark past 0');
 
     backdateStoredDatastoreVersion();
@@ -1888,11 +1906,11 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.strictEqual(afterReset.syncId, baseline.syncId, 'version-bump reset must leave syncId populated — the row identity is still valid on the same server');
     assert.strictEqual(afterReset.syncedAt, 0, 'version-bump reset must clear syncedAt so the item is re-pushed');
-    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'version-bump reset must reset the event push watermark to 0 (schema catch-up — see resetPerItemSyncState() doc comment)');
+    assert.strictEqual(eventPushedAt(), 0, 'version-bump reset must clear every event delivery stamp so events re-push under the new schema (see resetPerItemSyncState() doc comment)');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'version-bump reset must reset the tag push watermark to 0, for the same schema catch-up reason');
   });
 
-  it('a server-URL-change reset still clears both syncedAt and syncId, and resets the event/tag push watermarks to 0', async () => {
+  it('a server-URL-change reset still clears both syncedAt and syncId, and clears the event stamps and tag watermark', async () => {
     const { apiKey } = setup('server-change-scope');
 
     const db = datastore.getDb();
@@ -1901,6 +1919,16 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
       VALUES (?, 'text', 'server change scope item', '{}', '', 0, ?, ?, 0)
     `).run('local-server-change-scope-item', now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, 'server change scope event', NULL, ?, '{}', ?)
+    `).run('evt-server-change-scope', 'local-server-change-scope-item', now, now);
+
+    const eventPushedAt = (): number => {
+      const row = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?')
+        .get('evt-server-change-scope') as { pushedAt: number } | undefined;
+      return row ? row.pushedAt : 0;
+    };
 
     // Baseline sync against FAKE_SERVER_URL — records it as the last-known server, so a
     // later sync against a DIFFERENT url is a genuine "server changed" signal.
@@ -1910,6 +1938,7 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
     assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+    assert.notStrictEqual(eventPushedAt(), 0, 'sanity: baseline push stamped the event as delivered');
 
     installAlwaysFailingFetch();
 
@@ -1922,7 +1951,7 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.strictEqual(afterReset.syncId, '', 'server-URL-change reset must clear syncId — the old value has no meaning on a different server');
     assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
-    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'server-URL-change reset must reset the event push watermark to 0');
+    assert.strictEqual(eventPushedAt(), 0, 'server-URL-change reset must clear every event delivery stamp — a different server has none of them');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
   });
 });

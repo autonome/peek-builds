@@ -24,13 +24,15 @@ const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed",
 // carry their data in `metadata` and are allowed to have null content.
 //
 // `text` is deliberately NOT here. A client that holds an empty text item retries it
-// on every sync forever, and the item never earns a syncId — which stalls far more
-// than the one item: the event push holds its watermark below the oldest event of any
-// item without a syncId, so a single permanently-rejected item makes every subsequent
-// run re-push the entire event history behind it. Storing an empty note costs a row;
-// rejecting one costs sync. `url` keeps the requirement for now — an empty url item
-// has no meaning server-side (no domain, nothing to open) and none have been observed
-// in the wild, but it carries the same stall risk if that ever changes.
+// on every sync forever, the item never earns a syncId, and every event belonging to
+// it is stranded with it — an item this server refuses is an item no client can ever
+// resolve. It was worse still when event push tracked one global watermark, which had
+// to be held below the oldest event of any item without a syncId: a single rejected
+// item then made every run re-push the entire event history behind it (24,000 events
+// per run, measured). Storing an empty note costs a row; rejecting one costs sync.
+// `url` keeps the requirement for now — an empty url item has no meaning server-side
+// (no domain, nothing to open) and none have been observed in the wild, but it
+// carries the same stranding risk if that ever changes.
 const CONTENT_REQUIRED_TYPES = ["url"];
 
 // Resolve a pull/read type filter from the query string. `types` (comma-separated)

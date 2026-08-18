@@ -2526,9 +2526,10 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
 
 // Regression suite for the empty-text sync stall: a desktop client holding an
 // empty `text` item retried it every sync forever, and the item never earned
-// a syncId — which stalled the event push's watermark behind it, forcing
-// every run to re-push the entire event history (see CONTENT_REQUIRED_TYPES
-// in index.js). `url` keeps the content requirement. Exercises the real
+// a syncId — which stranded its events, and (while event push ran off one
+// global watermark) forced every run to re-push the entire event history
+// behind it (see CONTENT_REQUIRED_TYPES in index.js). `url` keeps the content
+// requirement. Exercises the real
 // production app (`require("./index").app`), same convention as the POST
 // /items real-route suite above.
 describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPES)", () => {

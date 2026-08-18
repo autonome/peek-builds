@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS item_events (
   value REAL,
   occurredAt INTEGER NOT NULL,
   metadata TEXT DEFAULT '{}',
-  createdAt INTEGER NOT NULL
+  createdAt INTEGER NOT NULL,
+  pushedAt INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);

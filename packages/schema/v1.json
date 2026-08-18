@@ -383,6 +383,13 @@
           "not_null": true,
           "sync": true,
           "description": "Creation timestamp (Unix ms)"
+        },
+        "pushedAt": {
+          "type": "integer",
+          "not_null": true,
+          "default": "0",
+          "sync": false,
+          "description": "Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself"
         }
       },
       "indexes": [

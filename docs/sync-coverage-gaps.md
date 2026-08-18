@@ -40,7 +40,7 @@ server-stamped on every write instead — `mergeServerItem()`'s conflict resolut
 (last-write-wins) compares on it, so it can't also carry client-supplied values
 without breaking that comparison.
 
-## 2. `item_events` now syncs, on its own watermark
+## 2. `item_events` now syncs, stamped per event
 
 `packages/schema/v1.json` marks every `item_events` column `"sync": true` and lists
 the table in `validation.required_sync_columns`. `sync.ts pushEventsToServer()` /
@@ -48,18 +48,27 @@ the table in `validation.required_sync_columns`. `sync.ts pushEventsToServer()` 
 stores it. `series` and `feed` items — whose entire payload lives in `item_events`
 rows rather than in the item itself — restore with their observations intact.
 
-Push tracks its own watermark (`feature_settings` key `lastEventPushAt`), separate
-from the item watermark (`lastSyncAt`). This split is load-bearing, not
-incidental: an event's `itemId` on the wire is the *server's* item id, resolved
-from the local item's `syncId` — so an event whose parent item has no `syncId` yet
-(not pushed, or still mid-push) has to be skipped for this run. A shared watermark
-would still advance to "now" at the end of a run that skipped some events (because
-items track their own per-row `syncedAt` and tolerate that), which would push the
-watermark past those skipped events' `createdAt` and strand them permanently — the
-next run's `> watermark` filter would exclude them even after their item finally
-gets a `syncId`. The dedicated watermark only advances up to the oldest still-blocked
-event, so a blocked event stays eligible on every future run until its item's push
-succeeds.
+Push records delivery per event, in `item_events.pushedAt` (0 = never delivered),
+rather than against any time watermark. The reason a watermark cannot serve here:
+an event's `itemId` on the wire is the *server's* item id, resolved from the local
+item's `syncId` — so an event whose parent item has no `syncId` yet (not pushed, or
+still mid-push) has to be skipped for this run. Any watermark still advances at the
+end of that run (items tolerate this, since they track their own per-row
+`syncedAt`), which would push it past the skipped events' `createdAt` and strand
+them permanently.
+
+A dedicated event watermark, held below the oldest skipped event, was the previous
+answer and had its own failure: an item the server permanently rejects — or one of a
+type that never syncs at all — never earns a `syncId`, so it pinned that watermark
+indefinitely and every run re-pushed the whole event tail behind it (24,000 events
+per run, measured against production). With a per-row stamp, an event whose parent
+cannot sync strands exactly itself and is picked up whenever that parent does sync.
+
+`pushedAt` is declared `"sync": false` in `packages/schema/v1.json` — local
+bookkeeping, never sent on the wire, no column on the server — so it needs no
+datastore version bump. `datastore.ts migrateEventPushedAtColumn()` adds the column
+and stamps everything at or below the retired watermark as already delivered; only
+the tail behind it re-pushes, once, and the server ignores ids it already holds.
 
 Deletion does not propagate: a locally hard-deleted event reappears on the next
 pull if the server still has it. There is no `deletedAt` (or any tombstone) column

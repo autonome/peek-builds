@@ -128,6 +128,8 @@ export interface SchemaItemEvents {
   metadata: string;
   /** Creation timestamp (Unix ms) */
   createdAt: number;
+  /** Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself */
+  pushedAt: number;
 }
 
 /** Valid sync table names */
