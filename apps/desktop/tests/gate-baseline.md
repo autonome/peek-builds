@@ -27,6 +27,15 @@ exit is the expected state.
 Any failure in main-process unit, node unit, components or editor is a regression — those four are
 green on this platform.
 
+**One qualification on `components` and `editor`, learned the expensive way.** Both run in
+plain chromium against their own static server and never launch Electron, so no change to the
+main process — the window manager included — can reach them. A failure there that is a 60-second
+timeout ending in `Target page, context or browser has been closed` is the harness losing its
+browser, not a regression: `peek-navbar-autocomplete.spec.ts` produced exactly that on the last
+test of the run, then passed 64 of 64 in 6 seconds on an immediate re-run of the same tree. Re-run
+the runner once before treating a failure in either as real, and if a main-process change is the
+suspect, note that it has no path to these two runners at all.
+
 ## Deterministic failures — present in every run
 
 These reproduced identically across both runs. A change is clean if its failing set is a subset of
