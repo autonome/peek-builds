@@ -3080,6 +3080,23 @@ bottleneck: the six-pattern batch (~62 tests) holds at 16 failed / 46 passed, sa
 names, across four full runs — including runs against profile names never used before,
 which rules out profile and code-cache contamination as the explanation.
 
+**The minimal-stacking commit is restored** on the strength of that reading (`93f46d9b`
+reapplies what `7df51e2c` reverted). Against the bar set for keeping it: the show/hide loop
+repro `hybrid-overlay.spec.ts` "active handoff paints navbar for A, swaps to B, clears on
+null" passed 20 of 20 consecutive runs, and two consecutive six-pattern runs gave 2 failed /
+60 passed and 3 failed / 59 passed against the 3 the head carried before it.
+
+Its intended payoff landed: `session-restore-hybrid-focus.spec.ts` "two hybrid pages: the
+page focused at save is the one restore raises (not the other)" — which failed 8 of 8 across
+a prior A/B — passes in both runs. The over-large stacking replay was indeed what starved the
+genuine focus, as predicted.
+
+One name to watch, NOT confirmed: `hybrid-overlay.spec.ts` "back/forward unblocked: nav
+drives the active content WC held through an overlay interaction" failed in the second batch
+run and passed in the first, in every pre-restore run, and 6 of 6 in isolation. One failure in
+two batch runs is an intermittent, not a regression — and by the trap stated below, the
+isolated greens are not evidence either way. Measure it under the batch.
+
 **The measurement trap, revised.** The first-load race's single-test repros did not
 reproduce in isolation — 3 of 3 and 6 of 6 passed pre-fix — which is what made the full
 batch the only trusted measurement. That is no longer true of this cluster: the retarget
