@@ -728,9 +728,22 @@ requirements and the rest self-policing. Repeating the pattern server-side means
 route is a place to forget a check. §3.4's declarative middleware is the mitigation and it is not
 free either.
 
-**Shared-package extraction is a real migration.** `resolveCapabilities()` and the capability types
-currently live in a TypeScript file in `apps/desktop/main` alongside Electron-aware code; the server
-is CommonJS Node. Extracting them cleanly is the kind of change that looks trivial and takes a day.
+**Shared-package extraction is real, but not because of Electron coupling.**
+`apps/desktop/main/tile-manifest.ts` imports only `node:fs` and `node:path`, both used by
+`parseManifestFile()` alone — nothing in the tile layer touches Electron, and that is a property
+the design keeps by intent rather than by accident: a tile's manifest describes what it may do,
+and the host enforcing it is meant to be replaceable, which is exactly what a worker runtime
+depends on. The real obstacles are the module system split (`apps/desktop` is TypeScript ESM;
+`apps/server` declares `"type": "commonjs"` and sits outside the root `workspaces` list) and the
+deployment boundary — `apps/server` is subtree-split and deployed standalone, so it can't import
+`packages/` at runtime and carries its own copy instead (see the comment atop `apps/server/db.js`).
+The precedent already in this repo, `packages/schema/v1.json` projected into
+`apps/server/schema.json` by `packages/schema/codegen.js` and guarded by
+`packages/schema/check-freshness.js`, projects *data*; the capability model is *logic*, and
+closing that gap is the extraction: `packages/capabilities` holds the model as plain JavaScript
+with hand-written `index.d.ts` types (`apps/desktop/main/tile-manifest.ts` re-exports it
+unchanged), and `packages/capabilities/codegen.js` generates the checked-in CommonJS
+`apps/server/capabilities.js` the same way the schema package generates its own projection.
 
 **And the thing none of this fixes: a worker misusing what it legitimately holds.** A feed worker
 granted `network: { domains: ["*"] }` and read access to items can post the user's items anywhere
