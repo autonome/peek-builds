@@ -96,6 +96,13 @@ this list plus the intermittent list below.
 |---|---|
 | `cmdl-navbar-no-resize.spec.ts` | Cmd+L shows the navbar without maximizing or resizing the window |
 | `hybrid-overlay.spec.ts` | clicking the chrome (overlay focus on content blur) does NOT deactivate |
+| `reopen-closed-window.spec.ts` | open → close → reopen brings the URL back |
+
+`reopen-closed-window.spec.ts` "open → close → reopen brings the URL back" passed in both runs
+recorded above and failed in a later gate run. Three isolated runs of that spec alone on an
+unchanged tree gave pass, fail, pass, so it is timing-dependent rather than a regression the later
+run introduced. The maximize-fidelity failure in the same spec is deterministic and stays listed
+above.
 
 `hybrid-overlay.spec.ts` "a hybrid window becoming active while the app is INACTIVE must not
 reveal the chrome" was intermittent in the previous recording and passed in both runs here. It is
