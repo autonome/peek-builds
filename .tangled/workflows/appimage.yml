@@ -1,29 +1,50 @@
+# Linux AppImage build. Slow (full Electron download + package), so it runs
+# on version tags and on demand rather than on every push — see gate.yml for
+# the per-push checks. Use the manual trigger to exercise it without cutting
+# a tag; to iterate on a feature branch, add that branch to the push trigger
+# temporarily and drop it again before merging.
+#
+# Engine choice: nixery rather than microvm. Packaging never executes the
+# Electron binary — electron-builder only bundles it — so the build needs no
+# steam-run and no NixOS guest. A microvm run of this workflow failed before
+# any step executed, at "guest agent connection lost: nix config build
+# failed", with no step logs. If it ever moves back to microvm, Electron's
+# prebuilt binary cannot run unpatched on NixOS and steam-run becomes a
+# required dependency.
+#
+# The dependency list is deliberately short. gcc, pkg-config, openssl, and
+# python are not needed: better-sqlite3 was the only package requiring a
+# node-gyp toolchain and it left the workspace when apps/desktop/main
+# moved to node:sqlite.
+#
+# electron-builder's linux target list is [dir, AppImage] only; .deb and .rpm
+# are intentionally excluded (its bundled fpm has no arm64 build — see the
+# comment in apps/desktop/electron-builder.yml). If the spindle runner turns
+# out to be x86, re-enabling deb/rpm there is a separate decision, not
+# something this workflow should do silently.
+
 when:
   - event: ["push"]
-    branch: ["spindles"]
+    tag: ["v*"]
+  - event: ["manual"]
 
-engine: microvm
-image: nixos
+engine: "nixery"
 
 dependencies:
-  - gcc
-  - pkg-config # exports PKG_CONFIG_PATH for the libraries below
-  - openssl # the C library + headers openssl-sys links against
-  - nodejs
-  - yarn
-  - python313
-  - bash
-  - steam-run
+  nixpkgs: [nodejs_24, yarn-berry, git]
 
 steps:
-  - name: "Install dependencies"
-    command: yarn install
+  - name: install
+    command: yarn install --immutable
 
-  - name: "PWD"
-    command: pwd && ls -al
-
-  - name: "Build peek"
+  - name: build
+    # Compiles the app (schema codegen + tsc + patch scripts) before
+    # packaging — electron-builder packages compiled output, not source.
     command: yarn build
 
-  - name: "Build peek appimage"
-    command: yarn workspace @peek/desktop run build:electron:dist:v2
+  - name: package AppImage
+    # Produces out/Peek-*.AppImage. Runs from the repo root, which is where
+    # electron-builder finds its config: the root package.json "build" key
+    # extends apps/desktop/electron-builder.yml. Invoking electron-builder
+    # from inside apps/desktop instead makes it read the wrong package.json.
+    command: yarn workspace @peek/desktop run build:electron:dist

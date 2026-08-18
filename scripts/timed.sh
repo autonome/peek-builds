@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Wrapper script that times any command and shows duration at the end
 # Usage: ./scripts/timed.sh <command> [args...]
 #

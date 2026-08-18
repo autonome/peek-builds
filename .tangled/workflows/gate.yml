@@ -1,0 +1,51 @@
+# Fast gate: install, typecheck/build, and every check that needs no
+# display and no Electron window. Runs on every push/PR to main so a
+# stale lockfile, a schema drift, or a broken sync path fails fast.
+#
+# Deliberately excluded:
+# - yarn lint — it is `echo "No linting configured"`, and naming it here
+#   would imply the repo is linted.
+# - yarn test:desktop:electron (and friends) — needs a real display and
+#   the Electron binary; see the Linux AppImage workflow's own limits and
+#   apps/desktop/CLAUDE.md.
+
+when:
+  - event: ["push"]
+    branch: ["main"]
+  - event: ["pull_request"]
+    branch: ["main"]
+  - event: ["manual"]
+
+engine: "nixery"
+
+dependencies:
+  nixpkgs: [nodejs_24, yarn-berry, git]
+
+steps:
+  - name: install
+    command: yarn install --immutable
+
+  - name: build
+    command: yarn build
+
+  - name: schema freshness check
+    command: yarn schema:check
+
+  - name: schema fidelity tests
+    # Compares the server, desktop and mobile schemas against
+    # packages/schema/v1.json.
+    command: yarn schema:test
+
+  - name: extension unit tests
+    command: yarn test:extension
+
+  - name: server dependencies
+    # apps/server is deliberately npm-only and outside the yarn
+    # workspaces (see apps/server/CLAUDE.md) — its deps don't come from
+    # the yarn install above.
+    command: yarn server:install
+
+  - name: sync integration tests
+    # Spawns apps/server as a child process against a temp data dir, so
+    # it needs the step above to have run first.
+    command: yarn test:sync
