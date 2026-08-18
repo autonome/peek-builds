@@ -31,8 +31,10 @@ All platforms use the same unified types:
 
 ### Pull (Server → Client)
 
-1. Fetch: `GET /items` (full) or `GET /items/since/:timestamp` (incremental)
-   - All pull requests include `includeDeleted=true` so tombstones propagate
+1. Fetch `GET /items/since/:timestamp` — a full pull is the same route with a timestamp of 0,
+   so both go through the one route that pages and that always carries tombstones
+   - The request carries `limit`, and the pull follows the `nextCursor` in each response until
+     none comes back, merging each page as it lands (see Paging below)
 2. For each server item:
    - If `deleted_at` is set: mark local item as soft-deleted (tombstone)
    - Find local item by `syncId` matching server `id`
@@ -73,6 +75,36 @@ DELETE /items/:id?profile=<uuid>                # Hard delete item
 ```
 
 The `includeDeleted=true` parameter on `GET /items` returns soft-deleted items (those with `deleted_at` set). The `/items/since/:timestamp` endpoint always includes tombstones so incremental sync propagates deletions.
+
+### Paging a pull
+
+`/items/since/:timestamp`, `/events/since/:timestamp` and `/tags/since/:timestamp` return the
+whole matching set in one body unless the client asks for a page. That body was measured at
+9.91 MB on a real profile and grows without bound, so a client that knows about paging sends
+`limit` and follows the cursor:
+
+```
+GET /items/since/0?profile=<uuid>&limit=500              # first page
+GET /items/since/0?profile=<uuid>&limit=500&cursor=<c>   # resume after the last row of the previous page
+```
+
+- `limit` is 1..1000; anything else is a 400.
+- `cursor` is opaque — pass back exactly what the previous response's `nextCursor` held. A cursor
+  the server cannot decode is a 400 rather than a silent restart, because it means client and
+  server disagree about where the pull is.
+- `nextCursor` is present only while the page was full. An exactly-full final page still carries
+  one, so a pull ends on a page that comes back empty.
+- The cursor carries the last row's timestamp **and** id. Rows can share a millisecond, and a
+  cursor holding only a timestamp would either skip the rest of that group or repeat it forever.
+
+Paging is opt-in on both sides, which is why it needed no datastore version bump: a client that
+sends no `limit` gets the whole set exactly as before, and a client that sends one to a server
+predating paging gets the whole set in one page with no `nextCursor`, so its loop ends after one
+round trip.
+
+One consequence of routing a full pull through the `since` route: a row whose `updatedAt` is
+missing or unparseable reads as 0 and is therefore never returned, where `GET /items` would have
+returned it. Every write path stamps `updatedAt`, so this is a property of legacy rows only.
 
 The `profile` parameter is a server-side profile UUID. The server uses the UUID directly as the folder name on disk. Legacy slugs are resolved to UUIDs for backward compatibility.
 

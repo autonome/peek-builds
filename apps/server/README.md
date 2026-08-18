@@ -62,6 +62,13 @@ yarn server:test     # Run the test suite
 - `DELETE /items/:id` - Delete an item
 - `PATCH /items/:id/tags` - Update tags
 
+**Sync pulls**
+- `GET /items/since/:timestamp`, `GET /events/since/:timestamp`, `GET /tags/since/:timestamp`
+- Each returns the whole matching set unless the client sends `limit` (1..1000), in which case
+  the response carries a `nextCursor` to pass back as `cursor` for the following page. A client
+  that sends neither gets the unpaged response, so paging costs nothing in compatibility either
+  direction. See `docs/sync.md` for the full contract.
+
 **Tags**
 - `GET /tags` - List tags sorted by frecency
 

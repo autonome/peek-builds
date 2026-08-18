@@ -4260,3 +4260,186 @@ describe("MCP Item Write Routes Tests", () => {
     });
   });
 });
+
+describe("Paged sync pulls (limit + cursor on the three `since` routes)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "paginguser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  after(() => {
+    cleanTestDir();
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function createItems(count) {
+    const ids = [];
+    for (let i = 0; i < count; i++) {
+      const res = await app.request("/items", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ type: "url", content: `https://example.com/paged-${i}` }),
+      });
+      const json = await res.json();
+      ids.push(json.id);
+    }
+    return ids;
+  }
+
+  // Walks every page the way a client does, and returns the rows in the order
+  // the server handed them over.
+  async function pullAllPages(basePath, key, limit) {
+    const rows = [];
+    let cursor;
+    for (let page = 0; page < 50; page++) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      let url = `${basePath}${separator}limit=${limit}`;
+      if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+      const res = await app.request(url, { headers: authHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      rows.push(...json[key]);
+      if (!json.nextCursor) return rows;
+      cursor = json.nextCursor;
+    }
+    throw new Error("pull never ran out of pages");
+  }
+
+  it("a pull with no limit returns everything, exactly as before paging existed", async () => {
+    await createItems(7);
+    const res = await app.request("/items/since/0", { headers: authHeaders() });
+    const json = await res.json();
+    assert.strictEqual(json.items.length, 7);
+    assert.strictEqual(json.nextCursor, undefined, "an unpaged pull hands back no cursor to follow");
+  });
+
+  it("paging through items returns every row exactly once", async () => {
+    await createItems(7);
+    const paged = await pullAllPages("/items/since/0", "items", 3);
+    const ids = paged.map((i) => i.id);
+    assert.strictEqual(ids.length, 7, `expected 7 rows across pages, got ${ids.length}`);
+    assert.strictEqual(new Set(ids).size, 7, "no row should arrive twice");
+  });
+
+  it("rows sharing a timestamp still page correctly — the cursor carries the id too", async () => {
+    // Every row written with the same updatedAt: a cursor of "the last timestamp
+    // I saw" would either skip the rest of the group or repeat it forever.
+    const db = require("./db");
+    // The route resolves the "default" slug to the profile's UUID, so a
+    // connection opened on the slug is a different bucket entirely.
+    const conn = db.getConnection(TEST_USER, users.resolveProfileId(TEST_USER, "default"));
+    for (let i = 0; i < 10; i++) {
+      conn.run(
+        `INSERT INTO items (id, type, content, metadata, createdAt, updatedAt, deletedAt)
+         VALUES (?, 'url', ?, '{}', 5000, 5000, 0)`,
+        [`same-ts-${i}`, `https://example.com/same-${i}`]
+      );
+    }
+
+    const paged = await pullAllPages("/items/since/0", "items", 3);
+    const ids = paged.map((i) => i.id).sort();
+    assert.strictEqual(ids.length, 10, `expected all 10 rows, got ${ids.length}`);
+    assert.strictEqual(new Set(ids).size, 10, "no row should arrive twice");
+  });
+
+  it("paging through events returns every row exactly once", async () => {
+    const itemRes = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "series", metadata: { title: "Paged series" } }),
+    });
+    const itemId = (await itemRes.json()).id;
+
+    const events = [];
+    for (let i = 0; i < 8; i++) {
+      events.push({ id: `paged-evt-${i}`, itemId, content: null, value: i, occurredAt: 1000 + i, createdAt: 1000 + i });
+    }
+    await app.request("/events", { method: "POST", headers: authHeaders(), body: JSON.stringify({ events }) });
+
+    const paged = await pullAllPages("/events/since/0", "events", 3);
+    assert.strictEqual(paged.length, 8);
+    assert.strictEqual(new Set(paged.map((e) => e.id)).size, 8);
+  });
+
+  it("paging through tags returns every row exactly once", async () => {
+    const tags = [];
+    for (let i = 0; i < 8; i++) {
+      tags.push({ name: `paged-tag-${i}`, color: "#123456", createdAt: 1000 + i, updatedAt: 1000 + i });
+    }
+    await app.request("/tags", { method: "POST", headers: authHeaders(), body: JSON.stringify({ tags }) });
+
+    const paged = await pullAllPages("/tags/since/0", "tags", 3);
+    assert.strictEqual(paged.length, 8);
+    assert.strictEqual(new Set(paged.map((t) => t.name)).size, 8);
+  });
+
+  it("a page carries a cursor only while more rows remain", async () => {
+    await createItems(4);
+    const res = await app.request("/items/since/0?limit=4", { headers: authHeaders() });
+    const json = await res.json();
+    assert.strictEqual(json.items.length, 4);
+    // An exactly-full last page still offers a cursor — the client discovers the
+    // end by fetching one more page that comes back empty.
+    assert.ok(json.nextCursor, "a full page offers a cursor");
+
+    const nextRes = await app.request(`/items/since/0?limit=4&cursor=${encodeURIComponent(json.nextCursor)}`, {
+      headers: authHeaders(),
+    });
+    const nextJson = await nextRes.json();
+    assert.strictEqual(nextJson.items.length, 0, "the page past the end is empty");
+    assert.strictEqual(nextJson.nextCursor, undefined, "and offers nothing further to follow");
+  });
+
+  it("a limit outside the accepted range is refused", async () => {
+    for (const bad of ["0", "-1", "abc", "100000"]) {
+      const res = await app.request(`/items/since/0?limit=${bad}`, { headers: authHeaders() });
+      assert.strictEqual(res.status, 400, `limit=${bad} should be refused`);
+    }
+  });
+
+  it("a cursor the server cannot read is refused rather than restarting the pull", async () => {
+    const res = await app.request("/items/since/0?limit=2&cursor=not-a-real-cursor", { headers: authHeaders() });
+    assert.strictEqual(res.status, 400);
+    const json = await res.json();
+    assert.match(json.error, /cursor/);
+  });
+
+  it("all three routes refuse a bad cursor the same way", async () => {
+    for (const route of ["/items/since/0", "/events/since/0", "/tags/since/0"]) {
+      const res = await app.request(`${route}?cursor=%%%`, { headers: authHeaders() });
+      assert.strictEqual(res.status, 400, `${route} should refuse an unreadable cursor`);
+    }
+  });
+
+  it("a type filter still applies across pages", async () => {
+    await createItems(5);
+    for (let i = 0; i < 3; i++) {
+      await app.request("/items", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ type: "text", content: `paged note ${i}` }),
+      });
+    }
+
+    const paged = await pullAllPages("/items/since/0?type=text", "items", 2);
+    assert.strictEqual(paged.length, 3, "only the text items should come back");
+    assert.ok(paged.every((i) => i.type === "text"));
+  });
+});

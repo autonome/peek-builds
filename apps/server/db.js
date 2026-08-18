@@ -1178,10 +1178,51 @@ function deleteImage(userId, itemId, profileId = "default") {
 }
 
 /**
+ * Paging cursor for the three `since` sync pulls.
+ *
+ * A pull orders by a timestamp column, which is not unique — several rows can
+ * share a millisecond — so a cursor of "the last timestamp I saw" either skips
+ * or repeats the rows on that boundary. The cursor therefore carries the last
+ * row's (timestamp, id) pair and the query resumes strictly after it, which is
+ * stable no matter how many rows share a timestamp.
+ *
+ * Opaque on the wire: a client passes back whatever it was handed. Base64url
+ * so it survives a query string unescaped.
+ */
+function encodeCursor(timestamp, id) {
+  return Buffer.from(JSON.stringify({ t: timestamp, i: id }), "utf8").toString("base64url");
+}
+
+/**
+ * Decode a cursor produced by encodeCursor(). Returns null for anything
+ * malformed, which callers surface as a 400 rather than silently pulling from
+ * the beginning — a cursor the server can't read means the client's idea of
+ * where it is and the server's have diverged.
+ */
+function decodeCursor(cursor) {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof parsed.t !== "number" || typeof parsed.i !== "string") return null;
+    return { timestamp: parsed.t, id: parsed.i };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * SQL fragment resuming a keyset scan after a cursor, for a query ordered by
+ * (column ASC, id ASC). Appends its own parameters to `params`.
+ */
+function appendCursorClause(column, cursor, params) {
+  params.push(cursor.timestamp, cursor.timestamp, cursor.id);
+  return ` AND (CAST(${column} AS INTEGER) > ? OR (CAST(${column} AS INTEGER) = ? AND id > ?))`;
+}
+
+/**
  * Get items modified since a given timestamp
  * Used for incremental sync - returns items where updatedAt > timestamp
  */
-function getItemsSince(userId, timestamp, type = null, profileId = "default") {
+function getItemsSince(userId, timestamp, type = null, profileId = "default", options = {}) {
   const conn = getConnection(userId, profileId);
 
   // CAST handles TEXT-affinity columns from legacy schemas where timestamps
@@ -1201,7 +1242,17 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
     params.push(...types);
   }
 
-  query += " ORDER BY updatedAt ASC";
+  if (options.cursor) {
+    query += appendCursorClause("updatedAt", options.cursor, params);
+  }
+
+  // id breaks ties so a page boundary lands somewhere the cursor can resume from
+  query += " ORDER BY CAST(updatedAt AS INTEGER) ASC, id ASC";
+
+  if (options.limit) {
+    query += " LIMIT ?";
+    params.push(options.limit);
+  }
 
   const items = conn.all(query, params);
 
@@ -1320,13 +1371,20 @@ function saveEvents(userId, profileId, events) {
  * SERVER's item id — the caller translates it back to a local item via that
  * item's syncId (see desktop sync.ts mergeServerEvent()).
  */
-function getEventsSince(userId, profileId, timestamp) {
+function getEventsSince(userId, profileId, timestamp, options = {}) {
   const conn = getConnection(userId, profileId);
-  const rows = conn.all(
-    `SELECT id, itemId, content, value, occurredAt, metadata, createdAt
-     FROM item_events WHERE CAST(createdAt AS INTEGER) > ? ORDER BY createdAt ASC`,
-    [timestamp]
-  );
+  let query = `SELECT id, itemId, content, value, occurredAt, metadata, createdAt
+     FROM item_events WHERE CAST(createdAt AS INTEGER) > ?`;
+  const params = [timestamp];
+  if (options.cursor) {
+    query += appendCursorClause("createdAt", options.cursor, params);
+  }
+  query += " ORDER BY CAST(createdAt AS INTEGER) ASC, id ASC";
+  if (options.limit) {
+    query += " LIMIT ?";
+    params.push(options.limit);
+  }
+  const rows = conn.all(query, params);
   return rows.map((row) => ({
     id: row.id,
     itemId: row.itemId,
@@ -1401,13 +1459,20 @@ function saveTags(userId, profileId, tags) {
  * by updatedAt so a client can advance a simple high-water mark, same shape as
  * getEventsSince() for events.
  */
-function getTagsSince(userId, profileId, timestamp) {
+function getTagsSince(userId, profileId, timestamp, options = {}) {
   const conn = getConnection(userId, profileId);
-  const rows = conn.all(
-    `SELECT id, name, slug, color, parentId, description, metadata, createdAt, updatedAt
-     FROM tags WHERE CAST(updatedAt AS INTEGER) > ? ORDER BY updatedAt ASC`,
-    [timestamp]
-  );
+  let query = `SELECT id, name, slug, color, parentId, description, metadata, createdAt, updatedAt
+     FROM tags WHERE CAST(updatedAt AS INTEGER) > ?`;
+  const params = [timestamp];
+  if (options.cursor) {
+    query += appendCursorClause("updatedAt", options.cursor, params);
+  }
+  query += " ORDER BY CAST(updatedAt AS INTEGER) ASC, id ASC";
+  if (options.limit) {
+    query += " LIMIT ?";
+    params.push(options.limit);
+  }
+  const rows = conn.all(query, params);
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -1555,6 +1620,8 @@ module.exports = {
   saveItem,
   getItems,
   getItemsSince,
+  encodeCursor,
+  decodeCursor,
   getItemById,
   deleteItem,
   updateItemTags,

@@ -794,6 +794,62 @@ app.patch("/items/:id/tags", async (c) => {
 
 // === Sync endpoints ===
 
+// A `since` pull returns the whole matching set in one body unless the client
+// asks for a page. Nearly 10 MB of items in a single response was measured on a
+// real profile, and it grows without bound, so a client that knows about paging
+// sends `limit` and follows `nextCursor` until it stops coming back.
+//
+// Paging is opt-in in BOTH directions, which is what lets it ship without a
+// version bump: a client that sends no `limit` gets the whole set exactly as
+// before, and a client that sends one to a server too old to know the parameter
+// gets the whole set in one page with no `nextCursor`, so its loop ends after a
+// single round trip.
+const MAX_SYNC_PAGE = 1000;
+
+/**
+ * Read `limit` and `cursor` off a sync pull. Returns {error} for a limit that
+ * isn't a positive integer within range, or a cursor the server can't decode —
+ * both mean the client and server disagree about where the pull is, which is
+ * worth a 400 rather than a silent restart from the beginning.
+ */
+function resolvePageOptions(c) {
+  const rawLimit = c.req.query("limit");
+  const rawCursor = c.req.query("cursor");
+  const options = {};
+
+  if (rawLimit !== undefined) {
+    if (!/^\d+$/.test(rawLimit)) {
+      return { error: "limit must be a positive integer" };
+    }
+    const limit = parseInt(rawLimit, 10);
+    if (limit < 1 || limit > MAX_SYNC_PAGE) {
+      return { error: `limit must be between 1 and ${MAX_SYNC_PAGE}` };
+    }
+    options.limit = limit;
+  }
+
+  if (rawCursor !== undefined) {
+    const cursor = db.decodeCursor(rawCursor);
+    if (!cursor) {
+      return { error: "cursor is not valid" };
+    }
+    options.cursor = cursor;
+  }
+
+  return { options };
+}
+
+/**
+ * The cursor to hand back with a page, or undefined when this page is the last
+ * one. A full page is assumed to have a successor; the client discovers an
+ * exactly-full final page by fetching one more that comes back empty.
+ */
+function nextCursorFor(rows, options, timestampField) {
+  if (!options.limit || rows.length < options.limit) return undefined;
+  const last = rows[rows.length - 1];
+  return db.encodeCursor(last[timestampField], last.id);
+}
+
 // Get items modified since a timestamp (for incremental sync)
 app.get("/items/since/:timestamp", (c) => {
   const userId = c.get("userId");
@@ -817,8 +873,13 @@ app.get("/items/since/:timestamp", (c) => {
     return c.json({ error: `type must be one of: ${SYNCABLE_ITEM_TYPES.join(", ")}` }, 400);
   }
 
-  const items = db.getItemsSince(userId, unixMs, typeFilter.filter, profileId);
-  return c.json({ items, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const items = db.getItemsSince(userId, unixMs, typeFilter.filter, profileId, page.options);
+  return c.json({ items, since: rawTimestamp, nextCursor: nextCursorFor(items, page.options, "updatedAt") });
 });
 
 // Get a single item by ID
@@ -892,8 +953,13 @@ app.get("/events/since/:timestamp", (c) => {
     unixMs = date.getTime();
   }
 
-  const events = db.getEventsSince(userId, profileId, unixMs);
-  return c.json({ events, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const events = db.getEventsSince(userId, profileId, unixMs, page.options);
+  return c.json({ events, since: rawTimestamp, nextCursor: nextCursorFor(events, page.options, "createdAt") });
 });
 
 // === Tag metadata sync endpoints ===
@@ -954,8 +1020,13 @@ app.get("/tags/since/:timestamp", (c) => {
     unixMs = date.getTime();
   }
 
-  const tags = db.getTagsSince(userId, profileId, unixMs);
-  return c.json({ tags, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const tags = db.getTagsSince(userId, profileId, unixMs, page.options);
+  return c.json({ tags, since: rawTimestamp, nextCursor: nextCursorFor(tags, page.options, "updatedAt") });
 });
 
 // === Backup endpoints ===

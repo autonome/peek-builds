@@ -1753,7 +1753,7 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         () => sync.pullFromServer(FAKE_SERVER_URL, apiKey),
         (error: Error) => {
           assert.ok(
-            error.message.startsWith('Request to /items?profile='),
+            error.message.startsWith('Request to /items/since/0?profile='),
             `error must name the request path, got: ${error.message}`
           );
           assert.ok(
@@ -2267,5 +2267,139 @@ describe('An item the server permanently rejects is parked until it changes', ()
       '',
       'a timeout or dropped link says nothing about the row itself, so the item must stay eligible'
     );
+  });
+});
+
+/**
+ * The pull side of paging: the client asks for a page, follows the cursor the
+ * server hands back, and merges each page as it lands.
+ *
+ * The server is answered by a stub here rather than the real app, because what
+ * is under test is the client's loop — how many requests it makes, what it puts
+ * in them, and when it stops — and driving that through the real app would mean
+ * writing a page's worth of rows per case to observe a single boundary.
+ */
+describe('Paged pulls — the client follows the server cursor', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  interface PullStub {
+    requestedPaths: string[];
+  }
+
+  /**
+   * Fresh desktop datastore and profile, plus a fetch stub whose item pulls are
+   * answered by `pages` — one entry per response, each already shaped the way
+   * the route shapes it. Everything else is routed to the real server app, so a
+   * pull that strays off the item route still behaves.
+   */
+  function setupPullStub(
+    name: string,
+    pages: Array<{ items: unknown[]; nextCursor?: string }>
+  ): { apiKey: string; stub: PullStub } {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-paging-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `paging-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    const stub: PullStub = { requestedPaths: [] };
+    let served = 0;
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+
+      if (reqPath.startsWith('/items/since/')) {
+        stub.requestedPaths.push(reqPath);
+        const page = pages[Math.min(served, pages.length - 1)];
+        served++;
+        return new Response(JSON.stringify(page), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return serverApp.request(reqPath, { method: init.method || 'GET', headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey, stub };
+  }
+
+  function serverItem(id: string, updatedAt: number) {
+    return {
+      id,
+      type: 'url',
+      content: `https://example.com/${id}`,
+      createdAt: updatedAt,
+      updatedAt,
+      deletedAt: 0,
+      starred: 0,
+      archived: 0,
+      tags: [],
+    };
+  }
+
+  it('asks for a page and follows the cursor until the server stops offering one', async () => {
+    const { apiKey, stub } = setupPullStub('follows-cursor', [
+      { items: [serverItem('page-1-a', 1000), serverItem('page-1-b', 1001)], nextCursor: 'cursor-1' },
+      { items: [serverItem('page-2-a', 1002)], nextCursor: 'cursor-2' },
+      { items: [] },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(result.pulled, 3, 'every row across every page must be merged');
+    assert.strictEqual(stub.requestedPaths.length, 3, 'one request per page, and one that ends it');
+    assert.ok(stub.requestedPaths[0].includes('limit='), 'the first request must ask for a page');
+    assert.ok(!stub.requestedPaths[0].includes('cursor='), 'the first request has nowhere to resume from');
+    assert.ok(stub.requestedPaths[1].includes('cursor=cursor-1'), 'the second request resumes where the first ended');
+    assert.ok(stub.requestedPaths[2].includes('cursor=cursor-2'));
+
+    const local = datastore.getDb().prepare('SELECT syncId FROM items ORDER BY syncId').all() as Array<{ syncId: string }>;
+    assert.deepStrictEqual(
+      local.map((r) => r.syncId),
+      ['page-1-a', 'page-1-b', 'page-2-a']
+    );
+  });
+
+  it('a server that knows nothing about paging is pulled in one request', async () => {
+    // What the deployed server does today: it ignores `limit`, returns the whole
+    // set, and sends no cursor. The loop has to end after one round trip, which
+    // is what lets this client ship before the server does.
+    const { apiKey, stub } = setupPullStub('unpaged-server', [
+      { items: [serverItem('all-1', 1000), serverItem('all-2', 1001), serverItem('all-3', 1002)] },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(result.pulled, 3);
+    assert.strictEqual(stub.requestedPaths.length, 1, 'no cursor came back, so there is nothing to follow');
+  });
+
+  it('a server that repeats the same cursor forever does not pin the pull', async () => {
+    const { apiKey, stub } = setupPullStub('stuck-cursor', [
+      { items: [serverItem('stuck-1', 1000)], nextCursor: 'same' },
+      { items: [serverItem('stuck-2', 1001)], nextCursor: 'same' },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(stub.requestedPaths.length, 2, 'the pull stops as soon as the cursor stops moving');
+    assert.strictEqual(result.pulled, 2);
   });
 });

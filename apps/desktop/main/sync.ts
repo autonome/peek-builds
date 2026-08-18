@@ -363,6 +363,73 @@ const BULK_PULL_TIMEOUT_MS = 120000;
 // than a bulk pull.
 const BATCH_PUSH_TIMEOUT_MS = 60000;
 
+// How many rows a single `since` pull asks for. The server caps a page at 1000
+// and hands back a cursor for the next one; these sizes keep each response
+// small enough to parse and merge without holding the whole profile in memory,
+// which was the point of paging the pull at all. Items carry content and so get
+// the smallest page; events and tags are narrow rows.
+const ITEMS_PAGE_SIZE = 500;
+const EVENTS_PAGE_SIZE = 1000;
+const TAGS_PAGE_SIZE = 1000;
+
+// A stop against a server that answers every page with the same cursor. Nothing
+// observed does this, but a pull loop that trusts a remote cursor unconditionally
+// is a loop a broken server can pin forever, and a sync run holds the datastore.
+const MAX_PULL_PAGES = 2000;
+
+/**
+ * Walk a `since` pull one page at a time, yielding each page's rows.
+ *
+ * Paging is opt-in on both sides: this asks for `limit` rows and follows the
+ * `nextCursor` the server hands back. A server too old to know either parameter
+ * ignores them, returns the whole set in one body, and sends no `nextCursor` —
+ * so the loop ends after one round trip and the caller sees exactly what it saw
+ * before paging existed. That is what lets a new client talk to the deployed
+ * server without a version bump.
+ *
+ * Rows are yielded per page rather than accumulated, so the caller can merge and
+ * discard each page: a profile that no longer fits in one response does not fit
+ * in one array either.
+ */
+async function* pullPages<T>(
+  serverUrl: string,
+  apiKey: string,
+  basePath: string,
+  key: 'items' | 'events' | 'tags',
+  pageSize: number
+): AsyncGenerator<T[]> {
+  let cursor: string | undefined;
+  let pages = 0;
+
+  while (pages < MAX_PULL_PAGES) {
+    let path = `${basePath}&limit=${pageSize}`;
+    if (cursor) {
+      path += `&cursor=${encodeURIComponent(cursor)}`;
+    }
+
+    const response = await serverFetch<Record<string, T[]> & { nextCursor?: string }>(
+      serverUrl,
+      apiKey,
+      path,
+      { timeoutMs: BULK_PULL_TIMEOUT_MS }
+    );
+    const rows = (response[key] || []) as T[];
+    pages++;
+
+    if (rows.length > 0) {
+      yield rows;
+    }
+
+    const next = response.nextCursor;
+    if (!next || next === cursor || rows.length === 0) {
+      return;
+    }
+    cursor = next;
+  }
+
+  console.warn(`[sync] ${key} pull stopped at ${MAX_PULL_PAGES} pages — server cursor never ended`);
+}
+
 // Items per batched push request. Deliberately below the server's own
 // MAX_ITEMS_PER_PUSH (500) so a chunk is never refused for its size alone, the
 // same relationship MAX_EVENTS_PER_PUSH has to the server's event cap.
@@ -473,33 +540,35 @@ export async function pullFromServer(
 
   // Fetch items from server with profile parameter
   // Use server profile ID (UUID) - the identifier the server uses for this profile
-  let path = '/items';
-  if (since && since > 0) {
-    path = `/items/since/${toISOString(since)}`;
-  }
+  //
+  // A full pull goes through the same `since` route with a timestamp of 0 rather
+  // than through GET /items. Both return the profile, but only the `since` route
+  // pages, and a full pull is the largest body sync ever asks for — the one that
+  // most needs paging. It also always carries tombstones, which GET /items only
+  // does when asked.
+  let path = `/items/since/${since && since > 0 ? toISOString(since) : 0}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
-  // Always include deleted items so tombstones propagate during sync
+  // Kept for a server old enough to route a full pull through GET /items
   path += '&includeDeleted=true';
 
   DEBUG && console.log(`[sync] Fetching from: ${serverUrl}${path}`);
 
-  const response = await serverFetch<{ items: ServerItem[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverItems = response.items;
-
-  DEBUG && console.log(`[sync] Received ${serverItems.length} items from server`);
-
   let pulled = 0;
   let conflicts = 0;
   let skipped = 0;
+  let received = 0;
 
-  for (const serverItem of serverItems) {
-    const result = mergeServerItem(serverItem);
-    if (result === 'pulled') pulled++;
-    if (result === 'conflict') conflicts++;
-    if (result === 'skipped') skipped++;
+  for await (const serverItems of pullPages<ServerItem>(serverUrl, apiKey, path, 'items', ITEMS_PAGE_SIZE)) {
+    received += serverItems.length;
+    for (const serverItem of serverItems) {
+      const result = mergeServerItem(serverItem);
+      if (result === 'pulled') pulled++;
+      if (result === 'conflict') conflicts++;
+      if (result === 'skipped') skipped++;
+    }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} items from server`);
 
   DEBUG && console.log(`[sync] Pull complete: ${pulled} pulled, ${conflicts} conflicts, ${skipped} skipped`);
 
@@ -1481,17 +1550,17 @@ export async function pullEventsFromServer(
   let path = `/events/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ events: ServerEvent[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverEvents = response.events;
-
-  DEBUG && console.log(`[sync] Received ${serverEvents.length} events from server`);
-
   let pulled = 0;
-  for (const serverEvent of serverEvents) {
-    if (mergeServerEvent(serverEvent)) pulled++;
+  let received = 0;
+
+  for await (const serverEvents of pullPages<ServerEvent>(serverUrl, apiKey, path, 'events', EVENTS_PAGE_SIZE)) {
+    received += serverEvents.length;
+    for (const serverEvent of serverEvents) {
+      if (mergeServerEvent(serverEvent)) pulled++;
+    }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} events from server`);
 
   DEBUG && console.log(`[sync] Event pull complete: ${pulled} pulled`);
 
@@ -1769,21 +1838,24 @@ export async function pullTagsFromServer(
   let path = `/tags/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ tags: ServerTag[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverTags = response.tags;
-
-  DEBUG && console.log(`[sync] Received ${serverTags.length} tags from server`);
-
   let pulled = 0;
+  let received = 0;
+  // Pass 2 runs over every tag this pull applied, across all pages: a parent can
+  // arrive on a later page than its child, so parents can only be resolved once
+  // the whole pull has landed.
   const applied: ServerTag[] = [];
-  for (const serverTag of serverTags) {
-    if (mergeServerTag(serverTag)) {
-      pulled++;
-      applied.push(serverTag);
+
+  for await (const serverTags of pullPages<ServerTag>(serverUrl, apiKey, path, 'tags', TAGS_PAGE_SIZE)) {
+    received += serverTags.length;
+    for (const serverTag of serverTags) {
+      if (mergeServerTag(serverTag)) {
+        pulled++;
+        applied.push(serverTag);
+      }
     }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} tags from server`);
 
   for (const serverTag of applied) {
     resolveTagParent(serverTag);
