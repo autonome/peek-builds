@@ -176,7 +176,47 @@ Linux classification does not carry over.
 **Two specs report green while covering much less than their names suggest.**
 `session-restore-page-host` skips 6 of its 8 tests in both runs, and `boot-window-inventory`
 skipped its only test — that one is now split so the fixed boot-count guard runs (see below). The
-`session-restore-page-host` skips are unexamined and are the same shape of hazard.
+`session-restore-page-host` skips are the same shape of hazard, and covering them found a live
+defect (next section).
+
+#### The restore-time maximize seed never reaches the kernel
+
+`session-restore-page-host.spec.ts`'s six skipped tests read geometry off the canvas shell page's
+`?width`/`?height` URL params, and a hybrid page host has no shell page. Hybrid is the only
+page-host architecture that ships, so **bounds and maximize round-trip through save+restore had no
+coverage at all on the architecture that runs.** Four tests now read geometry from the window
+registry instead, which is architecture-independent.
+
+One of them fails, reproducibly: after save+restore, `page:unmaximize` clears the maximized flag
+but leaves the window at the maximized rect. A live control — maximize then unmaximize with no
+save/restore — passes, so unmaximize itself is correct and only a **restored** window is broken.
+
+The cause is the shape §0.1 warns about, in its purest form. `ipc.ts`, at the
+`options.maximized === true` branch of the hybrid window-open path, seeds restore-time maximize
+state with a bare `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That reaches
+the **old machine only**. Every other maximize site pairs its dispatch with a kernel feed —
+`page:maximize` calls `shadowKernelMaximize` alongside its dispatch, `page:unmaximize` calls
+`shadowKernelUnmaximize` — for the stated reason that the kernel is what drives the window manager.
+This site has no pair, and `window-kernel-shadow.ts` has no `shadowKernelMaximizeRestored` to call.
+
+So the old machine holds the saved stash, `window-presenter.ts getHybridPresentation` reads it from
+there, and the registry reports `preMaxBounds` correctly — which is exactly why the sibling test
+that asserts that field passes. **The data is right and the behavior is wrong**, because the fact
+was never fed to the machine that acts on it. A test asserting the stash is present is a pin, not
+evidence that unmaximize works.
+
+The fix is a kernel API addition rather than a patch. The kernel's `Maximize` command stashes
+`rec.bounds`, and at restore time the window's creation bounds ARE the maximized rect, so replaying
+`Maximize` would stash the wrong rect and strand the next unmaximize. The kernel needs a command
+that accepts an **explicit** stash — the same distinction `MAXIMIZE_RESTORED` already draws from
+`MAXIMIZE_REQUESTED` in the old machine. Left unfixed deliberately: it is an addition to the kernel
+surface, and `yarn test:desktop:electron` has still never run over this branch. The failing test
+carries `test.fail()` so the suite stays readable and fails loudly the moment the defect is fixed.
+
+A note for anyone writing waits in these suites: `page.waitForFunction` does **not** await a
+promise its predicate returns, so an async predicate makes the wait resolve on the first tick and
+guard nothing. Use `expect.poll`. The first draft of these tests hit exactly that and reported a
+false timing failure — and the same pattern appears in existing helpers in that file.
 
 Running the unmasked boot guard immediately produced a fact nothing had recorded: the fixed boot
 window set is **4**, not the 3 its comment carried, and the fourth is
