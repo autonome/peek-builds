@@ -91,6 +91,25 @@ No automated check can reach any of these. For each, record what happened, not w
     always-on-top overlay flickering show/hide while the two fight over which one the OS just
     focused.
 
+12. **Focus after a peek or slide closes lands where it should, every time.** Close a peek or a
+    slide (Escape, or Cmd+W) with at least one page-host open behind it, and repeat it several
+    times in a row rather than once — the rule under test arms and disarms per close, so a single
+    clean close proves little. Each time: the window that receives focus must highlight and accept
+    keystrokes **immediately**, with no click needed to wake it, and the shared address bar must
+    stay attached to the page host underneath rather than vanishing or reattaching to something
+    else. Then do the same while a second application is frontmost — close the peek by clicking
+    Peek's window first, so the close and the app-activation arrive close together.
+
+    This is the single most macOS-sensitive rule on the branch
+    (`electron-window-backend.ts pendingHideProvokedFocus`). It declines to report the first focus
+    that arrives after a hide, on the reasoning that the platform reassigned focus as a side effect
+    of the hide rather than the user choosing a window. That reasoning was derived on Linux, where
+    the window manager does reassign focus on hide. **If macOS does not, the arming is instead
+    consumed by a genuine user focus and that focus is silently dropped** — which surfaces exactly
+    as a window that looks focused but ignores typing until clicked, or as the address bar
+    detaching from a page that is plainly frontmost. Either observation is a real finding; report
+    it with the gesture, not as flakiness.
+
 ## What to report back
 
 - Each numbered check, with what was observed.
