@@ -730,13 +730,23 @@ is the intended shape, not a transitional one.
    install. A worker runs on rented compute holding a credential scoped to the user's store, with
    a `network` capability that can reach anywhere. `notes/extensibility.md` already raised
    "exfiltration-proofing for sensitive access" as unresolved for local extensions; a worker
-   sharpens it considerably. `docs/workers-capabilities.md` §9 makes the sequencing explicit —
-   this decision gates how much of the credential vocabulary is worth building, so it should be
-   taken first — and §2.1 records what a credential design does and does not contribute: it can
-   stop a worker exfiltrating its credential, and it cannot stop a worker misusing what it
-   legitimately holds. **Settled by:** a trust decision that is a product decision, not an
-   engineering one — plausibly "workers are builtin-only for a first version," in the manner of
-   `BUILTIN_ONLY_CAPABILITIES` in `tile-manifest.ts`.
+   sharpens it considerably. `docs/workers-capabilities.md` §2.1 records what a credential design
+   does and does not contribute: it can stop a worker exfiltrating its credential, and it cannot
+   stop a worker misusing what it legitimately holds.
+
+   **Settled.** Third-party features can be workers. Publisher verification is what makes that
+   safe, and it already exists: `apps/desktop/main/atproto-verify.ts` verifies a publisher's
+   commit signature against the key active at the commit's `rev` via the PLC audit log, walks the
+   MST to the record, and re-hashes every block, with no unverified fallback. Provenance, not the
+   credential, is the defence against a hostile author.
+
+   The first version is nonetheless **bundled features only**, in the manner of
+   `BUILTIN_ONLY_CAPABILITIES` in `tile-manifest.ts`, with third-party workers layered on after.
+   This is a staging decision, not a narrower trust model, and the difference matters for what
+   gets built: the server-side capability vocabulary in `docs/workers-capabilities.md` §5.3 is
+   **earned**, because third-party workers are the destination. Building it against bundled-only
+   workers is paying early for a threat that is accepted, not designing for one that was never
+   accepted.
 
 4. **Whether cross-feature imports are bundled or resolved.** `feeds/background.js` imports
    `peek://cmd/nouns.js`. Bundling at install time is simpler and matches how

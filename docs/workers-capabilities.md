@@ -677,10 +677,11 @@ All of it is rows, closures and route guards. No cryptography, no new dependency
 7. **One grant per worker.** Never shared between workers, never a device key, never the user key.
    The namespace separation `grants.js` already enforces extends to a third namespace.
 
-Everything above is a precondition for running *anyone's* feature code remotely. If only builtin
-features are ever workers — which `docs/workers-design.md` leaves open as a trust decision — items
-1, 2, 4 and 6 are still worth doing, because they are what makes a mistake in a trusted feature
-bounded rather than total.
+Everything above is a precondition for running *anyone's* feature code remotely, which
+`docs/workers-design.md` settles as the destination: third-party features can be workers, gated on
+the publisher verification in `apps/desktop/main/atproto-verify.ts`. The first version runs bundled
+features only, and during that stage items 1, 2, 4 and 6 carry most of the value, because they are
+what makes a mistake in a trusted feature bounded rather than total.
 
 ### 8.2 Second stage, once a first worker runs
 
@@ -709,13 +710,17 @@ bounded rather than total.
 
 Stated plainly, because a design that only lists benefits has not been thought about.
 
-**The whole exercise is unearned if workers stay builtin-only.** If only features shipped in the
-app can ever be workers, the code holding the credential is code the same people wrote, and a
-capability system defends against in-house bugs rather than against intent. That is still worth
-something — item 4 of §8.1 turns a wrong method call into a `TypeError` instead of a silent 403 —
-but it does not justify the server-side vocabulary work. **The order of decisions therefore
-matters: settle whether third-party features can be workers before building §5.3.** Doing it the
-other way round risks building an authorization vocabulary for a threat nobody accepted.
+**The sequencing risk this section used to raise is closed.** The open question was whether the
+server-side vocabulary of §5.3 defends against a threat anyone had accepted: if only features
+shipped in the app could ever be workers, the code holding the credential is code the same people
+wrote, and a capability system defends against in-house bugs rather than against intent. Third-party
+features can be workers, so the vocabulary is earned and the question of building it against a
+hypothetical threat does not arise.
+
+What remains is a staging cost rather than a design risk. The first version runs bundled features
+only, so the vocabulary is built before the population it defends against exists, and §8.1 item 4
+— a wrong method call surfacing as a `TypeError` rather than a silent 403 — is most of what it buys
+in the interim.
 
 **Per-argument enforcement has a real ongoing cost.** The desktop's version is 215 handlers with
 their checks written by hand, and §1.1 records what that produced: four handlers declaring their
