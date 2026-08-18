@@ -50,7 +50,7 @@ const prefsSchema = {
     "showTrayIcon": {
       "description": "Whether to show app icon in system tray",
       "type": "boolean",
-      "default": true
+      "default": false
     },
     "showInDockAndSwitcher": {
       "description": "Always show in dock/app switcher, even when no windows are open. When disabled, dock icon only appears while windows are visible.",
@@ -174,7 +174,7 @@ const defaults = {
     height: 850,
     width: 1024,
     startupFeature: 'peek://app/settings/settings.html',
-    showTrayIcon: true,
+    showTrayIcon: false,
     showInDockAndSwitcher: true,
     backupDir: '',
     hideTitleBar: true,
