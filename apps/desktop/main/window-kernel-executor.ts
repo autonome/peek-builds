@@ -528,15 +528,18 @@ export class WindowKernelExecutor {
 
   /**
    * `SetStacking` is separated from the rest of the batch and replayed LAST, in
-   * layer bands (§0.1.6): the realization of an order is a re-assert loop —
-   * `moveTop()` bottom-to-top within each layer — not a minimal diff, so it is
-   * idempotent by construction and self-corrects any perturbation the OS made
-   * on its own. Ordering the replay by band (lowest first) and keeping array
-   * order within a band is what "within each layer" means in practice: each
-   * native call only reorders within the window's own level, so a band's
-   * result depends on the relative order of ITS OWN calls and on nothing else.
-   * Cross-band position in `order` is unobservable to the OS, which is exactly
-   * why regrouping the emission is behaviour-preserving.
+   * layer bands (§0.1.6): `moveTop()` bottom-to-top within each layer.
+   * `react` emits a MINIMAL set of these — the smallest trailing run of each
+   * band's order that still reproduces the whole band, not every eligible
+   * window — so this replay is a targeted diff, not a re-assert loop: it no
+   * longer self-corrects a perturbation the OS made on its own, and it
+   * depends on `prev` (the model `react` diffed against) actually matching
+   * what the OS currently has. Ordering the replay by band (lowest first) and
+   * keeping array order within a band is what "within each layer" means in
+   * practice: each native call only reorders within the window's own level,
+   * so a band's result depends on the relative order of ITS OWN calls and on
+   * nothing else. Cross-band position in `order` is unobservable to the OS,
+   * which is exactly why regrouping the emission is behaviour-preserving.
    *
    * Never a read-back: the OS stack is a write-only projection (§0.1.6), so
    * nothing here asks Electron what the current z-order is.
