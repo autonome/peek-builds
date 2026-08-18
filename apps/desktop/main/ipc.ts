@@ -104,6 +104,7 @@ import {
   shadowKernelMaximizeExitedByResize,
   shadowKernelSetBounds,
   shadowKernelMaximize,
+  shadowKernelSeedMaximized,
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
   shadowKernelShowRequested,
@@ -1044,11 +1045,22 @@ function assembleHybridPageHost(
   // driving a SET_BOUNDS, so a later page:unmaximize (and
   // getHybridPresentation / session save) see it (§5 step 7B).
   if (options.maximized === true) {
+    const restoredPreMaxBounds = readPreMaxBounds(options);
     dispatchWindowEvent({
       type: 'MAXIMIZE_RESTORED',
       id: hostMachineId,
-      preMaxBounds: readPreMaxBounds(options),
+      preMaxBounds: restoredPreMaxBounds,
     });
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; the dispatch above only reaches the old machine. The
+    // kernel's `SeedMaximized` carries the SAME saved rect as data, because
+    // replaying `Maximize` here would stash this window's creation bounds —
+    // which already ARE the maximized rect — as the thing to unmaximize back
+    // to. Without this pair the record reached the old machine only, so a
+    // later `page:unmaximize` cleared the flag and left the window at the
+    // maximized rect while `getHybridPresentation` still reported the right
+    // `preMaxBounds` off the old machine: data right, behavior wrong.
+    shadowKernelSeedMaximized(hostMachineId, restoredPreMaxBounds, getWindowStateSnapshot());
   }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this

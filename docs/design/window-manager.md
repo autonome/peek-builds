@@ -41,6 +41,20 @@ calls**. This number — not the table above, not any other prose in this docume
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
+### Open kernel defects
+
+None. The one open defect — the restore-time maximize seed reaching the old machine but not the
+kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and its
+`shadowKernelSeedMaximized` pair, with the previously `test.fail()`-marked spec now passing as an
+ordinary test. Write-up: "The restore-time maximize seed never reached the kernel" below.
+
+What remains open on this branch is not code defects but unrun verification and undiagnosed
+intermittents: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks, none
+recorded as passing), the overlay race present on both platforms (§4.3.1), the
+`session-restore-hybrid-focus` intermittent, the decisions in §0.1.10, and the retirement of
+`window-state.ts` / `window-os-adapter.ts`. `yarn test:desktop:electron` has never run over this
+branch.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,
@@ -231,7 +245,7 @@ skipped its only test — that one is now split so the fixed boot-count guard ru
 `session-restore-page-host` skips are the same shape of hazard, and covering them found a live
 defect (next section).
 
-#### The restore-time maximize seed never reaches the kernel
+#### The restore-time maximize seed never reached the kernel — fixed by `SeedMaximized`
 
 `session-restore-page-host.spec.ts`'s six skipped tests read geometry off the canvas shell page's
 `?width`/`?height` URL params, and a hybrid page host has no shell page. Hybrid is the only
@@ -239,31 +253,45 @@ page-host architecture that ships, so **bounds and maximize round-trip through s
 coverage at all on the architecture that runs.** Four tests now read geometry from the window
 registry instead, which is architecture-independent.
 
-One of them fails, reproducibly: after save+restore, `page:unmaximize` clears the maximized flag
-but leaves the window at the maximized rect. A live control — maximize then unmaximize with no
-save/restore — passes, so unmaximize itself is correct and only a **restored** window is broken.
+One of them failed, reproducibly: after save+restore, `page:unmaximize` cleared the maximized flag
+but left the window at the maximized rect. A live control — maximize then unmaximize with no
+save/restore — passed, so unmaximize itself was correct and only a **restored** window was broken.
 
-The cause is the shape §0.1 warns about, in its purest form. `ipc.ts`, at the
-`options.maximized === true` branch of the hybrid window-open path, seeds restore-time maximize
-state with a bare `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That reaches
+The cause was the shape §0.1 warns about, in its purest form. `ipc.ts`, at the
+`options.maximized === true` branch of the hybrid window-open path, seeded restore-time maximize
+state with a bare `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That reached
 the **old machine only**. Every other maximize site pairs its dispatch with a kernel feed —
 `page:maximize` calls `shadowKernelMaximize` alongside its dispatch, `page:unmaximize` calls
 `shadowKernelUnmaximize` — for the stated reason that the kernel is what drives the window manager.
-This site has no pair, and `window-kernel-shadow.ts` has no `shadowKernelMaximizeRestored` to call.
+That site had no pair, and `window-kernel-shadow.ts` had no entry point to call.
 
-So the old machine holds the saved stash, `window-presenter.ts getHybridPresentation` reads it from
-there, and the registry reports `preMaxBounds` correctly — which is exactly why the sibling test
-that asserts that field passes. **The data is right and the behavior is wrong**, because the fact
-was never fed to the machine that acts on it. A test asserting the stash is present is a pin, not
-evidence that unmaximize works.
+So the old machine held the saved stash, `window-presenter.ts getHybridPresentation` read it from
+there, and the registry reported `preMaxBounds` correctly — which is exactly why the sibling test
+that asserts that field passed throughout. **The data was right and the behavior was wrong**,
+because the fact was never fed to the machine that acts on it. A test asserting the stash is
+present is a pin, not evidence that unmaximize works.
 
-The fix is a kernel API addition rather than a patch. The kernel's `Maximize` command stashes
+The fix was a kernel API addition rather than a patch. The kernel's `Maximize` command stashes
 `rec.bounds`, and at restore time the window's creation bounds ARE the maximized rect, so replaying
-`Maximize` would stash the wrong rect and strand the next unmaximize. The kernel needs a command
-that accepts an **explicit** stash — the same distinction `MAXIMIZE_RESTORED` already draws from
-`MAXIMIZE_REQUESTED` in the old machine. Left unfixed deliberately: it is an addition to the kernel
-surface, and `yarn test:desktop:electron` has still never run over this branch. The failing test
-carries `test.fail()` so the suite stays readable and fails loudly the moment the defect is fixed.
+`Maximize` stashes the maximized rect as the thing to unmaximize back to and strands the next
+unmaximize. The kernel now carries a second command, `SeedMaximized`, taking an **explicit**
+`preMaxBounds` — the same distinction `MAXIMIZE_RESTORED` already draws from `MAXIMIZE_REQUESTED`
+in the old machine. It is a seed and nothing more: `decide` returns a lone
+`Maximized{preMaxBounds}` with no paired `BoundsChanged` (the window is already at that rect) and
+no `PendingProjectionDiscarded` (it matches a record to geometry that already exists rather than
+deciding new geometry), under the same non-`normal` `fsMode` guard `Maximize` carries.
+`shadowKernelSeedMaximized` is the pair for the `ipc.ts` dispatch.
+
+Proven by removing nothing: the spec ran as `test.fail()` while the defect stood, and the fix made
+Playwright report *"Expected to fail, but passed"* — a failing-first proof landing on the intended
+assertion, in one run. The marker is gone and the test is now an ordinary member of the file
+(6 passed / 6 skipped, unchanged otherwise). Three kernel unit tests in `window-kernel.test.ts`
+cover the command, including a negative control asserting that replaying `Maximize` on the same
+state stashes the maximized rect — the reason the command exists rather than a spelling of it.
+`window-kernel-properties.test.ts` does NOT generate `SeedMaximized`: its variant roll is a fixed
+36-way switch whose statistical assertions are measured against the current draw sequence, and
+adding a variant or a sub-roll reshuffles every seed's trajectory for a command whose invariants
+(`preMaxBounds` non-null only while maximized) it would not newly exercise.
 
 A note for anyone writing waits in these suites: `page.waitForFunction` does **not** await a
 promise its predicate returns, so an async predicate makes the wait resolve on the first tick and

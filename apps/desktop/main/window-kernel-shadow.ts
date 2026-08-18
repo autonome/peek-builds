@@ -1069,6 +1069,25 @@ export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot, w
 }
 
 /**
+ * Translate a construction-time maximize seed into the kernel's
+ * `SeedMaximized` command — the pair for `ipc.ts`'s `MAXIMIZE_RESTORED`
+ * dispatch on the hybrid window-open path, which reopen-last-closed and
+ * session restore reach with `maximized: true` plus the saved
+ * `preMaxBounds`. `preMaxBounds` rides the command explicitly because the
+ * window's creation bounds already ARE the maximized rect, so the stash
+ * cannot be derived from the bounds mirror the way `shadowKernelMaximize`
+ * lets `decide` derive it (see the command's own doc). `decide`'s own
+ * branching: `fsMode` non-`normal` -> `[]` (the aa34cb50 family), else a
+ * lone `Maximized{preMaxBounds}` — no snap, no projection discard. None of
+ * that is reproduced here. Same shape and containment as
+ * `shadowKernelMaximize`.
+ */
+export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'SeedMaximized', id, preMaxBounds, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
  * Translate an unmaximize request into the kernel's `Unmaximize` command.
  * `decide`'s own branching: not `maximized` -> `[]` (nothing to restore);
  * else `PendingProjectionDiscarded` + `Unmaximized`, PLUS a `BoundsChanged`

@@ -1084,6 +1084,27 @@ export type Command =
    */
   | { type: 'Maximize'; id: WindowId; workArea?: Rectangle; expectedVersion: number }
   /**
+   * A window was CONSTRUCTED already maximized — reopen-last-closed and
+   * session restore build it at the saved maximized rect — and the record
+   * needs seeding to match (ported from `window-state.ts
+   * MAXIMIZE_RESTORED`). Distinct from `Maximize`, and the distinction is
+   * load-bearing rather than cosmetic: `Maximize` derives the stash from
+   * `rec.bounds`, but at construction time those bounds ALREADY ARE the
+   * maximized rect, so replaying `Maximize` here would stash the maximized
+   * rect as the thing to unmaximize back to. Hence the EXPLICIT
+   * `preMaxBounds`, carried from the saved session data by the caller — the
+   * same distinction `MAXIMIZE_RESTORED` drew from `MAXIMIZE_REQUESTED`.
+   *
+   * Seed only: no paired `BoundsChanged`, because the window is already at
+   * the rect a snap would write. `null` is a legitimate value — a window
+   * saved maximized with no restorable rect behind it. No-op while `fsMode`
+   * is non-normal (the aa34cb50 family, same guard as `Maximize`); NOT
+   * guarded on `rec.maximized`, since re-seeding an already-maximized record
+   * with an explicit stash is the point of the command rather than a
+   * redundant re-snap.
+   */
+  | { type: 'SeedMaximized'; id: WindowId; preMaxBounds: Rectangle | null; expectedVersion: number }
+  /**
    * App code wants this window restored from maximized (ported from
    * `window-state.ts UNMAXIMIZE_REQUESTED`): clears `maximized`, restores
    * `preMaxBounds` when a stash exists. No-op when not maximized.
@@ -3325,6 +3346,23 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           // through. Skipped when the caller had no rect to hand (see the
           // command's own doc for why that is a valid, if inert, request).
           ...(cmd.workArea !== undefined ? ([{ type: 'BoundsChanged', id: cmd.id, bounds: cmd.workArea }] as Event[]) : []),
+        ],
+      };
+    }
+    case 'SeedMaximized': {
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      // Same aa34cb50 guard as Maximize/SetBounds.
+      if (rec.fsMode.name !== 'normal') return { events: [] };
+      return {
+        events: [
+          // The stash comes from the command, NEVER from `rec.bounds` the
+          // way `Maximize` resolves it: at construction time those bounds
+          // are the maximized rect (see the command's own doc). No paired
+          // `BoundsChanged` — the window is already there — and no
+          // `PendingProjectionDiscarded` either: this seeds a record to
+          // match geometry that already exists rather than deciding new
+          // geometry, so a held projection is not superseded by it.
+          { type: 'Maximized', id: cmd.id, preMaxBounds: cmd.preMaxBounds },
         ],
       };
     }

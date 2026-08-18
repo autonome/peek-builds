@@ -983,35 +983,18 @@ test.describe('Session Restore Page Host @desktop', () => {
   });
 
   test('hybrid page host: maximize → save+restore → unmaximize returns to the pre-maximize bounds', async () => {
-    // EXPECTED FAILURE — a real defect, diagnosed, deliberately not fixed here.
-    //
-    // Measured: after save+restore the flag clears but the window stays at the
-    // maximized rect. The control test above passes, so unmaximize restores
-    // bounds correctly on a LIVE window; only a restored one is broken.
-    //
-    // Cause: `ipc.ts`, at the `options.maximized === true` branch of the hybrid
-    // window-open path, seeds the restore-time maximize state with a bare
-    // `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That
-    // reaches the OLD machine only. Every other maximize site pairs its
-    // dispatch with a kernel feed — `page:maximize` calls `shadowKernelMaximize`
-    // alongside it, `page:unmaximize` calls `shadowKernelUnmaximize` — because
-    // the kernel is what drives the window manager. This one site has no such
-    // pair, and `window-kernel-shadow.ts` has no `shadowKernelMaximizeRestored`
-    // to call. So the old machine holds the saved stash, the presenter reads it
-    // from there (which is why the registry reports `preMaxBounds` correctly,
-    // and why the sibling test asserting that field passes), and the kernel —
-    // never told — has nothing to restore when `Unmaximize` arrives.
-    //
-    // Fixing it is a kernel API addition, not a patch: the existing `Maximize`
-    // command stashes `rec.bounds`, and at restore time the window's creation
-    // bounds ARE the maximized rect, so replaying `Maximize` would stash the
-    // wrong rect. The kernel needs a way to accept an EXPLICIT stash — the
-    // same distinction `MAXIMIZE_RESTORED` draws from `MAXIMIZE_REQUESTED` in
-    // the old machine.
-    //
-    // This marker is not a silenced test. It fails the suite the moment the
-    // defect is fixed, which is when it should be removed.
-    test.fail();
+    // Pins the restore-time maximize seed reaching the KERNEL, not just the
+    // old machine. It ran as an expected failure while the seed was a bare
+    // `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …})` in `ipc.ts`: the
+    // flag cleared on unmaximize but the window stayed at the maximized rect,
+    // while the sibling test asserting `preMaxBounds` passed the whole time —
+    // the presenter reads that field off the old machine, so the data looked
+    // right and only the behavior was wrong. The pair is now
+    // `shadowKernelSeedMaximized`, whose `SeedMaximized` command carries the
+    // saved rect EXPLICITLY (replaying `Maximize` would stash the window's
+    // creation bounds, which at restore time already are the maximized rect).
+    // The live control above stays the other half of the pair: it passed
+    // throughout, which is what localized this to restored windows.
 
     const slug = 'hybrid-premax-roundtrip';
     const windowId = await openHybridPageHost(slug);
