@@ -75,14 +75,41 @@ seam that keeps a genuine child alive is `options.declareParent`, which sets the
 `parentId` without touching `isRealParent`; `renderer/cmd/panel.js openChainPopup()` uses it. So a
 chain popup keeps the palette and an opened page dismisses it, which is the intended split.
 
-`izui-escape.spec.ts` now fires the open without awaiting its result, finds the opened window by
-URL, and pins the dismissal after the Escape assertion.
+`izui-escape.spec.ts` now fires the open without awaiting its result, finds the opened window in
+the registry by address, and pins the dismissal after the load-bearing assertions.
 
-**The Escape assertion in that spec is vacuous on macOS-headless, and is not fixed.** Removing
-`'palette'` from `ipc.ts NON_PARENT_ROLES` — the exact defect the spec names — leaves it PASSING.
-Whether `keyboard.press('Escape')` reaches the content window's `before-input-event` without a real
-key window is unestablished. Commit `a4b1b91e` is therefore unguarded on this platform, before and
-after the spec's repair.
+##### The Escape assertion was vacuous for two independent reasons, and the guard is now the classification
+
+Removing `'palette'` from `ipc.ts NON_PARENT_ROLES` — the exact defect the spec names — left the
+spec PASSING. Both causes are structural, and neither is about whether `keyboard.press('Escape')`
+reaches `before-input-event`; that question is moot.
+
+1. **The fixture URL could not carry either role under test.** The spec opened
+   `peek://search/home.html`. `izui-roles.ts inferIzuiRole` gates both `content` and
+   `child-content` on `ctx.isWebPage`, so a `peek://` URL falls through to `workspace`. Measured:
+   the opened window registered `role: 'workspace'`, `parentWindowId: null`. `workspace` is the one
+   role `escPolicy` never closes in any session, so the survival assertion held unconditionally.
+
+2. **The ESC outcome no longer separates `content` from `child-content` in any session.** The live
+   table is `window-state.ts escPolicy`, reached through `decideEscape`. It returns `'nothing'` for
+   `('active', 'child-content')` and `'close'` for BOTH roles under `'transient'`. Its successor
+   `window-escape.ts escapeClosePolicy` agrees. `main.ts` treats the two roles identically at both
+   of its role tests (`isContentRole`, `findWindowByUrl`). No session value tells them apart.
+
+Cause 2 is a behavior drift worth naming on its own: commit `900b0268` deliberately made
+`child-content` close on ESC regardless of session ("ESC means go back to where I came from"), and
+that arm is absent from `window-state.ts escPolicy` and from `window-escape.ts escapeClosePolicy`.
+It was dropped when the policy left `izui-state.ts` and was never restored. Whether to restore it
+is an open decision — see "0.1.10 Decisions and remaining questions".
+
+The guard is therefore the **classification**, which is the only observable that still separates
+the two worlds: the spec asserts the opened window registers `role: 'content'` with
+`parentWindowId: null`. Proven failing-first — with `'palette'` removed from `NON_PARENT_ROLES`
+the pair comes back `{parentWindowId: 5, role: 'child-content'}` and the spec fails on that
+assertion. Commit `a4b1b91e` is guarded again, on the fact it actually changed.
+
+The spec also opens a real `http://127.0.0.1` page from a local server, because that is the only
+way to reach either role at all.
 
 #### The overlay attach regression is fixed
 
@@ -101,6 +128,19 @@ failing subset each time, drawn from `active handoff paints navbar…`, `page-in
 subscription race `gate-baseline.md` names as **overlay race** — the renderer subscribes after
 the handoff is published and the `did-finish-load` re-send never lands — and it is the largest
 single lever on that gate. It is not evidence about the attach rule.
+
+#### The overlay race is closed on macOS, 2026-08-18
+
+Re-measured after rebasing onto `9a9e02a9`, which brought in `c7e9f4a5` (a late subscriber is
+answered by its own declaration), `9dffe56d` (a hide is no longer read as the user picking another
+window) and `93f46d9b` (stacking replays only the windows that must move). Four identical packaged
+runs of the full `hybrid-overlay.spec.ts`, same tree, same command: **45 passed, 45 passed, 45
+passed, 45 passed.** The four-run spread of 4/0/3/2 failures above is gone, and the failing subset
+is empty rather than merely smaller.
+
+That closes the overlay race **on macOS only**. `apps/desktop/tests/gate-baseline.md` is a Linux
+record and cannot be re-recorded from here; its twelve overlay-race rows are now stale and need
+two consecutive Linux gate runs on this tip before the list can be trusted for judging a change.
 
 #### The other four specs
 
@@ -2428,6 +2468,18 @@ only` › `a front change on WINDOW_SHOWN moves front and emits NO raise (the ec
 whose premise disappears because `WindowShown` never writes key in the kernel.
 
 ### 0.1.10 Decisions and remaining questions
+
+**Open, needs a decision: should ESC close a `child-content` window in an active session?**
+Commit `900b0268` deliberately made it do so, off a reported repro — open a page from a group,
+press ESC, expect the page to close and the group to come back. The prior behavior (page stays
+open behind the parent, switcher pops on top, second ESC needed) was reported as feeling like a
+bug. That arm lives in neither of the two current tables: `window-state.ts escPolicy` returns
+`'nothing'` for `('active', 'child-content')`, and `window-escape.ts escapeClosePolicy` agrees. It
+was lost when the policy was ported out of `izui-state.ts`, not removed on purpose, and no test
+covers the difference — `content` and `child-content` are treated identically at every live site,
+including `main.ts`'s `isContentRole` and `findWindowByUrl`. Restoring it means adding a role
+clause ahead of the session branches in whichever table is live at cutover. Leaving it out means
+`900b0268` is reverted in effect and should be recorded as such.
 
 **Decided: one order, and nothing else orders windows.** A background open is placed **below**
 the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.

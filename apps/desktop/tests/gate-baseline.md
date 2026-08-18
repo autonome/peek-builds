@@ -96,7 +96,12 @@ fix; both states have been observed on an unchanged tree.
 
 - **overlay race** — identified by a single diagnostic string: `overlay renderer never became
   usable: moduleReady=…, activeHandoffApplied=…`. Twelve specs share it, which makes it the
-  largest single lever on this gate. The renderer's first-load subscription race this
+  largest single lever on this gate. **These twelve rows are stale as of 2026-08-18 and must be
+  re-recorded on Linux before this file is used to judge a change.** On macOS, four identical
+  packaged runs of the full `hybrid-overlay.spec.ts` at `9a9e02a9` + the three commits above it
+  went 45/45/45/45 with an empty failing subset, against a 4/0/3/2 spread on the prior tip — so
+  `c7e9f4a5` / `9dffe56d` / `93f46d9b` plausibly close this cluster here too. Whether they do is
+  unverified on Linux; macOS evidence does not transfer. The renderer's first-load subscription race this
   diagnostic once named — the handoff publishing before the renderer subscribes, recovered by
   a `did-finish-load` re-send — is closed (`hybrid-overlay.ts wireOverlayReady()` answers the
   renderer's own post-subscribe `page-overlay:ready` declaration instead). This cluster's
