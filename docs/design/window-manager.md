@@ -129,18 +129,65 @@ subscription race `gate-baseline.md` names as **overlay race** — the renderer 
 the handoff is published and the `did-finish-load` re-send never lands — and it is the largest
 single lever on that gate. It is not evidence about the attach rule.
 
-#### The overlay race is closed on macOS, 2026-08-18
+#### The overlay race is present on macOS too — an earlier "closed on macOS" reading was wrong
 
-Re-measured after rebasing onto `9a9e02a9`, which brought in `c7e9f4a5` (a late subscriber is
-answered by its own declaration), `9dffe56d` (a hide is no longer read as the user picking another
-window) and `93f46d9b` (stacking replays only the windows that must move). Four identical packaged
-runs of the full `hybrid-overlay.spec.ts`, same tree, same command: **45 passed, 45 passed, 45
-passed, 45 passed.** The four-run spread of 4/0/3/2 failures above is gone, and the failing subset
-is empty rather than merely smaller.
+**Correction, recorded rather than quietly replaced, because the mistake is instructive.** Eight
+consecutive packaged runs of the full `hybrid-overlay.spec.ts` on macOS came back 45/45 clean —
+four at the tip carrying `c7e9f4a5` / `9dffe56d` / `93f46d9b`, four more after rebasing onto
+`0f1f6e44` — against a 4/0/3/2 failure spread on the tip before those commits. That was read as the
+race being closed on macOS. It is not.
 
-That closes the overlay race **on macOS only**. `apps/desktop/tests/gate-baseline.md` is a Linux
-record and cannot be re-recorded from here; its twelve overlay-race rows are now stale and need
-two consecutive Linux gate runs on this tip before the list can be trusted for judging a change.
+Four further runs against a **freshly built** package at `0f1f6e44` produced **1, 2, 0 and 0
+failures**, failing set nested:
+
+| run | failing set |
+|---|---|
+| 1 | `notes pane loads for the active URL, swaps on retarget, clears on null` |
+| 2 | that, plus `page-info renders the active window data, swaps on retarget, clears on null` |
+| 3 | — |
+| 4 | — |
+
+So the file races on macOS as well, at a visibly lower rate than on Linux — where §4.3.1 measured
+six runs for one clean. The macOS failures land on different tests again (`notes pane`,
+`page-info`) than the Linux ones (`back/forward unblocked`, `Cmd+F forward`), which is the same
+signature §4.3.1 describes: one race that lands on whichever test loses it, not a defect owned by
+any single test.
+
+**The lesson is about the bar, and it is higher than §4.3.1 states.** Four runs was the stated
+minimum; eight consecutive clean runs still produced a false "closed" reading here. For a race at
+this rate, a clean batch is evidence of nothing at all — only a *failing* batch is informative.
+Treat this file as an open race on both platforms until the mechanism is found and fixed, and do
+not let any number of green runs be cited as its closure.
+
+`apps/desktop/tests/gate-baseline.md` is a Linux record and cannot be re-recorded from here; its
+twelve overlay-race rows still need two consecutive Linux gate runs on this tip.
+
+#### A packaged run reports on whatever was last packaged, not on the working tree
+
+`yarn workspace @peek/desktop test:desktop:electron:spec` sets `PACKAGED=1` and runs Playwright.
+It does **not** build. So a packaged run after any source edit silently measures the previous
+package, and reports the difference as a result about the current tree.
+
+Measured, because it produced a convincing false regression: `izui-escape.spec.ts` failed
+deterministically in two packaged runs with `{parentWindowId: 12, role: 'child-content'}` — the
+exact signature of `'palette'` being absent from `ipc.ts NON_PARENT_ROLES`. The working tree was
+correct and the same spec passed 6/6 source-only. The package had been built while that line was
+temporarily reverted during a failing-first proof, and `grep`ing the `.asar` for the literal
+returned **both** spellings across its copies. After a clean rebuild the spec passes 6/6 packaged,
+twice.
+
+Two habits follow. Rebuild before any packaged run that is meant to judge a source change; and
+when a packaged result disagrees with a source-only result, suspect the package before the code —
+`grep -a` the `.asar` for the literal under test settles it in one command.
+
+#### Session-restore focus is intermittent too
+
+`session-restore-hybrid-focus.spec.ts` *"two hybrid pages: the page focused at save is the one
+restore raises (not the other)"* passed in three runs and failed in a fourth, all packaged on the
+same tree. It is not in `apps/desktop/tests/gate-baseline.md` under either list. Undiagnosed, and
+recorded here so it is not rediscovered as new: this is the save/restore focus rule that
+`4f1a974a` fixed, so an intermittent failure there is worth more than its one-in-four rate
+suggests.
 
 #### The other four specs
 
