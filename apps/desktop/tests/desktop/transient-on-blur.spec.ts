@@ -222,11 +222,50 @@ test.describe('Transient on blur auto-hide @desktop', () => {
     await closeWindow(b);
   });
 
-  test('utility focusing does NOT close transient parent (chain popup invariant)', async () => {
+  test('utility that declares the palette as its parent survives the utility focusing (chain popup invariant)', async () => {
     const palette = await openVisibleWindow('palette', 'palette-with-child');
-    const utility = await openVisibleWindow('utility', 'chain-popup-child');
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    // Open the utility (chain popup) window FROM the palette's own renderer —
+    // exactly how `renderer/cmd/panel.js openChainPopup()` calls
+    // `api.window.open(..., { declareParent: true })` — so ipc.ts resolves
+    // `ev.sender` to the palette and records it as the utility's machine-level
+    // `parentId` (window-kernel.ts). `executeJavaScript` runs in the palette's
+    // own main-world context (the same world `contextBridge` exposes
+    // `window.app` into), so the open call's sender genuinely is the palette,
+    // not this test harness.
+    const openResult = await app.evaluateMain<{ success: boolean; id?: number }, number>(
+      (electron, openerId) => {
+        const win = electron.BrowserWindow.fromId(openerId);
+        if (!win) throw new Error(`no BrowserWindow for id=${openerId}`);
+        return win.webContents.executeJavaScript(`
+          window.app.window.open('about:blank', {
+            role: 'utility',
+            modal: true,
+            type: 'panel',
+            width: 400,
+            height: 300,
+            key: 'transient-on-blur-chain-popup-child',
+            show: false,
+            declareParent: true,
+          })
+        `);
+      },
+      palette,
+    );
+    if (!openResult.success || !openResult.id) {
+      throw new Error(`open failed: ${JSON.stringify(openResult)}`);
+    }
+    const utility = openResult.id;
+    const shown = await app.evaluateMain<boolean, number>(
+      (_ctx, wid) => (globalThis as any).__peek_test.showWindow(wid),
+      utility,
+    );
+    if (!shown) throw new Error(`__peek_test.showWindow returned false for id=${utility}`);
+
     // Drive focus to the utility — the production check skips the autoclose
-    // loop entirely when the focuser's role is 'utility'.
+    // loop for the palette ONLY because the utility declares it as its
+    // machine-level parent (`focuser.parentId === rec.id` in
+    // `selectTransientAutoclose`), not because of the utility's role.
     await fireFocus(utility);
     expect(await isVisible(palette)).toBe(true);
     expect(await isVisible(utility)).toBe(true);
@@ -234,14 +273,36 @@ test.describe('Transient on blur auto-hide @desktop', () => {
     await closeWindow(palette);
   });
 
-  test('overlay is exempt from auto-close when a palette focuses', async () => {
-    const overlay = await openVisibleWindow('overlay', 'overlay-protected');
+  test('overlay attached to a host survives a palette focusing (ownership, not role)', async () => {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    // Attach the shared chrome overlay singleton to a fake hybrid host through
+    // the same E2E bridge the hybrid-overlay suite uses (`hybrid-overlay.ts`
+    // `installTestBridge`) — this drives the real `AttachOverlay` command and
+    // its `OverlayAttached` event, which sets `overlayFor` on the overlay's
+    // kernel record (window-kernel.ts `evolve`).
+    const { hostId, overlayId } = await app.evaluateMain<{ hostId: number; overlayId: number }, void>(
+      () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        const hostId = b.makeFakeHybridWindow({ x: 0, y: 0, width: 400, height: 300 });
+        b.setActive(hostId);
+        return { hostId, overlayId: b.overlayState().id };
+      },
+    );
+    expect(await isVisible(overlayId)).toBe(true);
+
     const palette = await openVisibleWindow('palette', 'palette-after-overlay');
-    // Palette focuses → autoclose loop runs but skips overlays explicitly.
+    // Palette focuses → autoclose loop runs but skips the overlay because its
+    // record carries `overlayFor` (attached to the fake host above), not
+    // because its role is 'overlay'.
     await fireFocus(palette);
-    expect(await isVisible(overlay)).toBe(true);
+    expect(await isVisible(overlayId)).toBe(true);
     expect(await isVisible(palette)).toBe(true);
+
     await closeWindow(palette);
-    await closeWindow(overlay);
+    await app.evaluateMain<void, number>((_ctx, id) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive(null);
+      b.destroyFakeHybridWindow(id);
+    }, hostId);
   });
 });

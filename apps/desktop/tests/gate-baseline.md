@@ -178,3 +178,13 @@ Two things are NOT established and should not be read as settled:
   equivalent and prove nothing. The suspicion that it is unrelated rests only on inspection (it
   drives a fetch stub against a fake server URL, and none of the changed files are in its import
   graph), which is an argument, not evidence. A second gate run is what settles it.
+
+The `transient-on-blur.spec.ts:225`/`:237` verdicts above need a correction beyond "pre-existing".
+Both asserted the role-based autoclose exemption (`AUTOCLOSE_FOCUSER_EXEMPT_ROLES` /
+`AUTOCLOSE_EXEMPT_ROLES` in the old `window-state.ts`) that `window-kernel.ts
+selectTransientAutoclose` deliberately does not carry forward — it replaced the role set with an
+ownership relation over `overlayFor` and `parentId`. Neither test staged that relation: the
+chain-popup test opened both windows with no parent link at all, and the overlay test opened a
+plain `role:'overlay'` window with no `AttachOverlay`. Both have been restaged to stage the
+relation the kernel checks (`declareParent` for the parent case, the hybrid-overlay E2E bridge's
+`AttachOverlay` for the attached case) and pass.
