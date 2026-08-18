@@ -148,6 +148,42 @@ Against the packaged build: `session-restore-hybrid-focus` 9 passed, `window-tar
 `session-restore-page-host` 2 passed. `boot-window-inventory` **skipped its only test and is
 evidence for nothing** — a gated skip of that shape reports green while covering nothing.
 
+#### Re-measured on the rebased tip, 2026-08-18
+
+Every load-bearing spec packaged, twice each, on the tip carrying `93f46d9b` (stacking replays
+only the windows that must move) and `9dffe56d` (a hide is no longer read as the user picking
+another window). Two runs, because one cannot tell a deterministic failure from a flake.
+
+| Spec | Run 1 | Run 2 |
+|---|---|---|
+| `session-restore-hybrid-focus` | 2 passed | 2 passed |
+| `window-targeting` | 9 passed | 8 passed, 1 failed |
+| `session-restore-page-host` | 2 passed, 6 skipped | 2 passed, 6 skipped |
+| `boot-window-inventory` | 1 skipped | 1 skipped |
+| `hybrid-content-window-gesture` | 6 passed | 5 passed, 1 failed |
+
+Two intermittents, each failing in exactly one of two identical runs, so neither is a
+deterministic regression and neither is dismissable as noise:
+
+- `window-targeting` → *modal window does not become theme target*
+- `hybrid-content-window-gesture` → *a double-click whose second press drags past slop does NOT
+  maximize (click-drag suppressed)*
+
+Both are undiagnosed. `hybrid-content-window-gesture` carries four rows in
+`gate-baseline.md` under **overlay race**; on macOS it is not deterministically failing, so its
+Linux classification does not carry over.
+
+**Two specs report green while covering much less than their names suggest.**
+`session-restore-page-host` skips 6 of its 8 tests in both runs, and `boot-window-inventory`
+skipped its only test — that one is now split so the fixed boot-count guard runs (see below). The
+`session-restore-page-host` skips are unexamined and are the same shape of hazard.
+
+Running the unmasked boot guard immediately produced a fact nothing had recorded: the fixed boot
+window set is **4**, not the 3 its comment carried, and the fourth is
+`peek://app/page/overlay.html` — the shared chrome overlay, one window for all page-hosts, which
+became a resident boot window after that guard was last observed. Its ceiling was observed+1,
+which is exactly the slack that let the overlay land unnoticed.
+
 #### Live observations, and what they cost to interpret
 
 Observed live at tip `dc1b6051` with `PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true`:
