@@ -1,5 +1,12 @@
 # Desktop Electron gate — failing-spec baseline (Linux)
 
+> **This file records the LINUX failing set only.** A macOS gate run has nothing here to diff
+> against, so "diff the failing set against gate-baseline.md" is not a usable macOS procedure —
+> attribution on macOS means A/B against the tree without the change. The first macOS gate run on
+> `wip/window-kernel-executor` is recorded under "First macOS gate run" at the bottom; it is ONE
+> run and does not meet this file's own two-consecutive-runs bar, so it is an observation rather
+> than a baseline.
+
 `yarn test:desktop:electron` cannot go green on Linux. A portion of its specs assert macOS
 window-server behaviour or headless paint suppression that this platform cannot produce, and a
 further group fails to an overlay-publish defect that is timing-dependent.
@@ -133,3 +140,41 @@ fix; both states have been observed on an unchanged tree.
 Re-record after any change that moves the failing set, and record from at least two consecutive
 runs on an unchanged tree — one run cannot distinguish a deterministic failure from a flake, which
 is the whole reason this file exists.
+
+## First macOS gate run (2026-08-18, one run — an observation, not a baseline)
+
+`yarn test:desktop:electron:bg` on `wip/window-kernel-executor`, macOS arm64, packaged. Exit 1,
+~5.7 min. This is the first time the gate has run over the window-kernel conversion on macOS.
+
+| Runner | Pass | Fail | Skip |
+|---|---|---|---|
+| main-process unit | — | 1 | — |
+| node unit | — | 0 | — |
+| desktop | 428 | 4 | 31 |
+| desktop-serial | 39 | 1 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Failing set, with attribution. Every "pre-existing" verdict is an A/B: the same spec run against a
+build with both same-day window-backend changes reverted (the `win.on('show')` ground-truth guard
+and the `pendingHideProvokedFocus` focused-window gate).
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `transient-on-blur.spec.ts:225` | utility focusing does NOT close transient parent (chain popup invariant) | pre-existing — fails with both changes reverted |
+| `transient-on-blur.spec.ts:237` | overlay is exempt from auto-close when a palette focuses | pre-existing — fails with both changes reverted |
+| `hybrid-transient-on-blur.spec.ts:153` | opening (focusing) a second hybrid quick-view closes the first | pre-existing — 3/3 failing reverted; see `docs/design/window-manager.md` 4.3.2 |
+| `desktop-serial/cmd-noun-commands.spec.ts:228` | new note without content signals editor open | pre-existing — fails with both changes reverted |
+| `hybrid-maximize-state-sync.spec.ts:89` | overlay keeps its maximized flag when a maximized window is switched away and back | **UNATTRIBUTED** — passed reverted, and passes 4/4 at the tip in isolation. Failed only inside the parallel gate, so flake and load-only interaction are not yet separated. |
+| `sync.test.ts` | a failed tag push does not advance the watermark, and the next push retries that tag | **UNATTRIBUTED** — see below |
+
+Two things are NOT established and should not be read as settled:
+
+- **`hybrid-maximize-state-sync.spec.ts:89`** needs a second gate run. Four isolated runs at the
+  tip pass, so it does not reproduce outside the gate's parallelism.
+- **The `sync.test.ts` failure was never validly measured.** The unit runner could not be
+  reproduced standalone: invoked on its own — including with the gate's exact command and cwd — it
+  fails roughly twenty sync tests rather than the one the gate reported, so those runs are not
+  equivalent and prove nothing. The suspicion that it is unrelated rests only on inspection (it
+  drives a fetch stub against a fake server URL, and none of the changed files are in its import
+  graph), which is an argument, not evidence. A second gate run is what settles it.
