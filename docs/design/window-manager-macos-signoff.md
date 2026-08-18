@@ -59,8 +59,12 @@ observations with the gesture that produced them; do not treat them as a pass/fa
 - `E2E_TEST=true` also suppresses the blur self-close for **every** modal window, and installs a
   hidden non-focusable fixture window that shows up as an extra row in any window inventory.
   Expect it; it is not a leak.
-- **Live test pages must be visually distinct.** A restored profile can come back with a dozen
-  identical pages. Use inline `data:` URLs with large unique labels.
+- **Live test pages must be visually distinct, and must be real `http://` URLs.** A restored
+  profile can come back with a dozen identical pages, so each staged page carries a large unique
+  label. `data:` and `peek://` URLs cannot be used for this: `main/izui-roles.ts` `inferIzuiRole`
+  gates the `content` and `child-content` roles on `ctx.isWebPage`, so such a URL can only ever
+  register as `workspace` and will not exercise the page-host paths under test.
+  `scripts/signoff-stage.mjs` serves its two pages over loopback for this reason.
 - **The shared address bar is pointer-driven, not focus-driven.** `overlay.js` shows it on a
   `mousemove` hit-test against the top trigger zone and arms a 400ms hide timer once the pointer
   leaves it; keyboard focus inside the URL field is the only focus that matters otherwise. Any
