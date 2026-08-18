@@ -337,6 +337,17 @@ and its blast radius is its scope tag. The unexpanded-`${VAR}` guard `remote-sto
 implements matters more for a worker than for a local child process, because a worker's
 environment is configured once in a deploy and never seen by a human again.
 
+**That credential is not adequate as it stands, and its replacement has its own document.**
+`scopeTag` plus `readonly` plus `profileId` is the whole authorization vocabulary on `/mcp/*`,
+while the same feature running on the desktop is checked per call against the tables, topics and
+domains its manifest declared. A worker would therefore hold a *less* bounded credential on rented
+compute than it holds on the user's own machine. `docs/workers-capabilities.md` works out what it
+should hold instead — what makes the reference unforgeable, how the manifest's declaration becomes
+the attenuation, how delegation and revocation work, and what has to change in `remote-store.js`,
+`PeekStore` and `apps/server` for "the credential is the authority" to be true rather than
+aspirational. Its conclusion is a narrower grant record rather than a signed token scheme, and it
+gives the reasoning.
+
 ---
 
 ## 7. How a worker's writes get back to devices
@@ -694,32 +705,38 @@ is the intended shape, not a transitional one.
 
 ## 13. Open questions
 
-1. **The generic-table gap is the largest hole in §6.** `api.datastore.getRow` / `setRow` /
-   `getTable` — documented in `docs/api.md` under "Generic Table Access", handled by
-   `tile:datastore:get-table` / `set-row` / `get-row` in `tile-preload.cts` — has no `/mcp/*`
-   equivalent, and `PeekStore` in `apps/desktop/features/mcp-server/store/types.js` does not
-   include it. A feature that keeps state in its own table cannot be a worker.
-   **Settled by:** deciding whether `/mcp/*` grows capability-scoped generic table routes, or
-   whether a worker's datastore is declared items-and-tags-only and features that need more are
-   simply not portable. The second is cheaper and more honest; the first is what several
-   existing features would need.
+1. **The generic-table gap — answered in the companion document.** `docs/workers-capabilities.md`
+   §6 finds the fork was mis-framed: `getRow` / `setRow` / `getTable` reach a *fixed* schema of
+   shared tables rather than feature-owned ones (`createTables` in `tile-manifest.ts` is declared
+   and never consulted), so the question splits in two. Per-worker private state wants
+   `feature_settings`, which is already keyed by feature id and therefore self-confining, ported to
+   `apps/server`. Shared tables get individual routes gated on `capabilities.datastore.tables`,
+   added on demand. **What is left open** is the schema cost — `apps/server` has five tables
+   against the desktop's twenty, and each one a worker needs is a migration plus a sync decision
+   plus a row in `docs/sync-coverage-gaps.md`.
 
 2. **Where `capabilities.network.domains` is enforced for a worker.** On the desktop it is
    checked in `tile-ipc.ts`'s `tile:network:fetch` handler against the grant — and `feeds`
    already routes around it by calling the renderer's own `fetch`. A worker host has no
    privileged position unless it replaces the `fetch` global before importing the module.
-   **Settled by:** deciding whether the host shadows `fetch` (and whether a feature can get the
-   real one back), or whether network gating for workers moves to an egress proxy, or whether it
-   is abandoned and `network` becomes an install-time disclosure rather than a runtime gate.
+   `docs/workers-capabilities.md` §3.3 records this as the one capability whose enforcement sits
+   irreducibly on the untrusted side. **Settled by:** deciding whether the host shadows `fetch`
+   (and whether a feature can get the real one back), or whether network gating for workers moves
+   to an egress proxy, or whether it is abandoned and `network` becomes an install-time disclosure
+   rather than a runtime gate.
 
 3. **Who approves a worker install, and what stops a worker exfiltrating.** A desktop feature
    runs on a machine the user controls, behind a capability gate the user consented to at
-   install. A worker runs on rented compute holding a bearer credential scoped to the user's
-   whole store, with a `network` capability that can reach anywhere. `notes/extensibility.md`
-   already raised "exfiltration-proofing for sensitive access" as unresolved for local
-   extensions; a worker sharpens it considerably. **Settled by:** a trust decision that is a
-   product decision, not an engineering one — plausibly "workers are builtin-only for v1," in
-   the manner of `BUILTIN_ONLY_CAPABILITIES` in `tile-manifest.ts`.
+   install. A worker runs on rented compute holding a credential scoped to the user's store, with
+   a `network` capability that can reach anywhere. `notes/extensibility.md` already raised
+   "exfiltration-proofing for sensitive access" as unresolved for local extensions; a worker
+   sharpens it considerably. `docs/workers-capabilities.md` §9 makes the sequencing explicit —
+   this decision gates how much of the credential vocabulary is worth building, so it should be
+   taken first — and §2.1 records what a credential design does and does not contribute: it can
+   stop a worker exfiltrating its credential, and it cannot stop a worker misusing what it
+   legitimately holds. **Settled by:** a trust decision that is a product decision, not an
+   engineering one — plausibly "workers are builtin-only for a first version," in the manner of
+   `BUILTIN_ONLY_CAPABILITIES` in `tile-manifest.ts`.
 
 4. **Whether cross-feature imports are bundled or resolved.** `feeds/background.js` imports
    `peek://cmd/nouns.js`. Bundling at install time is simpler and matches how
