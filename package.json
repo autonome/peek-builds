@@ -111,6 +111,7 @@
     "test:sync:ios": "./scripts/ios-sync-test.sh",
     "test:sync:e2e:mobile": "cargo test --manifest-path apps/mobile/peek-core/Cargo.toml --test sync_e2e_mobile -- --ignored --nocapture --test-threads=1",
     "test:version-compat": "node packages/integration-tests/sync-version-compat.test.js",
+    "test:sync:all": "yarn test:sync && yarn test:sync:three-way && yarn test:version-compat && yarn test:sync:e2e",
     "test:version-compat:e2e": "./scripts/version-compat-e2e.sh",
     "test:e2e:version": "./scripts/e2e-version-test.sh",
     "test:e2e:version:phase": "./scripts/e2e-version-test.sh --phase",
