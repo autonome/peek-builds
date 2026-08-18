@@ -357,6 +357,17 @@ const DEFAULT_FETCH_TIMEOUT_MS = 15000;
 // raising the default everywhere.
 const BULK_PULL_TIMEOUT_MS = 120000;
 
+// A batched item push carries hundreds of items' content in one body, so it is a
+// bulk request too — but one the server writes rather than reads, and one that
+// is retried harmlessly next run if it does time out, so it gets a smaller budget
+// than a bulk pull.
+const BATCH_PUSH_TIMEOUT_MS = 60000;
+
+// Items per batched push request. Deliberately below the server's own
+// MAX_ITEMS_PER_PUSH (500) so a chunk is never refused for its size alone, the
+// same relationship MAX_EVENTS_PER_PUSH has to the server's event cap.
+const MAX_ITEMS_PER_BATCH = 250;
+
 /**
  * Make an authenticated request to the sync server.
  * Sends version headers and checks server's response version headers.
@@ -804,29 +815,24 @@ export async function pushToServer(
   let lastProgressCount = 0;
   let lastProgressAt = Date.now();
 
-  for (const item of items) {
-    try {
-      await pushSingleItem(serverUrl, apiKey, item);
-      pushed++;
-    } catch (error) {
-      const message = (error as Error).message;
-      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
-      failed++;
-      // A 4xx means the server looked at this exact row and refused it, so the
-      // same body next run cannot do better — park it until the item itself
-      // changes. Anything else is the server or the link being unavailable,
-      // which an unchanged retry can clear on its own.
-      if (isPermanentPushFailure(message)) {
-        parkRejectedItem(item.id, item.updatedAt, message);
-      }
-      const ids = failuresByReason.get(message);
-      if (ids) {
-        ids.push(item.id);
-      } else {
-        failuresByReason.set(message, [item.id]);
-      }
+  const recordFailure = (item: Item, message: string, permanent: boolean): void => {
+    failed++;
+    // A 4xx means the server looked at this exact row and refused it, so the
+    // same body next run cannot do better — park it until the item itself
+    // changes. Anything else is the server or the link being unavailable,
+    // which an unchanged retry can clear on its own.
+    if (permanent) {
+      parkRejectedItem(item.id, item.updatedAt, message);
     }
+    const ids = failuresByReason.get(message);
+    if (ids) {
+      ids.push(item.id);
+    } else {
+      failuresByReason.set(message, [item.id]);
+    }
+  };
 
+  const reportProgress = (): void => {
     const done = pushed + failed;
     const now = Date.now();
     if (
@@ -837,6 +843,117 @@ export async function pushToServer(
       lastProgressCount = done;
       lastProgressAt = now;
     }
+  };
+
+  const pushOne = async (item: Item): Promise<void> => {
+    try {
+      await pushSingleItem(serverUrl, apiKey, item);
+      pushed++;
+    } catch (error) {
+      const message = (error as Error).message;
+      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
+      recordFailure(item, message, isPermanentPushFailure(message));
+    }
+    reportProgress();
+  };
+
+  /**
+   * Record what the server said about each item in a delivered chunk. One
+   * transaction for the whole chunk: 500 separate UPDATEs would be 500 fsyncs,
+   * which would hand back the cost the batching just removed.
+   */
+  const applyBatchResults = (chunk: Item[], results: ItemBatchResultRow[]): void => {
+    const byLocalId = new Map(chunk.map((item) => [item.id, item]));
+    const answered = new Set<string>();
+    const now = Date.now();
+    db.exec('BEGIN');
+    try {
+      for (const result of results) {
+        const item = result.localId ? byLocalId.get(result.localId) : undefined;
+        if (!item) continue;
+        answered.add(item.id);
+        if (result.id) {
+          db.prepare(`
+            UPDATE items SET syncId = ?, syncedAt = ?, syncError = '', syncErrorAt = 0 WHERE id = ?
+          `).run(result.id, now, item.id);
+          pushed++;
+        } else {
+          // Spelled exactly as serverFetch() would have thrown it on the
+          // single-item route, so the same rejection groups into one log line
+          // however the item happened to travel.
+          recordFailure(item, `Server error 400: ${JSON.stringify({ error: result.error })}`, true);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    // An item the response said nothing about was not confirmed stored, so it
+    // must stay eligible rather than be counted as sent.
+    for (const item of chunk) {
+      if (!answered.has(item.id)) {
+        recordFailure(item, 'No result for this item in the batch response', false);
+      }
+    }
+  };
+
+  // An image's payload is base64 in `content`, so batching images would build a
+  // body of unbounded size — the server refuses them per row for the same
+  // reason. They keep the one-request-per-item route.
+  const batchable = items.filter((item) => item.type !== 'image');
+  const singles = items.filter((item) => item.type === 'image');
+
+  // Set when the server answers 404 — it predates the batch route, so the rest of
+  // this run goes back to one request per item. No version negotiation to keep in
+  // step: the fallback costs one wasted request per run against an old server.
+  let batchUnsupported = false;
+
+  if (batchable.length > 0) {
+    const chunkCount = Math.ceil(batchable.length / MAX_ITEMS_PER_BATCH);
+    logSyncProgress(
+      'push-items',
+      'progress',
+      `Pushing ${batchable.length} item(s) in ${chunkCount} batch(es) of up to ${MAX_ITEMS_PER_BATCH}`
+    );
+  }
+
+  for (let i = 0; i < batchable.length; i += MAX_ITEMS_PER_BATCH) {
+    const chunk = batchable.slice(i, i + MAX_ITEMS_PER_BATCH);
+
+    if (batchUnsupported) {
+      for (const item of chunk) {
+        await pushOne(item);
+      }
+      continue;
+    }
+
+    try {
+      applyBatchResults(chunk, await pushItemsBatch(serverUrl, apiKey, chunk));
+      reportProgress();
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message.startsWith('Server error 404:')) {
+        batchUnsupported = true;
+        DEBUG && console.log('[sync] Server has no batch item route, falling back to one request per item');
+        logSyncProgress('push-items', 'progress', 'Server has no batch route — pushing one item at a time');
+        for (const item of chunk) {
+          await pushOne(item);
+        }
+      } else {
+        // The chunk never landed, and a chunk-level failure says nothing about
+        // any single row in it — so nothing here is parked.
+        DEBUG && console.log(`[sync] Item batch failed (${chunk.length} items), will retry next run:`, message);
+        for (const item of chunk) {
+          recordFailure(item, message, false);
+        }
+        reportProgress();
+      }
+    }
+  }
+
+  for (const item of singles) {
+    await pushOne(item);
   }
 
   // Always emit one final progress entry with the true final count, even
@@ -869,29 +986,39 @@ export async function pushToServer(
   return { pushed, failed };
 }
 
+interface ItemPushBody {
+  type: string;
+  content?: string | null;
+  tags: string[];
+  metadata?: Record<string, unknown>;
+  sync_id?: string;
+  localId: string;
+  deletedAt?: number;
+  starred: number;
+  archived: number;
+  title: string;
+  domain: string;
+  favicon: string;
+  visitCount: number;
+  lastVisitAt: number;
+  frecencyScore: number;
+  mimeType: string;
+  createdAt: number;
+}
+
 /**
- * Push a single item to the server
+ * The wire body for one item, shared by both push routes so a batched item and a
+ * singly-pushed one are byte-identical to the server.
+ *
+ * `localId` is the client's own row id. The batch route echoes it back in that
+ * item's result, which is how the caller knows which local row a returned server
+ * id belongs to; the single-item route ignores it, since its response is already
+ * about the one item it was given.
  */
-async function pushSingleItem(
-  serverUrl: string,
-  apiKey: string,
-  item: Item
-): Promise<void> {
-  const db = getDb();
-
-  // Get active profile to determine which server profile to sync with
-  const activeProfile = getActiveProfile();
-  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
-
-  if (!profileSyncConfig) {
-    throw new Error('Sync not configured for active profile');
-  }
-
-  // Get tags for this item
+function buildItemPushBody(item: Item): ItemPushBody {
   const tags = getItemTags(item.id);
   const tagNames = tags.map((t: Tag) => t.name);
 
-  // Parse metadata
   let metadata: Record<string, unknown> | null = null;
   if (item.metadata && item.metadata !== '{}') {
     try {
@@ -901,29 +1028,12 @@ async function pushSingleItem(
     }
   }
 
-  // Build request body
-  const body: {
-    type: string;
-    content?: string | null;
-    tags: string[];
-    metadata?: Record<string, unknown>;
-    sync_id?: string;
-    deletedAt?: number;
-    starred: number;
-    archived: number;
-    title: string;
-    domain: string;
-    favicon: string;
-    visitCount: number;
-    lastVisitAt: number;
-    frecencyScore: number;
-    mimeType: string;
-    createdAt: number;
-  } = {
+  const body: ItemPushBody = {
     type: item.type,
     content: item.content,
     tags: tagNames,
     sync_id: item.syncId || item.id,  // Use existing syncId or local id
+    localId: item.id,
     starred: item.starred,
     archived: item.archived,
     title: item.title,
@@ -945,6 +1055,73 @@ async function pushSingleItem(
   if (item.deletedAt > 0) {
     body.deletedAt = item.deletedAt;
   }
+
+  return body;
+}
+
+/** One item's verdict in a batch response: a server id, or the reason it was refused. */
+interface ItemBatchResultRow {
+  localId?: string;
+  id?: string;
+  error?: string;
+}
+
+/**
+ * Push a chunk of items in ONE request, returning the server's per-item verdicts.
+ *
+ * The server refuses an unacceptable row on its own rather than rejecting the
+ * whole chunk (unlike POST /events), so a caller has to read every result — a
+ * 2xx here does not mean every item in the chunk was stored.
+ */
+async function pushItemsBatch(
+  serverUrl: string,
+  apiKey: string,
+  items: Item[]
+): Promise<ItemBatchResultRow[]> {
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const path = `/items/batch?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+  const response = await serverFetch<{ received: number; saved: number; results: ItemBatchResultRow[] }>(
+    serverUrl,
+    apiKey,
+    path,
+    {
+      method: 'POST',
+      body: { items: items.map(buildItemPushBody) },
+      // A chunk carries hundreds of items' content, so it is a bulk body on the
+      // wire even though each row is small — the default per-item budget is for
+      // a single row's round-trip.
+      timeoutMs: BATCH_PUSH_TIMEOUT_MS,
+    }
+  );
+
+  return Array.isArray(response.results) ? response.results : [];
+}
+
+/**
+ * Push a single item to the server
+ */
+async function pushSingleItem(
+  serverUrl: string,
+  apiKey: string,
+  item: Item
+): Promise<void> {
+  const db = getDb();
+
+  // Get active profile to determine which server profile to sync with
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const body = buildItemPushBody(item);
 
   // POST to server with profile parameter
   // Use server profile ID (UUID) - the identifier the server uses for this profile

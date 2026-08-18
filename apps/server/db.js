@@ -1255,6 +1255,45 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
  * @param {Array<{id: string, itemId: string, content?: string|null, value?: number|null, occurredAt: number, metadata?: object|string|null, createdAt: number}>} events
  * @returns {{saved: number, total: number}}
  */
+/**
+ * Save many items in ONE transaction, returning a per-item result in the order
+ * they arrived. The caller (POST /items/batch) has already validated each row;
+ * anything that still throws is recorded against that row alone and the rest of
+ * the batch continues, so one bad item cannot cost the other 499.
+ *
+ * Same persistence as saveItem() — this is a transaction wrapper around it, not
+ * a second implementation, so syncId matching, tag upserts and tombstones behave
+ * identically whichever route an item arrives on. The win is entirely in the
+ * fsync: one transaction and one HTTP request for a chunk, instead of one of
+ * each per item (a full re-push was ~11k sequential requests, about 25 minutes).
+ */
+function saveItems(userId, profileId, items, deviceId = "") {
+  const conn = getConnection(userId, profileId);
+  const results = [];
+  conn.transaction(() => {
+    for (const it of items) {
+      try {
+        const id = saveItem(
+          userId, it.type, it.content || null, it.tags || [], it.metadata ?? null,
+          it.syncId, profileId, it.deletedAt, deviceId,
+          it.title, it.domain, it.frecencyScore, it.starred, it.archived,
+          {
+            favicon: it.favicon,
+            visitCount: it.visitCount,
+            lastVisitAt: it.lastVisitAt,
+            mimeType: it.mimeType,
+            createdAt: it.createdAt,
+          }
+        );
+        results.push({ localId: it.localId, id, created: true });
+      } catch (e) {
+        results.push({ localId: it.localId, error: e.message });
+      }
+    }
+  });
+  return results;
+}
+
 function saveEvents(userId, profileId, events) {
   const conn = getConnection(userId, profileId);
   let saved = 0;
@@ -1520,6 +1559,7 @@ module.exports = {
   deleteItem,
   updateItemTags,
   // Event sync
+  saveItems,
   saveEvents,
   getEventsSince,
   // Tag metadata sync

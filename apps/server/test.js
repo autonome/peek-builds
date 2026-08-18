@@ -2617,6 +2617,135 @@ describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPE
 // Coverage for item_events sync: append-only observations backing series/feed
 // items. Exercises the real production app (`require("./index").app`), same
 // convention as the POST /items real-route suite above.
+// A full push used to be one HTTP request per item — roughly 11k sequential
+// requests for a real datastore. This route takes a chunk at a time, in one
+// transaction, and reports per row: the identity work (syncId matching, the
+// server id coming back) has to survive batching, and one unacceptable item must
+// not cost the rest of the chunk.
+describe("POST /items/batch — batched item push", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "batchpushuser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function pushBatch(items) {
+    const res = await app.request("/items/batch", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ items }),
+    });
+    return { status: res.status, json: await res.json() };
+  }
+
+  async function fetchItems() {
+    const res = await app.request("/items", { headers: authHeaders() });
+    const json = await res.json();
+    return json.items;
+  }
+
+  it("saves every item in one request and returns a server id per item", async () => {
+    const { status, json } = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/one", title: "One" },
+      { localId: "l2", syncId: "l2", type: "url", content: "https://example.com/two", title: "Two" },
+      { localId: "l3", syncId: "l3", type: "text", content: "a note" },
+    ]);
+
+    assert.strictEqual(status, 200);
+    assert.strictEqual(json.received, 3);
+    assert.strictEqual(json.saved, 3);
+    assert.strictEqual(json.results.length, 3);
+    for (const result of json.results) {
+      assert.ok(result.id, `every accepted item must come back with a server id: ${JSON.stringify(result)}`);
+      assert.ok(result.localId, "and with the client's own row id, so the client can record it against the right row");
+    }
+    assert.strictEqual((await fetchItems()).length, 3);
+  });
+
+  it("reports one unacceptable item against itself and still saves the rest", async () => {
+    const { json } = await pushBatch([
+      { localId: "good-1", syncId: "good-1", type: "url", content: "https://example.com/good" },
+      { localId: "bad-1", syncId: "bad-1", type: "url", content: "" },
+      { localId: "good-2", syncId: "good-2", type: "url", content: "https://example.com/also-good" },
+    ]);
+
+    assert.strictEqual(json.saved, 2, "the two acceptable items must be stored");
+    const bad = json.results.find((r) => r.localId === "bad-1");
+    assert.ok(bad.error.includes("content is required"), `the bad row must carry its own reason; got ${JSON.stringify(bad)}`);
+    assert.strictEqual(bad.id, undefined, "and no server id, since nothing was stored for it");
+    assert.strictEqual((await fetchItems()).length, 2);
+  });
+
+  it("matches an existing row by the server id the first push returned, instead of duplicating it", async () => {
+    const first = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/one", title: "First title" },
+    ]);
+    const serverId = first.json.results[0].id;
+
+    const second = await pushBatch([
+      { localId: "l1", syncId: serverId, type: "url", content: "https://example.com/one", title: "Second title" },
+    ]);
+
+    assert.strictEqual(second.json.results[0].id, serverId, "the same row must come back, not a new one");
+    const items = await fetchItems();
+    assert.strictEqual(items.length, 1, "a re-push through the batch route must not duplicate the row");
+    assert.strictEqual(items[0].title, "Second title", "and it must actually apply the update");
+  });
+
+  it("refuses an image rather than building an unbounded body, and says so per row", async () => {
+    const { json } = await pushBatch([
+      { localId: "img-1", syncId: "img-1", type: "image", content: "aGVsbG8=", filename: "x.png", mime: "image/png" },
+      { localId: "txt-1", syncId: "txt-1", type: "text", content: "a note" },
+    ]);
+
+    const image = json.results.find((r) => r.localId === "img-1");
+    assert.ok(image.error.includes("one at a time"), `got ${JSON.stringify(image)}`);
+    assert.strictEqual(json.saved, 1, "the non-image item must still be stored");
+  });
+
+  it("rejects a batch larger than the cap, and an empty one", async () => {
+    const tooMany = Array.from({ length: 501 }, (_, i) => ({
+      localId: `l${i}`, syncId: `l${i}`, type: "text", content: `note ${i}`,
+    }));
+    const over = await pushBatch(tooMany);
+    assert.strictEqual(over.status, 400);
+    assert.ok(over.json.error.includes("at most"), over.json.error);
+
+    const empty = await pushBatch([]);
+    assert.strictEqual(empty.status, 400);
+  });
+
+  it("applies a tombstone through the batch route", async () => {
+    const first = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/gone" },
+    ]);
+    const serverId = first.json.results[0].id;
+
+    await pushBatch([
+      { localId: "l1", syncId: serverId, type: "url", content: "https://example.com/gone", deletedAt: Date.now() },
+    ]);
+
+    assert.strictEqual((await fetchItems()).length, 0, "a deleted item must not come back from GET /items");
+  });
+});
+
 describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () => {
   let app;
   let users;

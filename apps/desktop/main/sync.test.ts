@@ -525,6 +525,11 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     // defaults to 500 (transient) when omitted. Lets a test drive a 4xx
     // (permanent, per isPermanentPushFailure()) failure through the same stub.
     itemPushStatusFor?: (bodyText: string) => number;
+    // Answers POST /items/batch with a 404, the way a server predating that
+    // route does, so the push falls back to one request per item. The two hooks
+    // above describe ONE item's fate, and only the single-item route can express
+    // that — a batched chunk gets one status for all 250 of it.
+    noBatchRoute?: boolean;
   } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
@@ -542,6 +547,10 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       const reqPath = url.replace(FAKE_SERVER_URL, '');
       const method = init.method || 'GET';
       const bodyText = typeof init.body === 'string' ? init.body : '';
+
+      if (opts.noBatchRoute && method === 'POST' && reqPath.startsWith('/items/batch')) {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      }
 
       if (opts.itemPushFailureFor && method === 'POST' && reqPath.startsWith('/items')) {
         const failMessage = opts.itemPushFailureFor(bodyText);
@@ -717,6 +726,9 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     const PERMANENT_MARKER = 'permanent-marker';
     const TRANSIENT_MARKER = 'transient-marker';
     const { apiKey } = setup('item-fail-mixed-permanence', {
+      // Per-item statuses, so the single-item route: one batched chunk carrying
+      // both markers could only come back with one status for both.
+      noBatchRoute: true,
       itemPushFailureFor: (bodyText) =>
         bodyText.includes(PERMANENT_MARKER)
           ? `content is required for type 'text'`
@@ -798,6 +810,9 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
   it('item pushes failing with DIFFERENT errors produce one entry per distinct reason, capped with a rolled-up tail', async () => {
     let counter = 0;
     const { apiKey } = setup('item-fail-different-reasons', {
+      // A distinct reason per item needs a request per item — batched, all 40
+      // would share one chunk-level failure and one log line.
+      noBatchRoute: true,
       itemPushFailureFor: () => `distinct push failure #${counter++}`,
     });
 
@@ -1642,6 +1657,17 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         VALUES (?, 'text', 'bulk vs default item', '{}', '', 0, ?, ?, 0)
       `).run('local-bulk-vs-default-item', now, now);
 
+      // Force the single-item fallback: a batched push has its own, larger
+      // budget, and the per-item one is what this assertion is about.
+      const delayedFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+        const url = typeof input === 'string' ? input : String(input);
+        if (url.replace(FAKE_SERVER_URL, '').startsWith('/items/batch')) {
+          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+        }
+        return delayedFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+
       // pushToServer isolates per-item failures rather than throwing (see its
       // own doc comment), so the same artificial delay that the bulk pull
       // above survived shows up here as a counted failure, not a rejection.
@@ -1686,7 +1712,33 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         VALUES (?, 'text', 'timeout selection item', '{}', '', 0, ?, ?, 0)
       `).run('local-timeout-selection-item', now, now);
       await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
-      assert.deepStrictEqual(scaled.requestedTimeouts, [15000], 'a per-item push must request the default budget');
+      assert.deepStrictEqual(
+        scaled.requestedTimeouts,
+        [60000],
+        'a batched item push carries hundreds of items in one body, so it must request the batch budget'
+      );
+      scaled.requestedTimeouts.length = 0;
+
+      // Against a server with no batch route: the 404 comes back on the batch
+      // budget, and each item then goes out on the default one.
+      globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+        const url = typeof input === 'string' ? input : String(input);
+        const reqPath = url.replace(FAKE_SERVER_URL, '');
+        if (reqPath.startsWith('/items/batch')) {
+          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+        }
+        return serverApp.request(reqPath, { method: init.method || 'GET', headers: init.headers, body: init.body });
+      }) as typeof fetch;
+      db.prepare(`
+        INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+        VALUES (?, 'text', 'timeout fallback item', '{}', '', 0, ?, ?, 0)
+      `).run('local-timeout-fallback-item', now, now);
+      await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+      assert.deepStrictEqual(
+        scaled.requestedTimeouts,
+        [60000, 15000],
+        'the batch attempt asks for the batch budget; the per-item fallback asks for the default'
+      );
     } finally {
       scaled.restore();
     }
@@ -1953,6 +2005,139 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
     assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
     assert.strictEqual(eventPushedAt(), 0, 'server-URL-change reset must clear every event delivery stamp — a different server has none of them');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
+  });
+});
+
+describe('Batched item push — one request per chunk, not per item', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  /**
+   * Records the path of every POST the push makes, so a test can assert how many
+   * requests a set of items actually cost — the whole point of batching. With
+   * `noBatchRoute`, POST /items/batch answers 404 the way a server predating the
+   * route does.
+   */
+  function setup(name: string, opts: { noBatchRoute?: boolean } = {}) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-batch-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `batch-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    const posts: string[] = [];
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      if (method === 'POST') {
+        posts.push(reqPath.split('?')[0]);
+      }
+      if (opts.noBatchRoute && method === 'POST' && reqPath.startsWith('/items/batch')) {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      }
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey, posts };
+  }
+
+  function insertItems(prefix: string, count: number): void {
+    const db = datastore.getDb();
+    const now = Date.now();
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < count; i++) {
+      insert.run(`${prefix}-${i}`, `note ${i}`, now, now);
+    }
+  }
+
+  it('sends a whole chunk in one request and records the server id returned for each item', async () => {
+    const { apiKey, posts } = setup('one-request');
+    insertItems('local-batched-item', 5);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 5, failed: 0 });
+    assert.deepStrictEqual(
+      posts.filter((p) => p === '/items/batch').length,
+      1,
+      `five items must cost ONE request, not five: ${JSON.stringify(posts)}`
+    );
+    assert.strictEqual(posts.filter((p) => p === '/items').length, 0, 'nothing should have gone out on the single-item route');
+
+    const unsynced = datastore.getDb().prepare(`
+      SELECT COUNT(*) as count FROM items WHERE syncId = '' OR syncedAt = 0
+    `).get() as { count: number };
+    assert.strictEqual(unsynced.count, 0, 'every item must have recorded the server id the batch returned');
+  });
+
+  it('falls back to one request per item against a server that has no batch route', async () => {
+    const { apiKey, posts } = setup('fallback', { noBatchRoute: true });
+    insertItems('local-fallback-item', 3);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 3, failed: 0 }, 'an old server must still receive every item');
+    assert.strictEqual(posts.filter((p) => p === '/items').length, 3, 'one request per item on the fallback path');
+    assert.strictEqual(
+      posts.filter((p) => p === '/items/batch').length,
+      1,
+      'the batch route is tried once and not again for the rest of the run'
+    );
+  });
+
+  it('parks only the row the server refuses, and stores the rest of the chunk', async () => {
+    const { apiKey } = setup('partial-rejection');
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'a fine note', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-good-1', now, now);
+    // A url item with no content: the server refuses it per row, in a chunk
+    // whose other items it accepts.
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', '', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-bad', now, now);
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'another fine note', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-good-2', now, now);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 2, failed: 1 }, 'one refused row must not cost the rest of the chunk');
+
+    const parked = db.prepare('SELECT syncError, syncErrorAt FROM items WHERE id = ?').get('local-batch-bad') as
+      { syncError: string; syncErrorAt: number };
+    assert.ok(parked.syncError.includes('content is required'), `the refused row must be parked with its reason; got ${JSON.stringify(parked.syncError)}`);
+    assert.strictEqual(parked.syncErrorAt, now);
+
+    for (const id of ['local-batch-good-1', 'local-batch-good-2']) {
+      const stored = db.prepare('SELECT syncId, syncError FROM items WHERE id = ?').get(id) as
+        { syncId: string; syncError: string };
+      assert.notStrictEqual(stored.syncId, '', `${id} must have been stored and its server id recorded`);
+      assert.strictEqual(stored.syncError, '', `${id} must not be parked because a different row was refused`);
+    }
   });
 });
 

@@ -690,6 +690,79 @@ app.post("/items", async (c) => {
   return c.json({ id, type, created: true });
 });
 
+// One request per item is what a full push used to cost: roughly 11k sequential
+// round-trips for a real datastore, about 25 minutes on a normal connection, while
+// the event push moved 24k rows in under a minute because it batches. Capped well
+// under the event cap because an item body is far larger than an event's.
+const MAX_ITEMS_PER_PUSH = 500;
+
+// Batch item push. Unlike POST /events, a bad row does NOT reject the whole batch:
+// items carry per-row identity the client has to record (the server's row id comes
+// back and becomes the client's syncId), and one unacceptable item among 500 must
+// not cost the other 499 — that shape is what turned a single malformed event into
+// a permanently stalled event stage before it was fixed client-side.
+//
+// The response is per-item and positional-by-localId: each entry carries the
+// client's own row id back, so the client can record the server id against the
+// right local row without depending on ordering.
+//
+// A client talking to a server that predates this route gets a 404 and falls back
+// to POST /items per item, so there is no version negotiation to keep in step.
+app.post("/items/batch", async (c) => {
+  const userId = c.get("userId");
+  const deviceId = c.get("deviceId") || "";
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const items = Array.isArray(body.items) ? body.items : [];
+
+  if (items.length === 0) {
+    return c.json({ error: "items array is required" }, 400);
+  }
+  if (items.length > MAX_ITEMS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_ITEMS_PER_PUSH} items per push` }, 400);
+  }
+
+  // Same per-row rules POST /items applies to a single item, applied here before
+  // anything is written, so a rejected row is reported as its own result instead
+  // of throwing mid-transaction.
+  const acceptable = [];
+  const results = [];
+  for (const it of items) {
+    const syncId = it.syncId || it.sync_id || null;
+    const deletedAt = it.deletedAt || it.deleted_at || null;
+    const localId = it.localId || syncId;
+    if (!it.type || !SYNCABLE_ITEM_TYPES.includes(it.type)) {
+      results.push({ localId, error: `type must be one of: ${SYNCABLE_ITEM_TYPES.join(", ")}` });
+      continue;
+    }
+    if (CONTENT_REQUIRED_TYPES.includes(it.type) && !it.content) {
+      results.push({ localId, error: `content is required for type '${it.type}'` });
+      continue;
+    }
+    if (it.type === "tagset" && (!it.tags || it.tags.length === 0)) {
+      results.push({ localId, error: "tags are required for type 'tagset'" });
+      continue;
+    }
+    // An image's payload is base64 in `content` and goes through saveImage(), with
+    // its own size limit — batching those would build a body of unbounded size, so
+    // they stay on the single-item route.
+    if (it.type === "image") {
+      results.push({ localId, error: "type 'image' must be pushed one at a time" });
+      continue;
+    }
+    acceptable.push({ ...it, syncId, deletedAt, localId, tags: it.tags || [] });
+  }
+
+  if (acceptable.length > 0) {
+    results.push(...db.saveItems(userId, profileId, acceptable, deviceId));
+  }
+
+  const saved = results.filter((r) => r.id).length;
+  console.log(`=== Sync Batch Received === user=${userId} profile=${profileId} items=${items.length} saved=${saved}`);
+
+  return c.json({ received: items.length, saved, results });
+});
+
 app.get("/items", (c) => {
   const userId = c.get("userId");
   const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
