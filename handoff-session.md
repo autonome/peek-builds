@@ -4,10 +4,14 @@ Covers work through 2026-08-18. Two other handoffs exist and are NOT this one:
 `handoff.md` belongs to the window-manager initiative, and `handoff-mcp.md` is the
 standing reference for the MCP remote backend design and its known gaps.
 
+**This track lives in `.worktrees/sync`, on branch `sync`.** Work there, not in the
+primary checkout — the primary checkout stays on `main` and is not worked in. Every
+commit through `d3cfbc98` predates that rule and landed on `main` directly; the branch
+starts from it, so nothing is missing.
+
 **`.worktrees/fsm-window-kernel`, `.worktrees/bg-run-tmp-paths` and
 `.worktrees/spindles-review` belong to other initiatives.** Nothing here touches them.
-Do not edit, rebase, or reclaim them. This track works directly in the primary
-checkout on `main`.
+Do not edit, rebase, or reclaim them.
 
 ## Resume Here
 
