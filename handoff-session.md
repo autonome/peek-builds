@@ -1,8 +1,8 @@
 # Handoff — sync coverage and the datastore/server track
 
 Covers work through 2026-08-18. Two other handoffs exist and are NOT this one:
-`handoff.md` belongs to the window-manager initiative, and `handoff-mcp.md` is the
-standing reference for the MCP remote backend design and its known gaps.
+`handoff-mcp.md` is the standing reference for the MCP remote backend design and its
+known gaps, and `handoff-mcp-seam.md` covers the MCP seam work.
 
 **This track lives in `.worktrees/sync`, on branch `sync`.** Work there, not in the
 primary checkout, which stays on `main`.
@@ -17,116 +17,75 @@ primary checkout, which stays on `main`.
 Everything in the datastore must reach the server, so that losing a device loses
 nothing.
 
-Sync coverage for items, events and tags is complete and proven against production.
-**The next work is not more sync features — it is the test foundation.** The
-end-to-end suite that exercises the real desktop sync module against a real server
-over HTTP has been failing 11 of 13 tests since 2026-06-24, which means every recent
-sync change landed on suites that cannot see a whole class of breakage. Restore that
-suite, and establish what the remaining suites do and do not cover, before building
-anything further on top.
+Sync coverage for items, events and tags is complete and proven against production,
+the test foundation under it is repaired and documented, and the bulk pull is paged.
+**Every remaining step on this track needs a human first.** Nothing here should be
+started until the four questions in Next Steps are answered — they gate the gate run,
+the deploy, the mobile build and the dispatch loop respectively, and there is no
+unblocked sync work left behind them.
 
 ### Current state
 
-Five commits sit on `sync`, ahead of `main`, unlanded:
+Thirteen commits sit on `sync`, ahead of `main`, unlanded. The seven from this
+session:
 
-- `ca55f2ae` — event push tracks delivery per event in `item_events.pushedAt`,
-  replacing a single global watermark that one unsyncable item could pin forever
-  (every run re-pushed 24,000 events; measured live).
-- `0234630d` — tests for that column's migration and backfill.
-- `e17ed401` — an item the server permanently rejects is parked (`items.syncError`,
-  `items.syncErrorAt`) instead of retried on every run forever.
-- `64c5df6b` — item push batches through `POST /items/batch` instead of one HTTP
-  request per item, with a 404 fallback to the old route.
-- `740cffea` — `docs/sync.md` and `apps/server/README.md` describe the batched push.
+- `fe14a3e6` — the end-to-end suite addresses one server profile from both sides. It
+  had been 2 passed / 11 failed since 2026-06-24 because its own `serverRequest()`
+  sent no `profile` param (resolving the legacy slug `"default"`) while the sync
+  module sent the desktop's local profile UUID, and an unregistered UUID gets its own
+  isolated profile. Now 13/13.
+- `93cf0b5e` — `docs/sync-coverage-gaps.md` section 8: what each of the five sync
+  suites exercises for real and what is invisible to it by construction. Adds
+  `yarn test:sync:all`.
+- `dc19ffd0` — the two end-to-end cases that printed a pass on every path replaced
+  with real assertions: a deletion tombstone reaching the server, and an item the
+  server permanently rejects being parked and then un-parked by an edit.
+- `0a6e8216` — the three `since` routes accept `limit` and hand back `nextCursor`;
+  the desktop's three pull loops follow it, merging page by page. A full pull now
+  goes through `/items/since/0` instead of `GET /items`.
+- `ad9d6495` — a note being typed in stays open when the notes pane rebuilds.
+- `48c89956` — the coverage audit's per-suite counts refreshed for the paged-pull
+  cases.
+- `78e7a0fd` — an edited note's preview shows the new text immediately instead of
+  the pre-edit text.
 
-Unit and route coverage is green across the board (see How to verify). Two things
-about that are unverified rather than passing:
+The six older ones (`ca55f2ae`, `0234630d`, `e17ed401`, `64c5df6b`, `740cffea`,
+`4aeecd1d`) carry per-event push tracking in `item_events.pushedAt`, the parked-item
+columns, the batched item push through `POST /items/batch`, and their docs.
+
+Everything in How to verify is green. Two things are unverified rather than passing:
 
 - **The full Electron gate has not been run on this branch.** Two datastore
-  migrations and the whole item-push path changed. `apps/desktop/CLAUDE.md` forbids
-  launching it without explicit human approval.
-- **The server changes are not deployed.** `POST /items/batch` exists only in this
-  branch; production still has the single-item route. That is safe — the client
-  probes once per run, gets a 404, and pushes the old way — so the desktop can ship
-  first, but the batching does nothing until the server goes up.
-
-**`yarn test:sync:e2e` is 2 passed / 11 failed, and was already failing before any
-of the work above** (confirmed by stashing every change and re-running). One root
-cause, in the harness, not in the client or the server:
-
-`packages/integration-tests/sync-e2e.test.js` talks to the server through two paths
-that land in two different server-side profile buckets. Its own `serverRequest()`
-sends no `profile` query param, so `apps/server/index.js` resolves the legacy slug
-`"default"`. The real sync module always sends `?profile=<serverProfileId>`, and
-`initDesktopDatastore()` passes the desktop's own locally-generated profile UUID as
-that `serverProfileId` — an id the server has never seen. Since `a448079c`
-(2026-06-24) `apps/server/users.js resolveProfileId()` gives an unregistered UUID its
-own isolated profile instead of silently falling back to `"default"`, which was a
-cross-profile data leak. So anything written through one path is invisible to the
-other, and every test that mixes them fails. The two that pass use only one path.
-
-The sibling suite `packages/integration-tests/sync-three-way.test.js` was updated for
-that contract the day after it changed (`4f917fb1`) — it registers a real profile via
-`POST /profiles` and uses the returned UUID on both sides. `sync-e2e.test.js` never
-got the equivalent change.
+  migrations, the whole item-push path, the pull path and a renderer panel changed.
+  `apps/desktop/CLAUDE.md` forbids launching it without explicit human approval.
+- **The server changes are not deployed.** `POST /items/batch` and the `limit`/
+  `cursor` parameters exist only in this branch. That is safe in both directions —
+  the client probes the batch route once per run and falls back on a 404, and a
+  server that ignores `limit` returns one unpaged page with no cursor, which ends the
+  client's loop after one round trip — so the desktop can ship first, but neither
+  change does anything until the server goes up.
 
 ### Next steps
 
-Ordered. Steps 1 and 2 gate everything below them: no further sync feature work
-until the test foundation is known-good, because a suite that cannot fail is a
-suite that hides the regression the next change introduces.
+**Steps 1 through 4 are questions, not work.** Ask all four at the start of the
+session and wait for the answers before starting anything, including the steps
+below them: step 5 needs the same production authorization, and steps 6 and 7 are
+follow-on work that should not begin while the branch is unproven by the gate and
+undeployed.
 
-1. **Repair `packages/integration-tests/sync-e2e.test.js` so both sides address the
-   same server profile.** Two directions, either localized to that file:
-   register a real server profile via `POST /profiles` and use the returned UUID in
-   both `initDesktopDatastore()`'s `enableSync()` call and `serverRequest()` (what
-   `sync-three-way.test.js createServerProfile()` already does, and the better
-   model), or pass the literal slug `'default'` as `enableSync()`'s third argument to
-   match what `serverRequest()` implicitly resolves to. Do NOT change
-   `apps/server/users.js resolveProfileId()` — its isolation of unknown UUIDs is a
-   deliberate data-leak fix.
-
-   Expected result: 13 passed, 0 failed. Anything still red after the profile fix is
-   a second, unrelated fault and needs its own diagnosis — several of these tests
-   have never been observed passing on this machine.
-
-2. **Audit what the sync suites actually cover, and write it down.** The point is to
-   know which failures each suite can and cannot see, so a green run means something.
-   At minimum, for each of `apps/desktop/main/sync.test.ts`,
-   `packages/integration-tests/sync-e2e.test.js`,
-   `packages/integration-tests/sync-integration.test.js`,
-   `packages/integration-tests/sync-three-way.test.js` and
-   `packages/integration-tests/sync-version-compat.test.js`: does it run, what does it
-   exercise, and what class of fault is structurally invisible to it. One known
-   example to record — `sync.test.ts` stubs `globalThis.fetch` straight into the
-   server module in-process, so it is internally consistent by construction and can
-   never catch two independently-configured HTTP clients disagreeing, which is
-   exactly the bug in step 1. Record the result in `docs/sync-coverage-gaps.md`
-   (which already carries the per-entity coverage story) rather than in this handoff.
-
-   Also decide, and record, whether any of these suites should run in the desktop
-   gate or a pre-commit hook. Today nothing runs them automatically, which is why a
-   June breakage surfaced in August.
-
-3. **Run the full Electron gate on this branch and diff the failing spec set against
+1. **Run the full Electron gate on this branch and diff the failing spec set against
    `apps/desktop/tests/gate-baseline.md`** — never against the failure count, which
    moves between identical runs.
    **blocked on: approval to run the gate** (it pins the CPU and pops up windows;
    `apps/desktop/CLAUDE.md` requires asking).
 
-4. **Deploy the server so the batched item push takes effect.**
+2. **Deploy the server so the batched push and the paged pull take effect.**
    `railway up ./apps/server --path-as-root --service peek-node --detach -m "<what
-   changed>"` from the repo root. Ships `POST /items/batch` plus `db.js saveItems()`.
+   changed>"` from the repo root. Ships `POST /items/batch`, `db.js saveItems()`, and
+   `limit`/`cursor` on the three `since` routes.
    **blocked on: authorization to deploy to production.**
 
-5. **Paginate the bulk pull.** `/items/since/:timestamp` returns the entire profile
-   in one body — 9.91 MB measured, unbounded as the datastore grows. The 120 s
-   timeout only buys time. Touches the three `since` routes in `apps/server/index.js`
-   and `pullFromServer`, `pullEventsFromServer`, `pullTagsFromServer` in
-   `apps/desktop/main/sync.ts`, and needs a version story so an old client still
-   works. This is the last piece of the push/pull performance work.
-
-6. **Ship a mobile build.** The phone is locked out of `/items` entirely until a
+3. **Ship a mobile build.** The phone is locked out of `/items` entirely until a
    version-3 build ships: the shipped iOS build sends
    `X-Peek-Datastore-Version: 1` and `checkVersionHeaders()` in
    `apps/server/index.js` 409s it. Profile registration is not behind that check,
@@ -142,28 +101,37 @@ suite that hides the regression the next change introduces.
    phone's pending count before and after.
    **blocked on: the Mac, which holds the iOS build environment and Xcode.**
 
-7. **Keep the notes panel's editor open when something else changes.** Any subscribed
-   pubsub event (`item:created`, `tag:item-added`, `sync:pull-completed`, …) makes
-   `page-notes.js _reload()` rebuild the pane's whole DOM. Removing the focused
-   textarea fires its blur handler, which saves and then sets `_editingId = null`, so
-   an open note closes mid-typing and focus and caret are lost. **The text is NOT
-   lost** — measured with a live probe. So this is an interruption, not data loss.
+4. **Bootstrap the dispatch loop.** Needs Peek's MCP wired into this repo, which
+   needs an MCP grant minted via `POST /admin/mcp-grants` (a production write
+   creating a credential; the admin token is set and the route exists). No Peek
+   datastore exists on this machine, so it must ride on the remote backend.
+   `.claude/skills/dispatch/operating.md` covers the loop wiring and the autonomy
+   ladder. **blocked on: authorization to mint an MCP grant, plus the scope tag it
+   should be limited to and whether it is read-only.**
 
-   A fix has to keep `_editingId` alive across a rebuild (the blur that the removal
-   fires must save without closing) and restore the caret afterwards, which needs the
-   in-progress value and selection held in pane state. An attempt that held the value
-   and caret but left the blur handler clearing `_editingId` was reverted for changing
-   nothing observable.
+Once those are answered, the work that remains on this track, in order:
 
-8. **Give the restore path a production rehearsal.** Backups are proven readable and
+5. **Give the restore path a production rehearsal.** Backups are proven readable and
    the download route works against real data, but nothing has ever restored one.
    Until an archive is put back and verified, a backup is proven as an archive and
    unproven as recovery. Backups also still live on the same Railway volume as the
    live database with a 7-deep purge, so they do not protect against volume loss —
    the download route is the first half of fixing that; nothing pulls them off-box on
-   a schedule.
+   a schedule. `docs/server-backup-and-deploy.md` → the "Restoring an archive"
+   section has the route, its body, dry run, ordering, WAL handling and retention.
+   **blocked on: authorization to write to production, since a rehearsal restores
+   into the live server.**
 
-9. **Sync `rules` — still deferred until something can write a user rule.** There are
+6. **Close the gaps the coverage audit names**, listed in
+   `docs/sync-coverage-gaps.md` → the "The gaps this leaves" subsection of section 8:
+   no suite exercises the tag or event stages over a real socket, none exercises real
+   authentication end to end (the end-to-end suite spawns the server with
+   `E2E_TEST=true`, which short-circuits `apps/server/auth.js`), `item_events.pushedAt`
+   and the `POST /items/batch` 404 fallback are proven only in-process, and
+   `sync-version-compat.test.js` asserts version-bump behaviour against a copy of
+   `datastore.ts checkAndWriteDatastoreVersion()` rather than the real one.
+
+7. **Sync `rules` — still deferred until something can write a user rule.** There are
    zero `source='user'` rows and no code path that creates one; `tile:rules:register`
    hardcodes `source: 'runtime'` and there is no rule editor. All existing rules are
    `source='manifest'` and regenerate, so they must not sync. Two constraints the rule
@@ -174,27 +142,19 @@ suite that hides the regression the next change introduces.
    Separately, `scriptId` resolution fails silently — a synced rule naming a script the
    other device lacks never fires and logs nothing.
 
-10. **Bootstrap the dispatch loop.** Needs Peek's MCP wired into this repo, which
-    needs an MCP grant minted via `POST /admin/mcp-grants` (a production write
-    creating a credential; the admin token is set and the route exists). No Peek
-    datastore exists on this machine, so it must ride on the remote backend.
-    `.claude/skills/dispatch/operating.md` covers the loop wiring and the autonomy
-    ladder. **blocked on: authorization to mint an MCP grant, plus the scope tag it
-    should be limited to and whether it is read-only.**
-
 ### Key files & symbols
 
-- `packages/integration-tests/sync-e2e.test.js` — `initDesktopDatastore()` calls
-  `enableSync(activeProfile.id, apiKey, activeProfile.id)`, passing a local UUID as
-  the server profile id; `serverRequest()` sends no `profile` param at all. **That
-  disagreement is the whole of step 1.**
-- `packages/integration-tests/sync-three-way.test.js` — `createServerProfile()` and
-  `clientRequest()`: the working pattern to copy.
-- `apps/server/users.js resolveProfileId()` — an unregistered UUID gets its own
-  isolated profile. **Deliberate (a cross-profile data-leak fix, `a448079c`); do not
-  revert it to make a test pass.**
 - `apps/desktop/main/sync.ts` — `syncAll()` runs six stages: pull tags, pull items,
   pull events, push tags, push items, push events.
+  - `pullPages()` walks a `since` pull one page at a time, yielding each page's rows
+    so the caller merges and discards rather than accumulating the profile. It stops
+    on a missing `nextCursor`, an empty page, a repeated cursor, or `MAX_PULL_PAGES`.
+    **Paging is opt-in on both sides — a server that ignores `limit` ends the loop
+    after one request, which is what lets this ship before the server does.**
+  - `pullFromServer()` uses `/items/since/0` for a full pull, not `GET /items`.
+    **Consequence: a row whose `updatedAt` is missing or unparseable reads as 0 and is
+    never returned.** Every write path stamps `updatedAt`, so this bites legacy rows
+    only.
   - `pushToServer()` batches through `pushItemsBatch()` in chunks of
     `MAX_ITEMS_PER_BATCH` (250), applies each chunk's per-row verdicts in one local
     transaction, and falls back to `pushSingleItem()` for the rest of the run on a
@@ -211,38 +171,55 @@ suite that hides the regression the next change introduces.
     version bump or items duplicate.** It also clears `pushedAt` and the park columns.
   - `serverFetch()` carries `timeoutMs` (`DEFAULT_FETCH_TIMEOUT_MS` 15 s,
     `BATCH_PUSH_TIMEOUT_MS` 60 s, `BULK_PULL_TIMEOUT_MS` 120 s).
-- `apps/server/index.js` — `POST /items/batch` validates per row and never rejects a
-  whole chunk over one bad item, unlike `POST /events`. `checkVersionHeaders()` is
-  mounted on `/items` and `/items/*` ONLY, so a version-mismatched client still
-  reaches `/events` and `/tags`.
-- `apps/server/db.js` — `saveItems()` wraps `saveItem()` in one transaction and
-  returns a per-row result. `saveItem()` matches a pushed item by server row id, then
-  by the `syncId` column. **No content fallback; syncId is canonical.**
+- `apps/server/index.js` — `resolvePageOptions()` and `nextCursorFor()` are shared by
+  the three `since` routes; `MAX_SYNC_PAGE` is 1000. A bad `limit` or an undecodable
+  `cursor` is a 400, deliberately, rather than a silent restart from the beginning.
+  `POST /items/batch` validates per row and never rejects a whole chunk over one bad
+  item, unlike `POST /events`. `checkVersionHeaders()` is mounted on `/items` and
+  `/items/*` ONLY, so a version-mismatched client still reaches `/events` and `/tags`.
+- `apps/server/db.js` — `encodeCursor()` / `decodeCursor()` / `appendCursorClause()`
+  back the keyset scan. **The cursor carries the last row's timestamp AND id; rows
+  share a millisecond, and a timestamp-only cursor either skips the rest of that
+  group or repeats it forever.** `saveItems()` wraps `saveItem()` in one transaction
+  and returns a per-row result; `saveItem()` matches a pushed item by server row id,
+  then by the `syncId` column. **No content fallback; syncId is canonical.**
+- `apps/server/users.js resolveProfileId()` — an unregistered UUID gets its own
+  isolated profile. **Deliberate (a cross-profile data-leak fix, `a448079c`); do not
+  revert it to make a test pass.**
 - `apps/desktop/main/datastore.ts` — `migrateEventPushedAtColumn()` adds
   `item_events.pushedAt` and backfills from the retired watermark;
   `migrateItemSyncErrorColumns()` adds the park columns. Both are gated on the column
   being absent, which is what makes the backfill one-shot.
+- `apps/desktop/renderer/page/page-notes.js` — `_render()` sets `_rebuilding` while it
+  replaces the pane's DOM, `_captureOpenEditor()` snapshots the open editor's text and
+  caret, and the textarea's `blur` handler keeps the note open when `_rebuilding` is
+  set. Its closing branch also writes the new text onto the in-memory note before
+  re-rendering, because `_render()` reads `this._notes` and the datastore save is
+  fire-and-forget. **Chrome fires that blur while the textarea is still in the document, so
+  `isConnected` cannot distinguish a rebuild from the user leaving — the flag is the
+  only signal that works.** Verified by live trace, not by reasoning.
 - `apps/desktop/tests/gate-baseline.md` — the failing-spec baseline; diff against it
   rather than reading the gate's failure count.
-- `docs/sync-coverage-gaps.md` → the "`item_events` now syncs, stamped per event"
-  section — why per-row delivery replaced a watermark.
-- `docs/server-backup-and-deploy.md` → the "Restoring an archive" section — the
-  restore route, its body, dry run, ordering, WAL handling and retention.
+- `docs/sync-coverage-gaps.md` → section 8, "What the sync test suites can and cannot
+  catch" — per suite: what is real, which stages it touches, what it cannot see.
+- `docs/sync.md` → the "Paging a pull" section — the cursor contract and its
+  compatibility story.
 
 ### How to verify
 
 ```
-yarn test:sync:e2e                                                  # 2/13 today; 13 after step 1
-yarn test:sync                                                      # 9
-yarn server:test                                                    # 235
+yarn test:sync:all                                                  # 9 + 8 + 16 + 13
+yarn server:test                                                    # 245
 node --test apps/server/test-backup.js apps/server/test-restore.js  # 52
 node --test packages/schema/fidelity.test.js                        # 32 pass, 0 fail, 9 skip
 node packages/schema/check-freshness.js                             # all fresh
 node --test packages/sync/test.js                                   # 96
 npx tsc -p apps/desktop/tsconfig.json --noEmit                      # clean
-yarn build && node --test apps/desktop/dist/main/sync.test.js       # 38
+yarn build && node --test apps/desktop/dist/main/sync.test.js       # 41
 node --test apps/desktop/dist/main/datastore.test.js                # 45
 NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js         # 743
+yarn test:grep 'an open note survives a reload'                     # 1 passed
+yarn test:grep 'leaving a note still closes it'                     # 1 passed
 ```
 
 `yarn test:desktop:electron` is the full gate, takes ~15 minutes and pins the CPU.
@@ -308,8 +285,9 @@ dependencies only — without it the desktop sync tests fail with `Cannot find m
   order rather than invoking the registered closure**, because `tile-ipc.ts` imports
   `electron` statically, which throws at parse time outside a live Electron process.
   They prove the stages deliver; they would not catch a rewiring of `tile-ipc.ts`
-  itself. The settings panel's live status line and log have no automated coverage at
-  all for the same reason. Both belong in the step 2 audit.
+  itself. Recorded in `docs/sync-coverage-gaps.md` section 8. The settings panel's
+  live status line and log have no automated coverage at all for the same reason, and
+  that one is not recorded anywhere else.
 - **A sync library was reviewed and rejected.** ElectricSQL, PowerSync and Zero all
   require Postgres, which this server is not. Zero and Evolu have no Rust client, so
   `apps/mobile/peek-core` could not speak them; Automerge's Rust and JS
