@@ -1,16 +1,38 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import http from 'http';
 
 test.describe('IZUI Escape Protocol @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
+  let server: http.Server;
+  let serverPort: number;
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('izui-escape'));
+
+    // A resolvable local page for the palette-opener test. That test needs a
+    // window `izui-roles.ts inferIzuiRole` can classify as `content` /
+    // `child-content`, and both arms require `ctx.isWebPage` — a `peek://` URL
+    // falls through to `workspace` and can never carry either role. The URL
+    // must also resolve: the hybrid page-host branch awaits the content WC's
+    // `loadURL` and reports `{success:false}` when that navigation fails.
+    await new Promise<void>((resolve) => {
+      server = http.createServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<!DOCTYPE html><html><head><title>opened</title></head><body>opened</body></html>');
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        serverPort = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve();
+      });
+    });
   });
 
   test.afterAll(async () => {
+    if (server) server.close();
     if (app) await app.close();
   });
 
@@ -272,14 +294,6 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
     expect(stillAlive).toBe(true);
 
-    // Secondary, and asserted AFTER the guard above so a regression in the
-    // guard fails on the guard rather than here: the palette was dismissed
-    // when the opened page took key. If `ipc.ts NON_PARENT_ROLES` ever stops
-    // excluding the palette, the opened page becomes its child and this
-    // inverts — but `stillAlive` above fails first, which is the intended
-    // signal.
-    await expect.poll(() => paletteWindow.isClosed(), { timeout: 5000 }).toBe(true);
-
     // Clean up
     for (const id of [contentResult.id, workspaceResult.id]) {
       if (id) {
@@ -294,19 +308,39 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     }
   });
 
-  test('regression: ESC on a page opened FROM a palette-role opener does NOT close it (full backend path)', async () => {
-    // Symptom of the bug this test guards: with Peek focused, ESC closes
-    // web pages the user opened via the cmd panel. Root cause was that
-    // `isRealParent` in window-open treated any opener that wasn't bg
-    // (peek://app/background.html) as a real content parent — including
-    // the cmd palette. URLs opened from a palette were then classified
-    // as `role: 'child-content'`, and `escPolicy('active', 'child-content')`
-    // returns `'close'`. The fix excludes openers whose role is one of
-    // {palette, utility, overlay, quick-view} from the real-parent test.
+  test('regression: a page opened FROM a palette-role opener is classified content, never child-content', async () => {
+    // Symptom of the bug this guards: with Peek focused, ESC closed web pages
+    // the user opened via the cmd panel. Root cause was that `isRealParent` in
+    // window-open treated any opener that wasn't bg (peek://app/background.html)
+    // as a real content parent — including the cmd palette. URLs opened from a
+    // palette were then classified `role: 'child-content'`, which at the time
+    // closed on ESC in every session. The fix (`ipc.ts NON_PARENT_ROLES`)
+    // excludes launcher roles from the real-parent test.
     //
-    // This test exercises the full backend ESC chain via keyboard.press —
-    // unlike the renderer-only tests above, which call app.escape.trigger
-    // and don't reach the escPolicy code path.
+    // WHAT THIS TEST ASSERTS, AND WHY IT IS NOT THE ESC OUTCOME.
+    //
+    // The classification is the only remaining observable that separates the
+    // fixed world from the broken one. The ESC outcome no longer does, in any
+    // session: `window-state.ts escPolicy` — the live table, reached through
+    // `decideEscape` — returns `'nothing'` for ('active', 'child-content') and
+    // `'close'` for BOTH 'content' and 'child-content' under 'transient', so no
+    // session value tells the two roles apart. `900b0268`'s "child-content
+    // always closes regardless of session" arm is absent from that table and
+    // from its successor `window-escape.ts escapeClosePolicy`; it was dropped
+    // when the policy was ported out of `izui-state.ts` and never restored.
+    // `main.ts` treats the two roles identically at both of its role tests.
+    //
+    // So an ESC assertion here passes whatever the classification is, which is
+    // what made the previous version of this test vacuous — it survived
+    // `'palette'` being deleted from `NON_PARENT_ROLES`, the exact defect it
+    // names. Asserting the role instead fails on that deletion.
+    //
+    // The URL opened below must be http(s). `izui-roles.ts inferIzuiRole` gates
+    // both 'content' and 'child-content' on `ctx.isWebPage`; a `peek://` URL
+    // falls through to 'workspace', which the ESC table never closes in any
+    // session. The previous version opened `peek://search/home.html` and so
+    // could not reach either role — a second, independent reason it proved
+    // nothing.
 
     // Open a palette-role window via bg. This stands in for the cmd panel
     // (app/cmd/background.js opens itself with role: 'palette').
@@ -322,8 +356,9 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     expect(paletteWindow).toBeTruthy();
     await paletteWindow.waitForLoadState('domcontentloaded');
 
-    // From the palette window, open a content URL. Under the bug, the
-    // opened window would be tagged child-content; under the fix, content.
+    // From the palette window, open a web URL. Under the bug the opened window
+    // is tagged child-content with the palette as parentWindowId; under the fix
+    // it is content with no parent.
     //
     // The palette does NOT survive this open, and that is the specified
     // behaviour rather than a defect: the opened page takes key, and
@@ -337,39 +372,58 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     //
     // So the open is fired WITHOUT awaiting its result: the evaluate's own
     // page is destroyed mid-call, which rejects the promise. The opened
-    // window is found by URL instead.
+    // window is found in the registry by address instead.
+    const openedUrl = `http://127.0.0.1:${serverPort}/`;
     await paletteWindow
-      .evaluate(() => {
-        void (window as any).app.window.open('peek://search/home.html', {
-          width: 400,
-          height: 300,
-        });
-      })
+      .evaluate((u: string) => {
+        void (window as any).app.window.open(u, { width: 400, height: 300 });
+      }, openedUrl)
       .catch(() => {
         // Expected: the palette is dismissed as the opened page takes key.
       });
 
-    const contentWindow = await app.getWindow('search/home.html', 5000);
-    expect(contentWindow).toBeTruthy();
-    await contentWindow.waitForLoadState('domcontentloaded');
+    // Poll rather than sleep: the open was not awaited, so the only signal that
+    // registration happened is the window appearing in the registry. A web URL
+    // lands on the hybrid page-host branch (a BaseWindow), which Playwright
+    // never exposes as a Page — the registry is the only way to read it.
+    let opened: { id: number; params: Record<string, unknown> } | null = null;
+    for (let i = 0; i < 50 && opened === null; i++) {
+      opened = await bgWindow.evaluate(async (u: string) => {
+        const result = await (window as any).app.window.list({ includeInternal: true });
+        if (!result.success) return null;
+        const hit = result.windows.find((w: any) => w.params?.address === u);
+        return hit ? { id: hit.id, params: hit.params } : null;
+      }, openedUrl);
+      if (opened === null) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(opened, `no window registered for ${openedUrl}`).toBeTruthy();
 
-    // Press ESC via keyboard — exercises the before-input-event →
-    // handleEscapeForWindow → escPolicy chain that the bug lives in.
-    await contentWindow.keyboard.press('Escape');
-    await new Promise(resolve => setTimeout(resolve, 600));
+    // The assertions the fix is answerable for. Delete 'palette' from
+    // `ipc.ts NON_PARENT_ROLES` and both of these fail: `isRealParent` becomes
+    // true, which stamps the palette as parentWindowId and promotes the role to
+    // child-content in `inferIzuiRole`.
+    // Asserted as a pair so a failure reports both facts — the parent stamp and
+    // the role promotion are one defect, and checking them in sequence would
+    // hide the second behind the first.
+    expect({
+      parentWindowId: opened!.params.parentWindowId,
+      role: opened!.params.role,
+    }).toEqual({ parentWindowId: null, role: 'content' });
 
-    // Verify the content window survived. If isRealParent treated the
-    // palette as a real parent (the bug), this evaluate would throw/false.
-    const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
-    expect(stillAlive).toBe(true);
+    // Secondary, and asserted AFTER the guard above so a regression in the
+    // guard fails on the guard rather than here: the palette was dismissed when
+    // the opened page took key. If `ipc.ts NON_PARENT_ROLES` ever stops
+    // excluding the palette, the opened page becomes its child, the exemption
+    // in `window-kernel.ts selectTransientAutoclose` applies, and this inverts —
+    // but the pair above fails first, which is the intended signal.
+    await expect.poll(() => paletteWindow.isClosed(), { timeout: 5000 }).toBe(true);
 
-    // Clean up. The palette is already gone (asserted above); the content
-    // window closes itself, since this test no longer holds its id.
-    await contentWindow
-      .evaluate(() => (window as any).app.window.close())
-      .catch(() => {
-        // Window may already be closed
-      });
+    // Clean up. The palette is already gone (asserted above).
+    await bgWindow.evaluate(async (wid: number) => {
+      await (window as any).app.window.close(wid);
+    }, opened!.id).catch(() => {
+      // Window may already be closed
+    });
   });
 
   test('navigate mode: timeout does not close window', async () => {
