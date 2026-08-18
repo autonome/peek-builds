@@ -193,16 +193,19 @@ what is invisible to it by construction. The occasion for writing it down:
 2026-08-18) while every other suite stayed green, because the only suite able to
 see that class of fault was the broken one.
 
-All five pass as of 2026-08-18: 38, 13, 9, 8 and 16 cases respectively.
+All five pass as of 2026-08-18: 41, 13, 9, 8 and 16 cases respectively.
 
-### `apps/desktop/main/sync.test.ts` — 38 cases
+### `apps/desktop/main/sync.test.ts` — 41 cases
 
 Runs as runner 1 of the 6-runner desktop gate (`yarn test:desktop:electron`), and
 standalone via `yarn test:unit`. Exercises the real `sync.ts` push and pull
 functions against the real server app and a real `node:sqlite` datastore, and is
 the only suite covering all six stages deliberately rather than incidentally
 (`describe('IPC entry points — tile:sync:push / tile:sync:pull must run all three
-stages')`).
+stages')`). It also owns the paged-pull cases (`describe('Paged pulls — the
+client follows the server cursor')`), which answer the item pull from a stub
+rather than the real app: what is under test there is the client's loop — how
+many requests it makes and when it stops.
 
 Blind by construction to any disagreement between two separately-configured HTTP
 clients: `setup()` stubs `globalThis.fetch` and routes it into the server's Hono
