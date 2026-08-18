@@ -2,6 +2,8 @@ appId: com.autonome.peek
 productName: Peek
 copyright: Copyright © 2024 Dietrich Ayala
 
+electronVersion: "43.0.0" # pin version
+
 # Directories
 directories:
   output: out

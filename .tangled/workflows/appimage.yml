@@ -1,0 +1,29 @@
+when:
+  - event: ["push"]
+    branch: ["spindles"]
+
+engine: microvm
+image: nixos
+
+dependencies:
+  - gcc
+  - pkg-config # exports PKG_CONFIG_PATH for the libraries below
+  - openssl # the C library + headers openssl-sys links against
+  - nodejs
+  - yarn
+  - python313
+  - bash
+  - steam-run
+
+steps:
+  - name: "Install dependencies"
+    command: yarn install
+
+  - name: "PWD"
+    command: pwd && ls -al
+
+  - name: "Build peek"
+    command: yarn build
+
+  - name: "Build peek appimage"
+    command: yarn workspace @peek/desktop run build:electron:dist:v2
