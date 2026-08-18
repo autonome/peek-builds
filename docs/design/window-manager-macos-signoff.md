@@ -110,6 +110,18 @@ No automated check can reach any of these. For each, record what happened, not w
     detaching from a page that is plainly frontmost. Either observation is a real finding; report
     it with the gesture, not as flakiness.
 
+    **Half of that prediction is already confirmed in-suite and fixed, so this check is now
+    narrower than it was.** The arming was unconditional on every hide, including hides of windows
+    nothing was focused on — which reassign nothing, so no provoked focus ever arrived to consume
+    the arming and it sat armed until a genuine focus came along. Measured on macOS via the kernel
+    transition timeline: hiding the unfocused chrome overlay during an overlay retarget armed it,
+    and the next genuine focus on a page host was dropped with `cause=world`, leaving `key` on the
+    wrong window and the session snapshot naming the wrong focused page. The arming is now gated on
+    the hidden window actually holding focus. What this check still has to answer is the other
+    half, which no headless suite can reach: when the FOCUSED window is hidden, does macOS reassign
+    focus at all? If it does not, the arming still outlives its provocation and the next genuine
+    focus is still swallowed — just far more rarely than before.
+
 ## What to report back
 
 - Each numbered check, with what was observed.

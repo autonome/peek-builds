@@ -116,7 +116,7 @@ import {
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent, getWindowStateSnapshot } from './window-state-singleton.js';
-import { shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
+import { getShadowKernelExecutor, shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -274,6 +274,15 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     (entry.baseWin as unknown as { emit(name: string): boolean }).emit('focus');
     return true;
   },
+  /**
+   * Test-only: the kernel's applied-order transition timeline
+   * (`window-kernel-executor.ts timelineForTests`). The overlay bridge exposes
+   * the same log as `kernelTimeline()`; this is the reach for specs that do not
+   * drive the overlay. It answers "which transition put the machine here",
+   * which no state snapshot can — including, as a recorded absence, a focus the
+   * backend suppressed before it ever became an event.
+   */
+  kernelTimelineForTest: (): readonly string[] => getShadowKernelExecutor().timelineForTests(),
   /**
    * Test-only: is `windowId` a live hybrid page-host (BaseWindow) window?
    * Lets the session-restore-page-host spec skip its canvas-only chrome-param

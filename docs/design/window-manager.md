@@ -57,11 +57,18 @@ runs clean after. Write-up: "Resolved: an unguarded native `'show'` echo re-show
 drain had cleared" below. **Not yet re-measured on Linux**, where the same file recorded a worse
 rate (§4.3.1).
 
-What remains open on this branch is not code defects but unrun verification and undiagnosed
-intermittents: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks, none
-recorded as passing), the `session-restore-hybrid-focus` intermittent, the decisions in §0.1.10,
-and the retirement of `window-state.ts` / `window-os-adapter.ts`. `yarn test:desktop:electron` has
-never run over this branch.
+The `session-restore-hybrid-focus` failure is also CLOSED as of 2026-08-18, and it was not an
+intermittent: at the tip it failed 5 of 6 runs, at SAVE rather than at restore.
+`pendingHideProvokedFocus` was armed by every hide rather than only by a hide of the focused
+window, so an arming that nothing would ever consume sat waiting and swallowed the next genuine
+focus. Write-up: "Resolved: an unowned hide-provoked-focus arming swallowed a genuine focus" below.
+**One half of that rule is still unproven** — whether macOS reassigns focus when the focused window
+is hidden — and only sign-off check 12 can answer it.
+
+What remains open on this branch is not code defects but unrun verification: the macOS sign-off
+(`docs/design/window-manager-macos-signoff.md`, 12 checks, none recorded as passing), the decisions
+in §0.1.10, and the retirement of `window-state.ts` / `window-os-adapter.ts`.
+`yarn test:desktop:electron` has never run over this branch.
 
 ### First macOS evidence for this branch, 2026-08-17
 
@@ -3669,6 +3676,50 @@ The timeline is E2E-only (`process.env.E2E_TEST === 'true'`), bounded at 400 ent
 only already-computed snapshots — the same contract as `logTransition` beside it. It stays in the
 tree: it is the tool that answers "which transition put the kernel here", which no state snapshot
 can.
+
+#### Resolved: an unowned hide-provoked-focus arming swallowed a genuine focus
+
+Measured 2026-08-18 on macOS, packaged, with the same timeline. This is the
+`session-restore-hybrid-focus` intermittent, and it is neither intermittent nor restore-side. At
+the current tip it fails **5 of 6 runs** (the "roughly one in four" recorded earlier predates
+`pendingHideProvokedFocus`), and it fails at SAVE: after the spec focuses page A, the session
+snapshot names page B focused. `key` is simply on the wrong window before restore is ever reached.
+
+`electron-window-backend.ts`'s `win.on('focus')` declines to report a focus while
+`pendingHideProvokedFocus` is armed, on the reasoning that the platform reassigned focus as a side
+effect of a hide the machine asked for. The timeline's last line at the failure is the whole
+finding — a **recorded absence**, which is why no state snapshot could have produced it:
+
+```
+#27 OverlayAttached    key=wm-7 eff=[HideWindow(wm-1)]
+…
+#35 --- focus suppressed hide-provoked wm-6 cause=world
+```
+
+`wm-1` is the chrome overlay, hidden by an ordinary overlay retarget; `wm-6` is page A. The
+arming was set by **every** hide, with no owner and no expiry — so a hide of a window nothing was
+focused on, which reassigns nothing and therefore provokes no focus, left it armed indefinitely.
+The next focus to arrive was the user's genuine one (`cause=world`), and it was dropped.
+
+The fix gates the arming on the hidden window actually holding focus
+(`this.pendingHideProvokedFocus = this.isFocused(win)`), which is the mechanism the rule's own
+comment describes. Note what this means headless: nothing holds real OS focus there, so the arming
+never sets — correct, because nothing is reassigned there either.
+
+Measured A/B, packaged macOS, `session-restore-hybrid-focus.spec.ts`:
+
+| | Runs | Result |
+|---|---|---|
+| Before | 6 | 5 failing (and 5/6 failing again with the `'show'` guard reverted, so that fix is neither cause nor cure) |
+| After | 6 | all clean |
+
+**Half of this rule remains unproven and only a live macOS gesture can settle it.** When the
+FOCUSED window is hidden, does macOS reassign focus at all? The rule was derived on Linux, where
+the window manager does. If macOS does not, the arming still outlives its provocation and still
+swallows the next genuine focus — far more rarely now, but by the same mechanism. That is check 12
+of `docs/design/window-manager-macos-signoff.md`, which predicted this failure in writing before it
+was measured, and which is now narrowed to that remaining half. There is **no automated coverage of
+the rule at all** — `pendingHideProvokedFocus` appears in no spec.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 

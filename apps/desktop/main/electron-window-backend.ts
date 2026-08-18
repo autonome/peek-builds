@@ -85,6 +85,7 @@ import {
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
 import {
+  getShadowKernelExecutor,
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
   shadowKernelWindowClosed,
@@ -736,12 +737,22 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // closes a cycle (stacking → focus → raise → stacking) that sustains
       // itself. A machine-armed focus still reports: a focus-family command
       // genuinely asked for that one.
-      if (suppressed) return;
+      if (suppressed) {
+        // A suppressed focus is invisible to the transition timeline — it never
+        // becomes an event — so the timeline records the suppression itself.
+        // An absent `OsFocusGained` is exactly the signature to look for when a
+        // window the test focused is not the window the machine ends up on.
+        getShadowKernelExecutor().markTimeline(`focus suppressed stacking-provoked ${String(id)} cause=${cause.kind}`);
+        return;
+      }
       // The hide half of the same principle, one arming consumed by the one
       // focus the platform provokes for it. See `pendingHideProvokedFocus`.
       const hideProvoked = this.pendingHideProvokedFocus;
       this.pendingHideProvokedFocus = false;
-      if (hideProvoked && cause.kind !== 'machine') return;
+      if (hideProvoked && cause.kind !== 'machine') {
+        getShadowKernelExecutor().markTimeline(`focus suppressed hide-provoked ${String(id)} cause=${cause.kind}`);
+        return;
+      }
       this.emit({
         type: 'OS_FOCUS_GAINED',
         id,
@@ -1433,7 +1444,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // the machine never named — arm the attribution so the `'focus'` handler
       // does not read this backend's own side effect as fresh OS evidence. See
       // `pendingHideProvokedFocus`.
-      this.pendingHideProvokedFocus = true;
+      //
+      // GATED ON THE WINDOW ACTUALLY HOLDING FOCUS, because that is the whole
+      // mechanism: hiding a window nothing is focused on reassigns nothing, so
+      // there is no provoked focus to attribute. Arming unconditionally made
+      // this a latch with no expiry and no owner — it survived until SOME focus
+      // arrived, and the next focus to arrive was usually a genuine one, which
+      // it then swallowed. Measured: hiding the unfocused chrome overlay on an
+      // overlay retarget armed it, and the user's next focus on another page
+      // host was dropped with `cause=world`, leaving `key` on the wrong window
+      // and the session snapshot naming the wrong focused page
+      // (`session-restore-hybrid-focus.spec.ts` "two hybrid pages: the page
+      // focused at save is the one restore raises").
+      this.pendingHideProvokedFocus = this.isFocused(win);
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */

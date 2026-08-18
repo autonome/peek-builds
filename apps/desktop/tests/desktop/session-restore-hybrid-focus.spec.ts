@@ -189,9 +189,17 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
     expect(snapshot, 'snapshot exists after save').not.toBeNull();
     const focusedDescriptors = (snapshot!.windows || []).filter((w) => w.focused);
     expect(focusedDescriptors.length, 'exactly one focused descriptor').toBe(1);
+    // The kernel's applied-order transition timeline rides on this assertion:
+    // when the saved descriptor names the wrong page, what matters is which
+    // transitions ran between focusing A and saving — in particular whether an
+    // `OsFocusGained(A)` is present at all, since the backend suppresses a
+    // focus arriving while one of its own armings is outstanding and a
+    // suppressed focus never becomes an event.
+    const timeline = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.kernelTimelineForTest()) as any) as string[];
     expect(
       focusedDescriptors[0].url,
-      'the focused descriptor must be page A (the one focused at quit), not page B',
+      `the focused descriptor must be page A (the one focused at quit), not page B\nkernel timeline:\n${(timeline || []).join('\n')}`,
     ).toContain(slugA);
 
     // Close both so restore has work to do.
