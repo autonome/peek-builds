@@ -59,7 +59,7 @@ this list plus the intermittent list below.
 | `hybrid-overlay.spec.ts` | clicking the chrome (overlay focus on content blur) does NOT deactivate | overlay race |
 | `hybrid-overlay.spec.ts` | repeat Cmd+L (press 2) re-reveals + refocuses the navbar in the overlay renderer | overlay race |
 | `hybrid-show-activate.spec.ts` | applied show path is focus-free under headless | headless paint |
-| `hybrid-transient-on-blur.spec.ts` | opening (focusing) a second hybrid quick-view closes the first | unclassified |
+| `hybrid-transient-on-blur.spec.ts` | opening (focusing) a second hybrid quick-view closes the first | not Linux-only — also fails 4/4 packaged on macOS (2026-08-18) |
 | `izui-escape.spec.ts` | a page opened FROM a palette-role opener is classified content, never child-content | unclassified — see note |
 | `page-layout.spec.ts` | navbar can be revealed while the host is maximized | overlay race |
 | `peeks-lazy-wake.spec.ts` | the default Option+0 wake hotkey is registered at boot without the renderer | unclassified |

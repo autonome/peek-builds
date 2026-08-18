@@ -3743,6 +3743,16 @@ retired machine, in which opening granted no attention. On macOS
 `electron-window-backend.ts STACKING_TAKES_FOCUS` is false, no stacking-provoked focus arrives,
 and the first quick-view survives to the synthetic focus — which is why this fails only on Linux.
 
+**"Only on Linux" is no longer true at this tip.** Measured 2026-08-18, packaged macOS: this test
+fails 4/4 runs here, with the identical precondition signature (`hybridAlive(a)` is already false
+at the line after opening the second quick-view, before the spec fires any focus). A/B'd against
+the `pendingHideProvokedFocus` gate landed the same day — 3/3 failing with that gate reverted — so
+the platform difference this paragraph records closed for some other reason, and the failure is
+now cross-platform rather than a Linux artefact. `apps/desktop/tests/gate-baseline.md` still lists
+it as a Linux failure and needs the same correction. The explanation above of WHY it fails (the
+current attention rule working; the spec's staging assuming the retired machine) is unaffected —
+only the claim that macOS is exempt is wrong.
+
 
 ## 5. Migration sequence
 
