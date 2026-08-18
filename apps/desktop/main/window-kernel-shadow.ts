@@ -340,6 +340,8 @@ export interface ShadowRegisterWindowSpec {
   bounds?: Rectangle;
   /** See `WindowRecord.tracksBaseLayerTop`'s doc — declared here, nothing reads it yet. */
   tracksBaseLayerTop?: boolean;
+  /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
+  selfClosesOnBlur?: boolean;
 }
 
 /**
@@ -365,6 +367,7 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
     ...(spec.escapeMode === 'ignore' ? { escapeMode: 'ignore' as const } : {}),
     ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
+    ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);

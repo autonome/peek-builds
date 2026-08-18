@@ -403,6 +403,22 @@ export interface WindowRecord {
   tracksBaseLayerTop?: boolean;
 
   /**
+   * Whether this window tears itself down the moment it loses focus — the
+   * `modal` open option (`izui-roles.ts windowSelfClosesOnBlur`), wired to a
+   * `win.on('blur', …close)` handler in `ipc.ts`. A DECLARED fact, same shape
+   * as `tracksBaseLayerTop` above: written at registration from the caller's
+   * open-time options, never revisited, and OVERWRITTEN rather than preserved
+   * by the re-registration merge.
+   *
+   * The one thing `isAppResignSweepEligible` reads it for: a window that
+   * already closes itself on blur already owns its own app-resign policy, so
+   * the raw-edge sweep hiding it too would be redundant — and worse, would
+   * stamp `hiddenByAppBlur` on a record that is about to be torn down anyway,
+   * for `AppActivated` to find nothing left to re-show.
+   */
+  selfClosesOnBlur?: boolean;
+
+  /**
    * Whether this window's CONTENT web contents currently holds macOS
    * first-responder status — the mirror of the native `rendererWC
    * 'focus'`/`'blur'` pair, written solely by
@@ -743,6 +759,8 @@ export type Event =
       bounds?: Rectangle;
       /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
       tracksBaseLayerTop?: boolean;
+      /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
+      selfClosesOnBlur?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
@@ -776,9 +794,9 @@ export type Event =
    * modelled here, only its ordering relative to arm/disarm. Inert unless
    * `pendingAppResignSweep` is still armed (an `AppActivated` in between — the
    * dance — already disarmed it); when armed, hides the sweep-eligible
-   * windows (`isAppResignSweepEligible` — the heads-up surfaces that float
-   * above the stack and cannot hold key) and marks them `hiddenByAppBlur`.
-   * Never writes `key`, never reorders `order`.
+   * windows (`isAppResignSweepEligible` — every floater above the regular
+   * stack that does not already close itself on blur) and marks them
+   * `hiddenByAppBlur`. Never writes `key`, never reorders `order`.
    */
   | { type: 'AppResignSettled' }
   /** The first-composited-frame report — flips `orderable` to `true`. */
@@ -1031,6 +1049,8 @@ export type Command =
       bounds?: Rectangle;
       /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
       tracksBaseLayerTop?: boolean;
+      /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
+      selfClosesOnBlur?: boolean;
       expectedVersion: number;
     }
   /**
@@ -1630,6 +1650,15 @@ export function evolve(state: State, ev: Event): State {
             : existing.tracksBaseLayerTop !== undefined
               ? { tracksBaseLayerTop: existing.tracksBaseLayerTop }
               : {}),
+          // Intrinsic, same shape as `role`/`keepLive`/`escapeMode`/
+          // `tracksBaseLayerTop` above — see `WindowRecord.selfClosesOnBlur`'s
+          // doc: a DECLARED fact, so an event that names it overwrites, and an
+          // event that omits it keeps the existing value rather than erasing it.
+          ...(ev.selfClosesOnBlur !== undefined
+            ? { selfClosesOnBlur: ev.selfClosesOnBlur }
+            : existing.selfClosesOnBlur !== undefined
+              ? { selfClosesOnBlur: existing.selfClosesOnBlur }
+              : {}),
         };
         return {
           ...state,
@@ -1669,6 +1698,7 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
         ...(ev.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: ev.tracksBaseLayerTop } : {}),
+        ...(ev.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: ev.selfClosesOnBlur } : {}),
         // `contentFocused` is deliberately NOT seeded: registration is
         // exactly the moment nothing has been reported, and absent is the
         // honest answer for that (see the field's doc).
@@ -1960,15 +1990,14 @@ export function evolve(state: State, ev: Event): State {
       // the same relation `selectTransientAutoclose` reads, and the reason
       // that query skips overlays outright: an attached overlay's visibility
       // belongs to its attachment, so it is driven here and never dismissed.
-      // `isAppResignSweepEligible` layers on `!canBecomeKey` and excludes the
-      // transient roles for the same reason (each of those already owns its
-      // own app-resign policy) — the role clause is a defensive exclusion so
-      // this rule never doubles up with a different subsystem's, not the
-      // selector itself. An already-hidden window of either kind is left
-      // alone, which is what keeps a host in fullscreen (whose overlay the
-      // `OsFullscreenEntered` evolve arm already drove off screen, via
-      // `overlayFollowPatch`) from having its chrome revealed by the next
-      // activation.
+      // `isAppResignSweepEligible` layers on `!selfClosesOnBlur` for the same
+      // reason (a window that already tears itself down on blur already owns
+      // its own app-resign policy) — a defensive exclusion so this rule never
+      // doubles up with that window's own handler, not the selector itself.
+      // An already-hidden window of either kind is left alone, which is what
+      // keeps a host in fullscreen (whose overlay the `OsFullscreenEntered`
+      // evolve arm already drove off screen, via `overlayFollowPatch`) from
+      // having its chrome revealed by the next activation.
       //
       // No `opSeq` is stamped, exactly as the `AppResignSettled` sweep stamps
       // none: `lastOpSeq` tracks focus-family ops and `HideWindow` carries no
@@ -3137,6 +3166,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.escapeMode !== undefined ? { escapeMode: cmd.escapeMode } : {}),
           ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
           ...(cmd.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: cmd.tracksBaseLayerTop } : {}),
+          ...(cmd.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: cmd.selfClosesOnBlur } : {}),
         },
       ],
     };
@@ -3508,14 +3538,20 @@ export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette
  * clause has live windows on both sides of it; here it does not.
  *
  * INTERACTION WITH `hiddenByAppBlur` AND THE `AppActivated` RE-SHOW — checked,
- * and it is a non-interaction by construction. The app-resign sweep hides only
- * `isAppResignSweepEligible` windows, which requires `!canBecomeKey`; this
- * predicate requires `canBecomeKey`. The two sets are therefore DISJOINT, so
- * no content window is ever hidden by an app switch and no `visible` answer
- * here flickers as the app resigns and re-activates. (A property invariant
- * asserts the disjointness rather than leaving it to this comment.) The
- * separate `window-state.ts selectAppResignTransients` dismissal is also
- * disjoint: it takes only transient roles, none of which are in `CONTENT_ROLES`.
+ * and it is a non-interaction BY CONSTRUCTION, not by coincidence.
+ * `isAppResignSweepEligible` carries an explicit `!isContentWindow(record)`
+ * clause naming this predicate directly, so no content window is ever hidden
+ * by an app switch and no `visible` answer here flickers as the app resigns
+ * and re-activates, whatever `layer` or `canBecomeKey` a future content
+ * window registers with. (Earlier this rested on `isAppResignSweepEligible`
+ * requiring `!canBecomeKey` while this predicate requires `canBecomeKey` —
+ * true of every production window at the time, but not a constructional
+ * guarantee, and the property suite's generator did produce a counterexample
+ * once `isAppResignSweepEligible` stopped testing `canBecomeKey` at all; the
+ * explicit clause closes that gap for good.) A property invariant asserts the
+ * disjointness rather than leaving it to this comment. The separate
+ * `window-state.ts selectAppResignTransients` dismissal is also disjoint: it
+ * takes only transient roles, none of which are in `CONTENT_ROLES`.
  *
  * ONE PREDICATE, NOT THE ONLY ONE. Two upcoming callers want a NARROWER set
  * and must not be served by widening this one: `tile-ipc.ts`
@@ -3892,34 +3928,72 @@ export function selectTransientAutoclose(
  * `AppResigned` arm applies exactly this on the raw resign edge (alongside the
  * attached-overlay hide), and `AppResignSettled` re-applies it only as a
  * backstop for a window that became eligible in the gap before the settle;
- * `AppActivated` undoes exactly what either marked. Ported from
- * `window-state.ts`'s `class === 'hud' &&
- * visible` sweep, decomposed into the orthogonal facts that MADE a window that
- * class (`classifyWindowRegistration`: `alwaysOnTop && focusable === false`,
- * with the role classes taking precedence):
+ * `AppActivated` undoes exactly what either marked.
  *
- *   - `layer > BASE_LAYER`   the `alwaysOnTop` half — it floats above the
- *                            whole regular stack;
- *   - `!canBecomeKey`        the `focusable: false` half — §0.1.4's "a HUD
- *                            never holds key";
- *   - a non-transient role   the role precedence, kept as a role test because
- *                            it is one: a palette / quick-view / overlay
- *                            declares its own app-resign policy (see
- *                            `window-state.ts selectAppResignTransients`, and
- *                            the chrome overlay's attachment relation), and
- *                            never classified as a HUD however it was
- *                            constructed;
- *   - `visible`              nothing hidden for another reason may be marked,
- *                            or the re-show on activation would resurrect it.
+ *   - `layer > BASE_LAYER`    it floats above the whole regular stack — which
+ *                             means it floats above OTHER applications'
+ *                             windows too, not just Peek's own base-layer
+ *                             content;
+ *   - `acceptsInput`          a click-through window is an ambient annotation,
+ *                             never something the user is blocked by — the
+ *                             Space border (`features/spaces/background.js
+ *                             showBorder`) is `role:'overlay'`, always-on-top,
+ *                             and deliberately meant to stay visible while the
+ *                             user works in OTHER applications
+ *                             (`selectTransientAutoclose`'s own doc makes the
+ *                             same call for the same window), so it must never
+ *                             be admitted here regardless of layer;
+ *   - `!selfClosesOnBlur`     the window already tears itself down the moment
+ *                             it loses focus (`WindowRecord.selfClosesOnBlur`
+ *                             — the `modal` open option, e.g. the cmd panel),
+ *                             so hiding it here is redundant, and would stamp
+ *                             `hiddenByAppBlur` on a record about to disappear
+ *                             on its own;
+ *   - `!isContentWindow(record)` a content window is never hidden by an app
+ *                             switch — STATED here rather than left to the
+ *                             coincidence that no production content window
+ *                             floats above the base layer, which a pinned
+ *                             window would silently defeat;
+ *   - `visible`               nothing hidden for another reason may be
+ *                             marked, or the re-show on activation would
+ *                             resurrect it.
  *
- * NEITHER half of the pair is sufficient alone, and the difference is live in
- * both directions: `!canBecomeKey` on its own also takes the space-border
- * indicator (`features/spaces/background.js`, an `alwaysOnTop` role-`overlay`
- * window) and the privileged test fixture (`test-fixture-glue.ts`,
- * `focusable: false` but NOT floating), neither of which the old reducer ever
- * swept; `layer > BASE_LAYER` on its own takes the focusable always-on-top
- * windows (a cmd panel) that the old sweep deliberately left alone because
- * they have their own blur handling and would blink.
+ * NO ROLE CLAUSE and NO BARE `canBecomeKey` CLAUSE — this predicate used to
+ * carry both, and each excluded a window it should have admitted. The rule it
+ * derives from is `WindowRecord.hiddenByAppBlur`'s own doc: reversible
+ * visibility leaves on the RAW resign edge; only DISMISSAL
+ * (`window-state.ts selectAppResignTransients`) waits for the settle, because
+ * dismissal is destructive and the settle exists so the macOS activation
+ * dance cannot trigger one. `!canBecomeKey` was a stand-in for "heads-up
+ * surface" that also excluded the windows switcher
+ * (`renderer/windows/background.js` — maximized, always-on-top,
+ * `canBecomeKey: true`, so it can be typed into), and the transient-role
+ * exclusion (`role: 'switcher'` was in `TRANSIENT_ROLES`) confused reversible
+ * hiding with dismissal. Both meant the switcher hung over the app the user
+ * just switched to for the full `APP_RESIGN_SETTLE_MS`
+ * (`electron-window-backend.ts`) instead of leaving on the raw edge like every
+ * other floater. Same fix admits the chain popup
+ * (`renderer/cmd/panel.js openChainPopup`, `role: 'utility'`, always-on-top,
+ * non-modal) for the same reason: it is not one of these role clauses'
+ * business, because a floating window above the regular stack floats above
+ * other applications' windows too, whichever role it declares or whether it
+ * can hold key. `acceptsInput` is NOT a reintroduction of that mistake — it is
+ * measured, not a role stand-in: the HUD (`renderer/hud/background.js`)
+ * registers `acceptsInput: true` for its whole life (never calls
+ * `setIgnoreMouseEvents`) and keeps hiding with the app exactly as before; the
+ * Space border calls `setIgnoreMouseEvents(true, …)` in the same async open
+ * flow that creates it (`tile-ipc.ts` feeds the resulting
+ * `WindowAcceptsInputChanged`), so by the time any real app-resign reaches it
+ * `acceptsInput` already reads `false` and this clause is what keeps it
+ * admitted-nowhere, matching its documented purpose.
+ *
+ * NEITHER `layer > BASE_LAYER` NOR `!selfClosesOnBlur` is sufficient alone,
+ * for the same reasons as before this clause list grew: the first would sweep
+ * a window that already closes itself on blur (merely redundant, but would
+ * still overwrite `hiddenByAppBlur` on a record about to be torn down
+ * anyway), and the second would take every base-layer content window too —
+ * `!isContentWindow` is what now makes that impossible BY CONSTRUCTION rather
+ * than by production windows happening not to float.
  */
 /**
  * May an `AppActivated` put this record back on screen?
@@ -3958,11 +4032,13 @@ function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
 }
 
 export function isAppResignSweepEligible(record: WindowRecord): boolean {
-  if (!record.visible) return false;
-  if (record.canBecomeKey) return false;
-  if (record.layer <= BASE_LAYER) return false;
-  if (roleIn(TRANSIENT_ROLES, record.role)) return false;
-  return true;
+  return (
+    record.visible &&
+    record.layer > BASE_LAYER &&
+    record.acceptsInput &&
+    !record.selfClosesOnBlur &&
+    !isContentWindow(record)
+  );
 }
 
 /**

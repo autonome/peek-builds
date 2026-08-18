@@ -34,6 +34,7 @@ import {
   isAppResignSweepEligible,
   isContentWindow,
   hostForOverlay,
+  BASE_LAYER,
   type State,
   type Event,
   type Command,
@@ -201,6 +202,12 @@ function randomRegistrationFields(rng: Rng) {
     // `kind: 'browser'`) closely enough to give the field real coverage
     // without spending a fresh `rng()` draw of its own (see `kind` above).
     ...(kind === 'browser' ? { tracksBaseLayerTop: true } : {}),
+    // `selfClosesOnBlur` (see `WindowRecord.selfClosesOnBlur`'s doc): declared
+    // `true` for `role: 'palette'` or `role: 'quick-view'` — `inferIzuiRole`
+    // only ever derives either role from `modal:true`, so this mirrors the
+    // production fact exactly, reading the already-drawn `role` above rather
+    // than spending a fresh `rng()` draw of its own.
+    ...(role === 'palette' || role === 'quick-view' ? { selfClosesOnBlur: true } : {}),
   };
 }
 
@@ -717,8 +724,12 @@ function checkInvariants(state: State, prev?: State): string[] {
     // The `hiddenByAppBlur` / `AppActivated` interaction, asserted rather than
     // reasoned about in a comment: a content window is never a candidate for
     // the app-resign hide sweep, so the predicate's `visible` clause cannot
-    // flicker across an app switch. The two predicates disagree on
-    // `canBecomeKey` by construction; this catches either one drifting.
+    // flicker across an app switch. `isAppResignSweepEligible` carries an
+    // explicit `!isContentWindow(record)` clause naming this predicate
+    // directly (its own doc) — this check restates that guarantee
+    // independently rather than trusting the clause is still there, exactly
+    // like the role-set checks above restate `CONTENT_ROLES` independently of
+    // the kernel's own constant.
     if (isContentWindow(record) && isAppResignSweepEligible(record)) {
       violations.push(`a window is both content and app-resign-sweep eligible: ${record.id}`);
     }
@@ -884,6 +895,20 @@ function checkInvariants(state: State, prev?: State): string[] {
       ) {
         violations.push(`tracksBaseLayerTop decayed back to absent for ${prevRecord.id}`);
       }
+      // Same rule for `selfClosesOnBlur`, for the same reason: it is declared
+      // exactly once, at registration, from the caller's open-time options
+      // (see the field's own doc), and `isAppResignSweepEligible` needs it to
+      // still read true on a re-registered palette or quick-view — a
+      // re-registration merge silently dropping the fact back to absent would
+      // make that window newly eligible for the raw-edge hide sweep, the same
+      // bug class `keepLive` and `tracksBaseLayerTop` already suffered.
+      if (
+        nextRecord !== undefined &&
+        prevRecord.selfClosesOnBlur !== undefined &&
+        nextRecord.selfClosesOnBlur === undefined
+      ) {
+        violations.push(`selfClosesOnBlur decayed back to absent for ${prevRecord.id}`);
+      }
       // Same rule for `overlayFrame`, for the same reason: it is a lived fact
       // (the frame the overlay was last asked to occupy — see the field's
       // doc), and a re-registration merge dropping it is the same bug class
@@ -1016,23 +1041,36 @@ function checkAutocloseInvariants(state: State): string[] {
     }
   }
 
-  // The app-resign hide sweep and the transient autoclose sweep answer
-  // different questions about the same edge and may never name the same
-  // window: `isAppResignSweepEligible` excludes every transient role, while
-  // `selectTransientAutoclose` requires one — so the two sets are disjoint by
-  // construction, checked here rather than left to that construction alone.
-  // MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds, same run as the
-  // op-token measurement above: of 5416 reached states, 1670 have at least
-  // one transient-autoclose victim (for some focuser) and 916 have at least
-  // one app-resign-sweep-eligible window, with both kinds of candidate present
-  // in the same state 315 times — none of those co-occurrences trips the
-  // clause below, because it is the SAME window that is forbidden from being
-  // both, not merely the same state holding one of each. The three biases
-  // pushed `order` deep enough that the two candidate sets routinely coexist,
-  // which is exactly the condition this clause needs to be worth checking.
+  // The app-resign hide sweep and the transient autoclose sweep now
+  // legitimately NAME THE SAME WINDOW — this is a deliberate rule change, not
+  // a regression to paper over. Under the retired design
+  // `isAppResignSweepEligible` excluded every transient role, so the two
+  // selectors' candidate sets were disjoint by construction; that exclusion is
+  // gone (see the predicate's own doc), and the windows switcher is the
+  // motivating example of why: it is a legitimate candidate for BOTH the
+  // raw-edge/settle hide (reversible — `AppActivated` undoes it) AND a
+  // dismissal the instant some OTHER Peek window takes key (destructive —
+  // `selectTransientAutoclose`). Those are two different acts, triggered by
+  // two different transitions, and a window being eligible for both at once is
+  // not a contradiction — asserting "never both" here would just re-encode the
+  // retired design as a test, not check anything true of this one.
+  //
+  // What DOES still have to hold, and is the rule now checked: the two
+  // mechanisms never race, because both read the SAME `visible` fact from
+  // opposite sides. `isAppResignSweepEligible` requires `record.visible`;
+  // `selectTransientAutoclose` requires `rec.visible` too (its own
+  // `!rec.visible` exclusion, checked independently above via
+  // `isSweepableVictim`). So once the raw-edge (or settled-backstop) hide has
+  // actually run for a window — `hiddenByAppBlur: true`, which never
+  // accompanies `visible: true` (checked elsewhere in this file) — that same
+  // window can no longer be a `selectTransientAutoclose` victim for ANY
+  // focuser: the hide always wins, and the settle's dismissal never fires a
+  // second act against a window the hide has already taken off screen.
   for (const record of state.order) {
-    if (isAppResignSweepEligible(record) && sweptByTransientAutoclose.has(record.id)) {
-      violations.push(`a window is both eligible for the app-resign hide sweep and swept by transient autoclose: ${record.id}`);
+    if (record.hiddenByAppBlur === true && sweptByTransientAutoclose.has(record.id)) {
+      violations.push(
+        `a window already hidden by the app-resign sweep is still named by transient autoclose: ${record.id}`,
+      );
     }
   }
 
@@ -1510,7 +1548,13 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     type: 'WindowRegistered',
     id,
     kind: 'page-host',
-    layer: 1,
+    // BASE_LAYER, deliberately — `strip('pendingHidden')` below restores this
+    // content-role, key-capable record to `isContentWindow`-admitted, and a
+    // `layer` above `BASE_LAYER` would ALSO make it `isAppResignSweepEligible`
+    // (see that predicate's doc — no `canBecomeKey` clause protects the
+    // disjointness anymore), which would add a second, unrelated violation to
+    // the assertion below and defeat the point of this describe.
+    layer: BASE_LAYER,
     canBecomeKey: true,
     acceptsInput: true,
     class: 'primary',

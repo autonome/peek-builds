@@ -668,10 +668,11 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
 
   it('AppActivated re-shows a record hiddenByAppBlur and clears the mark, mirroring the old machine (window-kernel.ts AppActivated evolve arm)', () => {
     // `isAppResignSweepEligible` (the HUD-shaped heads-up surfaces the sweep
-    // hides) requires `!canBecomeKey` — deliberately disjoint from
-    // `isContentWindow`'s `canBecomeKey` requirement, so this case is checked
-    // on the record directly rather than through `topmost(state,
-    // isContentWindow)`, which by design never sees it either way.
+    // hides) carries an explicit `!isContentWindow(record)` clause —
+    // deliberately disjoint from `isContentWindow` by construction, so this
+    // case is checked on the record directly rather than through
+    // `topmost(state, isContentWindow)`, which by design never sees it either
+    // way.
     const id = wid(114);
     const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
@@ -680,7 +681,7 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
         kind: 'page-host',
         layer: BASE_LAYER + 1,
         canBecomeKey: false,
-        acceptsInput: false,
+        acceptsInput: true,
         class: 'primary',
       },
       oldSnapshot,
@@ -921,8 +922,9 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
 
   it('AppResignSettled hides a sweep-eligible record and marks lastAttention.holder null, the write react\'s dismissal rule reads (window-kernel.ts AppResignSettled evolve arm)', () => {
     // Same eligibility shape as the AppActivated re-show test above
-    // (`isAppResignSweepEligible`: visible, !canBecomeKey, layer > BASE_LAYER,
-    // no transient role) — a HUD-shaped surface, not a content window.
+    // (`isAppResignSweepEligible`: visible, layer > BASE_LAYER, acceptsInput,
+    // not self-closing, not content) — a HUD-shaped surface, not a content
+    // window.
     const id = wid(115);
     const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
@@ -931,7 +933,7 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
         kind: 'page-host',
         layer: BASE_LAYER + 1,
         canBecomeKey: false,
-        acceptsInput: false,
+        acceptsInput: true,
         class: 'primary',
       },
       oldSnapshot,

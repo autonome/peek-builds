@@ -55,6 +55,8 @@ export interface MachineWindowSpec {
   keepLive?: boolean;
   /** See `window-kernel.ts WindowRecord.tracksBaseLayerTop`'s doc — declared here, nothing reads it yet. Old machine does not carry this fact; it rides straight through to the kernel. */
   tracksBaseLayerTop?: boolean;
+  /** See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc — declared here. Old machine does not carry this fact; it rides straight through to the kernel. */
+  selfClosesOnBlur?: boolean;
   /** BaseWindow (page-host) or BrowserWindow (browser). */
   win: BaseWindow | BrowserWindow;
   /** Content view WC for a page-host, root WC for a browser. */
@@ -198,6 +200,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
     ...(registeredRecord?.bounds !== undefined ? { bounds: registeredRecord.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
+    ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
   }, settledSnapshot);
   // The divergence comparator now runs INSIDE `shadowKernelRegisterWindow`
   // itself (`window-kernel-shadow.ts`), against the old machine's

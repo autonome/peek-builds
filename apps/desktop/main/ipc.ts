@@ -3514,6 +3514,12 @@ export function registerWindowHandlers(): void {
         // keepLive rides the registration (first-class on the reducer record)
         // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.
         keepLive: options.keepLive === true,
+        // See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc —
+        // `isAppResignSweepEligible` reads this to skip a window that already
+        // tears itself down on blur. Same predicate the `windowSelfClosesOnBlur`
+        // call below gates the close-on-blur handler on, so the two never
+        // disagree about which windows self-close.
+        selfClosesOnBlur: windowSelfClosesOnBlur(options),
       });
 
       // macOS Spaces intent by role (§5 step 10 — machine-owned):
