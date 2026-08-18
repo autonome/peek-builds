@@ -14,6 +14,15 @@ export class PageNotesPane {
     this._currentUrl = null;
     this._editingId = null;
     this._pendingEditId = null;
+    // What an open editor held when the pane's DOM was last rebuilt: the text
+    // as typed and where the caret sat. The rebuild throws the textarea away,
+    // so without this the replacement comes back holding the datastore's copy
+    // with the caret at the end.
+    this._editorState = null;
+    // True only while _render() is replacing the pane's DOM. Removing the
+    // focused textarea fires its blur handler, and that blur must not be read
+    // as the user leaving the note — see the handler.
+    this._rebuilding = false;
     // In-memory draft for a note that hasn't been typed into yet. No datastore
     // row exists until the first non-empty keystroke (see _renderDraftItem),
     // so a draft that's abandoned empty (blur, teardown, click away) never
@@ -283,7 +292,40 @@ export class PageNotesPane {
     }
   }
 
+  /**
+   * Remember what the open editor holds, so the rebuild can put it back.
+   *
+   * Any subscribed event — a note created elsewhere, a tag change, a completed
+   * sync pull — rebuilds this pane's whole DOM, which is no reason for a note
+   * someone is typing in to close.
+   */
+  _captureOpenEditor() {
+    if (!this._editingId) return;
+    const textarea = this.content.querySelector('.notes-textarea');
+    if (!textarea) return;
+    this._editorState = {
+      id: this._editingId,
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    };
+  }
+
   _render() {
+    this._captureOpenEditor();
+    // Chrome fires the focused textarea's blur while it is still in the
+    // document, as the subtree is being replaced — so the blur handler cannot
+    // tell a rebuild from a real one by looking at the element. This flag is
+    // what tells it.
+    this._rebuilding = true;
+    try {
+      this._renderContent();
+    } finally {
+      this._rebuilding = false;
+    }
+  }
+
+  _renderContent() {
     this.content.innerHTML = '';
 
     // A draft in progress renders even with zero saved notes — don't let the
@@ -352,9 +394,15 @@ export class PageNotesPane {
 
       // Inline textarea editor
       if (isEditing) {
+        // A rebuild that interrupted this editor left what was typed and where
+        // the caret was; the datastore copy is a keystroke or two behind it.
+        const restore = this._editorState && this._editorState.id === note.id
+          ? this._editorState
+          : null;
+
         const textarea = document.createElement('textarea');
         textarea.className = 'notes-textarea';
-        textarea.value = note.content || '';
+        textarea.value = restore ? restore.value : (note.content || '');
         textarea.placeholder = 'Write a note...';
         textarea.rows = 3;
 
@@ -364,8 +412,26 @@ export class PageNotesPane {
         // Save on blur
         textarea.addEventListener('blur', () => {
           const value = textarea.value;
+
+          // The pane is being rebuilt underneath this editor, which is what
+          // fired the blur — not the user leaving the note. Save what was
+          // typed, but leave the note open so the rebuild puts the editor back
+          // with the caret where it was. Closing here is what used to
+          // interrupt someone mid-sentence whenever anything else changed.
+          if (this._rebuilding) {
+            this._editorState = {
+              id: note.id,
+              value,
+              selectionStart: textarea.selectionStart,
+              selectionEnd: textarea.selectionEnd,
+            };
+            this._updateNote(note.id, value);
+            return;
+          }
+
           this._editingId = null;
           this._pendingEditId = null;
+          this._editorState = null;
           this._updateNote(note.id, value);
           this._render();
         });
@@ -382,11 +448,13 @@ export class PageNotesPane {
 
         textWrap.appendChild(textarea);
 
-        // Auto-focus after DOM insertion
+        // Auto-focus after DOM insertion, at the caret the interrupted editor
+        // had, or at the end for an editor being opened for the first time.
         requestAnimationFrame(() => {
           textarea.focus();
-          textarea.selectionStart = textarea.value.length;
-          textarea.selectionEnd = textarea.value.length;
+          textarea.selectionStart = restore ? restore.selectionStart : textarea.value.length;
+          textarea.selectionEnd = restore ? restore.selectionEnd : textarea.value.length;
+          if (restore && this._editorState === restore) this._editorState = null;
         });
       }
 
@@ -491,6 +559,15 @@ export class PageNotesPane {
     // became a real item. An empty/never-typed-into draft is discarded with
     // no datastore write at all.
     textarea.addEventListener('blur', async () => {
+      // Same rebuild case as an existing note. Keep the draft — discarding it
+      // here would throw away text that has no datastore row yet.
+      if (this._rebuilding) {
+        draft.value = textarea.value;
+        draft.selectionStart = textarea.selectionStart;
+        draft.selectionEnd = textarea.selectionEnd;
+        return;
+      }
+
       if (draft.committing && draft.createPromise) {
         await draft.createPromise;
       }
@@ -516,11 +593,15 @@ export class PageNotesPane {
     textWrap.appendChild(textarea);
     item.appendChild(textWrap);
 
-    // Auto-focus after DOM insertion, same as a newly-created note used to.
+    // Auto-focus after DOM insertion, same as a newly-created note used to —
+    // at the caret a rebuild interrupted, if there was one.
     requestAnimationFrame(() => {
       textarea.focus();
-      textarea.selectionStart = textarea.value.length;
-      textarea.selectionEnd = textarea.value.length;
+      const hasCaret = typeof draft.selectionStart === 'number';
+      textarea.selectionStart = hasCaret ? draft.selectionStart : textarea.value.length;
+      textarea.selectionEnd = hasCaret ? draft.selectionEnd : textarea.value.length;
+      draft.selectionStart = undefined;
+      draft.selectionEnd = undefined;
     });
 
     return item;
