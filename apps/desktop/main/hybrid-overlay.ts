@@ -967,6 +967,9 @@ function installTestBridge(): void {
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
       const drained = getShadowKernelExecutor().getState().order.filter(isBaseLayerPageHost);
+      getShadowKernelExecutor().markTimeline(
+        `setActive(${String(wid)}) drain=[${drained.map((r) => String(r.id)).join(',')}]`,
+      );
       for (const record of drained) {
         dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: record.id });
         shadowKernelWindowHidden(record.id, getWindowStateSnapshot());
@@ -975,7 +978,17 @@ function installTestBridge(): void {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
         shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
       }
+      getShadowKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
       return true;
+    },
+    /**
+     * E2E-only: the kernel's applied-order transition timeline
+     * (`window-kernel-executor.ts timelineForTests`), for the deactivation
+     * polls. `attachDiagnostic()` says what the kernel believes now; this says
+     * which transitions produced it — the two are read together.
+     */
+    kernelTimeline(): readonly string[] {
+      return getShadowKernelExecutor().timelineForTests();
     },
     /**
      * Drive the overlay's maximize TOGGLE for a window through the REAL content

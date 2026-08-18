@@ -59,6 +59,12 @@ import {
  */
 export type FsSettleOutcome = 'settled' | 'timed-out' | 'vanished';
 
+/** Whether `WindowKernelExecutor.recordTimeline` records at all — E2E runs only. */
+const TIMELINE_ENABLED = process.env.E2E_TEST === 'true';
+
+/** Ring bound on the E2E transition timeline. */
+const TIMELINE_LIMIT = 400;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // layer -> StackingLevel (§0.1.6)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,8 +447,63 @@ export class WindowKernelExecutor {
     const effects = react(prev, event, next);
     this.state = next;
     this.logTransition(event, prev, next);
+    this.recordTimeline(event, prev, next, effects);
     this.runEffects(effects);
     this.notify();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // E2E transition timeline (diagnostic)
+  //
+  // The state SNAPSHOT the overlay bridge already reports (`hybrid-overlay.ts
+  // installTestBridge attachDiagnostic`) answers "what does the kernel believe
+  // now"; it cannot answer "which transition put it there", which is the open
+  // question about the overlay deactivation failure
+  // (`docs/design/window-manager.md` -> "The stated mechanism is REFUTED, and
+  // the macOS failure is a missing detach"). A nested dispatch is QUEUED by
+  // `pump` rather than recursing, so an effect issued for one event is applied
+  // strictly after that event's own effects finish — an ordering that only an
+  // applied-order log makes visible.
+  //
+  // One entry per APPLY, in applied order, so a re-show provoked by an earlier
+  // hide shows up as its own later entry rather than being folded into the
+  // hide that caused it. Effects are recorded as EMITTED (the `react` output),
+  // before `runEffects` performs any of them.
+  //
+  // Pure observation, same contract as `logTransition`: reads already-computed
+  // snapshots only, never feeds back into effect emission. Off entirely
+  // outside `E2E_TEST`, and bounded, so it can never grow a long-lived run.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private readonly timeline: string[] = [];
+  private timelineSeq = 0;
+
+  private recordTimeline(event: Event, prev: State, next: State, effects: readonly Effect[]): void {
+    if (!TIMELINE_ENABLED) return;
+    const evId = 'id' in event && event.id !== undefined ? `(${String(event.id)})` : '';
+    const keyDelta = prev.key === next.key ? `key=${String(next.key)}` : `key=${String(prev.key)}->${String(next.key)}`;
+    const eff = effects.map((e) => ('id' in e ? `${e.type}(${String(e.id)})` : e.type)).join(',') || '-';
+    const hosts = next.order
+      .filter((r) => r.kind === 'page-host' && r.layer === BASE_LAYER)
+      .map((r) => `${String(r.id)}${r.visible ? '+' : '-'}${r.orderable ? 'o' : ''}`)
+      .join(' ');
+    this.pushTimeline(`#${this.timelineSeq++} ${event.type}${evId} ${keyDelta} eff=[${eff}] hosts=[${hosts}]`);
+  }
+
+  private pushTimeline(line: string): void {
+    this.timeline.push(line);
+    if (this.timeline.length > TIMELINE_LIMIT) this.timeline.shift();
+  }
+
+  /** E2E-only: annotate the timeline from outside the pump (the bridge marks each drain). */
+  markTimeline(label: string): void {
+    if (!TIMELINE_ENABLED) return;
+    this.pushTimeline(`#${this.timelineSeq++} --- ${label}`);
+  }
+
+  /** E2E-only: the applied-order transition timeline, oldest first. */
+  timelineForTests(): readonly string[] {
+    return this.timeline;
   }
 
   // ───────────────────────────────────────────────────────────────────────────

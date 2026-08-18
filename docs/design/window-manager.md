@@ -48,13 +48,20 @@ kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and 
 `shadowKernelSeedMaximized` pair, with the previously `test.fail()`-marked spec now passing as an
 ordinary test. Write-up: "The restore-time maximize seed never reached the kernel" below.
 
+The overlay race on macOS is CLOSED as of 2026-08-18: `electron-window-backend.ts`'s
+`win.on('show')` echoed a lagged AppKit `'show'` notification into the machine without validating
+it against native ground truth, re-showing a window the bridge's drain had already cleared and
+re-attaching the chrome to it. It now carries the mirror of the guard `win.on('hide')` beside it
+already had. Failing SETS, packaged macOS: 4 runs failing before (`1054` deterministic at 4/4), 6
+runs clean after. Write-up: "Resolved: an unguarded native `'show'` echo re-showed a window the
+drain had cleared" below. **Not yet re-measured on Linux**, where the same file recorded a worse
+rate (§4.3.1).
+
 What remains open on this branch is not code defects but unrun verification and undiagnosed
 intermittents: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks, none
-recorded as passing), the overlay race present on both platforms (§4.3.1 — on macOS its mechanism
-is now measured and the mechanism §4.3.1 originally proposed is refuted), the
-`session-restore-hybrid-focus` intermittent, the decisions in §0.1.10, and the retirement of
-`window-state.ts` / `window-os-adapter.ts`. `yarn test:desktop:electron` has never run over this
-branch.
+recorded as passing), the `session-restore-hybrid-focus` intermittent, the decisions in §0.1.10,
+and the retirement of `window-state.ts` / `window-os-adapter.ts`. `yarn test:desktop:electron` has
+never run over this branch.
 
 ### First macOS evidence for this branch, 2026-08-17
 
@@ -3603,19 +3610,65 @@ detach, with `noActive` stuck at `false`. The renderer, the handoff delivery and
 dropped, because no message was ever due. The kernel's view is self-consistent throughout.
 
 So the defect is upstream of the overlay entirely: after `setActive(null)`, a base-layer page host
-is still visible in the kernel that the bridge's drain was supposed to hide. The drain
-(`installTestBridge`'s `setActive`) hides every record matching `isBaseLayerPageHost` in ONE
-snapshot, deliberately not re-reading between hides. Not yet proven, and the next thing to test:
-a hide of the `key` record makes `react` emit `RaiseWindow(topmost(next, isContentWindow))`, that
-raise is realized by `electron-window-backend.ts` `raiseWindow`/`showWindow`, and both feed
-`shadowKernelWindowShown` back into the kernel — so a raise provoked by one hide in the drain can
-re-show a record a later hide in the same drain has already cleared. Whether that lands before or
-after depends on effect-flush timing, which is what a one-in-two failure rate looks like.
+is still visible in the kernel that the bridge's drain was supposed to hide. Note also that the
+four affected tests span different `describe` blocks and therefore different app instances, so
+this is one defect and not a per-test staging bug.
 
-Proving it needs an event/effect timeline at the drain, not another state snapshot: the snapshots
-now agree run to run and have said all they can. Note also that the four affected tests span
-different `describe` blocks and therefore different app instances, so this is one defect and not a
-per-test staging bug.
+#### Resolved: an unguarded native `'show'` echo re-showed a window the drain had cleared
+
+Measured 2026-08-18 on macOS, packaged. The state snapshots had said all they could — they agreed
+run to run — so the probe that settled it was an **event and effect timeline at the drain**:
+`window-kernel-executor.ts recordTimeline` logs one line per APPLY, in applied order, carrying the
+event, the `key` delta, the effects `react` emitted, and every base-layer page host's visibility.
+`hybrid-overlay.ts installTestBridge` marks each drain (`markTimeline`) and exposes the log
+(`kernelTimeline()`), which the deactivation polls now carry alongside `attachDiagnostic()`. A
+failing poll reads:
+
+```
+#41 --- setActive(null) drain=[wm-7]
+#42 WindowHidden(wm-7) key=wm-7 eff=[AttachOverlayTo,HideWindow(wm-7),RaiseWindow(wm-4)]
+#44 WindowHidden(wm-7) key=wm-7 eff=[-]
+#47 --- setActive(null) done
+#48 WindowShown(wm-7)  key=wm-7 eff=[AttachOverlayTo,ShowWindow(wm-7),SetStacking(wm-7)]
+#49 OverlayAttached    key=wm-7 eff=[ShowWindow(wm-1),SetStacking(wm-1)]
+```
+
+The drain completes correctly and leaves the kernel consistent at `#47`. `#48` is a **stray
+`WindowShown` arriving after it** — AppKit delivering the `'show'` notification provoked by the
+EARLIER activation's `ShowWindow(wm-7)`, lagged past the hide. `react` reads it as a genuine
+`visible: false -> true` flip, re-emits the whole show-shaped effect set, and `AttachOverlayTo`
+puts the chrome back on a host the drain had just cleared. Nothing detaches it afterwards, because
+by the kernel's own reading nothing is wrong — which is why the failure is stuck rather than slow.
+Whether the lagged notification lands before or after the drain is what the roughly one-in-two
+rate was.
+
+**The drain itself is exonerated**, and so is the successor-raise mechanism proposed above it: the
+raise `#42` emits names `wm-4`, not a record later in the drain, and `isContentWindow` requires
+`visible`, so a drain cannot re-show its own members. That proposal is refuted too.
+
+The fix is the exact mirror of a guard the same file already carries.
+`electron-window-backend.ts`'s `win.on('hide')` validates against native ground truth before
+echoing (`if (!win.isDestroyed() && win.isVisible()) return;`) — added for the peek `71cfde09`
+lagged-notification class on the hide side. `win.on('show')` directly above it had none, so the
+show half of the same lag class went straight into the machine. It now reads
+`if (win.isDestroyed() || !win.isVisible()) return;`: a destroyed window is never shown, which is
+why the `isDestroyed` arm points the opposite way from the hide side's.
+
+Measured A/B, packaged macOS, `hybrid-overlay.spec.ts` (45 tests), failing SETS not counts:
+
+| | Runs | Failing sets (spec line) |
+|---|---|---|
+| Before | 4 | `{1054}` · `{1054}` · `{784, 1054, 1829}` · `{784, 1054, 2253}` |
+| After | 6 | all clean |
+
+`1054` ("notes pane … clears on null") failed 4/4 before and 0/6 after, so the proof is
+failing-first on a deterministic case rather than on a rate. `784` (2/4 before), `1829` and `2253`
+(1/4 each) also cleared.
+
+The timeline is E2E-only (`process.env.E2E_TEST === 'true'`), bounded at 400 entries, and reads
+only already-computed snapshots — the same contract as `logTransition` beside it. It stays in the
+tree: it is the tool that answers "which transition put the kernel here", which no state snapshot
+can.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 

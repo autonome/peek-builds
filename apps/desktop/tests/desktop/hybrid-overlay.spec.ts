@@ -287,7 +287,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayChromeState();
-          return s ? { noActive: s.noActive, url: s.url, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
+          return s ? { noActive: s.noActive, url: s.url, attached: b.activeId(), diag: b.attachDiagnostic(), timeline: b.kernelTimeline() } : null;
         }),
       )
       .toEqual(expect.objectContaining({ noActive: true, url: '', attached: null }));
@@ -878,7 +878,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayPanelState();
-          return s ? { noActive: s.noActive, hasData: s.pageInfo?.hasData, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
+          return s ? { noActive: s.noActive, hasData: s.pageInfo?.hasData, attached: b.activeId(), diag: b.attachDiagnostic(), timeline: b.kernelTimeline() } : null;
         }),
       )
       .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));
@@ -967,10 +967,10 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayPanelState();
-          return s ? { tags: s.tags?.hasData, ext: s.extensions?.hasData } : null;
+          return s ? { tags: s.tags?.hasData, ext: s.extensions?.hasData, timeline: b.kernelTimeline() } : null;
         }),
       )
-      .toEqual({ tags: false, ext: false });
+      .toEqual(expect.objectContaining({ tags: false, ext: false }));
   });
 
   test('panels become visible with the chrome and are in the click-capture set', async () => {
@@ -1126,7 +1126,7 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
         app.evaluateMain!(async () => {
           const b = (globalThis as any).__peekHybridOverlayTest;
           const s = await b.overlayNotesWidgetState();
-          return s ? { noActive: s.noActive, hasData: s.notes?.hasData, attached: b.activeId(), diag: b.attachDiagnostic() } : null;
+          return s ? { noActive: s.noActive, hasData: s.notes?.hasData, attached: b.activeId(), diag: b.attachDiagnostic(), timeline: b.kernelTimeline() } : null;
         }),
       )
       .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));

@@ -765,6 +765,21 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.armBlurSettle();
     });
     win.on('show', () => {
+      // OS boundary workaround, the exact mirror of the `'hide'` guard below
+      // (the peek 71cfde09 lag class, show half): AppKit delivers a
+      // BaseWindow's 'show' notification asynchronously, so it can arrive after
+      // the machine has already hidden that same window again — and the machine
+      // then reads a stale echo as a fresh reveal, flipping `visible` back to
+      // true and re-emitting the whole show-shaped effect set (`ShowWindow`,
+      // `SetStacking`, and — for a base-layer page host — `AttachOverlayTo`).
+      // That is the overlay-deactivation failure: the chrome re-attached to a
+      // host the drain had just cleared and never detached again. Validate the
+      // signal against native ground truth, exactly as the hide side does: only
+      // a window that is really on screen echoes WINDOW_SHOWN. A destroyed
+      // window is never shown, so it is excluded here (the hide side's
+      // `isDestroyed` arm reads the other way for the same reason — a destroyed
+      // window IS hidden).
+      if (win.isDestroyed() || !win.isVisible()) return;
       const focused = this.isFocused(win);
       this.emit({ type: 'WINDOW_SHOWN', id, focused });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
