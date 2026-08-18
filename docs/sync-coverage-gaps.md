@@ -237,15 +237,18 @@ Three limits:
   tests that call `syncAll()` (`testBidirectionalSync`, `testIncrementalSync`), on
   whatever data those tests happen to hold. `testTagsetSync` covers the `tags`
   array on `/items`, not the tag-metadata routes.
-- Two of the 13 cases cannot fail. `testDeletedItemsNotSynced()` and
-  `testPushFailureNotRetried()` print a pass on every path and never inject a
-  failure. `testPushFailureNotRetried()` is additionally stale: its comments
-  describe failed pushes never being retried, which the parked-item mechanism
-  (§ `items.syncError`) replaced.
+Two cases used to print a pass on every path and never inject a failure. They
+were replaced with assertions of the behaviour that actually holds now:
+`testDeletionTombstonePropagates()` proves a soft delete reaches the server as a
+`deletedAt` tombstone and drops out of the default listing, and
+`testRejectedItemIsParked()` proves a permanently rejected row records
+`syncError`/`syncErrorAt`, is not re-attempted while unchanged, and pushes once
+edited. That makes the parked-item mechanism the one recent change proven over a
+real socket rather than only in-process.
 
-None of `pushedAt`, `syncError` or `/items/batch` is referenced here. The batch
-route runs as an implementation detail of `pushToServer()`, but the 404 fallback
-cannot be reached, because the spawned server always has the route.
+`pushedAt` and the `/items/batch` 404 fallback are still in-process only. The
+batch route runs here as an implementation detail of `pushToServer()`, but the
+fallback cannot be reached, because the spawned server always has the route.
 
 ### `packages/integration-tests/sync-integration.test.js` — 9 cases
 
@@ -304,7 +307,7 @@ slow to run on every commit; the desktop gate stays the only place suite 1 runs.
   tag-stage assertion lives in the in-process suite, which cannot see a
   client/server disagreement.
 - No suite exercises real authentication end to end.
-- `pushedAt`, `items.syncError` and `POST /items/batch` are proven only in-process.
+- `pushedAt` and the `POST /items/batch` 404 fallback are proven only in-process.
 - The version-bump logic is proven against a copy of itself.
 
 ## Verifying any of this

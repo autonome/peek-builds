@@ -609,49 +609,50 @@ async function testSyncIdDeduplication() {
  *
  * This is a KNOWN LIMITATION documented in sync-architecture.md:244
  */
-async function testDeletedItemsNotSynced() {
-  console.log('\n--- Test: Deleted Items Not Synced (Documenting Known Limitation) ---');
+async function testDeletionTombstonePropagates() {
+  console.log('\n--- Test: Deletion Tombstone Propagates ---');
 
   // Create item on desktop and push to server
   const content = 'https://delete-test-' + Date.now() + '.com';
   const { id } = datastore.addItem('url', { content });
   console.log(`  Created item on desktop: ${id}`);
 
-  // Push to server
   await sync.syncAll(BASE_URL, apiKey);
   console.log('  Pushed item to server');
 
-  // Verify item exists on server
   if (!(await serverHasItem(content))) {
     throw new Error('Item should exist on server after push');
   }
 
-  // Delete item on desktop (soft delete)
+  // Soft delete on desktop
   datastore.deleteItem(id);
   console.log('  Soft deleted item on desktop');
 
-  // Verify item is deleted on desktop
-  const deletedItem = datastore.queryItems({}).find(i => i.content === content);
-  if (deletedItem) {
+  if (datastore.queryItems({}).find(i => i.content === content)) {
     throw new Error('Item should not appear in desktop queries after deletion');
   }
 
-  // Push again - the deleted item should NOT be pushed (current behavior)
-  const pushResult = await sync.pushToServer(BASE_URL, apiKey, 0);
+  // A tombstone only pushes on the incremental branch: it needs a syncId and an
+  // updatedAt past its syncedAt, which the delete just moved.
+  const pushResult = await sync.pushToServer(BASE_URL, apiKey, 1);
   console.log(`  Push after delete: ${pushResult.pushed} items`);
 
-  // DOCUMENTING LIMITATION: Item still exists on server after desktop delete
-  const stillOnServer = await serverHasItem(content);
-  console.log(`  Item still on server after desktop delete: ${stillOnServer}`);
+  const withDeleted = await serverRequest('GET', '/items?includeDeleted=true');
+  const serverCopy = withDeleted.items.find(i => i.content === content);
+  if (!serverCopy) {
+    throw new Error('Server should still hold the row, carrying a tombstone');
+  }
+  if (!serverCopy.deletedAt || serverCopy.deletedAt <= 0) {
+    throw new Error(`Server copy should carry deletedAt > 0, got ${serverCopy.deletedAt}`);
+  }
+  console.log(`  Server copy carries deletedAt=${serverCopy.deletedAt}`);
 
-  if (stillOnServer) {
-    console.log('  CONFIRMED: Deleted items do not propagate to server');
-    console.log('  This is a known limitation - soft deletes are local only');
-  } else {
-    console.log('  Note: Item was removed from server (unexpected)');
+  // And the live listing no longer offers it
+  if (await serverHasItem(content)) {
+    throw new Error('Deleted item should not appear in the default server listing');
   }
 
-  console.log('  PASSED (documented limitation)');
+  console.log('  PASSED');
 }
 
 /**
@@ -664,46 +665,53 @@ async function testDeletedItemsNotSynced() {
  *
  * This is a HIGH PRIORITY issue that could cause data loss.
  */
-async function testPushFailureNotRetried() {
-  console.log('\n--- Test: Push Failure Not Retried (Documenting Issue) ---');
+async function testRejectedItemIsParked() {
+  console.log('\n--- Test: Server-Rejected Item Is Parked Until Edited ---');
 
-  // Create item on desktop
-  const content = 'https://push-failure-test-' + Date.now() + '.com';
-  const { id } = datastore.addItem('url', { content });
-  console.log(`  Created item on desktop: ${id}`);
+  // A tagset with no tags is rejected by the server on every attempt: a
+  // permanent rejection, which parks the row instead of retrying it forever.
+  const { id } = datastore.addItem('tagset', { content: null });
+  console.log(`  Created a tagset with no tags: ${id}`);
 
-  // Do a normal sync first to establish lastSyncTime
-  await sync.syncAll(BASE_URL, apiKey);
-  console.log('  Initial sync complete');
-
-  // Wait a bit, then create another item
-  await sleep(100);
-  const content2 = 'https://push-failure-test-2-' + Date.now() + '.com';
-  const { id: id2 } = datastore.addItem('url', { content: content2 });
-  console.log(`  Created second item on desktop: ${id2}`);
-
-  // Verify item needs to be synced (syncedAt is 0)
-  const status1 = sync.getSyncStatus();
-  console.log(`  Pending items before sync: ${status1.pendingCount}`);
-
-  // Normal sync - item should be pushed
   await sync.syncAll(BASE_URL, apiKey);
 
-  // Verify item was pushed
-  if (!(await serverHasItem(content2))) {
-    throw new Error('Item should exist on server after successful push');
+  const parked = datastore.queryItems({}).find(i => i.id === id);
+  if (!parked) {
+    throw new Error('Tagset row should still exist locally');
   }
+  if (!parked.syncError) {
+    throw new Error('Rejected item should carry syncError, got empty');
+  }
+  if (!(parked.syncErrorAt > 0)) {
+    throw new Error(`Rejected item should carry syncErrorAt > 0, got ${parked.syncErrorAt}`);
+  }
+  if (parked.syncId) {
+    throw new Error('Rejected item should have no syncId');
+  }
+  console.log(`  Parked with syncError: ${parked.syncError}`);
 
-  // Check pending count is now 0
-  const status2 = sync.getSyncStatus();
-  console.log(`  Pending items after sync: ${status2.pendingCount}`);
+  // Parked, so a second run does not attempt it again — the row is unchanged.
+  await sync.syncAll(BASE_URL, apiKey);
+  const stillParked = datastore.queryItems({}).find(i => i.id === id);
+  if (stillParked.syncErrorAt !== parked.syncErrorAt) {
+    throw new Error('A parked item should not be re-attempted while unchanged');
+  }
+  console.log('  Second run left it alone');
 
-  // Document the issue: if push had failed, the item would be lost
-  console.log('  DOCUMENTED: If push fails, lastSyncTime is still updated');
-  console.log('  This means failed items won\'t be retried on next sync');
-  console.log('  Recommendation: Track failed items separately for retry');
+  // Editing it moves updatedAt past syncErrorAt, which makes it eligible again.
+  const { tag } = datastore.getOrCreateTag('parked-tagset-' + Date.now());
+  datastore.tagItem(id, tag.id);
+  datastore.updateItem(id, { metadata: { unparked: true } });
+  console.log('  Tagged and edited it');
 
-  console.log('  PASSED (documented issue)');
+  await sync.syncAll(BASE_URL, apiKey);
+  const revived = datastore.queryItems({}).find(i => i.id === id);
+  if (!revived.syncId) {
+    throw new Error('An edited item should push successfully and earn a syncId');
+  }
+  console.log(`  Pushed after the edit, syncId=${revived.syncId}`);
+
+  console.log('  PASSED');
 }
 
 /**
@@ -878,8 +886,8 @@ async function runTests() {
       ['sync_id Duplicate Prevention', testSyncIdDuplicatePrevention],
       ['sync_id Based Deduplication', testSyncIdDeduplication],
       // Edge case tests
-      ['Deleted Items Not Synced (Known Limitation)', testDeletedItemsNotSynced],
-      ['Push Failure Not Retried (Documented Issue)', testPushFailureNotRetried],
+      ['Deletion Tombstone Propagates', testDeletionTombstonePropagates],
+      ['Server-Rejected Item Is Parked', testRejectedItemIsParked],
       ['Tagset Sync', testTagsetSync],
       ['Unicode Content Handling', testUnicodeContent],
       ['Identical Timestamps', testIdenticalTimestamps],
