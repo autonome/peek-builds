@@ -108,6 +108,19 @@ yarn test:packaged                  # Re-run desktop project against existing ou
 yarn test:extension:chrome          # SEPARATE env: Chrome extension UI suite (headed)
 ```
 
+**`yarn test:grep` only ever runs the `desktop` project.** Its script hardcodes the path
+`apps/desktop/tests/desktop/`, so a pattern naming a spec in `tests/desktop-serial/`,
+`tests/components/` or `tests/editor/` matches nothing and Playwright reports **"No tests
+found"** — which exits non-zero but reads as "the spec is fine", and has already been recorded
+in a handoff as a real failure that did not exist. Confirm the collected count is what you
+expect. To grep another project, invoke the display wrapper with an explicit `--project`:
+
+```bash
+HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test \
+  --config apps/desktop/playwright.config.ts \
+  --project=desktop-serial --workers=1 --grep '<pattern>'
+```
+
 `yarn test:grep` iterates fast during editing. Validate with **`yarn test:desktop:electron`**
 (the full gate) before declaring done — source-only / single-project runs miss asar /
 asar.unpacked path bugs, electron-builder file-inclusion problems, and entire surfaces (unit,

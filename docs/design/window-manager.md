@@ -3228,6 +3228,71 @@ what Escape does. It owns nothing about what is inside them.
 
 ---
 
+
+### 4.3.1 The overlay Playwright file is a race, and single runs of it are not evidence
+
+`apps/desktop/tests/desktop/hybrid-overlay.spec.ts` (45 tests, the `Hybrid Chrome Overlay`
+patterns) does not settle to a stable failing set. Measured on Linux under
+`scripts/playwright-with-display.sh`, six consecutive runs at the head that carries
+`window-kernel.ts react`'s minimal stacking replay produced **one clean run**; five runs of the
+same file with that stacking commit reverted produced **two**. Both trees lose roughly one test
+per run, and the tests they lose are disjoint:
+
+| test | with minimal stacking replay (6 runs) | with it reverted (5 runs) |
+|---|---|---|
+| `back/forward unblocked: nav drives the active content WC` | 3 | 0 |
+| `Cmd+F forward (page:find) opens the overlay find bar` | 2 | 0 |
+| `clicking the chrome (overlay focus on content blur) does NOT deactivate` | 1 | 0 |
+| `trigger-zone → navbar move keeps the chrome open` | 1 | 0 |
+| `follows the active host window move/resize (focus-free)` | 1 | 0 |
+| `retarget is focus-free: overlay frames A, then B, then hides on null` | 0 | 1 |
+| `maximize snaps to work area; restore returns to prior bounds` | 0 | 2 |
+
+**Two consequences.** Narrowing the stacking replay does not cleanly cause any single failure —
+it changes which test loses a race both trees lose. And a single run of this file, green or red,
+is worthless in either direction: a green run has been observed on a tree whose next run failed
+twice. Measure it in batches of at least four and compare failing SETS, never counts.
+
+`back/forward unblocked: nav drives the active content WC held through an overlay interaction`
+is the strongest single lead — 3 of 6 with the narrowed replay, 0 of 5 without — and it is in
+neither list in `apps/desktop/tests/gate-baseline.md`.
+
+The mechanism to check first, stated so it can be refuted: the narrowed replay stops emitting
+`SetStacking` for the shared chrome overlay (alone in the pinned band) and for any window below
+the mover. On Linux each `SetStacking` also armed a `pendingStackingFocus` entry in
+`electron-window-backend.ts setStacking`, which suppressed a platform-provoked focus; with those
+armings gone, and `electron-window-backend.ts pendingHideProvokedFocus` being a single one-shot
+boolean, a focus handed to a non-page-host can survive as `OsFocusGained`, after which
+`window-kernel.ts topmostBaseLayerPageHost` answers null and `react` emits
+`AttachOverlayTo(overlay, null)`, detaching the chrome. Against it: the failing runs show the
+renderer demonstrably ready (`tests/helpers/hybrid-page.ts waitOverlayReady` succeeds and the
+"overlay renderer never became usable" diagnostic never appears), and the detach has never been
+observed. Reading the whole `overlayChromeState()` at the poll inside a full-file run settles it
+— `noActive: true` confirms the chain, a correct `url` refutes it.
+
+### 4.3.2 Two Linux-only spec failures, explained
+
+Both are listed in `apps/desktop/tests/gate-baseline.md` as deterministic Linux failures, and
+neither is a defect in the window kernel.
+
+`hybrid-close-shortcut.spec.ts` "getFocusedWindow() is null while a hybrid host is the active
+window" — at the moment the spec probes, Peek's settings window is already visible AND focused,
+so `BrowserWindow.getFocusedWindow()` answers it rather than null; the window the spec creates is
+not involved. `scripts/playwright-with-display.sh` unsets `HEADLESS` on Linux, so windows take
+real OS focus here, and the spec's premise — that a headless run grants none — is a macOS fact
+this platform cannot reproduce. The close path itself reads kernel state only:
+`windows.ts resolveFocusedWindowIdForClose` calls no Electron focus API.
+
+`hybrid-transient-on-blur.spec.ts` "opening (focusing) a second hybrid quick-view closes the
+first" — the spec fails on its precondition, before it fires any focus. Measured: after opening
+the first quick-view it is alive; after opening the second, **the first is already gone**. That is
+the current rule working — opening the second moves attention to it, `lastAttention` changes, and
+`window-kernel.ts selectTransientAutoclose` dismisses the first. The spec's staging assumes the
+retired machine, in which opening granted no attention. On macOS
+`electron-window-backend.ts STACKING_TAKES_FOCUS` is false, no stacking-provoked focus arrives,
+and the first quick-view survives to the synthetic focus — which is why this fails only on Linux.
+
+
 ## 5. Migration sequence
 
 Ordered so the highest-regression-risk area lands last. **Each step deletes its old
