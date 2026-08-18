@@ -54,23 +54,35 @@ against `main` on the same machine in the same sitting, by the same command, rep
 run distinguishes nothing here — `gate-baseline.md` exists precisely because this suite's failure
 count moves between identical runs, and reading one run reports a flake as a regression.
 
-#### One deterministic regression, still open
+#### The izui-escape palette failure: diagnosed, and not a kernel defect
 
 `izui-escape.spec.ts` "regression: ESC on a page opened FROM a palette-role opener does NOT close
-it (full backend path)".
+it (full backend path)" failed 4/4 source-only and 2/2 packaged on the branch against 3/3 passing
+on `main`, and `apps/desktop/tests/gate-baseline.md` lists it **unclassified**. The cause is not a
+kernel defect: the spec encoded behaviour the kernel deliberately changed.
 
-| | branch | `main` |
-|---|---|---|
-| source-only (`test:grep`) | 4/4 fail | 3/3 pass |
-| packaged (`test:desktop:electron:spec`) | 2/2 fail | not run |
+Traced live: the spec's own `paletteWindow.evaluate` opens `peek://search/home.html`; that page
+takes key; `window-kernel.ts selectTransientAutoclose` dismisses the palette; and the `evaluate`
+call rejects because the page it was running in was destroyed. The reported
+`Target page, context or browser has been closed` is the consequence of the spec's own action, not
+something that happened before it.
 
-The palette window is already closed when the spec tries to open a page from it
-(`page.evaluate: Target page, context or browser has been closed`), so the failure is upstream of
-the Escape behavior the spec names, and points at transient dismissal rather than at Escape.
+The dismissal is correct. `selectTransientAutoclose` dismisses a visible transient whenever another
+window genuinely takes key, unless that window names it as parent
+(`focuser.parentId === rec.id`). `ipc.ts NON_PARENT_ROLES` deliberately withholds that parent link
+from a palette-opened page — the very exclusion this spec guards — so no exemption applies. The
+seam that keeps a genuine child alive is `options.declareParent`, which sets the machine-level
+`parentId` without touching `isRealParent`; `renderer/cmd/panel.js openChainPopup()` uses it. So a
+chain popup keeps the palette and an opened page dismisses it, which is the intended split.
 
-`gate-baseline.md` lists this spec as **unclassified** — deterministic on Linux with no diagnosis
-tying it to a cause. The A/B above supplies one: it is branch-caused, not environmental, and it
-survived the overlay-attach-effect work.
+`izui-escape.spec.ts` now fires the open without awaiting its result, finds the opened window by
+URL, and pins the dismissal after the Escape assertion.
+
+**The Escape assertion in that spec is vacuous on macOS-headless, and is not fixed.** Removing
+`'palette'` from `ipc.ts NON_PARENT_ROLES` — the exact defect the spec names — leaves it PASSING.
+Whether `keyboard.press('Escape')` reaches the content window's `before-input-event` without a real
+key window is unestablished. Commit `a4b1b91e` is therefore unguarded on this platform, before and
+after the spec's repair.
 
 #### The overlay attach regression is fixed
 
