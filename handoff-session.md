@@ -1,6 +1,6 @@
 # Handoff — sync coverage and the datastore/server track
 
-Covers work through 2026-08-17. Two other handoffs exist and are NOT this one:
+Covers work through 2026-08-18. Two other handoffs exist and are NOT this one:
 `handoff.md` belongs to the window-manager initiative, and `handoff-mcp.md` is the
 standing reference for the MCP remote backend design and its known gaps.
 
@@ -20,7 +20,7 @@ unpaginated pull, mobile locked out) and the deliberately deferred `rules` table
 
 ### Current state
 
-`main` is clean and pushed to `tangled` at `54880720`.
+`main` is clean and pushed to `tangled`; the last code commit is `205e4687`.
 
 **Event sync is proven end to end.** A full desktop sync moved `item_events` on the
 live server from 0 to 24,087 rows, and a following delta sync added a handful more —
@@ -89,11 +89,46 @@ and are classified: a 4xx reads as "will not succeed until the item changes", an
 else as "will retry next run". Entries carry ids, counts and error text only — never
 item content, since the log renders in the UI.
 
-**Six local `text` items cannot sync.** A real run logged
-`Server error 400: {"error":"content is required for type 'text'"}` for six items.
-They stay pending and are retried every run. **Unverified: whether those items are
-genuinely empty locally (junk to drop) or hold content the push is not sending (a
-client bug losing data).** See the first Next Step.
+**One empty note stalled the whole event stage, and that is fixed.** Six local `text`
+items were rejected on every run with `Server error 400: {"error":"content is
+required for type 'text'"}`. Queried against the live datastore, four of them exist
+with empty content AND empty title — junk, not a client bug losing data
+(`pushSingleItem` sends `content: item.content` straight from `SELECT * FROM items`,
+so nothing is dropped in transit). The other two ids the log named are absent from
+that datastore, unexplained and not chased.
+
+The consequence was far larger than six items. `pushEventsToServer()` holds its
+watermark below the oldest event of any item lacking a `syncId`, so nothing is
+stranded when a parent item finally syncs — but an item the server permanently
+rejects never earns one. The watermark stayed pinned in February and **every run
+re-pushed the entire event tail behind it: 20,000+ events, measured live.** The
+stage logged nothing between its start and finish lines, so it read as a hang.
+
+Four changes closed it:
+
+- **The server stores an empty `text` item** instead of rejecting it
+  (`CONTENT_REQUIRED_TYPES` in `apps/server/index.js` drops `text`; `url` keeps the
+  requirement). Deployed to production 2026-08-18 07:27 UTC. Rejecting an item the
+  client retries forever is what turns one bad row into a stalled sync.
+- **A deleted, never-synced item no longer pins the watermark** (`AND i.deletedAt = 0`
+  on the blocked-event query). Deleting an unsyncable item is the obvious remedy, and
+  without this it made the stall permanent instead of clearing it.
+- **The event stage reports its batch plan and position**, so its size is visible
+  before it starts working.
+- **A one-time migration soft-deletes text items with neither content nor title**
+  (`migrateEmptyTextCleanup`, flag `empty_text_cleanup_v1`).
+
+**Unverified: the live effect.** The desktop fixes need a rebuild on the Mac that
+holds the datastore, and no sync has run since. Expect the migration line
+`[empty-text-cleanup] Removed N empty text items` at startup, the six rejections to
+stop, and the event stage to fall to the real delta.
+
+**What created the empty notes.** `features/editor/home.js init()` created the row the
+moment a blank editor opened, before any typing — introduced 2026-02-11 (`cb4d5e10`),
+removed 2026-02-26 (`0bd98f19`). All four surviving ids decode to timestamps inside
+that window. The overlay notes panel had the same shape (`page-notes.js _addNote()`
+wrote the row on `+` and filled it on blur) and now defers the write to the first
+non-empty keystroke, flushing a non-empty draft if the pane is torn down.
 
 **The desktop Electron gate has a recorded baseline.** `apps/desktop/tests/gate-baseline.md`
 lists the 27 desktop and 1 desktop-serial specs that fail on every run, and the 5 that
@@ -126,14 +161,11 @@ last-seen. Mobile source already declares version 3 in
 
 Ordered by consequence.
 
-1. **Decide what the six unsyncable `text` items are.** Run against the desktop
-   datastore: `SELECT id, type, title, length(content) AS len, createdAt FROM items
-   WHERE type='text' AND (content IS NULL OR content='')`. If they are genuinely empty,
-   they are junk and the fix is to stop creating them and/or drop them. If they have
-   titles or other content, `pushSingleItem` in `apps/desktop/main/sync.ts` is dropping
-   something real and that is a data-loss bug. **blocked on: access to the desktop
-   datastore, which lives on the operator's Mac — no Peek datastore exists on the
-   server this track works from.**
+1. **Confirm the event stall is actually gone.** Rebuild the desktop app on the Mac and
+   run a sync. The event stage should report a batch plan in the hundreds, not 20,000+,
+   and the six item rejections should stop. If the count stays high, the watermark is
+   pinned by something other than those items and the blocked-event query is where to
+   look. **blocked on: the Mac, which holds the datastore and the build.**
 
 2. **Ship a mobile build.** Mobile cannot reproduce the duplication bug — it has no
    version-change reset at all, and `push_to_server()` in
@@ -150,19 +182,33 @@ Ordered by consequence.
    pending count before and after.
    **blocked on: the Mac, which holds the iOS build environment and Xcode.**
 
-3. **Paginate the bulk pull.** `/items/since/:timestamp` returns the entire profile in
+3. **Keep the notes panel's editor open when something else changes.** Any subscribed
+   pubsub event (`item:created`, `tag:item-added`, `sync:pull-completed`, …) makes
+   `page-notes.js _reload()` rebuild the pane's whole DOM. Removing the focused
+   textarea fires its blur handler, which saves and then sets `_editingId = null`, so
+   an open note closes mid-typing and focus and caret are lost. **The text is NOT
+   lost** — measured with a live probe: after an unrelated write the note's preview
+   held every typed character. So this is an interruption, not data loss.
+
+   A fix has to keep `_editingId` alive across a rebuild (the blur that the removal
+   fires must save without closing) and restore the caret afterwards, which needs the
+   in-progress value and selection held in pane state. An attempt that held the value
+   and caret but left the blur handler clearing `_editingId` was reverted for changing
+   nothing observable.
+
+4. **Paginate the bulk pull.** `/items/since/:timestamp` returns the entire profile in
    one body — 9.91 MB today and unbounded as the datastore grows. The 120 s timeout
    only buys time. This changes both `apps/server/index.js` (the three `since` routes)
    and the desktop pull functions `pullFromServer`, `pullEventsFromServer`,
    `pullTagsFromServer` in `apps/desktop/main/sync.ts`, and needs a version story so an
    old client still works.
 
-4. **Batch the item push.** A full re-push is one HTTP request per item — roughly 11k
+5. **Batch the item push.** A full re-push is one HTTP request per item — roughly 11k
    sequential requests taking about 25 minutes on a normal connection. `POST /events`
    already accepts batches of up to 1000 and pushes 24k events in under a minute, so
    the shape to copy exists.
 
-5. **Give the restore path a production rehearsal.** Backups are proven readable and
+6. **Give the restore path a production rehearsal.** Backups are proven readable and
    the download route works against real data, but nothing has ever restored one.
    Until an archive is put back and verified, a backup is proven as an archive and
    unproven as recovery. Backups also still live on the same Railway volume as the
@@ -170,7 +216,7 @@ Ordered by consequence.
    the download route is the first half of fixing that; nothing pulls them off-box on
    a schedule.
 
-6. **Sync `rules` — still deferred until something can write a user rule.** There are
+7. **Sync `rules` — still deferred until something can write a user rule.** There are
    zero `source='user'` rows and no code path that creates one; `tile:rules:register`
    hardcodes `source: 'runtime'` and there is no rule editor. All existing rules are
    `source='manifest'` and regenerate, so they must not sync. Two constraints the rule
@@ -181,7 +227,7 @@ Ordered by consequence.
    Separately, `scriptId` resolution fails silently — a synced rule naming a script the
    other device lacks never fires and logs nothing.
 
-7. **Bootstrap the dispatch loop.** Needs Peek's MCP wired into this repo, which needs
+8. **Bootstrap the dispatch loop.** Needs Peek's MCP wired into this repo, which needs
    an MCP grant minted via `POST /admin/mcp-grants` (a production write creating a
    credential; the admin token is set and the route exists). No Peek datastore exists
    on this machine, so it must ride on the remote backend.
@@ -196,12 +242,21 @@ Ordered by consequence.
   takes a `clearSyncId` flag — **keep `syncId` on a version bump or items duplicate**.
   `serverFetch()` carries `timeoutMs` (`DEFAULT_FETCH_TIMEOUT_MS` 15 s,
   `BULK_PULL_TIMEOUT_MS` 120 s). `pushEventsToServer()` owns event validation, per-chunk
-  isolation and the `lastEventPushAt` watermark. `logSyncProgress()`/`getSyncLog()`/
+  isolation and the `lastEventPushAt` watermark — **its blocked-event query holds that
+  watermark below the oldest event of any live item without a `syncId`, so anything the
+  server permanently rejects stalls the whole stage** (deleted items are excluded).
+  `logSyncProgress()`/`getSyncLog()`/
   `resetSyncLog()` own the progress log; `groupFailuresByReason()` and
   `isPermanentPushFailure()` classify failures.
 - `apps/server/db.js saveItem()` — matches a pushed item by server row id, then by the
   `syncId` column. **No content fallback; syncId is canonical.** This is why a lost
   syncId means a duplicate row.
+- `apps/desktop/main/datastore.ts migrateEmptyTextCleanup()` — the one-shot cleanup, and
+  the model for adding another (settings-flag gating, soft delete, exported so a node
+  test can drive it against an in-memory database).
+- `apps/desktop/renderer/page/page-notes.js` — the chrome overlay's notes panel.
+  `_addNote()` holds a draft; `_createDraftNote()` writes the row on the first non-empty
+  keystroke; `_flushPendingDraft()` saves it when the pane is retargeted or cleared.
 - `apps/server/index.js` — `checkVersionHeaders()` is mounted on `/items` and
   `/items/*` ONLY, so a version-mismatched client still reaches `/events` and `/tags`.
   `POST /events` caps at 1000 per push and validates id/itemId/occurredAt/createdAt.
@@ -237,6 +292,12 @@ never by the count.
 ## Reference
 
 ### Decisions & gotchas
+
+- **A permanent server rejection is a sync-wide stall, not a one-item problem.** The
+  client retries a rejected item forever, so it never earns a `syncId`, and the event
+  watermark is held below every event behind it. Validation that refuses to store
+  something a client already holds costs far more than the row it saves — which is why
+  the server now accepts an empty `text` item.
 
 - **`createdAt` is client-authoritative on INSERT; `updatedAt` stays server-stamped.**
   Preserving creation dates is what "lose nothing" means, while `updatedAt` is the key
