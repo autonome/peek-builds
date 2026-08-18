@@ -411,6 +411,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * focus is suppressed even if it was genuine.
    */
   private readonly pendingStackingFocus = new Set<WindowId>();
+  /**
+   * Armed by `hideWindow`, consumed by the next `'focus'` — the hide half of the
+   * same principle `pendingStackingFocus` states for stacking: hiding the window
+   * that holds focus makes the platform hand focus to SOME other window, and the
+   * machine asked to hide, never to focus. Unlike stacking, the platform picks
+   * the recipient, so there is no id to arm — the arming is the ACT, and the one
+   * focus the platform provokes for it consumes it. A machine-armed focus still
+   * reports (`cause.kind === 'machine'`): a focus-family command asked for that
+   * one.
+   */
+  private pendingHideProvokedFocus = false;
 
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
@@ -726,6 +737,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // itself. A machine-armed focus still reports: a focus-family command
       // genuinely asked for that one.
       if (suppressed) return;
+      // The hide half of the same principle, one arming consumed by the one
+      // focus the platform provokes for it. See `pendingHideProvokedFocus`.
+      const hideProvoked = this.pendingHideProvokedFocus;
+      this.pendingHideProvokedFocus = false;
+      if (hideProvoked && cause.kind !== 'machine') return;
       this.emit({
         type: 'OS_FOCUS_GAINED',
         id,
@@ -1398,6 +1414,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!win) return;
     try {
       if (win.isDestroyed()) return;
+      // Hiding the focused window makes the platform reassign focus to a window
+      // the machine never named — arm the attribution so the `'focus'` handler
+      // does not read this backend's own side effect as fresh OS evidence. See
+      // `pendingHideProvokedFocus`.
+      this.pendingHideProvokedFocus = true;
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */
