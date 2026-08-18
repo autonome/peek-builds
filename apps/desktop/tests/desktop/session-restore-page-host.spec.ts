@@ -137,11 +137,123 @@ test.describe('Session Restore Page Host @desktop', () => {
     );
   }
 
+  /**
+   * The window-registry entry for `id`, or null. This is how geometry is read
+   * for a hybrid page host: it is a BaseWindow, so `BrowserWindow.fromId()`
+   * returns null for it, and the presenter behind `app.window.list` is the seam
+   * that reports `bounds` / `maximized` / `preMaxBounds` for hybrid and
+   * non-hybrid windows alike.
+   */
+  async function findEntry(id: number) {
+    return bgWindow.evaluate(async (targetId: number) => {
+      const r = await (window as any).app.window.list({ includeInternal: false });
+      if (!r?.success) return null;
+      return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
+    }, id);
+  }
+
+  /**
+   * Wait until `id`'s registry entry reports `maximized === want` and, when
+   * `bounds` is given, exactly those bounds. Waits on the state transition
+   * itself rather than on elapsed time — the topics below are published
+   * fire-and-forget, so the entry IS the completion signal.
+   */
+  async function waitForEntry(
+    id: number,
+    want: { maximized?: boolean; bounds?: { x: number; y: number; width: number; height: number } },
+  ) {
+    // `expect.poll`, NOT `page.waitForFunction`. The predicate has to await an
+    // IPC round trip, and waitForFunction does not await a promise its
+    // predicate returns — it tests the returned Promise object for truthiness,
+    // which is always true, so the wait resolves on the first tick and guards
+    // nothing. `expect.poll` awaits the async poller properly.
+    await expect
+      .poll(async () => {
+        const e = await findEntry(id);
+        if (!e) return null;
+        return { maximized: e.maximized, bounds: e.bounds };
+      }, { timeout: 10000 })
+      .toEqual(
+        want.bounds !== undefined && want.maximized !== undefined
+          ? { maximized: want.maximized, bounds: want.bounds }
+          : expect.objectContaining(
+              want.bounds !== undefined ? { bounds: want.bounds } : { maximized: want.maximized },
+            ),
+      );
+  }
+
+  /** Close `id` and resolve once it is gone from the registry. */
+  async function closeAndAwait(id: number) {
+    await bgWindow.evaluate(async (targetId: number) => {
+      await (window as any).app.window.close(targetId);
+    }, id);
+    await bgWindow.waitForFunction(async (targetId: number) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return false;
+      return !(list.windows || []).some((w: any) => w.id === targetId);
+    }, id);
+  }
+
+  /** Force a restore, then resolve the restored window's id by URL slug. */
+  async function restoreAndFind(slug: string): Promise<number> {
+    const restoreResult = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceRestoreSession()) as any) as
+      { restored: number; failed: number; total: number };
+    expect(restoreResult.restored).toBeGreaterThanOrEqual(1);
+
+    const restoredPageWindow = await app.getWindow(slug, 15000);
+    await restoredPageWindow.waitForLoadState('domcontentloaded');
+    const restoredId = await bgWindow.evaluate(async (s: string) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return null;
+      const match = (list.windows || []).find(
+        (w: any) => typeof w.url === 'string' && w.url.includes(s),
+      );
+      return match ? match.id : null;
+    }, slug) as number | null;
+    expect(restoredId, `restored window for ${slug} should be in the registry`).not.toBeNull();
+    return restoredId!;
+  }
+
+  /** Open a hybrid page host for `slug`, skipping if it did not come back hybrid. */
+  async function openHybridPageHost(slug: string): Promise<number> {
+    const { pageWindow, windowId } = await openPageHost(`http://127.0.0.1:${serverPort}/${slug}`);
+    await pageWindow.waitForLoadState('domcontentloaded');
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(!isHybrid, 'not a hybrid page-host');
+    return windowId;
+  }
+
   test.beforeEach(async () => {
     await resetState();
   });
 
   // Tests ----------------------------------------------------------------
+
+  // The six tests immediately below are canvas-only and all skip under hybrid,
+  // which is the only page-host architecture that ships. They assert geometry
+  // by reading `?width`/`?height` off the shell page's URL, and a hybrid page
+  // host has no shell page. Where each one's hybrid coverage lives, so a skip
+  // is not mistaken for an uncovered behaviour:
+  //
+  //   non-maximized bounds round-trip      → 'hybrid page host: bounds round-trip
+  //                                           through save+restore'
+  //   maximized state survives restore     → 'maximized hybrid page host: maximize
+  //                                           state survives save+restore'
+  //   max → unmax → resize → restart       → 'hybrid page host: maximize →
+  //                                           unmaximize → resize smaller → …'
+  //   max → restore → unmax to pre-max     → 'hybrid page host: maximize →
+  //                                           save+restore → unmaximize …'
+  //   edge resize handle (drag E)          → NO HYBRID PORT. Asserts the shell
+  //                                           page's `#resize-e` DOM handle;
+  //                                           a hybrid host has no such element.
+  //   maximized corner resize (drag SE)    → NO HYBRID PORT, same reason.
+  //
+  // The two unported ones are real gaps: resize-gesture behaviour on a hybrid
+  // host is untested here. Gesture coverage that does exist lives in
+  // `hybrid-content-window-gesture.spec.ts` and the hold-to-drag group in
+  // `hybrid-overlay.spec.ts`, neither of which covers edge/corner resize.
 
   test('non-maximized page host: bounds round-trip through save+restore', async () => {
     const url = `http://127.0.0.1:${serverPort}/normal-roundtrip`;
@@ -786,5 +898,148 @@ test.describe('Session Restore Page Host @desktop', () => {
     await bgWindow.evaluate(async (id: number) => {
       await (window as any).app.window.close(id);
     }, restoredId);
+  });
+
+  // Hybrid ports of the canvas-only geometry round-trips ------------------
+  //
+  // The six canvas tests above assert geometry by reading `?width`/`?height`
+  // off the page-host shell page's URL, and a hybrid page host has no shell
+  // page — so all six skip, and geometry round-trip had no coverage at all on
+  // the only page-host architecture that exists. These three read geometry from
+  // the registry instead, which is architecture-independent. Two of the canvas
+  // six have no port and are marked as such at their skip.
+
+  test('hybrid page host: bounds round-trip through save+restore', async () => {
+    const slug = 'hybrid-bounds-roundtrip';
+    const windowId = await openHybridPageHost(slug);
+
+    // Drive the window to distinctive bounds first. Asserting the round trip
+    // against whatever the open happened to produce would pass on a restore
+    // that ignored the snapshot and re-applied the same open-time defaults.
+    const target = { x: 120, y: 140, width: 720, height: 480 };
+    await publishOverlayTopic(app, 'page:set-bounds', { windowId, bounds: target });
+    await waitForEntry(windowId, { maximized: false, bounds: target });
+
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+    await closeAndAwait(windowId);
+
+    const restoredId = await restoreAndFind(slug);
+    const restored = await findEntry(restoredId);
+    expect(restored?.bounds, 'restored window must come back at the saved bounds').toEqual(target);
+    expect(restored?.maximized, 'a window saved unmaximized must not come back maximized').toBe(false);
+
+    await closeAndAwait(restoredId);
+  });
+
+  test('hybrid page host: maximize → unmaximize → resize smaller → save+restore comes back resized, not maximized', async () => {
+    const slug = 'hybrid-resize-after-unmaximize';
+    const windowId = await openHybridPageHost(slug);
+
+    await publishOverlayTopic(app, 'page:maximize', { windowId });
+    await waitForEntry(windowId, { maximized: true });
+
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId });
+    await waitForEntry(windowId, { maximized: false });
+
+    // Resize smaller AFTER unmaximizing. The failure this guards is a restore
+    // that reads the stale maximize stash rather than the current bounds, and
+    // brings the window back maximized (or at the pre-maximize size).
+    const smaller = { x: 200, y: 180, width: 420, height: 320 };
+    await publishOverlayTopic(app, 'page:set-bounds', { windowId, bounds: smaller });
+    await waitForEntry(windowId, { maximized: false, bounds: smaller });
+
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+    await closeAndAwait(windowId);
+
+    const restoredId = await restoreAndFind(slug);
+    const restored = await findEntry(restoredId);
+    expect(restored?.maximized, 'a window unmaximized before save must not come back maximized').toBe(false);
+    expect(restored?.bounds, 'restored window must come back at the post-unmaximize resized bounds').toEqual(smaller);
+
+    await closeAndAwait(restoredId);
+  });
+
+  test('hybrid page host: unmaximize returns a LIVE window to its pre-maximize bounds', async () => {
+    // The control for the save+restore test below. If both fail, unmaximize
+    // never restores bounds on a hybrid host and `preMaxBounds` is a stash
+    // nothing consumes; if only the restore one fails, the stash survives the
+    // round trip as data but stops driving the window.
+    const slug = 'hybrid-live-unmaximize';
+    const windowId = await openHybridPageHost(slug);
+
+    const original = { x: 170, y: 160, width: 660, height: 450 };
+    await publishOverlayTopic(app, 'page:set-bounds', { windowId, bounds: original });
+    await waitForEntry(windowId, { maximized: false, bounds: original });
+
+    await publishOverlayTopic(app, 'page:maximize', { windowId });
+    await waitForEntry(windowId, { maximized: true });
+
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId });
+    await waitForEntry(windowId, { maximized: false, bounds: original });
+
+    await closeAndAwait(windowId);
+  });
+
+  test('hybrid page host: maximize → save+restore → unmaximize returns to the pre-maximize bounds', async () => {
+    // EXPECTED FAILURE — a real defect, diagnosed, deliberately not fixed here.
+    //
+    // Measured: after save+restore the flag clears but the window stays at the
+    // maximized rect. The control test above passes, so unmaximize restores
+    // bounds correctly on a LIVE window; only a restored one is broken.
+    //
+    // Cause: `ipc.ts`, at the `options.maximized === true` branch of the hybrid
+    // window-open path, seeds the restore-time maximize state with a bare
+    // `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That
+    // reaches the OLD machine only. Every other maximize site pairs its
+    // dispatch with a kernel feed — `page:maximize` calls `shadowKernelMaximize`
+    // alongside it, `page:unmaximize` calls `shadowKernelUnmaximize` — because
+    // the kernel is what drives the window manager. This one site has no such
+    // pair, and `window-kernel-shadow.ts` has no `shadowKernelMaximizeRestored`
+    // to call. So the old machine holds the saved stash, the presenter reads it
+    // from there (which is why the registry reports `preMaxBounds` correctly,
+    // and why the sibling test asserting that field passes), and the kernel —
+    // never told — has nothing to restore when `Unmaximize` arrives.
+    //
+    // Fixing it is a kernel API addition, not a patch: the existing `Maximize`
+    // command stashes `rec.bounds`, and at restore time the window's creation
+    // bounds ARE the maximized rect, so replaying `Maximize` would stash the
+    // wrong rect. The kernel needs a way to accept an EXPLICIT stash — the
+    // same distinction `MAXIMIZE_RESTORED` draws from `MAXIMIZE_REQUESTED` in
+    // the old machine.
+    //
+    // This marker is not a silenced test. It fails the suite the moment the
+    // defect is fixed, which is when it should be removed.
+    test.fail();
+
+    const slug = 'hybrid-premax-roundtrip';
+    const windowId = await openHybridPageHost(slug);
+
+    const original = { x: 160, y: 150, width: 640, height: 440 };
+    await publishOverlayTopic(app, 'page:set-bounds', { windowId, bounds: original });
+    await waitForEntry(windowId, { maximized: false, bounds: original });
+
+    await publishOverlayTopic(app, 'page:maximize', { windowId });
+    await waitForEntry(windowId, { maximized: true });
+
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+    await closeAndAwait(windowId);
+
+    const restoredId = await restoreAndFind(slug);
+    await waitForEntry(restoredId, { maximized: true });
+
+    // The point of the test: the pre-maximize bounds must survive the round
+    // trip as a live fact, not merely be present in the snapshot. Unmaximizing
+    // the RESTORED window is what proves it — a restore that carried maximized
+    // state but dropped the stash would land somewhere else here.
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId: restoredId });
+    await waitForEntry(restoredId, { maximized: false, bounds: original });
+
+    const restored = await findEntry(restoredId);
+    expect(restored?.bounds, 'unmaximizing a restored window must return the pre-maximize bounds').toEqual(original);
+
+    await closeAndAwait(restoredId);
   });
 });
