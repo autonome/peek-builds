@@ -272,6 +272,14 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
     expect(stillAlive).toBe(true);
 
+    // Secondary, and asserted AFTER the guard above so a regression in the
+    // guard fails on the guard rather than here: the palette was dismissed
+    // when the opened page took key. If `ipc.ts NON_PARENT_ROLES` ever stops
+    // excluding the palette, the opened page becomes its child and this
+    // inverts — but `stillAlive` above fails first, which is the intended
+    // signal.
+    await expect.poll(() => paletteWindow.isClosed(), { timeout: 5000 }).toBe(true);
+
     // Clean up
     for (const id of [contentResult.id, workspaceResult.id]) {
       if (id) {
@@ -316,13 +324,31 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // From the palette window, open a content URL. Under the bug, the
     // opened window would be tagged child-content; under the fix, content.
-    const contentResult = await paletteWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://search/home.html', {
-        width: 400,
-        height: 300,
+    //
+    // The palette does NOT survive this open, and that is the specified
+    // behaviour rather than a defect: the opened page takes key, and
+    // `window-kernel.ts selectTransientAutoclose` dismisses a visible
+    // transient whenever another window genuinely takes key, unless that
+    // window names it as parent. A page opened from the palette deliberately
+    // does not (`ipc.ts NON_PARENT_ROLES` — the same exclusion this test
+    // guards), so no exemption applies. A chain popup DOES stay exempt,
+    // because `renderer/cmd/panel.js openChainPopup()` passes
+    // `declareParent: true`.
+    //
+    // So the open is fired WITHOUT awaiting its result: the evaluate's own
+    // page is destroyed mid-call, which rejects the promise. The opened
+    // window is found by URL instead.
+    await paletteWindow
+      .evaluate(() => {
+        void (window as any).app.window.open('peek://search/home.html', {
+          width: 400,
+          height: 300,
+        });
+      })
+      .catch(() => {
+        // Expected: the palette is dismissed as the opened page takes key.
       });
-    });
-    expect(contentResult.success).toBe(true);
+
     const contentWindow = await app.getWindow('search/home.html', 5000);
     expect(contentWindow).toBeTruthy();
     await contentWindow.waitForLoadState('domcontentloaded');
@@ -337,18 +363,13 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
     expect(stillAlive).toBe(true);
 
-    // Clean up
-    for (const id of [contentResult.id, paletteResult.id]) {
-      if (id) {
-        try {
-          await bgWindow.evaluate(async (wid: number) => {
-            return await (window as any).app.window.close(wid);
-          }, id);
-        } catch {
-          // Window may already be closed
-        }
-      }
-    }
+    // Clean up. The palette is already gone (asserted above); the content
+    // window closes itself, since this test no longer holds its id.
+    await contentWindow
+      .evaluate(() => (window as any).app.window.close())
+      .catch(() => {
+        // Window may already be closed
+      });
   });
 
   test('navigate mode: timeout does not close window', async () => {
