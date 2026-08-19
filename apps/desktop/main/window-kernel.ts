@@ -762,8 +762,20 @@ export type Event =
       /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
       selfClosesOnBlur?: boolean;
     }
-  | { type: 'WindowShown'; id: WindowId }
-  | { type: 'WindowHidden'; id: WindowId }
+  /**
+   * `opSeq` is present only when this event is the backend's own echo of a
+   * `ShowWindow`/`HideWindow`/`RaiseWindow` effect this executor just issued
+   * (`electron-window-backend.ts showWindow`/`hideWindow`/`raiseWindow`
+   * thread the effect's op token straight through) — the SAME provenance
+   * shape `OsFocusGained.cause` uses, one level down: a visibility echo
+   * carries the token of the op that provoked it, absent means a producer
+   * not yet taught to report one (a bare `ShowWindow`/`HideWindow` COMMAND,
+   * `decide` above). Consulted only by `isStaleWindowEcho` — `evolve` itself
+   * still reads none of this (see that function's doc for why the drop has
+   * to happen before `evolve`, not inside it).
+   */
+  | { type: 'WindowShown'; id: WindowId; opSeq?: number }
+  | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
   | { type: 'WindowClosed'; id: WindowId }
   /**
    * WHO caused it (see `FocusCause`). Absent means `world` — load-bearing:
@@ -1274,14 +1286,19 @@ export type Rejection = 'stale-version' | 'no-such-window';
 // Effects — described by `decide`'s future effect-emitting counterpart (not
 // built in this slice), executed by an OS adapter. Focus-family effects
 // (`ShowWindow`, `RaiseWindow` — the two that can make the OS move focus, same
-// split as `window-state.ts`'s `OpToken`) carry `opSeq`; `SetStacking` and
-// `HideWindow` are relative-order/visibility only and carry none.
+// split as `window-state.ts`'s `OpToken`) carry `opSeq` for focus provenance;
+// `SetStacking` carries none (a reorder has no echo to disambiguate).
+// `HideWindow` carries `opSeq` too, but for a NARROWER reason than the
+// focus-family pair: it never moves focus, but its confirming `WindowHidden`
+// echo needs the same op token `ShowWindow`'s `WindowShown` echo carries, so
+// the executor can tell a hide's own stale echo apart from a show that has
+// since superseded it — see `isStaleWindowEcho`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Effect =
   | { type: 'SetStacking'; id: WindowId; layer: number }
   | { type: 'ShowWindow'; id: WindowId; opSeq: number }
-  | { type: 'HideWindow'; id: WindowId }
+  | { type: 'HideWindow'; id: WindowId; opSeq: number }
   /** Drive the OS to close the window (dismiss the non-keepLive branch of `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no `opSeq`. */
   | { type: 'CloseWindow'; id: WindowId }
   /**
@@ -2738,7 +2755,11 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     if (!prevRecord.visible && nextRecord.visible) {
       effects.push({ type: 'ShowWindow', id: nextRecord.id, opSeq: next.opSeqCounter });
     } else if (prevRecord.visible && !nextRecord.visible) {
-      effects.push({ type: 'HideWindow', id: nextRecord.id });
+      // Same token source as the `ShowWindow` arm above (`next.opSeqCounter`,
+      // taken once this transition's own evolve has run) — see the `Effect`
+      // union's `HideWindow` doc for why a visibility-only effect still needs
+      // one.
+      effects.push({ type: 'HideWindow', id: nextRecord.id, opSeq: next.opSeqCounter });
     }
   }
 
@@ -3447,6 +3468,37 @@ export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): 
   if (cause.kind !== 'machine') return false;
   const record = state.order.find((w) => w.id === id);
   return record?.lastOpSeq !== undefined && cause.opSeq < record.lastOpSeq;
+}
+
+/**
+ * True when a `WindowShown`/`WindowHidden` event's `opSeq` is OLDER than the
+ * newest op issued for `id` (`WindowRecord.lastOpSeq`) — the same comparison
+ * `isStaleSelfEcho` makes for a focus report, generalized to a bare token
+ * instead of a `FocusCause` (a visibility echo carries no "who" to ask, only
+ * "which op"). An event with no `opSeq` (a bare `ShowWindow`/`HideWindow`
+ * COMMAND's event, or any producer not yet taught to report one) is never
+ * stale — absent is not a token to compare, same reading `OsFocusGained`'s
+ * missing `cause` gets.
+ *
+ * WHY THIS MATTERS: an `AttachOverlayTo` that re-targets the shared chrome
+ * overlay onto a surviving page host and a `HideWindow` that detaches it from
+ * a closing one can both be emitted for the SAME transition (`react`'s
+ * attach-diff and visibility-diff are independent passes over the same
+ * `prev`/`next`). Each performs a real native call and queues its own
+ * confirming echo; the attach's `OverlayAttached` is applied before the
+ * hide's queued `WindowHidden` (`react` pushes `AttachOverlayTo` ahead of
+ * `HideWindow`, and effects run in that order), so by the time the hide's
+ * echo is applied the overlay may already be visible again. Without this
+ * check that stale echo reads as a genuine fresh hide, `react` re-emits
+ * `HideWindow`, its own echo lands after the attach's `ShowWindow` re-fires
+ * to correct it, and the two alternate forever — `pump`'s queue has no depth
+ * limit and never runs out of events to drain. See
+ * `hybrid-close-two-hosts-hang.spec.ts`.
+ */
+export function isStaleWindowEcho(state: State, id: WindowId, opSeq: number | undefined): boolean {
+  if (opSeq === undefined) return false;
+  const record = state.order.find((w) => w.id === id);
+  return record?.lastOpSeq !== undefined && opSeq < record.lastOpSeq;
 }
 
 /**

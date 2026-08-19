@@ -264,8 +264,17 @@ export interface WindowBackend {
    */
   showWindow(id: WindowId, opts: { activate: boolean; opSeq: number }): void;
 
-  /** Hide, keep alive (the `HIDE_WINDOW` effect — the HUD app-blur sweep). */
-  hideWindow(id: WindowId): void;
+  /**
+   * Hide, keep alive (the `HIDE_WINDOW` effect — the HUD app-blur sweep).
+   *
+   * `opSeq` is the effect's op token, same provenance contract as
+   * `showWindow`'s — carried through to the confirming `WINDOW_HIDDEN` echo
+   * so the kernel can tell this hide's own echo apart from a later show that
+   * has already superseded it (`window-kernel.ts isStaleWindowEcho`).
+   * Optional: a caller with no op token (none exists today) gets an echo
+   * that is never treated as stale.
+   */
+  hideWindow(id: WindowId, opSeq?: number): void;
 
   /**
    * Pin above regular windows (the `SET_ALWAYS_ON_TOP` effect). The EXECUTOR

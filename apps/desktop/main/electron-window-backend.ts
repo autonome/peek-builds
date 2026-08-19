@@ -424,6 +424,35 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    */
   private pendingHideProvokedFocus = false;
 
+  /**
+   * "I am expecting this window's next native `'show'`/`'hide'` to be MY
+   * doing, from op N" — the visibility-echo counterpart of
+   * `pendingSelfCausedFocus`, one map per direction because a show and a hide
+   * are never the same op and must never label each other's echo.
+   *
+   * ARMED immediately before the native call that can provoke it
+   * (`performOsShow` for `pendingShowOpSeq`, `hideWindow` for
+   * `pendingHideOpSeq`), CONSUMED (one shot) by the matching `win.on('show')`
+   * / `win.on('hide')` listener once its own ground-truth check passes, and
+   * threaded onto the `WINDOW_SHOWN`/`WINDOW_HIDDEN` echo those listeners
+   * emit so `window-kernel.ts isStaleWindowEcho` can tell a stale echo of a
+   * superseded op apart from a genuine one.
+   *
+   * WHY THE EAGER SYNTHETIC ECHO (`performOsShow`'s and `hideWindow`'s own
+   * `shadowKernelWindowShown`/`shadowKernelWindowHidden` calls) is not enough
+   * on its own: on this backend a `BaseWindow`'s native `'show'`/`'hide'` can
+   * fire before the call that provoked it even returns — same tick, ahead of
+   * the synchronous echo below it in program order — so an
+   * `AttachOverlayTo`/`HideWindow` pair racing for the same window (the
+   * overlay-retarget hang, `hybrid-close-two-hosts-hang.spec.ts`) queues an
+   * UNLABELLED native echo before the labelled synthetic one, and an
+   * unlabelled event can never be judged stale (`opSeq === undefined` always
+   * passes `isStaleWindowEcho`). Without this arming that native echo is what
+   * kept the ping-pong fed even after the synthetic echo alone was tagged.
+   */
+  private readonly pendingShowOpSeq = new Map<WindowId, number>();
+  private readonly pendingHideOpSeq = new Map<WindowId, number>();
+
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
 
@@ -790,12 +819,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // window is never shown, so it is excluded here (the hide side's
       // `isDestroyed` arm reads the other way for the same reason — a destroyed
       // window IS hidden).
+      // One-shot, taken regardless of what happens next — see
+      // `pendingShowOpSeq`'s doc. A show this native event turns out NOT to
+      // confirm (the ground-truth check just below fails) spends the token
+      // either way: a rejected native 'show' is not evidence a LATER,
+      // unrelated show should be mislabelled with.
+      const opSeq = this.pendingShowOpSeq.get(id);
+      this.pendingShowOpSeq.delete(id);
       if (win.isDestroyed() || !win.isVisible()) return;
       const focused = this.isFocused(win);
       this.emit({ type: 'WINDOW_SHOWN', id, focused });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
-      shadowKernelWindowShown(id, this.getSnapshot(), focused);
+      shadowKernelWindowShown(id, this.getSnapshot(), focused, opSeq);
     });
     win.on('hide', () => {
       // OS boundary workaround (macOS, lowest layer — this backend): AppKit
@@ -805,14 +841,21 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // would yank the machine's `front` off the restored window. Validate
       // the signal against native ground truth: only a window that is
       // actually not visible echoes WINDOW_HIDDEN.
+      // One-shot, taken regardless of outcome — the `'show'` listener's
+      // `pendingShowOpSeq` doc explains why a rejected native event still
+      // spends its token.
+      const opSeq = this.pendingHideOpSeq.get(id);
+      this.pendingHideOpSeq.delete(id);
       if (!win.isDestroyed() && win.isVisible()) return;
       this.emit({ type: 'WINDOW_HIDDEN', id });
-      shadowKernelWindowHidden(id, this.getSnapshot());
+      shadowKernelWindowHidden(id, this.getSnapshot(), opSeq);
     });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
       this.pendingSelfCausedFocus.delete(id);
       this.pendingStackingFocus.delete(id);
+      this.pendingShowOpSeq.delete(id);
+      this.pendingHideOpSeq.delete(id);
       this.windows.delete(id);
       // `osWindowId` was captured at registration — reading `win.id` here would
       // throw on the already-destroyed native window.
@@ -1024,7 +1067,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
       }
       this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
-      shadowKernelWindowShown(id, this.getSnapshot(), true);
+      shadowKernelWindowShown(id, this.getSnapshot(), true, opSeq);
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
@@ -1045,7 +1088,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }
     }
     this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
-    shadowKernelWindowShown(id, this.getSnapshot(), true);
+    shadowKernelWindowShown(id, this.getSnapshot(), true, opSeq);
   }
 
   /** Make a page-host's content WC the macOS first responder. */
@@ -1397,7 +1440,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
-    shadowKernelWindowShown(id, this.getSnapshot(), opts.activate);
+    shadowKernelWindowShown(id, this.getSnapshot(), opts.activate, opts.opSeq);
   }
 
   /**
@@ -1407,6 +1450,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * enforces exactly that order.
    */
   private performOsShow(id: WindowId, win: NativeWindow, activate: boolean, opSeq: number): void {
+    // Arm BEFORE either native call below — see `pendingShowOpSeq`'s doc:
+    // the native `'show'` this provokes can land ahead of this method's own
+    // synthetic echo, so the listener needs the token armed first.
+    this.pendingShowOpSeq.set(id, opSeq);
     if (isHeadless()) {
       try {
         win.setOpacity(0);
@@ -1434,10 +1481,21 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
   }
 
-  /** Hide, keep alive (the HUD app-blur sweep). */
-  hideWindow(id: WindowId): void {
+  /**
+   * Hide, keep alive (the HUD app-blur sweep). `opSeq`, when the caller has
+   * one (the kernel's `HideWindow` effect always does), rides along on the
+   * confirming echo below — see `WindowBackend.hideWindow`'s doc.
+   */
+  hideWindow(id: WindowId, opSeq?: number): void {
     const win = this.windows.get(id)?.win;
     if (!win) return;
+    // Arm BEFORE `win.hide()` below — see `pendingHideOpSeq`'s doc: the
+    // native `'hide'` it provokes can land ahead of this method's own
+    // synthetic echo. A caller with no token (none exists today) clears any
+    // stale arm rather than leaving a PREVIOUS hide's token to mislabel this
+    // one's native echo.
+    if (opSeq !== undefined) this.pendingHideOpSeq.set(id, opSeq);
+    else this.pendingHideOpSeq.delete(id);
     try {
       if (win.isDestroyed()) return;
       // Hiding the focused window makes the platform reassign focus to a window
@@ -1470,7 +1528,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // successor promotion — sees stale `visible:true` for a tick. The late
     // native event still arrives and re-merges idempotently in the reducer.
     this.emit({ type: 'WINDOW_HIDDEN', id });
-    shadowKernelWindowHidden(id, this.getSnapshot());
+    shadowKernelWindowHidden(id, this.getSnapshot(), opSeq);
   }
 
   /** Pin above regular windows. 'floating' matches the old post-ctor reinforcement (`setAlwaysOnTop(true,'floating')`). */

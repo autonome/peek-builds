@@ -39,6 +39,7 @@ import {
   FULLSCREEN_SETTLE_TIMEOUT_MS as DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS,
   initialState,
   isStaleSelfEcho,
+  isStaleWindowEcho,
   react,
   type Command,
   type Effect,
@@ -441,6 +442,22 @@ export class WindowKernelExecutor {
         return;
       }
     }
+    // The visibility-echo counterpart of the guard above (`isStaleWindowEcho`):
+    // an `AttachOverlayTo` and a `HideWindow` can both be emitted for the same
+    // transition (the overlay detaches from a closing host while it re-attaches
+    // to a surviving one), each performing a real native call and queuing its
+    // own confirming echo. Applied out of the order the OS calls actually
+    // landed in, the hide's echo can read as a fresh hide against a model the
+    // attach's own echo has already moved past — and `react` re-emitting a
+    // `HideWindow` for it starts an alternation the queue has no depth limit
+    // to stop. Dropping the stale echo before `evolve` sees it is what ends
+    // it. See `window-kernel.ts isStaleWindowEcho`.
+    if ((event.type === 'WindowShown' || event.type === 'WindowHidden') && event.opSeq !== undefined) {
+      if (isStaleWindowEcho(this.state, event.id, event.opSeq)) {
+        DEBUG && console.log('[window-kernel] dropped stale visibility echo for', event.id, event.type);
+        return;
+      }
+    }
 
     const prev = this.state;
     const next = evolve(prev, event);
@@ -654,7 +671,7 @@ export class WindowKernelExecutor {
         return;
       }
       case 'HideWindow': {
-        this.backend.hideWindow(effect.id);
+        this.backend.hideWindow(effect.id, effect.opSeq);
         return;
       }
       case 'CloseWindow': {

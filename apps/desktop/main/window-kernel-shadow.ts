@@ -135,8 +135,8 @@ class NoopKernelBackend implements WindowBackend {
   showWindow(id: WindowId, opts: { activate: boolean; opSeq: number }): void {
     recordEffect('showWindow', id, opts);
   }
-  hideWindow(id: WindowId): void {
-    recordEffect('hideWindow', id);
+  hideWindow(id: WindowId, opSeq?: number): void {
+    recordEffect('hideWindow', id, opSeq);
   }
   pinAlwaysOnTop(id: WindowId, on: boolean): void {
     recordEffect('pinAlwaysOnTop', id, on);
@@ -471,15 +471,20 @@ export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
  * `focused` defaults to `false` (today's behavior — no companion focus feed)
  * for a caller that omits it, rather than guessing.
  */
-export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot, focused = false): void {
-  shadowDispatch({ type: 'WindowShown', id });
+export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot, focused = false, opSeq?: number): void {
+  shadowDispatch({ type: 'WindowShown', id, opSeq });
   if (focused) shadowDispatch({ type: 'OsFocusGained', id });
   compareAfterFeed(oldSnapshot);
 }
 
-/** Translate a completed hide report into the kernel's `WindowHidden` event. */
-export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapshot): void {
-  shadowDispatch({ type: 'WindowHidden', id });
+/**
+ * Translate a completed hide report into the kernel's `WindowHidden` event.
+ * `opSeq`, when the caller has one (the `HideWindow` effect's own token),
+ * rides along so a stale echo of a superseded hide can be told apart from a
+ * genuine one — see `window-kernel.ts isStaleWindowEcho`.
+ */
+export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapshot, opSeq?: number): void {
+  shadowDispatch({ type: 'WindowHidden', id, opSeq });
   compareAfterFeed(oldSnapshot);
 }
 

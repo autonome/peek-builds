@@ -952,7 +952,7 @@ describe('window-kernel: CloseOrHideWindow', () => {
     const ev = decision.events[0];
     const next = evolve(state, ev);
     const effects = react(state, ev, next);
-    assert.deepStrictEqual(effects, [{ type: 'HideWindow', id: wid(1) }]);
+    assert.deepStrictEqual(effects, [{ type: 'HideWindow', id: wid(1), opSeq: next.opSeqCounter }]);
     assert.ok(!effects.some((e) => e.type === 'CloseWindow'));
   });
 });
@@ -5324,7 +5324,11 @@ describe('window-kernel: teardown commands and effects', () => {
     const state = oneWindow();
     const teardown = run(state, { type: 'DestroyWindow', id: wid(1), expectedVersion: state.version });
     const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], teardown.state);
-    assert.deepStrictEqual(after.effects, [{ type: 'HideWindow', id: wid(1) }], 'no second DestroyWindow');
+    assert.deepStrictEqual(
+      after.effects,
+      [{ type: 'HideWindow', id: wid(1), opSeq: after.state.opSeqCounter }],
+      'no second DestroyWindow',
+    );
     assert.deepStrictEqual(after.state.lastTeardown, teardown.state.lastTeardown, 'and the recorded teardown is untouched');
   });
 
@@ -5488,7 +5492,11 @@ describe('window-kernel: the focus assert', () => {
     const asserted = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
     const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], asserted.state);
 
-    assert.deepStrictEqual(after.effects, [{ type: 'HideWindow', id: wid(1) }], 'no second RaiseWindow, no second FocusContent');
+    assert.deepStrictEqual(
+      after.effects,
+      [{ type: 'HideWindow', id: wid(1), opSeq: after.state.opSeqCounter }],
+      'no second RaiseWindow, no second FocusContent',
+    );
     assert.deepStrictEqual(after.state.lastFocusAssert, asserted.state.lastFocusAssert, 'and the recorded assert is untouched');
   });
 

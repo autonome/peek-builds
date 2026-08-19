@@ -1012,7 +1012,7 @@ function installTestBridge(): void {
       const backend = (getShadowKernelExecutor() as unknown as {
         backend: {
           showWindow: (id: unknown, opts: unknown) => void;
-          hideWindow: (id: unknown) => void;
+          hideWindow: (id: unknown, opSeq?: number) => void;
           attachOverlayTo: (overlayId: unknown, hostId: unknown) => void;
         };
       }).backend;
@@ -1027,10 +1027,13 @@ function installTestBridge(): void {
         if (shows > cap) return;
         realShow(id, opts);
       };
-      backend.hideWindow = (id) => {
+      // Forwards `opSeq` — dropping it here would strip the op token every
+      // capped hide carries, silently defeating `isStaleWindowEcho` for every
+      // test that installs this breaker (see that function's doc).
+      backend.hideWindow = (id, opSeq) => {
         hides++;
         if (hides > cap) return;
-        realHide(id);
+        realHide(id, opSeq);
       };
       backend.attachOverlayTo = (overlayId, hostId) => {
         attaches++;
