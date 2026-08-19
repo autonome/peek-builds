@@ -65,6 +65,21 @@ focus. Write-up: "Resolved: an unowned hide-provoked-focus arming swallowed a ge
 **One half of that rule is still unproven** — whether macOS reassigns focus when the focused window
 is hidden — and only sign-off check 12 can answer it.
 
+The peek-close overlay/hide echo hang is also CLOSED as of 2026-08-19 (commit `0bd49c7d`): closing
+a page host the shared chrome overlay was attached to, while a sibling base-layer page host
+survived, made `react` (`window-kernel.ts`) emit both `AttachOverlayTo` (retargeting the overlay to
+the survivor) and `HideWindow` (detaching from the closing host) for the same transition, and
+because neither Electron backend echo carried a token naming which op it belonged to, the hide's
+echo could land after the attach's echo had already re-shown the overlay — read as fresh evidence,
+so `HideWindow` was re-emitted and the two alternated forever inside one unbroken synchronous call.
+Visibility effects and events now carry the same `opSeq` discipline `ShowWindow`/`RaiseWindow`
+already use for focus provenance, consumed at both the synthetic echo and the native
+`win.on('show')`/`win.on('hide')` listeners — tagging only the former left the loop fed. Write-up:
+"Resolved: an untokened visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever"
+below. Regression: `hybrid-close-two-hosts-hang.spec.ts` (commit `0230c9e8`), 53 transitions before
+the fix, 2 after. Found by check-driven live use during the macOS sign-off run, not by any spec or
+the full test suite — see `docs/design/window-manager-macos-signoff.md`.
+
 What remains open on this branch is not code defects but unrun verification: the macOS sign-off
 (`docs/design/window-manager-macos-signoff.md`, 12 checks, none recorded as passing), the decisions
 in §0.1.10, and the retirement of `window-state.ts` / `window-os-adapter.ts`.
@@ -3720,6 +3735,51 @@ swallows the next genuine focus — far more rarely now, but by the same mechani
 of `docs/design/window-manager-macos-signoff.md`, which predicted this failure in writing before it
 was measured, and which is now narrowed to that remaining half. There is **no automated coverage of
 the rule at all** — `pendingHideProvokedFocus` appears in no spec.
+
+#### Resolved: an untokened visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever
+
+Measured 2026-08-19 on macOS, packaged, found by check-driven live use during the macOS sign-off
+run (`docs/design/window-manager-macos-signoff.md`) rather than by any spec, and invisible to both
+the full ~3200-test suite and to every Linux run. `sample` on the hung main process showed the
+entire thread (6678/6678 samples) inside one synchronous JS call from `node::Environment::RunTimers`,
+repeatedly in `-[NSWindow _doOrderWindow:]` -> `_reallyDoOrderWindowOutRelativeTo:` ->
+`_doWindowWillBecomeHidden`, entered via `windows.ts` `askWebContentsToHandleEscape`'s 500ms
+renderer-answer timeout.
+
+**Reproduction.** Two hybrid page hosts open on real `http://` URLs, plus a peek opened through the
+peeks feature (`features/peeks/background.js` `executeItem`, `role: 'quick-view'`, `modal: true`,
+`pageHost: true`), then ESC to close the peek. It terminates only when no base-layer page host
+survives (`topmostBaseLayerPageHost` returns null), which is why two hosts are required.
+
+**Mechanism.** Closing the page host the shared chrome overlay was attached to, while a sibling
+base-layer page host survives, made `react` (`window-kernel.ts`) emit both `AttachOverlayTo`
+(retargeting the overlay to the survivor) and `HideWindow` (detaching from the closing host) in one
+transition. Each performed a real native call and queued its own confirming echo
+(`WindowShown`/`WindowHidden`). Neither Electron backend echo carried a token identifying which op
+it belonged to, so the hide's echo could be applied after the attach's echo had already re-shown the
+overlay — read as fresh evidence, so `react` re-emitted `HideWindow`. The two alternated forever:
+`window-kernel-executor.ts` `pump`'s FIFO has a re-entrancy latch but no depth limit, so it ran as
+one unbroken synchronous call inside a timer callback.
+
+**The fix** (commit `0bd49c7d`): visibility ops carry an `opSeq` token; `WindowKernelExecutor.apply`
+drops a `WindowShown`/`WindowHidden` whose `opSeq` is older than the record's `lastOpSeq`. An event
+with no `opSeq` is never treated as stale — the same "absent means don't judge" reading
+`OsFocusGained`'s missing `cause` already gets. The token had to reach the native
+`win.on('show')`/`win.on('hide')` listeners too, not only the synthetic echoes: on this backend a
+`BaseWindow`'s native show/hide can fire before the provoking call returns, so tagging only the
+synthetic echo left the loop fed.
+
+This is the fourth instance of this document's recurring shape, a fact reaching one machine or
+owner and not the other: the restore-time maximize seed reaching the old machine and not the kernel
+("The restore-time maximize seed never reached the kernel" above), the unguarded native `'show'`
+echo reaching `win.on('hide')`'s ground-truth check and not its sibling `win.on('show')`
+("Resolved: an unguarded native `'show'` echo re-showed a window the drain had cleared" above), the
+hide-provoked-focus arming reaching every hide and not only the one it was armed for ("Resolved: an
+unowned hide-provoked-focus arming swallowed a genuine focus" above), and now a visibility token
+reaching the synthetic echo and not the native listener that could arrive first.
+
+**Regression:** `apps/desktop/tests/desktop/hybrid-close-two-hosts-hang.spec.ts` (commit
+`0230c9e8`) bounds transitions after the close: 53 before the fix, 2 after.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 

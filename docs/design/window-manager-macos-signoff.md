@@ -161,3 +161,29 @@ No automated check can reach any of these. For each, record what happened, not w
   rules above are display- and Space-sensitive.
 
 Commit and push anything changed on macOS immediately; a fork is only discovered on the next pull.
+
+## Results: 2026-08-19 run
+
+Machine: macOS 26.5.1, Apple M4, single built-in display, no external displays.
+
+**Check 1 (the overlay window follows the app).** Behaves as specified: the overlay leaves the
+screen with the app and returns in front of the page. One deviation: with the pointer held in the
+trigger zone across the switch, the address bar *re-animates in* on return rather than simply
+still being there. Consistent with the pointer-driven rule — app-blur tears the chrome down, so it
+is rebuilt on return and replays its show transition — but the intended behaviour here was never
+specified.
+
+**Check 2 (the address bar survives losing its page).** Passes. With every page host closed and
+one reopened, the bar returns, shows the correct URL, and accepts typing.
+
+**Checks 3-12: NOT RUN.**
+
+`[window-kernel-shadow] divergence` lines seen during the run were all `kind=stackOrder` (open
+question 1, §0.1.10: whether `order` includes never-shown windows) plus `kind=front` during
+close/reopen, where the kernel names the surviving or newly opened window while the old machine
+still names the window that just closed — the kernel giving the better answer.
+
+The peek-close overlay/hide echo hang (`docs/design/window-manager.md`, "Resolved: an untokened
+visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever") was found by this
+check-driven live use, not by any spec, and was invisible to both the full ~3200-test suite and to
+every Linux run.
