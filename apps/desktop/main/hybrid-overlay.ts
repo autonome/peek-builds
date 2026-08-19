@@ -990,6 +990,54 @@ function installTestBridge(): void {
     kernelTimeline(): readonly string[] {
       return getShadowKernelExecutor().timelineForTests();
     },
+    /** E2E-only: drop a labelled marker into the kernel timeline. */
+    markKernelTimeline(label: string): void {
+      getShadowKernelExecutor().markTimeline(label);
+    },
+    /**
+     * TEST-ONLY circuit breaker for the overlay-retarget runaway
+     * (`hybrid-close-two-hosts-hang.spec.ts`): caps the live kernel executor's
+     * `showWindow`/`hideWindow`/`attachOverlayTo` backend calls at `cap` each —
+     * every call past the cap returns without touching the OS and, critically,
+     * without running the synchronous `WINDOW_SHOWN`/`WINDOW_HIDDEN` echo
+     * (`electron-window-backend.ts showWindow`/`hideWindow`) that feeds straight
+     * back into the executor's `dispatch` and is what keeps the ping-pong fed. A
+     * spec can drive the real close far enough to prove the growth is unbounded
+     * without letting the drive spin the main thread forever. Patches the live
+     * backend instance directly (own-property override, not a class change) —
+     * never installed outside a test, and each describe block gets a fresh app
+     * so nothing needs to restore the originals.
+     */
+    capKernelBackendEchoForTest(cap: number): void {
+      const backend = (getShadowKernelExecutor() as unknown as {
+        backend: {
+          showWindow: (id: unknown, opts: unknown) => void;
+          hideWindow: (id: unknown) => void;
+          attachOverlayTo: (overlayId: unknown, hostId: unknown) => void;
+        };
+      }).backend;
+      const realShow = backend.showWindow.bind(backend);
+      const realHide = backend.hideWindow.bind(backend);
+      const realAttach = backend.attachOverlayTo.bind(backend);
+      let shows = 0;
+      let hides = 0;
+      let attaches = 0;
+      backend.showWindow = (id, opts) => {
+        shows++;
+        if (shows > cap) return;
+        realShow(id, opts);
+      };
+      backend.hideWindow = (id) => {
+        hides++;
+        if (hides > cap) return;
+        realHide(id);
+      };
+      backend.attachOverlayTo = (overlayId, hostId) => {
+        attaches++;
+        if (attaches > cap) return;
+        realAttach(overlayId, hostId);
+      };
+    },
     /**
      * Drive the overlay's maximize TOGGLE for a window through the REAL content
      * gesture topic (`page:request-toggle-maximize`) — the exact signal the
