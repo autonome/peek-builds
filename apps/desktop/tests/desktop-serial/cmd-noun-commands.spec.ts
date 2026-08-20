@@ -170,8 +170,42 @@ test.describe('Type-Specific Noun Commands @desktop-serial', () => {
     }, seedId);
   });
 
+  /**
+   * Both `new note` paths end in the state machine's CLOSING arm, which
+   * publishes `editor:add` — so an editor window opens AFTER the command's own
+   * state has settled and after the panel is closed. Nothing in the test waited
+   * for it, so it arrived during whichever test was running by then, took focus
+   * and disturbed that test's panel. The symptoms alternated between runs: an
+   * ERR_FAILED on the next panel's load, and a page closed mid-keypress.
+   *
+   * Arm this BEFORE running the command, then await it after — `window:opened`
+   * is the state transition itself, so there is nothing to poll for.
+   */
+  async function armEditorWindowCapture(): Promise<void> {
+    await bgWindow.evaluate(() => {
+      const w = window as any;
+      w.__editorWindowOpened = new Promise((resolve) => {
+        w.app.subscribe('window:opened', (data: any) => {
+          if (typeof data?.url === 'string' && data.url.includes('editor/home.html')) {
+            resolve(data.id);
+          }
+        });
+      });
+    });
+  }
+
+  /** Await the armed editor window and close it, leaving the window set settled. */
+  async function closeCapturedEditorWindow(): Promise<void> {
+    const editorId: number = await bgWindow.evaluate(
+      () => (window as any).__editorWindowOpened);
+    await bgWindow.evaluate(async (id: number) => {
+      return await (window as any).app.window.close(id);
+    }, editorId);
+  }
+
   test('new note with content saves to datastore', async () => {
     const uniqueContent = `New note test ${Date.now()}`;
+    await armEditorWindowCapture();
 
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
@@ -209,6 +243,8 @@ test.describe('Type-Specific Noun Commands @desktop-serial', () => {
       } catch { /* may already be closed */ }
     }
 
+    await closeCapturedEditorWindow();
+
     const queryResult = await bgWindow.evaluate(async (content: string) => {
       const result = await (window as any).app.datastore.queryItems({ type: 'text' });
       if (!result.success) return { found: false };
@@ -226,6 +262,8 @@ test.describe('Type-Specific Noun Commands @desktop-serial', () => {
   });
 
   test('new note without content signals editor open', async () => {
+    await armEditorWindowCapture();
+
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
@@ -237,7 +275,7 @@ test.describe('Type-Specific Noun Commands @desktop-serial', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, JSON.stringify(openResult)).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
@@ -249,11 +287,21 @@ test.describe('Type-Specific Noun Commands @desktop-serial', () => {
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
 
-    await cmdWindow.press('input', 'Enter');
+    // Enter runs the command, which opens the editor window; the editor taking
+    // focus dismisses the palette, which is intended. The panel page can
+    // therefore die while this press is still resolving — a closed target here
+    // is the behavior under test, not a failure. Anything else rethrows.
+    try {
+      await cmdWindow.press('input', 'Enter');
+    } catch (err) {
+      if (!String(err).includes('has been closed')) throw err;
+    }
 
-    const finalState = await waitForCmdNotExecuting(cmdWindow, 10000);
-    expect(finalState).not.toBe('TIMEOUT');
-    expect(finalState).not.toBe('ERROR');
+    // The editor window opening IS the signal this test is named for. Awaiting
+    // it is the assertion: it throws if no editor window ever opens. The old
+    // post-press panel-state checks asserted against a page that is supposed
+    // to be closing, which is why they raced.
+    await closeCapturedEditorWindow();
 
     if (openResult.id) {
       await bgWindow.evaluate(async (id: number) => {

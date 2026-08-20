@@ -84,7 +84,7 @@ this list plus the intermittent list below.
 
 | Spec | Test | Cause |
 |---|---|---|
-| `cmd-noun-commands.spec.ts` | new note without content signals editor open | unclassified |
+| `cmd-noun-commands.spec.ts` | new note without content signals editor open | RESOLVED — asserted against a page that is meant to close; see "Resolved: the new-note editor signal" |
 
 ## Intermittent failures — present in one run, absent in the other
 
@@ -164,7 +164,7 @@ and the `pendingHideProvokedFocus` focused-window gate).
 | `transient-on-blur.spec.ts:225` | utility focusing does NOT close transient parent (chain popup invariant) | pre-existing — fails with both changes reverted |
 | `transient-on-blur.spec.ts:237` | overlay is exempt from auto-close when a palette focuses | pre-existing — fails with both changes reverted |
 | `hybrid-transient-on-blur.spec.ts:153` | opening (focusing) a second hybrid quick-view closes the first | **RESOLVED** — stale staging, not a defect; see "Resolved: the second-quick-view staging" below |
-| `desktop-serial/cmd-noun-commands.spec.ts:228` | new note without content signals editor open | pre-existing — fails with both changes reverted |
+| `desktop-serial/cmd-noun-commands.spec.ts:228` | new note without content signals editor open | **RESOLVED** — see "Resolved: the new-note editor signal" below |
 | `hybrid-maximize-state-sync.spec.ts:89` | overlay keeps its maximized flag when a maximized window is switched away and back | **UNATTRIBUTED** — passed reverted, and passes 4/4 at the tip in isolation. Failed only inside the parallel gate, so flake and load-only interaction are not yet separated. |
 | `sync.test.ts` | a failed tag push does not advance the watermark, and the next push retries that tag | **UNATTRIBUTED** — see below |
 
@@ -205,7 +205,9 @@ hybrid key-namespace fix.
 | editor | 91 | 0 | — |
 
 The failing set is exactly two, both already carried as pre-existing:
-`hybrid-transient-on-blur.spec.ts:153` and `desktop-serial/cmd-noun-commands.spec.ts:228`.
+`hybrid-transient-on-blur.spec.ts:153` and `desktop-serial/cmd-noun-commands.spec.ts:228`. Both
+have since been resolved — neither was a product defect; both were tests staged against behavior
+the machine no longer has. See the two "Resolved:" sections below.
 
 ### Resolved: the second-quick-view staging
 
@@ -226,6 +228,36 @@ encoded.
 The failure was on that precondition, not on the outcome: the test's own final assertion (A
 closes, B stands) was already true, one step earlier than staged. The test now asserts A alive
 before B opens, then polls A dead after the open. All 5 tests in the file pass source-only.
+
+### Resolved: the new-note editor signal
+
+`desktop-serial/cmd-noun-commands.spec.ts` "new note without content signals editor open" was
+asserting against a page the product deliberately closes. It failed only when run after its
+neighbour, with the symptom alternating between runs — `ERR_FAILED (-2) loading
+'peek://cmd/panel.html'` on the next panel's load, and `page.press: Target page ... has been
+closed` at the Enter press. Alone it passed. That alternation is why it read as unclassified.
+
+The kernel timeline named the transition (`window-kernel-executor.ts timelineForTests`), which no
+state snapshot could:
+
+```
+#53 OsFocusGained(wm-10) eff=[RaiseWindow(wm-10),DismissWindow(wm-9),SetStacking(wm-10)]
+#55 WindowDirectCloseRequested(wm-9) → #56 WindowClosed(wm-9)
+```
+
+`wm-9` is the test's own cmd panel and `wm-10` the editor window its Enter press opened. Both
+`new note` paths end in the state machine's CLOSING arm and publish `editor:add`
+(`renderer/cmd/commands/notes.js executeNewNote` returns mimeType `item` with content and
+`new-item` without; `renderer/cmd/state-machine.js` routes both through `isEditorMimeType`), so an
+editor window opens asynchronously and takes focus. The palette being dismissed when it opens a
+page is intended behavior. The test then ran `waitForCmdNotExecuting` against that closing page,
+and the editor window it left open drifted into the neighbouring test and took focus there too.
+
+The test now awaits the `window:opened` event for the editor — the state transition itself, so
+there is nothing to poll — and closes that window. That await IS the assertion, and it is stronger
+than the `not TIMEOUT` / `not ERROR` checks it replaces, which passed without establishing that an
+editor ever opened. A page-closed error from the Enter press is tolerated because it is the
+behavior under test; any other error rethrows. All 4 tests in the file passed 4/4 runs.
 
 **`hybrid-maximize-state-sync.spec.ts:89` passed.** Together with 4/4 isolated passes at the
 previous tip, its single failure in the 2026-08-18 gate reads as flake rather than a load-only
