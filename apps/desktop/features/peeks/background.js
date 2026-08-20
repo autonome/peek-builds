@@ -99,8 +99,15 @@ const executeItem = (item) => {
     keepLive: item.keepLive || false,
     persistState: item.persistState || false,
 
-    // Create a unique key for this peek using its address
-    key: `peek:${item.address}`,
+    // The window's identity is the SLOT, not the address. Reopening peek N
+    // returns to peek N's own window, and two slots pointing at the same
+    // address still get a window each. Keying on the address instead made two
+    // slots sharing an address share one window, and left an edited slot's old
+    // window stranded under a key nothing would reuse.
+    // Known gap: `ipc.ts windowOpenHandler`'s hybrid key-reuse branch shows the
+    // existing window without navigating it, so editing a slot's address does
+    // not move that slot's open window to the new address.
+    key: `peek:${item.keyNum}`,
 
     // tracking
     trackingSource: 'peek',
