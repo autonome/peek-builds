@@ -115,7 +115,7 @@ interface Fake {
 let nextId = 1;
 
 /** Build + register a hybrid window. Returns the fake handles. */
-function mk(opts: { url?: string; title?: string; key?: string } = {}): Fake {
+function mk(opts: { url?: string; title?: string; key?: string; source?: string } = {}): Fake {
   const id = nextId++;
   const baseWin = new FakeBaseWindow();
   const wc = new FakeWebContents(opts.url ?? '', opts.title ?? '');
@@ -123,6 +123,7 @@ function mk(opts: { url?: string; title?: string; key?: string } = {}): Fake {
     baseWin: baseWin as unknown as BaseWindow,
     contentWC: wc as unknown as WebContents,
     key: opts.key,
+    source: opts.source,
     url: opts.url,
   });
   return { id, baseWin, wc };
@@ -330,6 +331,23 @@ describe('hybrid-page-host-registry: dedup by key', () => {
   it('does not match on url (key lookup is key-only)', () => {
     mk({ url: 'https://x/', key: 'tab:7' });
     assert.strictEqual(findHybridWindowByKey('https://x/'), null);
+  });
+
+  it('a key is private to the feature that declared it', () => {
+    const a = mk({ url: 'https://a/', key: 'settings', source: 'peek://ext/alpha' });
+    const b = mk({ url: 'https://b/', key: 'settings', source: 'peek://ext/bravo' });
+    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/alpha')!.windowId, a.id);
+    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/bravo')!.windowId, b.id);
+  });
+
+  it('a sourced key is not found by a lookup that omits the source', () => {
+    mk({ url: 'https://a/', key: 'settings', source: 'peek://ext/alpha' });
+    assert.strictEqual(findHybridWindowByKey('settings'), null);
+  });
+
+  it('a sourceless key is not found by a lookup that names one', () => {
+    mk({ url: 'https://a/', key: 'settings' });
+    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/alpha'), null);
   });
 });
 

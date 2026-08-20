@@ -128,6 +128,12 @@ interface InternalEntry {
   baseWin: BaseWindow;
   contentWC: WebContents;
   key?: string;
+  /**
+   * The address of the feature that opened this window — the namespace its
+   * `key` belongs to. A key is private to its declaring feature, so two
+   * features may both use `'settings'` without colliding.
+   */
+  source?: string;
   requestedUrl?: string;
   deferredLoad: DeferredLoad | null;
 }
@@ -231,6 +237,8 @@ export function registerHybridWindow(
     baseWin: BaseWindow;
     contentWC: WebContents;
     key?: string;
+    /** The opening feature's address — the namespace `key` is private to. */
+    source?: string;
     url?: string;
     /**
      * Session-restore deferred content load (`restoreBlank`): the window is
@@ -242,9 +250,9 @@ export function registerHybridWindow(
     deferredLoad?: { url: string; title?: string };
   },
 ): void {
-  const { baseWin, contentWC, key, url } = opts;
+  const { baseWin, contentWC, key, source, url } = opts;
   const entry: InternalEntry = {
-    windowId, baseWin, contentWC, key, requestedUrl: url,
+    windowId, baseWin, contentWC, key, source, requestedUrl: url,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
@@ -389,14 +397,19 @@ export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
 }
 
 /**
- * Find a hybrid window opened with dedup `key`. Mirrors the canvas path's
- * `findWindowByKey` (the key is the per-window identity the caller manages).
- * Returns null if none.
+ * Find a hybrid window opened with dedup `key` by the feature at `source`.
+ * Mirrors the canvas path's `findWindowByKey(source, key)`: a key is the
+ * per-window identity its declaring feature manages, and it is private to that
+ * feature — matching on the bare key made one global space in which two
+ * features using the same key string reused each other's windows.
+ *
+ * `source` is compared, not merely preferred, so an entry registered without
+ * one is found only by a lookup that also passes none.
  */
-export function findHybridWindowByKey(key: string): HybridWindowEntry | null {
+export function findHybridWindowByKey(key: string, source?: string): HybridWindowEntry | null {
   if (!key) return null;
   for (const e of entries.values()) {
-    if (e.key === key && !e.baseWin.isDestroyed()) {
+    if (e.key === key && e.source === source && !e.baseWin.isDestroyed()) {
       return toPublic(e);
     }
   }

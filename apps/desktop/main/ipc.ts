@@ -853,6 +853,10 @@ function assembleHybridPageHost(
     baseWin,
     contentWC: view.webContents,
     key: options.key,
+    // The key's namespace. Canvas parity: the machine record stores `source`
+    // and `findWindowByKey` matches on it, so the hybrid registry must file
+    // the key under its declaring feature too.
+    source,
     url,
     deferredLoad: deferContentLoad
       ? { url, title: typeof options.title === 'string' ? options.title : '' }
@@ -2642,7 +2646,7 @@ export function registerWindowHandlers(): void {
       // its baseWin, return its id) instead of spawning a duplicate — matching
       // the canvas key-reuse semantics below.
       {
-        const existingHybrid = findHybridWindowByKey(options.key);
+        const existingHybrid = findHybridWindowByKey(options.key, msg.source);
         if (existingHybrid) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
           // Parity with the canvas key-reuse below: refresh the per-window
