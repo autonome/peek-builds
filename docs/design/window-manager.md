@@ -81,9 +81,15 @@ the fix, 2 after. Found by check-driven live use during the macOS sign-off run, 
 the full test suite — see `docs/design/window-manager-macos-signoff.md`.
 
 What remains open on this branch is not code defects but unrun verification: the macOS sign-off
-(`docs/design/window-manager-macos-signoff.md`, 12 checks, none recorded as passing), the decisions
-in §0.1.10, and the retirement of `window-state.ts` / `window-os-adapter.ts`.
-`yarn test:desktop:electron` has never run over this branch.
+(`docs/design/window-manager-macos-signoff.md`, 12 checks — 1 and 2 observed passing on the
+2026-08-19 run, 3-12 not run), the remaining decision in §0.1.10, and the retirement of
+`window-state.ts` / `window-os-adapter.ts`.
+
+§0.1.10's ESC/`child-content` question is CLOSED as of 2026-08-20, by history rather than by a new
+decision: `900b0268` added the close-on-ESC arm and `a9c4ec88` reversed it four weeks later, so
+both current tables and `izui-escape.spec.ts` carry the standing rule and agree with each other.
+Two earlier records in this document described the arm as silently lost in the port; both are
+corrected. The `order`/never-shown-windows question in §0.1.10 is still open.
 
 ### First macOS evidence for this branch, 2026-08-17
 
@@ -145,11 +151,11 @@ reaches `before-input-event`; that question is moot.
    `window-escape.ts escapeClosePolicy` agrees. `main.ts` treats the two roles identically at both
    of its role tests (`isContentRole`, `findWindowByUrl`). No session value tells them apart.
 
-Cause 2 is a behavior drift worth naming on its own: commit `900b0268` deliberately made
-`child-content` close on ESC regardless of session ("ESC means go back to where I came from"), and
-that arm is absent from `window-state.ts escPolicy` and from `window-escape.ts escapeClosePolicy`.
-It was dropped when the policy left `izui-state.ts` and was never restored. Whether to restore it
-is an open decision — see "0.1.10 Decisions and remaining questions".
+Cause 2 is the standing policy, not a drift. Commit `900b0268` briefly made `child-content` close
+on ESC regardless of session; `a9c4ec88` reversed it four weeks later, merging the two roles under
+one rule — ESC closes a real content window only in a `transient` session, and the switcher opens
+while the app is OS-focused. Both current tables carry the post-reversal rule because that is the
+decision. Full history and coverage in "0.1.10 Decisions and remaining questions".
 
 The guard is therefore the **classification**, which is the only observable that still separates
 the two worlds: the spec asserts the opened window registers `role: 'content'` with
@@ -2655,17 +2661,31 @@ whose premise disappears because `WindowShown` never writes key in the kernel.
 
 ### 0.1.10 Decisions and remaining questions
 
-**Open, needs a decision: should ESC close a `child-content` window in an active session?**
-Commit `900b0268` deliberately made it do so, off a reported repro — open a page from a group,
-press ESC, expect the page to close and the group to come back. The prior behavior (page stays
-open behind the parent, switcher pops on top, second ESC needed) was reported as feeling like a
-bug. That arm lives in neither of the two current tables: `window-state.ts escPolicy` returns
-`'nothing'` for `('active', 'child-content')`, and `window-escape.ts escapeClosePolicy` agrees. It
-was lost when the policy was ported out of `izui-state.ts`, not removed on purpose, and no test
-covers the difference — `content` and `child-content` are treated identically at every live site,
-including `main.ts`'s `isContentRole` and `findWindowByUrl`. Restoring it means adding a role
-clause ahead of the session branches in whichever table is live at cutover. Leaving it out means
-`900b0268` is reverted in effect and should be recorded as such.
+**Settled, not open: ESC does NOT close a `child-content` window in an active session.** The
+absence of that arm from the current tables is the standing decision, not a porting loss. History,
+in order:
+
+- `900b0268` (2026-05-08) added `child-content -> 'close'` in every session, off a reported repro —
+  open a page from a group, press ESC, expect the page to close and the group to come back.
+- `a9c4ec88` (2026-06-04) reversed it four weeks later, merging `content` and `child-content` under
+  one rule: ESC closes a real content window ONLY in a `transient` session; while the app is
+  OS-focused, `escUnhandledPolicy` opens the switcher instead. The reversal is stated in the
+  commit subject and in the replacement comment.
+- `c2fa0a16` (relocation into `izui-state.ts`) and `c2a4cc2e` (the `window-state.ts` reducer) both
+  carried the post-reversal table byte-for-byte. `window-state.ts escPolicy`'s "ported VERBATIM"
+  claim is accurate; its source already lacked the arm.
+
+Coverage exists and agrees: `apps/desktop/tests/desktop/izui-escape.spec.ts` "active mode: ESC on
+child-content window does NOT close it (regression)" was added by `616b3b69` (2026-02-27), predates
+both policy commits, and passes at this tip. `window-escape.ts escapeClosePolicy` agrees with
+`escPolicy`, and `window-escape.ts ESC_FALLBACK_ROLES` carries `child-content` for the switcher
+fallback. Nothing else can close the window on ESC: `window-state.ts decideEscape` is the sole
+decider, `tile-preload.cts api.escape.onEscape` only relays handled/unhandled, and the DOM
+`Escape` listeners in `renderer/page/overlay.js` and the `peek-*` components dismiss in-page
+widgets only.
+
+Reopening this means re-reversing `a9c4ec88` with a new repro, and flipping that spec — not
+restoring a lost line.
 
 **Decided: one order, and nothing else orders windows.** A background open is placed **below**
 the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
