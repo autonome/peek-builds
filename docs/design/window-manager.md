@@ -2687,6 +2687,23 @@ widgets only.
 Reopening this means re-reversing `a9c4ec88` with a new repro, and flipping that spec — not
 restoring a lost line.
 
+**Decided: a peek always opens its own window.** A peek is a standalone feature with its own
+behavior, not a generic page host, so it never reuses an already-open window and never lands in an
+existing page host. The one reuse it does allow is itself: reopening the same peek refocuses that
+peek's own prior window rather than spawning a duplicate.
+
+The mechanism, traced 2026-08-20. `features/peeks/background.js executeItem()` opens with
+`role: 'quick-view'`, `pageHost: true`, `modal: true` and `key: peek:<address>`. In `ipc.ts`'s
+`windowOpenHandler` the generic URL dedupe — `findWindowByUrl` (its only call site) and
+`findHybridWindowByUrl` — sits behind a guard requiring `!options.key`, so a peek never reaches it.
+The key branch runs instead: `hybrid-page-host-registry.ts findHybridWindowByKey` and `main.ts
+findWindowByKey` match only a window opened under that identical key. `pageHost: true` then forces
+a fresh top-level `BaseWindow` + `WebContentsView`, not a view inside an existing base-layer window.
+
+**This rule rests entirely on the `!options.key` guard**, which reads as a dedupe detail rather
+than as the thing keeping peeks in their own windows. Widening that guard, or dropping `key` from
+`executeItem()`, would silently put a peek into whatever window already held the same URL.
+
 **Decided: one order, and nothing else orders windows.** A background open is placed **below**
 the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
 
