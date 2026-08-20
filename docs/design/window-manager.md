@@ -377,6 +377,10 @@ activity" says the path is unlogged.
    migration — is DONE once the R2 allowlist above also reaches zero.
 2. Once steps 9 and 11 are all DONE and the R2 allowlist is empty, delete this block
    and replace it with a one-line completion note (see the directive below).
+3. Absorb window identity (`options.key`) into the machine — the create-versus-reuse decision
+   that currently lives as a guard chain in `ipc.ts windowOpenHandler` with two key spaces that
+   disagree about namespacing. Scoped in §4.6 "Window identity". Engine work, after the
+   cutover; the targeted defects are being fixed in place meanwhile.
 
 ### Fixes landed 2026-07-30
 
@@ -3592,6 +3596,36 @@ application content state, not window management. It stays where it is; it still
 numeric Electron window ids today (converted at the seams via `window-state-singleton.ts
 getWindowIdFor()` / `getNativeWindowFor()`), and adopting the WM id space is deferred to
 the session/context-store step (§3 scope decision). It must be told when a window dies.
+
+**Window identity (`options.key`) — IN SCOPE, NOT MODELLED. The one piece of window policy
+with no state machine behind it.** A feature declares a window's identity by passing a `key`;
+that key decides whether an open creates a window or returns an existing one. Deciding whether
+a window exists is squarely the WM's mandate (see the paragraph below), but the kernel has no
+notion of a key at all — `window-kernel.ts` never reads one, and `key` inside the kernel means
+the key window, an unrelated concept. The decision lives instead in `ipc.ts windowOpenHandler`
+as a guard chain over three lookups, reached only by the caller; the kernel first hears about it
+as a `WINDOW_SHOW_REQUESTED` on a window it already knows.
+
+The two key spaces disagree, which is the symptom of having no owner:
+
+- `main.ts findWindowByKey(source, key)` matches on `source` AND `key`, and
+  `windowOpenHandler`'s own race guard `pendingWindowKeys` is qualified the same way
+  (`${msg.source}:${options.key}`).
+- `hybrid-page-host-registry.ts findHybridWindowByKey(key)` matches the bare key, and
+  `registerHybridWindow` stores it unqualified — one global space across every feature. Two
+  features passing the same key string collide, and the second open refocuses the first
+  feature's window. `hybrid-page-host-registry.test.ts` exercises one source only, so nothing
+  catches it.
+
+A third rule sits beside them: the generic URL dedupe (`findWindowByUrl` /
+`findHybridWindowByUrl`) is gated on `!options.key`, which is the only thing keeping a
+key-declaring feature out of an unrelated window that happens to hold the same URL — a guard
+that reads as a dedupe detail rather than as the rule it enforces.
+
+Absorbing this means the machine owns identity: a key is qualified by its declaring feature,
+resolution is one transition rather than a guard chain, and reuse-versus-create is a state the
+kernel can be asked about. Engine work, deliberately deferred — the targeted defects above are
+being fixed in place first.
 
 **Peek / slide content features** — EXPLICITLY OUT OF SCOPE. What a peek *shows*, how a
 slide *animates its content*, what the switcher *lists* — none of that is window
