@@ -13,13 +13,20 @@ For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see 
 
 ## Testing
 
-> **ALWAYS ASK BEFORE RUNNING THE FULL GATE.** Never launch `yarn test:desktop:electron`
-> (or its `:bg`/`:x`/`:source` variants, or an equivalent all-runner Playwright run) on
-> your own initiative — not to "confirm green" before landing, not because a handoff says
-> to, not for any reason. It is expensive: it pins the CPU, makes the laptop run hot, and
-> pops up crash/app windows that intrude on whatever the user is doing. So: state that the
-> change needs the gate, ask, and wait for an explicit yes before running it. Fast
-> single-test iteration (`yarn test:grep`) does not need to ask. (User directive, 2026-07-08.)
+> **The full gate runs without asking.** `yarn test:desktop:electron` (and its
+> `:bg`/`:x`/`:source` variants) takes ~15 minutes and pins the CPU, but the machine it
+> runs on is a workstation rather than someone's laptop, so the cost is time and not
+> interruption. Run it whenever a change warrants it — before landing, to confirm a
+> failing-set diff, to reproduce something the smaller runners can't. Prefer the `:bg`
+> variants so the run doesn't hold a turn.
+>
+> **A single spec file is NOT a substitute for the gate.** `test:desktop:electron:spec`
+> and `:spec:bg` run `PACKAGED=1` against whatever `electron-builder` last produced and
+> perform no build of their own — so they silently exercise a stale binary after any source
+> edit. Run `yarn workspace @peek/desktop build && npx electron-builder --dir` first, or use
+> `yarn test:grep`, which rebuilds and runs from source. Some failures also reproduce only
+> under the full desktop project's load and ordering, and are invisible to a single-file run
+> on any binary.
 
 Test commands follow a `test:{environment}:{implementation}` system. The canonical
 gate for this app is **`yarn test:desktop:electron`** — and it is the *whole* suite, not a

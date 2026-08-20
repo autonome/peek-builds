@@ -55,9 +55,11 @@ columns, the batched item push through `POST /items/batch`, and their docs.
 
 Everything in How to verify is green. Two things are unverified rather than passing:
 
-- **The full Electron gate has not been run on this branch.** Two datastore
-  migrations, the whole item-push path, the pull path and a renderer panel changed.
-  `apps/desktop/CLAUDE.md` forbids launching it without explicit human approval.
+- **The full Electron gate fails `hybrid-overlay.spec.ts` "draft note: an empty blur
+  creates nothing, a typed blur creates exactly one item"**, which is absent from
+  `apps/desktop/tests/gate-baseline.md` and passed in both of the baseline's recorded runs.
+  It reproduces only under the full desktop project — a single-file run of that spec on a
+  freshly built package passes 47/48. Cause not yet identified.
 - **The server changes are not deployed.** `POST /items/batch` and the `limit`/
   `cursor` parameters exist only in this branch. That is safe in both directions —
   the client probes the batch route once per run and falls back on a 404, and a
@@ -73,11 +75,15 @@ below them: step 5 needs the same production authorization, and steps 6 and 7 ar
 follow-on work that should not begin while the branch is unproven by the gate and
 undeployed.
 
-1. **Run the full Electron gate on this branch and diff the failing spec set against
-   `apps/desktop/tests/gate-baseline.md`** — never against the failure count, which
-   moves between identical runs.
-   **blocked on: approval to run the gate** (it pins the CPU and pops up windows;
-   `apps/desktop/CLAUDE.md` requires asking).
+1. **Find the cause of the draft-note gate failure and fix it.** It is the one thing
+   blocking this branch from landing. What is known: it reproduces only under the full
+   desktop project, not in a single-file run or via `test:grep`; the item does reach the
+   datastore (the test's count assertions pass) and what is empty is the rendered pane, so
+   this is a render/reload problem rather than a lost write. `page-notes.js` `_render()`
+   guards a rebuild with `_rebuilding`, and both blur handlers branch on it — the draft's
+   handler is `async` and reads it again after an `await`, which is the prime suspect.
+   `overlay.js` and the spec currently carry a temporary diagnostic (`window.__notesPaneDiag`
+   plus a state dump on the failing assertion) — **remove both before committing.**
 
 2. **Deploy the server so the batched push and the paged pull take effect.**
    `railway up ./apps/server --path-as-root --service peek-node --detach -m "<what
@@ -222,9 +228,13 @@ yarn test:grep 'an open note survives a reload'                     # 1 passed
 yarn test:grep 'leaving a note still closes it'                     # 1 passed
 ```
 
-`yarn test:desktop:electron` is the full gate, takes ~15 minutes and pins the CPU.
-Judge it by diffing the failing spec set against `apps/desktop/tests/gate-baseline.md`,
-never by the count. **Requires human approval before each run.**
+`yarn test:desktop:electron` is the full gate, takes ~15 minutes and pins the CPU. Run it
+whenever a change warrants it; no approval needed. Judge it by diffing the failing spec set
+against `apps/desktop/tests/gate-baseline.md`, never by the count.
+
+**`test:desktop:electron:spec` does not build.** It runs `PACKAGED=1` against the last
+`electron-builder` output, so after any source edit it tests a stale binary. Build and
+repackage first, or use `yarn test:grep`, which rebuilds and runs from source.
 
 `npm install --prefix apps/server` is needed once in a fresh worktree, for plain JS
 dependencies only — without it the desktop sync tests fail with `Cannot find module

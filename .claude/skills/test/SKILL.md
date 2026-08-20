@@ -29,6 +29,7 @@ When the user invokes /test:
 - Always use `yarn test:desktop:electron:bg` for the full background run (logs to `/tmp/test-electron.log`); read that log with the Read tool.
 - Use `yarn test:desktop:electron:x` if the user wants stop-on-first-failure mode.
 - Source-only escape hatch (no packaging, runners 3+4 only): `yarn test:desktop:electron:source`. Single-test fast iteration: `yarn test:grep "<pattern>"` (source).
+- **`test:desktop:electron:spec` / `:spec:bg` build nothing.** They run `PACKAGED=1` against whatever `electron-builder` last produced, so after a source edit they exercise a stale binary and "the fix didn't work" is indistinguishable from "the fix was never in the build". Run `yarn workspace @peek/desktop build && npx electron-builder --dir` first, or use `yarn test:grep`, which rebuilds from source. Also note some failures reproduce only under the full desktop project's load and ordering — a green single-file run does not clear a failure the gate found.
 - There is **no bare `yarn test`** — always name environment + implementation.
 
 ## Usage
