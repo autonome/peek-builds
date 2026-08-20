@@ -202,6 +202,7 @@
   "workspaces": [
     "apps/desktop",
     "apps/mobile",
+    "apps/server",
     "packages/*"
   ],
   "dependencies": {
