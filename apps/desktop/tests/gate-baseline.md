@@ -188,3 +188,40 @@ chain-popup test opened both windows with no parent link at all, and the overlay
 plain `role:'overlay'` window with no `AttachOverlay`. Both have been restaged to stage the
 relation the kernel checks (`declareParent` for the parent case, the hybrid-overlay E2E bridge's
 `AttachOverlay` for the attached case) and pass.
+
+## Second macOS gate run (2026-08-20) — both unattributed failures settled
+
+`yarn test:desktop:electron:bg` on `wip/window-kernel-executor` at `ca9b613f`, macOS arm64,
+packaged. Exit 1. Run over a tip carrying the peek slot-key fix, the restore-source fix and the
+hybrid key-namespace fix.
+
+| Runner | Pass | Fail | Cancelled |
+|---|---|---|---|
+| main-process unit | 3365 | 0 | 20 |
+| node unit | 743 | 0 | — |
+| desktop | 432 | 1 | — |
+| desktop-serial | 39 | 1 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The failing set is exactly two, both already carried as pre-existing:
+`hybrid-transient-on-blur.spec.ts:153` and `desktop-serial/cmd-noun-commands.spec.ts:228`.
+
+**`hybrid-maximize-state-sync.spec.ts:89` passed.** Together with 4/4 isolated passes at the
+previous tip, its single failure in the 2026-08-18 gate reads as flake rather than a load-only
+interaction. Not proof of the absence of one — a second failure in a later gate would reopen it.
+
+**The `sync.test.ts` failure is an install gap, not a defect, and never was one.** `sync.test.js`
+requires `apps/server/index.js`, which requires `hono`. `hono` is declared in
+`apps/server/package.json` but is installed nowhere in the tree, because **`apps/server` is not in
+the root `workspaces` list** (`apps/desktop`, `apps/mobile`, `packages/*`). Every `before` hook in
+that suite throws `MODULE_NOT_FOUND`, and its ~20 tests are CANCELLED rather than failed.
+
+That also explains the earlier measurement that "did not reproduce": ~20 sync tests standalone
+versus the one the gate reported is the same cause seen at two different truncation points, not
+two inequivalent runs.
+
+**Read the `cancelled` column, not just `fail`.** The runner prints cancelled tests under a
+"failing tests:" heading while its summary line says `fail 0` — so a suite that cannot load its
+own imports presents as a passing runner. Twenty desktop sync tests currently cannot pass on any
+clean checkout, and no summary line says so.
