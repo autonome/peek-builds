@@ -23,6 +23,9 @@ export class PageNotesPane {
     // focused textarea fires its blur handler, and that blur must not be read
     // as the user leaving the note — see the handler.
     this._rebuilding = false;
+    // The textarea _renderContent() built for the open editor, and where its
+    // caret goes. _render() applies it once the pane's DOM is complete.
+    this._pendingFocus = null;
     // In-memory draft for a note that hasn't been typed into yet. No datastore
     // row exists until the first non-empty keystroke (see _renderDraftItem),
     // so a draft that's abandoned empty (blur, teardown, click away) never
@@ -320,9 +323,30 @@ export class PageNotesPane {
     this._rebuilding = true;
     try {
       this._renderContent();
+      // Focus and caret are applied here, inside the rebuild, not a frame
+      // later. Deferring them leaves a window where the editor is rebuilt but
+      // its caret has not been written yet — and a second rebuild arriving in
+      // that window captures the unapplied caret as if it were the user's,
+      // which is how a caret mid-note becomes end-of-note.
+      this._applyPendingFocus();
     } finally {
       this._rebuilding = false;
     }
+  }
+
+  /**
+   * Focus the rebuilt editor and put the caret back. _renderContent() records
+   * what to focus; by the time this runs it has appended everything.
+   */
+  _applyPendingFocus() {
+    const pending = this._pendingFocus;
+    this._pendingFocus = null;
+    if (!pending) return;
+    const { textarea, selectionStart, selectionEnd } = pending;
+    textarea.focus();
+    const end = textarea.value.length;
+    textarea.selectionStart = typeof selectionStart === 'number' ? selectionStart : end;
+    textarea.selectionEnd = typeof selectionEnd === 'number' ? selectionEnd : end;
   }
 
   _renderContent() {
@@ -453,14 +477,14 @@ export class PageNotesPane {
 
         textWrap.appendChild(textarea);
 
-        // Auto-focus after DOM insertion, at the caret the interrupted editor
-        // had, or at the end for an editor being opened for the first time.
-        requestAnimationFrame(() => {
-          textarea.focus();
-          textarea.selectionStart = restore ? restore.selectionStart : textarea.value.length;
-          textarea.selectionEnd = restore ? restore.selectionEnd : textarea.value.length;
-          if (restore && this._editorState === restore) this._editorState = null;
-        });
+        // Focus at the caret the interrupted editor had, or at the end for an
+        // editor being opened for the first time.
+        this._pendingFocus = {
+          textarea,
+          selectionStart: restore ? restore.selectionStart : undefined,
+          selectionEnd: restore ? restore.selectionEnd : undefined,
+        };
+        if (restore && this._editorState === restore) this._editorState = null;
       }
 
       item.appendChild(textWrap);
@@ -598,16 +622,15 @@ export class PageNotesPane {
     textWrap.appendChild(textarea);
     item.appendChild(textWrap);
 
-    // Auto-focus after DOM insertion, same as a newly-created note used to —
-    // at the caret a rebuild interrupted, if there was one.
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const hasCaret = typeof draft.selectionStart === 'number';
-      textarea.selectionStart = hasCaret ? draft.selectionStart : textarea.value.length;
-      textarea.selectionEnd = hasCaret ? draft.selectionEnd : textarea.value.length;
-      draft.selectionStart = undefined;
-      draft.selectionEnd = undefined;
-    });
+    // Focus at the caret a rebuild interrupted, if there was one, else at the
+    // end — same as a newly-created note used to.
+    this._pendingFocus = {
+      textarea,
+      selectionStart: draft.selectionStart,
+      selectionEnd: draft.selectionEnd,
+    };
+    draft.selectionStart = undefined;
+    draft.selectionEnd = undefined;
 
     return item;
   }
