@@ -1190,9 +1190,16 @@ export async function restoreSessionSnapshot(
         result.failed++;
         continue;
       }
+      // `source` is the key namespace: `ipc.ts windowOpenHandler` stores it on
+      // the window record and `main.ts findWindowByKey(source, key)` matches on
+      // it, so a restored window must carry the source that originally opened
+      // it. Restoring everything under `WEB_CORE_ADDRESS` filed keyed windows
+      // in the wrong namespace, and the owning feature's next open of the same
+      // key missed the restored window and opened a duplicate. Fall back to the
+      // core address only for a descriptor saved without one.
       const openResult = await invokeWindowOpen(
         { sender: bgWin.webContents },
-        { source: WEB_CORE_ADDRESS, url: descriptor.url, options },
+        { source: descriptor.source || WEB_CORE_ADDRESS, url: descriptor.url, options },
       ) as { success: boolean; id?: number; error?: string };
       const windowMs = Date.now() - windowStartedAt;
       DEBUG && console.log(`[session] Window open result:`, JSON.stringify(openResult));
