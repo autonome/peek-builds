@@ -41,6 +41,18 @@ calls**. This number — not the table above, not any other prose in this docume
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
+### Open design decisions
+
+None. The last one — whether `order` includes never-shown and offscreen windows — was answered
+on 2026-08-21: **it does**, every window always, with no registration-time membership test. The
+decision and what it commits to are in §0.1.10, "Answered: `order` includes never-shown and
+offscreen windows". The recurring boot-time
+`divergence kind=stackOrder old=["wm-4"] kernel=["wm-1",…,"wm-4"]` is explained by it and is not a
+defect: the comparator is contrasting two membership rules, and only the kernel's survives.
+
+The key-reuse behavior in §4.6 is likewise decided rather than pending: a key-reuse shows the
+existing window and does not navigate it.
+
 ### Open kernel defects
 
 None. The one open defect — the restore-time maximize seed reaching the old machine but not the
@@ -2750,10 +2762,32 @@ headless, and told the machine a window was pinned that the constructor had been
 not to pin. The record describes the window that exists; an option the constructor declined is not
 a fact about it.
 
-**Still open.** Both questions below are parked awaiting a decision. The evidence bearing on each
-is assembled under it; neither is answered here, and neither is softened into a recommendation.
+**Both questions below are now answered.** The evidence bearing on each is assembled under it and
+kept, because it is what each answer was decided on.
 
-#### Open question 1: does `order` include never-shown and offscreen windows?
+#### Answered: `order` includes never-shown and offscreen windows
+
+**Decided: yes — every window, always, taken literally.** No registration-time membership test is
+added, and no window the machine knows about is absent from `order`. This is the reading the rest
+of this section was already written against, and it is the one that requires no exception.
+
+What it rests on, in one line each: excluding these windows would mean *adding* a filter that does
+not exist today, since all five reach the reducer through the single `registerWindowWithMachine`
+path; the only property the excluded set shares is a `class` string, and §0.1.4 forbids branching
+on `class`; and the three costs of including them are bounded and already paid — `role: 'utility'`
+keeps them out of every content predicate, never being visible keeps them out of every `visible`
+clause, and `react` emits `SetStacking` only for `w.visible && w.orderable`.
+
+**What this commits to, stated so it is not rediscovered.** Every query keeps carrying its own
+exclusions rather than relying on `order` membership to pre-filter — which is what they already do.
+The `SetStacking` exclusion is incidental (it is by visibility, not by class), so it stops applying
+to any of these windows that is ever shown; a devtools or test-fixture window that becomes visible
+is an ordinary orderable window and is meant to be.
+
+**The consequence for the retirement of the old machine.** Every boot emits
+`divergence kind=stackOrder old=["wm-4"] kernel=["wm-1",…,"wm-4"]`. Under this decision that
+divergence is the kernel being right and the old machine being narrow, not a defect to reconcile —
+the comparator is contrasting two membership rules, and only one of them survives.
 
 Rule 1 says every window, always, and the reading taken here is the literal one — `background`,
 `bridge`, `offscreen`, `devtools` and test fixtures all sit in the one order at their own layer.
@@ -3634,12 +3668,17 @@ resolution is one transition rather than a guard chain, and reuse-versus-create 
 kernel can be asked about. Engine work, deliberately deferred — the two defects above were fixed
 in place first, so what remains is ownership, not correctness.
 
-One behavior is knowingly left as-is, because it is a product decision rather than a defect: the
-hybrid key-reuse branch shows and focuses the existing window WITHOUT navigating it, so a feature
-that changes the address behind a key does not move that key's open window. Peeks want exactly
-that for `keepLive` / `persistState`, and a user may browse inside a peek — so "reopen shows the
-configured address" would undo their navigation. Distinguishing a settings-side address change
-from ordinary in-window browsing needs feature-side memory of the previous address.
+**Decided: a key-reuse shows the existing window and does not navigate it.** The hybrid key-reuse
+branch shows and focuses the existing window WITHOUT navigating it, so a feature that changes the
+address behind a key does not move that key's open window — editing a peek slot's address in
+settings leaves that slot's open window where it is. This is the standing behavior and it stays.
+
+The reason it is not a defect to patch: peeks want exactly this for `keepLive` / `persistState`,
+and a user may browse inside a peek, so "reopen shows the configured address" would silently undo
+their navigation. Telling a settings-side address change apart from ordinary in-window browsing
+needs feature-side memory of the previous address, which no feature carries today. Revisiting this
+means adding that memory first — the fix is in the feature, not in the reuse branch, and changing
+the reuse branch alone would trade a surprising non-update for a worse surprising update.
 
 **Peek / slide content features** — EXPLICITLY OUT OF SCOPE. What a peek *shows*, how a
 slide *animates its content*, what the switcher *lists* — none of that is window
