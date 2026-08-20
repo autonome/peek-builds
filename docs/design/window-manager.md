@@ -2697,7 +2697,8 @@ existing page host. The one reuse it does allow is itself: reopening the same pe
 peek's own prior window rather than spawning a duplicate.
 
 The mechanism, traced 2026-08-20. `features/peeks/background.js executeItem()` opens with
-`role: 'quick-view'`, `pageHost: true`, `modal: true` and `key: peek:<address>`. In `ipc.ts`'s
+`role: 'quick-view'`, `pageHost: true`, `modal: true` and `key: peek:<keyNum>` — the slot number,
+not the address, so two slots sharing an address still get a window each. In `ipc.ts`'s
 `windowOpenHandler` the generic URL dedupe — `findWindowByUrl` (its only call site) and
 `findHybridWindowByUrl` — sits behind a guard requiring `!options.key`, so a peek never reaches it.
 The key branch runs instead: `hybrid-page-host-registry.ts findHybridWindowByKey` and `main.ts
