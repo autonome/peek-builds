@@ -156,12 +156,13 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     // not the BrowserWindow one — the second half of the regression: a hybrid
     // window gaining focus must also run the transient-sibling autoclose.
     const a = await openHybridQuickView('qv-a');
-    const b = await openHybridQuickView('qv-b');
     expect(await hybridAlive(a)).toBe(true);
-    expect(await hybridAlive(b)).toBe(true);
 
-    // Focus B (hybrid focuser) → A must close, B must stand.
-    await fireFocus(b);
+    // Opening B activates it, and that activation IS the hybrid focus — it
+    // reports as a machine-caused focus, which is deliberately not suppressed,
+    // so the transient-sibling autoclose runs on the open itself. A is
+    // dismissed here, before any separate focus event is fired.
+    const b = await openHybridQuickView('qv-b');
     await expect.poll(() => hybridAlive(a), { timeout: 4000 }).toBe(false);
     expect(await hybridAlive(b)).toBe(true);
   });

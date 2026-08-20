@@ -66,7 +66,7 @@ this list plus the intermittent list below.
 | `hybrid-overlay.spec.ts` | clicking the chrome (overlay focus on content blur) does NOT deactivate | overlay race |
 | `hybrid-overlay.spec.ts` | repeat Cmd+L (press 2) re-reveals + refocuses the navbar in the overlay renderer | overlay race |
 | `hybrid-show-activate.spec.ts` | applied show path is focus-free under headless | headless paint |
-| `hybrid-transient-on-blur.spec.ts` | opening (focusing) a second hybrid quick-view closes the first | not Linux-only — also fails 4/4 packaged on macOS (2026-08-18) |
+| `hybrid-transient-on-blur.spec.ts` | opening (focusing) a second hybrid quick-view closes the first | RESOLVED — stale staging; see "Resolved: the second-quick-view staging" |
 | `izui-escape.spec.ts` | a page opened FROM a palette-role opener is classified content, never child-content | unclassified — see note |
 | `page-layout.spec.ts` | navbar can be revealed while the host is maximized | overlay race |
 | `peeks-lazy-wake.spec.ts` | the default Option+0 wake hotkey is registered at boot without the renderer | unclassified |
@@ -163,7 +163,7 @@ and the `pendingHideProvokedFocus` focused-window gate).
 |---|---|---|
 | `transient-on-blur.spec.ts:225` | utility focusing does NOT close transient parent (chain popup invariant) | pre-existing — fails with both changes reverted |
 | `transient-on-blur.spec.ts:237` | overlay is exempt from auto-close when a palette focuses | pre-existing — fails with both changes reverted |
-| `hybrid-transient-on-blur.spec.ts:153` | opening (focusing) a second hybrid quick-view closes the first | pre-existing — 3/3 failing reverted; see `docs/design/window-manager.md` 4.3.2 |
+| `hybrid-transient-on-blur.spec.ts:153` | opening (focusing) a second hybrid quick-view closes the first | **RESOLVED** — stale staging, not a defect; see "Resolved: the second-quick-view staging" below |
 | `desktop-serial/cmd-noun-commands.spec.ts:228` | new note without content signals editor open | pre-existing — fails with both changes reverted |
 | `hybrid-maximize-state-sync.spec.ts:89` | overlay keeps its maximized flag when a maximized window is switched away and back | **UNATTRIBUTED** — passed reverted, and passes 4/4 at the tip in isolation. Failed only inside the parallel gate, so flake and load-only interaction are not yet separated. |
 | `sync.test.ts` | a failed tag push does not advance the watermark, and the next push retries that tag | **UNATTRIBUTED** — see below |
@@ -206,6 +206,26 @@ hybrid key-namespace fix.
 
 The failing set is exactly two, both already carried as pre-existing:
 `hybrid-transient-on-blur.spec.ts:153` and `desktop-serial/cmd-noun-commands.spec.ts:228`.
+
+### Resolved: the second-quick-view staging
+
+`hybrid-transient-on-blur.spec.ts` "opening (focusing) a second hybrid quick-view closes the
+first" was a stale staging, not a defect, and the behavior it names is correct at the tip.
+
+The spec opened quick-views A and B back to back, asserted both alive, and only then fired a
+synthetic focus at B to make A close. Under the kernel, opening B *is* the focus: an activating
+show arms a self-caused focus token, `electron-window-backend.ts attachNativeListeners`
+(`win.on('focus')`) reports it with `cause.kind === 'machine'`, and both suppression arms
+(`pendingStackingFocus`, `pendingHideProvokedFocus`) deliberately decline to suppress a
+machine-caused focus. So `OS_FOCUS_GAINED` lands for B at open time,
+`window-kernel.ts selectTransientAutoclose` runs with B as the focuser, and A — an earlier
+`openSeq` sibling with no parent or overlay relation to B — is dismissed there. The old machine
+granted no attention on open, which is what the mid-test `expect(hybridAlive(a)).toBe(true)`
+encoded.
+
+The failure was on that precondition, not on the outcome: the test's own final assertion (A
+closes, B stands) was already true, one step earlier than staged. The test now asserts A alive
+before B opens, then polls A dead after the open. All 5 tests in the file pass source-only.
 
 **`hybrid-maximize-state-sync.spec.ts:89` passed.** Together with 4/4 isolated passes at the
 previous tip, its single failure in the 2026-08-18 gate reads as flake rather than a load-only
