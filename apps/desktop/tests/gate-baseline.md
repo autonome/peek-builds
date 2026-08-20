@@ -275,5 +275,33 @@ two inequivalent runs.
 
 **Read the `cancelled` column, not just `fail`.** The runner prints cancelled tests under a
 "failing tests:" heading while its summary line says `fail 0` — so a suite that cannot load its
-own imports presents as a passing runner. Twenty desktop sync tests currently cannot pass on any
-clean checkout, and no summary line says so.
+own imports presents as a passing runner. That is why this went unattributed for two gate runs.
+
+**RESOLVED 2026-08-21:** `apps/server` was added to the root `workspaces` list, so `hono`
+installs and the suite loads. The main-process unit runner now reports **3385 pass / 0 fail /
+0 cancelled**, against 3365 pass / 20 cancelled before. The `cancelled` count remains worth
+reading on every gate run for exactly the reason above.
+
+### Third macOS gate run — 2026-08-21
+
+Run at commit `20cd3b75`, before the `workspaces` fix. **Every Playwright runner green, and the
+two long-standing failures are gone.**
+
+| runner | pass | fail | cancelled |
+|---|---|---|---|
+| main-process unit | 3365 | 0 | 20 |
+| node unit | 743 | 0 | 0 |
+| desktop | 433 | 0 | — |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The failing set is **empty**. `hybrid-transient-on-blur.spec.ts:153` and
+`desktop-serial/cmd-noun-commands.spec.ts:228` both pass — see the two "Resolved:" sections above;
+neither was a product defect. The run still exited 1, on the 20 cancelled sync tests alone, which
+the `workspaces` fix landed immediately after this run closes. `hybrid-maximize-state-sync.spec.ts:89`
+passed again, which is its second consecutive pass and leaves its single 2026-08-18 failure reading
+as flake.
+
+**Not re-run after the `workspaces` fix.** That change was verified against the main-process unit
+runner (3385/0/0) and a clean typecheck, not against a full gate.
