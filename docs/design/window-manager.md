@@ -3606,16 +3606,22 @@ the key window, an unrelated concept. The decision lives instead in `ipc.ts wind
 as a guard chain over three lookups, reached only by the caller; the kernel first hears about it
 as a `WINDOW_SHOW_REQUESTED` on a window it already knows.
 
-The two key spaces disagree, which is the symptom of having no owner:
+The two key spaces disagreed until 2026-08-20, which was the symptom of having no owner:
 
 - `main.ts findWindowByKey(source, key)` matches on `source` AND `key`, and
   `windowOpenHandler`'s own race guard `pendingWindowKeys` is qualified the same way
   (`${msg.source}:${options.key}`).
-- `hybrid-page-host-registry.ts findHybridWindowByKey(key)` matches the bare key, and
-  `registerHybridWindow` stores it unqualified — one global space across every feature. Two
-  features passing the same key string collide, and the second open refocuses the first
-  feature's window. `hybrid-page-host-registry.test.ts` exercises one source only, so nothing
-  catches it.
+- `hybrid-page-host-registry.ts findHybridWindowByKey(key)` matched the bare key, and
+  `registerHybridWindow` stored it unqualified — one global space in which two features
+  passing the same key string collided, the second open refocusing the first feature's window.
+  Now fixed: the registry records the opening `source` beside the key and the lookup compares
+  both, with three cross-source cases added to `hybrid-page-host-registry.test.ts`, which had
+  exercised a single source only.
+
+A related defect fell out of the same reading: `session.ts restoreSessionSnapshot` opened every
+restored window under a hardcoded `WEB_CORE_ADDRESS`, discarding the `descriptor.source` it
+persists, so a restored keyed window landed in a namespace its owning feature never looks in and
+that feature's next open produced a duplicate. It now passes the persisted source back.
 
 A third rule sits beside them: the generic URL dedupe (`findWindowByUrl` /
 `findHybridWindowByUrl`) is gated on `!options.key`, which is the only thing keeping a
@@ -3624,8 +3630,15 @@ that reads as a dedupe detail rather than as the rule it enforces.
 
 Absorbing this means the machine owns identity: a key is qualified by its declaring feature,
 resolution is one transition rather than a guard chain, and reuse-versus-create is a state the
-kernel can be asked about. Engine work, deliberately deferred — the targeted defects above are
-being fixed in place first.
+kernel can be asked about. Engine work, deliberately deferred — the two defects above were fixed
+in place first, so what remains is ownership, not correctness.
+
+One behavior is knowingly left as-is, because it is a product decision rather than a defect: the
+hybrid key-reuse branch shows and focuses the existing window WITHOUT navigating it, so a feature
+that changes the address behind a key does not move that key's open window. Peeks want exactly
+that for `keepLive` / `persistState`, and a user may browse inside a peek — so "reopen shows the
+configured address" would undo their navigation. Distinguishing a settings-side address change
+from ordinary in-window browsing needs feature-side memory of the previous address.
 
 **Peek / slide content features** — EXPLICITLY OUT OF SCOPE. What a peek *shows*, how a
 slide *animates its content*, what the switcher *lists* — none of that is window
