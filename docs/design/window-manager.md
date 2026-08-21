@@ -55,7 +55,22 @@ existing window and does not navigate it.
 
 ### Open kernel defects
 
-None. The one open defect — the restore-time maximize seed reaching the old machine but not the
+**Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
+`docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
+branch-introduced — none of the kernel files exist on `main`.
+
+- **A: opening a peek works only every other press.** `window-kernel.ts decide`'s `RaiseWindow`
+  arm emits `OsFocusGained` with no `cause`, and an absent `FocusCause` defaults to `world`. With
+  a world cause `selectTransientAutoclose`'s `orderingFloor` is `null`, so the carve-out that
+  spares a transient newer than the focuser never arms on machine-issued focus, and a successor
+  raise sweeps a peek that is still inside its own `loadURL`.
+- **B: ESC on the command palette opens the switcher** instead of closing the palette — the
+  palette's ESC falls through to `window-state.ts escUnhandledPolicy`.
+- **C (severe): the app beachballs and must be force-quit**, reached from the state B leaves. A
+  runaway loop, not a deadlock: two page hosts trade the top of the stack forever with `front`
+  flipping between them. Possibly the same root cause as A.
+
+The earlier entries below are the defects closed before this sign-off, and remain closed. The one open defect — the restore-time maximize seed reaching the old machine but not the
 kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and its
 `shadowKernelSeedMaximized` pair, with the previously `test.fail()`-marked spec now passing as an
 ordinary test. Write-up: "The restore-time maximize seed never reached the kernel" below.
