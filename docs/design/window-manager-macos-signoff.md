@@ -99,6 +99,10 @@ No automated check can reach any of these. For each, record what happened, not w
    specifically to use it.
 4. **Cmd+W with a peek focused closes the peek**, not the page behind it.
 5. **Escape on a fullscreen window leaves fullscreen**, and the window then closes normally.
+   **Enter fullscreen through the command palette.** Peek's windows have no native titlebar, so
+   there is no green button to click — the same fact that makes double-click-to-maximize an
+   overlay-delivered gesture. Close the palette before judging the result: on 2026-08-21, going
+   fullscreen with the palette still open hung the app (Defect C below).
 6. **Maximize actually resizes**, and unmaximize returns to the previous bounds. This one was just
    fixed for windows that had never been moved or resized since being created — worth exercising on
    a freshly opened window specifically, before touching its geometry.
@@ -176,7 +180,7 @@ specified.
 **Check 2 (the address bar survives losing its page).** Passes. With every page host closed and
 one reopened, the bar returns, shows the correct URL, and accepts typing.
 
-**Checks 3-12: NOT RUN.**
+**Checks 3-12: NOT RUN in this run. Checks 3-5 were run on 2026-08-21 — see below.**
 
 `[window-kernel-shadow] divergence` lines seen during the run were all `kind=stackOrder` (open
 question 1, §0.1.10: whether `order` includes never-shown windows) plus `kind=front` during
@@ -187,3 +191,91 @@ The peek-close overlay/hide echo hang (`docs/design/window-manager.md`, "Resolve
 visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever") was found by this
 check-driven live use, not by any spec, and was invisible to both the full ~3200-test suite and to
 every Linux run.
+
+## Results: 2026-08-21 run
+
+Machine: macOS 26.5.1, Apple M4, single built-in display, no external displays. Run from the
+`wm-cutover` worktree at commit `ff3f1c9d`, profile `signoff-0821`, staged with
+`scripts/signoff-stage.mjs` (ALPHA + BRAVO over loopback).
+
+**Two defects were found, one of them a hang. Checks 6-12 are still NOT RUN** — the run ended when
+the app had to be force-quit.
+
+**Check 3 (peeks and slides carry the shared address bar).** The address bar part PASSES: a peek
+shows the shared bar with the pointer held in the top trigger zone.
+
+**Defect A — opening a peek works only every other press.** Option+0 pressed six times in a row
+alternates perfectly: presses 1/3/5 open the peek, presses 2/4/6 do not, and on the failing press
+the page behind flashes briefly. All six presses reach `ipc.ts windowOpenHandler` (six
+`[window-open] … key: peek:0` lines), but the work per press alternates — ~216 log lines for a
+working press, ~68 for a failing one, the short ones ending in:
+
+    [hybrid-page-host] Failed to open hybrid page window: TypeError: Object has been destroyed
+        at windowOpenHandler (dist/main/ipc.js:3038)
+
+That line is `baseWin.id` inside the `window:opened` publish, so the BaseWindow the handler just
+created is already destroyed by the time it publishes. The failing press creates a NEW window
+rather than reusing the peek (`[hybrid-page-host] compat hooks attached to content wc <N>`), and
+that new window is destroyed during its own `loadURL`.
+
+Traced mechanism: `window-kernel.ts decide`'s `RaiseWindow` arm emits `OsFocusGained` with **no
+`cause`**, and an absent `FocusCause` defaults to `world`. `react`'s `lastAttention` clause then
+calls `selectTransientAutoclose` with a world cause, for which the `orderingFloor` is `null` — so
+the "spare anything newer than the focuser" carve-out that exists for exactly the handoff-raise
+echo never arms on machine-issued focus. On a press with a live predecessor, the predecessor is
+swept, its close emits a successor raise, and that raise's attention report sweeps the
+just-created, still-loading peek — a visible `quick-view`, which is in `TRANSIENT_ROLES`. On a
+press with no predecessor nothing is swept and the window survives, which is the alternation.
+
+Proposed fix, not yet applied: stamp `cause: { kind: 'machine', opSeq }` on the kernel's
+self-synthesized focus reports — `window-kernel.ts decide`'s `RaiseWindow` arm and the companion
+`OsFocusGained` in `window-kernel-shadow.ts shadowKernelWindowShown`. The `RaiseWindow` effect
+already carries an `opSeq` token. That arms the ordering floor and leaves the sweep on genuine
+world focus unchanged. **One claim in that trace is unverified**: whether this peek slot is
+actually non-`keepLive`. `keepLive` appears in the logged `options keys`, but that log prints keys
+rather than values, so it must be read off `features/peeks/background.js executeItem()` before the
+fix is written.
+
+**Check 4 (Cmd+W with a peek focused closes the peek).** PASSES. The peek window closed; the page
+behind it did not.
+
+**Check 5 (Escape on a fullscreen window).** Fullscreen itself works — entering fullscreen on
+ALPHA via the command palette behaved correctly. The check could not be completed as written, and
+two things came out of the attempt.
+
+**This check's procedure is wrong and must be rewritten.** It was attempted via a green
+titlebar button, which does not exist: Peek's windows have no native titlebar (the same fact the
+`window-manager.md` gotcha records for double-click-to-maximize). Fullscreen has to be reached
+through the command palette. Any rewrite of check 5 should say so.
+
+**Defect B — ESC on the command palette opens the switcher instead of closing the palette.**
+With a page focused, opening the command palette and pressing ESC opens the window switcher. The
+palette stays. The log shows the palette registering as `wm-16` (`[izui] Window role: palette for:
+peek://cmd/panel.html`, `modal: true keepLive: true`) and the switcher arriving immediately after
+as `wm-17`/`wm-18` with a `peek://windows/background` preload. The live escape decider is
+`window-state.ts decideEscape` / `escUnhandledPolicy`, which opens the switcher for an unhandled
+ESC while the app is OS-focused — so the palette's ESC is not being handled as "close the palette"
+and is falling through to the unhandled path. `window-escape.ts` is written but has no production
+callers, so it is not involved.
+
+**Defect C — the app beachballs and must be force-quit (SEVERE).** Reached from the state Defect B
+leaves: palette open, switcher opened by ESC, then fullscreen on ALPHA. The app then spun until
+force-quit. It is a runaway loop, not a deadlock: the log grew from 13,777 to 53,988 lines, and the
+tail is ~18,000 `kind=stackOrder` plus ~9,000 `kind=front` divergence comparisons. The cycle is two
+page hosts trading the top of the stack forever —
+
+    kernel=[…,"wm-1","wm-16","wm-6","wm-4"]
+    kernel=[…,"wm-1","wm-16","wm-4","wm-6"]
+
+with `front` flipping `wm-6` ↔ `wm-4` (ALPHA and BRAVO) between them. This is the same family as
+the already-fixed peek-close hang where `AttachOverlayTo` and `HideWindow` alternated forever, and
+it is plausibly the same root cause as Defect A: a re-entrant seam, where `windows.ts
+closeOrHideWindow` feeds `shadowKernelCloseOrHideRequested` back into the kernel while it is itself
+executing the kernel's `DismissWindow`, so one sweep produces a second decision pass. That
+connection is a hypothesis; the ping-pong itself is measured.
+
+**Both defects are branch-introduced.** None of the kernel files exist on `main`.
+
+`[window-kernel-shadow] divergence` lines outside the hang were `kind=stackOrder` (settled by the
+2026-08-21 decision that `order` includes never-shown windows — the kernel column is the correct
+one) and `kind=front` during close/reopen, matching the 2026-08-19 run.
