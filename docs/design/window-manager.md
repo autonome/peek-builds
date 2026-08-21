@@ -57,16 +57,23 @@ existing window and does not navigate it.
 
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
 `docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
-branch-introduced — none of the kernel files exist on `main`. **That claim survives only for A and
-C: B was re-traced on 2026-08-21 and reproduces on `main`.** A is fixed in code as of 2026-08-21
-and unit-proven failing-first, but is not yet confirmed live. B and C are open.
+branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
+B was re-traced on 2026-08-21 and reproduces on `main`; A's mechanism is not yet attributed to
+either machine, so its provenance is unknown rather than established. **All three are open.**
 
-- **A (fixed in code, live confirmation pending): opening a peek works only every other press.**
-  Every machine-issued focus report was reaching the kernel as a `world` focus, so
-  `selectTransientAutoclose`'s `orderingFloor` — the carve-out sparing a transient newer than the
-  focuser — never armed, and a successor raise swept a peek still inside its own `loadURL`. Three
-  producers each dropped the provenance; all three now carry it. Write-up: "Resolved: three
-  producers of a machine focus reported it as the world's" below.
+- **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
+  the alternation is that dismissal racing page-load latency. On a failing press it lands inside
+  `ipc.ts windowOpenHandler`'s `await ...loadURL(url)`, so reading `baseWin.id` just after throws
+  `Object has been destroyed` and no window ever appears. Which machine decides the dismissal is
+  unproven — `window-state.ts` and the kernel both have a transient-dismissal path, and every close
+  path in the build is DEBUG-gated. Write-up: "Defect A: the peek is destroyed inside its own
+  `loadURL`" below.
+
+  A separate, genuine missing-provenance defect was fixed while chasing this — machine-issued focus
+  reports reached the kernel as `world`, disarming `selectTransientAutoclose`'s ordering floor — but
+  the symptom survived that fix unchanged, so it was not the cause. See "Three producers of a
+  machine focus reported it as the world's" below, and the note there about why it was written up as
+  resolved before anything was reproduced.
 - **B: ESC on the command palette opens the switcher** instead of closing the palette.
   **NOT branch-introduced — it reproduces on `main`**, where `window-state.ts` `decideEscape` and
   `izui-roles.ts` `isSatelliteRegistration` are byte-identical. It is a pre-existing defect in the
@@ -3958,11 +3965,19 @@ reaching the synthetic echo and not the native listener that could arrive first.
 **Regression:** `apps/desktop/tests/desktop/hybrid-close-two-hosts-hang.spec.ts` (commit
 `0230c9e8`) bounds transitions after the close: 53 before the fix, 2 after.
 
-#### Resolved: three producers of a machine focus reported it as the world's
+#### Three producers of a machine focus reported it as the world's — real, but NOT defect A's cause
 
-Found by the 2026-08-21 macOS sign-off as "opening a peek works only every other press" (defect A
-in "Open kernel defects" above). Fixed in code 2026-08-21; unit-proven failing-first, **not yet
-confirmed live** — the six-press gesture is a sign-off check, not a spec.
+**This section previously claimed to resolve defect A. It does not.** The fix below is a genuine
+missing-provenance defect and is unit-proven failing-first, but the live repro on 2026-08-21
+showed the every-other-press symptom **surviving it unchanged**, so it was never the cause. The
+title and framing were written from unit evidence before any live reproduction — the exact failure
+mode `apps/desktop/CLAUDE.md` records for this bug class, where a green headless suite gave false
+confidence twice on a focus bug and only a live trace found the cause.
+
+What the live run established about A's real mechanism is recorded under "Defect A: the peek is
+destroyed inside its own `loadURL`" below. Notably, it is not yet established that the KERNEL
+decides that dismissal at all: `window-state.ts` is still live alongside it, and every close path
+in the build is DEBUG-gated, so no log names the deciding arm.
 
 **Mechanism.** `window-kernel.ts` `selectTransientAutoclose` spares a transient whose `openSeq` is
 newer than the focuser's, so a raise cannot dismiss a window opened after the op that provoked it.
@@ -4003,6 +4018,45 @@ nothing in practice, green tests passing vacuously" shape §4 warns about. It is
 than calling `selectTransientAutoclose` directly, because the pure selector's machine-cause
 behavior was already covered and passing — the gap was that nothing proved a raise DELIVERS a
 machine cause.
+
+#### Defect A: the peek is destroyed inside its own `loadURL`
+
+Live repro, 2026-08-21, macOS, `PROFILE=signoff-a` with two hybrid page hosts (ALPHA, BRAVO) open
+on `http://` URLs and Peek frontmost. The peek hotkey was pressed repeatedly; each press published
+`cli:peek-open keyNum=0` and ran `features/peeks/background.js` `executeItem` exactly once.
+
+**Every peek opened in the run was dismissed.** The presses that "work" and the presses that "fail"
+differ only in WHEN:
+
+- working press — the peek is shown, then vanishes ~0.9-1.3s later;
+- failing press — the peek is destroyed ~90ms after construction, *while `ipc.ts`
+  `windowOpenHandler` is still awaiting `view.webContents.loadURL(url)`*. The `publish(...,
+  'window:opened', { id: baseWin.id, ... })` immediately after that await then throws `Object has
+  been destroyed`, and the renderer receives `{success:false}`. The window never reaches
+  `Opened BaseWindow`.
+
+So the alternation is not a rule firing every other time — it is a constant dismissal racing a
+variable page-load latency. The visible "flash", and the sibling page host appearing to reload, are
+the same event: on a failing press the legacy stack thrashes ~45 times in 90ms between the surviving
+page host and the doomed peek, against 9 divergence lines across a working press's entire life.
+
+**Ruled out by the same trace:** key reuse and the `pendingWindowKeys` race guard in
+`windowOpenHandler` — every open minted a fresh id, none returned `reused:true` or `id:null`.
+
+**Not yet established: which machine decides the dismissal.** `window-state.ts` runs alongside the
+kernel, and both have a transient-dismissal path — the reducer's `pushCloseOrHide` (fed by
+`selectTransientAutoclose` or by the `APP_RESIGN_SETTLED` arm's `selectAppResignTransients`) and
+`window-kernel.ts` `react`'s `DismissWindow`. Every close-path log in the build is DEBUG-gated and
+`DEBUG` is off, so no log names the arm, and `DEBUG=1` cannot be used here because it fans detached
+devtools across internal windows and poisons focus observation. Settling it needs unconditional
+logging at `pushCloseOrHide`, the executor's `DismissWindow`, the app-activation dispatches in
+`electron-window-backend.ts attachAppListeners`, `windows.ts closeOrHideWindow`, and either side of
+the `loadURL` await.
+
+**A separate defect the same trace surfaced:** opening one peek minted TWO kernel windows, and the
+extra one never leaves the kernel's membership for the rest of the process. The same shape appears
+when a page host opens. `ipc.ts`'s tile-launch path registering each window twice is the suspected
+seam.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 
