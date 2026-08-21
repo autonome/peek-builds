@@ -52,7 +52,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { isContentWindow, topmost, type Command, type DesktopMembership, type Event, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { isContentWindow, topmost, type Command, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StateSnapshot } from './window-state.js';
 import type { StackingLevel } from './izui-roles.js';
@@ -400,9 +400,19 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
  * A `front`/membership divergence logged from that specific call is expected
  * and transient — it resolves once the outer pump drains the queued event a
  * moment later — not evidence the two machines have actually diverged.
+ *
+ * `cause` IS PART OF THE REPORT, not decoration. The backend already computes
+ * it (`electron-window-backend.ts takeFocusCause`) for the old machine's
+ * `OS_FOCUS_GAINED`, and dropping it here fed the kernel a `world` focus for
+ * every machine-issued raise — which disarms `selectTransientAutoclose`'s
+ * ordering floor, so a raise sweeps transients opened AFTER the op that
+ * caused it. It also left the executor's stale-self-echo guard
+ * (`window-kernel-executor.ts apply`, `isStaleSelfEcho`) matching nothing in
+ * production, because a `world` cause is never stale. Omitted means `world`,
+ * the same reading `Event.OsFocusGained` gives an absent cause.
  */
-export function shadowKernelOsFocusGained(id: WindowId, oldSnapshot: StateSnapshot): void {
-  shadowDispatch({ type: 'OsFocusGained', id });
+export function shadowKernelOsFocusGained(id: WindowId, oldSnapshot: StateSnapshot, cause?: FocusCause): void {
+  shadowDispatch({ type: 'OsFocusGained', id, cause });
   compareAfterFeed(oldSnapshot);
 }
 
@@ -473,7 +483,14 @@ export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
  */
 export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot, focused = false, opSeq?: number): void {
   shadowDispatch({ type: 'WindowShown', id, opSeq });
-  if (focused) shadowDispatch({ type: 'OsFocusGained', id });
+  // The companion focus carries the SHOW's own token as its provenance: an
+  // activating show is a machine-issued focus, so the report has to say so or
+  // `selectTransientAutoclose` reads it as the world taking key and sweeps
+  // transients newer than the show. A show with no token (a caller not yet
+  // reporting one) has no provenance to claim and stays `world`.
+  if (focused) {
+    shadowDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
+  }
   compareAfterFeed(oldSnapshot);
 }
 

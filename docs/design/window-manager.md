@@ -57,13 +57,15 @@ existing window and does not navigate it.
 
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
 `docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
-branch-introduced — none of the kernel files exist on `main`.
+branch-introduced — none of the kernel files exist on `main`. **A is fixed in code as of
+2026-08-21 and unit-proven failing-first; it is not yet confirmed live.** B and C are open.
 
-- **A: opening a peek works only every other press.** `window-kernel.ts decide`'s `RaiseWindow`
-  arm emits `OsFocusGained` with no `cause`, and an absent `FocusCause` defaults to `world`. With
-  a world cause `selectTransientAutoclose`'s `orderingFloor` is `null`, so the carve-out that
-  spares a transient newer than the focuser never arms on machine-issued focus, and a successor
-  raise sweeps a peek that is still inside its own `loadURL`.
+- **A (fixed in code, live confirmation pending): opening a peek works only every other press.**
+  Every machine-issued focus report was reaching the kernel as a `world` focus, so
+  `selectTransientAutoclose`'s `orderingFloor` — the carve-out sparing a transient newer than the
+  focuser — never armed, and a successor raise swept a peek still inside its own `loadURL`. Three
+  producers each dropped the provenance; all three now carry it. Write-up: "Resolved: three
+  producers of a machine focus reported it as the world's" below.
 - **B: ESC on the command palette opens the switcher** instead of closing the palette. **This is a
   wrong fact reaching the machine, not a missing rule.** The standing rule is the simple one the
   app is named for — a transient window closes on ESC — and the command panel is a transient
@@ -74,7 +76,8 @@ branch-introduced — none of the kernel files exist on `main`.
   palette-specific or switcher-specific ESC arm.
 - **C (severe): the app beachballs and must be force-quit**, reached from the state B leaves. A
   runaway loop, not a deadlock: two page hosts trade the top of the stack forever with `front`
-  flipping between them. Possibly the same root cause as A.
+  flipping between them. Possibly the same root cause as A, so it is re-checked against the A fix
+  before being investigated on its own.
 
 The earlier entries below are the defects closed before this sign-off, and remain closed. The one open defect — the restore-time maximize seed reaching the old machine but not the
 kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and its
@@ -3925,6 +3928,52 @@ reaching the synthetic echo and not the native listener that could arrive first.
 
 **Regression:** `apps/desktop/tests/desktop/hybrid-close-two-hosts-hang.spec.ts` (commit
 `0230c9e8`) bounds transitions after the close: 53 before the fix, 2 after.
+
+#### Resolved: three producers of a machine focus reported it as the world's
+
+Found by the 2026-08-21 macOS sign-off as "opening a peek works only every other press" (defect A
+in "Open kernel defects" above). Fixed in code 2026-08-21; unit-proven failing-first, **not yet
+confirmed live** — the six-press gesture is a sign-off check, not a spec.
+
+**Mechanism.** `window-kernel.ts` `selectTransientAutoclose` spares a transient whose `openSeq` is
+newer than the focuser's, so a raise cannot dismiss a window opened after the op that provoked it.
+That carve-out is deliberately armed only by a `machine` cause: a genuine world focus — the user
+clicking another window — should sweep everything eligible. But no production path was delivering a
+machine cause, so the floor was `null` for every focus report the kernel ever saw.
+
+Pressing the peek hotkey with a live predecessor: the new peek takes key and sweeps the older one
+(correct — it is a transient and the focuser is newer). The older peek's `WindowClosed` makes
+`react` emit a successor `RaiseWindow` for the surviving content window. That raise's
+`OsFocusGained` carried no cause, so the floor stayed disarmed and the sweep it triggered admitted
+the just-created peek, still inside its own `loadURL`. Net effect: the press appeared to do nothing,
+and the next press — with no predecessor to sweep — worked.
+
+**Three producers, one missing fact.** This is the document's recurring shape again — a fact
+reaching one machine or owner and not the other — but with three sites rather than one:
+
+- `window-kernel.ts` `decide`'s `RaiseWindow` arm manufactured `OsFocusGained` from a COMMAND, the
+  most unambiguously machine-caused focus there is, and stamped no cause. It now carries
+  `{ kind: 'machine', opSeq: state.opSeqCounter }`.
+- `window-kernel-shadow.ts` `shadowKernelOsFocusGained` dropped the cause on the floor.
+  `electron-window-backend.ts`'s `win.on('focus')` listener already computes it (`takeFocusCause`,
+  consuming the `pendingSelfCausedFocus` arming a focus-family native call left) and hands it to the
+  OLD machine's `OS_FOCUS_GAINED` — the kernel simply was not told. Both focus listeners now pass
+  the same value; `takeFocusCause` is one-shot, so the already-consumed local is reused rather than
+  read twice.
+- `window-kernel-shadow.ts` `shadowKernelWindowShown`'s companion focus for an activating show
+  stamped nothing either. It now carries the show's own `opSeq`, and stays `world` when the caller
+  reported no token.
+
+**A second, silent consequence.** `WindowKernelExecutor.apply`'s stale-self-echo guard
+(`isStaleSelfEcho`) drops a late `machine` echo that would otherwise steal focus back from a window
+the user has since moved to. It only judges events that carry a cause — so with no production
+producer stamping one, that guard was matching nothing live, exactly the "correct in form, matching
+nothing in practice, green tests passing vacuously" shape §4 warns about. It is now reachable.
+
+**Regression:** in the main-process unit suite; it drives `decide`'s `RaiseWindow` command rather
+than calling `selectTransientAutoclose` directly, because the pure selector's machine-cause
+behavior was already covered and passing — the gap was that nothing proved a raise DELIVERS a
+machine cause.
 
 ### 4.3.2 Two Linux-only spec failures, explained
 

@@ -789,8 +789,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         cause,
       });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
-      // window operations post-cutover — see that module's header.
-      shadowKernelOsFocusGained(id, this.getSnapshot());
+      // window operations post-cutover — see that module's header. The SAME
+      // `cause` the old machine gets: `takeFocusCause` is one-shot, so the
+      // already-consumed local is reused rather than asked for again.
+      shadowKernelOsFocusGained(id, this.getSnapshot(), cause);
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
     // "focus is moving to the next Peek window" — Electron fires the old window's
@@ -912,15 +914,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (kind === 'page-host' && rendererWC) {
       rendererWC.on('focus', () => {
         this.cancelBlurSettle();
+        // One shot (`takeFocusCause`), so it is read once and both machines
+        // are told the same provenance.
+        const cause = this.takeFocusCause(id);
         this.emit({
           type: 'OS_FOCUS_GAINED',
           id,
           lastHttpUrl: this.readHttpUrl(id),
-          cause: this.takeFocusCause(id),
+          cause,
         });
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
         // Feeds the kernel — see the `win.on('focus')` listener above.
-        shadowKernelOsFocusGained(id, this.getSnapshot());
+        shadowKernelOsFocusGained(id, this.getSnapshot(), cause);
         // Feeds the kernel (window-kernel-shadow.ts) — the sole writer of its
         // `contentFocused`.
         shadowKernelContentFirstResponderChanged(id, true, this.getSnapshot());

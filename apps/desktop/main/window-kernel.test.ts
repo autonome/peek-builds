@@ -3788,6 +3788,30 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+  it('a RaiseWindow COMMAND for an older window does not sweep a peek opened after it — decide has to stamp the machine cause itself', () => {
+    // The live shape: W is a base content window opened first; P is a
+    // quick-view peek opened LATER and currently key, exactly the "successor
+    // RaiseWindow for the surviving content window" `react` manufactures off
+    // a `WindowClosed`. This drives the COMMAND through `decide` — the arm
+    // whose `OsFocusGained` used to carry no `cause` — rather than calling
+    // `selectTransientAutoclose` directly, so a regression there (dropping
+    // the `cause` field decide's `RaiseWindow` arm stamps) fails here even
+    // though the bare-selector INVARIANT test above still passes.
+    const W = wid(1);
+    const P = wid(2);
+    const state = fold([reg(1, 'workspace'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: P }], initialState());
+
+    const decision = decide(state, { type: 'RaiseWindow', id: W, expectedVersion: state.version });
+    assert.ok('events' in decision, `RaiseWindow was rejected: ${JSON.stringify(decision)}`);
+    const { effects } = foldWithEffects(decision.events, state);
+
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'DismissWindow'),
+      [],
+      'P outlives the raise on the older W — a causeless OsFocusGained would have swept it as a world focus',
+    );
+  });
+
   it('the ordering test spares only what is strictly newer than the focuser', () => {
     // Three transients in a known open order; the machine focuses the middle one.
     const state = fold(
@@ -4109,19 +4133,35 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.deepStrictEqual(dismissed(react(focused, echo, next)), [wid(2), wid(3)], 'and the sweep still runs — no dedup on the echo');
   });
 
-  it('a RaiseWindow COMMAND now sweeps too — intended: decide has no other route to key', () => {
-    // §0.1.10: `decide` turns `RaiseWindow` into `OsFocusGained` with no
-    // `cause` (absent = world), so a machine-issued raise reaches `react`'s
-    // sweep rule exactly like a real user focus does. The old reducer's
-    // `RAISE_WINDOW_REQUESTED` never ran the sweep at all — this is a
-    // deliberate consequence of collapsing to one focus route, not a gap.
+  it('a RaiseWindow COMMAND reaches the sweep rule, but carries the machine cause that arms the floor', () => {
+    // §0.1.10: `decide` turns `RaiseWindow` into `OsFocusGained`, so a
+    // machine-issued raise reaches `react`'s sweep rule exactly like a real
+    // user focus does. The old reducer's `RAISE_WINDOW_REQUESTED` never ran
+    // the sweep at all — that is a deliberate consequence of collapsing to one
+    // focus route, not a gap.
+    //
+    // What makes it SAFE is the provenance: `decide` is the machine asking, so
+    // the event says `machine`, and `selectTransientAutoclose`'s ordering floor
+    // arms and spares everything opened after the raise. Reporting it as the
+    // world's is what let a successor raise sweep a peek that was still
+    // loading — the every-other-press defect
+    // (`docs/design/window-manager.md`, "Resolved: three producers of a
+    // machine focus reported it as the world's").
     const state = scene();
     const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
     assert.ok('events' in decision);
     const ev = decision.events[0];
-    assert.strictEqual((ev as { cause?: unknown }).cause, undefined, 'no cause means world');
+    assert.deepStrictEqual(
+      (ev as { cause?: unknown }).cause,
+      { kind: 'machine', opSeq: state.opSeqCounter },
+      'the raise names itself as the machine, carrying the counter decide saw',
+    );
     const next = evolve(state, ev);
-    assert.deepStrictEqual(dismissed(react(state, ev, next)), [wid(2), wid(3)], 'the raise command sweeps like any world-caused focus');
+    assert.deepStrictEqual(
+      dismissed(react(state, ev, next)),
+      [],
+      'the palette and quick-view were both opened after the workspace, so the floor spares them',
+    );
   });
 
   it('the machine-cause ordering floor still spares a transient opened AFTER the raise it rides with', () => {

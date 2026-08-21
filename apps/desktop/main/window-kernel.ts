@@ -3004,13 +3004,18 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // provokes.
   //
   // decide's `RaiseWindow` COMMAND is translated into an `OsFocusGained`
-  // event with no `cause` (absent = `world`), so a machine-issued raise now
-  // sweeps where the old machine's `RAISE_WINDOW_REQUESTED` did not. That is
-  // intended, not a gap: a raise that genuinely takes key IS "some other
-  // window takes key", and the machine-cause ordering floor
-  // `selectTransientAutoclose` already holds (spare anything opened after the
-  // op that caused the focus) is what keeps a machine-driven raise from
-  // sweeping something the user opened after it was issued.
+  // event, so a machine-issued raise sweeps where the old machine's
+  // `RAISE_WINDOW_REQUESTED` did not. That is intended, not a gap: a raise
+  // that genuinely takes key IS "some other window takes key", and the
+  // machine-cause ordering floor `selectTransientAutoclose` holds (spare
+  // anything opened after the op that caused the focus) is what keeps a
+  // machine-driven raise from sweeping something opened after it was issued.
+  // That floor arms ONLY on a `machine` cause, so every producer of a
+  // machine-issued focus report owes one: `decide`'s `RaiseWindow` arm above,
+  // `window-kernel-shadow.ts`'s `shadowKernelOsFocusGained` (threading the
+  // backend's `takeFocusCause`) and `shadowKernelWindowShown`'s companion
+  // focus. A producer that omits it reads as the world, the floor disarms, and
+  // a raise sweeps the window whose own opening provoked it.
   const attention = next.lastAttention;
   if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
     const holder = attention.holder;
@@ -3301,7 +3306,18 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     case 'RaiseWindow':
       // A raise is a focus request (§0.1.10: use-order and z-order are one
       // order, so raising a window is what makes it key).
-      return { events: [{ type: 'OsFocusGained', id: cmd.id }] };
+      //
+      // `machine` provenance, because the machine is literally the one asking:
+      // this event is manufactured from a COMMAND, not reported by the OS. The
+      // token is the counter as it stands now — `evolve` mints the NEXT one for
+      // this transition, so the record's `lastOpSeq` can only be <= this value
+      // when the event is applied to the state `decide` saw, and the
+      // stale-self-echo guard drops it only if a newer op for the same window
+      // was applied while it sat in the pump's queue. Without a cause the event
+      // reads as the WORLD taking key, which disarms
+      // `selectTransientAutoclose`'s ordering floor and lets a machine raise
+      // sweep a transient opened after the raise was issued.
+      return { events: [{ type: 'OsFocusGained', id: cmd.id, cause: { kind: 'machine', opSeq: state.opSeqCounter } }] };
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':
