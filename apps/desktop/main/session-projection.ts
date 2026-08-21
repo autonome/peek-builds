@@ -9,7 +9,7 @@
  * left with read → project → write.
  *
  * Every window-management fact in the projected snapshot is read off the
- * machine `StateSnapshot` that arrives as a parameter, except ORDER and FOCUS,
+ * kernel `State` that arrives as a parameter, except ORDER and FOCUS,
  * which the old machine's `front`/`stackOrder`/`WindowRecord.focusSeq` used to
  * supply and the kernel now does — see `SerializeSessionInput.kernelOrder` /
  * `.topmostContentWindowId`:
@@ -54,8 +54,7 @@
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import type { StateSnapshot, WindowRecord } from './window-state.js';
-import type { WindowId } from './window-kernel.js';
+import type { State, WindowId, WindowRecord } from './window-kernel.js';
 
 /**
  * The persisted session. `version`/`createdAt`/`reason`/`windows` and their
@@ -120,8 +119,8 @@ export interface SessionSaveNotice {
 }
 
 export interface SerializeSessionInput {
-  /** The window-state machine's state — the window-management half of the projection. */
-  snapshot: StateSnapshot;
+  /** The kernel's state — the window-management half of the projection. */
+  snapshot: State;
   /** The registry walk, in `getAllWindows()` order. */
   windows: readonly SessionSaveWindow[];
   /** `window-presenter.ts getWindowPresentation` for a native id. */
@@ -373,7 +372,7 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
   const notices: SessionSaveNotice[] = [];
 
   const recordsById = new Map<WindowId, WindowRecord>();
-  for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
+  for (const rec of input.snapshot.order) recordsById.set(rec.id, rec);
 
   // The kernel's single order, bottom → top, as a lookup. `zOrder` and
   // `stackIndex` both read this same map below — see `SerializeSessionInput
@@ -584,7 +583,7 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
 // (`getLiveWindow` is null for a BaseWindow — since the canvas removal that is
 // EVERY web page window), a fabricated z-order, a live `win.isFocused()` read,
 // and a presenter-sourced rect instead of the restorable-geometry rule. Same
-// fix, same shape: a pure projection over the machine `StateSnapshot` plus the
+// fix, same shape: a pure projection over the kernel `State` plus the
 // same hybrid-aware read-phase rows `serializeSession` consumes.
 // ============================================================================
 
@@ -621,8 +620,8 @@ export interface SpaceWorkspaceSnapshot {
 }
 
 export interface SerializeSpaceWorkspacesInput {
-  /** The window-state machine's state — same snapshot `serializeSession` reads. */
-  snapshot: StateSnapshot;
+  /** The kernel's state — same snapshot `serializeSession` reads. */
+  snapshot: State;
   /**
    * Same read-phase rows `serializeSession` consumes (`session.ts
    * buildSessionSaveWindows`) — `destroyed`/`url` already resolved the hybrid
@@ -659,7 +658,7 @@ export interface SerializeSpaceWorkspacesInput {
  */
 export function serializeSpaceWorkspaces(input: SerializeSpaceWorkspacesInput): Map<string, SpaceWorkspaceSnapshot> {
   const recordsById = new Map<WindowId, WindowRecord>();
-  for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
+  for (const rec of input.snapshot.order) recordsById.set(rec.id, rec);
 
   // Same kernel-order lookup `serializeSession` builds for `stackIndex`/`zOrder`.
   const kernelOrderIndexById = new Map<WindowId, number>();

@@ -34,19 +34,22 @@
  * the field falls back to the old focus-recency ordering
  * (`orderRestoredWindowsBottomToTop`, tested below).
  *
- * KERNEL CUTOVER (window-manager.md "The one-order consequence"): `front`,
- * `stackOrder` and `WindowRecord.focusSeq` are the OLD machine's fields —
- * frozen and on their way out. `zOrder`, `stackIndex` and `focused` now come
- * from the kernel's single order (`SerializeSessionInput.kernelOrder`) and its
- * topmost content window (`.topmostContentWindowId`), threaded into fixtures
- * via `World.kernelOrder`/`front` below (see `inputFor`) rather than off
- * `StateSnapshot` — that struct is still built (`makeStateSnapshot`) because
- * `serializeSession` still reads its other fields (`windows`), but its own
- * `front`/`stackOrder` are dead weight the projection no longer reads.
- * `World.stackOrder`/`.legacyFront` feed exactly those two dead fields and
- * default to matching `kernelOrder`/`front` — a world names them explicitly
- * only to hand them a value that DISAGREES, which is what lets a test tell
- * which of the two the implementation actually read (see `inputFor`).
+ * KERNEL CUTOVER (window-manager.md "The one-order consequence"): the OLD
+ * machine's `front`/`stackOrder`/`WindowRecord.focusSeq` are gone — the kernel's
+ * `State` (`makeStateSnapshot`) carries no such fields at all. `zOrder`,
+ * `stackIndex` and `focused` come from the kernel's single order
+ * (`SerializeSessionInput.kernelOrder`) and its topmost content window
+ * (`.topmostContentWindowId`), threaded into fixtures via `World.kernelOrder`/
+ * `front` below (see `inputFor`). `serializeSession` reads every OTHER
+ * window-management fact off `snapshot.order` (per-record `visible` /
+ * `maximized` / `preMaxBounds` / `bounds` / `fsMode`), which `makeStateSnapshot`
+ * still builds.
+ * `World.stackOrder`/`.legacyFront` are a pre-cutover holdover: they used to
+ * feed the old machine's now-deleted `front`/`stackOrder` fields so a test
+ * could prove the implementation read the kernel fact and not the dead one.
+ * `makeStateSnapshot` accepts them for backward source compatibility with
+ * every existing `World`/`inputFor` call site but no longer has anywhere to
+ * put them — there is no dead field left on `State` to disagree with.
  *
  * ORACLE LIMIT FOR `zOrder`/`stackIndex`/`focused`: these three fields are,
  * post-cutover, definitionally "a position in `kernelOrder`" / "equals
@@ -85,8 +88,8 @@ import {
   type SessionSavePresentation,
 } from './session-projection.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import type { FsMode, StateSnapshot, WindowRecord } from './window-state.js';
-import type { Rectangle, WindowId } from './window-kernel.js';
+import type { FsMode, Rectangle, State, WindowId, WindowRecord } from './window-kernel.js';
+import { initialState, isFrontEligibleWindow } from './window-kernel.js';
 
 // ============================================================================
 // Fixtures
@@ -100,16 +103,15 @@ function makeRecord(id: string, over: Partial<WindowRecord> = {}): WindowRecord 
     kind: 'browser',
     role: 'content',
     class: 'primary',
-    satellite: false,
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
     visible: true,
-    stackingLevel: 'stacked',
     orderable: true,
     fsMode: { name: 'normal' },
     maximized: false,
     preMaxBounds: null,
-    visibleOnAllSpaces: false,
     pendingProjectedBounds: null,
-    focusSeq: 0,
     // Runtime registration order; deliberately NOT projected into any
     // descriptor (see `WindowRecord.openSeq`), so the value is arbitrary here.
     openSeq: 0,
@@ -121,25 +123,28 @@ function makeStateSnapshot(
   windows: WindowRecord[],
   front: WindowId | null = null,
   stackOrder: WindowId[] = defaultStackOrder(windows),
-): StateSnapshot {
+): State {
+  // `front`/`stackOrder` are the OLD machine's fields (see the module header's
+  // KERNEL CUTOVER note) and have no counterpart on the kernel's `State` —
+  // `key` is the nearest field but `serializeSession` reads neither it nor
+  // any snapshot-carried order/focus fact, so both params stay accepted only
+  // to keep every existing `World`/`inputFor` call site unchanged.
+  void stackOrder;
   return {
-    appActive: true,
-    session: 'idle',
-    front,
-    stackOrder,
-    switcher: { open: false },
-    windows,
+    ...initialState(),
+    key: front,
+    order: windows,
   };
 }
 
 /**
  * The stack a world gets when it does not name one: record order, filtered to
- * the machine's own membership rule (`stackingLevel 'stacked' && visible`), so
- * the fixture cannot hand save a stack containing a window the reducer would
+ * the kernel's own front-eligibility rule (`isFrontEligibleWindow`), so the
+ * fixture cannot hand save a stack containing a window the kernel would
  * never put there.
  */
 function defaultStackOrder(windows: WindowRecord[]): WindowId[] {
-  return windows.filter((w) => w.stackingLevel === 'stacked' && w.visible).map((w) => w.id);
+  return windows.filter(isFrontEligibleWindow).map((w) => w.id);
 }
 
 /**
@@ -521,7 +526,7 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
 
     ['single plain content window', {
       fixtures: [contentFixture(1, 'w1')],
-      records: [makeRecord('w1', { bounds: { x: 5, y: 6, width: 700, height: 800 }, focusSeq: 42 })],
+      records: [makeRecord('w1', { bounds: { x: 5, y: 6, width: 700, height: 800 } })],
       front: 'w1',
       frontNativeId: 1,
     }],
@@ -531,7 +536,6 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       records: [makeRecord('w1', {
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
         fsMode: FULLSCREEN_MODE,
-        focusSeq: 7,
       })],
       front: 'w1',
       frontNativeId: 1,
@@ -590,7 +594,7 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
         contentFixture(13, null as unknown as string, { machineId: null }),   // machine-unknown
       ],
       records: [
-        makeRecord('w1', { bounds: { x: 1, y: 1, width: 10, height: 10 }, focusSeq: 5 }),
+        makeRecord('w1', { bounds: { x: 1, y: 1, width: 10, height: 10 } }),
         makeRecord('w2'),
         makeRecord('w3', { visible: false }),
         makeRecord('w4'),
@@ -629,8 +633,8 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       ],
       records: [
         makeRecord('w1', { visible: false, bounds: { x: 3, y: 3, width: 30, height: 30 } }),
-        makeRecord('w2', { class: 'overlay', satellite: true }),
-        makeRecord('w3', { bounds: { x: 5, y: 5, width: 50, height: 50 }, focusSeq: 2 }),
+        makeRecord('w2', { class: 'overlay', role: 'overlay' }),
+        makeRecord('w3', { bounds: { x: 5, y: 5, width: 50, height: 50 } }),
       ],
     }],
 
@@ -823,7 +827,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
   });
 
   it('mid-transition fullscreen (entering/leaving) also persists the stash', () => {
-    for (const name of ['entering-fullscreen', 'leaving-fullscreen'] as const) {
+    for (const name of ['entering', 'leaving'] as const) {
       const world: World = {
         fixtures: [contentFixture(1, 'w1')],
         records: [makeRecord('w1', {

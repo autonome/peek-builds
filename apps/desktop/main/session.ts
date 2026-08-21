@@ -13,8 +13,8 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getWindowIdFor, getAppActive, getWindowStateSnapshot, dispatchWindowEvent } from './window-state-singleton.js';
-import type { WindowId } from './window-kernel.js';
+import { getWindowIdFor, getAppActive, dispatchWindowEvent } from './window-state-singleton.js';
+import type { State, WindowId } from './window-kernel.js';
 import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
@@ -426,10 +426,11 @@ function buildSessionSaveWindows(
 }
 
 /**
- * Read phase shared by both save paths, the kernel half: `SerializeSessionInput
- * .kernelOrder` / `.topmostContentWindowId` (and the space-workspace mirrors of
- * both). Fetched once per save call so the two facts a projection call sees are
- * a single kernel-state read apart, never two.
+ * Read phase shared by both save paths: the kernel's whole state (the
+ * `SerializeSessionInput.snapshot` every window-management fact — visibility,
+ * bounds, maximize — is read off), plus `.kernelOrder` / `.topmostContentWindowId`
+ * (and the space-workspace mirrors of all three). ONE kernel-state read, so
+ * every fact a projection call sees comes from the same instant.
  *
  * `kernelState.order` is the kernel's FULL order — every registered window,
  * including an invisible one or a palette/HUD. The old machine's
@@ -446,11 +447,15 @@ function buildSessionSaveWindows(
  * window the kernel never stacked, which is what keeps `readStackIndex`'s
  * "no recorded position" migration branch reachable for an aged profile
  * instead of retiring it (every registered window would otherwise almost
- * always have SOME position).
+ * always have SOME position). `kernelState.order` itself (unfiltered) is
+ * what `SerializeSessionInput.snapshot` carries — `serializeSession` looks
+ * up individual records by id from it, so the broader membership there is
+ * inert for that read.
  */
-function readKernelOrderFacts(): { kernelOrder: WindowId[]; topmostContentWindowId: WindowId | null } {
+function readKernelOrderFacts(): { kernelState: State; kernelOrder: WindowId[]; topmostContentWindowId: WindowId | null } {
   const kernelState = getShadowKernelExecutor().getState();
   return {
+    kernelState,
     kernelOrder: kernelState.order.filter(isFrontEligibleWindow).map((rec) => rec.id),
     topmostContentWindowId: topmost(kernelState, isContentWindow)?.id ?? null,
   };
@@ -514,22 +519,20 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   const registeredWindows = getAllWindows();
 
   // ── Read ────────────────────────────────────────────────────────────────
-  // Gather ONLY what the window-state machine does not hold: per window, is
-  // the native handle gone, and what raw URL does the early-skip filter match
+  // Gather ONLY what the kernel does not hold: per window, is the native
+  // handle gone, and what raw URL does the early-skip filter match
   // `background.html` against. Visibility/geometry/maximize state are read off
-  // the machine snapshot inside `serializeSession`; stack position and which
-  // window was focused come from the kernel, not the machine — see
-  // `readKernelOrderFacts`.
-  const machineSnapshot = getWindowStateSnapshot();
+  // the kernel snapshot inside `serializeSession`; stack position and which
+  // window was focused also come from the kernel — see `readKernelOrderFacts`.
   const saveWindows = buildSessionSaveWindows(registeredWindows);
-  const { kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
+  const { kernelState, kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
 
   // ── Project ─────────────────────────────────────────────────────────────
   // The pure projection owns every window decision: the skip rules, the
   // restorable rect, maximize + its flat preMax bag, stack position, the
   // focused descriptor, and the empty-URL guard.
   const projection = serializeSession({
-    snapshot: machineSnapshot,
+    snapshot: kernelState,
     windows: saveWindows,
     getPresentation: (nativeId) => getWindowPresentation(nativeId),
     getContext: readSaveContext,
@@ -1647,17 +1650,16 @@ export function saveSpaceWorkspaces(): void {
   }
 
   // ── Read ────────────────────────────────────────────────────────────────
-  // Same read phase as `saveSessionSnapshot`: the machine snapshot for every
+  // Same read phase as `saveSessionSnapshot`: the kernel snapshot for every
   // window-management fact, plus per-window liveness/raw-URL (the two things
-  // the machine does not hold), plus the kernel's order/focus facts (see
+  // the kernel does not hold), plus the kernel's order/focus facts (see
   // `readKernelOrderFacts`). This is what fixes the hybrid blind spot —
   // `buildSessionSaveWindows` resolves a hybrid page-host's URL from the
   // hybrid registry instead of the `getLiveWindow`-only guard this loop used
   // to have, so a hybrid window reaches the projection below at all.
   const registeredWindows = getAllWindows();
-  const machineSnapshot = getWindowStateSnapshot();
   const saveWindows = buildSessionSaveWindows(registeredWindows);
-  const { kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
+  const { kernelState, kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
 
   // ── Project ─────────────────────────────────────────────────────────────
   // The pure projection owns the space-grouping decision: which windows are
@@ -1665,7 +1667,7 @@ export function saveSpaceWorkspaces(): void {
   // recency), and `focused` off the kernel's topmost content window (not OS
   // focus).
   const spaceSnapshots = serializeSpaceWorkspaces({
-    snapshot: machineSnapshot,
+    snapshot: kernelState,
     windows: saveWindows,
     getPresentation: (nativeId) => getWindowPresentation(nativeId),
     getContext: readSaveContext,

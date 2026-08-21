@@ -25,6 +25,7 @@ import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
 import { getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
 import { restorableBoundsFromRecord } from './session-projection.js';
+import { getShadowKernelExecutor } from './window-kernel-shadow.js';
 import type { WindowId } from './window-kernel.js';
 
 export { resolveWindowAddress };
@@ -63,7 +64,11 @@ export { resolveWindowAddress };
  */
 export function getRestorableBounds(machineId: WindowId | null): Electron.Rectangle | null {
   if (machineId == null) return null;
-  return restorableBoundsFromRecord(getMachineWindowRecord(machineId));
+  // `restorableBoundsFromRecord` reads the kernel's `WindowRecord` shape
+  // (session-save's own repoint off the old machine) — the kernel's state,
+  // not `getMachineWindowRecord`'s old-machine record, is this rule's source.
+  const rec = getShadowKernelExecutor().getState().order.find((w) => w.id === machineId);
+  return restorableBoundsFromRecord(rec);
 }
 
 export interface WindowPresentation {
