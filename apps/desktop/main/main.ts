@@ -44,7 +44,6 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  listMachineWindowRecords,
   getWindowStateSnapshot,
   getTopmostContentWindowId,
 } from './window-state-singleton.js';
@@ -58,6 +57,12 @@ import {
   shadowKernelAssertFocus,
   shadowKernelCloseOrHideRequested,
 } from './window-kernel-shadow.js';
+import {
+  setWindowOpenPayload,
+  getWindowOpenPayload,
+  listWindowOpenPayloads,
+  removeWindowOpenPayload,
+} from './window-open-registry.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -238,6 +243,11 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; RULE 1 makes this the only event that shrinks its `order`.
     if (wmId != null) shadowKernelWindowClosed(wmId);
+    // Drop the open-registry entry (window-open-registry.ts) here too — this
+    // is the one teardown tail every window kind (BrowserWindow and hybrid
+    // BaseWindow) funnels through, so a dead window's source/params never
+    // linger to be matched by a later reuse/dedup scan.
+    if (wmId != null) removeWindowOpenPayload(wmId);
   }
   try {
     publish('system', 'window:removed', { id: windowId });
@@ -1382,23 +1392,23 @@ export async function reloadTile(tileId: string): Promise<object | null> {
 }
 
 /**
- * The numeric-id view over the machine's registry payload (see the note where
- * the old Map used to live). Enumerates only LIVE windows whose record
- * carries `source`+`params` — the exact membership the old Map had.
+ * The numeric-id view over `window-open-registry.ts`'s payload map (see that
+ * module's header for why `source`/`params` live there rather than on the
+ * machine record). Enumerates only LIVE windows — the exact membership the
+ * old Map had.
  */
 function machineRegistryEntries(): Array<[number, { source: string; params: Record<string, unknown> }]> {
   const out: Array<[number, { source: string; params: Record<string, unknown> }]> = [];
-  for (const rec of listMachineWindowRecords()) {
-    if (rec.source === undefined || rec.params === undefined) continue;
-    const native = getNativeWindowFor(rec.id);
+  for (const entry of listWindowOpenPayloads()) {
+    const native = getNativeWindowFor(entry.id);
     if (!native) continue; // destroyed mid-teardown — the old Map's entry was unreadable-by-liveness too
-    out.push([native.id, { source: rec.source, params: rec.params }]);
+    out.push([native.id, { source: entry.source, params: entry.params }]);
   }
   return out;
 }
 
 /**
- * Attach the window-manager registry payload ({ source, params }) to an
+ * Attach the window-open registry payload ({ source, params }) to an
  * already-machine-registered window. The ipc.ts open sites now pass the
  * payload directly on the registration spec; this export remains for the
  * merge callers that run AFTER `registerWindowWithMachine` (hybrid-overlay
@@ -1410,11 +1420,15 @@ export function registerWindow(windowId: number, source: string, params: Record<
     DEBUG && console.log('[window-registry] registerWindow: window', windowId, 'is not machine-registered — payload dropped');
     return;
   }
-  // Lift keepLive out of the opaque params bag onto the record FIRST-CLASS
-  // (the payload-after-registration path, e.g. the hybrid test bridge) — the
-  // reducer's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on
+  setWindowOpenPayload(id, source, params);
+  // Lift keepLive out of the opaque params bag onto the machine record
+  // FIRST-CLASS (the payload-after-registration path, e.g. the hybrid test
+  // bridge) — the reducer's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on
   // `WindowRecord.keepLive`, never on params. Absent stays undefined so the
-  // merge keeps any registration-time value.
+  // merge keeps any registration-time value. `source`/`params` still ride
+  // this dispatch too (window-state.ts's own copy, unread by this file's
+  // lookups from here on) — that field pair retires with `window-state.ts`
+  // itself, a later step.
   //
   // No kernel shadow feed for this: `keepLive` is decided once, at
   // registration (`ipc.ts`'s two `registerWindowWithMachine` sites, and the
@@ -1429,17 +1443,15 @@ export function registerWindow(windowId: number, source: string, params: Record<
 }
 
 /**
- * Get window info from the machine's registry payload. Undefined for windows
- * that never carried one (tile windows, bridge/background infra) — same
+ * Get window info from `window-open-registry.ts`. Undefined for windows that
+ * never carried a payload (tile windows, bridge/background infra) — same
  * contract as the deleted Map. The returned `params` is the SAME object
  * across calls (callers mutate it in place, e.g. `params.currentUrl`).
  */
 export function getWindowInfo(windowId: number): { source: string; params: Record<string, unknown> } | undefined {
   const id = getWindowIdFor(windowId);
   if (id == null) return undefined;
-  const rec = getMachineWindowRecord(id);
-  if (!rec || rec.source === undefined || rec.params === undefined) return undefined;
-  return { source: rec.source, params: rec.params };
+  return getWindowOpenPayload(id);
 }
 
 /**
@@ -1509,6 +1521,7 @@ export function removeWindow(windowId: number): boolean {
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
   dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
   shadowKernelWindowClosed(id);
+  removeWindowOpenPayload(id);
   return true;
 }
 

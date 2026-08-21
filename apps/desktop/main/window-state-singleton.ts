@@ -36,6 +36,7 @@ import { topmost, isContentWindow } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
+import { setWindowOpenPayload } from './window-open-registry.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -176,6 +177,12 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // `NativeWindow`; the electron typed-overload `on` isn't assignable to the
   // loose `on` shape, so bridge with a single cast here (not at every call site).
   const id = getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
+  // The registry payload rides the registration spec when the caller has it
+  // (ipc.ts's window-open handler, for both hybrid and browser opens) — see
+  // `window-open-registry.ts` for why this lives outside the machine record.
+  if (spec.source !== undefined && spec.params !== undefined) {
+    setWindowOpenPayload(id, spec.source, spec.params);
+  }
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
@@ -411,12 +418,11 @@ export function getDevtoolsTargetId(): WindowId | null {
 }
 
 /**
- * The live reducer record for one window — READ-ONLY by contract (no copy;
- * `params` is deliberately the shared mutable bag legacy consumers write
- * into, see `WindowRecord.params`). This plus `listMachineWindowRecords` is
- * what the numeric-id registry seam in `main.ts` (`getWindowInfo` /
- * `findWindowByKey` / `getAllWindows` …) reads instead of the deleted
- * module-level `windowRegistry` Map (§4.1 dim 1a).
+ * The live reducer record for one window — READ-ONLY by contract (no copy).
+ * `main.ts`'s numeric-id registry seam (`getWindowInfo` / `findWindowByKey` /
+ * `getAllWindows` …) no longer reads `source`/`params` off this record — that
+ * pair moved to `window-open-registry.ts` — but existence checks (e.g.
+ * `removeWindow`) still read this.
  */
 export function getMachineWindowRecord(id: WindowId): WindowRecord | undefined {
   return getWindowOsAdapter().getOwner().getWindowRecord(id);
