@@ -9,10 +9,14 @@
  * that makes Tauri / ElectroBun / a native Swift shell a reimplementation
  * rather than a rewrite (§3).
  *
- * Shape (§3): COMMAND + EVENT, never QUERY.
+ * Shape (§3): COMMAND + EVENT, never QUERY — with one deliberate exception.
  *   - Outbound: the executor issues the commands below. No method returns OS
- *     state — the two Promise-returning commands resolve with `void`; the
- *     promise is settlement plumbing for the E2E test bridge
+ *     state, except `askRendererHandledEscape`: its `boolean` IS the answer
+ *     to the question it asks — the renderer's own `handled` verdict, which
+ *     no event stream could hand back any sooner — so a caller can decide in
+ *     the same pass rather than waiting for a later event to arrive. Every
+ *     other Promise-returning command resolves with `void`; the promise
+ *     there is settlement plumbing for the E2E test bridge
  *     (`WindowOsAdapter.trackAsyncEffect`), not an answer.
  *   - Inbound: the backend pushes native reality into the machine's OWN event
  *     vocabulary (`window-state.ts WindowEvent`) through the single
@@ -26,8 +30,11 @@
  *     `APP_ACTIVATED`, `APP_RESIGNED`, `SPACE_CHANGED` (the §3 table's
  *     `spaceChanged`, from the macOS active-Space workspace notification —
  *     §5 step 10),
- *     `ESC_PRESSED { landedId: 'global' }` (the OS Escape grab) and
- *     `ESC_RENDERER_ANSWER` (the renderer ask's round trip).
+ *     `ESC_PRESSED { landedId: 'global' }` (the OS Escape grab). The renderer
+ *     Escape ask's answer no longer rides this sink — `askRendererHandledEscape`
+ *     below returns it directly, and the executor (`window-os-adapter.ts`'s
+ *     `ASK_RENDERER` arm) is the one that turns it into an `ESC_RENDERER_ANSWER`
+ *     dispatch.
  *
  * SCOPE (§5 step 2 + the no-speculative-code rule): the surface below is
  * exactly what the executor issues today — nothing from the §3 full table is
@@ -204,15 +211,16 @@ export interface WindowBackend {
   closeOrHide(id: WindowId, opts?: { closedDueToAppBlur?: boolean }): Promise<void>;
 
   /**
-   * Ask the window's renderer to handle an Escape press (the `ASK_RENDERER`
-   * effect — the `escape-pressed` IPC, unchanged protocol). The answer comes
-   * back as an `ESC_RENDERER_ANSWER` emission carrying `seq` (the ask's epoch,
-   * so the reducer can drop an answer whose question no longer stands); a
-   * missing/destroyed renderer answers `handled: false` immediately so ESC
-   * still resolves. The returned promise settles after the answer is emitted
-   * — test-bridge tracking only.
+   * Ask the window's renderer whether it handled an Escape press (the
+   * `ASK_RENDERER` effect — the `escape-pressed` IPC, unchanged protocol).
+   * Resolves to the renderer's own `handled` verdict; a missing/destroyed
+   * renderer resolves `false` immediately so ESC still resolves. This port
+   * only answers the question — it never touches the reducer itself. The
+   * caller that still owes the old machine an `ESC_RENDERER_ANSWER` dispatch
+   * (`window-os-adapter.ts`'s `ASK_RENDERER` arm) carries the ask's own
+   * `seq` and turns this answer into that event.
    */
-  askRendererToHandleEscape(id: WindowId, seq: number): Promise<void>;
+  askRendererHandledEscape(id: WindowId): Promise<boolean>;
 
   /**
    * Attach the WM-owned per-window Escape interceptor (browser windows only —

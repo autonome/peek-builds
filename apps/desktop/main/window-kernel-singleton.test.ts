@@ -56,9 +56,9 @@ class FakeBackend implements WindowBackend {
     this.record('closeOrHide', id);
     return Promise.resolve();
   }
-  askRendererToHandleEscape(id: BackendWindowId, seq: number): Promise<void> {
-    this.record('askRendererToHandleEscape', id, seq);
-    return Promise.resolve();
+  askRendererHandledEscape(id: BackendWindowId): Promise<boolean> {
+    this.record('askRendererHandledEscape', id);
+    return Promise.resolve(false);
   }
   attachEscHandler(id: BackendWindowId): void {
     this.record('attachEscHandler', id);

@@ -80,8 +80,8 @@ class InertBackend implements WindowBackend {
   closeOrHide(): Promise<void> {
     return Promise.resolve();
   }
-  askRendererToHandleEscape(): Promise<void> {
-    return Promise.resolve();
+  askRendererHandledEscape(): Promise<boolean> {
+    return Promise.resolve(false);
   }
   attachEscHandler(): void {}
   setEscGrab(): void {}

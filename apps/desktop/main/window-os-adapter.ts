@@ -248,9 +248,12 @@ export class WindowOsAdapter {
    * RE-ENTRANCY: effect execution can dispatch back into this pump. The known
    * cycle is `RAISE_WINDOW`/`SHOW_WINDOW` → the backend performing the OS
    * show and synchronously emitting its `WINDOW_SHOWN` echo (§5 step 6A-2);
-   * the backend's synchronous emissions for `RECONCILE_FULLSCREEN` and the
-   * destroyed-WC `ASK_RENDERER` answer also land here from inside
-   * `runEffect`. Instead of recursing mid-`runEffects`, nested dispatches are
+   * the backend's synchronous emission for `RECONCILE_FULLSCREEN` also lands
+   * here from inside `runEffect`. (`ASK_RENDERER`'s answer is different: the
+   * port now returns it as a promise, so its `ESC_RENDERER_ANSWER` dispatch
+   * always arrives through a later microtask, never synchronously from inside
+   * `runEffect` — it enters this pump as a fresh top-level call, not a nested
+   * one.) Instead of recursing mid-`runEffects`, nested dispatches are
    * QUEUED and drained strictly AFTER the current event's effect batch
    * completes. One pump runs at a time; every event still flows through the
    * identical reduce → log → effects → Esc-grab-reconcile sequence, in
@@ -338,13 +341,18 @@ export class WindowOsAdapter {
         return;
       }
       case 'ASK_RENDERER': {
-        // The `escape-pressed` IPC, unchanged protocol. The renderer's answer
-        // drives `decideEscape` step 6; it returns as an `ESC_RENDERER_ANSWER`
-        // emission echoing `effect.seq` (the ask's epoch) so the reducer can
-        // drop an answer whose question no longer stands. Tracked (not bare
-        // `void`) so the E2E test bridge can await the ask's round trip
+        // The `escape-pressed` IPC, unchanged protocol. The port RETURNS the
+        // renderer's answer rather than emitting it; this arm is the one that
+        // still turns it into the old machine's `ESC_RENDERER_ANSWER` dispatch,
+        // echoing `effect.seq` (the ask's epoch) so the reducer can drop an
+        // answer whose question no longer stands. Tracked (not bare `void`)
+        // so the E2E test bridge can await the ask's round trip
         // deterministically — see `waitForPendingAsyncEffects`.
-        this.trackAsyncEffect(this.backend.askRendererToHandleEscape(effect.id, effect.seq));
+        this.trackAsyncEffect(
+          this.backend.askRendererHandledEscape(effect.id).then((handled) => {
+            this.pump({ type: 'ESC_RENDERER_ANSWER', id: effect.id, handled, seq: effect.seq });
+          }),
+        );
         return;
       }
       case 'CLOSE_WINDOW_UNHANDLED_ESCAPE': {

@@ -1162,32 +1162,23 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * The `escape-pressed` IPC, unchanged protocol. The renderer's answer drives
-   * `decideEscape` step 6; it comes back as an `ESC_RENDERER_ANSWER` emission
-   * echoing `seq` (the ask's epoch) on BOTH answer paths so the reducer can
-   * drop an answer whose question no longer stands.
+   * The `escape-pressed` IPC, unchanged protocol. Resolves to the renderer's
+   * own `handled` verdict — the caller (`window-os-adapter.ts`'s
+   * `ASK_RENDERER` arm) is the one that still turns it into the old
+   * machine's `ESC_RENDERER_ANSWER` dispatch; this method never touches the
+   * reducer.
    */
-  askRendererToHandleEscape(id: WindowId, seq: number): Promise<void> {
+  askRendererHandledEscape(id: WindowId): Promise<boolean> {
     const wc = this.windows.get(id)?.rendererWC;
     if (!wc || wc.isDestroyed()) {
-      // No renderer to ask → treat as unhandled so ESC still resolves.
-      this.emit({ type: 'ESC_RENDERER_ANSWER', id, handled: false, seq });
-      return Promise.resolve();
+      // No renderer to ask → unhandled, so ESC still resolves.
+      return Promise.resolve(false);
     }
     // `askWebContentsToHandleEscape` (windows.ts) still speaks Electron ids;
     // resolve the native id INSIDE the backend (the one place allowed to).
-    return askWebContentsToHandleEscape(
-      this.osWindowIdOf(id) ?? -1,
-      wc as unknown as WebContents,
-    ).then((ans) => {
-      this.emit({
-        type: 'ESC_RENDERER_ANSWER',
-        id,
-        handled: ans.handled,
-        close: ans.close,
-        seq,
-      });
-    });
+    return askWebContentsToHandleEscape(this.osWindowIdOf(id) ?? -1, wc as unknown as WebContents).then(
+      (ans) => ans.handled,
+    );
   }
 
   /**

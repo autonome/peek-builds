@@ -112,9 +112,9 @@ class NoopKernelBackend implements WindowBackend {
     recordEffect('closeOrHide', id);
     return Promise.resolve();
   }
-  askRendererToHandleEscape(id: WindowId, seq: number): Promise<void> {
-    recordEffect('askRendererToHandleEscape', id, seq);
-    return Promise.resolve();
+  askRendererHandledEscape(id: WindowId): Promise<boolean> {
+    recordEffect('askRendererHandledEscape', id);
+    return Promise.resolve(false);
   }
   attachEscHandler(id: WindowId): void {
     recordEffect('attachEscHandler', id);

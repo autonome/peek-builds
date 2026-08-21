@@ -761,8 +761,17 @@ The load-bearing detail is the arrow's direction — the dispatcher never asks t
 It is independently testable as a pure `(keyEvent, snapshot) → Command | null`. This removes
 `decideEscape`, `applyEscape`, `decideEscapeUnhandled`, `escPolicy`, `escUnhandledPolicy`,
 `applyUnhandledEscape`, `escAsk`, `escSeq`, `EscapeMode`, `session: IzuiSession`, the whole
-`switcher: SwitcherState` sub-machine, and the `ASK_RENDERER` / `ESC_RENDERER_ANSWER` round trip.
-`deriveEscGrabRegistered` becomes that subsystem querying a snapshot.
+`switcher: SwitcherState` sub-machine, and the `ASK_RENDERER` / `ESC_RENDERER_ANSWER` event pair the
+old reducer answered them through. `deriveEscGrabRegistered` becomes that subsystem querying a
+snapshot.
+
+The renderer ask itself does not go with them. `EscapeKeyPress.rendererHandled` is a fact mirrored
+into main (`window-escape-renderer-handled.ts`) with exactly one writer — the renderer's response to
+the same `escape-pressed` message the old `ASK_RENDERER` sent — so removing the ask would leave that
+fact frozen at whatever the previous press answered, and a window with a dialog open would decide its
+first press against a stale or absent fact. The interpreter still needs the ask to fire before it can
+decide; what the cutover changes is only the answer's path back — an event round-tripped through the
+reducer, versus a value the ask's own caller already holds.
 
 ### 0.1.4 The state shape
 
