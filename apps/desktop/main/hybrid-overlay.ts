@@ -1236,8 +1236,8 @@ function installTestBridge(): void {
       simOverlayFocused = false;
       // "Focus landed on a non-hybrid window." Under the machine this is a real
       // front move (the old registry nulled its active id instead): drive focus
-      // onto a lazily-created hidden NON-page-host machine window, so `front`
-      // leaves the page-host set → getFrontPageHostId() goes null → the
+      // onto a lazily-created hidden NON-page-host machine window, so
+      // `topmostBaseLayerPageHost` (`window-kernel.ts`) goes null → the
       // overlay hides and activeId() reports null, exactly the old bridge
       // contract. (The other "left the group" case — focus moving to ANOTHER
       // APP — keeps `front` by design and hides the chrome via

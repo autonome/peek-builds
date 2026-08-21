@@ -8,7 +8,6 @@
  * of main (ipc.ts / tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts /
  * tile-launcher.ts). It replaces the deleted scattered authorities:
  *   - `getTopmostContentWindowId()` ← ipc.ts `getLastFocusedVisibleWindowId`
- *   - `getFrontPageHostId()`    ← registry `getActiveHybridWindowId`
  *   - `subscribeOverlayAttachment()` ← registry `onActiveHybridWindowChange`
  *   - `getDevtoolsTargetId()`   ← ipc.ts `getLastContentWindowId`
  *   - `getWindowPreBounds()`    ← registry `preFullScreenBounds`
@@ -312,29 +311,6 @@ export function getTopmostContentWindowId(): WindowId | null {
 }
 
 /**
- * The old machine's front window iff its record is a page-host, else null.
- * Its two production consumers (`hybrid-overlay.ts overlayHostOsId` and the
- * now-deleted `attachTargetHostOsId`) wanted different queries once the
- * kernel cut over — the attachment relation (`window-kernel.ts
- * hostForOverlay`) for one, the ordering query (`topmostBaseLayerPageHost`)
- * for the other — so this shared selector has no single correct kernel
- * mapping and both were repointed off it directly. The only remaining caller
- * is the `__peekHybridOverlayTest` bridge's `setActive` (its up-to-100-iteration drain loop was written
- * against the OLD machine's front-successor repair and needs re-deriving
- * against the kernel separately — see the comment on `setActive` — so this
- * selector stays exactly as it always read, off the old machine, until that
- * happens). Do not add a new production caller: use `hostForOverlay` or
- * `topmostBaseLayerPageHost` directly instead.
- */
-export function getFrontPageHostId(): WindowId | null {
-  const owner = getWindowOsAdapter().getOwner();
-  const front = owner.getFrontWindowId();
-  if (front == null) return null;
-  const rec = owner.snapshot().windows.find((w) => w.id === front);
-  return rec && rec.kind === 'page-host' ? front : null;
-}
-
-/**
  * Subscribe to changes in the overlay's read-back attachment relation
  * (`window-kernel.ts WindowRecord.overlayFor`, read here via the record
  * carrying `tracksBaseLayerTop`) — NOT the ordering query
@@ -459,8 +435,7 @@ export function listMachineWindowRecords(): WindowRecord[] {
  * registered or the native window is gone.
  */
 export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWindow | null {
-  const owner = getWindowOsAdapter().getOwner();
-  for (const rec of owner.listWindowRecords()) {
+  for (const rec of getShadowKernelExecutor().getState().order) {
     if (rec.class !== cls) continue;
     const native = getNativeWindowFor(rec.id);
     if (native) return native;
