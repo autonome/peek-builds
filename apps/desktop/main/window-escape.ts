@@ -75,27 +75,37 @@
  *     `state.key` against `order` and returns null on a miss, so a dangling id
  *     reads as "nobody holds key". The arm is unrepresentable, not merely dead.
  *  6. The renderer answer's `close` payload field. `ESC_RENDERER_ANSWER` carried
- *     it; nothing ever read it. The mirrored fact that replaces the round trip
- *     (below) is a single boolean.
+ *     it; nothing ever read it. The answer this file takes instead
+ *     (`EscapeKeyPress.rendererHandled`, below) is a single boolean.
  *
- * ─── THE RENDERER ROUND TRIP IS GONE ────────────────────────────────────────
+ * ─── THE ROUND TRIP LEAVES THE REDUCER; THE ASK ITSELF STAYS ────────────────
  *
- * `ASK_RENDERER` / `ESC_RENDERER_ANSWER` / `escSeq` / `escAsk` / the 500ms
- * timeout are all deleted. "Did the renderer consume this Escape?" becomes a
- * fact published AHEAD of the keypress and read synchronously at decision time.
- * Two live precedents for exactly that shape: `CONTENT_FIRST_RESPONDER_CHANGED`
- * -> `WindowRecord.contentFocused`, and `hybrid-editable-focus.ts
- * isEditableFocusedForWc(...)` — a cached renderer-reported boolean already read
- * synchronously inside the same `before-input-event` handler that dispatches
- * Escape.
+ * What this file deletes is the reducer's two-phase shape: `ASK_RENDERER` /
+ * `ESC_RENDERER_ANSWER` / `escSeq` / `escAsk`, the event pair that made one
+ * keypress two transitions. "Did the renderer consume this Escape?" is an INPUT
+ * here (`EscapeKeyPress.rendererHandled`), so `interpretEscape` decides in one
+ * pass over one state.
  *
- * In THIS file that fact is an INPUT (`EscapeKeyPress.rendererHandled`); adding
- * its producer is a later wiring commit. Stated plainly, because it changes
- * behaviour until then: **with no such fact present, the "renderer handled it"
- * outcome is not expressible, and the policy table fires for every
- * non-fullscreen Escape.** A page that used to swallow Escape in its own
- * renderer will, until the producer lands, see the policy table's decision
- * instead.
+ * THE ASK IS NOT DELETED, and neither is its 500ms timeout — an earlier version
+ * of this note claimed both, and the claim was wrong in a way that would break
+ * the wiring built on it. The mirrored fact
+ * (`window-escape-renderer-handled.ts`) has exactly ONE writer: the renderer's
+ * `escape-pressed` handler in `renderer/tile-preload.cts`, which fires only
+ * BECAUSE an ask was sent. Remove the ask and the cache does not go empty, it
+ * goes STALE — frozen at whatever the tile answered to the previous press — so
+ * a window that opens a dialog decides its first Escape against the answer to
+ * an unrelated one. The ask therefore moves OUT of the reducer and into the
+ * caller, which asks and then re-enters `interpretEscape` with the answer.
+ * `windows.ts askWebContentsToHandleEscape` is that ask, unchanged.
+ *
+ * The precedents this note used to cite for a proactively-published fact —
+ * `CONTENT_FIRST_RESPONDER_CHANGED` -> `WindowRecord.contentFocused`, and
+ * `hybrid-editable-focus.ts isEditableFocusedForWc(...)` — are real, and are
+ * what a future producer would look like. They are not what exists today.
+ *
+ * Until such a producer lands, a caller that passes no `rendererHandled` gets a
+ * decision in which the "renderer handled it" outcome is not expressible, and
+ * the policy table fires for every non-fullscreen Escape.
  */
 
 import {
