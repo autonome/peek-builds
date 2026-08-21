@@ -252,11 +252,20 @@ through the command palette. Any rewrite of check 5 should say so.
 With a page focused, opening the command palette and pressing ESC opens the window switcher. The
 palette stays. The log shows the palette registering as `wm-16` (`[izui] Window role: palette for:
 peek://cmd/panel.html`, `modal: true keepLive: true`) and the switcher arriving immediately after
-as `wm-17`/`wm-18` with a `peek://windows/background` preload. The live escape decider is
-`window-state.ts decideEscape` / `escUnhandledPolicy`, which opens the switcher for an unhandled
-ESC while the app is OS-focused — so the palette's ESC is not being handled as "close the palette"
-and is falling through to the unhandled path. `window-escape.ts` is written but has no production
-callers, so it is not involved.
+as `wm-17`/`wm-18` with a `peek://windows/background` preload.
+
+**This is a wrong fact reaching the machine, not a missing rule.** The standing rule is the simple
+one the app is named for: a transient window closes on ESC, and the command panel is a transient
+window. The palette's own registration line says otherwise —
+
+    Adding window to manager: 16 escapeMode: undefined modal: true keepLive: true transient: false
+
+Registered `transient: false`, the ESC rule correctly declines to fire, and the press falls through
+to `window-state.ts escUnhandledPolicy`, which opens the switcher while the app is OS-focused. The
+decider is behaving as specified on the fact it was given. **The fix is to feed the correct fact.
+Do not add a palette-specific or switcher-specific ESC arm** — a rule per window kind is how the
+previous two attempts at this machine went wrong. `window-escape.ts` has no production callers and
+is not involved.
 
 **Defect C — the app beachballs and must be force-quit (SEVERE).** Reached from the state Defect B
 leaves: palette open, switcher opened by ESC, then fullscreen on ALPHA. The app then spun until

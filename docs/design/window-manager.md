@@ -64,8 +64,14 @@ branch-introduced — none of the kernel files exist on `main`.
   a world cause `selectTransientAutoclose`'s `orderingFloor` is `null`, so the carve-out that
   spares a transient newer than the focuser never arms on machine-issued focus, and a successor
   raise sweeps a peek that is still inside its own `loadURL`.
-- **B: ESC on the command palette opens the switcher** instead of closing the palette — the
-  palette's ESC falls through to `window-state.ts escUnhandledPolicy`.
+- **B: ESC on the command palette opens the switcher** instead of closing the palette. **This is a
+  wrong fact reaching the machine, not a missing rule.** The standing rule is the simple one the
+  app is named for — a transient window closes on ESC — and the command panel is a transient
+  window. The registration log line says otherwise:
+  `Adding window to manager: 16 escapeMode: undefined modal: true keepLive: true transient: false`.
+  The palette is registered `transient: false`, so the ESC rule correctly does not fire and the
+  press falls through to the unhandled path. The fix is to feed the correct fact; do NOT add a
+  palette-specific or switcher-specific ESC arm.
 - **C (severe): the app beachballs and must be force-quit**, reached from the state B leaves. A
   runaway loop, not a deadlock: two page hosts trade the top of the stack forever with `front`
   flipping between them. Possibly the same root cause as A.
