@@ -1786,27 +1786,18 @@ function closeOrHideEffect(rec: WindowRecord): Effect {
   return rec.keepLive ? { type: 'HIDE_WINDOW', id: rec.id } : { type: 'CLOSE_WINDOW', id: rec.id };
 }
 
-/**
- * Emit the dismissal effect for a list of AUTOCLOSE transient siblings.
- *
- * Unconditionally `CLOSE_WINDOW`, never the keepLive-resolved
- * `closeOrHideEffect` above: `CLOSE_WINDOW` routes through
- * `backend.closeOrHide` -> `windows.ts closeOrHideWindow`, which runs the
- * black-macOS-Space preamble (exit native fullscreen, await the settled
- * `normal` mode) BEFORE it re-dispatches `WINDOW_CLOSE_OR_HIDE_REQUESTED` to
- * resolve keepLive here. Pre-resolving to `HIDE_WINDOW` here would skip that
- * preamble for a fullscreen keepLive victim — the bug this comment is
- * guarding against (a raw `hide()` while still fullscreen strands a black
- * Space). Keeping this a bare `CLOSE_WINDOW` reproduces the pre-cutover path,
- * where every dismissed window (regardless of keepLive) went through
- * `closeOrHideWindow` and only THAT function's own keepLive branch decided
- * hide-vs-close.
- */
-function pushCloseOrHide(state: AppWindowState, ids: WindowId[], effects: Effect[]): void {
-  for (const id of ids) {
-    if (state.windows.has(id)) effects.push({ type: 'CLOSE_WINDOW', id });
-  }
-}
+// The `pushCloseOrHide` helper that used to convert `selectTransientAutoclose`
+// / `selectAppResignTransients` into a bare `CLOSE_WINDOW` per victim (the
+// OS_FOCUS_GAINED and APP_RESIGN_SETTLED arms below) is gone: both decisions
+// now belong solely to `window-kernel.ts` (its `react` DismissWindow rule and
+// its `AppResigned`/`AppResignSettled` arms), so neither arm below calls
+// either selector anymore — they stay exported here for their own tests. The
+// black-macOS-Space reasoning `pushCloseOrHide` used to carry (a bare
+// `CLOSE_WINDOW`, never a pre-resolved `HIDE_WINDOW`, so the fullscreen-exit
+// preamble in `windows.ts closeOrHideWindow` always runs first) is enforced
+// today by `window-kernel-executor.ts`'s `DismissWindow` case, which routes
+// through `backend.closeOrHide` rather than `backend.closeWindow` for the
+// same reason.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fullscreen sub-reducer (§2.4 transition table). Total over (mode x event).
@@ -2072,10 +2063,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // keepLive: hide, keep the record registered. `visible` is untouched
       // here — it flips on the backend's native hide event (WINDOW_HIDDEN).
       // Otherwise: the resolved close (no keepLive policy left to apply).
-      // This is the SOLE keepLive resolution point now: the §5 step 9
-      // transient autoclose (`pushCloseOrHide`) deliberately emits a bare
-      // `CLOSE_WINDOW` instead of pre-resolving here, so `closeOrHideWindow`'s
-      // fullscreen-exit preamble runs before this decision is re-dispatched.
+      // This is the SOLE keepLive resolution point in this reducer: the §5
+      // step 9 transient autoclose deliberately emitted a bare `CLOSE_WINDOW`
+      // rather than pre-resolving here, so `closeOrHideWindow`'s
+      // fullscreen-exit preamble ran before this decision was re-dispatched —
+      // that dismissal path is no longer this reducer's to decide (see the
+      // comment above `closeOrHideEffect`).
       effects.push(closeOrHideEffect(rec));
       break;
     }
@@ -2333,26 +2326,19 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'OS_FOCUS_GAINED': {
       applyFocusGained(state, event.id, event.lastHttpUrl);
-      // Transient-sibling autoclose (§4.4 dim 4b, §5 step 9): the FOCUSER
-      // dismisses the transients it is not. Driven from OS focus only — this
-      // is the machine form of the `win.on('focus')` / `onHybridHostFocus`
-      // producers, and deliberately NOT of `WINDOW_SHOWN { focused: true }`,
-      // which is a registration-time visibility IMPORT (see
-      // `WindowRegistrationDecision.pumpShownEvent`) rather than evidence that
-      // the OS moved focus. The dismissed records retire on their own
-      // `WINDOW_CLOSED` / `WINDOW_HIDDEN`, so this clause is effect-only and
-      // cannot break the front invariant.
-      //
-      // `cause` (absent = `world`) is what keeps a focus the MACHINE asked for
-      // from dismissing surfaces the user opened after it asked — see
-      // `selectTransientAutoclose` and `FocusCause`. Nothing per-record is
-      // written for it: provenance rides the event, so a self-caused echo burns
-      // no latch and the next real focus behaves exactly as if it were the
-      // window's first.
-      pushCloseOrHide(state, selectTransientAutoclose(state, event.id, event.cause ?? WORLD_CAUSE), effects);
+      // Transient-sibling autoclose used to be decided HERE (§4.4 dim 4b, §5
+      // step 9): the FOCUSER dismisses the transients it is not, driven from
+      // OS focus only. That decision now belongs solely to `window-kernel.ts`
+      // — its `react` emits `DismissWindow` off a `State.lastAttention` diff,
+      // using the kernel's own `selectTransientAutoclose`, fed by the same
+      // `OsFocusGained` event this arm handles. Deciding it in both places was
+      // a split brain: a live run showed this arm's `pushCloseOrHide` and the
+      // kernel's `DismissWindow` firing twice for one dismissal, one
+      // millisecond apart. `selectTransientAutoclose` and `FocusCause` stay
+      // exported here (consumed by tests and by the still-live parts of this
+      // reducer) — only the conversion of their answer into an effect is gone.
       // What the OS already did for us, mirrored into the machine (+ the one
       // half it does not vouch for). Emits NO raise — see `applyRaiseRequest`.
-      // AFTER the autoclose so effect order stays [autoclose…, FOCUS_CONTENT].
       applyOsFocusRealized(state, event.id, effects);
       break;
     }
@@ -2504,10 +2490,16 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // machine. Belief-vs-reality here is `appActive`'s job, and a visible
       // surface must never be dismissed while the app is front.
       if (state.appActive) break;
-      // Focus left Peek entirely, so there is no focuser to exclude: every
-      // visible transient page-host is dismissed (the original passed the
-      // no-match sentinel id -1 with an undefined focuser role).
-      pushCloseOrHide(state, selectAppResignTransients(state), effects);
+      // The app-switch sweep — every visible transient page-host dismissed
+      // because focus left Peek entirely — used to be decided HERE via
+      // `selectAppResignTransients`. That decision now belongs solely to
+      // `window-kernel.ts`'s `AppResigned`/`AppResignSettled` arms, which
+      // carry the same arm/settle ordering (`pendingAppResignSweep` above is
+      // this reducer's own copy of that ordering, kept for the state writes
+      // still live on this arm) against its own sweep-eligible predicate.
+      // `selectAppResignTransients` stays exported for tests — only the
+      // conversion of its answer into an effect is gone, for the same
+      // split-brain reason `OS_FOCUS_GAINED` above lost its own.
       break;
     }
 

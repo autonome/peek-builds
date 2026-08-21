@@ -30,6 +30,7 @@
  */
 
 import { DEBUG, isHeadless } from './config.js';
+import { wmLog } from './window-diag.js';
 import type { WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 import {
@@ -41,6 +42,7 @@ import {
   isStaleSelfEcho,
   isStaleWindowEcho,
   react,
+  traceTransientAutoclose,
   type Command,
   type Effect,
   type Event,
@@ -465,6 +467,7 @@ export class WindowKernelExecutor {
     this.state = next;
     this.logTransition(event, prev, next);
     this.recordTimeline(event, prev, next, effects);
+    this.logDismissalDecisions(event, prev, next);
     this.runEffects(effects);
     this.notify();
   }
@@ -598,6 +601,74 @@ export class WindowKernelExecutor {
     }
     for (const part of modeDeltas(before, after)) line += ` ${part}`;
     console.log(line);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Dismissal diagnostics (window-diag.ts, always-on — NOT the DEBUG-gated
+  // `logTransition` above).
+  //
+  // `window-kernel.ts` keeps zero value imports and cannot call `wmLog`
+  // itself, so this reruns the same pure queries `evolve`/`react` already
+  // consulted, purely to describe the decision — it changes nothing and feeds
+  // nothing back into the pump. Two decisions, both prone to the "a rule that
+  // matches nothing leaves no trace" failure this app keeps rediscovering
+  // (peek 8e5c3174, `window-state.ts pushCloseOrHide` docs, `6e04e8df`):
+  //
+  //   - the transient-autoclose sweep `react` drives off a `State.lastAttention`
+  //     diff, using `selectTransientAutoclose`;
+  //   - the app-resign sweep `evolve`'s `AppResigned`/`AppResignSettled` arms
+  //     drive, using `isAppResignSweepEligible`.
+  //
+  // Every attention diff logs a `transient-sweep` summary line even when it
+  // dismisses nothing, and every genuine candidate logs either a
+  // `transient-dismiss` or a `transient-spare` naming which of the four
+  // exemption clauses spared it — see `traceTransientAutoclose`'s doc for why
+  // a non-candidate (hidden, wrong role, the focuser itself) is omitted
+  // rather than traced. `AppResigned`/`AppResignSettled` log the same way: a
+  // count and id list even when zero windows were chosen, so "the sweep ran
+  // and swept nothing" is a recorded fact, not a silence.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private logDismissalDecisions(event: Event, prev: State, next: State): void {
+    const attention = next.lastAttention;
+    if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
+      const holder = attention.holder;
+      // Mirrors `react`'s own guard: a non-null holder absent from `next.order`
+      // is indeterminate, and the sweep declines rather than guesses.
+      if (holder === null || next.order.some((w) => w.id === holder)) {
+        const trace = traceTransientAutoclose(next, holder, attention.cause);
+        const causeOpSeq = attention.cause.kind === 'machine' ? attention.cause.opSeq : undefined;
+        const dismissedCount = trace.filter((t) => t.dismissed).length;
+        wmLog('transient-sweep', {
+          holder,
+          cause: attention.cause.kind,
+          opSeq: causeOpSeq,
+          dismissed: dismissedCount,
+          spared: trace.length - dismissedCount,
+        });
+        for (const t of trace) {
+          if (t.dismissed) {
+            wmLog('transient-dismiss', { id: t.id, holder, cause: attention.cause.kind, opSeq: causeOpSeq });
+          } else {
+            wmLog('transient-spare', { id: t.id, holder, exemption: t.exemption });
+          }
+        }
+      } else {
+        wmLog('transient-sweep-indeterminate', { holder });
+      }
+    }
+
+    if (event.type === 'AppResigned') {
+      const victims = appResignHideVictims(prev, next);
+      wmLog('app-resign-armed', { victims: victims.length, ids: victims.join(',') || undefined });
+    } else if (event.type === 'AppResignSettled') {
+      if (!prev.pendingAppResignSweep) {
+        wmLog('app-resign-settle-noop', { reason: 'not-armed' });
+      } else {
+        const victims = appResignHideVictims(prev, next);
+        wmLog('app-resign-settle', { victims: victims.length, ids: victims.join(',') || undefined });
+      }
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -932,4 +1003,17 @@ function modeDeltas(before: State, after: State): string[] {
     }
   }
   return parts;
+}
+
+/**
+ * Which windows THIS transition marked `hiddenByAppBlur` — the app-resign
+ * sweep's victims, for `logDismissalDecisions`. A record already hidden (or
+ * already marked) before this transition is not a victim of it: only a
+ * `true → false` flip on `visible`, landing alongside the mark, counts, which
+ * is what tells the raw `AppResigned` edge's immediate hide apart from a
+ * window that was already off screen for some other reason.
+ */
+function appResignHideVictims(prev: State, next: State): WindowId[] {
+  const wasVisible = new Map(prev.order.map((w) => [w.id, w.visible]));
+  return next.order.filter((w) => w.hiddenByAppBlur === true && wasVisible.get(w.id) === true).map((w) => w.id);
 }

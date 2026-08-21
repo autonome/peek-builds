@@ -4041,6 +4041,71 @@ export function selectTransientAutoclose(
   return out;
 }
 
+/** Which of the four exemption clauses in `selectTransientAutoclose` spared a candidate. */
+export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
+
+/** One candidate's fate, as decided by `traceTransientAutoclose`. */
+export type TransientAutocloseTrace =
+  | { id: WindowId; dismissed: true }
+  | { id: WindowId; dismissed: false; exemption: TransientAutocloseExemption };
+
+/**
+ * `selectTransientAutoclose`, restated as a per-candidate trace instead of a
+ * bare victim list — the recurring bug shape in this subsystem is a rule that
+ * matches nothing, and a list of dismissed ids cannot show that: it looks
+ * identical whether nothing WAS a candidate or everything that was got
+ * spared. This exists purely so `window-kernel-executor.ts` can log the
+ * difference (§ diagnostics — this file keeps zero value imports and cannot
+ * log anything itself).
+ *
+ * MIRRORS `selectTransientAutoclose` clause-for-clause and MUST be kept in
+ * lockstep with it — same candidacy filters (not a focuser, visible,
+ * transient role) before the same four exemptions in the same order, so
+ * `dismissed: true` here is exactly that function's return set. Not a
+ * refactor of it into a common helper: the two are read independently for
+ * different audiences (a decision function and a diagnostic one), and a
+ * shared helper would make one file's edit silently able to change the
+ * other's meaning.
+ *
+ * Non-candidates (the focuser itself, a hidden window, a non-transient role)
+ * are OMITTED rather than traced with a reason: they were never in the
+ * sweep's consideration set, so a caller logging "spared" for one of them
+ * would manufacture a decision that was never made. Only genuine candidates
+ * — visible, transient-role, not the focuser — appear here.
+ */
+export function traceTransientAutoclose(
+  state: State,
+  focusedId: WindowId | null,
+  cause: FocusCause = WORLD_CAUSE,
+): TransientAutocloseTrace[] {
+  const focuser = state.order.find((w) => w.id === focusedId);
+  const orderingFloor: number | null = cause.kind === 'machine' && focuser !== undefined ? focuser.openSeq : null;
+  const out: TransientAutocloseTrace[] = [];
+  for (const rec of state.order) {
+    if (rec.id === focusedId) continue;
+    if (!rec.visible) continue;
+    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (rec.overlayFor !== undefined) {
+      out.push({ id: rec.id, dismissed: false, exemption: 'overlay-attached' });
+      continue;
+    }
+    if (!rec.acceptsInput) {
+      out.push({ id: rec.id, dismissed: false, exemption: 'no-input' });
+      continue;
+    }
+    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) {
+      out.push({ id: rec.id, dismissed: false, exemption: 'focuser-relation' });
+      continue;
+    }
+    if (orderingFloor !== null && rec.openSeq > orderingFloor) {
+      out.push({ id: rec.id, dismissed: false, exemption: 'newer-than-focuser' });
+      continue;
+    }
+    out.push({ id: rec.id, dismissed: true });
+  }
+  return out;
+}
+
 /**
  * Which windows a REAL app switch hides for the duration — `evolve`'s
  * `AppResigned` arm applies exactly this on the raw resign edge (alongside the
