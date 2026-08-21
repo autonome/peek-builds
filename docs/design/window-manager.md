@@ -57,8 +57,9 @@ existing window and does not navigate it.
 
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
 `docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
-branch-introduced — none of the kernel files exist on `main`. **A is fixed in code as of
-2026-08-21 and unit-proven failing-first; it is not yet confirmed live.** B and C are open.
+branch-introduced — none of the kernel files exist on `main`. **That claim survives only for A and
+C: B was re-traced on 2026-08-21 and reproduces on `main`.** A is fixed in code as of 2026-08-21
+and unit-proven failing-first, but is not yet confirmed live. B and C are open.
 
 - **A (fixed in code, live confirmation pending): opening a peek works only every other press.**
   Every machine-issued focus report was reaching the kernel as a `world` focus, so
@@ -66,14 +67,33 @@ branch-introduced — none of the kernel files exist on `main`. **A is fixed in 
   focuser — never armed, and a successor raise swept a peek still inside its own `loadURL`. Three
   producers each dropped the provenance; all three now carry it. Write-up: "Resolved: three
   producers of a machine focus reported it as the world's" below.
-- **B: ESC on the command palette opens the switcher** instead of closing the palette. **This is a
-  wrong fact reaching the machine, not a missing rule.** The standing rule is the simple one the
-  app is named for — a transient window closes on ESC — and the command panel is a transient
-  window. The registration log line says otherwise:
-  `Adding window to manager: 16 escapeMode: undefined modal: true keepLive: true transient: false`.
-  The palette is registered `transient: false`, so the ESC rule correctly does not fire and the
-  press falls through to the unhandled path. The fix is to feed the correct fact; do NOT add a
-  palette-specific or switcher-specific ESC arm.
+- **B: ESC on the command palette opens the switcher** instead of closing the palette.
+  **NOT branch-introduced — it reproduces on `main`**, where `window-state.ts` `decideEscape` and
+  `izui-roles.ts` `isSatelliteRegistration` are byte-identical. It is a pre-existing defect in the
+  OLD machine's escape decider, and so does not block landing this branch.
+
+  **It is a rule aimed at the wrong window, not a wrong fact.** An earlier reading blamed the
+  registration line
+  `Adding window to manager: 16 escapeMode: undefined modal: true keepLive: true transient: false`
+  and concluded the palette was registered `transient: false` when it should be `true`. That is
+  wrong twice over: `windowOpenHandler`'s `transient` means "opened while Peek was in the
+  background" (`sessionWasTransient || entryMode === 'transient'`), not "an ephemeral overlay
+  window", and no escape decision reads it — `decideEscape`/`decideEscapeUnhandled` read only
+  `role`, `escapeMode`, `fsMode` and `session`.
+
+  The actual chain: `decideEscape` targets `state.front` and discards the landed id as
+  first-responder noise, while `applyFocusGained` bars every satellite from becoming `front` —
+  and role `palette` is unconditionally satellite, deliberately, because the palette is a chrome
+  surface and never a content target. So ESC pressed in an open palette is decided about some
+  OTHER window, or about none, and both branches end in `OPEN_SWITCHER_WINDOW`. The palette's own
+  `escPolicy(session, 'palette') === 'close'` is dead code for the palette itself.
+
+  **The fix is the escape cutover, and it needs no new rule.** `window-escape.ts` `interpretEscape`
+  — written, unit-tested, and with zero production callers — resolves its target through
+  `resolveEscapeTarget`, which reads `keyWindow(state)`, the window in use, rather than `front`;
+  and `palette` is in `ESC_CLOSE_ROLES`. Wiring it closes B as a side effect of the migration.
+  Making the palette non-satellite instead would break front eligibility everywhere, and a
+  palette-specific ESC arm is the failure mode this machine exists to remove.
 - **C (severe): the app beachballs and must be force-quit**, reached from the state B leaves. A
   runaway loop, not a deadlock: two page hosts trade the top of the stack forever with `front`
   flipping between them. Possibly the same root cause as A, so it is re-checked against the A fix
