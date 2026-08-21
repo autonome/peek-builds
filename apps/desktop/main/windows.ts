@@ -27,7 +27,6 @@ import { registerGuest } from './webview-guest-registry.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   getWindowModeName,
-  waitForMode,
   dispatchWindowEvent,
   dispatchEscapePress,
   getWindowIdFor,
@@ -35,7 +34,9 @@ import {
   getMachineWindowRecord,
   listMachineWindowRecords,
   getWindowStateSnapshot,
+  getKernelExecutorForApp,
 } from './window-state-singleton.js';
+import { wmLog } from './window-diag.js';
 import type { WindowClass } from './izui-roles.js';
 import {
   shadowKernelCloseWindowDirect,
@@ -638,8 +639,10 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         // window-state machine (the single `setFullScreen` owner), before the
         // terminal hide/close. A fullscreen host closed or hidden mid-state
         // strands a black macOS Space; dropping fullscreen first (and awaiting
-        // the settled exit via `waitForMode`) avoids it. No-op when the host
-        // isn't fullscreen. The host may be torn down while we await — re-check.
+        // the settled exit via `waitForSettledFsMode`) avoids it. No-op when
+        // the host isn't fullscreen. The host may be torn down while we
+        // await — re-checked below, and a `'vanished'` outcome from the wait
+        // itself means the same thing: nothing left to strand.
         const machineId = getWindowIdFor(id);
         const fsMode = machineId != null ? getWindowModeName(machineId) : null;
         if (machineId != null && fsMode != null && fsMode !== 'normal') {
@@ -648,7 +651,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
           // the window manager; the dispatch above only reaches the old
           // machine, whose matching effect arm is a no-op.
           shadowKernelSetFullscreen(machineId, false);
-          await waitForMode(machineId, 'normal');
+          const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
+          if (outcome !== 'settled') {
+            // Timed out or vanished: proceed into the destroyed re-check and
+            // the hide/close below exactly as before this wait was bounded —
+            // logged so a stranded black Space is diagnosable from a live run.
+            wmLog('fs-settle-wait-non-settled', { site: 'closeOrHideWindow', id: machineId, outcome });
+          }
         }
         if (hybrid.baseWin.isDestroyed()) return;
         // keepLive parity with the BrowserWindow branch below: a hybrid

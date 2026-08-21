@@ -81,7 +81,6 @@ import {
   subscribeOverlayAttachment,
   dispatchWindowEvent,
   dispatchEscapePress,
-  waitForMode,
   registerWindowWithMachine,
   getWindowModeName,
   getWindowIdFor,
@@ -91,7 +90,9 @@ import {
   getAppActive,
   subscribeAppActive,
   getWindowStateSnapshot,
+  getKernelExecutorForApp,
 } from './window-state-singleton.js';
+import { wmLog } from './window-diag.js';
 import type { WindowId } from './window-kernel.js';
 import {
   hostForOverlay,
@@ -3028,23 +3029,29 @@ function installTestBridge(): void {
      * (`setHybridHostFullScreen`) — the exact code the `fullscreen` command runs
      * via tile:window:fullscreen. Lets the disruptive fullscreen spec exercise the
      * command's transition (enter/leave settle on the native events) without
-     * fabricating a token/grant. Resolves when the transition settles (or the
-     * bounded timeout fires). Read the outcome via `hostFullscreenState(id)`.
+     * fabricating a token/grant. Resolves once the kernel's
+     * `waitForSettledFsMode` reports settled, timed out, or vanished — a
+     * non-settled outcome is logged (`wmLog`) rather than surfaced to the
+     * caller, since this bridge always resolves either way. Read the outcome
+     * via `hostFullscreenState(id)`.
      */
-    driveHostFullscreen(id: number, desired: boolean): Promise<void> {
+    async driveHostFullscreen(id: number, desired: boolean): Promise<void> {
       // Drive through the machine (the single setFullScreen owner) exactly as the
       // `fullscreen` command does. Pass current bounds for the preBounds stash.
       const boundsWin = getHybridWindow(id)?.baseWin ?? null;
       let bounds: { x: number; y: number; width: number; height: number } | null = null;
       try { if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds(); } catch { /* gone */ }
       const machineId = getWindowIdFor(id);
-      if (machineId == null) return Promise.resolve();
+      if (machineId == null) return;
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired, bounds });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
       shadowKernelSetFullscreen(machineId, desired);
-      return waitForMode(machineId, desired ? 'fullscreen' : 'normal');
+      const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, desired ? 'fullscreen' : 'normal');
+      if (outcome !== 'settled') {
+        wmLog('fs-settle-wait-non-settled', { site: 'driveHostFullscreen', id: machineId, desired, outcome });
+      }
     },
   };
 }

@@ -127,13 +127,14 @@ import {
   getTopmostContentWindowId,
   getDevtoolsTargetId,
   getWindowModeName,
-  waitForMode,
   dispatchWindowEvent,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
   getWindowStateSnapshot,
+  getKernelExecutorForApp,
 } from './window-state-singleton.js';
+import { wmLog } from './window-diag.js';
 import {
   shadowKernelSetFullscreen,
   shadowKernelSetBounds,
@@ -3089,7 +3090,13 @@ export function registerTileIpcHandlers(): void {
             // drives the window manager; the dispatch above only reaches
             // the old machine, whose matching effect arm is a no-op.
             shadowKernelSetFullscreen(machineId, false);
-            await waitForMode(machineId, 'normal');
+            const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
+            if (outcome !== 'settled') {
+              // Timed out or vanished: proceed into the destroyed re-check
+              // and the hide below exactly as before this wait was bounded —
+              // logged so a stranded black Space is diagnosable from a live run.
+              wmLog('fs-settle-wait-non-settled', { site: 'tile:window:hide', id: machineId, outcome });
+            }
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
           // Route the hide through the machine (§5 step 6A-4):
@@ -3593,17 +3600,18 @@ export function registerTileIpcHandlers(): void {
       // off its CURRENT fsMode (window-state.ts `desiredFullscreen`). Mirror
       // that same toggle here so the shadow kernel's `SetFullscreen` carries
       // an explicit boolean rather than one this module invents: `normal` and
-      // `leaving-fullscreen` both want fullscreen next, `fullscreen` and
-      // `entering-fullscreen` both want out. Skipped when the machine holds
-      // no record for this id — the same case the reducer's own `if (!rec)
-      // break;` no-ops on.
+      // `leaving` (the kernel's mode name — the old machine spelled it
+      // `leaving-fullscreen`) both want fullscreen next, `fullscreen` and
+      // `entering` both want out. Skipped when the machine holds no record
+      // for this id — the same case the reducer's own `if (!rec) break;`
+      // no-ops on.
       const oldMode = getWindowModeName(machineId);
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, bounds });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
       if (oldMode !== null) {
-        const desired = oldMode === 'normal' || oldMode === 'leaving-fullscreen';
+        const desired = oldMode === 'normal' || oldMode === 'leaving';
         shadowKernelSetFullscreen(machineId, desired);
       }
       return { success: true };

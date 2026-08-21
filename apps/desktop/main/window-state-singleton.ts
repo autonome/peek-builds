@@ -24,7 +24,7 @@ import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js
 import { getKernelExecutor } from './window-kernel-singleton.js';
 import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import type { WindowEvent, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
 import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
 import {
@@ -409,14 +409,24 @@ export function subscribeAppActive(cb: (appActive: boolean) => void): () => void
   });
 }
 
-/** Resolve when window `id` reaches fullscreen `mode` (the settle-await seam). */
-export function waitForMode(id: WindowId, mode: FsMode['name']): Promise<void> {
-  return getWindowOsAdapter().getOwner().waitForMode(id, mode);
-}
-
-/** The current fullscreen mode name for `id`, or null if unregistered. */
-export function getWindowModeName(id: WindowId): FsMode['name'] | null {
-  return getWindowOsAdapter().getOwner().getWindowMode(id);
+/**
+ * The kernel record's current fullscreen mode name for `id`
+ * (`window-kernel.ts WindowRecord.fsMode.name`), or null when `id` names no
+ * live kernel record. Replaces the old adapter-backed `getWindowModeName`
+ * (`window-os-adapter.ts` → `window-state.ts WindowStateOwner.getWindowMode`)
+ * — this reads the kernel's own belief instead of a second copy. NOTE the
+ * kernel's mid-transition names are `'entering'`/`'leaving'`, not the old
+ * machine's `'entering-fullscreen'`/`'leaving-fullscreen'`; a caller matching
+ * on the old strings needs updating, not just re-pointing.
+ *
+ * The old machine's settle-await sibling (`waitForMode`) has no wrapper here
+ * — callers that need to await a settle call `window-kernel-executor.ts
+ * WindowKernelExecutor.waitForSettledFsMode` directly (via
+ * `getKernelExecutorForApp()`), since its bounded, three-outcome return needs
+ * handling at the call site rather than behind a same-shape passthrough.
+ */
+export function getWindowModeName(id: WindowId): 'normal' | 'entering' | 'fullscreen' | 'leaving' | null {
+  return getShadowKernelExecutor().getState().order.find((w) => w.id === id)?.fsMode.name ?? null;
 }
 
 /** The devtools fallback target: MRU http(s) window (replaces `getLastContentWindowId`). */
