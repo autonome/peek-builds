@@ -17,11 +17,11 @@
  * anything themselves. Every other arm is a labelled no-op (see the block
  * comment inside `runEffect`). This module holds NO native handles and
  * imports NO platform module — `electron-window-backend.ts` is the only
- * window-manager file that touches Electron, and it feeds native reality back
- * into this module's pump through the single event sink injected at
- * construction. (The one non-port import of that file here is the DEFAULT
- * backend construction in the constructor — composition, not a window op.)
- * This module dies alongside `window-state.ts` once those four
+ * window-manager file that touches Electron, and it feeds native reality
+ * straight to the shadow kernel now, never through this module's pump. (The
+ * one non-port import of that file here is the DEFAULT backend construction
+ * in the constructor — composition, not a window op.) This module dies
+ * alongside `window-state.ts` once those four
  * responsibilities move to their permanent home.
  *
  * The two OS/Chromium boundary workarounds (the deferred-blur settle §4.4 and
@@ -40,7 +40,7 @@ import { publish, getSystemAddress } from './pubsub.js';
 // Read for the app-blur cooldown guard and told to drop overlay state on the
 // app-blur dismiss; see `CLOSE_SWITCHER_WINDOW`.
 import { getIzuiCoordinator } from './izui-state.js';
-import type { BackendEventSink, WindowBackend } from './window-backend.js';
+import type { WindowBackend } from './window-backend.js';
 import {
   ElectronWindowBackend,
   type BackendMigrationShims,
@@ -94,27 +94,21 @@ export class WindowOsAdapter {
 
   constructor(
     owner: WindowStateOwner = new WindowStateOwner(),
-    // Default composition: the Electron backend, wired to this pump. Tests /
-    // future platforms inject their own factory; the sink argument is the ONE
-    // channel backend events enter the machine through. `getSnapshot` is a
-    // second, read-only channel — the backend has no state of its own (§3),
-    // but its native listeners feed the shadow kernel (`window-kernel-shadow.ts`
+    // Default composition: the Electron backend. Tests / future platforms
+    // inject their own factory. `getSnapshot` is a read-only channel — the
+    // backend has no state of its own (§3), but its native listeners feed the
+    // shadow kernel (`window-kernel-shadow.ts`
     // shadowKernelOsFocusGained/shadowKernelOsFocusSettled/shadowKernelWindowClosed)
-    // right after `emit` settles this machine, and the comparator those calls
-    // run needs this machine's just-settled snapshot. Reading it through this
-    // injected closure (rather than the backend importing
-    // `window-state-singleton.ts` directly) keeps the backend from having to
-    // know the singleton exists at all.
+    // and the comparator those calls run needs this machine's snapshot.
+    // Reading it through this injected closure (rather than the backend
+    // importing `window-state-singleton.ts` directly) keeps the backend from
+    // having to know the singleton exists at all.
     createBackend: (
-      emit: BackendEventSink,
       getSnapshot: () => StateSnapshot,
-    ) => WindowBackend & BackendMigrationShims & LegacySpacesShim = (emit, getSnapshot) => new ElectronWindowBackend(emit, getSnapshot),
+    ) => WindowBackend & BackendMigrationShims & LegacySpacesShim = (getSnapshot) => new ElectronWindowBackend(getSnapshot),
   ) {
     this.owner = owner;
-    this.backend = createBackend(
-      (event) => this.pump(event),
-      () => this.owner.snapshot(),
-    );
+    this.backend = createBackend(() => this.owner.snapshot());
   }
 
   /** The shared state owner (read-only consumers attach to this). */

@@ -5,10 +5,9 @@
  * Blueprint: `docs/design/window-manager.md`. THIS IS THE ONLY WINDOW-MANAGER
  * MODULE THAT IMPORTS ELECTRON. The executor (`window-os-adapter.ts`) issues
  * port commands; this backend performs them against the native handles it
- * retains, and pushes native reality back as machine events
- * (`window-state.ts WindowEvent`) through the single `BackendEventSink`
- * injected at construction. It never dispatches into the reducer itself —
- * the executor stays the one dispatch owner.
+ * retains, and pushes native reality straight into the shadow kernel
+ * (`window-kernel-shadow.ts shadowKernel*`) at each native-event call site —
+ * the only remaining machine. It never dispatches into a reducer itself.
  *
  * It is also the sole authority on window identity (§3): `registerWindow`
  * mints every `WindowId` ("wm-N", idempotent per native window), and the
@@ -86,13 +85,14 @@ import {
 } from './izui-roles.js';
 import { type StateSnapshot } from './window-state.js';
 import type { DesktopMembership, FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
-import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
+import type { WindowBackend, WindowSpec } from './window-backend.js';
 import {
   destroyGuestsAndWait,
   QUIT_GUEST_TEARDOWN_BUDGET_MS,
   type TeardownGuest,
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
+import { wmLog } from './window-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
 import {
   getShadowKernelExecutor,
@@ -329,19 +329,15 @@ interface BackendWindow {
 
 /**
  * The Electron backend. Holds native handles + the WindowId mint, performs
- * port commands, translates native events into machine events via `emit`.
+ * port commands, feeds native events straight to the shadow kernel.
  */
 export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims, LegacySpacesShim {
-  /** The single event channel into the executor's dispatch pump. */
-  private readonly emit: BackendEventSink;
-
   /**
    * Read-only channel back to the executor's owner: the old machine's
    * snapshot, taken fresh on each call — used ONLY to feed the shadow
    * kernel's divergence comparator (`window-kernel-shadow.ts
-   * compareShadowKernelState`) right after a native listener's `emit` call
-   * settles this machine. See `window-os-adapter.ts`'s constructor doc for
-   * why this is injected rather than read via `window-state-singleton.ts`.
+   * compareShadowKernelState`). See `window-os-adapter.ts`'s constructor doc
+   * for why this is injected rather than read via `window-state-singleton.ts`.
    */
   private readonly getSnapshot: () => StateSnapshot;
 
@@ -488,8 +484,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     dispatchEscapePress('global', 'electron-window-backend.escGrabHandler');
   };
 
-  constructor(emit: BackendEventSink, getSnapshot: () => StateSnapshot) {
-    this.emit = emit;
+  constructor(getSnapshot: () => StateSnapshot) {
     this.getSnapshot = getSnapshot;
   }
 
@@ -517,13 +512,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    */
   attachAppListeners(): void {
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
-      this.emit({ type: 'APP_ACTIVATED' });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
       shadowKernelAppActivated();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
-      this.emit({ type: 'APP_RESIGNED' });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
       shadowKernelAppResigned();
@@ -544,13 +537,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           DEBUG && console.log('[wm-backend] app-resign settle suppressed (izui overlay cooldown)');
           return;
         }
-        this.emit({ type: 'APP_RESIGN_SETTLED' });
-        // Feeds the kernel — same containment as above. Fed AFTER the
-        // cooldown early return so the kernel observes exactly the edge the
-        // old machine observes; the cooldown read itself stays at the
-        // producer (see `window-kernel-shadow.ts shadowKernelAppResignSettled`
-        // for the backstop this settle now performs — the primary hide already
-        // ran on the raw `AppResigned` edge).
+        // Feeds the kernel — same containment as above. The cooldown read
+        // itself stays at the producer (see `window-kernel-shadow.ts
+        // shadowKernelAppResignSettled` for the backstop this settle now
+        // performs — the primary hide already ran on the raw `AppResigned`
+        // edge).
         shadowKernelAppResignSettled();
       }, APP_RESIGN_SETTLE_MS);
     });
@@ -564,16 +555,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *
    * The notification's `userInfo` is EMPTY — verified live on this app — so
    * there is nothing to put on the event and no way to name the Space we
-   * moved to. The machine does not need one: its `SPACE_CHANGED` clause is
-   * inert today (see the clause for why), and this subscription exists so the
-   * signal is there when something needs it.
+   * moved to. No machine consumes this today (the old reducer's own
+   * `SPACE_CHANGED` clause was a documented no-op, and the kernel has no
+   * counterpart), but the transition is real and can move or hide windows on
+   * its own, so it is logged rather than dropped silently — the always-on
+   * `wmLog` line is where a consumer would attach if one is ever needed, and
+   * in the meantime it keeps the signal readable when a window's movement on
+   * a Space switch needs investigating.
    */
   private attachSpaceChangeListener(): void {
     if (process.platform !== 'darwin') return;
     systemPreferences.subscribeWorkspaceNotification(
       'NSWorkspaceActiveSpaceDidChangeNotification',
       () => {
-        this.emit({ type: 'SPACE_CHANGED' });
+        wmLog('space-changed');
       },
     );
   }
@@ -793,16 +788,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         getShadowKernelExecutor().markTimeline(`focus suppressed hide-provoked ${String(id)} cause=${cause.kind}`);
         return;
       }
-      this.emit({
-        type: 'OS_FOCUS_GAINED',
-        id,
-        lastHttpUrl: this.readHttpUrl(id),
-        cause,
-      });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
-      // window operations post-cutover — see that module's header. The SAME
-      // `cause` the old machine gets: `takeFocusCause` is one-shot, so the
-      // already-consumed local is reused rather than asked for again.
+      // window operations post-cutover — see that module's header.
       shadowKernelOsFocusGained(id, cause);
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
@@ -841,7 +828,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.pendingShowOpSeq.delete(id);
       if (win.isDestroyed() || !win.isVisible()) return;
       const focused = this.isFocused(win);
-      this.emit({ type: 'WINDOW_SHOWN', id, focused });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
       shadowKernelWindowShown(id, focused, opSeq);
@@ -860,7 +846,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       const opSeq = this.pendingHideOpSeq.get(id);
       this.pendingHideOpSeq.delete(id);
       if (!win.isDestroyed() && win.isVisible()) return;
-      this.emit({ type: 'WINDOW_HIDDEN', id });
       shadowKernelWindowHidden(id, opSeq);
     });
     win.on('closed', () => {
@@ -873,21 +858,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // `osWindowId` was captured at registration — reading `win.id` here would
       // throw on the already-destroyed native window.
       this.idByOsWindowId.delete(osWindowId);
-      this.emit({ type: 'WINDOW_CLOSED', id });
       // Feeds the kernel (window-kernel-shadow.ts) — RULE 1 makes this the
       // only event that shrinks its `order`.
       shadowKernelWindowClosed(id);
     });
     win.on('enter-full-screen', () => {
       this.clearFullscreenSettle(id);
-      this.emit({ type: 'OS_FULLSCREEN_ENTERED', id });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
       shadowKernelOsFullscreenEntered(id);
     });
     win.on('leave-full-screen', () => {
       this.clearFullscreenSettle(id);
-      this.emit({ type: 'OS_FULLSCREEN_LEFT', id });
       shadowKernelOsFullscreenLeft(id);
     });
     // Geometry mirror (§5 step 7): every native resize/move lands in the
@@ -908,7 +890,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // frame math for every other window kind.
         const overlayFrame =
           kind === 'page-host' ? expandToOverlayFrame(bounds, this.workAreaNearest(bounds)) : undefined;
-        this.emit({ type: 'BOUNDS_CHANGED', id, bounds, overlayFrame });
         // Feeds the kernel (window-kernel-shadow.ts), which drives the real
         // window operations post-cutover — see that module's header.
         shadowKernelBoundsChanged(id, bounds, overlayFrame);
@@ -925,16 +906,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (kind === 'page-host' && rendererWC) {
       rendererWC.on('focus', () => {
         this.cancelBlurSettle();
-        // One shot (`takeFocusCause`), so it is read once and both machines
-        // are told the same provenance.
+        // One shot (`takeFocusCause`), read once and fed to the kernel below.
         const cause = this.takeFocusCause(id);
-        this.emit({
-          type: 'OS_FOCUS_GAINED',
-          id,
-          lastHttpUrl: this.readHttpUrl(id),
-          cause,
-        });
-        this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
         // Feeds the kernel — see the `win.on('focus')` listener above.
         shadowKernelOsFocusGained(id, cause);
         // Feeds the kernel (window-kernel-shadow.ts) — the sole writer of its
@@ -943,7 +916,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       });
       // Mirrors the content WC's first-responder status (§5 step 11).
       rendererWC.on('blur', () => {
-        this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: false });
         // Feeds the kernel (window-kernel-shadow.ts) — the sole writer of its
         // `contentFocused`.
         shadowKernelContentFirstResponderChanged(id, false);
@@ -1082,7 +1054,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           /* wc gone mid-raise */
         }
       }
-      this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
       shadowKernelWindowShown(id, true, opSeq);
       return;
     }
@@ -1103,7 +1074,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
       }
     }
-    this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
     shadowKernelWindowShown(id, true, opSeq);
   }
 
@@ -1134,14 +1104,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /**
    * The ONE sanctioned `isFullScreen()` read (§2.5): read reality ONCE and
-   * emit the settled event so the reducer snaps `fsMode` to it. Command in,
+   * feed the settled fact to the kernel so `fsMode` snaps to it. Command in,
    * event out — no other code may read `isFullScreen()` for state.
    */
   reconcileFullscreen(id: WindowId): void {
     const w = this.windows.get(id)?.win;
     if (!w || w.isDestroyed()) return;
     const entered = w.isFullScreen();
-    this.emit(entered ? { type: 'OS_FULLSCREEN_ENTERED', id } : { type: 'OS_FULLSCREEN_LEFT', id });
     // Feeds the kernel (window-kernel-shadow.ts), which drives the real
     // window operations post-cutover — see that module's header.
     if (entered) {
@@ -1416,14 +1385,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     `makeKeyAndOrderFront:` and stealing the macOS key window; only
    *     `showInactive()` avoids the grab. (Prior comment wrongly claimed
    *     opacity-0 covered headless — it was the test focus-theft root cause.)
-   *   - echoes `WINDOW_SHOWN` with the caller's UNMASKED `activate` intent
-   *     (absorbing the seam-side WINDOW_SHOWN dispatch windows.ts used to make):
-   *     `showInactive()` emits no native `'show'` event and headless runs are
-   *     focus-free, so this echo is what keeps the machine's visibility +
-   *     `front` truthful. The native `'show'` listener still mirrors
-   *     activating shows — the reducer's WINDOW_SHOWN merge is idempotent.
-   *     Because the reducer runs that focused echo through `applyFocusGained`,
-   *     `front`/`focusSeq` move under headless off this event alone — nothing
+   *   - feeds the kernel a `WindowShown` fact with the caller's UNMASKED
+   *     `activate` intent: `showInactive()` emits no native `'show'` event and
+   *     headless runs are focus-free, so this feed is what keeps the kernel's
+   *     visibility + `front` truthful. The native `'show'` listener still
+   *     feeds the kernel for activating shows too — the merge is idempotent.
+   *     `front`/`focusSeq` move under headless off this fact alone — nothing
    *     here synthesizes an `OS_FOCUS_GAINED` to stand in for the activation
    *     the headless mask declined. See the module header for why not.
    */
@@ -1446,7 +1413,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       (kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate) &&
       !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
-    this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
     shadowKernelWindowShown(id, opts.activate, opts.opSeq);
   }
 
@@ -1527,14 +1493,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       /* hiding a torn-down window is a no-op */
       return;
     }
-    // Echo WINDOW_HIDDEN for the hide this backend just performed — the exact
-    // mirror of `showWindow`'s WINDOW_SHOWN echo. The native `'hide'` event
+    // Feed WINDOW_HIDDEN for the hide this backend just performed — the exact
+    // mirror of `showWindow`'s WINDOW_SHOWN feed. The native `'hide'` event
     // fires a tick LATE on macOS BaseWindows (the documented peek 71cfde09
-    // lag), so without this echo every consumer that reads machine state right
+    // lag), so without this feed every consumer that reads kernel state right
     // after a hide intent — the overlay's host-visibility gate, `front`
     // successor promotion — sees stale `visible:true` for a tick. The late
-    // native event still arrives and re-merges idempotently in the reducer.
-    this.emit({ type: 'WINDOW_HIDDEN', id });
+    // native event still arrives and re-merges idempotently.
     shadowKernelWindowHidden(id, opSeq);
   }
 
@@ -1770,9 +1735,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.pendingBlurSettle = null;
       // One tick later Electron has delivered any incoming `focus`. If some Peek
       // window now holds focus, focus stayed in-app — do nothing. Otherwise it
-      // left the whole group → emit OS_FOCUS_SETTLED_NULL.
+      // left the whole group → feed the kernel OS_FOCUS_SETTLED_NULL.
       if (this.anyWindowFocused()) return;
-      this.emit({ type: 'OS_FOCUS_SETTLED_NULL' });
       // Shadow-feed the kernel — see `window-kernel-shadow.ts
       // shadowKernelOsFocusSettled` for the shape mismatch this translates
       // (this event carries no id; the kernel's `OsFocusLost` names one).
@@ -1849,7 +1813,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       id,
       setTimeout(() => {
         this.fullscreenSettleTimers.delete(id);
-        this.emit({ type: 'FULLSCREEN_SETTLE_TIMEOUT', id });
         shadowKernelFullscreenSettleTimeout(id);
       }, FULLSCREEN_SETTLE_TIMEOUT_MS),
     );

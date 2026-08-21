@@ -18,24 +18,13 @@
  *     other Promise-returning command resolves with `void`; the promise
  *     there is settlement plumbing for the E2E test bridge
  *     (`WindowOsAdapter.trackAsyncEffect`), not an answer.
- *   - Inbound: the backend pushes native reality into the machine's OWN event
- *     vocabulary (`window-state.ts WindowEvent`) through the single
- *     `BackendEventSink` injected at construction. The executor stays the one
- *     dispatch owner; the backend never touches the reducer directly. Events a
- *     backend emits today: `OS_FOCUS_GAINED`, `OS_FOCUS_SETTLED_NULL`,
- *     `WINDOW_SHOWN`, `WINDOW_HIDDEN`, `WINDOW_CLOSED`,
- *     `OS_FULLSCREEN_ENTERED`, `OS_FULLSCREEN_LEFT`,
- *     `FULLSCREEN_SETTLE_TIMEOUT`, `BOUNDS_CHANGED` (the §3 table's
- *     `boundsChanged`, from the native resize/move listeners — §5 step 7),
- *     `APP_ACTIVATED`, `APP_RESIGNED`, `SPACE_CHANGED` (the §3 table's
- *     `spaceChanged`, from the macOS active-Space workspace notification —
- *     §5 step 10). The OS Escape grab (`electron-window-backend.ts
- *     escGrabHandler`) no longer rides this sink either — it calls
- *     `window-state-singleton.ts dispatchEscapePress` directly, the same
- *     entry point the other three Escape dispatch sites call, so Escape is
- *     decided by `window-escape.ts interpretEscape` rather than reduced
- *     through `WindowEvent`. `askRendererHandledEscape` below still returns
- *     the renderer's ask answer directly rather than riding this sink.
+ *   - Inbound: the backend pushes native reality straight to the kernel
+ *     (`window-kernel-shadow.ts shadowKernel*`, called directly at each
+ *     native-event site in `electron-window-backend.ts`), never back through
+ *     this port. Escape is decided by `window-escape.ts interpretEscape`,
+ *     reached via `window-state-singleton.ts dispatchEscapePress`.
+ *     `askRendererHandledEscape` below still returns the renderer's ask
+ *     answer directly.
  *
  * SCOPE (§5 step 2 + the no-speculative-code rule): the surface below is
  * exactly what the executor issues today — nothing from the §3 full table is
@@ -53,19 +42,12 @@
  * deliberately OUTSIDE this interface.
  */
 
-import type { WindowEvent, EscapeMode } from './window-state.js';
+import type { EscapeMode } from './window-state.js';
 import type { WindowId, WindowKind, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
 export type { Rectangle as Rect } from './window-kernel.js';
-
-/**
- * The single injected event channel: the backend translates native events into
- * the machine's event vocabulary and feeds them here. The executor wires this
- * to its dispatch pump at construction — one emitter, one dispatch owner.
- */
-export type BackendEventSink = (event: WindowEvent) => void;
 
 /**
  * The platform-neutral half of a window registration: what the WM needs to
@@ -132,8 +114,7 @@ export interface WindowSpec {
 }
 
 /**
- * The backend port. One instance per app, constructed with a
- * `BackendEventSink` and driven only by the executor
+ * The backend port. One instance per app, driven only by the executor
  * (`window-os-adapter.ts` — rule R2's one effect funnel).
  *
  * Commands are fire-and-forget against a window that is gone: a backend
@@ -144,9 +125,11 @@ export interface WindowSpec {
 export interface WindowBackend {
   /**
    * Subscribe to app-level activation (macOS `did-become-active` /
-   * `did-resign-active`) and emit `APP_ACTIVATED` / `APP_RESIGNED`, plus the
-   * platform's active-Space change → `SPACE_CHANGED` (§5 step 10; no-op where
-   * Spaces don't exist). Called once at boot wiring
+   * `did-resign-active`) and feed the kernel `APP_ACTIVATED` / `APP_RESIGNED`,
+   * plus the platform's active-Space change (§5 step 10; no-op where Spaces
+   * don't exist — no machine consumes this fact today, so it is logged rather
+   * than fed anywhere, see `electron-window-backend.ts
+   * attachSpaceChangeListener`). Called once at boot wiring
    * (`window-state-singleton.ts initWindowStateMachine`).
    */
   attachAppListeners(): void;
