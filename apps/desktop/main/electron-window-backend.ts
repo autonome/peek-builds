@@ -67,6 +67,14 @@ import {
   closeOrHideWindow,
   addEscHandler,
 } from './windows.js';
+// `window-state-singleton.js` value-imports `window-os-adapter.js`, which
+// value-imports THIS file (for the default `ElectronWindowBackend`
+// construction) — a real module cycle, already tolerated one hop over via the
+// `windows.js` import just above (which imports `window-state-singleton.js`
+// itself). Safe here for the same reason it is safe there: `dispatchEscapePress`
+// is called only from inside `escGrabHandler`'s closure body, never at this
+// module's top level, so it is never read before the cycle finishes resolving.
+import { dispatchEscapePress } from './window-state-singleton.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { shouldCloseContentWCOnFinalize, type WindowClass, type StackingLevel } from './izui-roles.js';
@@ -464,9 +472,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /** Stable handler reference so register/unregister target the same closure. */
   private readonly escGrabHandler = (): void => {
-    // The grab fires the SAME `ESC_PRESSED` the before-input-event path does —
-    // `decideEscape` is the single decision, so a stale grab is harmless
-    // (defense by shared decision, not by registration timing, §4.2).
+    // The grab reaches the SAME decision (`window-escape.ts interpretEscape`,
+    // via `dispatchEscapePress`) the before-input-event path does — a stale
+    // grab is harmless (defense by shared decision, not by registration
+    // timing, §4.2).
     //
     // No `rendererHandled` fact to read here (window-escape-renderer-handled.ts
     // / peek 7fffa286 companion): `globalShortcut` firing at all means
@@ -474,7 +483,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // keystroke, so no renderer could have consumed it. Absent is the
     // structurally correct answer at this ONE of the four dispatch sites, not
     // a gap in the producer.
-    this.emit({ type: 'ESC_PRESSED', landedId: 'global' });
+    dispatchEscapePress('global', 'electron-window-backend.escGrabHandler');
   };
 
   constructor(emit: BackendEventSink, getSnapshot: () => StateSnapshot) {

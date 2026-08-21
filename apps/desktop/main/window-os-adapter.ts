@@ -489,6 +489,12 @@ export class WindowOsAdapter {
   // that ISSUES the effects — outside the reducer (promise plumbing, not
   // state) and above the backend (which just returns each command's
   // settlement).
+  //
+  // A third source joined these two once Escape's own decision moved to
+  // `window-escape-runtime.ts`: its renderer ask is issued outside this
+  // module's `runEffect` entirely, so `trackExternalAsyncEffect` below is the
+  // seam that lets it register on the SAME set rather than standing up a
+  // second tracker `waitForPendingWindowEffects` would also have to await.
   // ───────────────────────────────────────────────────────────────────────────
 
   /** In-flight async effect promises (renderer ESC asks, delegated closes). */
@@ -499,6 +505,16 @@ export class WindowOsAdapter {
     this.pendingAsyncEffects.add(p);
     const drop = () => this.pendingAsyncEffects.delete(p);
     p.then(drop, drop);
+  }
+
+  /**
+   * Public entry to `trackAsyncEffect` for a caller outside this module's own
+   * `runEffect` arms — `window-escape-runtime.ts handleEscapePress`'s renderer
+   * ask, injected as its `track` dep so `waitForPendingWindowEffects` still
+   * sees it settle.
+   */
+  trackExternalAsyncEffect(p: Promise<unknown>): void {
+    this.trackAsyncEffect(p);
   }
 
   /**

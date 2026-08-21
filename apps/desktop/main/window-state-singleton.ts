@@ -34,6 +34,9 @@ import {
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { topmost, isContentWindow } from './window-kernel.js';
+import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
+import { publish, getSystemAddress } from './pubsub.js';
+import { wmLog } from './window-diag.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -254,6 +257,43 @@ export function getNativeWindowFor(id: WindowId): BaseWindow | BrowserWindow | n
 /** Feed an event into the machine (runs effects + Esc-grab reconcile + log). */
 export function dispatchWindowEvent(event: WindowEvent): void {
   getWindowOsAdapter().dispatch(event);
+}
+
+/**
+ * THE live Escape decider entry point. `window-escape-runtime.ts
+ * handleEscapePress` takes every dependency injected (so it unit-tests
+ * without `electron`); this binds those deps onto the production kernel,
+ * backend and pubsub and calls it. Every site that used to dispatch
+ * `window-state.ts`'s `ESC_PRESSED` — `windows.ts addEscHandler`, `ipc.ts
+ * wireHybridContentEvents`, `electron-window-backend.ts`'s OS-level grab, and
+ * `hybrid-overlay.ts`'s `runHybridEscape` test bridge — calls this ONE
+ * function instead. One wrapper, not one arm per window kind: the two prior
+ * attempts at this machine both failed by growing a rule per window kind, and
+ * this is the seam that stays a single decision regardless of which of the
+ * four sites the keystroke arrived through.
+ *
+ * `site` names the calling dispatch site for `window-diag.ts` — the four
+ * entry points are otherwise indistinguishable in the log once the keystroke
+ * reaches `handleEscapePress`.
+ *
+ * `session` is read here, not carried by the caller: the old `ESC_PRESSED`
+ * event carried no session field either — `decideEscape` read `state.session`
+ * directly — so this wrapper is the direct replacement for that read,
+ * against the same clamped session `seedSessionMirror` keeps live.
+ */
+export function dispatchEscapePress(landedId: WindowId | 'global', site: string): void {
+  const session = clampSession(getIzuiCoordinator().getState());
+  wmLog('esc-dispatch', { site, landedId, session });
+  const deps: EscapeRuntimeDeps = {
+    getState: () => getShadowKernelExecutor().getState(),
+    execute: (command) => {
+      getShadowKernelExecutor().execute(command);
+    },
+    publish: (topic, payload) => publish(getSystemAddress(), topic, payload),
+    ask: (id) => getWindowOsAdapter().getBackend().askRendererHandledEscape(id),
+    track: (pending) => getWindowOsAdapter().trackExternalAsyncEffect(pending),
+  };
+  handleEscapePress({ landedId, session }, deps);
 }
 
 /**

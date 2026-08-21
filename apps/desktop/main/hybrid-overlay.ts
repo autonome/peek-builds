@@ -80,6 +80,7 @@ import { wireHybridContentEvents } from './ipc.js';
 import {
   subscribeOverlayAttachment,
   dispatchWindowEvent,
+  dispatchEscapePress,
   waitForMode,
   registerWindowWithMachine,
   getWindowModeName,
@@ -2847,9 +2848,9 @@ function installTestBridge(): void {
     runHybridEscape(id: number): Promise<number | null> {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
-      // Decision now lives in the machine — dispatch ESC_PRESSED (the landed id
-      // is first-responder noise; decideEscape targets `front`).
-      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(id) ?? 'global' });
+      // Decision lives in `window-escape.ts interpretEscape`, reached through
+      // `dispatchEscapePress` (`window-state-singleton.ts`).
+      dispatchEscapePress(getWindowIdFor(id) ?? 'global', 'hybrid-overlay.runHybridEscape');
       // Honor the pre-cutover contract (the old impl AWAITED the full
       // handleHybridEscape round trip) DETERMINISTICALLY: the adapter tracks
       // the async work its effects spawned — the ASK_RENDERER `escape-pressed`

@@ -29,12 +29,13 @@
  *     `boundsChanged`, from the native resize/move listeners — §5 step 7),
  *     `APP_ACTIVATED`, `APP_RESIGNED`, `SPACE_CHANGED` (the §3 table's
  *     `spaceChanged`, from the macOS active-Space workspace notification —
- *     §5 step 10),
- *     `ESC_PRESSED { landedId: 'global' }` (the OS Escape grab). The renderer
- *     Escape ask's answer no longer rides this sink — `askRendererHandledEscape`
- *     below returns it directly, and the executor (`window-os-adapter.ts`'s
- *     `ASK_RENDERER` arm) is the one that turns it into an `ESC_RENDERER_ANSWER`
- *     dispatch.
+ *     §5 step 10). The OS Escape grab (`electron-window-backend.ts
+ *     escGrabHandler`) no longer rides this sink either — it calls
+ *     `window-state-singleton.ts dispatchEscapePress` directly, the same
+ *     entry point the other three Escape dispatch sites call, so Escape is
+ *     decided by `window-escape.ts interpretEscape` rather than reduced
+ *     through `WindowEvent`. `askRendererHandledEscape` below still returns
+ *     the renderer's ask answer directly rather than riding this sink.
  *
  * SCOPE (§5 step 2 + the no-speculative-code rule): the surface below is
  * exactly what the executor issues today — nothing from the §3 full table is

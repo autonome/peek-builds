@@ -29,6 +29,7 @@ import {
   getWindowModeName,
   waitForMode,
   dispatchWindowEvent,
+  dispatchEscapePress,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
@@ -378,13 +379,16 @@ export function addEscHandler(bw: BrowserWindow): void {
         const rendererHandled = rendererHandledEscapeForWc(wc.id);
         DEBUG && console.log(`[esc] window ${bw.id} source:${source} rendererHandled=${rendererHandled}`);
 
-        // Decision moved to the window-state machine: dispatch ESC_PRESSED and
-        // let `decideEscape` own the outcome (the landed id is first-responder
-        // noise; the target is `front`). The attach/debounce/webview routing
-        // above stays here as input hygiene. The landed id is resolved to the
-        // WM's WindowId at keypress time (registration has long happened);
-        // an unregistered window degrades to 'global' — same decision either way.
-        dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(bw) ?? 'global' });
+        // Decision lives in `window-escape.ts interpretEscape`, reached
+        // through `dispatchEscapePress` (`window-state-singleton.ts`). The
+        // attach/debounce/webview routing above stays here as input hygiene.
+        // The landed id is resolved to the WM's WindowId at keypress time
+        // (registration has long happened); an unregistered window degrades
+        // to 'global' — same decision either way. Shared by both attach
+        // points (`attachEscListener` below wires the host WC and every
+        // webview guest into this SAME closure), so there is exactly one
+        // call site here for the two entry points.
+        dispatchEscapePress(getWindowIdFor(bw) ?? 'global', 'windows.addEscHandler');
       }
     });
   };

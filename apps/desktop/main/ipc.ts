@@ -87,6 +87,7 @@ import {
 import {
   registerWindowWithMachine,
   dispatchWindowEvent,
+  dispatchEscapePress,
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
@@ -1486,21 +1487,24 @@ export function wireHybridContentEvents(
       lastHybridEscTime = now;
       // Block ESC from reaching the page DOM (matches the canvas path's
       // preventDefault) so the machine's decision — not a page handler — owns it.
-      // Only the DECISION moved: this before-input attach + editable guard +
-      // debounce stay here (input hygiene); the landed id is first-responder
-      // noise — `decideEscape` targets `front`.
+      // The before-input attach + editable guard + debounce stay here (input
+      // hygiene); the decision itself lives in `window-escape.ts
+      // interpretEscape`, reached through `dispatchEscapePress`.
       event.preventDefault();
       // The mirrored "renderer already consumed this Escape" fact (this
       // content WC's tile-preload's last reported `onEscape` answer, if any),
-      // read synchronously — see window-escape-renderer-handled.ts. Not yet
-      // threaded into `ESC_PRESSED` (window-state.ts's reducer event has no
-      // field for it); real once the interpreter cutover lands.
+      // read synchronously — see window-escape-renderer-handled.ts. Still not
+      // threaded into the dispatch below: `window-escape.ts`'s
+      // `rendererHandled` input is fed only by the explicit ask
+      // (`window-escape-runtime.ts handleEscapePress`'s pass B), never by this
+      // synchronously-read cache — see that file's docblock ("THE ROUND TRIP
+      // LEAVES THE REDUCER; THE ASK ITSELF STAYS") for why the two are kept
+      // apart. Retained here only for the DEBUG trace line below.
       const rendererHandled = rendererHandledEscapeForWc(contentWC.id);
       DEBUG && console.log(`[esc] hybrid content wc ${contentWC.id} rendererHandled=${rendererHandled}`);
       // Resolve the host's WM WindowId at keypress time (registration happened
-      // at window creation); an unregistered host degrades to 'global' — the
-      // landed id is first-responder noise either way.
-      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(hostWindowId) ?? 'global' });
+      // at window creation); an unregistered host degrades to 'global'.
+      dispatchEscapePress(getWindowIdFor(hostWindowId) ?? 'global', 'ipc.wireHybridContentEvents');
       return;
     }
 
