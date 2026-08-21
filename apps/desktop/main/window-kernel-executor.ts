@@ -31,6 +31,7 @@
 
 import { DEBUG, isHeadless } from './config.js';
 import { wmLog } from './window-diag.js';
+import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 import type { WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 import {
@@ -41,6 +42,7 @@ import {
   initialState,
   isStaleSelfEcho,
   isStaleWindowEcho,
+  keyWindow,
   react,
   traceTransientAutoclose,
   type Command,
@@ -469,7 +471,48 @@ export class WindowKernelExecutor {
     this.recordTimeline(event, prev, next, effects);
     this.logDismissalDecisions(event, prev, next);
     this.runEffects(effects);
+    this.reconcileEscGrab();
     this.notify();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // OS Escape grab reconcile — the kernel-side counterpart of
+  // `window-os-adapter.ts WindowOsAdapter.pump`'s `reconcileEscGrab`. Same
+  // choke point (once per applied event, right after that event's own effects
+  // run), so an app-active flip, a key-holder change or a switcher open/close
+  // reconciles the grab exactly as an Escape press would — the old adapter
+  // reconciled generally too; only its INPUT (`deriveEscGrabRegistered` reading
+  // `window-state.ts`'s `front`/`contentFocused`) was wrong for this kernel.
+  // Here the input is `shouldArmEscapeGrab` (`window-escape.ts`) read against
+  // this executor's own settled `State`.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** The value this executor last armed the backend with, or null before the first reconcile. */
+  private escGrabArmed: boolean | null = null;
+
+  /**
+   * Skipped headless — no OS grab to hold. Otherwise a no-op unless the
+   * derived value actually CHANGES from `escGrabArmed`: `setEscGrab` asserts a
+   * `globalShortcut`, and re-registering it on every dispatch — the old
+   * reconcile's shape, papered over only by the backend's own idempotent
+   * no-op — would be new observable behavior here. Logged on every actual
+   * transition, never on a no-change reconcile, with the reason inputs
+   * `shouldArmEscapeGrab` decided from.
+   */
+  private reconcileEscGrab(): void {
+    if (this.headless) return;
+    const desired = shouldArmEscapeGrab(this.state);
+    if (desired === this.escGrabArmed) return;
+    const holder = keyWindow(this.state);
+    wmLog('esc-grab-reconcile', {
+      armed: desired,
+      appActive: this.state.appActive,
+      switcherOpen: switcherWindow(this.state) !== null,
+      keyHolder: holder?.id ?? null,
+      keyHolderContentFocused: holder?.contentFocused ?? null,
+    });
+    this.escGrabArmed = desired;
+    this.backend.setEscGrab(desired);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
