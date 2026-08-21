@@ -165,13 +165,12 @@ export function shouldActivateFocusedOnRestore(
 }
 
 // `selectTransientSiblingsToClose` + its `TransientSiblingCandidate` shape were
-// retired by the §5 step 9 cutover. The decision lives in the window-state
-// machine now — `window-state.ts selectTransientAutoclose` (focus-driven) and
-// `selectAppResignTransients` (app switch) — reading the reducer's records
-// instead of a candidate list gathered from two registries. Semantics were
-// ported verbatim (utility focuser closes nothing; skip self / hidden /
-// non-transient; 'overlay' exempt) and the unit table moved with them into
-// `window-state.test.ts`.
+// retired by the §5 step 9 cutover. The decision lives in the window-kernel
+// machine now — `window-kernel.ts selectTransientAutoclose` — reading the
+// kernel's own state instead of a candidate list gathered from two
+// registries. Semantics were ported verbatim (utility focuser closes
+// nothing; skip self / hidden / non-transient; 'overlay' exempt) and the unit
+// table moved with them into `window-kernel.test.ts`.
 
 /**
  * macOS Spaces policy for a role.

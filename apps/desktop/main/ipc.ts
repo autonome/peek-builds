@@ -170,18 +170,19 @@ import {
 } from './hybrid-page-host-registry.js';
 
 // Transient-sibling autoclose (focus-driven AND app-resign) is GONE from this
-// file (§5 step 9 cutover). The window-state machine owns both halves now:
-//   - focus-driven: `window-state.ts selectTransientAutoclose`, fired from the
-//     reducer's `OS_FOCUS_GAINED` clause. The backend's per-window native
+// file (§5 step 9 cutover). The window-kernel machine owns both halves now:
+//   - focus-driven: `window-kernel.ts selectTransientAutoclose`, fired from
+//     the kernel's `OsFocusGained` clause. The backend's per-window native
 //     `focus` listeners (host BaseWindow + content WC + BrowserWindow) are the
 //     exact producers the deleted `closeTransientSiblingsOnFocus` call sites
 //     were, so both kinds still close and are closed (peek 8e5c3174).
-//   - app-switch: `window-state.ts selectAppResignTransients`, fired from the
-//     reducer's `APP_RESIGN_SETTLED` clause. The 500ms deferral + the
-//     `did-become-active` cancel are no longer a `setTimeout` handle here:
-//     `AppWindowState.pendingAppResignSweep` is armed by `APP_RESIGNED` and
-//     disarmed by `APP_ACTIVATED`, and the OS-boundary settle DELAY lives in
-//     `electron-window-backend.ts attachAppListeners` (the lowest layer).
+//   - app-switch: also `window-kernel.ts selectTransientAutoclose`, fired
+//     from the kernel's `AppResigned`/`AppResignSettled` arms. The 500ms
+//     deferral + the `did-become-active` cancel are no longer a `setTimeout`
+//     handle here: the kernel's own pending-sweep flag is armed by
+//     `AppResigned` and disarmed by `AppActivated`, and the OS-boundary
+//     settle DELAY lives in `electron-window-backend.ts attachAppListeners`
+//     (the lowest layer).
 // Both dismissals route through the reducer's shared keepLive decision
 // (HIDE_WINDOW vs CLOSE_WINDOW), so a keepLive slide is still hidden, never
 // destroyed (peek 2c94c125).
@@ -906,9 +907,9 @@ function assembleHybridPageHost(
     //
     // The transient-sibling autoclose this handler used to run is the
     // machine's now (§5 step 9): the backend's own `focus` listener on THIS
-    // BaseWindow (and on the content WC) emits `OS_FOCUS_GAINED`, whose
-    // reducer clause runs `selectTransientAutoclose` over both window kinds.
-    // Regression covered: peek 8e5c3174.
+    // BaseWindow (and on the content WC) emits `OsFocusGained`, whose
+    // kernel clause runs `window-kernel.ts selectTransientAutoclose` over
+    // both window kinds. Regression covered: peek 8e5c3174.
   };
   baseWin.on('focus', onHybridHostFocus);
   // Native fullscreen state (SETTLED enter/leave) is now owned by the window-
@@ -3841,7 +3842,7 @@ export function registerWindowHandlers(): void {
 
         // The transient-sibling autoclose that used to run here is the
         // machine's now (§5 step 9): the backend's `focus` listener on this
-        // same BrowserWindow emits `OS_FOCUS_GAINED`, and the reducer's
+        // same BrowserWindow emits `OsFocusGained`, and `window-kernel.ts`'s
         // `selectTransientAutoclose` dismisses the palette / quick-view
         // siblings across BOTH window kinds. Only the `window:focused` HUD
         // notify above is left in this handler.

@@ -41,8 +41,6 @@ import {
   getDevtoolsTargetId,
   getOverlayHost,
   overlayIdForHost,
-  selectTransientAutoclose,
-  selectAppResignTransients,
   snapshot,
   stackOrderInvariantHolds,
   getStackOrder,
@@ -3154,14 +3152,6 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     assert.strictEqual(state.windows.get(wid(2))!.visible, true);
   });
 
-  it('selectTransientAutoclose is the pure decision behind the clause', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'workspace', focused: false });
-    s = sibling(s, 2, { role: 'quick-view' });
-    assert.deepStrictEqual(selectTransientAutoclose(s, wid(1)), [wid(2)]);
-    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [], 'the focuser is never its own victim');
-  });
-
   // ── The slow-open race: a MACHINE-caused focus cannot sweep what opened after it ──
   //
   // The user hotkeys a page host, it takes time to load, and BEFORE it finishes
@@ -3367,12 +3357,6 @@ describe('focus provenance: machine-caused vs world-caused OS focus (peek 7fffa2
     );
   });
 
-  it('selectTransientAutoclose takes the cause directly, and defaults to world', () => {
-    const s = traceState();
-    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [wid(15)], 'default = world');
-    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2), { kind: 'machine', opSeq: 7 }), []);
-  });
-
   it('stamps a fresh, monotonic opSeq on every focus-family effect it emits', () => {
     // The token the executor echoes back as `cause.opSeq`. A reducer-owned
     // COUNTER, never a clock — `window-state.ts` keeps zero value imports.
@@ -3495,11 +3479,6 @@ describe('app-resign transient sweep (§4.4 dim 4b — no timer, armed state)', 
     assert.deepStrictEqual(effectsOfType(requestResult.effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(2) }]);
     assert.deepStrictEqual(effectsOfType(requestResult.effects, 'DESTROY_WINDOW'), []);
     assert.ok(requestResult.state.windows.has(wid(2)), 'still registered — keepLive never closes');
-  });
-
-  it('selectAppResignTransients is the pure decision behind the clause', () => {
-    const s = withTransient();
-    assert.deepStrictEqual(selectAppResignTransients(s), [wid(2)]);
   });
 
   it('the sweep emits NO destroy effects (keepLive would lose a live slide)', () => {
