@@ -204,7 +204,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(registeredRecord?.bounds !== undefined ? { bounds: registeredRecord.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
-  }, settledSnapshot);
+  });
   // The divergence comparator now runs INSIDE `shadowKernelRegisterWindow`
   // itself (`window-kernel-shadow.ts`), against the old machine's
   // just-settled snapshot passed in above — see that module's
@@ -225,7 +225,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     // `pumpShownEvent` (`window-os-adapter.ts registerWindow`) always dispatches
     // the old machine's `WINDOW_SHOWN` with `focused: true` — this import
     // mirrors the same fact.
-    shadowKernelWindowShown(id, settledSnapshot, true);
+    shadowKernelWindowShown(id, true);
   }
   return id;
 }

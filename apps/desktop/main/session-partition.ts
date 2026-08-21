@@ -353,7 +353,7 @@ function closeWindowViaMachine(win: { id: number }): void {
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
-  shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
+  shadowKernelCloseWindowDirect(id);
 }
 
 function _registerDownloadHandlerImpl(ses: Session): void {

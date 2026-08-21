@@ -8,13 +8,8 @@
  * machine sees — registration, OS focus, visibility, app activation, close
  * reports, teardown, stack-order import, raise, overlay attach — into the
  * kernel's own command/event vocabulary, at the call site that produces each
- * one today. The name and the "shadow" vocabulary throughout this file
- * (`compareShadowKernelState`, `NoopKernelBackend`, …) are load-bearing
- * history, not the current shape: this module was built to run the kernel in
- * SHADOW, feed-only, alongside the old machine, so its divergence comparator
- * could be trusted before anything depended on the kernel's decisions. That
- * period is over. `window-state-singleton.ts initWindowStateMachine` installs
- * a provider (`setKernelExecutorProvider`) that points `getShadowKernelExecutor()`
+ * one today. `window-state-singleton.ts initWindowStateMachine` installs a
+ * provider (`setKernelExecutorProvider`) that points `getShadowKernelExecutor()`
  * at the production kernel built over the real `ElectronWindowBackend`
  * (`window-kernel-singleton.ts`, `window-state-singleton.ts
  * getKernelExecutorForApp`) — from boot onward, every feed helper below drives
@@ -41,20 +36,17 @@
  * `setKernelExecutorProvider` has not been called; production always calls it
  * at boot, so a production run never reaches this fallback.
  *
- * DIVERGENCE COMPARATOR. `compareShadowKernelState` (bottom of this file) is
- * a diagnostic read left over from the shadow period: it checks the kernel's
- * view against the old machine's current state and returns every mismatch.
- * Its logging is gated behind `PEEK_SHADOW_KERNEL_COMPARE=1` — unset (the
- * default), the comparator still runs but emits nothing, so a normal run pays
- * only for the comparison itself (a few array scans over a handful of
- * windows), never for a log line.
+ * NO DIVERGENCE COMPARATOR ANY LONGER. This module used to also check the
+ * kernel's view against the old machine's current state on every feed
+ * (`compareShadowKernelState`, gated behind `PEEK_SHADOW_KERNEL_COMPARE`) —
+ * both are gone. The kernel is the only machine now; there is nothing left to
+ * diff it against.
  */
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { isContentWindow, topmost, type Command, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { type Command, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StateSnapshot } from './window-state.js';
 import type { StackingLevel } from './izui-roles.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,7 +242,6 @@ export function _resetShadowKernelForTests(): void {
   shadowExecutorInstance = null;
   installedProvider = null;
   effectLog.length = 0;
-  lastDivergences = [];
 }
 
 /** Execute a command against the shadow kernel. Never throws; a rejection is logged, not surfaced. */
@@ -276,42 +267,6 @@ function shadowDispatch(event: Event): void {
   } catch (err) {
     DEBUG && console.log('[window-kernel-shadow] event threw:', event.type, err);
   }
-}
-
-/**
- * Run `compareShadowKernelState` against the old machine's snapshot, for its
- * diagnostic value alone. Called at the tail of every feed helper below — not
- * just registration — so any input that can move either machine is covered,
- * never only the one call site that happened to exist first.
- *
- * `oldSnapshot` is supplied by the CALLER rather than read from
- * `window-state-singleton.ts` here: that module imports this one (for the
- * feed helpers themselves), and importing it back — even only for its
- * `getWindowOsAdapter()` accessor — pulls this otherwise-standalone module
- * into the full main-process graph (`window-state-singleton.ts` →
- * `izui-state.ts` → … → a value import of `electron`'s `app`), which breaks
- * `window-kernel-shadow.test.ts` running in isolation under the unit-test
- * harness. Every call site already holds (or can cheaply obtain) the old
- * machine's current snapshot, so it is threaded through instead.
- *
- * A pure read (see `compareShadowKernelState`'s own doc); wrapped the same
- * way `shadowExecute`/`shadowDispatch` are so a comparator failure can never
- * escape into the caller.
- */
-function compareAfterFeed(oldSnapshot: StateSnapshot): void {
-  try {
-    lastDivergences = compareShadowKernelState(oldSnapshot);
-  } catch (err) {
-    DEBUG && console.log('[window-kernel-shadow] compare threw:', err);
-  }
-}
-
-/** The divergences the most recent `compareAfterFeed` call found — test-only, so a spec can assert the comparator ran from a specific feed helper without depending on `PEEK_SHADOW_KERNEL_COMPARE`'s console output. */
-let lastDivergences: ShadowKernelDivergence[] = [];
-
-/** Test-only read of `lastDivergences`. */
-export function _lastDivergencesForTests(): readonly ShadowKernelDivergence[] {
-  return lastDivergences;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -346,13 +301,10 @@ export interface ShadowRegisterWindowSpec {
 
 /**
  * Translate a completed registration into the kernel's `RegisterWindow`
- * command. `oldSnapshot` is the old machine's snapshot taken AFTER it
- * processed this same registration (`window-state-singleton.ts
- * registerWindowWithMachine` — the settled point both machines have reached
- * by the time this is called) — see `compareAfterFeed`'s doc for why the
- * caller supplies it rather than this module reading it itself.
+ * command, called from `window-state-singleton.ts registerWindowWithMachine`
+ * once its own registration has settled.
  */
-export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSnapshot: StateSnapshot): void {
+export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void {
   shadowExecute({
     type: 'RegisterWindow',
     id: spec.id,
@@ -370,7 +322,6 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,19 +339,6 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
  * content WC's `'focus'` synthesized by an activating raise/show) into the
  * kernel's `OsFocusGained` event, naming the window that gained focus.
  *
- * NOT ALWAYS A SETTLED COMPARISON POINT: `electron-window-backend.ts`'s
- * `emit(...)` call immediately before this one can be RE-ENTRANT — a
- * `RAISE_WINDOW`/`SHOW_WINDOW` effect can synchronously provoke the native
- * `'focus'` this listener reacts to, from inside `WindowOsAdapter.pump`'s own
- * effect loop (see that method's re-entrancy doc). On that path `pump` only
- * ENQUEUES the old machine's own echo of this same focus change rather than
- * draining it, so `oldSnapshot` (read via the backend's `getSnapshot`
- * immediately after) reflects the state BEFORE this focus change, while the
- * shadow kernel (whose `dispatch` has no such queue) has already applied it.
- * A `front`/membership divergence logged from that specific call is expected
- * and transient — it resolves once the outer pump drains the queued event a
- * moment later — not evidence the two machines have actually diverged.
- *
  * `cause` IS PART OF THE REPORT, not decoration. The backend already computes
  * it (`electron-window-backend.ts takeFocusCause`) for the old machine's
  * `OS_FOCUS_GAINED`, and dropping it here fed the kernel a `world` focus for
@@ -411,9 +349,8 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
  * production, because a `world` cause is never stale. Omitted means `world`,
  * the same reading `Event.OsFocusGained` gives an absent cause.
  */
-export function shadowKernelOsFocusGained(id: WindowId, oldSnapshot: StateSnapshot, cause?: FocusCause): void {
+export function shadowKernelOsFocusGained(id: WindowId, cause?: FocusCause): void {
   shadowDispatch({ type: 'OsFocusGained', id, cause });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -426,10 +363,9 @@ export function shadowKernelOsFocusGained(id: WindowId, oldSnapshot: StateSnapsh
  * window — so this emits nothing when no key is held, rather than a null-id
  * event the kernel has no vocabulary for.
  */
-export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
+export function shadowKernelOsFocusSettled(): void {
   const { key } = getShadowKernelExecutor().getState();
   if (key !== null) shadowDispatch({ type: 'OsFocusLost', id: key });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,7 +417,7 @@ export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
  * `focused` defaults to `false` (today's behavior — no companion focus feed)
  * for a caller that omits it, rather than guessing.
  */
-export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot, focused = false, opSeq?: number): void {
+export function shadowKernelWindowShown(id: WindowId, focused = false, opSeq?: number): void {
   shadowDispatch({ type: 'WindowShown', id, opSeq });
   // The companion focus carries the SHOW's own token as its provenance: an
   // activating show is a machine-issued focus, so the report has to say so or
@@ -491,7 +427,6 @@ export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot
   if (focused) {
     shadowDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
   }
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -500,9 +435,8 @@ export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot
  * rides along so a stale echo of a superseded hide can be told apart from a
  * genuine one — see `window-kernel.ts isStaleWindowEcho`.
  */
-export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapshot, opSeq?: number): void {
+export function shadowKernelWindowHidden(id: WindowId, opSeq?: number): void {
   shadowDispatch({ type: 'WindowHidden', id, opSeq });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -514,9 +448,8 @@ export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapsho
  * the old machine's own re-show. The other two are `shadowKernelAppResigned`
  * and `shadowKernelAppResignSettled` directly below.
  */
-export function shadowKernelAppActivated(oldSnapshot: StateSnapshot): void {
+export function shadowKernelAppActivated(): void {
   shadowDispatch({ type: 'AppActivated' });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -530,12 +463,10 @@ export function shadowKernelAppActivated(oldSnapshot: StateSnapshot): void {
  * doc for why those two victim sets hide immediately rather than waiting out
  * the settle delay `shadowKernelAppResignSettled` handles below). Same shape
  * and containment as `shadowKernelAppActivated`: `shadowDispatch` (an event,
- * not a command — this is a past-tense fact `decide` never sees), ending with
- * the same `compareAfterFeed` tail.
+ * not a command — this is a past-tense fact `decide` never sees).
  */
-export function shadowKernelAppResigned(oldSnapshot: StateSnapshot): void {
+export function shadowKernelAppResigned(): void {
   shadowDispatch({ type: 'AppResigned' });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -562,9 +493,8 @@ export function shadowKernelAppResigned(oldSnapshot: StateSnapshot): void {
  * backgrounded) — the same backstop `window-kernel.ts`'s `AppResignSettled`
  * arm documents on its own.
  */
-export function shadowKernelAppResignSettled(oldSnapshot: StateSnapshot): void {
+export function shadowKernelAppResignSettled(): void {
   shadowDispatch({ type: 'AppResignSettled' });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -589,27 +519,23 @@ export function shadowKernelAppResignSettled(oldSnapshot: StateSnapshot): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Translate a forceful native-destroy teardown into the kernel's `DestroyWindow` command. */
-export function shadowKernelDestroyWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelDestroyWindow(id: WindowId): void {
   shadowExecute({ type: 'DestroyWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate the hybrid finalize's content-surface teardown into the kernel's `CloseContent` command. */
-export function shadowKernelCloseContent(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelCloseContent(id: WindowId): void {
   shadowExecute({ type: 'CloseContent', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate a guest-safe direct close (`windows.ts closeHostWindow`) into the kernel's `CloseWindowDirect` command. */
-export function shadowKernelCloseWindowDirect(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelCloseWindowDirect(id: WindowId): void {
   shadowExecute({ type: 'CloseWindowDirect', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate the quit-time guest teardown into the kernel's `DestroyAllGuests` command. Names no window. */
-export function shadowKernelDestroyAllGuests(oldSnapshot: StateSnapshot): void {
+export function shadowKernelDestroyAllGuests(): void {
   shadowExecute({ type: 'DestroyAllGuests', expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -635,9 +561,8 @@ export function shadowKernelDestroyAllGuests(oldSnapshot: StateSnapshot): void {
  * an event naming an unknown window rather than rejecting it, so no guard is
  * needed here.
  */
-export function shadowKernelWindowClosed(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelWindowClosed(id: WindowId): void {
   shadowDispatch({ type: 'WindowClosed', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -656,9 +581,8 @@ export function shadowKernelWindowClosed(id: WindowId, oldSnapshot: StateSnapsho
  * is preserved by construction. None of that reconciliation belongs here;
  * this function only translates and feeds.
  */
-export function shadowKernelImportStackOrder(order: readonly WindowId[], oldSnapshot: StateSnapshot): void {
+export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
   shadowExecute({ type: 'ImportStackOrder', order, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,11 +614,10 @@ export function shadowKernelImportStackOrder(order: readonly WindowId[], oldSnap
  *
  * Same shape and containment as `shadowKernelDestroyWindow` et al.: routed
  * through `shadowExecute` (a rejected stale `expectedVersion` is logged, never
- * thrown into the caller), ending with the same `compareAfterFeed` tail.
+ * thrown into the caller).
  */
-export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelRaiseWindow(id: WindowId): void {
   shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,7 +649,7 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
  * containment as `shadowKernelRaiseWindow` et al.: routed through
  * `shadowExecute` (a rejected stale `expectedVersion`, or a `hostId`/
  * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
- * caller), ending with the same `compareAfterFeed` tail. No production
+ * caller). No production
  * caller remains (see the section comment above); `shadowKernelOverlayAttached`
  * is what the live attach/detach path uses.
  *
@@ -734,7 +657,7 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
  * `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the kernel takes
  * this as data rather than computing it. Omitted on a detach.
  */
-export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot, frame?: Rectangle): void {
+export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
   shadowExecute({
     type: 'AttachOverlay',
     overlayId,
@@ -742,7 +665,6 @@ export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId 
     ...(frame !== undefined ? { frame } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -766,14 +688,13 @@ export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId 
  * Omitted on a detach, or when the backend could not read the host's
  * bounds.
  */
-export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot, frame?: Rectangle): void {
+export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
   shadowDispatch({
     type: 'OverlayAttached',
     overlayId,
     hostId,
     ...(frame !== undefined ? { frame } : {}),
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,9 +720,8 @@ export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowI
  * adds). `evolve`'s arm never resets `orderable` back to false and no-ops on
  * an unregistered id, so no guard is needed here.
  */
-export function shadowKernelWindowContentOrderable(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelWindowContentOrderable(id: WindowId): void {
   shadowDispatch({ type: 'WindowContentOrderable', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -819,9 +739,8 @@ export function shadowKernelWindowContentOrderable(id: WindowId, oldSnapshot: St
  * is stored as reported, same as the old machine: the kernel never infers
  * first-responder status, only records what the OS said.
  */
-export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boolean, oldSnapshot: StateSnapshot): void {
+export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boolean): void {
   shadowDispatch({ type: 'ContentFirstResponderChanged', id, held });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -832,9 +751,8 @@ export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boo
  * infers click-through state, only records what the causing site already did
  * (see the event's own doc for why this is fed rather than observed).
  */
-export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput: boolean, oldSnapshot: StateSnapshot): void {
+export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput: boolean): void {
   shadowDispatch({ type: 'WindowAcceptsInputChanged', id, acceptsInput });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -855,11 +773,10 @@ export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput
  * here to guard existence against on either payload shape, so a `null` clear
  * and a real id naming a window not yet registered are both legitimate
  * traffic. Same shape and containment as `shadowKernelAttachOverlay` et al.:
- * routed through `shadowExecute`, ending with the same `compareAfterFeed` tail.
+ * routed through `shadowExecute`.
  */
-export function shadowKernelArmColdStartFocus(id: WindowId | null, oldSnapshot: StateSnapshot): void {
+export function shadowKernelArmColdStartFocus(id: WindowId | null): void {
   shadowExecute({ type: 'ArmColdStartFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -888,9 +805,8 @@ export function shadowKernelArmColdStartFocus(id: WindowId | null, oldSnapshot: 
  * logged by `shadowExecute` as a rejection, never thrown into the caller. Same
  * shape and containment as `shadowKernelRaiseWindow` et al.
  */
-export function shadowKernelAssertFocus(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelAssertFocus(id: WindowId): void {
   shadowExecute({ type: 'AssertFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -913,9 +829,8 @@ export function shadowKernelAssertFocus(id: WindowId, oldSnapshot: StateSnapshot
  * straight through to `leaving` on a coalesced cancel (`nextFsModeForOsEntered`,
  * `window-kernel.ts`).
  */
-export function shadowKernelOsFullscreenEntered(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelOsFullscreenEntered(id: WindowId): void {
   shadowDispatch({ type: 'OsFullscreenEntered', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -924,9 +839,8 @@ export function shadowKernelOsFullscreenEntered(id: WindowId, oldSnapshot: State
  * through to `entering` on a coalesced re-enter (`nextFsModeForOsLeft`,
  * `window-kernel.ts`).
  */
-export function shadowKernelOsFullscreenLeft(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelOsFullscreenLeft(id: WindowId): void {
   shadowDispatch({ type: 'OsFullscreenLeft', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -939,9 +853,8 @@ export function shadowKernelOsFullscreenLeft(id: WindowId, oldSnapshot: StateSna
  * strands `preBounds` or leaves a black macOS Space behind — the machine
  * asks the OS rather than guessing).
  */
-export function shadowKernelFullscreenSettleTimeout(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelFullscreenSettleTimeout(id: WindowId): void {
   shadowDispatch({ type: 'FullscreenSettleTimeout', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -954,17 +867,15 @@ export function shadowKernelFullscreenSettleTimeout(id: WindowId, oldSnapshot: S
  * branching is reproduced here — the command is executed and `decide`
  * decides. Same shape and containment as `shadowKernelRaiseWindow` et al.:
  * routed through `shadowExecute` (a rejected stale `expectedVersion`, or a
- * target absent from `order`, is logged, never thrown into the caller),
- * ending with the same `compareAfterFeed` tail.
+ * target absent from `order`, is logged, never thrown into the caller).
  */
-export function shadowKernelSetFullscreen(id: WindowId, desired: boolean, oldSnapshot: StateSnapshot): void {
+export function shadowKernelSetFullscreen(id: WindowId, desired: boolean): void {
   shadowExecute({
     type: 'SetFullscreen',
     id,
     desired,
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -998,9 +909,8 @@ export function shadowKernelSetFullscreen(id: WindowId, desired: boolean, oldSna
  * See `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the frame
  * rides here as data rather than being computed inside the kernel.
  */
-export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot, overlayFrame?: Rectangle): void {
+export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, overlayFrame?: Rectangle): void {
   shadowDispatch({ type: 'BoundsChanged', id, bounds, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1014,11 +924,8 @@ export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, oldSn
  * reproduced here — the event is dispatched and `evolve` decides.
  */
 export function shadowKernelDisplayChanged(
-  projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }>,
-  oldSnapshot: StateSnapshot,
-): void {
+  projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }>): void {
   shadowDispatch({ type: 'DisplayChanged', projections });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1030,9 +937,8 @@ export function shadowKernelDisplayChanged(
  * no-op for it — the old reducer's "not maximized -> nothing to restore"
  * guard is unnecessary here).
  */
-export function shadowKernelMaximizeExitedByResize(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelMaximizeExitedByResize(id: WindowId): void {
   shadowDispatch({ type: 'MaximizeExitedByResize', id });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1046,11 +952,10 @@ export function shadowKernelMaximizeExitedByResize(id: WindowId, oldSnapshot: St
  * reproduced here — the command is executed and `decide` decides. Same
  * shape and containment as `shadowKernelRaiseWindow` et al.: routed through
  * `shadowExecute` (a rejected stale `expectedVersion` is logged, never
- * thrown into the caller), ending with the same `compareAfterFeed` tail.
+ * thrown into the caller).
  */
-export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot): void {
+export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle): void {
   shadowExecute({ type: 'SetBounds', id, bounds, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1080,14 +985,13 @@ export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle, oldSnapsh
  * the actual snap. None of that branching is reproduced here. Same shape
  * and containment as `shadowKernelSetBounds`.
  */
-export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot, workArea?: Rectangle): void {
+export function shadowKernelMaximize(id: WindowId, workArea?: Rectangle): void {
   shadowExecute({
     type: 'Maximize',
     id,
     ...(workArea !== undefined ? { workArea } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1104,9 +1008,8 @@ export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot, w
  * that is reproduced here. Same shape and containment as
  * `shadowKernelMaximize`.
  */
-export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null, oldSnapshot: StateSnapshot): void {
+export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null): void {
   shadowExecute({ type: 'SeedMaximized', id, preMaxBounds, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1117,9 +1020,8 @@ export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle 
  * clears the flag — nowhere to restore to). None of that branching is
  * reproduced here. Same shape and containment as `shadowKernelMaximize`.
  */
-export function shadowKernelUnmaximize(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelUnmaximize(id: WindowId): void {
   shadowExecute({ type: 'Unmaximize', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1153,14 +1055,13 @@ export function shadowKernelUnmaximize(id: WindowId, oldSnapshot: StateSnapshot)
  * `DesktopMembershipSet{membership: cmd.membership}`; no branching to
  * reproduce. Same shape and containment as `shadowKernelMaximize` et al.
  */
-export function shadowKernelSetDesktopMembership(id: WindowId, membership: DesktopMembership, oldSnapshot: StateSnapshot): void {
+export function shadowKernelSetDesktopMembership(id: WindowId, membership: DesktopMembership): void {
   shadowExecute({
     type: 'SetDesktopMembership',
     id,
     membership,
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
-  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1177,18 +1078,16 @@ export function shadowKernelSetDesktopMembership(id: WindowId, membership: Deskt
  * visibility and key are separate stored facts, each written only by its own
  * event, so neither command alone reproduces an activating show.
  */
-export function shadowKernelShowRequested(id: WindowId, activate: boolean, oldSnapshot: StateSnapshot): void {
+export function shadowKernelShowRequested(id: WindowId, activate: boolean): void {
   shadowExecute({ type: 'ShowWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
   if (activate) {
     shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
   }
-  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate a window-hide request into the kernel's `HideWindow` command. */
-export function shadowKernelHideRequested(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelHideRequested(id: WindowId): void {
   shadowExecute({ type: 'HideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -1197,93 +1096,7 @@ export function shadowKernelHideRequested(id: WindowId, oldSnapshot: StateSnapsh
  * inside the kernel's own `decide()` arm for this command, not here — the
  * caller passes no keepLive flag.
  */
-export function shadowKernelCloseOrHideRequested(id: WindowId, oldSnapshot: StateSnapshot): void {
+export function shadowKernelCloseOrHideRequested(id: WindowId): void {
   shadowExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Divergence comparator — a diagnostic left running post-cutover: it still
-// checks the kernel's view against the old machine's on every settled input,
-// for the three things the cutover's readers (`windows.ts
-// resolveFocusedWindowIdForClose`, `session.ts readKernelOrderFacts`, …)
-// actually depend on. See `compareShadowKernelState`'s own doc below for what
-// each check does and does not claim.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** One divergence between the old machine and the shadow kernel — see `compareShadowKernelState`. */
-export interface ShadowKernelDivergence {
-  kind: 'membership' | 'front' | 'stackOrder';
-  old: unknown;
-  kernel: unknown;
-}
-
-/**
- * Compare the shadow kernel's view against the old machine's CURRENT state
- * (a `window-state.ts snapshot()`), for the three things the cutover's
- * readers actually depend on:
- *
- *   - **membership** — `oldMachine.windows` (the old machine's record set)
- *     versus the kernel's `order` — same ids present, order aside.
- *   - **the main/front window** — `oldMachine.front` versus
- *     `topmost(kernelState, isContentWindow)` (`window-kernel.ts`). These are
- *     NOT expected to be identical by definition: `front` was trying to be
- *     AppKit's *main* window while being written from focus events, which is
- *     exactly the drift this conversion exists to fix. A mismatch here may be
- *     the OLD machine being wrong — this reports both values rather than
- *     judging it.
- *   - **stacking order** — `oldMachine.stackOrder` versus the kernel's
- *     `order`, each restricted to the ids BOTH machines hold a record for.
- *     Comparing the raw sequences would also flag every id one machine simply
- *     doesn't know about yet (already reported by the membership check above)
- *     as if it were a stacking disagreement, which it isn't.
- *
- * `keyWindow(kernelState)` (`window-kernel.ts`) is deliberately NOT compared
- * against `front` here — `key` is the key window and replaces none of the old
- * readers `front` and `topmost(state, isContentWindow)` do.
- *
- * A PURE READ: never dispatches, never mutates either machine, performs no
- * effect. The comparison always runs (cheap — a few array scans over a
- * handful of windows); only the console line per divergence is gated behind
- * `PEEK_SHADOW_KERNEL_COMPARE=1`, so a caller can call this on every settled
- * input for its return value alone with no cost when the flag is unset.
- */
-export function compareShadowKernelState(oldMachine: StateSnapshot): ShadowKernelDivergence[] {
-  const kernelState = getShadowKernelExecutor().getState();
-  const divergences: ShadowKernelDivergence[] = [];
-
-  const oldIds = oldMachine.windows.map((w) => w.id);
-  const oldIdSet = new Set(oldIds);
-  const kernelIds = kernelState.order.map((r) => r.id);
-  const kernelIdSet = new Set(kernelIds);
-  const sameMembership = oldIdSet.size === kernelIdSet.size && oldIds.every((id) => kernelIdSet.has(id));
-  if (!sameMembership) {
-    divergences.push({ kind: 'membership', old: oldIds, kernel: kernelIds });
-  }
-
-  const kernelFront = topmost(kernelState, isContentWindow)?.id ?? null;
-  if (oldMachine.front !== kernelFront) {
-    divergences.push({ kind: 'front', old: oldMachine.front, kernel: kernelFront });
-  }
-
-  // Restrict both sequences to ids present in BOTH record sets, preserving
-  // each machine's own relative order, before comparing.
-  const oldStackRestricted = oldMachine.stackOrder.filter((id) => kernelIdSet.has(id));
-  const kernelOrderRestricted = kernelIds.filter((id) => oldIdSet.has(id));
-  const sameStackOrder =
-    oldStackRestricted.length === kernelOrderRestricted.length &&
-    oldStackRestricted.every((id, i) => id === kernelOrderRestricted[i]);
-  if (!sameStackOrder) {
-    divergences.push({ kind: 'stackOrder', old: oldStackRestricted, kernel: kernelOrderRestricted });
-  }
-
-  if (process.env.PEEK_SHADOW_KERNEL_COMPARE === '1') {
-    for (const d of divergences) {
-      console.log(
-        `[window-kernel-shadow] divergence kind=${d.kind} old=${JSON.stringify(d.old)} kernel=${JSON.stringify(d.kernel)}`,
-      );
-    }
-  }
-
-  return divergences;
-}

@@ -615,7 +615,7 @@ function applyPlacementOnReuse(
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
+      shadowKernelSetBounds(machineId, result.bounds);
     }
   }
 }
@@ -760,7 +760,7 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; the dispatch above only reaches the old machine,
     // whose matching effect arm is a no-op.
-    shadowKernelDestroyWindow(id, getWindowStateSnapshot());
+    shadowKernelDestroyWindow(id);
   } catch (cleanupErr) {
     // Cleanup must never mask the original failure — a still-leaked window is
     // logged loudly instead.
@@ -1065,7 +1065,7 @@ function assembleHybridPageHost(
     // later `page:unmaximize` cleared the flag and left the window at the
     // maximized rect while `getHybridPresentation` still reported the right
     // `preMaxBounds` off the old machine: data right, behavior wrong.
-    shadowKernelSeedMaximized(hostMachineId, restoredPreMaxBounds, getWindowStateSnapshot());
+    shadowKernelSeedMaximized(hostMachineId, restoredPreMaxBounds);
   }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
@@ -1153,7 +1153,7 @@ function assembleHybridPageHost(
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
         // the window manager; the dispatch above only reaches the old
         // machine, whose matching effect arm is a no-op.
-        shadowKernelSetFullscreen(hostMachineId, false, getWindowStateSnapshot());
+        shadowKernelSetFullscreen(hostMachineId, false);
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
     finalizeWindowClose(baseWin.id, {
@@ -1203,7 +1203,7 @@ function assembleHybridPageHost(
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelCloseContent(hostMachineId, getWindowStateSnapshot());
+      shadowKernelCloseContent(hostMachineId);
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
     }
@@ -1262,7 +1262,7 @@ function assembleHybridPageHost(
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
         // the window manager; the dispatch above only reaches the old
         // machine, whose matching effect arm is a no-op.
-        shadowKernelCloseWindowDirect(hostMachineId, getWindowStateSnapshot());
+        shadowKernelCloseWindowDirect(hostMachineId);
       }
     } catch { /* closing a torn-down host is a no-op */ }
   });
@@ -1747,7 +1747,7 @@ export function wireHybridContentEvents(
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; the dispatch above only reaches the old machine,
     // whose matching effect arm is a no-op.
-    shadowKernelMaximizeExitedByResize(machineId, getWindowStateSnapshot());
+    shadowKernelMaximizeExitedByResize(machineId);
     try {
       publish(getSystemAddress(), 'page-overlay:maximize-state', {
         windowId: hostWindowId, maximized: false, preMaxBounds: null,
@@ -1866,7 +1866,7 @@ export function wireHybridContentEvents(
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelSetBounds(resizeMachineId, resizeBounds, getWindowStateSnapshot());
+      shadowKernelSetBounds(resizeMachineId, resizeBounds);
     }
     // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
     // navbar-drag MOVE math + maximize stash, and main (not the renderer) drives
@@ -2384,7 +2384,7 @@ export function installHybridNavbarActionRouting(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelSetBounds(machineId, setBounds, getWindowStateSnapshot());
+      shadowKernelSetBounds(machineId, setBounds);
     }
   });
 
@@ -2445,7 +2445,7 @@ export function installHybridNavbarActionRouting(): void {
       // whose matching effect arm is a no-op. The kernel's `Maximize`
       // command carries the work area as data (`459ed219` shape — see
       // `shadowKernelMaximize`'s doc), same rect as the old event above.
-      shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
+      shadowKernelMaximize(machineId, workAreaRect);
     } catch { /* window gone */ }
   });
 
@@ -2461,7 +2461,7 @@ export function installHybridNavbarActionRouting(): void {
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; the dispatch above only reaches the old machine,
     // whose matching effect arm is a no-op.
-    shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
+    shadowKernelUnmaximize(machineId);
   });
 
   // ── P1.4b-4: find-in-page routing (overlay find bar → content WC) ───────────
@@ -2697,7 +2697,7 @@ export function registerWindowHandlers(): void {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
             if (reusedId != null) {
               dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
-              shadowKernelShowRequested(reusedId, hybridReuseActivate, getWindowStateSnapshot());
+              shadowKernelShowRequested(reusedId, hybridReuseActivate);
             }
           }
           return { success: true, id: existingHybrid.windowId, reused: true };
@@ -2769,7 +2769,7 @@ export function registerWindowHandlers(): void {
               // an anchored window's creation-time pair must NOT be replayed
               // on reuse), so `reusePolicy` is already the intention the
               // kernel wants, no translation needed.
-              shadowKernelSetDesktopMembership(spacesMachineId, reusePolicy, getWindowStateSnapshot());
+              shadowKernelSetDesktopMembership(spacesMachineId, reusePolicy);
             }
           }
         }
@@ -2857,7 +2857,7 @@ export function registerWindowHandlers(): void {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
             if (reusedId != null) {
               dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
-              shadowKernelShowRequested(reusedId, true, getWindowStateSnapshot());
+              shadowKernelShowRequested(reusedId, true);
             }
           }
           // Reload so content is fresh (mirrors the canvas path's reload).
@@ -3571,7 +3571,7 @@ export function registerWindowHandlers(): void {
         // there is no `'none'` case to skip here — see that function's doc
         // for why the kernel never sees the platform-derived third value the
         // dispatch above's `spacesPolicyForRole` can return.
-        shadowKernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role), getWindowStateSnapshot());
+        shadowKernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role));
       }
 
       // Feed the machine the OPEN intent (gate fallout of the WindowId
@@ -3608,7 +3608,7 @@ export function registerWindowHandlers(): void {
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
         // the window manager; the dispatch above only reaches the old
         // machine, whose matching effect arm is a no-op.
-        shadowKernelWindowShown(machineWindowId, getWindowStateSnapshot(), true);
+        shadowKernelWindowShown(machineWindowId, true);
       }
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
@@ -3942,7 +3942,7 @@ export function registerWindowHandlers(): void {
                 // Feed the kernel (window-kernel-shadow.ts) — this is what
                 // drives the window manager; the dispatch above only reaches
                 // the old machine, whose matching effect arm is a no-op.
-                shadowKernelRaiseWindow(machineWindowId, getWindowStateSnapshot());
+                shadowKernelRaiseWindow(machineWindowId);
                 return;
               }
               // Name the focus thief in the log: which window (or hybrid host)
@@ -3982,7 +3982,7 @@ export function registerWindowHandlers(): void {
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
           // the window manager; the dispatch above only reaches the old
           // machine, whose matching effect arm is a no-op.
-          shadowKernelSetBounds(machineWindowId, result.bounds, getWindowStateSnapshot());
+          shadowKernelSetBounds(machineWindowId, result.bounds);
         }
       }
 

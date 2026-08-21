@@ -107,7 +107,7 @@ export function showWindowHeadlessSafe(
     return;
   }
   dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.active === true });
-  shadowKernelShowRequested(id, opts?.active === true, getWindowStateSnapshot());
+  shadowKernelShowRequested(id, opts?.active === true);
 }
 
 /**
@@ -226,7 +226,7 @@ export function showHybridHost(
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.inactive !== true });
-    shadowKernelShowRequested(id, opts?.inactive !== true, getWindowStateSnapshot());
+    shadowKernelShowRequested(id, opts?.inactive !== true);
   }
   return intent;
 }
@@ -247,7 +247,7 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
       DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
     } else {
       dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id });
-      shadowKernelHideRequested(id, getWindowStateSnapshot());
+      shadowKernelHideRequested(id);
     }
   }
   if (params.action === 'show') {
@@ -478,7 +478,7 @@ export function closeHostWindow(hostId: number, _win: ClosableWindow): void {
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
-  shadowKernelCloseWindowDirect(hostWmId, getWindowStateSnapshot());
+  shadowKernelCloseWindowDirect(hostWmId);
 }
 
 /**
@@ -647,7 +647,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
           // the window manager; the dispatch above only reaches the old
           // machine, whose matching effect arm is a no-op.
-          shadowKernelSetFullscreen(machineId, false, getWindowStateSnapshot());
+          shadowKernelSetFullscreen(machineId, false);
           await waitForMode(machineId, 'normal');
         }
         if (hybrid.baseWin.isDestroyed()) return;
@@ -675,7 +675,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         if (machineId != null && hybridRec?.keepLive === true) {
           DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
           dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: machineId });
-          shadowKernelCloseOrHideRequested(machineId, getWindowStateSnapshot());
+          shadowKernelCloseOrHideRequested(machineId);
           maybeHideApp(id);
           return;
         }
@@ -734,7 +734,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // the intent forever.
     else if (wmId != null && rec?.keepLive === true) {
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wmId });
-      shadowKernelCloseOrHideRequested(wmId, getWindowStateSnapshot());
+      shadowKernelCloseOrHideRequested(wmId);
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);

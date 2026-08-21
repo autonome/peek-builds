@@ -381,7 +381,7 @@ export class WindowOsAdapter {
         // keepLive window closed by Escape takes a second `CloseOrHideWindow`
         // from that same re-dispatch. It is inert — the record is already
         // hidden by then, so `react`'s structural diff emits nothing.
-        shadowKernelCloseOrHideRequested(effect.id, this.owner.snapshot());
+        shadowKernelCloseOrHideRequested(effect.id);
         return;
       }
       case 'SET_FULLSCREEN_ESCAPE_EXIT': {
@@ -404,7 +404,7 @@ export class WindowOsAdapter {
         // operations (see the TRANSFERRED TO THE KERNEL EXECUTOR block
         // above), so this arm's only job is telling the kernel what happened,
         // never toggling fullscreen itself.
-        shadowKernelSetFullscreen(effect.id, false, this.owner.snapshot());
+        shadowKernelSetFullscreen(effect.id, false);
         return;
       }
       case 'OPEN_SWITCHER_WINDOW': {

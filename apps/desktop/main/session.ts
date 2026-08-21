@@ -255,7 +255,7 @@ export function installFirstFrameOrderableProducer(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the sole writer of `orderable`, without which
       // `topmostBaseLayerPageHost` returns null forever.
-      shadowKernelWindowContentOrderable(machineId, getWindowStateSnapshot());
+      shadowKernelWindowContentOrderable(machineId);
     }
     // Restore-spec bookkeeping only (see the counter block above).
     if (_restorePendingFirstFrameIds.delete(entry.windowId)) {
@@ -874,7 +874,7 @@ export async function restoreSessionSnapshot(
   dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: null });
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager.
-  shadowKernelArmColdStartFocus(null, getWindowStateSnapshot());
+  shadowKernelArmColdStartFocus(null);
 
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
@@ -1430,7 +1430,7 @@ export async function restoreSessionSnapshot(
           dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: coldStartMachineId });
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
           // the window manager.
-          shadowKernelArmColdStartFocus(coldStartMachineId, getWindowStateSnapshot());
+          shadowKernelArmColdStartFocus(coldStartMachineId);
         }
       }
 
@@ -1466,7 +1466,7 @@ export async function restoreSessionSnapshot(
         dispatchWindowEvent({ type: 'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop });
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
         // the window manager.
-        shadowKernelImportStackOrder(savedOrderBottomToTop, getWindowStateSnapshot());
+        shadowKernelImportStackOrder(savedOrderBottomToTop);
         _restoreStackDriveCount = savedOrderBottomToTop.length;
         // Counter bookkeeping for the cold-start spec: each restored page-host
         // reports first-frame once; the permanent producer (top of file) counts

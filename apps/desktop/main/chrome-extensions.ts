@@ -49,7 +49,7 @@ function destroyWindowViaMachine(win: BrowserWindow): void {
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
-  shadowKernelDestroyWindow(id, getWindowStateSnapshot());
+  shadowKernelDestroyWindow(id);
 }
 
 /**
@@ -1059,7 +1059,7 @@ export function openChromeExtensionPage(
     const existingId = getWindowIdFor(existing);
     if (existingId != null) {
       dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: existingId, activate: true });
-      shadowKernelShowRequested(existingId, true, getWindowStateSnapshot());
+      shadowKernelShowRequested(existingId, true);
     }
     return existing;
   }
@@ -1166,7 +1166,7 @@ export function openChromeExtensionPage(
         const id = getWindowIdFor(win);
         if (id != null) {
           dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });
-          shadowKernelShowRequested(id, false, getWindowStateSnapshot());
+          shadowKernelShowRequested(id, false);
         }
       } catch { /* ignore */ }
       try { win.webContents.openDevTools({ mode: 'detach', activate: false }); } catch { /* ignore */ }

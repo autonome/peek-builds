@@ -3038,7 +3038,7 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(args.id);
           if (machineId != null) {
             dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
-            shadowKernelShowRequested(machineId, true, getWindowStateSnapshot());
+            shadowKernelShowRequested(machineId, true);
           }
           return { success: true };
         }
@@ -3088,7 +3088,7 @@ export function registerTileIpcHandlers(): void {
             // Feed the kernel (window-kernel-shadow.ts) — this is what
             // drives the window manager; the dispatch above only reaches
             // the old machine, whose matching effect arm is a no-op.
-            shadowKernelSetFullscreen(machineId, false, getWindowStateSnapshot());
+            shadowKernelSetFullscreen(machineId, false);
             await waitForMode(machineId, 'normal');
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
@@ -3100,7 +3100,7 @@ export function registerTileIpcHandlers(): void {
           // acceptance the 6A-3 keepLive cutover made in closeOrHideWindow.
           if (machineId != null) {
             dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
-            shadowKernelHideRequested(machineId, getWindowStateSnapshot());
+            shadowKernelHideRequested(machineId);
           }
           return { success: true };
         }
@@ -3111,7 +3111,7 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
-          shadowKernelHideRequested(machineId, getWindowStateSnapshot());
+          shadowKernelHideRequested(machineId);
         }
       }
       return { success: true };
@@ -3162,7 +3162,7 @@ export function registerTileIpcHandlers(): void {
       const machineId = getWindowIdFor(args.id);
       if (machineId != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
-        shadowKernelShowRequested(machineId, true, getWindowStateSnapshot());
+        shadowKernelShowRequested(machineId, true);
       }
       return { success: true };
     } catch (err) {
@@ -3223,7 +3223,7 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
-          shadowKernelHideRequested(machineId, getWindowStateSnapshot());
+          shadowKernelHideRequested(machineId);
         }
       }
       return { success: true };
@@ -3267,7 +3267,7 @@ export function registerTileIpcHandlers(): void {
       // observe (Electron has no getter for `setIgnoreMouseEvents`).
       const machineId = getWindowIdFor(win);
       if (machineId != null) {
-        shadowKernelWindowAcceptsInputChanged(machineId, args.ignore !== true, getWindowStateSnapshot());
+        shadowKernelWindowAcceptsInputChanged(machineId, args.ignore !== true);
       }
       return { success: true };
     } catch (err) {
@@ -3322,7 +3322,7 @@ export function registerTileIpcHandlers(): void {
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
           // the window manager; the dispatch above only reaches the old
           // machine, whose matching effect arm is a no-op.
-          shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
+          shadowKernelSetBounds(machineId, result.bounds);
         }
       }
       return { success: true };
@@ -3373,7 +3373,7 @@ export function registerTileIpcHandlers(): void {
             // Feed the kernel (window-kernel-shadow.ts) — this is what
             // drives the window manager; the dispatch above only reaches
             // the old machine, whose matching effect arm is a no-op.
-            shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
+            shadowKernelSetBounds(machineId, result.bounds);
           }
         }
         centered++;
@@ -3461,7 +3461,7 @@ export function registerTileIpcHandlers(): void {
       // whose matching effect arm is a no-op. The kernel's `Maximize`
       // command carries the work area as data (`459ed219` shape — see
       // `shadowKernelMaximize`'s doc), same rect as the old event above.
-      shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
+      shadowKernelMaximize(machineId, workAreaRect);
       // Targeted notification to the window's renderer — a renderer that
       // owns internal layout state subscribes via
       // api.window.onMaximizeRequest to keep its layout in sync without
@@ -3530,7 +3530,7 @@ export function registerTileIpcHandlers(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
+      shadowKernelUnmaximize(machineId);
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
@@ -3604,7 +3604,7 @@ export function registerTileIpcHandlers(): void {
       // whose matching effect arm is a no-op.
       if (oldMode !== null) {
         const desired = oldMode === 'normal' || oldMode === 'leaving-fullscreen';
-        shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
+        shadowKernelSetFullscreen(machineId, desired);
       }
       return { success: true };
     } catch (err) {
@@ -3802,7 +3802,7 @@ export function registerTileIpcHandlers(): void {
       // (`'anchor'`). The caller-supplied platform options (`args.options`)
       // are NOT fed — they are Electron `setVisibleOnAllWorkspaces` argument
       // names and have no meaning to the kernel's platform-neutral command.
-      shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor', getWindowStateSnapshot());
+      shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor');
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3916,7 +3916,7 @@ export function registerTileIpcHandlers(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelSetBounds(machineId, next, getWindowStateSnapshot());
+      shadowKernelSetBounds(machineId, next);
     }
 
     const info = getWindowInfo(win.id);

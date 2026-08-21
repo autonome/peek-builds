@@ -237,7 +237,7 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
     if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; RULE 1 makes this the only event that shrinks its `order`.
-    if (wmId != null) shadowKernelWindowClosed(wmId, getWindowStateSnapshot());
+    if (wmId != null) shadowKernelWindowClosed(wmId);
   }
   try {
     publish('system', 'window:removed', { id: windowId });
@@ -469,7 +469,7 @@ export async function initialize(): Promise<void> {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
+      shadowKernelCloseWindowDirect(id);
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
     // INTENT — the reducer branches on the record's keepLive (hide vs the
@@ -482,7 +482,7 @@ export async function initialize(): Promise<void> {
         return;
       }
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id });
-      shadowKernelCloseOrHideRequested(id, getWindowStateSnapshot());
+      shadowKernelCloseOrHideRequested(id);
     },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the
@@ -862,7 +862,7 @@ export async function initialize(): Promise<void> {
         try {
           const wmId = getWindowIdFor(windowId);
           if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
-          if (wmId != null) shadowKernelWindowClosed(wmId, getWindowStateSnapshot());
+          if (wmId != null) shadowKernelWindowClosed(wmId);
         } catch {
           // already in error path; suppress
         }
@@ -961,7 +961,7 @@ export async function initialize(): Promise<void> {
         // through only as the divergence comparator.
         const snap = getWindowStateSnapshot();
         const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId, snap);
+        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
       }
     });
     wc.on('devtools-closed', () => {
@@ -975,7 +975,7 @@ export async function initialize(): Promise<void> {
         // divergence comparator.
         const snap = getWindowStateSnapshot();
         const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId, snap);
+        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
       }
     });
 
@@ -1508,7 +1508,7 @@ export function removeWindow(windowId: number): boolean {
   const id = getWindowIdFor(windowId);
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
   dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
-  shadowKernelWindowClosed(id, getWindowStateSnapshot());
+  shadowKernelWindowClosed(id);
   return true;
 }
 

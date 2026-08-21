@@ -473,7 +473,7 @@ function wireClickCapture(): void {
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — capture:true means the overlay now takes
     // input, capture:false means it is click-through again.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, capture, getWindowStateSnapshot());
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, capture);
   });
 }
 
@@ -512,7 +512,7 @@ function wireAppActiveGate(): void {
     }
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — forced click-through on this edge.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false, getWindowStateSnapshot());
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false);
     // The WINDOW half of this edge is the reducer's (§5 step 9): `APP_RESIGNED`
     // pushes `HIDE_WINDOW` for every attached overlay (peek 88797f2d / R6), so
     // the chrome leaves the screen while Peek is backgrounded. The old
@@ -534,7 +534,7 @@ function wireAppActiveGate(): void {
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — restored to default click-through, still
     // not capturing.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false, getWindowStateSnapshot());
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false);
     // The re-reveal is the reducer's: `APP_ACTIVATED` runs `applyOverlayFollow`
     // for every attached overlay, restoring its z-pin and re-showing it over the
     // host it is still attached to (the attachment survived the resign, so no
@@ -619,7 +619,7 @@ function wireShowNavbarFocus(): void {
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: overlayWmId, activate: true });
-    shadowKernelShowRequested(overlayWmId, true, getWindowStateSnapshot());
+    shadowKernelShowRequested(overlayWmId, true);
   });
 }
 
@@ -874,7 +874,7 @@ function installTestBridge(): void {
     const wid = getWindowIdFor(baseWin.id);
     if (wid == null) return;
     dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: wid });
-    shadowKernelWindowContentOrderable(wid, getWindowStateSnapshot());
+    shadowKernelWindowContentOrderable(wid);
   };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
     makeFakeHybridWindow(bounds: { x: number; y: number; width: number; height: number }): number {
@@ -973,11 +973,11 @@ function installTestBridge(): void {
       );
       for (const record of drained) {
         dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: record.id });
-        shadowKernelWindowHidden(record.id, getWindowStateSnapshot());
+        shadowKernelWindowHidden(record.id);
       }
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-        shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
+        shadowKernelWindowShown(wid, true);
       }
       getShadowKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
       return true;
@@ -1072,7 +1072,7 @@ function installTestBridge(): void {
       const wid = getWindowIdFor(w);
       if (wid == null) return false;
       dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: wid, activate: false });
-      shadowKernelShowRequested(wid, false, getWindowStateSnapshot());
+      shadowKernelShowRequested(wid, false);
       return true;
     },
     /**
@@ -1102,7 +1102,7 @@ function installTestBridge(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelDestroyWindow(wid, getWindowStateSnapshot());
+      shadowKernelDestroyWindow(wid);
       fakeHosts.delete(id);
       return true;
     },
@@ -1136,7 +1136,7 @@ function installTestBridge(): void {
         const wid = getWindowIdFor(w);
         if (wid != null) {
           dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-          shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
+          shadowKernelWindowShown(wid, true);
         }
       }
       w.emit('focus');
@@ -1167,7 +1167,7 @@ function installTestBridge(): void {
         const wid = getWindowIdFor(id);
         if (wid != null) {
           dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-          shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
+          shadowKernelWindowShown(wid, true);
         }
       }
       entry.contentWC.emit('focus');
@@ -1257,7 +1257,7 @@ function installTestBridge(): void {
       const wid = getWindowIdFor(elsewhereWin);
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-        shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
+        shadowKernelWindowShown(wid, true);
       }
     },
     runDeferredBlur(_id: number): number | null {
@@ -1453,13 +1453,13 @@ function installTestBridge(): void {
       // overlay hide, and this bridge is the only resign input a headless
       // run has (see `shadowKernelAppResigned` / electron-window-backend.ts
       // `did-resign-active`).
-      shadowKernelAppResigned(getWindowStateSnapshot());
+      shadowKernelAppResigned();
       return true;
     },
     simAppBecomeActive(): boolean {
       dispatchWindowEvent({ type: 'APP_ACTIVATED' });
       // Feeds the kernel, for the same reason as `simAppResignActive` above.
-      shadowKernelAppActivated(getWindowStateSnapshot());
+      shadowKernelAppActivated();
       return true;
     },
     /** R1: whether the machine currently considers the app active. */
@@ -3043,7 +3043,7 @@ function installTestBridge(): void {
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the dispatch above only reaches the old machine,
       // whose matching effect arm is a no-op.
-      shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
+      shadowKernelSetFullscreen(machineId, desired);
       return waitForMode(machineId, desired ? 'fullscreen' : 'normal');
     },
   };

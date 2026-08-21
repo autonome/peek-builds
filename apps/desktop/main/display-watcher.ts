@@ -154,9 +154,7 @@ function projectAllWindows(reason: string): void {
   // window manager; the dispatch above only reaches the old machine, whose
   // matching effect arm is a no-op.
   shadowKernelDisplayChanged(
-    decisions.map(({ id, bounds }) => ({ id, bounds })),
-    getWindowStateSnapshot(),
-  );
+    decisions.map(({ id, bounds }) => ({ id, bounds })));
 
   console.log(`[display-watcher] Dispatched reprojection for ${decisions.length} window(s)`);
 }

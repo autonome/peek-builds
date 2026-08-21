@@ -217,9 +217,9 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     // under Xvfb), so without this the kernel's `appActive` mirror stays false
     // for the whole run and every executor raise reads as suppressed.
     if (focused) {
-      shadowKernelAppActivated(getWindowStateSnapshot());
+      shadowKernelAppActivated();
     } else {
-      shadowKernelAppResigned(getWindowStateSnapshot());
+      shadowKernelAppResigned();
     }
   },
   /**
