@@ -3473,6 +3473,15 @@ export function keyWindow(state: State): WindowRecord | null {
 }
 
 /**
+ * The registered record for `id`, or null when `id` names no member of
+ * `order` — a plain-lookup sibling to `keyWindow`/`topmost`, so callers that
+ * only need to resolve a known id do not each write their own `order.find`.
+ */
+export function windowById(state: State, id: WindowId): WindowRecord | null {
+  return state.order.find((w) => w.id === id) ?? null;
+}
+
+/**
  * True when `cause` is a `machine` echo whose `opSeq` is OLDER than the
  * newest op issued for `id` (`WindowRecord.lastOpSeq`) — a stale self-echo
  * that a later decision (the transient sweep, not built here) should

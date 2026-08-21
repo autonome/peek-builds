@@ -566,7 +566,11 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
   return listMachineWindowRecords().filter(rec => {
     if (excludeMachineId != null && rec.id === excludeMachineId) return false;
     if (!rec.visible) return false;
-    return !APP_HIDE_EXCLUDED_CLASSES.has(rec.class);
+    // `rec.class` is a plain `string` on the kernel record (no `WindowClass`
+    // brand — see `window-kernel.ts WindowRecord.class`); the excluded set is
+    // typed as the branded lookup-only vocabulary. Cast, non-behavioral: the
+    // kernel's `class` values are drawn from the same vocabulary.
+    return !APP_HIDE_EXCLUDED_CLASSES.has(rec.class as WindowClass);
   }).length;
 }
 

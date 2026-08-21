@@ -23,8 +23,8 @@ import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js
 import { getKernelExecutor } from './window-kernel-singleton.js';
 import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
-import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
+import type { WindowEvent, IzuiSession, EscapeMode, StateSnapshot } from './window-state.js';
+import type { Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecord } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
 import {
   setKernelExecutorProvider,
@@ -32,7 +32,7 @@ import {
   shadowKernelWindowShown,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
-import { topmost, isContentWindow } from './window-kernel.js';
+import { topmost, isContentWindow, windowById } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
@@ -418,19 +418,19 @@ export function getDevtoolsTargetId(): WindowId | null {
 }
 
 /**
- * The live reducer record for one window — READ-ONLY by contract (no copy).
+ * The live kernel record for one window — READ-ONLY by contract (no copy).
  * `main.ts`'s numeric-id registry seam (`getWindowInfo` / `findWindowByKey` /
  * `getAllWindows` …) no longer reads `source`/`params` off this record — that
  * pair moved to `window-open-registry.ts` — but existence checks (e.g.
  * `removeWindow`) still read this.
  */
-export function getMachineWindowRecord(id: WindowId): WindowRecord | undefined {
-  return getWindowOsAdapter().getOwner().getWindowRecord(id);
+export function getMachineWindowRecord(id: WindowId): KernelWindowRecord | undefined {
+  return windowById(getShadowKernelExecutor().getState(), id) ?? undefined;
 }
 
-/** All live reducer records (fresh array; records not copied — read-only by contract). */
-export function listMachineWindowRecords(): WindowRecord[] {
-  return getWindowOsAdapter().getOwner().listWindowRecords();
+/** All live kernel records — `State.order` itself (bottom -> top, not copied — read-only by contract). */
+export function listMachineWindowRecords(): readonly KernelWindowRecord[] {
+  return getShadowKernelExecutor().getState().order;
 }
 
 /**
