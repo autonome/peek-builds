@@ -24,7 +24,7 @@
  * its own — so the dependency is one-way and adds no Electron surface.
  */
 
-import { BASE_LAYER } from './window-kernel.js';
+import { BASE_LAYER, type WindowKind } from './window-kernel.js';
 
 /**
  * Transient window roles. These open and close frequently and ride above
@@ -718,4 +718,131 @@ export function classifyWindowRegistration(
   if (role === 'quick-view') return 'quick-view';
   if (opts.alwaysOnTop === true && opts.focusable === false) return 'hud';
   return 'primary';
+}
+
+/**
+ * What one registration call must do. Every field is a decision, not a value,
+ * executed verbatim in two halves: the backend
+ * (`electron-window-backend.ts registerWindow`) performs the merge +
+ * native-listener attach, the executor (`window-os-adapter.ts registerWindow`)
+ * performs the event pumps + the Esc-interceptor port command.
+ */
+export interface WindowRegistrationDecision {
+  /** The id was already registered: this call is a MERGE, not a first registration. */
+  reRegistration: boolean;
+  /**
+   * Attach the native window listeners (focus/blur/show/hide/closed/fullscreen).
+   * False on a re-registration — attaching a second set would double every
+   * event the window emits.
+   */
+  attachNativeListeners: boolean;
+  /**
+   * Attach the `before-input-event` Escape interceptor (`windows.ts
+   * addEscHandler`). False on a re-registration: a second interceptor turned ONE
+   * physical Escape into TWO `ESC_PRESSED` dispatches, which is what made the
+   * switcher reopen itself in a loop (7fffa286). Also false for a `page-host`
+   * (a BaseWindow has no root webContents; its Escape rides the content
+   * WebContentsView) and for a caller that opts out (the shared chrome overlay,
+   * which handles Escape in its own renderer).
+   */
+  attachEscHandler: boolean;
+  /**
+   * Overwrite the retained renderer WebContents with the incoming spec's.
+   * A first registration always installs one (`null` when the caller supplied
+   * none); a re-registration only when the caller actually passed the field, so
+   * a later, thinner spec cannot blank out a WC the first one established.
+   */
+  adoptRendererWC: boolean;
+  /**
+   * Pump `WINDOW_REGISTERED` into the reducer. ALWAYS true, including on a
+   * duplicate — deliberately. The later spec is the RICHER one (ipc.ts knows the
+   * real `modal`/`focusable`, the tile-launcher hook only `win.isFocusable()`),
+   * and `satellite` lives in the reducer's `WindowRecord`, so swallowing the
+   * re-pump would strand the reducer on the thin spec and regress the
+   * `isSatelliteRegistration` modal clause. `WINDOW_REGISTERED` is an idempotent
+   * MERGE in `reduce` (it preserves `visible`/`focusSeq`/`fsMode`), so the
+   * re-pump costs nothing beyond refreshing the declared fields.
+   */
+  pumpRegisteredEvent: boolean;
+  /**
+   * Pump `WINDOW_SHOWN { focused: true }` after the (re-)registration pump,
+   * importing the native window's CURRENT visibility into the machine. True
+   * whenever the native window is already visible at registration time.
+   *
+   * WHY (gate fallout of the WindowId cutover): a BrowserWindow constructed
+   * with `show: true` (the window-open browser branch, pseudo-tiles) never
+   * fires a `'show'` TRANSITION — it is born visible — and under a headless
+   * run nothing ever focuses it either, so without this import the machine
+   * literally never learns the window exists on screen: `front` stays null and
+   * every front consumer (`getFocusedVisibleWindowId`, session-save's focused
+   * descriptor, the overlay retarget) reads null forever. `focused: true`
+   * ports the deleted "track immediately at open" behavior (old ipc.ts
+   * `trackVisibleWindowFocus` at the open site): opening a visible window
+   * makes it the target. Satellite/modal arbitration is structural in the
+   * reducer (`applyFocusGained` ignores ineligible fronts), so this is safe to
+   * pump for every kind — and on a RE-registration it lands after the richer
+   * `WINDOW_REGISTERED` merge, so a modal is already a satellite by the time
+   * the focused-shown event is judged.
+   *
+   * CONSTRAINT — registration happens at OPEN time only. `focused: true` is
+   * correct solely because every current caller registers a window at the
+   * moment it is opened, when an already-visible window is by construction the
+   * one the user just targeted; this decision has NO input saying whether the
+   * window actually holds OS focus. If a future path re-registers an
+   * already-visible BACKGROUND window while another window holds OS focus,
+   * this pump would steal `front` from the genuinely-focused window. Such a
+   * path must not reuse this decision as-is: it needs real focus state as an
+   * input (pump `focused: <actual OS focus>` instead), or must suppress the
+   * shown pump entirely.
+   */
+  pumpShownEvent: boolean;
+}
+
+/**
+ * decideWindowRegistration — the SINGLE owner of the "is this a re-registration,
+ * and if so what carries over vs. what the new spec overwrites?" branch that
+ * `WindowOsAdapter.registerWindow` executes.
+ *
+ * WHY it lives here and not next to its callers: `electron-window-backend.ts`
+ * (which executes the merge/listener half) has a value-side
+ * `import { app, globalShortcut } from 'electron'`, and `window-os-adapter.ts`
+ * (which executes the pump/Esc-attach half) pulls it in transitively as its
+ * default backend. The main-process unit gate runs its tests under
+ * `ELECTRON_RUN_AS_NODE=1`, where that import throws at parse ("The requested
+ * module 'electron' does not provide an export named …" — see the explanatory
+ * comment in `window-registry.ts`). A test file importing either module would
+ * take down the whole ~1950-test runner. This module has zero Electron
+ * imports, so the decision is testable here and nowhere else. Same pattern as
+ * the pure predicates above (`isSatelliteRegistration`, `classifyWindowRegistration`).
+ */
+export function decideWindowRegistration(input: {
+  /** Whether the adapter already retains an entry for this window id. */
+  alreadyRegistered: boolean;
+  kind: WindowKind;
+  /** Whether the spec carries a `contentWC` field at all (`undefined` = absent). */
+  hasContentWC: boolean;
+  /** The spec's `attachEscHandler` opt-out (`undefined` = default on). */
+  attachEscHandlerRequested?: boolean;
+  /**
+   * Whether the native window is ALREADY VISIBLE at registration time
+   * (`win.isVisible()`, read once by the adapter). `undefined` = not visible.
+   * Drives `pumpShownEvent` — see its doc for why registration must import
+   * current visibility (a ctor-shown window has no `'show'` transition).
+   */
+  nativeVisible?: boolean;
+}): WindowRegistrationDecision {
+  const { alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested, nativeVisible } = input;
+  const fresh = !alreadyRegistered;
+  return {
+    reRegistration: alreadyRegistered,
+    attachNativeListeners: fresh,
+    attachEscHandler: fresh && kind === 'browser' && attachEscHandlerRequested !== false,
+    adoptRendererWC: fresh || hasContentWC,
+    pumpRegisteredEvent: true,
+    // Registration-time-only assumption — see the `pumpShownEvent` field doc:
+    // visible-at-registration implies "just opened, user-targeted" ONLY while
+    // every caller registers at open time. A path re-registering a visible
+    // background window must not take this branch as-is (latent front-steal).
+    pumpShownEvent: nativeVisible === true,
+  };
 }

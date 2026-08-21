@@ -44,7 +44,6 @@ import {
   snapshot,
   stackOrderInvariantHolds,
   getStackOrder,
-  decideWindowRegistration,
   deriveEscGrabRegistered,
   WindowStateOwner,
   type AppWindowState,
@@ -55,6 +54,7 @@ import {
   type FsMode,
   type IzuiSession,
 } from './window-state.js';
+import { decideWindowRegistration } from './izui-roles.js';
 import type { Rectangle, WindowId } from './window-kernel.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────

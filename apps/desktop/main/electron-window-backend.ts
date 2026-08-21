@@ -77,12 +77,14 @@ import {
 import { dispatchEscapePress } from './window-state-singleton.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { shouldCloseContentWCOnFinalize, type WindowClass, type StackingLevel } from './izui-roles.js';
 import {
+  shouldCloseContentWCOnFinalize,
   decideWindowRegistration,
+  type WindowClass,
+  type StackingLevel,
   type WindowRegistrationDecision,
-  type StateSnapshot,
-} from './window-state.js';
+} from './izui-roles.js';
+import { type StateSnapshot } from './window-state.js';
 import type { DesktopMembership, FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 import {
