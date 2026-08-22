@@ -4188,30 +4188,39 @@ export function traceTransientAutoclose(
  * carry both, and each excluded a window it should have admitted. The rule it
  * derives from is `WindowRecord.hiddenByAppBlur`'s own doc: reversible
  * visibility leaves on the RAW resign edge; only DISMISSAL
- * (`window-state.ts selectAppResignTransients`) waits for the settle, because
- * dismissal is destructive and the settle exists so the macOS activation
- * dance cannot trigger one. `!canBecomeKey` was a stand-in for "heads-up
- * surface" that also excluded the windows switcher
- * (`renderer/windows/background.js` — maximized, always-on-top,
- * `canBecomeKey: true`, so it can be typed into), and the transient-role
- * exclusion (`role: 'switcher'` was in `TRANSIENT_ROLES`) confused reversible
- * hiding with dismissal. Both meant the switcher hung over the app the user
- * just switched to for the full `APP_RESIGN_SETTLE_MS`
- * (`electron-window-backend.ts`) instead of leaving on the raw edge like every
- * other floater. Same fix admits the chain popup
- * (`renderer/cmd/panel.js openChainPopup`, `role: 'utility'`, always-on-top,
- * non-modal) for the same reason: it is not one of these role clauses'
- * business, because a floating window above the regular stack floats above
- * other applications' windows too, whichever role it declares or whether it
- * can hold key. `acceptsInput` is NOT a reintroduction of that mistake — it is
- * measured, not a role stand-in: the HUD (`renderer/hud/background.js`)
- * registers `acceptsInput: true` for its whole life (never calls
- * `setIgnoreMouseEvents`) and keeps hiding with the app exactly as before; the
- * Space border calls `setIgnoreMouseEvents(true, …)` in the same async open
- * flow that creates it (`tile-ipc.ts` feeds the resulting
- * `WindowAcceptsInputChanged`), so by the time any real app-resign reaches it
- * `acceptsInput` already reads `false` and this clause is what keeps it
- * admitted-nowhere, matching its documented purpose.
+ * (`selectTransientAutoclose`) waits for the settle, because dismissal is
+ * destructive and the settle exists so the macOS activation dance cannot
+ * trigger one. This predicate is for the OTHER case — a non-transient floater
+ * above the base layer with no dismissal policy of its own, that must still
+ * leave the screen on an app switch regardless of what role it declares or
+ * whether it can hold key. The HUD (`renderer/hud/background.js` —
+ * `role:'workspace'`, always-on-top, `canBecomeKey:false`) is the motivating
+ * one; the chain popup (`renderer/cmd/panel.js openChainPopup`, `role:
+ * 'utility'`, always-on-top, non-modal, `canBecomeKey: true`) is the one
+ * `!canBecomeKey`, once carried here as a stand-in for "heads-up surface",
+ * used to wrongly exclude.
+ *
+ * A TRANSIENT-role window (`role: 'switcher'`, `'palette'`, `'quick-view'`,
+ * `'overlay'` — `TRANSIENT_ROLES`) can still pass every clause here: the
+ * windows switcher floats, accepts input, and does not self-close, so this
+ * predicate alone reads it as eligible. It never actually gets swept —
+ * a transient window loses focus on ANY app resign under the uniform
+ * dismissal law, so it is always a `selectTransientAutoclose` candidate too,
+ * and `evolve`'s `dismissVictims` exclusion (see the `AppResigned` arm's own
+ * doc) routes it to that dismissal instead of the reversible hide this
+ * predicate would otherwise grant it. The two rules are kept from ever
+ * double-claiming the same window at that CALL SITE, not by a role clause
+ * here.
+ *
+ * `acceptsInput` is NOT a reintroduction of the role-clause mistake — it is
+ * measured, not a role stand-in: the HUD registers `acceptsInput: true` for
+ * its whole life (never calls `setIgnoreMouseEvents`) and keeps hiding with
+ * the app exactly as before; the Space border calls
+ * `setIgnoreMouseEvents(true, …)` in the same async open flow that creates it
+ * (`tile-ipc.ts` feeds the resulting `WindowAcceptsInputChanged`), so by the
+ * time any real app-resign reaches it `acceptsInput` already reads `false`
+ * and this clause is what keeps it admitted-nowhere, matching its documented
+ * purpose.
  *
  * NEITHER `layer > BASE_LAYER` NOR `!selfClosesOnBlur` is sufficient alone,
  * for the same reasons as before this clause list grew: the first would sweep

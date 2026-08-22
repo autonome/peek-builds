@@ -3369,14 +3369,24 @@ describe('window-kernel: which windows a real app resign hides', () => {
   const sweptBy = (state: State): WindowId[] =>
     state.order.filter((w) => w.hiddenByAppBlur === true).map((w) => w.id);
 
-  it('the sweep takes the HUD and the switcher, and spares the click-through space border — every floater that both accepts input and does not already close itself on blur', () => {
+  it('the sweep takes only the HUD; the switcher is a dismissal victim of the same resign rather than a sweep target, and the click-through space border is spared', () => {
     const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
     const swept = sweptBy(settled);
 
     // A predicate matching nothing (the inert failure mode) dies on this line.
     assert.ok(swept.length > 0, 'a real app resign must hide something — a sweep that matches nothing is the bug');
-    assert.deepStrictEqual(swept, [hud, switcher]);
+    assert.deepStrictEqual(swept, [hud]);
     assert.strictEqual(settled.order.find((w) => w.id === hud)?.visible, false);
+
+    // The switcher floats above the regular stack exactly like the HUD, but a
+    // transient window loses focus on ANY app resign under the uniform
+    // dismissal law (`selectTransientAutoclose`), and dismissal is not
+    // reversible — so it is excluded from this reversible hide rather than
+    // swept alongside the HUD. `evolve` never marks a dismissal victim's
+    // `visible` false itself; the settle only arranges for `react` to name it
+    // on a `DismissWindow` effect (see the effects test below for that half).
+    assert.strictEqual(settled.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
+    assert.strictEqual(settled.order.find((w) => w.id === switcher)?.visible, true);
 
     // Everything else stayed exactly as visible as it was: the base-layer
     // window, the non-floating test fixture, the click-through space border
@@ -3391,7 +3401,7 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(settled.order.find((w) => w.id === alreadyHiddenHud)?.hiddenByAppBlur, undefined);
   });
 
-  it('the HUD and the switcher hide on the RAW resign edge, before any settle — neither lingers over the app the user switched to', () => {
+  it('the HUD hides on the RAW resign edge, before any settle; the switcher stays visible there — it is a dismissal victim, not a hide, and dismissal has no raw-edge half', () => {
     // The old reducer hid `class === 'hud'` immediately on APP_RESIGNED.
     // Waiting for the 500ms settle (as the settled-only sweep used to)
     // leaves a floater over whatever app the user just switched to for the
@@ -3402,10 +3412,18 @@ describe('window-kernel: which windows a real app resign hides', () => {
     const resigned = evolve(scene(), { type: 'AppResigned' });
     const swept = sweptBy(resigned);
 
-    assert.deepStrictEqual(swept, [hud, switcher]);
+    assert.deepStrictEqual(swept, [hud]);
     assert.strictEqual(resigned.order.find((w) => w.id === hud)?.visible, false);
     assert.strictEqual(resigned.order.find((w) => w.id === hud)?.hiddenByAppBlur, true);
-    assert.strictEqual(resigned.order.find((w) => w.id === switcher)?.hiddenByAppBlur, true);
+
+    // The switcher is a `selectTransientAutoclose` candidate at this very
+    // resign, so `AppResigned`'s `dismissVictims` exclusion keeps it out of
+    // the reversible hide entirely — a raw edge that hid it here would read
+    // back `!visible` at the settle and be mistaken for already dismissed
+    // (see that arm's own doc). It is left untouched until the settle names
+    // it on a `DismissWindow` effect.
+    assert.strictEqual(resigned.order.find((w) => w.id === switcher)?.visible, true);
+    assert.strictEqual(resigned.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
 
     // Nothing else moved — same exclusions as the settled sweep, checked
     // directly on the raw edge rather than after settle folds in behind it.
@@ -3438,21 +3456,26 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(isAppResignSweepEligible(rec(alreadyHiddenHud)), false, 'already hidden, for a reason of its own');
   });
 
-  it('the following activation re-shows exactly the windows the sweep hid — the HUD and the switcher', () => {
+  it('the following activation re-shows exactly the window the sweep hid — the HUD; the switcher was never hidden by it and carries no mark to clear', () => {
     const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
     const activated = evolve(settled, { type: 'AppActivated' });
 
-    for (const id of [hud, switcher]) {
-      assert.strictEqual(activated.order.find((w) => w.id === id)?.visible, true, `${id} must re-show`);
-      assert.strictEqual(activated.order.find((w) => w.id === id)?.hiddenByAppBlur, false, `${id} must have its mark cleared`);
-    }
+    assert.strictEqual(activated.order.find((w) => w.id === hud)?.visible, true, 'hud must re-show');
+    assert.strictEqual(activated.order.find((w) => w.id === hud)?.hiddenByAppBlur, false, 'hud must have its mark cleared');
+
+    // The switcher was a dismissal victim, not a reversible hide — it was
+    // never marked `hiddenByAppBlur`, so `appBlurRevealAdmits` has nothing to
+    // admit and this activation leaves it exactly as the resign left it.
+    assert.strictEqual(activated.order.find((w) => w.id === switcher)?.visible, true);
+    assert.strictEqual(activated.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
+
     assert.strictEqual(activated.order.find((w) => w.id === alreadyHiddenHud)?.visible, false);
     // The space border was never touched — it carries no mark to clear.
     assert.strictEqual(activated.order.find((w) => w.id === spaceBorder)?.hiddenByAppBlur, undefined);
     assert.deepStrictEqual(sweptBy(activated), []);
   });
 
-  it('the raw resign edge emits a HideWindow effect for exactly the windows it hides — the settle that follows emits nothing, since react has no diff left to project', () => {
+  it('the raw resign edge emits a HideWindow effect for the HUD only; the settle names the switcher on a DismissWindow effect instead', () => {
     const before = scene();
     const resignEv: Event = { type: 'AppResigned' };
     const resigned = evolve(before, resignEv);
@@ -3460,18 +3483,32 @@ describe('window-kernel: which windows a real app resign hides', () => {
 
     assert.deepStrictEqual(
       resignEffects.filter((e) => e.type === 'HideWindow').map((e) => e.id),
-      [hud, switcher],
+      [hud],
+    );
+    // The switcher is not hidden on this edge, so nothing names it here
+    // either — its dismissal is the settle's business, below.
+    assert.deepStrictEqual(
+      resignEffects.filter((e) => e.type === 'DismissWindow'),
+      [],
     );
 
-    // The settle step that follows finds each of them already `visible: false`,
-    // so its own re-application of `isAppResignSweepEligible` is a no-op and
-    // `react`'s structural diff has nothing to project a second time.
+    // The settle step finds the HUD already `visible: false`, so its own
+    // re-application of `isAppResignSweepEligible` is a no-op for it and
+    // `react`'s structural diff has nothing to project a second time. The
+    // switcher is different: it is still visible, still a
+    // `selectTransientAutoclose` candidate, and this settle is the one that
+    // writes `lastAttention` — so `react`'s attention-diff rule fires and
+    // names it on a `DismissWindow` effect.
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
     const settleEffects = react(resigned, settleEv, settled);
     assert.deepStrictEqual(
       settleEffects.filter((e) => e.type === 'HideWindow'),
       [],
+    );
+    assert.ok(
+      settleEffects.some((e) => e.type === 'DismissWindow' && e.id === switcher),
+      'the switcher is named on a DismissWindow effect at the settle',
     );
   });
 });
