@@ -1640,6 +1640,86 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
     assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'normal');
   });
 
+  it('normal -> entering stashes preBounds from the REAL bounds mirror, not a hardcoded null (95deff8c)', () => {
+    // Producer-side coverage for the `95deff8c` fix: the SetFullscreen
+    // 'normal' branch resolves `preBounds` as `rec.bounds ?? null`. Every
+    // other fixture in this describe block registers its window without
+    // ever setting bounds, so `rec.bounds` is `undefined` there and
+    // `rec.bounds ?? null` reads as `null` either way — a regression back to
+    // a hardcoded `null` would pass those unnoticed. This one seeds a real
+    // bounds mirror through `BoundsChanged` (the sole writer of `bounds`)
+    // before entering fullscreen, so that regression fails here.
+    const state = fold(registerTwo(), initialState());
+    const rect: Rectangle = { x: 10, y: 20, width: 640, height: 480 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: rect });
+
+    const enterDecision = decide(withBounds, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: withBounds.version });
+    assert.ok('events' in enterDecision);
+    assert.deepStrictEqual(enterDecision.events, [
+      { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: rect },
+    ]);
+    const entering = fold(enterDecision.events, withBounds);
+    const mode = entering.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(mode?.name, 'entering');
+    assert.deepStrictEqual((mode as { preBounds: Rectangle | null }).preBounds, rect, 'preBounds carries the real bounds mirror, not null');
+  });
+
+  it('a transition already entering, leaving or fullscreen never re-stashes preBounds from a further SetFullscreen', () => {
+    const state = fold(registerTwo(), initialState());
+    const rect: Rectangle = { x: 10, y: 20, width: 640, height: 480 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: rect });
+
+    // normal -> entering, real preBounds stashed.
+    const enterDecision = decide(withBounds, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: withBounds.version });
+    assert.ok('events' in enterDecision);
+    let s = fold(enterDecision.events, withBounds);
+    assert.deepStrictEqual((s.order.find((w) => w.id === wid(1))?.fsMode as { preBounds: Rectangle | null }).preBounds, rect);
+
+    // A further re-confirming request while still entering coalesces into
+    // pendingDesire — preBounds must survive untouched. (`desired: true`,
+    // not a change of mind, so the settle below still lands on fullscreen —
+    // the mind-changing coalesce is covered by "a request arriving
+    // mid-transition..." above.)
+    const midFlight = decide(s, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: s.version });
+    assert.ok('events' in midFlight);
+    s = fold(midFlight.events, s);
+    const enteringMode = s.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(enteringMode?.name, 'entering');
+    assert.deepStrictEqual((enteringMode as { preBounds: Rectangle | null }).preBounds, rect, 'preBounds untouched by a mid-flight coalesce');
+
+    // Settle into fullscreen.
+    s = evolve(s, { type: 'OsFullscreenEntered', id: wid(1) });
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
+
+    // The OS's own fullscreen-rect report lands on the bounds mirror (the
+    // transient rect `WindowRecord.bounds`'s doc names) — a re-stash from
+    // THIS value, rather than the held `fsMode.preBounds`, would be the
+    // aa34cb50 lookalike trap.
+    const transientRect: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    s = evolve(s, { type: 'BoundsChanged', id: wid(1), bounds: transientRect });
+
+    // fullscreen -> leaving: preBounds must come from the held fsMode, not
+    // from the current (fullscreen-rect) bounds mirror.
+    const leaveDecision = decide(s, { type: 'SetFullscreen', id: wid(1), desired: false, expectedVersion: s.version });
+    assert.ok('events' in leaveDecision);
+    assert.deepStrictEqual(leaveDecision.events, [
+      { type: 'FullscreenTransitionStarted', id: wid(1), entering: false, preBounds: rect },
+    ]);
+    s = fold(leaveDecision.events, s);
+    const leavingMode = s.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(leavingMode?.name, 'leaving');
+    assert.deepStrictEqual((leavingMode as { preBounds: Rectangle | null }).preBounds, rect, 'preBounds never overwritten by the fullscreen-era bounds report');
+
+    // A further request while still leaving coalesces too — preBounds
+    // still untouched.
+    const midFlightLeaving = decide(s, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: s.version });
+    assert.ok('events' in midFlightLeaving);
+    s = fold(midFlightLeaving.events, s);
+    const stillLeavingMode = s.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(stillLeavingMode?.name, 'leaving');
+    assert.deepStrictEqual((stillLeavingMode as { preBounds: Rectangle | null }).preBounds, rect, 'preBounds untouched by a mid-flight coalesce while leaving');
+  });
+
   it('a request arriving mid-transition records pendingDesire and is applied on settle', () => {
     const state = fold(registerTwo(), initialState());
 
