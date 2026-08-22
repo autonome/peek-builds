@@ -645,18 +645,11 @@ export async function initialize(): Promise<void> {
       publish(getSystemAddress(), 'app:focus-changed', { focused: false });
 
       // (Overlay-switcher close removed — §5 step 9's LAST direct window call
-      // out of this file. The backend's own did-resign-active listener
-      // dispatches APP_RESIGNED; the reducer's clause emits
-      // CLOSE_SWITCHER_WINDOW(restoreFocus:false) when `switcher.open`, and
-      // the executor performs the SAME sequence this loop did —
-      // `exitOverlayForAppBlur()`, the `__closedDueToAppBlur` stamp, then the
-      // close — behind the same two izui cooldown guards, still on the resign
-      // EDGE (not the ~500ms APP_RESIGN_SETTLED point, so Cmd+Tab dismissal
-      // stays immediate). Two incidental narrowings come with it: the target
-      // is now the machine's `switcher.windowId` rather than "the first
-      // registry entry with role:'overlay'" — which could pick the spaces
-      // border or the chrome overlay — and `closeOrHide` replaces the bare
-      // `close()`, matching what the ESC path already did to the same window.)
+      // out of this file. The switcher is a TRANSIENT-role window
+      // (`window-kernel.ts` `TRANSIENT_ROLES`), so an app resign dismisses it
+      // through the same `selectTransientAutoclose` law that closes any other
+      // transient window on app blur — no dedicated overlay-switcher path or
+      // side-channel stamp survives here.)
 
       // (HUD hide removed — the reducer's APP_RESIGNED clause hides the
       // visible class-'hud' windows via HIDE_WINDOW effects. The class field
@@ -786,12 +779,6 @@ export async function initialize(): Promise<void> {
         // the raise. See window-state.ts.)
 
         if (windowData) {
-          // Check if this overlay was already handled by the app-blur path.
-          // When the user Cmd+Tabs away, did-resign-active calls exitOverlayForAppBlur()
-          // (which restores windows without focusing) before closing the overlay window.
-          // In that case, skip all overlay restoration logic here.
-          const closedDueToAppBlur = (window as any).__closedDueToAppBlur === true;
-
           // Overlay restoration: use coordinator as single source of truth
           const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
           if (isOverlayWindow) {
@@ -834,11 +821,6 @@ export async function initialize(): Promise<void> {
             }
 
             // Pop AFTER exitOverlay — order matters to avoid premature session end
-            coordinator.popWindow(windowId);
-          } else if (closedDueToAppBlur) {
-            // App-blur path already handled restoration via exitOverlayForAppBlur().
-            // Just pop the window from the stack — no focus, no restoration needed.
-            DEBUG && console.log('[izui] Overlay closed due to app blur — skipping restoration (already handled)');
             coordinator.popWindow(windowId);
           } else {
             // Non-overlay close. There used to be a fallback here that

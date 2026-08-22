@@ -1091,18 +1091,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * native id (the one place allowed to). The returned promise is test-bridge
    * settlement only — nothing in the machine waits on it.
    */
-  closeOrHide(id: WindowId, opts?: { closedDueToAppBlur?: boolean }): Promise<void> {
+  closeOrHide(id: WindowId): Promise<void> {
     const osId = this.osWindowIdOf(id);
     if (osId == null) return Promise.resolve();
-    if (opts?.closedDueToAppBlur === true) {
-      // The legacy side channel the `main.ts` 'closed' handler reads
-      // (`__closedDueToAppBlur`). The expando lives on the native window, so
-      // the write belongs here — the executor holds no handles. Stamped
-      // IMMEDIATELY before the close, the ordering the old `main.ts
-      // did-resign-active` loop had, so the 'closed' handler always sees it.
-      const win = this.windows.get(id)?.win;
-      if (win) (win as unknown as { __closedDueToAppBlur?: boolean }).__closedDueToAppBlur = true;
-    }
     return closeOrHideWindow(osId);
   }
 

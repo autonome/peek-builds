@@ -360,23 +360,6 @@ describe('IZUI State Coordinator Tests', () => {
       assert.deepStrictEqual(session.hiddenWindowIds, []);
     });
 
-    it('exitOverlayForAppBlur also clears hidden-window state without touching any window', () => {
-      // Same reasoning as the regular exit path.
-      const hiddenWindow = createMockWindow(1);
-      hiddenWindow._visible = false;
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.enterOverlay(100, [1]);
-
-      coordinator.exitOverlayForAppBlur();
-
-      assert.strictEqual(hiddenWindow._visible, false, 'exitOverlayForAppBlur must not touch any window');
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.overlayWindowId, null);
-      assert.deepStrictEqual(session.hiddenWindowIds, []);
-    });
-
     it('should return to transient state after overlay if session was transient', () => {
       mockWindows.push(createMockWindow(1));
 
@@ -981,61 +964,6 @@ describe('IZUI State Coordinator Tests', () => {
     });
   });
 
-  describe('exitOverlayForAppBlur', () => {
-    it('clears hidden-window and focus-target state without setting focus', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-      coordinator.pushWindow(2);
-      mockFrontWindowId = 2;
-
-      coordinator.enterOverlay(100, [1, 2]);
-      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
-
-      // App blur exit — clears session state, does not touch any window or focus target
-      coordinator.exitOverlayForAppBlur();
-
-      // State should return to previous (active)
-      assert.strictEqual(coordinator.getState(), 'active');
-      assert.strictEqual(coordinator.isOverlay(), false);
-
-      // Focus targets should be cleared — no window should be focused
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.preOverlayFocusTarget, null,
-        'preOverlayFocusTarget should be cleared (no focus on app blur)');
-      assert.strictEqual(session.overlayFocusTarget, null,
-        'overlayFocusTarget should be cleared (no focus on app blur)');
-    });
-
-    it('should not restore windows when not in overlay mode', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-
-      // Not in overlay mode — should be a no-op
-      coordinator.exitOverlayForAppBlur();
-
-      assert.strictEqual(coordinator.getState(), 'active');
-    });
-
-    it('should set lastOverlayExitTime for cooldown', () => {
-      const winA = createMockWindow(1);
-      mockWindows.push(winA);
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-      coordinator.enterOverlay(100, [1]);
-
-      const beforeTime = Date.now();
-      coordinator.exitOverlayForAppBlur();
-      const afterTime = Date.now();
-
-      const exitTime = coordinator.getLastOverlayExitTime();
-      assert.ok(exitTime >= beforeTime && exitTime <= afterTime,
-        'lastOverlayExitTime should be set to current time');
-    });
-  });
-
   describe('Overlay exit cooldown', () => {
     it('should not be in cooldown initially', () => {
       const coordinator = izuiState.getIzuiCoordinator();
@@ -1055,21 +983,6 @@ describe('IZUI State Coordinator Tests', () => {
 
       assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true,
         'Should be in cooldown right after overlay exit');
-    });
-
-    it('should be in cooldown immediately after exitOverlayForAppBlur', () => {
-      const winA = createMockWindow(1);
-      mockWindows.push(winA);
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-      coordinator.enterOverlay(100, [1]);
-
-      coordinator.exitOverlayForAppBlur();
-
-      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true,
-        'Should be in cooldown right after app blur overlay exit');
     });
 
     it('should accept custom cooldown duration', () => {
@@ -1160,45 +1073,4 @@ describe('IZUI State Coordinator Tests', () => {
     });
   });
 
-  describe('State is clean after both overlay close paths', () => {
-    it('should have identical state after exitOverlay vs exitOverlayForAppBlur', () => {
-      // Path 1: normal exitOverlay
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-      coordinator.pushWindow(100);
-      coordinator.enterOverlay(100, [1]);
-      coordinator.exitOverlay();
-
-      const stateAfterNormal = coordinator.getState();
-      const sessionAfterNormal = coordinator.getSession();
-      const overlayAfterNormal = coordinator.isOverlay();
-
-      // Reset for path 2
-      coordinator._resetAll();
-
-      // Path 2: app blur exitOverlay
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-      coordinator.pushWindow(100);
-      coordinator.enterOverlay(100, [1]);
-      coordinator.exitOverlayForAppBlur();
-
-      const stateAfterBlur = coordinator.getState();
-      const sessionAfterBlur = coordinator.getSession();
-      const overlayAfterBlur = coordinator.isOverlay();
-
-      // Both paths should leave identical coordinator state
-      assert.strictEqual(stateAfterNormal, stateAfterBlur,
-        'State should be the same after both exit paths');
-      assert.strictEqual(overlayAfterNormal, overlayAfterBlur,
-        'isOverlay should be the same after both exit paths');
-      assert.ok(sessionAfterNormal, 'Session should exist after normal exit');
-      assert.ok(sessionAfterBlur, 'Session should exist after app blur exit');
-      assert.strictEqual(sessionAfterNormal!.overlayWindowId, sessionAfterBlur!.overlayWindowId,
-        'overlayWindowId should be null in both');
-      assert.deepStrictEqual(sessionAfterNormal!.hiddenWindowIds, sessionAfterBlur!.hiddenWindowIds,
-        'hiddenWindowIds should be empty in both');
-    });
-  });
 });

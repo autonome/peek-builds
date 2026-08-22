@@ -306,28 +306,6 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Exit overlay mode due to app losing OS focus (Cmd+Tab away).
-   * Does NOT focus any window — the user is switching to another app.
-   */
-  exitOverlayForAppBlur(): void {
-    if (!this.session || this.state !== 'overlay') {
-      DEBUG && console.log('[izui] Not in overlay mode (app blur path)');
-      return;
-    }
-
-    DEBUG && console.log('[izui] Exiting overlay (app blur)');
-
-    // Return to previous state based on entry mode
-    this.state = this.session.entryMode;
-    this.session.overlayWindowId = null;
-    this.session.hiddenWindowIds = [];
-    this.session.preOverlayFocusTarget = null;
-    this.session.overlayFocusTarget = null;
-    this.lastOverlayExitTime = Date.now();
-    this.emitSessionChange();
-  }
-
-  /**
    * Check if we're within the overlay exit cooldown period.
    * After an overlay closes, window restoration can trigger a brief
    * did-resign-active → did-become-active cycle (macOS focus dance).
