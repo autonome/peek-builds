@@ -143,10 +143,13 @@ below. Regression: `hybrid-close-two-hosts-hang.spec.ts` (commit `0230c9e8`), 53
 the fix, 2 after. Found by check-driven live use during the macOS sign-off run, not by any spec or
 the full test suite — see `docs/design/window-manager-macos-signoff.md`.
 
-What remains open on this branch is not code defects but unrun verification: the macOS sign-off
-(`docs/design/window-manager-macos-signoff.md`, 12 checks — 1 and 2 observed passing on the
-2026-08-19 run, 3-12 not run), the remaining decision in §0.1.10, and the retirement of
-`window-state.ts` / `window-os-adapter.ts`.
+The retirement of `window-state.ts` / `window-os-adapter.ts` is DONE: commit `f189496b` deleted
+both files along with `window-state.test.ts`. `window-kernel.ts` + `window-kernel-executor.ts`,
+fed by `window-kernel-shadow.ts`, are the only window machine left — no shadow comparison, no
+dual-write, no fallback path. What remains open on this branch is not code defects but unrun
+verification: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks — 1
+and 2 observed passing on the 2026-08-19 run, 3-12 not run) and the remaining decision in
+§0.1.10.
 
 §0.1.10's ESC/`child-content` question is CLOSED as of 2026-08-20, by history rather than by a new
 decision: `900b0268` added the close-on-ESC arm and `a9c4ec88` reversed it four weeks later, so
@@ -660,6 +663,14 @@ selectTransientAutoclose`, implemented against the kernel as recorded in §0.1.1
   `State.lastAttention`'s `seq`, not a branch on the event type. That keeps rule application
   non-optional: the machine remains the only thing that can dismiss a transient, and no dispatch
   site can silently skip running it.
+
+**A transient window closes when it loses focus. Any reason. Always.** Three exemptions, all
+relational, never per window kind: the focuser names it as parent (`focuser.parentId ===
+rec.id`) or is its overlay (`focuser.overlayFor === rec.id`); an overlay is attached to it
+(`rec.overlayFor !== undefined`); it is click-through (`!rec.acceptsInput`) and so can never be
+in the user's way. Transient roles are `window-kernel.ts TRANSIENT_ROLES`: `quick-view`,
+`palette`, `switcher`, `overlay`. Enforced by `window-kernel-properties.test.ts
+checkTransientHideIsNotDismiss`.
 
 ---
 

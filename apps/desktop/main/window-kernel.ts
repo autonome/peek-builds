@@ -1698,9 +1698,27 @@ export function evolve(state: State, ev: Event): State {
               ? { selfClosesOnBlur: existing.selfClosesOnBlur }
               : {}),
         };
+        // A REVERSIBLE HIDE MUST NEVER SURVIVE INTO A TRANSIENT IDENTITY IT
+        // WOULD NOT HAVE BEEN GIVEN IN THE FIRST PLACE (same law as
+        // `AppResigned`/`AppResignSettled`'s own fix — see those arms' doc —
+        // reached here through a re-registration instead of a resign):
+        // `hiddenByAppBlur` was preserved above as a lived fact from a
+        // registration whose `role` may have been anything; if THIS merge is
+        // what makes the record transient, `AppActivated` would later reveal
+        // it rather than the machine ever dismissing it, because a hidden
+        // record is invisible to `selectTransientAutoclose`'s own `visible`
+        // clause and so cannot be called here to derive the answer — the
+        // three clauses are restated instead, matching the law's degenerate
+        // (no-focuser) case exactly.
+        const strandedByRoleChange =
+          merged.hiddenByAppBlur === true &&
+          roleIn(TRANSIENT_ROLES, merged.role) &&
+          merged.overlayFor === undefined &&
+          merged.acceptsInput;
+        const mergedRecord = strandedByRoleChange ? { ...merged, hiddenByAppBlur: false } : merged;
         return {
           ...state,
-          order: [...state.order.slice(0, existingIdx), merged, ...state.order.slice(existingIdx + 1)],
+          order: [...state.order.slice(0, existingIdx), mergedRecord, ...state.order.slice(existingIdx + 1)],
           version: state.version + 1,
         };
       }
@@ -2040,8 +2058,17 @@ export function evolve(state: State, ev: Event): State {
       // No `opSeq` is stamped, exactly as the `AppResignSettled` sweep stamps
       // none: `lastOpSeq` tracks focus-family ops and `HideWindow` carries no
       // token. Nothing here touches `key` or `order` (RULE 2).
+      //
+      // A REVERSIBLE HIDE MUST NEVER CLAIM A DISMISSAL VICTIM. `dismissVictims`
+      // is exactly `selectTransientAutoclose`'s answer for this resign — there
+      // is no focuser at an app resign, so `null` yields the law's three
+      // exemptions with the focuser-relation clause vacuous (see that
+      // function's doc). A transient this raw edge hid would read `!visible`
+      // to `selectTransientAutoclose` at the settle and survive it; excluding
+      // it here instead leaves it visible for the settle to dismiss.
+      const dismissVictims = new Set(selectTransientAutoclose(state, null));
       const hidesImmediately = (w: WindowRecord): boolean =>
-        w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
+        !dismissVictims.has(w.id) && w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
       const hidesSomething = state.order.some(hidesImmediately);
       return {
         ...state,
@@ -2194,11 +2221,18 @@ export function evolve(state: State, ev: Event): State {
       // STATE test (`state.appActive`), not an event test, which is why the
       // guard belongs here, on the write, rather than in `react`.
       const attentionLost = !state.appActive;
+      // A REVERSIBLE HIDE MUST NEVER CLAIM A DISMISSAL VICTIM (see the
+      // `AppResigned` arm's matching note). Computed only on the branch that
+      // actually writes `lastAttention` below: a settle that does not dismiss
+      // runs the backstop hide unfiltered, exactly as it does today.
+      const dismissVictims = attentionLost ? new Set(selectTransientAutoclose(state, null)) : null;
       return {
         ...state,
         pendingAppResignSweep: false,
         order: state.order.map((w) =>
-          isAppResignSweepEligible(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w,
+          isAppResignSweepEligible(w) && !(dismissVictims?.has(w.id) ?? false)
+            ? { ...w, visible: false, hiddenByAppBlur: true }
+            : w,
         ),
         lastAttention: attentionLost
           ? { holder: null, cause: WORLD_CAUSE, seq: nextAttentionSeq(state) }

@@ -35,6 +35,8 @@ import {
   isContentWindow,
   hostForOverlay,
   BASE_LAYER,
+  TRANSIENT_ROLES,
+  roleIn,
   type State,
   type Event,
   type Command,
@@ -1125,6 +1127,51 @@ function checkAutocloseWiring(step: Step): string[] {
 }
 
 /**
+ * THE TRANSIENT-DISMISSAL LAW, held as a standing invariant on `next` alone
+ * (`docs/design/window-manager.md` § 0: "a transient closes on any focus
+ * loss, with exactly three exemptions, none of them per-role"): no record
+ * whose role is in `TRANSIENT_ROLES` may carry `hiddenByAppBlur === true`
+ * unless one of the three exemptions holds. Restated here as literal clause
+ * checks rather than a call into `selectTransientAutoclose` — this checker
+ * exists to catch a hide-instead-of-dismiss path even one that never runs
+ * that selector at all, which is exactly the shape the bug it pins took
+ * (`evolve`'s `AppResigned`/`AppResignSettled` arms hid a transient on the
+ * raw resign edge / settle backstop, and `selectTransientAutoclose` — reading
+ * `visible` — could no longer see it as a dismissal candidate).
+ *
+ * `hiddenByAppBlur` is a REVERSIBLE hide; a transient hidden that way instead
+ * of dismissed survives an `AppActivated` re-show — the command palette
+ * surviving a Cmd+Tab and reappearing over whatever the user switched to.
+ *
+ * Exemption 1 (a focuser naming this record as parent or overlay) is
+ * VACUOUS for every setter of `hiddenByAppBlur` today: both arms that write
+ * it true derive their hide from an app resign, which names no focuser at
+ * all (see those arms' own doc) — so only exemptions 2 and 3 can ever spare
+ * a hidden transient in the current kernel, and clause 1 is checked anyway
+ * so a future arm that DOES have a focuser is held to the same law.
+ */
+function checkTransientHideIsNotDismiss(step: Step): string[] {
+  const violations: string[] = [];
+  const holder = step.next.lastAttention?.holder ?? null;
+  const focuser = holder !== null ? step.next.order.find((w) => w.id === holder) : undefined;
+  for (const rec of step.next.order) {
+    if (rec.hiddenByAppBlur !== true) continue;
+    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    // Exemption 1: the focuser names this record as parent or overlay.
+    if (focuser !== undefined && (focuser.parentId === rec.id || focuser.overlayFor === rec.id)) continue;
+    // Exemption 2: an overlay is attached to this record.
+    if (rec.overlayFor !== undefined) continue;
+    // Exemption 3: click-through — can never be in the user's way.
+    if (!rec.acceptsInput) continue;
+    violations.push(
+      `transient record ${rec.id} (role=${rec.role}) carries hiddenByAppBlur===true with none of the three ` +
+        `exemptions holding — docs/design/window-manager.md § 0: a transient closes on any focus loss, always`,
+    );
+  }
+  return violations;
+}
+
+/**
  * Extra invariant on `react`'s output: every emitted effect names a window
  * still in `next.order` — this is what guarantees, among other things, that
  * no `SetBounds` effect (this slice) ever names a window absent from `order`.
@@ -1253,6 +1300,12 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           const wiringViolations = checkAutocloseWiring(step);
           if (wiringViolations.length > 0) {
             throw new Error(reproMessage(seed, log, i, `autoclose wiring violation(s): ${wiringViolations.join('; ')}`));
+          }
+          const hideNotDismissViolations = checkTransientHideIsNotDismiss(step);
+          if (hideNotDismissViolations.length > 0) {
+            throw new Error(
+              reproMessage(seed, log, i, `transient-dismissal law violation(s): ${hideNotDismissViolations.join('; ')}`),
+            );
           }
         }
 
