@@ -231,10 +231,11 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   clearAppFocusedForTest: () => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(null);
-    // Shadow-feed the kernel the same restore-to-active edge
-    // `setAppFocusedForTest` above feeds — see its comment for why this test
-    // bridge is the only app-activation input on a headless/Linux run.
-    shadowKernelAppActivated();
+    // No kernel feed here: the APP_ACTIVATED dispatch this reset used to make
+    // reached only the old window machine (deleted), never the kernel, so
+    // feeding it here would hand the kernel a fact it never had rather than
+    // preserving one — and it would disarm pendingAppResignSweep and re-show
+    // every hiddenByAppBlur window at teardown.
   },
   /**
    * Read the restoreSessionSnapshot drift-detection counters. Reset at
