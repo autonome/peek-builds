@@ -3021,7 +3021,10 @@ function installTestBridge(): void {
      */
     async driveHostFullscreen(id: number, desired: boolean): Promise<void> {
       // Drive through the kernel (the single setFullScreen owner) exactly as
-      // the `fullscreen` command does.
+      // the `fullscreen` command does. The kernel resolves `preBounds`
+      // itself from its own bounds mirror on the normal→entering edge (the
+      // fullscreen-lookalike session-save fix) — this bridge does not need
+      // to read or pass bounds.
       const machineId = getWindowIdFor(id);
       if (machineId == null) return;
       shadowKernelSetFullscreen(machineId, desired);

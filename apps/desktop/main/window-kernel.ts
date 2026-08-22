@@ -3377,7 +3377,12 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       }
       if (mode.name === 'normal') {
         if (!cmd.desired) return { events: [] }; // already normal -> no-op, no OS call
-        return { events: [{ type: 'FullscreenTransitionStarted', id: cmd.id, entering: true, preBounds: null }] };
+        // Stash the pre-fullscreen rect from the machine's own bounds
+        // mirror — never a live query, and read from `rec` (the
+        // pre-transition record), same pattern as Maximize's `preMaxBounds`
+        // stash above. `null` = no stash was possible (no bounds ever
+        // reported for this window).
+        return { events: [{ type: 'FullscreenTransitionStarted', id: cmd.id, entering: true, preBounds: rec.bounds ?? null }] };
       }
       // mode.name === 'fullscreen'
       if (cmd.desired) return { events: [] }; // already fullscreen -> no-op, no OS call
