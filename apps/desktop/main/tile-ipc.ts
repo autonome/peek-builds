@@ -125,13 +125,10 @@ import { getWindowPresentation } from './window-presenter.js';
 import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   getTopmostContentWindowId,
-  getDevtoolsTargetId,
   getWindowModeName,
-  dispatchWindowEvent,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  getWindowStateSnapshot,
   getKernelExecutorForApp,
 } from './window-state-singleton.js';
 import { wmLog } from './window-diag.js';
@@ -3038,7 +3035,6 @@ export function registerTileIpcHandlers(): void {
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           const machineId = getWindowIdFor(args.id);
           if (machineId != null) {
-            dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
             shadowKernelShowRequested(machineId, true);
           }
           return { success: true };
@@ -3085,10 +3081,8 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(args.id);
           const fsMode = machineId != null ? getWindowModeName(machineId) : null;
           if (machineId != null && fsMode != null && fsMode !== 'normal') {
-            dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
             // Feed the kernel (window-kernel-shadow.ts) — this is what
-            // drives the window manager; the dispatch above only reaches
-            // the old machine, whose matching effect arm is a no-op.
+            // drives the window manager.
             shadowKernelSetFullscreen(machineId, false);
             const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
             if (outcome !== 'settled') {
@@ -3099,25 +3093,23 @@ export function registerTileIpcHandlers(): void {
             }
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
-          // Route the hide through the machine (§5 step 6A-4):
-          // WINDOW_HIDE_REQUESTED → HIDE_WINDOW → backend.hideWindow. The
-          // backend's native 'hide' listener is the only WINDOW_HIDDEN source
-          // — the old synchronous hand-dispatch (peek 71cfde09's workaround
-          // for the macOS BaseWindow 'hide'-event lag) is gone, the same
-          // acceptance the 6A-3 keepLive cutover made in closeOrHideWindow.
+          // Route the hide through the kernel (§5 step 6A-4): HideWindow →
+          // backend.hideWindow. The backend's native 'hide' listener is the
+          // only WINDOW_HIDDEN source — the old synchronous hand-dispatch
+          // (peek 71cfde09's workaround for the macOS BaseWindow 'hide'-event
+          // lag) is gone, the same acceptance the 6A-3 keepLive cutover made
+          // in closeOrHideWindow.
           if (machineId != null) {
-            dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
             shadowKernelHideRequested(machineId);
           }
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
       }
-      // Machine hide intent (§5 step 6A-4) — R2: only the backend hides.
+      // Kernel hide intent (§5 step 6A-4) — R2: only the backend hides.
       {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
           shadowKernelHideRequested(machineId);
         }
       }
@@ -3168,7 +3160,6 @@ export function registerTileIpcHandlers(): void {
       }
       const machineId = getWindowIdFor(args.id);
       if (machineId != null) {
-        dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
         shadowKernelShowRequested(machineId, true);
       }
       return { success: true };
@@ -3225,11 +3216,10 @@ export function registerTileIpcHandlers(): void {
       if (!win || win.isDestroyed()) {
         return { success: false, error: 'Tile window not found' };
       }
-      // Machine hide intent (§5 step 6A-4) — R2: only the backend hides.
+      // Kernel hide intent (§5 step 6A-4) — R2: only the backend hides.
       {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
           shadowKernelHideRequested(machineId);
         }
       }
@@ -3320,15 +3310,11 @@ export function registerTileIpcHandlers(): void {
         primaryDisplayId: screen.getPrimaryDisplay().id,
       });
       if (result.kind === 'reposition') {
-        // Machine-owned since §5 step 7E: the rect is computed here at the
-        // dispatch site (reducer keeps zero value imports) and the write is
-        // driven as the reducer's SET_BOUNDS effect through the port.
+        // Kernel-owned since §5 step 7E: the rect is computed here at the
+        // feed site (the kernel keeps zero value imports) and the write is
+        // driven as the kernel's SetBounds effect through the port.
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-          // the window manager; the dispatch above only reaches the old
-          // machine, whose matching effect arm is a no-op.
           shadowKernelSetBounds(machineId, result.bounds);
         }
       }
@@ -3373,13 +3359,9 @@ export function registerTileIpcHandlers(): void {
           primaryDisplayId,
         });
         if (result.kind === 'reposition') {
-          // §5 step 7E — same machine-routed write as tile:window:center.
+          // §5 step 7E — same kernel-routed write as tile:window:center.
           const machineId = getWindowIdFor(win);
           if (machineId != null) {
-            dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-            // Feed the kernel (window-kernel-shadow.ts) — this is what
-            // drives the window manager; the dispatch above only reaches
-            // the old machine, whose matching effect arm is a no-op.
             shadowKernelSetBounds(machineId, result.bounds);
           }
         }
@@ -3449,34 +3431,27 @@ export function registerTileIpcHandlers(): void {
       if (machineId == null) {
         return { success: false, error: 'Window not registered with window-state machine' };
       }
-      // Dispatch-site reads: current bounds pick the display; the work
-      // area rides the event (the reducer imports no value modules).
+      // Feed-site reads: current bounds pick the display; the work area
+      // rides the command (the kernel imports no value modules).
       const currentBounds = win.getBounds();
       const workArea = screen.getDisplayMatching(currentBounds).workArea;
       const workAreaRect = { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
-      // Pre-dispatch record — the renderer notification below reports the
-      // pre-maximize rect, and after the dispatch the record already
-      // reflects the maximize.
+      // Pre-feed record — the renderer notification below reports the
+      // pre-maximize rect, and after the feed the record already reflects
+      // the maximize.
       const recBefore = getMachineWindowRecord(machineId);
-      dispatchWindowEvent({
-        type: 'MAXIMIZE_REQUESTED',
-        id: machineId,
-        workArea: workAreaRect,
-      });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op. The kernel's `Maximize`
-      // command carries the work area as data (`459ed219` shape — see
-      // `shadowKernelMaximize`'s doc), same rect as the old event above.
+      // window manager. The kernel's `Maximize` command carries the work
+      // area as data (`459ed219` shape — see `shadowKernelMaximize`'s doc).
       shadowKernelMaximize(machineId, workAreaRect);
       // Targeted notification to the window's renderer — a renderer that
       // owns internal layout state subscribes via
       // api.window.onMaximizeRequest to keep its layout in sync without
       // going through pubsub broadcast. prevWindowBounds is null on a
-      // re-maximize (the machine's stash is not overwritten — matching
-      // the reducer's idempotent MAXIMIZE_REQUESTED clause); otherwise
-      // it is the machine's bounds mirror (what the reducer stashed),
-      // falling back to the live read for a mirror the machine never saw.
+      // re-maximize (the kernel's stash is not overwritten — matching the
+      // kernel's idempotent Maximize clause); otherwise it is the kernel's
+      // bounds mirror (what the kernel stashed), falling back to the live
+      // read for a mirror the kernel never saw.
       try {
         win.webContents.send('tile:window:maximize-request', {
           prevWindowBounds: recBefore?.maximized === true ? null : {
@@ -3533,10 +3508,8 @@ export function registerTileIpcHandlers(): void {
         );
       } catch { /* logging must never throw */ }
 
-      dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       shadowKernelUnmaximize(machineId);
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
@@ -3565,51 +3538,38 @@ export function registerTileIpcHandlers(): void {
       if (args.id !== undefined && typeof args.id !== 'number') {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
-      // Both window kinds now route through ONE path: dispatch
-      // FULLSCREEN_REQUESTED into the window-state machine (the single
-      // `setFullScreen` owner + settle-aware transition table). `id` defaults to
-      // the front window. We pass the target's CURRENT outer bounds so the
-      // reducer stashes them as `preBounds` on the normal→entering edge (the
-      // fullscreen-lookalike session-save fix); the reducer ignores `bounds` on
-      // every other edge. An unregistered id is a reducer no-op (both browser
-      // and hybrid windows register at creation).
+      // Both window kinds now route through ONE path: feed the kernel's
+      // single `SetFullscreen` command (the single `setFullScreen` owner +
+      // settle-aware transition table). `id` defaults to the front window.
+      // The kernel resolves `preBounds` itself from its own bounds mirror on
+      // the normal→entering edge (the fullscreen-lookalike session-save
+      // fix) — this seam does not need to read or pass bounds. An
+      // unregistered id is a kernel no-op (both browser and hybrid windows
+      // register at creation).
       // Resolve the target both ways at the seam: a renderer-supplied `args.id`
       // is an ELECTRON window id (the tile IPC surface stays numeric until the
       // id-space collapse lands); no id means "the front window", which the
       // machine hands back as a WM WindowId.
       let machineId: ReturnType<typeof getTopmostContentWindowId> = null;
-      let boundsWin: ReturnType<typeof getLiveWindow> | BaseWindow | null = null;
       if (typeof args.id === 'number') {
         machineId = getWindowIdFor(args.id);
-        boundsWin = getLiveWindow(args.id) ?? getHybridWindow(args.id)?.baseWin ?? null;
       } else {
         machineId = getTopmostContentWindowId();
-        boundsWin = machineId != null ? getNativeWindowFor(machineId) : null;
       }
       if (machineId == null) {
-        // An explicit id that never registered with the machine was a reducer
-        // no-op before the id-space split too — keep that a silent success.
+        // An explicit id that never registered with the kernel was a no-op
+        // before the id-space split too — keep that a silent success.
         if (typeof args.id === 'number') return { success: true };
         return { success: false, error: 'Window not found' };
       }
-      let bounds: { x: number; y: number; width: number; height: number } | null = null;
-      try {
-        if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds();
-      } catch { /* window gone mid-request */ }
-      // No `desired` on this dispatch — the old machine's own reducer toggles
-      // off its CURRENT fsMode (window-state.ts `desiredFullscreen`). Mirror
-      // that same toggle here so the shadow kernel's `SetFullscreen` carries
-      // an explicit boolean rather than one this module invents: `normal` and
-      // `leaving` (the kernel's mode name — the old machine spelled it
-      // `leaving-fullscreen`) both want fullscreen next, `fullscreen` and
-      // `entering` both want out. Skipped when the machine holds no record
-      // for this id — the same case the reducer's own `if (!rec) break;`
-      // no-ops on.
+      // Toggle off the CURRENT fsMode so the shadow kernel's `SetFullscreen`
+      // carries an explicit boolean rather than one this module invents:
+      // `normal` and `leaving` both want fullscreen next, `fullscreen` and
+      // `entering` both want out. Skipped when the kernel holds no record
+      // for this id.
       const oldMode = getWindowModeName(machineId);
-      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, bounds });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       if (oldMode !== null) {
         const desired = oldMode === 'normal' || oldMode === 'leaving';
         shadowKernelSetFullscreen(machineId, desired);
@@ -3694,7 +3654,7 @@ export function registerTileIpcHandlers(): void {
       // (the renderer-facing surface stays numeric until the id-space collapse).
       let targetId: number | null = typeof args.id === 'number' ? args.id : null;
       if (targetId == null) {
-        const machineId = getDevtoolsTargetId() ?? getTopmostContentWindowId();
+        const machineId = getTopmostContentWindowId();
         const nativeWin = machineId != null ? getNativeWindowFor(machineId) : null;
         targetId = nativeWin ? nativeWin.id : null;
       }
@@ -3785,31 +3745,14 @@ export function registerTileIpcHandlers(): void {
       if (machineId == null) {
         return { success: false, error: 'Window not registered with window-state machine' };
       }
-      // Machine-owned since §5 step 10: the RAW path. The renderer supplies
-      // both halves (`visible` plus the platform options) and has no role to
-      // consult, so this dispatches SET_VISIBLE_ON_ALL_SPACES_REQUESTED rather
-      // than SPACES_POLICY_REQUESTED. The reducer records the intent on
-      // `WindowRecord.visibleOnAllSpaces` and emits one
-      // SET_VISIBLE_ON_ALL_SPACES effect; only the flags the caller actually
-      // supplied ride it (undefined means "don't pass the option", which is
-      // not the same as `false`).
-      dispatchWindowEvent({
-        type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED',
-        id: machineId,
-        on: args.visible === true,
-        visibleOnFullScreen: args.options?.visibleOnFullScreen,
-        skipTransformProcessType: args.options?.skipTransformProcessType,
-      });
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op. The renderer's raw
-      // boolean IS the same on/off fact the kernel's `DesktopMembership`
-      // names, so it is translated directly rather than carried as a second,
-      // boolean-shaped command: `true` -> rides along with the user
-      // (`'follow'`), `false` -> stays on the desktop it was opened on
-      // (`'anchor'`). The caller-supplied platform options (`args.options`)
-      // are NOT fed — they are Electron `setVisibleOnAllWorkspaces` argument
-      // names and have no meaning to the kernel's platform-neutral command.
+      // Kernel-owned since §5 step 10. The renderer's raw boolean IS the
+      // same on/off fact the kernel's `DesktopMembership` names, so it is
+      // translated directly rather than carried as a second, boolean-shaped
+      // command: `true` -> rides along with the user (`'follow'`), `false`
+      // -> stays on the desktop it was opened on (`'anchor'`). The
+      // caller-supplied platform options (`args.options`) are NOT fed — they
+      // are Electron `setVisibleOnAllWorkspaces` argument names and have no
+      // meaning to the kernel's platform-neutral command.
       shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor');
       return { success: true };
     } catch (err) {
@@ -3914,16 +3857,12 @@ export function registerTileIpcHandlers(): void {
       width: args.width ?? current.width,
       height: args.height ?? current.height,
     };
-    // Machine-owned since §5 step 7E: the partial-args merge against the live
-    // rect happens here at the dispatch site; the write is the reducer's
-    // SET_BOUNDS effect through the port. The bounds mirror updates only via
+    // Kernel-owned since §5 step 7E: the partial-args merge against the live
+    // rect happens here at the feed site; the write is the kernel's
+    // SetBounds effect through the port. The bounds mirror updates only via
     // the backend's BOUNDS_CHANGED echo.
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
-      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: next });
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(machineId, next);
     }
 

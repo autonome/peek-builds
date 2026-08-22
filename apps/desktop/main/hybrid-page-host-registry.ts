@@ -24,9 +24,10 @@
  * `debug-list-windows`, `debug-eval`) can rely on it unconditionally.
  *
  * **Active-window / fullscreen tracking has moved.** Front-window, active-hybrid,
- * and native-fullscreen tracking are now owned by the window-state machine
- * (`window-state.ts` + `window-os-adapter.ts` + `window-state-singleton.ts`), not
- * this registry. This module owns object lifecycle/lookup/dedup only.
+ * and native-fullscreen tracking are now owned by the kernel
+ * (`window-kernel.ts` + `window-kernel-executor.ts`, fed via
+ * `window-kernel-shadow.ts` + `window-state-singleton.ts`), not this registry.
+ * This module owns object lifecycle/lookup/dedup only.
  */
 
 import type { BaseWindow, WebContents } from 'electron';
@@ -141,9 +142,9 @@ interface InternalEntry {
 const entries = new Map<number, InternalEntry>();
 
 // Active-window tracking, the focus-group model, and native-fullscreen
-// tracking now live in the window-state machine (window-state.ts +
-// window-os-adapter.ts + window-state-singleton.ts). This module owns object
-// lifecycle/lookup/dedup only.
+// tracking now live in the kernel (window-kernel.ts + window-kernel-executor.ts,
+// fed via window-kernel-shadow.ts + window-state-singleton.ts). This module
+// owns object lifecycle/lookup/dedup only.
 
 function safeUrl(wc: WebContents): string {
   try {
@@ -283,11 +284,11 @@ export function getHybridWindow(windowId: number): HybridWindowEntry | null {
   return e ? toPublic(e) : null;
 }
 
-// Maximize state (`maximized` / `preMaxBounds`) now lives on the window-state
-// machine record (window-state.ts WindowRecord — §5 step 7B), driven by the
-// MAXIMIZE_REQUESTED / UNMAXIMIZE_REQUESTED / MAXIMIZE_RESTORED /
-// MAXIMIZE_EXITED_BY_RESIZE reducer transitions. The rationale that used to
-// live here (frameless hosts never fire native 'maximize' events, so the
+// Maximize state (`maximized` / `preMaxBounds`) now lives on the kernel
+// record (window-kernel.ts WindowRecord — §5 step 7B), driven by the
+// Maximize / Unmaximize / SeedMaximized / MaximizeExitedByResize kernel
+// transitions. The rationale that used to live here (frameless hosts never
+// fire native 'maximize' events, so the
 // app's own intent is the only deterministic signal) is documented on
 // `WindowRecord.maximized`. Native-fullscreen tracking/ownership moved to the
 // machine earlier (see the module doc comment above).

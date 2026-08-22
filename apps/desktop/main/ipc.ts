@@ -86,13 +86,11 @@ import {
 } from './windows.js';
 import {
   registerWindowWithMachine,
-  dispatchWindowEvent,
   dispatchEscapePress,
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  getWindowStateSnapshot,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import {
@@ -236,11 +234,10 @@ import {
 // ============================================================================
 
 // Focused-window tracking (S1 `lastFocusedVisibleWindowId` / S4 `lastContentWindowId`
-// / `focus-order.ts`) is GONE — the window-state machine's `front` + per-record
-// `focusSeq`/`lastHttpUrl` are the single authority now. Consumers read
-// `getTopmostContentWindowId()` / `getDevtoolsTargetId()` from
-// `window-state-singleton.ts`; every window's focus is fed to the machine by the
-// OS adapter's native `focus` listeners (attached at `registerWindowWithMachine`),
+// / `focus-order.ts`) is GONE — the kernel's `key`/`order` are the single
+// authority now. Consumers read `getTopmostContentWindowId()` from
+// `window-state-singleton.ts`; every window's focus is fed to the kernel by the
+// backend's native `focus` listeners (attached at `registerWindowWithMachine`),
 // so there are no `track*` feeds to maintain here.
 
 /**
@@ -607,15 +604,11 @@ function applyPlacementOnReuse(
       `(${currentBounds.x},${currentBounds.y} ${currentBounds.width}x${currentBounds.height}) -> ` +
       `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height}) [mode:${placement.mode}]`
     );
-    // Machine-owned since §5 step 7E: computePlacement runs here at the
-    // dispatch site; the write is the reducer's SET_BOUNDS effect through
-    // the port.
+    // Kernel-owned since §5 step 7E: computePlacement runs here at the
+    // feed site; the write is the kernel's SetBounds effect through the
+    // port.
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
-      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(machineId, result.bounds);
     }
   }
@@ -757,10 +750,8 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
         win: baseWin,
       });
     }
-    dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-    // window manager; the dispatch above only reaches the old machine,
-    // whose matching effect arm is a no-op.
+    // window manager.
     shadowKernelDestroyWindow(id);
   } catch (cleanupErr) {
     // Cleanup must never mask the original failure — a still-leaked window is
@@ -1025,7 +1016,6 @@ function assembleHybridPageHost(
     class: classifyWindowRegistration(role, { alwaysOnTop: alwaysOnTopResolved }),
     satellite: role === 'overlay' || role === 'palette' || role === 'switcher',
     escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
-    lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
     ...deriveWindowSurface({ alwaysOnTop: alwaysOnTopResolved, focusable: options.focusable === undefined ? undefined : !!options.focusable }),
     win: baseWin,
     contentWC: view.webContents,
@@ -1052,20 +1042,11 @@ function assembleHybridPageHost(
   // getHybridPresentation / session save) see it (§5 step 7B).
   if (options.maximized === true) {
     const restoredPreMaxBounds = readPreMaxBounds(options);
-    dispatchWindowEvent({
-      type: 'MAXIMIZE_RESTORED',
-      id: hostMachineId,
-      preMaxBounds: restoredPreMaxBounds,
-    });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-    // window manager; the dispatch above only reaches the old machine. The
-    // kernel's `SeedMaximized` carries the SAME saved rect as data, because
-    // replaying `Maximize` here would stash this window's creation bounds —
-    // which already ARE the maximized rect — as the thing to unmaximize back
-    // to. Without this pair the record reached the old machine only, so a
-    // later `page:unmaximize` cleared the flag and left the window at the
-    // maximized rect while `getHybridPresentation` still reported the right
-    // `preMaxBounds` off the old machine: data right, behavior wrong.
+    // window manager. The kernel's `SeedMaximized` carries the SAME saved
+    // rect as data, because replaying `Maximize` here would stash this
+    // window's creation bounds — which already ARE the maximized rect — as
+    // the thing to unmaximize back to.
     shadowKernelSeedMaximized(hostMachineId, restoredPreMaxBounds);
   }
   // Track the content-WC→host relationship for the permission lookup
@@ -1147,13 +1128,9 @@ function assembleHybridPageHost(
     try {
       const mode = getWindowModeName(hostMachineId);
       if (mode != null && mode !== 'normal' && !baseWin.isDestroyed()) {
-        // Drop fullscreen synchronously through the machine's single
-        // setFullScreen owner (the adapter's SET_FULLSCREEN effect runs
-        // synchronously; we don't await the ~600ms settle — quit can't block).
-        dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: hostMachineId, desired: false });
-        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager; the dispatch above only reaches the old
-        // machine, whose matching effect arm is a no-op.
+        // Drop fullscreen synchronously through the kernel's single
+        // setFullScreen owner (the effect runs synchronously; we don't await
+        // the ~600ms settle — quit can't block).
         shadowKernelSetFullscreen(hostMachineId, false);
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
@@ -1193,17 +1170,12 @@ function assembleHybridPageHost(
     // existing lifecycle signal — fsm-pilled: gate, don't rely on the
     // swallow), so an already-torn-down content wc is a clean no-op.
     try {
-      // The content-surface teardown is a machine effect now
-      // (WINDOW_CONTENT_CLOSE_REQUESTED → CLOSE_CONTENT →
+      // The content-surface teardown is a kernel effect now (CloseContent →
       // backend.closeContent, which applies the same
       // `shouldCloseContentWCOnFinalize` guard — peek 9a591551 — and issues
       // the documented `webContents.close()`: no beforeunload wait; the host
       // is already gone). The backend retains the content WC per WindowId,
       // so this works after the machine record was retired above.
-      dispatchWindowEvent({ type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: hostMachineId });
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
       shadowKernelCloseContent(hostMachineId);
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
@@ -1255,14 +1227,10 @@ function assembleHybridPageHost(
     // already closing / destroyGuestsThenClose's own baseWin.close() ran
     // or is about to); runHybridFinalize already consumed the captured
     // bounds, so any re-entrant 'close' is harmless. Routed through the
-    // machine (WINDOW_CLOSE_REQUESTED → backend guest-safe close; the guest
-    // is already gone here, so it takes the synchronous fast path).
+    // kernel (CloseWindowDirect → backend guest-safe close; the guest is
+    // already gone here, so it takes the synchronous fast path).
     try {
       if (!baseWin.isDestroyed()) {
-        dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostMachineId });
-        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager; the dispatch above only reaches the old
-        // machine, whose matching effect arm is a no-op.
         shadowKernelCloseWindowDirect(hostMachineId);
       }
     } catch { /* closing a torn-down host is a no-op */ }
@@ -1731,11 +1699,11 @@ export function wireHybridContentEvents(
     return null;
   };
   // A resize gesture ENDS maximize: the host is about to stop filling the work
-  // area, so the machine's flag and its stashed preMaxBounds must go now, at the
+  // area, so the kernel's flag and its stashed preMaxBounds must go now, at the
   // press. Leaving them set IS the stale-preMaxBounds de-sync — a later maximize
   // toggle would "restore" to a rect the user has since resized away from.
   // Clearing at press rather than release means an abandoned drag still leaves
-  // coherent state. The transition is the reducer's MAXIMIZE_EXITED_BY_RESIZE
+  // coherent state. The transition is the kernel's MaximizeExitedByResize
   // (§5 step 7B) — clears both, drives nothing back at the OS (the gesture owns
   // the bounds). Mirrors the cleared state into the overlay, which keeps a
   // local copy for its chrome reflow + navbar-drag math and would otherwise
@@ -1744,10 +1712,8 @@ export function wireHybridContentEvents(
     const machineId = getWindowIdFor(hostWindowId);
     if (machineId == null) return;
     if (getMachineWindowRecord(machineId)?.maximized !== true) return;
-    dispatchWindowEvent({ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: machineId });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-    // window manager; the dispatch above only reaches the old machine,
-    // whose matching effect arm is a no-op.
+    // window manager.
     shadowKernelMaximizeExitedByResize(machineId);
     try {
       publish(getSystemAddress(), 'page-overlay:maximize-state', {
@@ -1850,23 +1816,20 @@ export function wireHybridContentEvents(
     if (dir.includes('s')) height = Math.max(MIN_RESIZE_H, sb.height + dy);
     if (dir.includes('w')) { const nw = Math.max(MIN_RESIZE_W, sb.width - dx); x = sb.x + (sb.width - nw); width = nw; }
     if (dir.includes('n')) { const nh = Math.max(MIN_RESIZE_H, sb.height - dy); y = sb.y + (sb.height - nh); height = nh; }
-    // Machine-owned since §5 step 7E. Per-move dispatch through the reducer is
-    // deliberate (not the port-command fallback): the pump's dispatch is
-    // synchronous (read-after-dispatch contract) and already carries
-    // BOUNDS_CHANGED at native resize-event frequency, so the gesture stream
-    // costs what its own echo stream already costs — and every geometry write
-    // stays on the ONE event → reducer → SET_BOUNDS path. Maximize was
-    // already exited AT PRESS (exitMaximizeForResize, §5 step 7B), so the
-    // per-move writes land on a non-maximized record. The old direct call
-    // passed animate:false — the port's setWindowBounds omits the flag, which
-    // is the same (false is the Electron default).
+    // Kernel-owned since §5 step 7E. Per-move feed through the kernel is
+    // deliberate (not the port-command fallback): the pump is synchronous
+    // and already carries BOUNDS_CHANGED at native resize-event frequency,
+    // so the gesture stream costs what its own echo stream already costs —
+    // and every geometry write stays on the ONE command → kernel → SetBounds
+    // path. Maximize was already exited AT PRESS (exitMaximizeForResize, §5
+    // step 7B), so the per-move writes land on a non-maximized record. The
+    // old direct call passed animate:false — the port's setWindowBounds
+    // omits the flag, which is the same (false is the Electron default).
     const resizeMachineId = getWindowIdFor(hostWindowId);
     if (resizeMachineId != null) {
       const resizeBounds = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
-      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: resizeMachineId, bounds: resizeBounds });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       shadowKernelSetBounds(resizeMachineId, resizeBounds);
     }
     // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
@@ -2368,11 +2331,11 @@ export function installHybridNavbarActionRouting(): void {
     ) {
       return;
     }
-    // Machine-owned since §5 step 7E. Same per-move-through-the-reducer
+    // Kernel-owned since §5 step 7E. Same per-move-through-the-kernel
     // decision as the band-drag applyResize stream above (synchronous pump,
     // BOUNDS_CHANGED already runs at this frequency); the overlay renderer
-    // computes the rect, main dispatches the intent, the reducer drives the
-    // one SET_BOUNDS path.
+    // computes the rect, main feeds the intent, the kernel drives the one
+    // SetBounds path.
     const machineId = getWindowIdFor(r.windowId);
     if (machineId != null) {
       const setBounds = {
@@ -2381,10 +2344,8 @@ export function installHybridNavbarActionRouting(): void {
         width: Math.round(b.width),
         height: Math.round(b.height),
       };
-      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: setBounds });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       shadowKernelSetBounds(machineId, setBounds);
     }
   });
@@ -2406,23 +2367,23 @@ export function installHybridNavbarActionRouting(): void {
     setContentCursor(msg.state === 'grab' || msg.state === 'grabbing' ? msg.state : null);
   });
 
-  // page:maximize — snap the host to its display's work area. Machine-owned
-  // since §5 step 7B: the handler resolves the display work area (a dispatch-
-  // site read — the reducer keeps zero value imports, so the rect rides the
-  // event) and dispatches MAXIMIZE_REQUESTED; the REDUCER stashes preMaxBounds
-  // from its own bounds mirror, flips `maximized`, and drives the snap as a
-  // SET_BOUNDS effect through the executor/backend. Explicit work-area bounds
-  // rather than a native maximize() because frameless/panel-style windows on
-  // macOS don't respond to native maximize() reliably (the isMaximized()
-  // distrust this migration deletes — see WindowRecord.maximized).
+  // page:maximize — snap the host to its display's work area. Kernel-owned
+  // since §5 step 7B: the handler resolves the display work area (a feed-
+  // site read — the kernel keeps zero value imports, so the rect rides the
+  // command) and feeds Maximize; the KERNEL stashes preMaxBounds from its
+  // own bounds mirror, flips `maximized`, and drives the snap as a
+  // SetBounds effect through the executor/backend. Explicit work-area
+  // bounds rather than a native maximize() because frameless/panel-style
+  // windows on macOS don't respond to native maximize() reliably (the
+  // isMaximized() distrust this migration deletes — see
+  // WindowRecord.maximized).
   //
   // The idempotent re-maximize trap (a second page:maximize must NOT restash
   // preMaxBounds — by then the current rect IS the work area, and overwriting
   // the stash strands the next unmaximize at maximized size) lives in the
-  // reducer's MAXIMIZE_REQUESTED clause now, pinned by window-state.test.ts.
-  // Maximize state is visible to getHybridPresentation (window-presenter.ts)
-  // — what session save / reopen-last-closed / tile:window:list read — via
-  // the machine record.
+  // kernel's Maximize clause. Maximize state is visible to
+  // getHybridPresentation (window-presenter.ts) — what session save /
+  // reopen-last-closed / tile:window:list read — via the machine record.
   subscribe(getSystemAddress(), 'page:maximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
@@ -2436,32 +2397,23 @@ export function installHybridNavbarActionRouting(): void {
       });
       const wa = display.workArea;
       const workAreaRect = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
-      dispatchWindowEvent({
-        type: 'MAXIMIZE_REQUESTED',
-        id: machineId,
-        workArea: workAreaRect,
-      });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op. The kernel's `Maximize`
-      // command carries the work area as data (`459ed219` shape — see
-      // `shadowKernelMaximize`'s doc), same rect as the old event above.
+      // window manager. The kernel's `Maximize` command carries the work
+      // area as data (`459ed219` shape — see `shadowKernelMaximize`'s doc).
       shadowKernelMaximize(machineId, workAreaRect);
     } catch { /* window gone */ }
   });
 
   // page:unmaximize — restore the pre-maximize bounds stashed at maximize.
-  // The reducer's UNMAXIMIZE_REQUESTED clause restores the stash via a
-  // SET_BOUNDS effect and clears both fields; a no-op when not maximized.
+  // The kernel's Unmaximize clause restores the stash via a SetBounds
+  // effect and clears both fields; a no-op when not maximized.
   subscribe(getSystemAddress(), 'page:unmaximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
     const machineId = getWindowIdFor(r.windowId);
     if (machineId == null) return;
-    dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-    // window manager; the dispatch above only reaches the old machine,
-    // whose matching effect arm is a no-op.
+    // window manager.
     shadowKernelUnmaximize(machineId);
   });
 
@@ -2697,7 +2649,6 @@ export function registerWindowHandlers(): void {
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
             if (reusedId != null) {
-              dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
               shadowKernelShowRequested(reusedId, hybridReuseActivate);
             }
           }
@@ -2751,9 +2702,9 @@ export function registerWindowHandlers(): void {
           // to them on show(), which is the desired behavior, so ONLY the
           // 'follow' policy re-asserts here; an 'anchor' role must NOT get its
           // creation-time pair replayed on reuse.
-          // Machine-owned since §5 step 10: `spacesPolicyForRole` stays at the
-          // dispatch site (pure policy, same status as `computePlacement`) and
-          // the reducer turns the policy into the SET_VISIBLE_ON_ALL_SPACES
+          // Kernel-owned since §5 step 10: `spacesPolicyForRole` stays at the
+          // feed site (pure policy, same status as `computePlacement`) and
+          // the kernel turns the policy into the SetDesktopMembership
           // effect(s) — including skipTransformProcessType:true, which prevents
           // the activation-policy toggle that hides every other Peek window
           // during the call.
@@ -2762,12 +2713,9 @@ export function registerWindowHandlers(): void {
           if (reusePolicy === 'follow') {
             const spacesMachineId = getWindowIdFor(existingWindow.window);
             if (spacesMachineId != null) {
-              dispatchWindowEvent({ type: 'SPACES_POLICY_REQUESTED', id: spacesMachineId, policy: reusePolicy });
               // Feed the kernel (window-kernel-shadow.ts) — this is what
-              // drives the window manager, alongside the dispatch above,
-              // whose matching effect arm is a no-op.
-              // Only reached for 'follow' (same reasoning as the dispatch:
-              // an anchored window's creation-time pair must NOT be replayed
+              // drives the window manager. Only reached for 'follow' (an
+              // anchored window's creation-time pair must NOT be replayed
               // on reuse), so `reusePolicy` is already the intention the
               // kernel wants, no translation needed.
               shadowKernelSetDesktopMembership(spacesMachineId, reusePolicy);
@@ -2845,11 +2793,11 @@ export function registerWindowHandlers(): void {
               DEBUG && console.log('[hybrid-page-host] placement-on-url-reuse failed:', e);
             }
           }
-          // Machine show intent (§5 step 6A-4) — see the hybrid key-reuse
+          // Kernel show intent (§5 step 6A-4) — see the hybrid key-reuse
           // block above: replaces the imperative baseWin.show() and the
-          // hand-dispatched WINDOW_SHOWN mirror in one move (the backend
-          // echoes WINDOW_SHOWN for the show it performs).
-          // The focus half rides the same dispatch since §5 step 8e — see
+          // hand-fed WINDOW_SHOWN mirror in one move (the backend echoes
+          // WINDOW_SHOWN for the show it performs).
+          // The focus half rides the same feed since §5 step 8e — see
           // the hybrid key-reuse block above (the activating show IS the
           // raise → OS_FOCUS_GAINED → `applyOsFocusRealized`'s FOCUS_CONTENT,
           // R4 first-responder parity included). The old imperative
@@ -2857,7 +2805,6 @@ export function registerWindowHandlers(): void {
           {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
             if (reusedId != null) {
-              dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
               shadowKernelShowRequested(reusedId, true);
             }
           }
@@ -3521,7 +3468,6 @@ export function registerWindowHandlers(): void {
           focusable: options.focusable === undefined ? undefined : !!options.focusable,
         }),
         escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
-        lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
         ...deriveWindowSurface({
           alwaysOnTop: winOptions.alwaysOnTop === true,
           focusable: options.focusable === undefined ? undefined : !!options.focusable,
@@ -3532,8 +3478,8 @@ export function registerWindowHandlers(): void {
         params: windowParams,
         parentId: registrationParentWindowId != null ? getWindowIdFor(registrationParentWindowId) : null,
         alwaysOnTop: winOptions.alwaysOnTop === true,
-        // keepLive rides the registration (first-class on the reducer record)
-        // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.
+        // keepLive rides the registration (first-class on the kernel record)
+        // — the kernel's CloseOrHideRequested clause branches on it.
         keepLive: options.keepLive === true,
         // See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc —
         // `isAppResignSweepEligible` reads this to skip a window that already
@@ -3550,65 +3496,49 @@ export function registerWindowHandlers(): void {
       //     PAIR (true → false) so macOS lands the window on the user's active
       //     Space and pins it there.
       //   'none' — non-darwin platforms; macOS Spaces don't exist.
-      // `spacesPolicyForRole` stays here at the dispatch site (pure policy,
-      // same status as `computePlacement`); the reducer owns the pair and puts
-      // skipTransformProcessType:true on every resulting call — without it,
-      // macOS toggles the app's activation policy (Accessory ↔ Foreground) and
-      // every other Peek window flashes out for a frame.
-      // This sits AFTER registration because the reducer needs the record to
+      // This sits AFTER registration because the kernel needs the record to
       // exist; it is still synchronous and still precedes any load/show, which
       // is what the anchor pair requires.
       if (!isHeadless()) {
-        dispatchWindowEvent({
-          type: 'SPACES_POLICY_REQUESTED',
-          id: machineWindowId,
-          policy: spacesPolicyForRole(role, process.platform),
-        });
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager. Unlike the dispatch above, this feed
-        // carries the platform-neutral intention directly
-        // (`desktopMembershipForRole`, `izui-roles.ts`): every role wants to
-        // either follow the user or stay anchored regardless of platform, so
-        // there is no `'none'` case to skip here — see that function's doc
-        // for why the kernel never sees the platform-derived third value the
-        // dispatch above's `spacesPolicyForRole` can return.
+        // the window manager, carrying the platform-neutral intention
+        // directly (`desktopMembershipForRole`, `izui-roles.ts`): every role
+        // wants to either follow the user or stay anchored regardless of
+        // platform.
         shadowKernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role));
       }
 
-      // Feed the machine the OPEN intent (gate fallout of the WindowId
+      // Feed the kernel the OPEN intent (gate fallout of the WindowId
       // cutover) — but ONLY for an open the caller wants VISIBLE. Under
       // HEADLESS the winOptions above force `show: false` and nothing ever
       // shows or focuses the window at the OS level, so no native
-      // `'show'`/`'focus'` event will EVER reach the adapter — without this
-      // dispatch the machine never learns the window exists on screen and
+      // `'show'`/`'focus'` event will EVER reach the backend — without this
+      // feed the kernel never learns the window exists on screen and
       // `front` stays null for the whole run (getFocusedVisibleWindowId null,
       // session-save loses the focused descriptor, …). Non-headless the OS
-      // events fire too and the reducer re-merges idempotently. `focused:
+      // events fire too and the kernel re-merges idempotently. `focused:
       // true` ports the deleted "track immediately at open" behavior
       // (`trackVisibleWindowFocus` at this exact site): an open the caller
       // wants visible targets the window. Satellite/modal arbitration is
-      // structural in the reducer.
+      // structural in the kernel.
       //
-      // A `show:false` open (session-restore pre-warm) gets NO dispatch: the
+      // A `show:false` open (session-restore pre-warm) gets NO feed: the
       // window is natively HIDDEN here, so recording it as shown is a lie the
-      // machine ACTS on — the reducer's seed branch (`front == null` +
-      // non-satellite) would make the hidden window `front`, and the closing
-      // assertion step then emits RAISE_WINDOW, whose executor shows +
-      // focuses it. During a visible session restore that machine-initiated
-      // activation races (and can precede) session.ts's single-activation
-      // authority — the 4f1a974a design: restore activates the focused
-      // descriptor exactly once — and the headless gate structurally cannot
-      // catch the flash. The window enters the machine when it genuinely
-      // becomes visible: the show seams (`showWindowHeadlessSafe` /
-      // `showHybridHost` in windows.ts) route through the machine — the
-      // backend's `showWindow` echoes WINDOW_SHOWN for the show it performs —
-      // and non-headless the native `'show'`/`'focus'` listeners cover any
-      // other path.
+      // kernel ACTS on — the seed branch (`front == null` + non-satellite)
+      // would make the hidden window `front`, and the closing assertion step
+      // then emits RaiseWindow, whose executor shows + focuses it. During a
+      // visible session restore that kernel-initiated activation races (and
+      // can precede) session.ts's single-activation authority — the
+      // 4f1a974a design: restore activates the focused descriptor exactly
+      // once — and the headless gate structurally cannot catch the flash.
+      // The window enters the kernel when it genuinely becomes visible: the
+      // show seams (`showWindowHeadlessSafe` / `showHybridHost` in
+      // windows.ts) route through the kernel — the backend's `showWindow`
+      // echoes WINDOW_SHOWN for the show it performs — and non-headless the
+      // native `'show'`/`'focus'` listeners cover any other path.
       if (options.show !== false) {
-        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: true });
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager; the dispatch above only reaches the old
-        // machine, whose matching effect arm is a no-op.
+        // the window manager.
         shadowKernelWindowShown(machineWindowId, true);
       }
       const coordinator = getIzuiCoordinator();
@@ -3939,10 +3869,8 @@ export function registerWindowHandlers(): void {
               const showTime = (win as { __lastShowTime?: number }).__lastShowTime;
               if (showTime && Date.now() - showTime < 200) {
                 DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
-                dispatchWindowEvent({ type: 'RAISE_WINDOW_REQUESTED', id: machineWindowId });
                 // Feed the kernel (window-kernel-shadow.ts) — this is what
-                // drives the window manager; the dispatch above only reaches
-                // the old machine, whose matching effect arm is a no-op.
+                // drives the window manager.
                 shadowKernelRaiseWindow(machineWindowId);
                 return;
               }
@@ -3976,13 +3904,9 @@ export function registerWindowHandlers(): void {
           primaryDisplayId: screen.getPrimaryDisplay().id,
         });
         if (result.kind === 'reposition') {
-          // Machine-owned since §5 step 7E: the fill rect is computed here at
-          // the dispatch site; the write is the reducer's SET_BOUNDS effect
+          // Kernel-owned since §5 step 7E: the fill rect is computed here at
+          // the feed site; the write is the kernel's SetBounds effect
           // through the port.
-          dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineWindowId, bounds: result.bounds });
-          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-          // the window manager; the dispatch above only reaches the old
-          // machine, whose matching effect arm is a no-op.
           shadowKernelSetBounds(machineWindowId, result.bounds);
         }
       }
@@ -4012,11 +3936,6 @@ export function registerWindowHandlers(): void {
       if (options.overlay === true) {
         const coordinator = getIzuiCoordinator();
         coordinator.enterOverlay(win.id, []);
-        // Mirror the switcher-overlay open into the window-state machine so
-        // `decideEscape` step 1 (`switcher.open → close-switcher`) fires. The
-        // overlay WINDOW lifecycle (teardown/focus-restore/cooldowns) stays
-        // owned by izui + main.ts (staged cutover); this is state-mirror only.
-        dispatchWindowEvent({ type: 'SWITCHER_OPENED', windowId: machineWindowId });
       }
 
       // Notify HUD and other listeners that a window was opened

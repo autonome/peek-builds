@@ -45,23 +45,10 @@ import {
 } from './window-kernel-shadow.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
-import type { StateSnapshot, WindowRecord } from './window-state.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
-
-/** Minimal `StateSnapshot` fixture — the comparator reads only `front`, `stackOrder`, and each `windows[].id`. */
-function fakeOldMachine(opts: { front: WindowId | null; stackOrder: WindowId[]; ids: WindowId[] }): StateSnapshot {
-  return {
-    appActive: true,
-    session: 'idle',
-    front: opts.front,
-    stackOrder: opts.stackOrder,
-    switcher: { open: false },
-    windows: opts.ids.map((id) => ({ id }) as unknown as WindowRecord),
-  };
-}
 
 /**
  * A `WindowBackend` that performs nothing and records nothing — implements the
@@ -155,7 +142,6 @@ describe('window-kernel-shadow: registration feed', () => {
     // Two registrations in a row exercise the version-carrying path — a bug
     // that pins `expectedVersion` to a stale value would surface here as a
     // silently-dropped second registration.
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id: wid(2),
@@ -188,7 +174,6 @@ describe('window-kernel-shadow: OS focus feed', () => {
 
   it('a focus gain reaches the shadow kernel as OsFocusGained, naming the window', () => {
     const id = wid(10);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -206,7 +191,6 @@ describe('window-kernel-shadow: OS focus feed', () => {
 
   it('the settle emits OsFocusLost naming the currently-held key', () => {
     const id = wid(11);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -246,7 +230,7 @@ describe('window-kernel-shadow: teardown feed', () => {
   const teardownCases: Array<{
     name: string;
     kind: 'destroy-window' | 'close-content' | 'close-window-direct' | 'destroy-all-guests';
-    call: (id: WindowId, oldSnapshot: StateSnapshot) => void;
+    call: (id: WindowId) => void;
     carriesId: boolean;
   }> = [
     { name: 'DestroyWindow', kind: 'destroy-window', call: shadowKernelDestroyWindow, carriesId: true },
@@ -255,7 +239,7 @@ describe('window-kernel-shadow: teardown feed', () => {
     {
       name: 'DestroyAllGuests',
       kind: 'destroy-all-guests',
-      call: (_id, oldSnapshot) => shadowKernelDestroyAllGuests(),
+      call: () => shadowKernelDestroyAllGuests(),
       carriesId: false,
     },
   ];
@@ -263,7 +247,6 @@ describe('window-kernel-shadow: teardown feed', () => {
   for (const { name, kind, call, carriesId } of teardownCases) {
     it(`${name} reaches the shadow kernel (recorded on lastTeardown) — membership stays untouched (peek 7fffa286)`, () => {
       const id = wid(30);
-      const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [id], ids: [id] });
       shadowKernelRegisterWindow(
         {
           id,
@@ -275,7 +258,7 @@ describe('window-kernel-shadow: teardown feed', () => {
         });
       const versionBefore = getShadowKernelExecutor().getState().version;
 
-      call(id, oldSnapshot);
+      call(id);
 
       const state = getShadowKernelExecutor().getState();
       const lastTeardown = state.lastTeardown;
@@ -295,7 +278,6 @@ describe('window-kernel-shadow: teardown feed', () => {
 
   it('a teardown naming a window whose record is already gone is absorbed, not thrown or rejected into the caller', () => {
     const danglingId = wid(31); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     const versionBefore = getShadowKernelExecutor().getState().version;
 
     assert.doesNotThrow(() => shadowKernelDestroyWindow(danglingId));
@@ -321,7 +303,6 @@ describe('window-kernel-shadow: close report feed', () => {
 
   it('a close report removes the window from the shadow kernel order (peek 7fffa286)', () => {
     const id = wid(40);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [id], ids: [id] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -371,7 +352,6 @@ describe('window-kernel-shadow: stack-order import feed', () => {
 
   it('an import permutes only the slots the payload names, naming a partial subset with an unknown id and a duplicate (peek 7fffa286)', () => {
     const [a, b, c, d] = [wid(50), wid(51), wid(52), wid(53)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [a, b, c, d], ids: [a, b, c, d] });
     for (const id of [a, b, c, d]) {
       shadowKernelRegisterWindow(
         {
@@ -456,7 +436,6 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
 
   it('a registration followed by a show feed makes topmost(state, isContentWindow) return that window (the fix)', () => {
     const id = wid(111);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -480,7 +459,6 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
 
   it('a hide feed reported after a show flips the record back off topmost', () => {
     const id = wid(112);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -505,7 +483,6 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
 
   it('never throws across a show/hide feed naming a window with no record', () => {
     const danglingId = wid(113); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelWindowShown(danglingId));
     assert.doesNotThrow(() => shadowKernelWindowHidden(danglingId));
@@ -520,7 +497,6 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
     // `topmost(state, isContentWindow)`, which by design never sees it either
     // way.
     const id = wid(114);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -567,7 +543,6 @@ describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
     // fixture cannot pass vacuously: without a raise feed nothing ever moves
     // `a` back to the top of `order`, so `topmost` stays pinned on `b`.
     const [a, b] = [wid(120), wid(121)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
@@ -587,7 +562,6 @@ describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
 
   it('never throws across a raise naming a window with no record', () => {
     const danglingId = wid(122); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelRaiseWindow(danglingId));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
@@ -615,7 +589,6 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
     // focus feed at all — `topmost` would already read the target window
     // either way. Only the lower-window case exposes the gap.
     const [a, b] = [wid(130), wid(131)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
@@ -642,7 +615,6 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
     // `OsFocusGained` regardless of the flag, this assertion would catch it
     // exactly the way the activating case above proves the fix is live.
     const [a, b] = [wid(132), wid(133)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
@@ -672,7 +644,6 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
     // attach. Two real registered records (an overlay-shaped one and a host)
     // so the assertion cannot pass on a record that was never created.
     const [overlay, host] = [wid(200), wid(201)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(overlay);
     registerWindow(host);
     const before = getShadowKernelExecutor()
@@ -690,7 +661,6 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
 
   it('a retarget onto a different host moves overlayFor, never accumulates it', () => {
     const [overlay, hostA, hostB] = [wid(202), wid(203), wid(204)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(overlay);
     registerWindow(hostA);
     registerWindow(hostB);
@@ -716,7 +686,6 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
 
   it('a detach (hostId: null) clears overlayFor', () => {
     const [overlay, host] = [wid(205), wid(206)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(overlay);
     registerWindow(host);
     shadowKernelAttachOverlay(overlay, host);
@@ -742,7 +711,6 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
   it('never throws across an attach naming an overlay or host with no record', () => {
     const danglingOverlay = wid(207); // never registered
     const danglingHost = wid(208); // never registered
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelAttachOverlay(danglingOverlay, danglingHost));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling attach joins nothing');
@@ -755,7 +723,6 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
   });
 
   it('AppResigned arms pendingAppResignSweep and clears appActive, mirroring the old machine (window-kernel.ts AppResigned evolve arm)', () => {
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     shadowKernelAppResigned();
 
@@ -770,7 +737,6 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
     // not self-closing, not content) — a HUD-shaped surface, not a content
     // window.
     const id = wid(115);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -797,7 +763,6 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
   });
 
   it('never throws across an app-resign feed with nothing registered', () => {
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelAppResigned());
     assert.doesNotThrow(() => shadowKernelAppResignSettled());
@@ -812,7 +777,6 @@ describe('window-kernel-shadow: content orderable feed', () => {
 
   it('THE MEASURED DEFECT, pinned: without the feed a shown page-host stays permanently non-orderable and topmostBaseLayerPageHost reads null', () => {
     const id = wid(140);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -834,7 +798,6 @@ describe('window-kernel-shadow: content orderable feed', () => {
 
   it('a first-composited-frame feed flips orderable to true, and topmostBaseLayerPageHost returns the record (the fix)', () => {
     const id = wid(141);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -867,7 +830,6 @@ describe('window-kernel-shadow: content orderable feed', () => {
 
   it('never throws across a content-orderable feed naming a window with no record', () => {
     const danglingId = wid(142); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelWindowContentOrderable(danglingId));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
@@ -881,7 +843,6 @@ describe('window-kernel-shadow: content first responder feed', () => {
 
   it('a held report reaches the shadow kernel as contentFocused: true, naming the window', () => {
     const id = wid(150);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -902,7 +863,6 @@ describe('window-kernel-shadow: content first responder feed', () => {
 
   it('a released report flips it back to false', () => {
     const id = wid(151);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -923,7 +883,6 @@ describe('window-kernel-shadow: content first responder feed', () => {
 
   it('never throws across a content-first-responder feed naming a window with no record', () => {
     const danglingId = wid(152); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelContentFirstResponderChanged(danglingId, true));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
@@ -937,7 +896,6 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
 
   it('a click-through report reaches the shadow kernel as acceptsInput: false, naming the window', () => {
     const id = wid(160);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -958,7 +916,6 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
 
   it('a capturing report flips it back to true', () => {
     const id = wid(161);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       {
         id,
@@ -979,7 +936,6 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
 
   it('never throws across an accepts-input feed naming a window with no record', () => {
     const danglingId = wid(162); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelWindowAcceptsInputChanged(danglingId, false));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
@@ -993,7 +949,6 @@ describe('window-kernel-shadow: cold-start focus latch feed', () => {
 
   it('arming with a real id writes pendingColdStartFocus', () => {
     const id = wid(160);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     shadowKernelArmColdStartFocus(id);
 
@@ -1002,7 +957,6 @@ describe('window-kernel-shadow: cold-start focus latch feed', () => {
 
   it('arming with null clears a previously-armed latch', () => {
     const id = wid(161);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelArmColdStartFocus(id);
     assert.strictEqual(
       getShadowKernelExecutor().getState().pendingColdStartFocus,
@@ -1017,7 +971,6 @@ describe('window-kernel-shadow: cold-start focus latch feed', () => {
 
   it('never throws arming a latch with an id naming no registered window', () => {
     const danglingId = wid(162); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelArmColdStartFocus(danglingId));
     // Not exempt from being recorded — ArmColdStartFocus answers before the
@@ -1034,7 +987,6 @@ describe('window-kernel-shadow: focus assert feed', () => {
 
   it('asserting focus on a registered content window records lastFocusAssert', () => {
     const id = wid(170);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerVisibleContentWindow(id);
 
     shadowKernelAssertFocus(id);
@@ -1044,7 +996,6 @@ describe('window-kernel-shadow: focus assert feed', () => {
 
   it('a target with no record is rejected (logged, never thrown into the caller) and advances nothing', () => {
     const danglingId = wid(171); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     const versionBefore = getShadowKernelExecutor().getState().version;
 
     assert.doesNotThrow(() => shadowKernelAssertFocus(danglingId));
@@ -1066,7 +1017,6 @@ describe('window-kernel-shadow: fullscreen feed', () => {
 
   it('SetFullscreen(true) on an idle window starts entering, and the following OsFullscreenEntered settles it to fullscreen', () => {
     const id = wid(180);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     assert.strictEqual(record(id)?.fsMode.name, 'normal', 'precondition: a freshly registered window starts normal');
 
@@ -1081,7 +1031,6 @@ describe('window-kernel-shadow: fullscreen feed', () => {
 
   it('SetFullscreen(false) on a fullscreen window starts leaving, and the following OsFullscreenLeft settles it back to normal', () => {
     const id = wid(181);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelSetFullscreen(id, true);
     shadowKernelOsFullscreenEntered(id);
@@ -1098,7 +1047,6 @@ describe('window-kernel-shadow: fullscreen feed', () => {
 
   it('a SetFullscreen arriving mid-transition records the desire rather than restarting the transition', () => {
     const id = wid(182);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelSetFullscreen(id, true);
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
@@ -1117,7 +1065,6 @@ describe('window-kernel-shadow: fullscreen feed', () => {
 
   it('a settle timeout on an in-flight window writes a fresh lastFsReconcile naming it and leaves fsMode transitional (8152196c: the machine asks the OS rather than guessing)', () => {
     const id = wid(183);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelSetFullscreen(id, true);
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
@@ -1144,7 +1091,6 @@ describe('window-kernel-shadow: fullscreen feed', () => {
 
   it('never throws across a fullscreen feed naming a window with no record', () => {
     const danglingId = wid(184); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelOsFullscreenEntered(danglingId));
     assert.doesNotThrow(() => shadowKernelOsFullscreenLeft(danglingId));
@@ -1165,7 +1111,6 @@ describe('window-kernel-shadow: geometry feed', () => {
 
   it('a bounds change lands on the record\'s bounds', () => {
     const id = wid(190);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     assert.strictEqual(record(id)?.bounds, undefined, 'precondition: no rect has ever been reported');
 
@@ -1176,7 +1121,6 @@ describe('window-kernel-shadow: geometry feed', () => {
 
   it('SetBounds on a record whose fsMode is not normal is refused by decide and leaves bounds untouched', () => {
     const id = wid(191);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelBoundsChanged(id, RECT_A);
     shadowKernelSetFullscreen(id, true);
@@ -1193,7 +1137,6 @@ describe('window-kernel-shadow: geometry feed', () => {
 
   it('a display change repositions every named window and leaves unnamed ones alone', () => {
     const [a, b] = [wid(192), wid(193)];
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(a);
     registerWindow(b);
     shadowKernelBoundsChanged(a, RECT_A);
@@ -1212,7 +1155,6 @@ describe('window-kernel-shadow: geometry feed', () => {
 
   it('MaximizeExitedByResize clears maximized and preMaxBounds without touching bounds', () => {
     const id = wid(194);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelBoundsChanged(id, RECT_A);
     shadowKernelMaximize(id);
@@ -1226,7 +1168,6 @@ describe('window-kernel-shadow: geometry feed', () => {
 
   it('never throws across a geometry feed naming a window with no record', () => {
     const danglingId = wid(195); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelBoundsChanged(danglingId, RECT_A));
     assert.doesNotThrow(() => shadowKernelDisplayChanged([{ id: danglingId, bounds: RECT_A }]));
@@ -1247,7 +1188,6 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
 
   it('maximize then unmaximize round-trips the bounds through the stash', () => {
     const id = wid(210);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelBoundsChanged(id, RECT_A);
 
@@ -1270,7 +1210,6 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
 
   it('Maximize on a record whose fsMode is not normal is refused by decide', () => {
     const id = wid(211);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelBoundsChanged(id, RECT_A);
     shadowKernelSetFullscreen(id, true);
@@ -1283,7 +1222,6 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
 
   it('Unmaximize on a not-maximized record is a no-op', () => {
     const id = wid(212);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     shadowKernelBoundsChanged(id, RECT_A);
 
@@ -1295,7 +1233,6 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
 
   it('never throws across a maximize/unmaximize feed naming a window with no record', () => {
     const danglingId = wid(213); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelMaximize(danglingId));
     assert.doesNotThrow(() => shadowKernelUnmaximize(danglingId));
@@ -1319,7 +1256,6 @@ describe('window-kernel-shadow: desktop membership feed', () => {
 
   it('starts undefined, then moves to the requested intention', () => {
     const id = wid(230);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id);
     assert.strictEqual(record(id)?.desktopMembership, undefined, 'precondition: nobody has asked yet');
 
@@ -1333,7 +1269,6 @@ describe('window-kernel-shadow: desktop membership feed', () => {
   it('moves kernel state for a fresh open (windowOpenHandler feed) and a keepLive reuse (reuse-path feed)', () => {
     const opened = wid(232);
     const reused = wid(233);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(opened);
     registerWindow(reused);
 
@@ -1349,7 +1284,6 @@ describe('window-kernel-shadow: desktop membership feed', () => {
 
   it('never throws naming a window with no record', () => {
     const danglingId = wid(231); // never registered with the shadow kernel
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelSetDesktopMembership(danglingId, 'follow'));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
@@ -1381,7 +1315,6 @@ describe('window-kernel-shadow: executor provider seam', () => {
     );
 
     const id = wid(900);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     shadowKernelRegisterWindow(
       { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' });
 
@@ -1425,7 +1358,6 @@ describe('window-kernel-shadow: executor provider seam', () => {
 
   it('does not throw when the fallback was merely constructed (feeds ran) with no subscriber ever attached', () => {
     const id = wid(901);
-    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     // Constructs the fallback via the ordinary feed path — nobody subscribes.
     shadowKernelRegisterWindow(
       { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' });

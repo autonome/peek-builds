@@ -34,17 +34,28 @@
  * `BOUNDS_CHANGED`), step 10 the macOS desktop-membership command
  * (`setDesktopMembership` — the rewritten kernel's platform-neutral
  * replacement for the raw `setVisibleOnAllSpaces` step 10 originally added,
- * which now lives outside this port as `electron-window-backend.ts
- * LegacySpacesShim`); later steps add theirs (`loadContent` with its
+ * which lived outside this port as `electron-window-backend.ts
+ * LegacySpacesShim` until it was deleted alongside `window-state.ts`);
+ * later steps add theirs (`loadContent` with its
  * step). Windows are
  * still joined post-hoc via the backend's migration shims (see
  * `electron-window-backend.ts BackendMigrationShims`), which sit
  * deliberately OUTSIDE this interface.
  */
 
-import type { EscapeMode } from './window-state.js';
 import type { WindowId, WindowKind, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
+
+/**
+ * The declared Escape-handling override a registration spec may carry.
+ * `window-kernel.ts WindowRecord.escapeMode` stores only the one value it
+ * ever branches on (`'ignore'`) — see that field's doc for why the other
+ * three names survive as prose rather than kernel state. This is the
+ * caller-facing vocabulary (`api.window.open({ escapeMode })`), moved here
+ * (rather than re-pointed at the kernel's narrower field type) because the
+ * two are not the same type.
+ */
+export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
 export type { Rectangle as Rect } from './window-kernel.js';
@@ -332,13 +343,12 @@ export interface WindowBackend {
   // It predates the governing platform-neutral rule
   // (`docs/design/window-manager.md` §0) and its signature carries Electron's
   // own option names (`visibleOnFullScreen`/`skipTransformProcessType`), which
-  // this file — scanned by `scripts/check-platform-leak.mjs` — may not. It now
-  // lives as `electron-window-backend.ts LegacySpacesShim`, a companion
+  // this file — scanned by `scripts/check-platform-leak.mjs` — may not. It
+  // lived as `electron-window-backend.ts LegacySpacesShim`, a companion
   // interface deliberately OUTSIDE this port, the same pattern
-  // `BackendMigrationShims` already uses for the handle-speaking surface:
-  // `window-os-adapter.ts` types its backend as the intersection and keeps
-  // calling it unchanged; this port and the kernel never see it. Deleted
-  // alongside `window-state.ts`.
+  // `BackendMigrationShims` uses for the handle-speaking surface — deleted
+  // alongside `window-state.ts` and `window-os-adapter.ts`, the sole caller
+  // that typed its backend as the wider intersection.
 
   /**
    * Realize the window's declared desktop membership (the `SetDesktopMembership`

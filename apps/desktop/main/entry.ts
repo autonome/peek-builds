@@ -115,7 +115,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent, getWindowStateSnapshot } from './window-state-singleton.js';
+import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-state-singleton.js';
 import { getShadowKernelExecutor, shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -210,10 +210,9 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   setAppFocusedForTest: (focused: boolean) => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(focused);
-    dispatchWindowEvent({ type: focused ? 'APP_ACTIVATED' : 'APP_RESIGNED' });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) the same edge the old
-    // machine just saw — this test bridge is the ONLY app-activation input on
-    // a headless/Linux run (`did-become-active`/`did-resign-active` never fire
+    // Shadow-feed the kernel (window-kernel-shadow.ts) the app-activation
+    // edge — this test bridge is the ONLY app-activation input on a
+    // headless/Linux run (`did-become-active`/`did-resign-active` never fire
     // under Xvfb), so without this the kernel's `appActive` mirror stays false
     // for the whole run and every executor raise reads as suppressed.
     if (focused) {
@@ -232,7 +231,10 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   clearAppFocusedForTest: () => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(null);
-    dispatchWindowEvent({ type: 'APP_ACTIVATED' });
+    // Shadow-feed the kernel the same restore-to-active edge
+    // `setAppFocusedForTest` above feeds — see its comment for why this test
+    // bridge is the only app-activation input on a headless/Linux run.
+    shadowKernelAppActivated();
   },
   /**
    * Read the restoreSessionSnapshot drift-detection counters. Reset at

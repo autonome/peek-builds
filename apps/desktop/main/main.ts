@@ -40,11 +40,9 @@ import { getIzuiCoordinator } from './izui-state.js';
 import {
   initWindowStateMachine,
   registerWindowWithMachine,
-  dispatchWindowEvent,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  getWindowStateSnapshot,
   getTopmostContentWindowId,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
@@ -239,7 +237,6 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   // dispatch is the one that retires the record.
   {
     const wmId = getWindowIdFor(windowId);
-    if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
     // window manager; RULE 1 makes this the only event that shrinks its `order`.
     if (wmId != null) shadowKernelWindowClosed(wmId);
@@ -475,10 +472,8 @@ export async function initialize(): Promise<void> {
         console.error('[tile-launcher] closeTileWindow: window', win.id, 'is not machine-registered — cannot close (leak risk)');
         return;
       }
-      dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       shadowKernelCloseWindowDirect(id);
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
@@ -491,7 +486,6 @@ export async function initialize(): Promise<void> {
         console.error('[tile-launcher] closeOrHideTileWindow: window', win.id, 'is not machine-registered — cannot hide');
         return;
       }
-      dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id });
       shadowKernelCloseOrHideRequested(id);
     },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
@@ -825,8 +819,6 @@ export async function initialize(): Promise<void> {
                 // a page-host + SET_STACKING) also restores the target's
                 // content first responder and stack position, which the old
                 // bare `.focus()` calls did not.
-                const wmId = getWindowIdFor(selectedTargetId);
-                if (wmId != null) dispatchWindowEvent({ type: 'SWITCHER_SELECTED', id: wmId });
               }
             } else {
               DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
@@ -871,7 +863,6 @@ export async function initialize(): Promise<void> {
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
         try {
           const wmId = getWindowIdFor(windowId);
-          if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
           if (wmId != null) shadowKernelWindowClosed(wmId);
         } catch {
           // already in error path; suppress
@@ -960,16 +951,9 @@ export async function initialize(): Promise<void> {
         /* detached devtools window not resolvable — attached mode, or races teardown */
       }
       if (hostId != null) {
-        dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager. The old machine's shared arm re-raises
-        // `state.front`, not the devtools host itself (window-state.ts
-        // DEVTOOLS_OPENED/DEVTOOLS_CLOSED case) — this names the same
-        // target, but the id fed to the kernel comes from the kernel's own
-        // topmost-content-window query, not the old machine's `front`.
-        // `snap` is still the old machine's just-settled snapshot, passed
-        // through only as the divergence comparator.
-        const snap = getWindowStateSnapshot();
+        // the window manager, re-raising focus onto the kernel's own
+        // topmost-content-window query.
         const topmostContentId = getTopmostContentWindowId();
         if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
       }
@@ -977,13 +961,8 @@ export async function initialize(): Promise<void> {
     wc.on('devtools-closed', () => {
       const hostId = hostMachineId();
       if (hostId != null) {
-        dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
-        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-        // the window manager. Same re-raise target as devtools-opened
-        // above: the kernel's topmost-content-window id, with `snap` (the old
-        // machine's just-settled snapshot) passed through only as the
-        // divergence comparator.
-        const snap = getWindowStateSnapshot();
+        // Feed the kernel (window-kernel-shadow.ts) — same re-raise target
+        // as devtools-opened above.
         const topmostContentId = getTopmostContentWindowId();
         if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
       }
@@ -1421,25 +1400,14 @@ export function registerWindow(windowId: number, source: string, params: Record<
     return;
   }
   setWindowOpenPayload(id, source, params);
-  // Lift keepLive out of the opaque params bag onto the machine record
-  // FIRST-CLASS (the payload-after-registration path, e.g. the hybrid test
-  // bridge) — the reducer's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on
-  // `WindowRecord.keepLive`, never on params. Absent stays undefined so the
-  // merge keeps any registration-time value. `source`/`params` still ride
-  // this dispatch too (window-state.ts's own copy, unread by this file's
-  // lookups from here on) — that field pair retires with `window-state.ts`
-  // itself, a later step.
-  //
-  // No kernel shadow feed for this: `keepLive` is decided once, at
-  // registration (`ipc.ts`'s two `registerWindowWithMachine` sites, and the
-  // tile-launcher path through this file's `_registerWindow` hook) and never
-  // revisited — the window-reuse paths never touch it, and the
-  // features-manager keepLive checkbox writes datastore state read back only
-  // at the NEXT open. This call site's own `keepLive` is supplied only by
-  // the `E2E_TEST`-gated hybrid-overlay test bridge, so there is no
-  // production gap for a kernel command to close.
-  const keepLive = typeof params.keepLive === 'boolean' ? params.keepLive : undefined;
-  dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params, keepLive });
+  // `keepLive` is decided once, at registration (`ipc.ts`'s two
+  // `registerWindowWithMachine` sites, and the tile-launcher path through
+  // this file's `_registerWindow` hook) and never revisited — the
+  // window-reuse paths never touch it, and the features-manager keepLive
+  // checkbox writes datastore state read back only at the NEXT open. This
+  // call site's own `keepLive` is supplied only by the `E2E_TEST`-gated
+  // hybrid-overlay test bridge, so there is no production gap the kernel
+  // needs to hear about here.
 }
 
 /**
@@ -1519,7 +1487,6 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
 export function removeWindow(windowId: number): boolean {
   const id = getWindowIdFor(windowId);
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
-  dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
   shadowKernelWindowClosed(id);
   removeWindowOpenPayload(id);
   return true;

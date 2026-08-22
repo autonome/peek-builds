@@ -79,7 +79,6 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 import { wireHybridContentEvents } from './ipc.js';
 import {
   subscribeOverlayAttachment,
-  dispatchWindowEvent,
   dispatchEscapePress,
   registerWindowWithMachine,
   getWindowModeName,
@@ -89,7 +88,6 @@ import {
   waitForPendingWindowEffects,
   getAppActive,
   subscribeAppActive,
-  getWindowStateSnapshot,
   getKernelExecutorForApp,
 } from './window-state-singleton.js';
 import { wmLog } from './window-diag.js';
@@ -619,7 +617,6 @@ function wireShowNavbarFocus(): void {
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
-    dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: overlayWmId, activate: true });
     shadowKernelShowRequested(overlayWmId, true);
   });
 }
@@ -874,7 +871,6 @@ function installTestBridge(): void {
     registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
     const wid = getWindowIdFor(baseWin.id);
     if (wid == null) return;
-    dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: wid });
     shadowKernelWindowContentOrderable(wid);
   };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
@@ -973,11 +969,9 @@ function installTestBridge(): void {
         `setActive(${String(wid)}) drain=[${drained.map((r) => String(r.id)).join(',')}]`,
       );
       for (const record of drained) {
-        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: record.id });
         shadowKernelWindowHidden(record.id);
       }
       if (wid != null) {
-        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
         shadowKernelWindowShown(wid, true);
       }
       getShadowKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
@@ -1072,7 +1066,6 @@ function installTestBridge(): void {
       if (!w || w.isDestroyed()) return false;
       const wid = getWindowIdFor(w);
       if (wid == null) return false;
-      dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: wid, activate: false });
       shadowKernelShowRequested(wid, false);
       return true;
     },
@@ -1099,10 +1092,8 @@ function installTestBridge(): void {
           `destroyFakeHybridWindow: fake host ${id} is not registered with the window-state machine`,
         );
       }
-      dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id: wid });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
+      // window manager.
       shadowKernelDestroyWindow(wid);
       fakeHosts.delete(id);
       return true;
@@ -1136,7 +1127,6 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(w);
         if (wid != null) {
-          dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
           shadowKernelWindowShown(wid, true);
         }
       }
@@ -1167,7 +1157,6 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(id);
         if (wid != null) {
-          dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
           shadowKernelWindowShown(wid, true);
         }
       }
@@ -1257,15 +1246,13 @@ function installTestBridge(): void {
       }
       const wid = getWindowIdFor(elsewhereWin);
       if (wid != null) {
-        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
         shadowKernelWindowShown(wid, true);
       }
     },
     runDeferredBlur(_id: number): number | null {
-      // The machine's deferred-blur settle lives in the OS adapter (setImmediate)
-      // and keeps `front` on an app-switch (design divergence #2), so there is no
-      // synchronous per-window "decide after blur" hook. Best-effort: report the
-      // current front page host.
+      // The deferred-blur settle keeps `front` on an app-switch (design
+      // divergence #2), so there is no synchronous per-window "decide after
+      // blur" hook. Best-effort: report the current front page host.
       return overlayHostOsId();
     },
     activeId(): number | null {
@@ -1439,8 +1426,8 @@ function installTestBridge(): void {
     /**
      * R1 (app-active gate) verification, focus-free. A headless test cannot
      * drive REAL app resign/become-active (no virtual display on macOS), so we
-     * dispatch the SAME events the backend's `attachAppListeners` emits for
-     * `'did-resign-active'`/`'did-become-active'` — the machine flips
+     * feed the kernel the SAME edge the backend's `attachAppListeners` emits
+     * for `'did-resign-active'`/`'did-become-active'` — the kernel flips
      * `appActive` and the overlay's `subscribeAppActive` edge runs the very
      * production handler. After resign: the overlay must be forced
      * click-through (captureState false) and drop its floating level
@@ -1448,17 +1435,14 @@ function installTestBridge(): void {
      * (alwaysOnTop true) and click-through re-armed with forwarding.
      */
     simAppResignActive(): boolean {
-      dispatchWindowEvent({ type: 'APP_RESIGNED' });
-      // Feeds the kernel (window-kernel-shadow.ts) the same edge the old
-      // machine just saw — the kernel, not the old machine, performs the
-      // overlay hide, and this bridge is the only resign input a headless
-      // run has (see `shadowKernelAppResigned` / electron-window-backend.ts
-      // `did-resign-active`).
+      // Feeds the kernel (window-kernel-shadow.ts) the resign edge — this
+      // bridge is the only resign input a headless run has (see
+      // `shadowKernelAppResigned` / `electron-window-backend.ts
+      // 'did-resign-active'`).
       shadowKernelAppResigned();
       return true;
     },
     simAppBecomeActive(): boolean {
-      dispatchWindowEvent({ type: 'APP_ACTIVATED' });
       // Feeds the kernel, for the same reason as `simAppResignActive` above.
       shadowKernelAppActivated();
       return true;
@@ -3036,17 +3020,10 @@ function installTestBridge(): void {
      * via `hostFullscreenState(id)`.
      */
     async driveHostFullscreen(id: number, desired: boolean): Promise<void> {
-      // Drive through the machine (the single setFullScreen owner) exactly as the
-      // `fullscreen` command does. Pass current bounds for the preBounds stash.
-      const boundsWin = getHybridWindow(id)?.baseWin ?? null;
-      let bounds: { x: number; y: number; width: number; height: number } | null = null;
-      try { if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds(); } catch { /* gone */ }
+      // Drive through the kernel (the single setFullScreen owner) exactly as
+      // the `fullscreen` command does.
       const machineId = getWindowIdFor(id);
       if (machineId == null) return;
-      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired, bounds });
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-      // window manager; the dispatch above only reaches the old machine,
-      // whose matching effect arm is a no-op.
       shadowKernelSetFullscreen(machineId, desired);
       const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, desired ? 'fullscreen' : 'normal');
       if (outcome !== 'settled') {

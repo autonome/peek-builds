@@ -27,13 +27,11 @@ import { registerGuest } from './webview-guest-registry.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   getWindowModeName,
-  dispatchWindowEvent,
   dispatchEscapePress,
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
   listMachineWindowRecords,
-  getWindowStateSnapshot,
   getKernelExecutorForApp,
 } from './window-state-singleton.js';
 import { wmLog } from './window-diag.js';
@@ -107,7 +105,6 @@ export function showWindowHeadlessSafe(
     DEBUG && console.log('[windows] showWindowHeadlessSafe: window not machine-registered — show dropped');
     return;
   }
-  dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.active === true });
   shadowKernelShowRequested(id, opts?.active === true);
 }
 
@@ -226,7 +223,6 @@ export function showHybridHost(
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
-    dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.inactive !== true });
     shadowKernelShowRequested(id, opts?.inactive !== true);
   }
   return intent;
@@ -247,7 +243,6 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
     if (id == null) {
       DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
     } else {
-      dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id });
       shadowKernelHideRequested(id);
     }
   }
@@ -475,10 +470,8 @@ export function closeHostWindow(hostId: number, _win: ClosableWindow): void {
     DEBUG && console.log('closeHostWindow: window', hostId, 'is not machine-registered — nothing to close');
     return;
   }
-  dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostWmId });
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op.
+  // window manager.
   shadowKernelCloseWindowDirect(hostWmId);
 }
 
@@ -650,10 +643,8 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         const machineId = getWindowIdFor(id);
         const fsMode = machineId != null ? getWindowModeName(machineId) : null;
         if (machineId != null && fsMode != null && fsMode !== 'normal') {
-          dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
-          // the window manager; the dispatch above only reaches the old
-          // machine, whose matching effect arm is a no-op.
+          // the window manager.
           shadowKernelSetFullscreen(machineId, false);
           const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
           if (outcome !== 'settled') {
@@ -674,20 +665,18 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         // required (see the runHybridFinalize comment in ipc.ts). Only a
         // genuine closeHostWindow frees the resources.
         //
-        // The hide is a MACHINE decision (§5 step 6A-3): dispatch
-        // WINDOW_CLOSE_OR_HIDE_REQUESTED and let the reducer branch on the
-        // record's first-class keepLive (registered at the ipc.ts open /
-        // merged via WINDOW_PARAMS_SET) → HIDE_WINDOW → backend.hideWindow.
-        // The backend's native 'hide' event is the only WINDOW_HIDDEN source
-        // now — the old synchronous hand-dispatch (peek 71cfde09's "the
-        // BaseWindow 'hide' event fires a tick late" admission) is gone.
-        // This function reads the SAME record field only to keep the resolved
-        // close (the reducer's CLOSE_WINDOW answer routes back through this
-        // seam) from re-dispatching the intent forever.
+        // The hide is a KERNEL decision (§5 step 6A-3): feed
+        // CloseOrHideRequested and let the kernel branch on the record's
+        // first-class keepLive (registered at the ipc.ts open) → HideWindow
+        // → backend.hideWindow. The backend's native 'hide' event is the
+        // only WINDOW_HIDDEN source now — the old synchronous hand-dispatch
+        // (peek 71cfde09's "the BaseWindow 'hide' event fires a tick late"
+        // admission) is gone. This function reads the SAME record field only
+        // to keep the resolved close (the kernel's CloseWindow answer routes
+        // back through this seam) from re-feeding the intent forever.
         const hybridRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
         if (machineId != null && hybridRec?.keepLive === true) {
           DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
-          dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: machineId });
           shadowKernelCloseOrHideRequested(machineId);
           maybeHideApp(id);
           return;
@@ -738,15 +727,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // without keepLive (peeks, quick-views) should be closed so they can be
     // cleanly recreated on next invocation.
     //
-    // The hide is a MACHINE decision (§5 step 6A-3): dispatch
-    // WINDOW_CLOSE_OR_HIDE_REQUESTED and the reducer branches on the record's
-    // first-class keepLive (registered at the ipc.ts open) → HIDE_WINDOW →
-    // backend.hideWindow; the native 'hide' event then feeds WINDOW_HIDDEN.
-    // The record field is read here only so the resolved close (the reducer's
-    // CLOSE_WINDOW answer routes back through this seam) can't re-dispatch
-    // the intent forever.
+    // The hide is a KERNEL decision (§5 step 6A-3): feed CloseOrHideRequested
+    // and the kernel branches on the record's first-class keepLive
+    // (registered at the ipc.ts open) → HideWindow → backend.hideWindow; the
+    // native 'hide' event then feeds WINDOW_HIDDEN. The record field is read
+    // here only so the resolved close (the kernel's CloseWindow answer
+    // routes back through this seam) can't re-feed the intent forever.
     else if (wmId != null && rec?.keepLive === true) {
-      dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wmId });
       shadowKernelCloseOrHideRequested(wmId);
     } else {
       // close any open windows this window opened

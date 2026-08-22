@@ -28,9 +28,7 @@ import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';
 import {
   registerWindowWithMachine,
-  dispatchWindowEvent,
   getWindowIdFor,
-  getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
 import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-kernel-shadow.js';
@@ -45,10 +43,6 @@ import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-k
 function destroyWindowViaMachine(win: BrowserWindow): void {
   const id = getWindowIdFor(win);
   if (id == null) return; // never registered / already retired — nothing to destroy
-  dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op.
   shadowKernelDestroyWindow(id);
 }
 
@@ -1058,7 +1052,6 @@ export function openChromeExtensionPage(
   if (existing && !existing.isDestroyed()) {
     const existingId = getWindowIdFor(existing);
     if (existingId != null) {
-      dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: existingId, activate: true });
       shadowKernelShowRequested(existingId, true);
     }
     return existing;
@@ -1165,7 +1158,6 @@ export function openChromeExtensionPage(
       try {
         const id = getWindowIdFor(win);
         if (id != null) {
-          dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });
           shadowKernelShowRequested(id, false);
         }
       } catch { /* ignore */ }

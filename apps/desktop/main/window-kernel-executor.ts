@@ -989,6 +989,20 @@ export class WindowKernelExecutor {
     }
   }
 
+  /**
+   * Retain an async effect issued OUTSIDE the pump, so
+   * `waitForPendingAsyncEffects` covers it too. The Escape decider
+   * (`window-escape-runtime.ts`, via `window-state-singleton.ts
+   * dispatchEscapePress`) is the one such producer: its renderer ask is a
+   * backend call the machine never issued as an `Effect`, so nothing in
+   * `performEffect` can see it, yet the E2E bridge that awaits the ESC round
+   * trip must. Replaces `window-os-adapter.ts trackExternalAsyncEffect`,
+   * which held the same set on the deleted adapter half.
+   */
+  trackExternalAsyncEffect(p: Promise<unknown>): void {
+    this.trackAsyncEffect(p);
+  }
+
   /** Retain an async effect's promise until it settles (never rethrows). */
   private trackAsyncEffect(p: Promise<unknown>): void {
     this.pendingAsyncEffects.add(p);

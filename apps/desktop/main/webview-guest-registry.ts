@@ -24,9 +24,7 @@ import type { WindowId } from './window-kernel.js';
 import {
   getNativeWindowFor,
   getWindowIdFor,
-  dispatchWindowEvent,
   waitForGuestTeardown,
-  getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import { shadowKernelDestroyAllGuests } from './window-kernel-shadow.js';
 
@@ -163,19 +161,17 @@ export function getAllGuestWebContentsIds(): number[] {
  * (peek d1cf0b9a). The interactive close path is already covered by the
  * backend's guest-safe `closeWindow`; this closes the quit/teardown gap.
  *
- * THE RETURNED PROMISE IS THE ORDERING. The dispatch is synchronous, but the
+ * THE RETURNED PROMISE IS THE ORDERING. The feed is synchronous, but the
  * destruction it triggers is not: `webContents.destroy()` returns with the
- * guest still alive. A caller that dispatched and moved on delivered none of
- * the ordering above — every guest was still live when its host window closed
- * ~1ms later. Await this before letting the quit proceed. Bounded in the
- * backend, so the await cannot hang the quit.
+ * guest still alive. A caller that fed the kernel and moved on delivered none
+ * of the ordering above — every guest was still live when its host window
+ * closed ~1ms later. Await this before letting the quit proceed. Bounded in
+ * the backend, so the await cannot hang the quit.
  */
 export function destroyAllPageHostGuests(): Promise<void> {
   try {
-    dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
     // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-    // window manager; the dispatch above only reaches the old machine, whose
-    // matching effect arm is a no-op.
+    // window manager.
     shadowKernelDestroyAllGuests();
   } catch {
     /* best-effort during shutdown — nothing was requested, nothing to await */

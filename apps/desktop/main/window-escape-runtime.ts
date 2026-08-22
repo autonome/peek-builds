@@ -63,8 +63,8 @@ export interface EscapeRuntimeDeps {
   ask(id: WindowId): Promise<boolean>;
   /**
    * Register a promise that outlives this call so a test bridge can await its
-   * settlement — the same channel `window-os-adapter.ts trackAsyncEffect`
-   * feeds for its own `ASK_RENDERER` arm, reachable through
+   * settlement — the same channel `window-kernel-executor.ts
+   * trackExternalAsyncEffect` feeds, reachable through
    * `window-state-singleton.ts waitForPendingWindowEffects`. `handleEscapePress`
    * itself returns `void`; this is how its async half becomes observable.
    */

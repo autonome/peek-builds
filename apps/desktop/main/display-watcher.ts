@@ -30,10 +30,10 @@
  * THIS MODULE NO LONGER TOUCHES WINDOWS (window-manager.md §5 step 10). It is
  * a pure PRODUCER: it reads the OS (the display layout, the two window
  * registries, the open-time params), decides via `display-projection.ts` who
- * moves and where, and dispatches ONE `DISPLAY_CHANGED` carrying the batch.
- * The state machine emits the `SET_BOUNDS` effects and the port performs them
- * — the single geometry funnel (R2). `dispatchWindowEvent` drains its queue
- * before returning, so an add/remove pass is still synchronous end to end.
+ * moves and where, and feeds the kernel ONE `DisplayChanged` command carrying
+ * the batch. The kernel emits the `SetBounds` effects and the port performs
+ * them — the single geometry funnel (R2). The feed is synchronous, so an
+ * add/remove pass is still synchronous end to end.
  */
 
 import { BrowserWindow, screen } from 'electron';
@@ -42,7 +42,7 @@ import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registr
 import { getWindowInfo } from './main.js';
 import { DEBUG } from './config.js';
 import { collectDisplayProjection, type ProjectionWindow } from './display-projection.js';
-import { dispatchWindowEvent, getWindowIdFor, getWindowStateSnapshot } from './window-state-singleton.js';
+import { getWindowIdFor } from './window-state-singleton.js';
 import { shadowKernelDisplayChanged } from './window-kernel-shadow.js';
 
 /**
@@ -137,22 +137,14 @@ function projectAllWindows(reason: string): void {
       `[display-watcher] Dispatching projection for ${d.label} ${d.nativeId} (${d.mode}): ` +
       `(${d.from.x},${d.from.y} ${d.from.width}x${d.from.height}) -> ` +
       `(${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height}) ` +
-      `(reducer may still drop this if fullscreen/hidden/unknown)`
+      `(kernel may still drop this if fullscreen/hidden/unknown)`
     );
   }
 
-  // ONE event for the whole pass — the machine decides which entries survive
-  // (unknown / hidden / non-normal fsMode are dropped there) and emits the
-  // SET_BOUNDS effects. Dispatch is synchronous, so the add/remove path keeps
-  // its no-deferred-reposition guarantee.
-  dispatchWindowEvent({
-    type: 'DISPLAY_CHANGED',
-    projected: decisions.map(({ id, bounds }) => ({ id, bounds })),
-  });
-
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op.
+  // ONE command for the whole pass — the kernel decides which entries
+  // survive (unknown / hidden / non-normal fsMode are dropped there) and
+  // emits the SetBounds effects. The feed is synchronous, so the add/remove
+  // path keeps its no-deferred-reposition guarantee.
   shadowKernelDisplayChanged(
     decisions.map(({ id, bounds }) => ({ id, bounds })));
 

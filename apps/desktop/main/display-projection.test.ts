@@ -3,17 +3,17 @@
  * of the display watcher (window-manager.md §5 step 10).
  *
  * What this covers: the translation a display-layout change goes through
- * before it becomes ONE `DISPLAY_CHANGED` event — which live windows are
- * candidates, which are filtered out at the dispatch site, and which of them
+ * before it becomes ONE `DisplayChanged` command — which live windows are
+ * candidates, which are filtered out at the feed site, and which of them
  * `computePlacement` says actually move. `display-watcher.ts` itself is not
  * importable here (it pulls the Electron runtime + `main.js`), so its
  * remaining job — the `screen` snapshot, the two registry walks, the log lines
- * and the single `dispatchWindowEvent` call — is thin wiring around this
- * function and is NOT covered by these tests.
+ * and the single `shadowKernelDisplayChanged` call — is thin wiring around
+ * this function and is NOT covered by these tests.
  *
- * The complementary half — what the reducer does with the batch (dropping
- * unknown / hidden / non-normal-fsMode entries, emitting one `SET_BOUNDS`
- * each) — lives in `window-state.test.ts` "DISPLAY_CHANGED".
+ * The complementary half — what the kernel does with the batch (dropping
+ * unknown / hidden / non-normal-fsMode entries, emitting one `SetBounds`
+ * each) — lives in `window-kernel-shadow.test.ts` "DisplayChanged".
  *
  * All display data is fabricated; no real Electron `screen` API is touched.
  * Runs under ELECTRON_RUN_AS_NODE=1 via `yarn test:unit`.

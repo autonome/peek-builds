@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getWindowIdFor, getAppActive, dispatchWindowEvent } from './window-state-singleton.js';
+import { getWindowIdFor, getAppActive } from './window-state-singleton.js';
 import type { State, WindowId } from './window-kernel.js';
 import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
@@ -251,7 +251,6 @@ export function installFirstFrameOrderableProducer(): void {
     if (!entry) return;
     const machineId = getWindowIdFor(entry.windowId);
     if (machineId != null) {
-      dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: machineId });
       // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
       // window manager; the sole writer of `orderable`, without which
       // `topmostBaseLayerPageHost` returns null forever.
@@ -874,7 +873,6 @@ export async function restoreSessionSnapshot(
   resetRestoreFocusCounters();
   // Clear any stale cold-start re-raise latch from a prior restore; this pass
   // re-arms it only if it activates the focused descriptor at cold start.
-  dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: null });
   // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
   // window manager.
   shadowKernelArmColdStartFocus(null);
@@ -1425,12 +1423,11 @@ export async function restoreSessionSnapshot(
       // Arm the one-shot cold-start re-raise latch BEFORE touching windows: a
       // trailing did-resign-active could re-strand Peek after this block runs.
       // Gated cold-start + non-headless + a window actually present to raise.
-      // The latch itself lives in the machine (see the note above the restore
+      // The latch itself lives in the kernel (see the note above the restore
       // section); this is only the decision to arm it.
       if (isColdStart && !isHeadless() && (focusWin || (hybridFocus && !hybridFocus.baseWin.isDestroyed()))) {
         const coldStartMachineId = getWindowIdFor(focusedWindowId);
         if (coldStartMachineId != null) {
-          dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: coldStartMachineId });
           // Feed the kernel (window-kernel-shadow.ts) — this is what drives
           // the window manager.
           shadowKernelArmColdStartFocus(coldStartMachineId);
@@ -1453,7 +1450,7 @@ export async function restoreSessionSnapshot(
         // rebuild — a fact the kernel no longer tracks at all, which is why
         // this fallback can only replay dispatch order rather than genuinely
         // reconstruct recency — see `orderRestoredWindowsBottomToTop`. The
-        // reducer replaces its `stackOrder` with this order and emits SET_STACKING
+        // kernel replaces its `order` with this order and emits SetStacking
         // per window bottom→top — relative raises only, no activation, no focus
         // steal; only the focused window (activated LAST, below) becomes
         // key/first-responder. Page-hosts that have not composited yet no-op
@@ -1466,7 +1463,6 @@ export async function restoreSessionSnapshot(
           const machineId = getWindowIdFor(id);
           if (machineId != null) savedOrderBottomToTop.push(machineId);
         }
-        dispatchWindowEvent({ type: 'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop });
         // Feed the kernel (window-kernel-shadow.ts) — this is what drives
         // the window manager.
         shadowKernelImportStackOrder(savedOrderBottomToTop);

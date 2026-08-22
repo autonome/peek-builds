@@ -25,7 +25,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
-import { dispatchWindowEvent, getWindowIdFor, getWindowStateSnapshot } from './window-state-singleton.js';
+import { getWindowIdFor } from './window-state-singleton.js';
 import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -339,9 +339,9 @@ function getDownloadsDir(): string {
 }
 
 /**
- * Close a download-trigger window through the window-state machine
- * (WINDOW_CLOSE_REQUESTED → the backend's guest-safe close). Every window is
- * machine-registered (design §7); an unresolved id means it is already gone.
+ * Close a download-trigger window through the kernel (CloseWindowDirect →
+ * the backend's guest-safe close). Every window is machine-registered
+ * (design §7); an unresolved id means it is already gone.
  */
 function closeWindowViaMachine(win: { id: number }): void {
   const id = getWindowIdFor(win.id);
@@ -349,10 +349,6 @@ function closeWindowViaMachine(win: { id: number }): void {
     DEBUG && console.log('[download] close target', win.id, 'is not machine-registered — skipping');
     return;
   }
-  dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op.
   shadowKernelCloseWindowDirect(id);
 }
 

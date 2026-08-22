@@ -83,7 +83,6 @@ import {
   type StackingLevel,
   type WindowRegistrationDecision,
 } from './izui-roles.js';
-import { type StateSnapshot } from './window-state.js';
 import type { DesktopMembership, FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { WindowBackend, WindowSpec } from './window-backend.js';
 import {
@@ -199,7 +198,7 @@ export interface NativeWindow {
   /** Outer-bounds write (the `setWindowBounds` command — §5 step 7). On both kinds in Electron 40. */
   setBounds(bounds: Rectangle): void;
   /**
-   * macOS Spaces pin (the `setVisibleOnAllSpaces` command — §5 step 10).
+   * macOS Spaces pin (the `setDesktopMembership` command — §5 step 10).
    * On both kinds in Electron 40; a no-op off darwin, which is why the
    * backend guards the platform before calling it at all.
    */
@@ -286,29 +285,6 @@ export interface BackendMigrationShims {
   getNativeWindowFor(id: WindowId): NativeWindow | null;
 }
 
-/**
- * LEGACY SPACES SHIM — the raw, Electron-option-carrying macOS Spaces write
- * (`window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED` /
- * `SPACES_POLICY_REQUESTED`) that `window-os-adapter.ts` alone still calls,
- * driving that frozen reducer's `SET_VISIBLE_ON_ALL_SPACES` effect exactly as
- * it always worked. Deliberately OUTSIDE `WindowBackend` — a DIFFERENT reason
- * than `BackendMigrationShims` above (that one is about platform HANDLES; this
- * one is about platform ARGUMENT NAMES, `visibleOnFullScreen` /
- * `skipTransformProcessType`, which `window-backend.ts` may not carry once
- * scanned by `scripts/check-platform-leak.mjs`) but the SAME pattern: the
- * executor types its backend as the wider intersection
- * (`WindowBackend & BackendMigrationShims & LegacySpacesShim`,
- * `window-os-adapter.ts`) and this shim is deleted alongside `window-state.ts`,
- * not absorbed by a later migration step.
- */
-export interface LegacySpacesShim {
-  setVisibleOnAllSpaces(
-    id: WindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void;
-}
-
 /** What the backend retains per registered window to execute commands against it. */
 interface BackendWindow {
   win: NativeWindow;
@@ -331,15 +307,7 @@ interface BackendWindow {
  * The Electron backend. Holds native handles + the WindowId mint, performs
  * port commands, feeds native events straight to the shadow kernel.
  */
-export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims, LegacySpacesShim {
-  /**
-   * Read-only channel back to the executor's owner: the old machine's
-   * snapshot, taken fresh on each call — used ONLY to feed the shadow
-   * kernel's divergence comparator (`window-kernel-shadow.ts
-   * compareShadowKernelState`). See `window-os-adapter.ts`'s constructor doc
-   * for why this is injected rather than read via `window-state-singleton.ts`.
-   */
-  private readonly getSnapshot: () => StateSnapshot;
+export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims {
 
   /** Native handles + renderer WC per registered WM WindowId (for command execution). */
   private readonly windows = new Map<WindowId, BackendWindow>();
@@ -484,9 +452,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     dispatchEscapePress('global', 'electron-window-backend.escGrabHandler');
   };
 
-  constructor(getSnapshot: () => StateSnapshot) {
-    this.getSnapshot = getSnapshot;
-  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // Port: app-level listeners.
@@ -1561,48 +1526,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * LEGACY (see `LegacySpacesShim` above): pin the window to (or unpin it
-   * from) every macOS Space, exactly as this always worked, for the
-   * `SET_VISIBLE_ON_ALL_SPACES` effect that `window-os-adapter.ts` alone
-   * still issues (§5 step 10, the frozen `window-state.ts` reducer).
-   * `setDesktopMembership` below is the platform-neutral replacement new
-   * callers use.
-   *
-   * darwin-only: Spaces don't exist elsewhere and the platform call is a
-   * no-op there, so the guard is the honest statement of scope rather than a
-   * behavior change (`spacesPolicyForRole` already answers `'none'` off
-   * darwin, so no effect should reach here anyway).
-   *
-   * No `isHeadless()` gate HERE — same convention as `pinAlwaysOnTop` /
-   * `setStacking` / `setWindowBounds`: the executor owns the headless
-   * decision for this family (`window-os-adapter.ts` skips the effect under
-   * headless, matching the `if (!isHeadless())` both `ipc.ts` call sites
-   * already sit inside). `entry.ts`'s headless prototype no-op guard remains
-   * the belt-and-braces backstop that COUNTS any call that slips through.
-   *
-   * Only the options the caller actually supplied are forwarded: an absent
-   * flag must stay absent, not become `false` (`visibleOnFullScreen` belongs
-   * on the `true` call of the anchor pair only).
-   */
-  setVisibleOnAllSpaces(
-    id: WindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void {
-    if (process.platform !== 'darwin') return;
-    const win = this.windows.get(id)?.win;
-    if (!win) return;
-    const options: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean } = {};
-    if (opts?.visibleOnFullScreen !== undefined) options.visibleOnFullScreen = opts.visibleOnFullScreen;
-    if (opts?.skipTransformProcessType !== undefined) options.skipTransformProcessType = opts.skipTransformProcessType;
-    try {
-      if (!win.isDestroyed()) win.setVisibleOnAllWorkspaces(on, options);
-    } catch {
-      /* Spaces write against a torn-down window — the machine already recorded intent */
-    }
-  }
-
-  /**
    * Realize the window's declared desktop membership (the platform-neutral
    * `SetDesktopMembership` effect from the rewritten kernel,
    * `window-kernel.ts DesktopMembership`) as native macOS Spaces calls. Named
@@ -1616,9 +1539,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * there — a platform fact this backend owns, never one the kernel or the
    * port sees.
    *
-   * No `isHeadless()` gate HERE, same convention as `setVisibleOnAllSpaces`
-   * above: the executor owns the headless decision for this family
-   * (`window-kernel-executor.ts` skips the effect under headless).
+   * No `isHeadless()` gate HERE, same convention as `pinAlwaysOnTop` /
+   * `setStacking` / `setWindowBounds`: the executor owns the headless
+   * decision for this family (`window-kernel-executor.ts` skips the effect
+   * under headless).
    *
    * `skipTransformProcessType: true` rides EVERY call this method makes:
    * without it macOS toggles the app's activation policy (Accessory <->
@@ -1678,7 +1602,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * kernel's belief stuck on a request it cannot honor.
    */
   attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void {
-    const oldSnapshot = this.getSnapshot();
     if (hostId === null) {
       shadowKernelOverlayAttached(overlayId, null);
       return;
@@ -1784,22 +1707,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return wc.getURL();
     } catch {
       return '';
-    }
-  }
-
-  /**
-   * The window's current http(s) URL (from its renderer WC), or undefined when
-   * it is not on an http(s) page. Fed to `OS_FOCUS_GAINED` so the reducer can
-   * track the devtools target (absorbs the old `lastContentWindowId`).
-   */
-  private readHttpUrl(id: WindowId): string | undefined {
-    const wc = this.windows.get(id)?.rendererWC;
-    if (!wc || wc.isDestroyed()) return undefined;
-    try {
-      const url = wc.getURL();
-      return url.startsWith('http://') || url.startsWith('https://') ? url : undefined;
-    } catch {
-      return undefined;
     }
   }
 

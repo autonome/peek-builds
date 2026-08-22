@@ -18,7 +18,7 @@ import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
 // chrome-extensions.ts `_spawnBridgeWindow` / `destroyWindowViaMachine`. These
 // relative paths resolve in dist/ (the polyfills are copied next to the
 // compiled main modules by the build's `cp -r` step).
-import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from '../window-state-singleton.js';
+import { registerWindowWithMachine, getWindowIdFor } from '../window-state-singleton.js';
 import { deriveWindowSurface, isSatelliteRegistration } from '../izui-roles.js';
 
 const API = 'offscreen';
@@ -77,7 +77,8 @@ function getExtensionId(event) {
 function destroyWindowViaMachine(win) {
   const id = getWindowIdFor(win);
   if (id == null) return; // never registered / already retired — nothing to destroy
-  dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
+  // No kernel feed here — this site never had one before the cutover either
+  // (peek scoping pass); it fed only the deleted machine.
 }
 
 /**

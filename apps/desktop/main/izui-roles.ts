@@ -724,8 +724,9 @@ export function classifyWindowRegistration(
  * What one registration call must do. Every field is a decision, not a value,
  * executed verbatim in two halves: the backend
  * (`electron-window-backend.ts registerWindow`) performs the merge +
- * native-listener attach, the executor (`window-os-adapter.ts registerWindow`)
- * performs the event pumps + the Esc-interceptor port command.
+ * native-listener attach, `window-state-singleton.ts
+ * registerWindowWithMachine` performs the kernel feed + the Esc-interceptor
+ * port command.
  */
 export interface WindowRegistrationDecision {
   /** The id was already registered: this call is a MERGE, not a first registration. */
@@ -801,13 +802,14 @@ export interface WindowRegistrationDecision {
 /**
  * decideWindowRegistration — the SINGLE owner of the "is this a re-registration,
  * and if so what carries over vs. what the new spec overwrites?" branch that
- * `WindowOsAdapter.registerWindow` executes.
+ * `electron-window-backend.ts registerWindow` / `window-state-singleton.ts
+ * registerWindowWithMachine` execute.
  *
  * WHY it lives here and not next to its callers: `electron-window-backend.ts`
  * (which executes the merge/listener half) has a value-side
- * `import { app, globalShortcut } from 'electron'`, and `window-os-adapter.ts`
- * (which executes the pump/Esc-attach half) pulls it in transitively as its
- * default backend. The main-process unit gate runs its tests under
+ * `import { app, globalShortcut } from 'electron'`, and `window-state-singleton.ts`
+ * (which executes the feed/Esc-attach half) pulls it in transitively via that
+ * same backend. The main-process unit gate runs its tests under
  * `ELECTRON_RUN_AS_NODE=1`, where that import throws at parse ("The requested
  * module 'electron' does not provide an export named …" — see the explanatory
  * comment in `window-registry.ts`). A test file importing either module would
