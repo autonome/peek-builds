@@ -54,7 +54,9 @@ import {
   shadowKernelCloseWindowDirect,
   shadowKernelAssertFocus,
   shadowKernelCloseOrHideRequested,
+  shadowKernelRaiseWindow,
 } from './window-kernel-shadow.js';
+import { wmLog } from './window-diag.js';
 import {
   setWindowOpenPayload,
   getWindowOpenPayload,
@@ -819,6 +821,13 @@ export async function initialize(): Promise<void> {
                 // a page-host + SET_STACKING) also restores the target's
                 // content first responder and stack position, which the old
                 // bare `.focus()` calls did not.
+                const wmId = getWindowIdFor(selectedTargetId);
+                if (wmId != null) {
+                  wmLog('switcher-select-raise', { id: wmId, osId: selectedTargetId });
+                  shadowKernelRaiseWindow(wmId);
+                } else {
+                  wmLog('switcher-select-raise', { osId: selectedTargetId, outcome: 'no-record' });
+                }
               }
             } else {
               DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
