@@ -2075,6 +2075,33 @@ describe('window-kernel: geometry', () => {
     assert.deepStrictEqual(restoredRec.bounds, original, 'restored to the pre-maximize rect, not left at the work area');
   });
 
+  it('re-maximizing an already-maximized window is a no-op — the original stash survives a mirror moved by the user', () => {
+    // The stale-snapshot unmaximize-no-op trap: `decide`'s Maximize arm
+    // no-ops once `rec.maximized` is already true (see its own comment), so
+    // a second Maximize command must never re-stash `preMaxBounds` from
+    // whatever the bounds mirror has since become — only Unmaximize is
+    // allowed to touch the stash after the first Maximize.
+    const state = fold(registerTwo(), initialState());
+    const original: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+    const workArea: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: original });
+
+    const maxDecision = decide(withBounds, { type: 'Maximize', id: wid(1), workArea, expectedVersion: withBounds.version });
+    assert.ok('events' in maxDecision);
+    const maximized = fold(maxDecision.events, withBounds);
+
+    // The user resized the maximized window smaller; the mirror tracked it.
+    const shrunk: Rectangle = { x: 50, y: 50, width: 300, height: 200 };
+    const resized = evolve(maximized, { type: 'BoundsChanged', id: wid(1), bounds: shrunk });
+
+    const reMaxDecision = decide(resized, { type: 'Maximize', id: wid(1), workArea, expectedVersion: resized.version });
+    assert.ok('events' in reMaxDecision);
+    assert.deepStrictEqual(reMaxDecision.events, [], 'already maximized — a no-op, never a re-snap');
+    const rec = fold(reMaxDecision.events, resized).order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, original, 'the original pre-max rect survives a re-maximize — never re-stashed from the shrunk mirror');
+  });
+
   it('Maximize with no workArea supplied stashes null and writes no bounds; Unmaximize then restores nothing', () => {
     // The caller-optional half of the command (see its own doc for why): a
     // dispatch site with no rect to hand still gets a valid flag flip.
@@ -2314,6 +2341,31 @@ describe('window-kernel: geometry', () => {
     const shownRec = shown.order.find((w) => w.id === wid(1))!;
     assert.strictEqual(shownRec.pendingProjectedBounds, null, 'flushed and cleared once both axes are clear');
     assert.deepStrictEqual(shownRec.bounds, projC);
+  });
+
+  it('DisplayChanged batch: mixed block states are independent per window in the same event', () => {
+    const state = fold(registerTwo(), initialState());
+    // Window 1 is shown and normal — unblocked, reprojects immediately.
+    const shown = evolve(state, { type: 'WindowShown', id: wid(1) });
+    // Window 2 keeps registerTwo()'s default: hidden — blocked, held.
+    const rec2Before = shown.order.find((w) => w.id === wid(2))!;
+    assert.strictEqual(rec2Before.visible, false, 'precondition: window 2 still hidden');
+
+    const proj1: Rectangle = { x: 10, y: 10, width: 100, height: 100 };
+    const proj2: Rectangle = { x: 20, y: 20, width: 200, height: 200 };
+    const after = evolve(shown, {
+      type: 'DisplayChanged',
+      projections: [
+        { id: wid(1), bounds: proj1 },
+        { id: wid(2), bounds: proj2 },
+      ],
+    });
+    const rec1 = after.order.find((w) => w.id === wid(1))!;
+    const rec2 = after.order.find((w) => w.id === wid(2))!;
+    assert.deepStrictEqual(rec1.bounds, proj1, 'the unblocked sibling reprojects immediately, in the same batch');
+    assert.strictEqual(rec1.pendingProjectedBounds, null, 'nothing held for the unblocked window');
+    assert.strictEqual(rec2.bounds, undefined, 'the blocked window is not moved');
+    assert.deepStrictEqual(rec2.pendingProjectedBounds, proj2, 'held for the still-hidden window — independent of its unblocked sibling');
   });
 
   it('a held projection stays held when only one blocking axis clears', () => {
