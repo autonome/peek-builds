@@ -92,6 +92,40 @@ export function inferIzuiRole(
 }
 
 /**
+ * Whether a role means "this window is showing a real web page".
+ *
+ * THE ROLE IS THE SURVIVING PROXY FOR AN http/https FACT. `inferIzuiRole`
+ * above gates BOTH of these roles on `ctx.isWebPage` — `content` is the
+ * `ctx.isWebPage` tail, `child-content` is that same tail with a parent (or
+ * an explicit `role: 'content'` re-tagged by the parent rule). No other arm
+ * of the cascade can produce either one without an explicit caller-supplied
+ * role, so a record carrying one of these two roles was opened for a page.
+ * That is what the deleted `WindowRecord.lastHttpUrl` field used to say
+ * directly; this says it from a fact the kernel already stores.
+ *
+ * AN ALLOW-LIST, NOT A DENY-LIST, mirroring `window-kernel.ts CONTENT_ROLES`
+ * for the same reason: an unknown or absent role is NOT a web page. A
+ * deny-list would silently admit every future surface — including the
+ * `peek://` ones this predicate exists to exclude — which is exactly the
+ * failure that made `topmost(state, isContentWindow)` the wrong devtools
+ * target (`workspace` is a content role, and `peek://` opens infer
+ * `workspace`).
+ *
+ * KNOWN IMPRECISION, accepted: the role is fixed at open time, so a window
+ * opened on an http page that later navigates to a `peek://` URL still reads
+ * `content`. The deleted field was written on focus rather than on open, but
+ * it was only ever set and never cleared, so it carried the same staleness in
+ * the same direction.
+ *
+ * Pure, and role-only by design — the callers that need liveness and
+ * stacking (`window-state-singleton.ts getTopmostWebPageWindowId`) compose
+ * this with `isContentWindow` rather than restating its clauses.
+ */
+export function isWebPageRole(role: string | undefined): boolean {
+  return role === 'content' || role === 'child-content';
+}
+
+/**
  * Whether a window opened with these options SELF-CLOSES when it loses focus
  * (blur). This is what the `modal` option actually does in this codebase —
  * despite the name. `modal:true` does NOT create an OS-style parent-blocking

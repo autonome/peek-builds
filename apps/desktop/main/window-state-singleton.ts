@@ -21,7 +21,7 @@ import { getIzuiCoordinator } from './izui-state.js';
 import type { EscapeSession } from './window-escape.js';
 import type { EscapeMode } from './window-backend.js';
 import type { Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecord } from './window-kernel.js';
-import type { WindowClass } from './izui-roles.js';
+import { isWebPageRole, type WindowClass } from './izui-roles.js';
 import {
   setKernelExecutorProvider,
   shadowKernelRegisterWindow,
@@ -263,6 +263,40 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
  */
 export function getTopmostContentWindowId(): WindowId | null {
   return topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id ?? null;
+}
+
+/**
+ * The topmost window showing a real web page: `getTopmostContentWindowId`'s
+ * narrower sibling, and the replacement for the deleted `window-state.ts
+ * getDevtoolsTargetId`. THE target window for a developer surface that only
+ * means something over an http/https page — devtools.
+ *
+ * COMPOSED OVER `isContentWindow`, not re-derived from `WindowRecord` fields,
+ * so the `visible` / `!pendingHidden` / `canBecomeKey` gates stay in one
+ * place and the added role clause only NARROWS within the band those gates
+ * already admit — which keeps `topmost`'s single-layer requirement satisfied
+ * for free.
+ *
+ * WHERE THE RECENCY COMES FROM. The old selector ranked candidates by
+ * `focusSeq` over a stored `lastHttpUrl`. Neither fact exists any more, and
+ * neither is needed: `evolve`'s `OsFocusGained` arm splices the focused
+ * record out of `order` and re-pushes it at the end, and `topmost` scans from
+ * the end — so topmost-among-matching IS most-recently-focused-among-matching.
+ * The http fact is supplied by `izui-roles.ts isWebPageRole` (see its doc for
+ * why role is a sound proxy, and for the open-time staleness both the old
+ * field and this predicate share).
+ *
+ * Null when nothing on screen is a page — a session of `peek://` surfaces
+ * only. Callers that must still resolve something fall back to
+ * `getTopmostContentWindowId`.
+ */
+export function getTopmostWebPageWindowId(): WindowId | null {
+  return (
+    topmost(
+      getShadowKernelExecutor().getState(),
+      (r) => isContentWindow(r) && isWebPageRole(r.role),
+    )?.id ?? null
+  );
 }
 
 /**

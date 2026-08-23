@@ -125,6 +125,7 @@ import { getWindowPresentation } from './window-presenter.js';
 import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   getTopmostContentWindowId,
+  getTopmostWebPageWindowId,
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
@@ -3628,12 +3629,17 @@ export function registerTileIpcHandlers(): void {
   //
   // Open devtools (detached) on a target window. Resolution order:
   //   1. args.id if provided
-  //   2. the last-focused content (http/https) window
-  //   3. the last-focused visible window of any kind
+  //   2. the topmost web-page window — a content / child-content role, which
+  //      `izui-roles.ts inferIzuiRole` reaches only through its `isWebPage`
+  //      gate, so this is the last-focused REAL page
+  //   3. the topmost content window of ANY kind, `peek://` surfaces included
+  // Step 2 is what makes `view devtools` land on the page the user is reading
+  // rather than on whatever `peek://` tile happens to sit above it: a
+  // `peek://` open infers role `workspace`, which IS a content role, so step 3
+  // alone answers with the tile.
   // Step 3 covers page-hosts (peek://app/page/?url=...), settings, and any
   // other peek:// surface — without it, `view devtools` from the cmd palette
-  // would fail with "No content window available" because page-hosts are not
-  // http/https top-level URLs.
+  // would fail in a session that has no web page open at all.
   //
   // trustedBuiltin only — devtools is a developer surface; third-party
   // tiles must not trigger it on arbitrary windows. Replaces legacy
@@ -3654,7 +3660,7 @@ export function registerTileIpcHandlers(): void {
       // (the renderer-facing surface stays numeric until the id-space collapse).
       let targetId: number | null = typeof args.id === 'number' ? args.id : null;
       if (targetId == null) {
-        const machineId = getTopmostContentWindowId();
+        const machineId = getTopmostWebPageWindowId() ?? getTopmostContentWindowId();
         const nativeWin = machineId != null ? getNativeWindowFor(machineId) : null;
         targetId = nativeWin ? nativeWin.id : null;
       }
