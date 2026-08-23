@@ -657,48 +657,74 @@ export class WindowKernelExecutor {
   // matches nothing leaves no trace" failure this app keeps rediscovering
   // (peek 8e5c3174, `window-state.ts pushCloseOrHide` docs, `6e04e8df`):
   //
-  //   - the transient-autoclose sweep `react` drives off a `State.lastAttention`
+  //   - the focus-report sweep `react` drives off a `State.lastAttention`
   //     diff, using `selectTransientAutoclose`;
-  //   - the app-resign sweep `evolve`'s `AppResigned`/`AppResignSettled` arms
-  //     drive, using `isAppResignSweepEligible`.
+  //   - the resign sweep `react` drives off a `pendingAppResignSweep`/
+  //     `appActive` diff, using the same selector with `focusedId: null` —
+  //     the structural replacement for what `AppResignSettled` used to write
+  //     onto `State.lastAttention` as a one-shot `holder: null`;
+  //   - the app-resign HIDE (reversible, distinct from either dismissal
+  //     above) `evolve`'s `AppResigned`/`AppResignSettled` arms drive, using
+  //     `isAppResignSweepEligible`.
   //
-  // Every attention diff logs a `transient-sweep` summary line even when it
+  // Every diff advance logs a `transient-sweep` summary line even when it
   // dismisses nothing, and every genuine candidate logs either a
   // `transient-dismiss` or a `transient-spare` naming which of the four
   // exemption clauses spared it — see `traceTransientAutoclose`'s doc for why
   // a non-candidate (hidden, wrong role, the focuser itself) is omitted
-  // rather than traced. `AppResigned`/`AppResignSettled` log the same way: a
-  // count and id list even when zero windows were chosen, so "the sweep ran
-  // and swept nothing" is a recorded fact, not a silence.
+  // rather than traced. `AppResigned`/`AppResignSettled` log the reversible
+  // hide the same way: a count and id list even when zero windows were
+  // chosen, so "the sweep ran and swept nothing" is a recorded fact, not a
+  // silence.
   // ───────────────────────────────────────────────────────────────────────────
+
+  /** Shared tail of both dismissal-sweep branches below — one summary line plus one per-candidate line each, so the two branches cannot drift into different log shapes. */
+  private logTransientSweepTrace(
+    holder: WindowId | null,
+    causeKind: string,
+    causeOpSeq: number | undefined,
+    trace: ReturnType<typeof traceTransientAutoclose>,
+  ): void {
+    const dismissedCount = trace.filter((t) => t.dismissed).length;
+    wmLog('transient-sweep', {
+      holder,
+      cause: causeKind,
+      opSeq: causeOpSeq,
+      dismissed: dismissedCount,
+      spared: trace.length - dismissedCount,
+    });
+    for (const t of trace) {
+      if (t.dismissed) {
+        wmLog('transient-dismiss', { id: t.id, holder, cause: causeKind, opSeq: causeOpSeq });
+      } else {
+        wmLog('transient-spare', { id: t.id, holder, exemption: t.exemption });
+      }
+    }
+  }
 
   private logDismissalDecisions(event: Event, prev: State, next: State): void {
     const attention = next.lastAttention;
     if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
       const holder = attention.holder;
-      // Mirrors `react`'s own guard: a non-null holder absent from `next.order`
-      // is indeterminate, and the sweep declines rather than guesses.
-      if (holder === null || next.order.some((w) => w.id === holder)) {
+      // Mirrors `react`'s own guard: a holder absent from `next.order` is
+      // indeterminate, and the sweep declines rather than guesses.
+      if (next.order.some((w) => w.id === holder)) {
         const trace = traceTransientAutoclose(next, holder, attention.cause);
         const causeOpSeq = attention.cause.kind === 'machine' ? attention.cause.opSeq : undefined;
-        const dismissedCount = trace.filter((t) => t.dismissed).length;
-        wmLog('transient-sweep', {
-          holder,
-          cause: attention.cause.kind,
-          opSeq: causeOpSeq,
-          dismissed: dismissedCount,
-          spared: trace.length - dismissedCount,
-        });
-        for (const t of trace) {
-          if (t.dismissed) {
-            wmLog('transient-dismiss', { id: t.id, holder, cause: attention.cause.kind, opSeq: causeOpSeq });
-          } else {
-            wmLog('transient-spare', { id: t.id, holder, exemption: t.exemption });
-          }
-        }
+        this.logTransientSweepTrace(holder, attention.cause.kind, causeOpSeq, trace);
       } else {
         wmLog('transient-sweep-indeterminate', { holder });
       }
+    }
+
+    // Resign sweep: the same structural diff `react`'s rule (b) reads —
+    // `AppResignSettled`'s own `attentionLost` test, restated so this
+    // diagnostic never has to branch on `event.type` either. `focusedId: null`
+    // is determinate (attention on nothing of Peek's), so unlike the branch
+    // above this one never logs `transient-sweep-indeterminate`.
+    if (prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive) {
+      const trace = traceTransientAutoclose(next, null);
+      this.logTransientSweepTrace(null, 'world', undefined, trace);
     }
 
     if (event.type === 'AppResigned') {

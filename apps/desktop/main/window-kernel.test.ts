@@ -3643,8 +3643,9 @@ describe('window-kernel: which windows a real app resign hides', () => {
     // `react`'s structural diff has nothing to project a second time. The
     // switcher is different: it is still visible, still a
     // `selectTransientAutoclose` candidate, and this settle is the one that
-    // writes `lastAttention` — so `react`'s attention-diff rule fires and
-    // names it on a `DismissWindow` effect.
+    // disarms `pendingAppResignSweep` while `appActive` stays false — so
+    // `react`'s resign-sweep rule fires and names it on a `DismissWindow`
+    // effect.
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
     const settleEffects = react(resigned, settleEv, settled);
@@ -4188,8 +4189,8 @@ describe('window-kernel: transient autoclose', () => {
       ],
       initialState(),
     );
-    // `holder: null` is what a real AppResignSettled writes onto
-    // `lastAttention` — see `react`'s call site.
+    // `focusedId: null` is what `react`'s resign-sweep rule passes for a real
+    // AppResignSettled — see that rule's own comment.
     assert.deepStrictEqual(
       selectTransientAutoclose(state, null, { kind: 'world' }),
       [],
@@ -4387,22 +4388,21 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), [{ type: 'DismissWindow', id: wid(2) }]);
   });
 
-  it('a null holder is a DETERMINATE fact, not a guarded one — a real AppResignSettled dismisses a visible unattached transient with no focuser at all', () => {
+  it('the resign sweep dismisses a visible unattached transient with no focuser at all', () => {
     // No OsFocusGained ever runs here, so `key` stays null throughout — the
     // old `next.key !== null` guard would have blocked this outright. The
-    // dismissal has to come from `lastAttention.holder`, written directly by
-    // the settle, not from `key`.
+    // dismissal comes from react's own `pendingAppResignSweep`/`appActive`
+    // diff — `AppResignSettled` no longer writes `lastAttention` at all.
     const state = fold([reg(1, 'workspace'), reg(2, 'palette'), show(1), show(2)], initialState());
     const resigned = evolve(state, { type: 'AppResigned' });
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
     assert.strictEqual(settled.key, null, 'key was never written by this sequence');
-    assert.strictEqual(settled.lastAttention?.holder, null, 'the settle records attention as on nothing of ours');
-    assert.notStrictEqual(settled.lastAttention?.seq, resigned.lastAttention?.seq, 'a fresh seq for react to diff');
+    assert.strictEqual(settled.pendingAppResignSweep, false, 'the settle disarms the sweep');
     assert.deepStrictEqual(dismissed(react(resigned, settleEv, settled)), [wid(2)]);
   });
 
-  it('an ATTACHED transient survives a null holder — the ownership relation exempts it, no focuser needed to do so', () => {
+  it('an ATTACHED transient survives the resign sweep — the ownership relation exempts it, no focuser needed to do so', () => {
     const state = fold(
       [reg(1, 'workspace'), reg(2, 'overlay'), show(1), show(2), { type: 'OverlayAttached', overlayId: wid(2), hostId: wid(1) }],
       initialState(),
@@ -4410,8 +4410,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     const resigned = evolve(state, { type: 'AppResigned' });
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
-    assert.strictEqual(settled.lastAttention?.holder, null, 'the settle records attention as on nothing of ours');
-    assert.notStrictEqual(settled.lastAttention?.seq, resigned.lastAttention?.seq, 'a fresh seq for react to diff — the sweep genuinely ran');
+    assert.strictEqual(settled.pendingAppResignSweep, false, 'the settle disarms the sweep');
     assert.deepStrictEqual(dismissed(react(resigned, settleEv, settled)), [], 'attached, so spared even though nothing excludes it by focuser');
   });
 });

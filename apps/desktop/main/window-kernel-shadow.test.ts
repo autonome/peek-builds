@@ -731,7 +731,7 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
     assert.strictEqual(state.pendingAppResignSweep, true, 'AppResigned must arm the sweep');
   });
 
-  it('AppResignSettled hides a sweep-eligible record and marks lastAttention.holder null, the write react\'s dismissal rule reads (window-kernel.ts AppResignSettled evolve arm)', () => {
+  it('AppResignSettled hides a sweep-eligible record and disarms pendingAppResignSweep while appActive stays false, the diff react\'s dismissal rule reads (window-kernel.ts AppResignSettled evolve arm)', () => {
     // Same eligibility shape as the AppActivated re-show test above
     // (`isAppResignSweepEligible`: visible, layer > BASE_LAYER, acceptsInput,
     // not self-closing, not content) — a HUD-shaped surface, not a content
@@ -755,11 +755,9 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
 
     assert.strictEqual(record()?.visible, false, 'AppResignSettled must hide the sweep-eligible window');
     assert.strictEqual(record()?.hiddenByAppBlur, true);
-    assert.strictEqual(
-      getShadowKernelExecutor().getState().lastAttention?.holder,
-      null,
-      'a resign that settled without an intervening AppActivated must clear lastAttention.holder',
-    );
+    const state = getShadowKernelExecutor().getState();
+    assert.strictEqual(state.pendingAppResignSweep, false, 'a resign that settled without an intervening AppActivated must disarm the sweep');
+    assert.strictEqual(state.appActive, false, 'and leave appActive false — the pair react\'s resign-sweep rule diffs');
   });
 
   it('never throws across an app-resign feed with nothing registered', () => {
