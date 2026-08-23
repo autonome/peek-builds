@@ -64,13 +64,6 @@ describe('inferIzuiRole', () => {
     );
   });
 
-  it("returns 'workspace' when escapeMode is 'navigate'", () => {
-    assert.strictEqual(
-      inferIzuiRole({ escapeMode: 'navigate' }, { isWebPage: false, parentWindowId: null }),
-      'workspace',
-    );
-  });
-
   it("returns 'child-content' when webpage opened from a real parent", () => {
     assert.strictEqual(
       inferIzuiRole({}, { isWebPage: true, parentWindowId: 7 }),

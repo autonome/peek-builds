@@ -357,17 +357,15 @@ export interface WindowRecord {
    * the meaningful default, not a hole, and it is what every window without
    * an explicit override gets.
    *
-   * ONE value, deliberately, where `window-state.ts EscapeMode` names four
-   * (`'auto' | 'close' | 'navigate' | 'ignore'`). Only `'ignore'` is ever a
-   * decision input: the old reducer branches on it once (`decideEscape` step
-   * 3 -> pass-through) and never reads the other three. `'close'` and
-   * `'auto'` reach no branch at all; `'navigate'` is read exactly once and
-   * NOT as an escape decision — `izui-roles.ts inferIzuiRole` maps it to
-   * `role: 'workspace'` at registration, so by the time a record exists the
-   * fact has already become a role. The three survive as prose on
-   * `windows.ts addEscHandler`, which still documents the app-facing
-   * `api.window.open({ escapeMode })` vocabulary; modelling them here would
-   * be modelling dead inputs.
+   * ONE value, matching `window-backend.ts EscapeMode` — narrowed to
+   * `'ignore'` because that is the only value any code ever branched on:
+   * the old reducer read it once (`decideEscape` step 3 -> pass-through),
+   * the current one reads it the same way (`window-escape.ts
+   * interpretEscape` step 3). `'close'` and `'auto'` never reached a branch
+   * at all; `'navigate'` had one reader, `izui-roles.ts inferIzuiRole`,
+   * which mapped it to `role: 'workspace'` — but no production caller ever
+   * passed it, so the arm was deleted along with the type's other two dead
+   * values with no behaviour change.
    *
    * Live producers of `'ignore'`: `renderer/hud/background.js` (the HUD) and
    * `chrome-extensions.ts` (extension popup/options pages, whose own DOM

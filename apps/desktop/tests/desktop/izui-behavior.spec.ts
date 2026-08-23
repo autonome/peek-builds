@@ -167,7 +167,7 @@ test.describe('IZUI Behavior @desktop', () => {
       return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
-        escapeMode: 'navigate'
+        role: 'workspace'
       });
     });
     expect(result.success).toBe(true);
@@ -254,12 +254,12 @@ test.describe('IZUI Behavior @desktop', () => {
 
   test('ESC debouncing: two rapid presses trigger only one handler call', async () => {
 
-    // Open a groups window with navigate escape mode
+    // Open a groups window as a workspace
     const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
-        escapeMode: 'navigate'
+        role: 'workspace'
       });
     });
     expect(result.success).toBe(true);

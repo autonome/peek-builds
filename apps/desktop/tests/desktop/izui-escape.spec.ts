@@ -59,12 +59,12 @@ test.describe('IZUI Escape Protocol @desktop', () => {
       }, { itemId: item.data.id, tagId });
     }
 
-    // Open groups window (background.js uses escapeMode: 'navigate')
+    // Open groups window (background.js opens it as a workspace)
     const groupsResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://groups/home.html', {
         width: 800,
         height: 600,
-        escapeMode: 'navigate'
+        role: 'workspace'
       });
     });
     expect(groupsResult.success).toBe(true);
@@ -428,13 +428,13 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
   test('navigate mode: timeout does not close window', async () => {
 
-    // Open a window with navigate escape mode but NO escape handler registered
+    // Open a workspace window with NO escape handler registered
     // This simulates what happens when a window hasn't finished loading its IZUI
     const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
-        escapeMode: 'navigate'
+        role: 'workspace'
       });
     });
     expect(result.success).toBe(true);

@@ -2810,7 +2810,7 @@ function installTestBridge(): void {
         role: roledRole,
         class: classifyWindowRegistration(roledRole),
         satellite: roledRole === 'overlay' || roledRole === 'palette',
-        escapeMode: params.escapeMode as ('auto' | 'close' | 'navigate' | 'ignore' | undefined),
+        escapeMode: params.escapeMode === 'ignore' ? 'ignore' : undefined,
         ...deriveWindowSurface({}),
         win: baseWin,
         contentWC: view.webContents,

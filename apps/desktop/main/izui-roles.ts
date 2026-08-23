@@ -55,7 +55,6 @@ export interface IzuiRoleOptions {
   overlay?: boolean;
   modal?: boolean;
   keepLive?: boolean;
-  escapeMode?: string;
 }
 
 /**
@@ -75,8 +74,6 @@ export function inferIzuiRole(
       role = 'palette';
     } else if (options.modal === true) {
       role = 'quick-view';
-    } else if (options.escapeMode === 'navigate') {
-      role = 'workspace';
     } else if (ctx.parentWindowId != null && ctx.isWebPage) {
       role = 'child-content';
     } else if (ctx.isWebPage) {
