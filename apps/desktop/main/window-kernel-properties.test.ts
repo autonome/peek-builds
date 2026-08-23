@@ -31,6 +31,7 @@ import {
   decide,
   keyWindow,
   selectTransientAutoclose,
+  traceTransientAutoclose,
   isAppResignSweepEligible,
   isContentWindow,
   hostForOverlay,
@@ -1172,6 +1173,75 @@ function checkTransientHideIsNotDismiss(step: Step): string[] {
 }
 
 /**
+ * THE SAME LAW, PINNED AGAINST THE SELECTOR ITSELF RATHER THAN AGAINST A
+ * RESTATEMENT OF IT. `checkTransientHideIsNotDismiss` above deliberately
+ * spells the clauses out — it has to, so it can catch a hide-instead-of-
+ * dismiss path that never runs the selector. This one asks the opposite
+ * question: does what the kernel actually did to `hiddenByAppBlur` agree with
+ * what `selectTransientAutoclose` would say about the very same record?
+ *
+ * The obstacle is that the two can never be compared directly: a record
+ * carrying `hiddenByAppBlur === true` is invisible, and the selector skips
+ * every invisible record, so it answers "not a victim" for exactly the
+ * records this law is about. The comparison is therefore COUNTERFACTUAL —
+ * the record is probed with `visible: true` flipped on, which changes nothing
+ * else and asks only "if this window were on screen, would the law sweep it?"
+ * Nothing else in the state is altered, so the answer is the law's, not a
+ * fixture's.
+ *
+ * Both directions are asserted, and the second is the one nothing else covers:
+ *
+ *   - MUST-CLEAR: a record the law would sweep may not be sitting on a
+ *     reversible hide. This is `checkTransientHideIsNotDismiss`'s territory,
+ *     restated through the selector so a clause that exists in one and not the
+ *     other is caught rather than silently tolerated.
+ *   - MUST-NOT-OVER-CLEAR: a record whose `hiddenByAppBlur` was cleared by
+ *     this very transition, and which is STILL hidden afterwards, must be one
+ *     the law would have swept. A clear on a still-hidden record can only be
+ *     `evolve`'s `WindowRegistered` merge arm stranding fix — an `AppActivated`
+ *     or `WindowShown` clear comes with `visible: true`, which this excludes —
+ *     and that arm may only clear the mark for a record the law would really
+ *     have dismissed. Clearing it for one the law SPARES (a click-through
+ *     window, say) would drop a hide the app-resign sweep legitimately owns.
+ *
+ * `null` is the right focuser for both probes: the transitions that write
+ * `hiddenByAppBlur` derive from an app resign, and a re-registration names no
+ * focuser either, so no window is in a relation that could spare it.
+ */
+function checkStrandedHideAgreesWithSelector(step: Step): string[] {
+  const { prev, next } = step;
+  const violations: string[] = [];
+  for (const rec of next.order) {
+    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    const probe: State = {
+      ...next,
+      order: next.order.map((w) => (w.id === rec.id ? { ...w, visible: true } : w)),
+    };
+    const wouldBeSwept = selectTransientAutoclose(probe, null).includes(rec.id);
+
+    if (wouldBeSwept && rec.hiddenByAppBlur === true) {
+      violations.push(
+        `transient ${rec.id} (role=${rec.role}) carries hiddenByAppBlur===true though ` +
+          `selectTransientAutoclose would sweep it were it visible — a reversible hide standing in for a dismissal`,
+      );
+    }
+
+    const wasMarked = prev.order.find((w) => w.id === rec.id)?.hiddenByAppBlur === true;
+    const clearedWhileStillHidden = wasMarked && rec.hiddenByAppBlur !== true && !rec.visible;
+    if (clearedWhileStillHidden && !wouldBeSwept) {
+      const traced = traceTransientAutoclose(probe, null).find((t) => t.id === rec.id);
+      const why = traced === undefined ? 'not a candidate' : traced.dismissed ? 'no exemption' : traced.exemption;
+      violations.push(
+        `transient ${rec.id} (role=${rec.role}) had its hiddenByAppBlur cleared while still hidden, ` +
+          `but selectTransientAutoclose spares it (${why}) — the app-resign hide it was carrying was ` +
+          `dropped rather than honoured`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
  * Extra invariant on `react`'s output: every emitted effect names a window
  * still in `next.order` — this is what guarantees, among other things, that
  * no `SetBounds` effect (this slice) ever names a window absent from `order`.
@@ -1305,6 +1375,12 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           if (hideNotDismissViolations.length > 0) {
             throw new Error(
               reproMessage(seed, log, i, `transient-dismissal law violation(s): ${hideNotDismissViolations.join('; ')}`),
+            );
+          }
+          const strandedViolations = checkStrandedHideAgreesWithSelector(step);
+          if (strandedViolations.length > 0) {
+            throw new Error(
+              reproMessage(seed, log, i, `stranded-hide/selector disagreement(s): ${strandedViolations.join('; ')}`),
             );
           }
         }
@@ -1700,6 +1776,87 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     const after = evolve(before, reg);
     assert.strictEqual(after.order.find((w) => w.id === swept)?.hiddenByAppBlur, true);
     assert.deepStrictEqual(checkInvariants(after, before), []);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // A REVERSIBLE HIDE MEETING A ROLE CHANGE, both outcomes, hand-built.
+  //
+  // The test above re-registers as `workspace` — still non-transient — so it
+  // never reaches `WindowRegistered`'s stranding fix at all. These two do, and
+  // they are hand-built rather than left to the generator for the reason the
+  // "Pinned merge coverage — MEASURED, not assumed" block records: the
+  // re-registration path is thin enough that dropping a whole merge field left
+  // all 200 seeds passing, and a re-registration that ALSO flips a marked
+  // record's role into `TRANSIENT_ROLES` is rarer still.
+  //
+  // The pair differs in exactly one fact, `acceptsInput`, because that is the
+  // clause whose absence changes nothing anywhere else: the law spares a
+  // click-through window (it can never be in the user's way), so the hide it
+  // is carrying must be left alone, while an input-taking transient must have
+  // that hide dropped or `AppActivated` would later reveal a window the law
+  // says should have been dismissed.
+  //
+  // `acceptsInput` is flipped by `WindowAcceptsInputChanged` rather than by
+  // the registration, and it has to be: registration-time `acceptsInput` is a
+  // lived fact the merge preserves rather than overwrites (see
+  // `WindowRegistered`'s merge arm), AND a click-through window is not
+  // `isAppResignSweepEligible` in the first place, so registering one
+  // click-through would leave no mark to reason about and the test would
+  // assert nothing.
+
+  it('a re-registration that turns a marked window transient drops the reversible hide', () => {
+    const marked = wid(3);
+    // Floating (`layer > BASE_LAYER`), input-taking, non-content — the shape
+    // `isAppResignSweepEligible` accepts, which is the only way to get the mark.
+    const asWorkspace: Event = { type: 'WindowRegistered', id: marked, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
+    const before = fold([asWorkspace, { type: 'WindowShown', id: marked }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
+    const markedRecord = before.order.find((w) => w.id === marked)!;
+    assert.strictEqual(markedRecord.hiddenByAppBlur, true, 'the resign sweep marked it');
+    assert.strictEqual(markedRecord.visible, false, 'a marked window is hidden');
+
+    const asPalette: Event = { ...asWorkspace, role: 'palette' };
+    const after = evolve(before, asPalette);
+    const afterRecord = after.order.find((w) => w.id === marked)!;
+    assert.strictEqual(afterRecord.role, 'palette', 'the merge took the new role');
+    assert.strictEqual(
+      afterRecord.hiddenByAppBlur,
+      false,
+      'a transient the law would dismiss may not sit on a hide AppActivated would reverse',
+    );
+    // Still hidden — the fix clears the MARK, not the hide. Nothing re-shows
+    // the window here, and nothing should: the mark is what would have made
+    // `AppActivated` reveal it.
+    assert.strictEqual(afterRecord.visible, false);
+    assert.deepStrictEqual(checkInvariants(after, before), []);
+    assert.deepStrictEqual(checkStrandedHideAgreesWithSelector({ prev: before, next: after, effects: [] }), []);
+  });
+
+  it('a re-registration that turns a marked CLICK-THROUGH window transient keeps the hide', () => {
+    const marked = wid(4);
+    const asWorkspace: Event = { type: 'WindowRegistered', id: marked, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
+    const before = fold([
+      asWorkspace,
+      { type: 'WindowShown', id: marked },
+      { type: 'AppResigned' },
+      { type: 'AppResignSettled' },
+      { type: 'WindowAcceptsInputChanged', id: marked, acceptsInput: false },
+    ]);
+    const markedRecord = before.order.find((w) => w.id === marked)!;
+    assert.strictEqual(markedRecord.hiddenByAppBlur, true, 'the resign sweep marked it while it still took input');
+    assert.strictEqual(markedRecord.acceptsInput, false, 'and it went click-through afterwards');
+
+    const asPalette: Event = { ...asWorkspace, role: 'palette' };
+    const after = evolve(before, asPalette);
+    const afterRecord = after.order.find((w) => w.id === marked)!;
+    assert.strictEqual(afterRecord.role, 'palette', 'the merge took the new role');
+    assert.strictEqual(afterRecord.acceptsInput, false, 'and left the lived click-through fact alone');
+    assert.strictEqual(
+      afterRecord.hiddenByAppBlur,
+      true,
+      'the law spares a click-through transient, so its reversible hide stands',
+    );
+    assert.deepStrictEqual(checkInvariants(after, before), []);
+    assert.deepStrictEqual(checkStrandedHideAgreesWithSelector({ prev: before, next: after, effects: [] }), []);
   });
 
   it('the prev/next invariants name the field when a lived fact IS dropped', () => {
