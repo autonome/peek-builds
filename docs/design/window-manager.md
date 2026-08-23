@@ -1924,13 +1924,30 @@ fixed point — the focus report it provokes emits NOTHING`, `a registration tha
 not raise either`, and `a focus report on the window already on top DOES raise when it takes key
 from somebody else` carry this forward.
 
-**`getDevtoolsTargetId` stays outside the kernel for now.** `WindowRecord` carries no `lastHttpUrl`
-and `State` no `focusSeq`, and `isContentWindow`'s docblock already declares that
-`tile:window:devtools` must post-filter until a URL fact lands. Its single production caller is
-`tile-ipc.ts`'s `tile:window:devtools` handler, via `window-state-singleton.ts
-getDevtoolsTargetId`. The old selector ranks by `focusSeq` (most-recently-focused), the kernel's
-replacement ranks by `order` position, and §0.1.10 declares those to be the same order — so it is a
-no-op in principle, but it is an assumption being spent rather than a fact being preserved.
+**`getDevtoolsTargetId`'s replacement stays outside the kernel, and stores nothing.**
+`WindowRecord` carries no `lastHttpUrl` and `State` no `focusSeq`, and neither is restored: the
+selector is `window-state-singleton.ts getTopmostWebPageWindowId`, a composition over the kernel's
+own facts, read by `tile-ipc.ts`'s `tile:window:devtools` handler as
+`getTopmostWebPageWindowId() ?? getTopmostContentWindowId()`.
+
+Both halves of the old selector are derivable. RECENCY: `evolve`'s `OsFocusGained` arm re-pushes the
+focused record at the end of `order` and `topmost` scans from the end, so
+topmost-among-matching IS most-recently-focused-among-matching — the ranking `focusSeq` gave,
+§0.1.10's same-order claim now spent on a query rather than on a stored sequence. THE http FACT: role
+is its proxy. `izui-roles.ts inferIzuiRole` gates `content` and `child-content` on `ctx.isWebPage`,
+so `izui-roles.ts isWebPageRole` admits exactly the roles a page open can produce, and
+`getTopmostWebPageWindowId` narrows `isContentWindow` with it rather than re-deriving the
+`visible` / `!pendingHidden` / `canBecomeKey` gates.
+
+The narrowing is what the handler needed: `CONTENT_ROLES` includes `workspace` and a `peek://` open
+infers `workspace`, so `topmost(state, isContentWindow)` alone answers with whatever `peek://` tile
+sits on top — devtools on the tile instead of the page being read. Three accepted differences from
+the deleted selector: a `peek://app/new-tab/index.html` host counts as `isWebPage` and stays
+targetable (harmless — it is a page host); a peek or slide over an http page is role `quick-view`
+and is no longer the automatic target, though the explicit `args.id` path still reaches it; and role
+is fixed at open, so a window that navigated from http to `peek://` still reads `content` — the old
+open-time feed carried the same staleness in the same direction. The any-kind fallback stays so
+devtools in a `peek://`-only session still opens something.
 
 #### Measured: quit no longer reaches `closeContent` with a live WebContents
 

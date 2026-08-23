@@ -26,6 +26,7 @@ import {
   RESIZE_EDGE_PX,
   RESIZE_CORNER_PX,
   TRANSIENT_ROLES,
+  isWebPageRole,
   deriveWindowSurface,
   deriveWindowLayer,
   deriveCanBecomeKey,
@@ -119,6 +120,65 @@ describe('TRANSIENT_ROLES', () => {
     assert.ok(!TRANSIENT_ROLES.has('content'));
     assert.ok(!TRANSIENT_ROLES.has('child-content'));
     assert.ok(!TRANSIENT_ROLES.has('utility'));
+  });
+});
+
+describe('isWebPageRole (the devtools target: role as the surviving http/https fact)', () => {
+  /**
+   * The whole role vocabulary, each entry paired with whether it means "a real
+   * web page". A role added to `inferIzuiRole` without a decision here shows up
+   * as a missing row, not as a silent default.
+   */
+  const vocabulary: ReadonlyArray<readonly [string, boolean]> = [
+    ['content', true],
+    ['child-content', true],
+    ['workspace', false],
+    ['quick-view', false],
+    ['palette', false],
+    ['overlay', false],
+    ['switcher', false],
+    ['utility', false],
+  ];
+
+  for (const [role, expected] of vocabulary) {
+    it(`${role} -> ${expected}`, () => {
+      assert.strictEqual(isWebPageRole(role), expected);
+    });
+  }
+
+  it('an unknown or absent role is not a web page — an allow-list, like CONTENT_ROLES', () => {
+    assert.strictEqual(isWebPageRole('something-new'), false);
+    assert.strictEqual(isWebPageRole(undefined), false);
+    assert.strictEqual(isWebPageRole(''), false);
+  });
+
+  it('admits exactly the roles inferIzuiRole gates on isWebPage', () => {
+    // The tie that makes role a sound proxy for the deleted `lastHttpUrl`:
+    // both admitted roles come out of a `ctx.isWebPage` arm, and the
+    // non-web-page tail returns `workspace`, which is rejected above.
+    assert.strictEqual(
+      isWebPageRole(inferIzuiRole({}, { isWebPage: true, parentWindowId: null })),
+      true,
+    );
+    assert.strictEqual(
+      isWebPageRole(inferIzuiRole({}, { isWebPage: true, parentWindowId: 7 })),
+      true,
+    );
+    assert.strictEqual(
+      isWebPageRole(inferIzuiRole({}, { isWebPage: false, parentWindowId: null })),
+      false,
+      'a peek:// open infers `workspace` — the regression this predicate routes around',
+    );
+  });
+
+  it('a peek/slide over a page is no longer auto-targetable — an accepted narrowing', () => {
+    // `modal:true` infers `quick-view` even for an http URL, so a slide sitting
+    // over a page stops being the automatic devtools target. The explicit
+    // `args.id` path in `tile-ipc.ts` still reaches it.
+    assert.strictEqual(
+      isWebPageRole(inferIzuiRole({ modal: true }, { isWebPage: true, parentWindowId: null })),
+      false,
+    );
   });
 });
 

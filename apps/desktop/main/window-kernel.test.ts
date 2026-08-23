@@ -47,6 +47,12 @@ import {
 // dangling-key cases are pinned against the real predicate rather than
 // restated as prose.
 import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
+// The devtools-target case below narrows `isContentWindow` with the role
+// predicate that supplies the http/https fact this kernel does not store
+// (`window-state-singleton.ts getTopmostWebPageWindowId` is the production
+// composition). Same shape as the `window-escape.js` import above: a pure
+// sibling module, pinned against the real predicate rather than restated.
+import { isWebPageRole } from './izui-roles.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
 
@@ -4595,6 +4601,68 @@ describe('window-kernel: which window the user is working in', () => {
       { type: 'WindowShown', id: wid(21) },
     ]);
     assert.deepStrictEqual(contentIds(state), []);
+  });
+
+  // ── the devtools target: content, narrowed to a real web page ─────────────
+
+  it('a focused peek:// tile takes main, but the devtools target stays the web page behind it', () => {
+    // The regression: `tile:window:devtools` resolved through
+    // `topmost(state, isContentWindow)` alone, and a `peek://` open infers
+    // role 'workspace', which IS a content role — so devtools opened on the
+    // tile instead of the page the user was reading.
+    const host = wid(30);
+    const peekTile = wid(31);
+    const state = fold([
+      { type: 'WindowRegistered', id: host, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: host },
+      { type: 'OsFocusGained', id: host },
+      { type: 'WindowRegistered', id: peekTile, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+      { type: 'WindowShown', id: peekTile },
+      { type: 'OsFocusGained', id: peekTile },
+    ]);
+
+    const webPage = (r: WindowRecord) => isContentWindow(r) && isWebPageRole(r.role);
+
+    assert.strictEqual(
+      topmost(state, isContentWindow)?.id,
+      peekTile,
+      'the tile is genuinely main — role workspace is a content role, which is why the old selector answered with it',
+    );
+    assert.strictEqual(
+      topmost(state, webPage)?.id,
+      host,
+      'the narrowed predicate walks past the tile to the last-focused real page',
+    );
+  });
+
+  it('the narrowed predicate ranks by focus recency, which is what `order` already carries', () => {
+    // The deleted selector ranked its http candidates by `focusSeq`.
+    // `OsFocusGained` re-pushes the focused record at the end of `order` and
+    // `topmost` scans from the end, so topmost-among-matching IS
+    // most-recently-focused-among-matching — no stored sequence needed.
+    const first = wid(32);
+    const second = wid(33);
+    const webPage = (r: WindowRecord) => isContentWindow(r) && isWebPageRole(r.role);
+    const base = fold([
+      { type: 'WindowRegistered', id: first, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: second, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: first },
+      { type: 'WindowShown', id: second },
+      { type: 'OsFocusGained', id: second },
+    ]);
+    assert.strictEqual(topmost(base, webPage)?.id, second);
+    assert.strictEqual(topmost(evolve(base, { type: 'OsFocusGained', id: first }), webPage)?.id, first);
+  });
+
+  it('a session of peek:// surfaces only has no web page — the caller must keep a fallback', () => {
+    const tile = wid(34);
+    const state = fold([
+      { type: 'WindowRegistered', id: tile, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+      { type: 'WindowShown', id: tile },
+      { type: 'OsFocusGained', id: tile },
+    ]);
+    assert.strictEqual(topmost(state, (r) => isContentWindow(r) && isWebPageRole(r.role)), null);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, tile, 'which is why `tile:window:devtools` keeps the any-kind fallback');
   });
 
   it('a hidden content window is not main — the visible half of the old rule', () => {
