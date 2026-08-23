@@ -165,3 +165,42 @@ describe('Phase 3: tile:command:result is gone', () => {
     );
   });
 });
+
+describe('tile:window:set-visible-on-all-workspaces — caller options are inert by design', () => {
+  // The renderer's `options` (`visibleOnFullScreen`/`skipTransformProcessType`,
+  // Electron's own `setVisibleOnAllWorkspaces` argument names) are accepted at
+  // the IPC boundary for call-site compatibility but never reach the window
+  // machine: the handler translates `args.visible` into the platform-neutral
+  // `DesktopMembership` intention ('follow'/'anchor') and the backend
+  // (`electron-window-backend.ts setDesktopMembership`) derives its own
+  // platform option set for that intention. Same source-grep technique as the
+  // "Phase 3" check above — the handler isn't wired up to invoke standalone
+  // in this file, so the compiled output is the cheapest honest check that
+  // `args.options` isn't silently threaded back in.
+  const hereDir = dirname(fileURLToPath(import.meta.url));
+  const compiledTileIpc = join(hereDir, 'tile-ipc.js');
+
+  function extractHandlerBlock(src: string): string {
+    const start = src.indexOf("registerTileIpc('tile:window:set-visible-on-all-workspaces'");
+    assert.ok(start >= 0, 'handler registration not found in compiled tile-ipc.js');
+    const nextRegistration = src.indexOf('registerTileIpc(', start + 1);
+    assert.ok(nextRegistration > start, 'could not bound the handler block');
+    return src.slice(start, nextRegistration);
+  }
+
+  it('never forwards args.options to the window machine', () => {
+    const block = extractHandlerBlock(readFileSync(compiledTileIpc, 'utf8'));
+    const callSite = block.match(/shadowKernelSetDesktopMembership\([^)]*\)/);
+    assert.ok(callSite, 'shadowKernelSetDesktopMembership call site not found');
+    assert.ok(
+      !callSite![0].includes('options'),
+      `shadowKernelSetDesktopMembership call must not reference args.options: ${callSite![0]}`
+    );
+  });
+
+  it('still translates the raw visible boolean into follow/anchor', () => {
+    const block = extractHandlerBlock(readFileSync(compiledTileIpc, 'utf8'));
+    assert.ok(block.includes("'follow'"), 'visible:true must still translate to the follow intention');
+    assert.ok(block.includes("'anchor'"), 'visible:false must still translate to the anchor intention');
+  });
+});

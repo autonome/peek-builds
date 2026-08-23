@@ -956,6 +956,11 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * Pin a window across macOS Spaces. Requires the `window` capability.
+     *
+     * `options` is accepted for call-site compatibility but currently
+     * inert — the main-process handler derives its own platform option set
+     * from the `visible` intention rather than forwarding these Electron
+     * argument names. See `tile-api.d.ts setVisibleOnAllWorkspaces`.
      */
     setVisibleOnAllWorkspaces: (
       id: number | null | undefined,

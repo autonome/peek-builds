@@ -3752,7 +3752,11 @@ export function registerTileIpcHandlers(): void {
       // -> stays on the desktop it was opened on (`'anchor'`). The
       // caller-supplied platform options (`args.options`) are NOT fed — they
       // are Electron `setVisibleOnAllWorkspaces` argument names and have no
-      // meaning to the kernel's platform-neutral command.
+      // meaning to the kernel's platform-neutral command. This predates the
+      // legacy-engine deletion (`f189496b`): the shadow-kernel feed already
+      // dropped `args.options` before that commit, which only removed the
+      // parallel dispatch into the OLD machine's already-no-op effect arm —
+      // the caller-supplied options never reached Electron either way.
       shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor');
       return { success: true };
     } catch (err) {

@@ -174,6 +174,14 @@ interface TileWindow {
   /**
    * Pin or unpin a window across macOS Spaces.
    * Requires `window.manage` capability.
+   *
+   * `opts` is accepted for call-site compatibility but currently inert: the
+   * handler translates `visible` into the platform-neutral
+   * `DesktopMembership` intention (`'follow'`/`'anchor'`) and the backend
+   * derives its own platform option set for that intention rather than
+   * taking caller-supplied Electron argument names (see
+   * `main/tile-ipc.ts`'s `tile:window:set-visible-on-all-workspaces`
+   * handler and `main/electron-window-backend.ts setDesktopMembership`).
    */
   setVisibleOnAllWorkspaces(id: number | undefined, visible: boolean, opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean }): Promise<{ success: boolean; error?: string }>;
 
