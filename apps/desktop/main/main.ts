@@ -305,7 +305,7 @@ const devTiles = new Map<string, { path: string }>();
 // The window-manager registry (windowId -> { source, params }) lives on the
 // window-state machine's window records now (window-manager.md §4.1 dim 1a,
 // §5 step 4) — the module-level Map this file used to hold is DELETED. The
-// exported accessors below (`registerWindow` / `getWindowInfo` /
+// exported accessors below (`attachWindowOpenPayload` / `getWindowInfo` /
 // `findWindowByKey` / …) survive as the numeric-Electron-id seam over the
 // machine state: records that carry a `source`+`params` payload are exactly
 // the windows the old Map contained (ipc.ts open sites + the core background
@@ -1379,26 +1379,37 @@ function machineRegistryEntries(): Array<[number, { source: string; params: Reco
 
 /**
  * Attach the window-open registry payload ({ source, params }) to an
- * already-machine-registered window. The ipc.ts open sites now pass the
- * payload directly on the registration spec; this export remains for the
- * merge callers that run AFTER `registerWindowWithMachine` (hybrid-overlay
- * test bridges, `createBackgroundWindow`).
+ * already-machine-registered window. This function registers NOTHING with the
+ * window machine and writes NO field of the kernel record — it only stores the
+ * opaque payload bag in `window-open-registry.ts`, keyed by an id the caller's
+ * window must already own. A window that is not machine-registered yet gets
+ * its payload dropped.
+ *
+ * The ipc.ts open sites pass the payload directly on the registration spec
+ * (`registerWindowWithMachine`'s `source`/`params`); this export remains for
+ * the merge callers that run AFTER registration (hybrid-overlay test bridges,
+ * `createBackgroundWindow`).
+ *
+ * In particular a `keepLive` in `params` is NOT lifted onto the kernel record
+ * here. `keepLive` is a declared fact, decided once at registration and never
+ * revisited: the two `registerWindowWithMachine` sites in `ipc.ts` (hybrid
+ * page-host and browser open) and the tile-launcher registration hook in
+ * `initialize()` above all pass it first-class on the spec, which is what
+ * `windows.ts closeOrHideWindow` reads back off the record. Window-reuse paths
+ * never touch it, and the features-manager keepLive checkbox writes datastore
+ * state read back only at the NEXT open. No production caller of this function
+ * supplies a `keepLive` at all — `createBackgroundWindow` does not, and the
+ * `E2E_TEST`-gated hybrid-overlay bridge that does re-registers with the
+ * machine itself right after (the sanctioned way to correct a declared fact,
+ * since there is deliberately no `SetKeepLive` command).
  */
-export function registerWindow(windowId: number, source: string, params: Record<string, unknown>): void {
+export function attachWindowOpenPayload(windowId: number, source: string, params: Record<string, unknown>): void {
   const id = getWindowIdFor(windowId);
   if (id == null) {
-    DEBUG && console.log('[window-registry] registerWindow: window', windowId, 'is not machine-registered — payload dropped');
+    DEBUG && console.log('[window-registry] attachWindowOpenPayload: window', windowId, 'is not machine-registered — payload dropped');
     return;
   }
   setWindowOpenPayload(id, source, params);
-  // `keepLive` is decided once, at registration (`ipc.ts`'s two
-  // `registerWindowWithMachine` sites, and the tile-launcher path through
-  // this file's `_registerWindow` hook) and never revisited — the
-  // window-reuse paths never touch it, and the features-manager keepLive
-  // checkbox writes datastore state read back only at the NEXT open. This
-  // call site's own `keepLive` is supplied only by the `E2E_TEST`-gated
-  // hybrid-overlay test bridge, so there is no production gap the kernel
-  // needs to hear about here.
 }
 
 /**
@@ -1676,7 +1687,7 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
   // filters bgWindow out by address, so the projection never runs.
   // See docs/window-placement.md.
   const corePlacement: Placement = { mode: 'centered' };
-  registerWindow(win.id, systemAddress, {
+  attachWindowOpenPayload(win.id, systemAddress, {
     key: 'background-core',
     address: WEB_CORE_ADDRESS,
     placement: corePlacement,
