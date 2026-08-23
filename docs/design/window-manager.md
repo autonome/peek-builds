@@ -499,6 +499,27 @@ BELOW the last-focused window`, with its fixture `stackOrder` flipped from `['w1
 no source change; the fix was confined to the test fixture. One caveat carries forward to the
 eventual kernel cutover — see §0.1.10, "Decided: one order, and nothing else orders windows."
 
+### The transient-dismissal exemptions are one predicate, 2026-08-23
+
+The law's exemptions had four copies in the tree — `selectTransientAutoclose` (four clauses),
+`traceTransientAutoclose` (a declared clause-for-clause mirror), `evolve`'s `WindowRegistered`
+merge arm (two clauses, with the focuser-relation clause missing and nothing recording why), and
+`window-kernel-properties.test.ts checkTransientHideIsNotDismiss` (three). They are now one:
+`window-kernel.ts transientAutocloseExemption`, described in §0. The three production copies call
+it; the property checker keeps its independent restatement on purpose, because a checker that
+called the code under test could not catch a hide-instead-of-dismiss path.
+
+Two mutations measured the cover that existed before the consolidation. Deleting the merge arm's
+guard outright was caught, by one property seed. Dropping only its `acceptsInput` conjunct — the
+over-clear direction, where a reversible hide the law wanted kept gets dropped — was caught by
+NOTHING: the whole suite stayed green. That gap is now closed from two sides, by
+`checkStrandedHideAgreesWithSelector`'s must-not-over-clear direction and by two hand-built
+example logs beside "the hiddenByAppBlur mark survives a re-registration mid-sweep", which take a
+marked window through a re-registration into a transient role with `acceptsInput` true and false
+and assert the opposite outcomes. The examples are hand-built rather than left to the generator
+because the re-registration path is measured-thin — `window-kernel-properties.test.ts`, "Pinned
+merge coverage — MEASURED, not assumed".
+
 ### Maintenance directive
 
 **This block is the single source of truth for migration status. Every agent that lands
@@ -664,13 +685,34 @@ selectTransientAutoclose`, implemented against the kernel as recorded in §0.1.1
   non-optional: the machine remains the only thing that can dismiss a transient, and no dispatch
   site can silently skip running it.
 
-**A transient window closes when it loses focus. Any reason. Always.** Three exemptions, all
-relational, never per window kind: the focuser names it as parent (`focuser.parentId ===
-rec.id`) or is its overlay (`focuser.overlayFor === rec.id`); an overlay is attached to it
-(`rec.overlayFor !== undefined`); it is click-through (`!rec.acceptsInput`) and so can never be
-in the user's way. Transient roles are `window-kernel.ts TRANSIENT_ROLES`: `quick-view`,
-`palette`, `switcher`, `overlay`. Enforced by `window-kernel-properties.test.ts
-checkTransientHideIsNotDismiss`.
+**A transient window closes when it loses focus. Any reason. Always.** The exemptions are
+relational, never per window kind: an overlay is attached to it (`rec.overlayFor !== undefined`);
+it is click-through (`!rec.acceptsInput`) and so can never be in the user's way; the focuser names
+it as parent (`focuser.parentId === rec.id`) or is its overlay (`focuser.overlayFor === rec.id`);
+and a machine-caused focus spares anything strictly newer than the focuser (the ordering floor,
+above). Transient roles are `window-kernel.ts TRANSIENT_ROLES`: `quick-view`, `palette`,
+`switcher`, `overlay`.
+
+**The exemptions are ONE statement, not one per reader.** `window-kernel.ts
+transientAutocloseExemption` is that statement: it takes a single record, the focuser (or
+`undefined`) and the ordering floor (or `null`), and returns which clause spared it or `null`.
+Every reader of the law calls it — `selectTransientAutoclose` (the decision),
+`traceTransientAutoclose` (the per-candidate diagnostic), and `evolve`'s `WindowRegistered` merge
+arm, which asks the degenerate focuser-less question about a record a re-registration has just
+made transient while it still carries a reversible `hiddenByAppBlur` hide. Each reader keeps its
+own CANDIDACY filters (not the focuser, transient role, and — for the two sweeps — visible), its
+own iteration and its own output shape; none keeps its own exemptions. That split is the point:
+candidacy legitimately differs per reader, the exemptions cannot, and hand-restating them is how a
+copy came to be missing the focuser-relation clause with nothing recording whether that was a
+decision. There is deliberately no "ignore visible" parameter — making the law's answer depend on
+which caller asked is the same defect in another shape.
+
+Enforced by `window-kernel-properties.test.ts checkTransientHideIsNotDismiss` (the law spelled out
+independently, so a hide-instead-of-dismiss path that never runs the selector is still caught) and
+`checkStrandedHideAgreesWithSelector` (the same law read back THROUGH the selector, on a
+counterfactually-visible probe, in both directions: a record the law would sweep may not sit on a
+reversible hide, and a record whose hide was cleared while it stayed hidden must be one the law
+would really have swept).
 
 ---
 

@@ -1705,16 +1705,25 @@ export function evolve(state: State, ev: Event): State {
         // `hiddenByAppBlur` was preserved above as a lived fact from a
         // registration whose `role` may have been anything; if THIS merge is
         // what makes the record transient, `AppActivated` would later reveal
-        // it rather than the machine ever dismissing it, because a hidden
-        // record is invisible to `selectTransientAutoclose`'s own `visible`
-        // clause and so cannot be called here to derive the answer — the
-        // three clauses are restated instead, matching the law's degenerate
-        // (no-focuser) case exactly.
+        // it rather than the machine ever dismissing it.
+        //
+        // `selectTransientAutoclose` cannot answer this: a hidden record is
+        // invisible to its own `visible` clause, and `state.order` still holds
+        // the PRE-merge record, so it would answer about the old identity.
+        // What the law's EXEMPTIONS say is asked directly instead, of
+        // `merged` — the post-merge identity — through the one predicate both
+        // sweeps read, so this arm cannot drift from them.
+        //
+        // The arguments STATE the degenerate case rather than leaving it to
+        // silent omission: `undefined` focuser, because a re-registration
+        // names no focuser at all and so nothing can be spared by the
+        // focuser-relation clause; `null` ordering floor, because with no
+        // focuser there is no `openSeq` to be newer than. Role membership is
+        // candidacy, which the caller owns, so it is tested here.
         const strandedByRoleChange =
           merged.hiddenByAppBlur === true &&
           roleIn(TRANSIENT_ROLES, merged.role) &&
-          merged.overlayFor === undefined &&
-          merged.acceptsInput;
+          transientAutocloseExemption(merged, undefined, null) === null;
         const mergedRecord = strandedByRoleChange ? { ...merged, hiddenByAppBlur: false } : merged;
         return {
           ...state,
@@ -3983,6 +3992,55 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
   return role !== undefined && set.has(role);
 }
 
+/** Which of the four exemption clauses in the transient-dismissal law spared a candidate. */
+export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
+
+/**
+ * THE EXEMPTIONS OF THE TRANSIENT-DISMISSAL LAW, AS ONE STATEMENT. A
+ * transient closes when it loses focus, always — `docs/design/window-manager.md`
+ * § 0 — and this function is the whole of what spares one. It answers for a
+ * SINGLE record already known to be a candidate: the caller owns candidacy
+ * (not the focuser, transient role, and — where it applies — visible) and
+ * owns iteration and output shape; this owns only the exemptions, in order.
+ * `null` means nothing spares the record.
+ *
+ * Every reader of the law calls this: `selectTransientAutoclose` (the
+ * decision), `traceTransientAutoclose` (the diagnostic), and `evolve`'s
+ * `WindowRegistered` merge arm (which asks the degenerate, focuser-less
+ * question about a record that is not yet in `state.order`). Restating the
+ * clauses instead was how a copy came to be missing one: the merge arm
+ * omitted `focuser-relation` silently, and nothing said whether that was a
+ * decision or an oversight.
+ *
+ * The parameters are the only facts the exemptions read beyond the record
+ * itself, and each is passed rather than derived so a caller with no focuser
+ * (`undefined`) or no ordering floor (`null`) STATES that degenerate case
+ * instead of expressing it by omission. `orderingFloor` is the focuser's
+ * `openSeq` when a machine-caused focus armed the ordering test, and `null`
+ * when no test is armed.
+ *
+ * Deliberately NOT parameterised by anything else — in particular there is no
+ * "ignore visible" switch. Making the law's answer depend on which caller
+ * asked is the exact defect this consolidation removes.
+ *
+ * Why each clause spares what it spares — the Space border, the shared chrome
+ * overlay, the two live ordering failures — is documented on
+ * `selectTransientAutoclose` below, which remains the law's prose home.
+ */
+export function transientAutocloseExemption(
+  rec: WindowRecord,
+  focuser: WindowRecord | undefined,
+  orderingFloor: number | null,
+): TransientAutocloseExemption | null {
+  if (rec.overlayFor !== undefined) return 'overlay-attached';
+  // Policy, not derivation — see `selectTransientAutoclose`'s doc for why and
+  // for the Space border / chrome overlay cases this spares and does not spare.
+  if (!rec.acceptsInput) return 'no-input';
+  if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return 'focuser-relation';
+  if (orderingFloor !== null && rec.openSeq > orderingFloor) return 'newer-than-focuser';
+  return null;
+}
+
 /**
  * Which transient siblings a newly-focused window dismisses. A transient is
  * dismissed when some other window, not belonging to it, genuinely takes key
@@ -4078,19 +4136,11 @@ export function selectTransientAutoclose(
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    if (rec.overlayFor !== undefined) continue;
-    // Policy, not derivation — see this function's doc for why and for the
-    // Space border / chrome overlay cases this spares and does not spare.
-    if (!rec.acceptsInput) continue;
-    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) continue;
-    if (orderingFloor !== null && rec.openSeq > orderingFloor) continue;
+    if (transientAutocloseExemption(rec, focuser, orderingFloor) !== null) continue;
     out.push(rec.id);
   }
   return out;
 }
-
-/** Which of the four exemption clauses in `selectTransientAutoclose` spared a candidate. */
-export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
 
 /** One candidate's fate, as decided by `traceTransientAutoclose`. */
 export type TransientAutocloseTrace =
@@ -4106,14 +4156,16 @@ export type TransientAutocloseTrace =
  * difference (§ diagnostics — this file keeps zero value imports and cannot
  * log anything itself).
  *
- * MIRRORS `selectTransientAutoclose` clause-for-clause and MUST be kept in
- * lockstep with it — same candidacy filters (not a focuser, visible,
- * transient role) before the same four exemptions in the same order, so
- * `dismissed: true` here is exactly that function's return set. Not a
- * refactor of it into a common helper: the two are read independently for
- * different audiences (a decision function and a diagnostic one), and a
- * shared helper would make one file's edit silently able to change the
- * other's meaning.
+ * The EXEMPTIONS are not restated here: both this and
+ * `selectTransientAutoclose` ask `transientAutocloseExemption`, so
+ * `dismissed: true` is exactly that function's return set by construction
+ * rather than by two copies being kept in lockstep. What stays separate is
+ * everything the two do NOT share — the candidacy filters (not the focuser,
+ * visible, transient role), the iteration, and the output shape — because the
+ * two are read independently for different audiences, a decision function and
+ * a diagnostic one, and neither should have to carry the other's shape. That
+ * separation is sound; sharing the exemptions is not optional, because they
+ * are the law and a law with two statements can disagree with itself.
  *
  * Non-candidates (the focuser itself, a hidden window, a non-transient role)
  * are OMITTED rather than traced with a reason: they were never in the
@@ -4133,23 +4185,8 @@ export function traceTransientAutoclose(
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    if (rec.overlayFor !== undefined) {
-      out.push({ id: rec.id, dismissed: false, exemption: 'overlay-attached' });
-      continue;
-    }
-    if (!rec.acceptsInput) {
-      out.push({ id: rec.id, dismissed: false, exemption: 'no-input' });
-      continue;
-    }
-    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) {
-      out.push({ id: rec.id, dismissed: false, exemption: 'focuser-relation' });
-      continue;
-    }
-    if (orderingFloor !== null && rec.openSeq > orderingFloor) {
-      out.push({ id: rec.id, dismissed: false, exemption: 'newer-than-focuser' });
-      continue;
-    }
-    out.push({ id: rec.id, dismissed: true });
+    const exemption = transientAutocloseExemption(rec, focuser, orderingFloor);
+    out.push(exemption === null ? { id: rec.id, dismissed: true } : { id: rec.id, dismissed: false, exemption });
   }
   return out;
 }
