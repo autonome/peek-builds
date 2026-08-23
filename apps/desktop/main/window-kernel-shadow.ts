@@ -195,12 +195,16 @@ let installedProvider: (() => WindowKernelExecutor) | null = null;
  * fallback via `subscribe`. That listener stays bound to the orphaned noop
  * instance forever: nothing production drives that object, this module
  * swallows every exception by design, so the subscription goes silently dead
- * for the rest of the process. Today the one such subscriber is
- * `window-state-singleton.ts subscribeFrontChange` (the shared chrome
- * overlay's retarget), and it only stays alive because the provider happens
- * to be installed before that subscription is ever made — nothing enforces
- * that order, so a reorder of boot wiring would kill the retarget with no
- * exception anywhere to point at it.
+ * for the rest of the process. The subscribers today are
+ * `window-state-singleton.ts subscribeOverlayAttachment` (the shared chrome
+ * overlay's re-frame) and `window-state-singleton.ts subscribeAppActive` (the
+ * overlay's app-active pointer-policy gate, `hybrid-overlay.ts
+ * wireAppActiveGate`) — both made from `initHybridOverlay()`. They stay alive
+ * because boot installs the provider first: `entry.ts` awaits
+ * `main.ts initialize()` (which runs `initWindowStateMachine()`) before it
+ * calls `initHybridOverlay()`. THIS THROW is what enforces that order — a
+ * reorder of boot wiring fails loudly here instead of leaving the overlay's
+ * re-frame and app-active edges silently dead.
  *
  * NOT a violation of this module's swallow-everything rule (module header,
  * invariant 2) — that rule exists so a rejected or thrown KERNEL DECISION can
