@@ -5,20 +5,17 @@
  * pure triple (`decide` / `evolve` / `react`) with ZERO value imports; THIS
  * module owns one kernel `State`, accepts dispatches, runs that triple, and
  * performs the resulting `Effect`s against the `WindowBackend` port
- * (`window-backend.ts`). Same division of labour as the pair that runs the app
- * today — `window-state.ts` (pure) + `window-os-adapter.ts` (executor) — and
- * modelled on it deliberately rather than inventing a second shape.
+ * (`window-backend.ts`). The division of labour was modelled on the pair that
+ * used to run the app — a pure reducer plus a separate executor — rather than
+ * inventing a second shape; that pair is gone and this is the only one left.
  *
  * SCOPE: the backend is a required constructor argument, so importing this
  * module alone causes no window operation and no listener attach — but
  * production DOES construct one: `window-kernel-singleton.ts getKernelExecutor`
- * is called with the real `ElectronWindowBackend` from `window-state-singleton.ts
+ * is called with the real `ElectronWindowBackend` from `window-machine.ts
  * getKernelExecutorForApp`, wired in at boot
- * (`window-state-singleton.ts initWindowStateMachine`). From that point this
- * executor performs every window operation the app makes; the old reducer
- * (`window-state.ts`) and its adapter (`window-os-adapter.ts`) keep running
- * alongside it but no longer perform one (see that adapter's header for the
- * handful of responsibilities it retains).
+ * (`window-machine.ts initWindowStateMachine`). From that point this executor
+ * performs every window operation the app makes.
  *
  * WHY IT MAY IMPORT PLATFORM-FACING CODE. The kernel's zero-value-import rule
  * exists so the pure triple stays loadable with no display and no window
@@ -234,9 +231,8 @@ export class WindowKernelExecutor {
   /**
    * Fire `listener` with the new state after every applied event (after its
    * effects have been performed). The base surface only: the edge-deduped
-   * consumer shapes the old machine exposes — `window-state-singleton.ts
-   * subscribeFrontChange` / `subscribeAppActive` — are each built as a dedup
-   * layer over exactly this, and the kernel's equivalents are built the same
+   * consumer shape `window-machine.ts subscribeAppActive` exposes is built as
+   * a dedup layer over exactly this, and the kernel's equivalents the same
    * way BY THE CALLER, at the call site that knows which fact it cares about.
    *
    * Deliberately no `subscribeTopmostPageHostChange` here. §0.1.5 records that
@@ -1018,7 +1014,7 @@ export class WindowKernelExecutor {
   /**
    * Retain an async effect issued OUTSIDE the pump, so
    * `waitForPendingAsyncEffects` covers it too. The Escape decider
-   * (`window-escape-runtime.ts`, via `window-state-singleton.ts
+   * (`window-escape-runtime.ts`, via `window-machine.ts
    * dispatchEscapePress`) is the one such producer: its renderer ask is a
    * backend call the machine never issued as an `Effect`, so nothing in
    * `performEffect` can see it, yet the E2E bridge that awaits the ESC round

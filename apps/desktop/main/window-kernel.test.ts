@@ -49,7 +49,7 @@ import {
 import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 // The devtools-target case below narrows `isContentWindow` with the role
 // predicate that supplies the http/https fact this kernel does not store
-// (`window-state-singleton.ts getTopmostWebPageWindowId` is the production
+// (`window-machine.ts getTopmostWebPageWindowId` is the production
 // composition). Same shape as the `window-escape.js` import above: a pure
 // sibling module, pinned against the real predicate rather than restated.
 import { isWebPageRole } from './izui-roles.js';
