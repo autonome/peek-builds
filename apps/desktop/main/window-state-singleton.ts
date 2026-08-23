@@ -317,6 +317,17 @@ export function getAppActive(): boolean {
  * shape as `subscribeOverlayAttachment` above: layered over the kernel's own
  * `subscribe`, edge-deduped so the callback fires only when the boolean
  * actually flips, not on every dispatch. Returns an unsubscribe function.
+ *
+ * ORDERING: like `subscribeOverlayAttachment`, this binds to whichever
+ * executor `getShadowKernelExecutor()` answers with AT CALL TIME, and
+ * `initWindowStateMachine()` above is what points that accessor at
+ * `getKernelExecutorForApp()`. Calling this first would bind the callback to
+ * the pre-cutover noop-backed fallback, which nothing production ever drives
+ * again. That is not a silent hazard: `window-kernel-shadow.ts
+ * setKernelExecutorProvider` throws when it finds a listener already on the
+ * fallback, so the wrong order fails at startup. Boot satisfies it because
+ * `entry.ts` awaits `main.ts initialize()` (→ `initWindowStateMachine()`)
+ * before calling `initHybridOverlay()`, the only caller.
  */
 export function subscribeAppActive(cb: (appActive: boolean) => void): () => void {
   let last = getAppActive();

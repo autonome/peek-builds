@@ -1356,6 +1356,41 @@ describe('window-kernel-shadow: executor provider seam', () => {
     }
   });
 
+  it('an app-active edge subscriber made AFTER the provider install hears the production feed', () => {
+    // PIN, not a bug repro: records the boot ordering `window-state-singleton.ts
+    // subscribeAppActive` depends on. That helper cannot be imported here
+    // (`window-state-singleton.ts` value-imports `electron`, which throws under
+    // ELECTRON_RUN_AS_NODE=1), so this rebuilds its exact shape — an
+    // edge-deduped read of `state.appActive` layered over
+    // `getShadowKernelExecutor().subscribe` — and drives it with the same feed
+    // helpers `electron-window-backend.ts attachAppListeners` calls.
+    const injectedExecutor = new WindowKernelExecutor(new InertBackend());
+    setKernelExecutorProvider(() => injectedExecutor);
+
+    const edges: boolean[] = [];
+    let last = getShadowKernelExecutor().getState().appActive;
+    const unsub = getShadowKernelExecutor().subscribe((state) => {
+      if (state.appActive !== last) {
+        last = state.appActive;
+        edges.push(state.appActive);
+      }
+    });
+
+    try {
+      assert.strictEqual(injectedExecutor.getState().appActive, true, 'precondition: the kernel boots app-active');
+      shadowKernelAppResigned();
+      shadowKernelAppActivated();
+    } finally {
+      unsub();
+    }
+
+    assert.deepStrictEqual(
+      edges,
+      [false, true],
+      'both app-active edges must reach a subscriber bound after the provider install',
+    );
+  });
+
   it('does not throw when the fallback was merely constructed (feeds ran) with no subscriber ever attached', () => {
     const id = wid(901);
     // Constructs the fallback via the ordinary feed path — nobody subscribes.
