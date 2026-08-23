@@ -916,10 +916,21 @@ describe('state ownership and entry points', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
     const before = exec.getState();
+    // The setup dispatch is an APPLIED event, so it has already primed the OS
+    // Escape grab: `reconcileEscGrab` runs once per apply and the first one
+    // always writes, because `escGrabArmed` starts unset rather than at a
+    // value the derived one could already match. "Changes nothing" is
+    // therefore a statement about what the REJECTED command adds, not about an
+    // empty recorder — pin the calls standing before it and require no growth.
+    const callsBeforeCommand = backend.names();
+    assert.ok(
+      callsBeforeCommand.length > 0,
+      'the setup dispatch must have recorded something, or the no-growth check below proves nothing',
+    );
     const out = exec.execute({ type: 'ShowWindow', id: wid(1), expectedVersion: before.version - 1 });
     assert.deepStrictEqual(out, { rejected: 'stale-version' });
     assert.strictEqual(exec.getState(), before);
-    assert.deepStrictEqual(backend.names(), []);
+    assert.deepStrictEqual(backend.names(), callsBeforeCommand);
   });
 
   it('rejects a command naming no window', () => {
@@ -1253,6 +1264,17 @@ describe('the per-transition trace', () => {
   let originalLog: typeof console.log;
   let lines: string[];
 
+  /**
+   * The trace lines alone. `console.log` also carries the always-on `[wm]`
+   * diagnostics (`window-diag.ts`), which are deliberately NOT DEBUG-gated —
+   * the executor emits an `esc-grab-reconcile` line on every apply that flips
+   * the grab and a `transient-sweep` line on every attention diff. Asserting
+   * over the raw capture would make every test here a test of that stream too;
+   * these tests are about the DEBUG-gated `[window-kernel]` trace, so they
+   * read it through this filter.
+   */
+  const traceLines = (): string[] => lines.filter((l) => l.startsWith('[window-kernel] '));
+
   beforeEach(() => {
     __resetDebugFlagsForTest();
     setDebug(true);
@@ -1292,15 +1314,19 @@ describe('the per-transition trace', () => {
     // genuine reorder (§0.1.10), so both `key` and `order` move.
     exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
 
-    assert.strictEqual(lines.length, 1);
-    assert.strictEqual(lines[0], `[window-kernel] OsFocusGained id(${wid(1)}) key none→${wid(1)} order=[${wid(2)} ${wid(1)}]`);
+    const traced = traceLines();
+    assert.strictEqual(traced.length, 1);
+    assert.strictEqual(traced[0], `[window-kernel] OsFocusGained id(${wid(1)}) key none→${wid(1)} order=[${wid(2)} ${wid(1)}]`);
   });
 
-  it('logs nothing when DEBUG is off', () => {
+  it('logs no trace when DEBUG is off', () => {
     setDebug(false);
     const { exec } = makeExecutor();
     exec.dispatch(register(wid(1)));
     exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
-    assert.deepStrictEqual(lines, []);
+    // Only the trace is gated. The `[wm]` diagnostics on the same
+    // `console.log` stay on by design (`window-diag.ts`), so this asserts
+    // their absence would be asserting the opposite of that design.
+    assert.deepStrictEqual(traceLines(), []);
   });
 });

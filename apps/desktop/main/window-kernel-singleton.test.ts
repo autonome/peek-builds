@@ -37,6 +37,19 @@ class FakeBackend implements WindowBackend {
     this.calls.push({ name, args });
   }
 
+  /**
+   * The recorded calls minus the OS Escape-grab reconcile.
+   * `WindowKernelExecutor.apply` runs `reconcileEscGrab` after every applied
+   * event, and the first apply on a fresh executor always writes because the
+   * tracked value starts unset — so `setEscGrab` is a property of applying ANY
+   * event, not an effect of the command under test. A test asking which
+   * backend received a command's effect reads the list through this; one
+   * asking whether the backend was touched at all still reads `calls`.
+   */
+  effectCalls(): Call[] {
+    return this.calls.filter((c) => c.name !== 'setEscGrab');
+  }
+
   attachAppListeners(): void {
     this.record('attachAppListeners');
   }
@@ -141,7 +154,7 @@ describe('window-kernel-singleton getKernelExecutor', () => {
     const outcome = destroyCommand(exec1, wid(1));
     assert.ok('applied' in outcome && outcome.applied, 'DestroyWindow has no unknown-window guard');
     assert.deepStrictEqual(
-      backendA.calls,
+      backendA.effectCalls(),
       [{ name: 'destroyWindow', args: [wid(1)] }],
       'the injected backend from the first call is the one that receives the effect',
     );
@@ -159,8 +172,8 @@ describe('window-kernel-singleton getKernelExecutor', () => {
     const exec2 = getKernelExecutor(backendB);
     assert.notStrictEqual(exec1, exec2, 'a reset must force a fresh construction');
     destroyCommand(exec2, wid(2));
-    assert.deepStrictEqual(backendB.calls, [{ name: 'destroyWindow', args: [wid(2)] }]);
-    assert.deepStrictEqual(backendA.calls, [{ name: 'destroyWindow', args: [wid(1)] }], 'the old executor/backend pair is untouched by the new one');
+    assert.deepStrictEqual(backendB.effectCalls(), [{ name: 'destroyWindow', args: [wid(2)] }]);
+    assert.deepStrictEqual(backendA.effectCalls(), [{ name: 'destroyWindow', args: [wid(1)] }], 'the old executor/backend pair is untouched by the new one');
   });
 });
 
