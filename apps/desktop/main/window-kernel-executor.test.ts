@@ -684,6 +684,20 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('destroyWindow'), []);
   });
 
+  it('a DismissWindow effect (the transient-autoclose sweep) closes through closeOrHide, never closeWindow — a keepLive slide must be hidden, not destroyed', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2), { kind: 'page-host', role: 'quick-view' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+    backend.calls.length = 0;
+    // wid(1) taking key sweeps the still-visible transient wid(2) — a world
+    // focus report, so the sweep is unconditional (no ordering floor).
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    assert.deepStrictEqual(backend.of('closeOrHide').map((c) => c.args[0]), [wid(2)]);
+    assert.deepStrictEqual(backend.of('closeWindow'), [], 'the sweep must never route through the destructive close');
+  });
+
   it('drives fullscreen in and out through the one port command', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
