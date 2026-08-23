@@ -850,8 +850,8 @@ export function shadowKernelOsFullscreenLeft(id: WindowId): void {
 /**
  * Translate the bounded fullscreen settle timeout into the kernel's
  * `FullscreenSettleTimeout` event. Does NOT force-settle `fsMode` itself —
- * `evolve`'s arm never guesses; it only records the ask (`lastFsReconcile`,
- * answered by `react`'s own `ReconcileFullscreen` effect) for a record still
+ * `evolve`'s arm never guesses; it only marks the record `unverified`
+ * (answered by `react`'s own `ReconcileFullscreen` effect) for a record still
  * genuinely in flight, leaving every `fsMode` exactly where it was
  * (`window-kernel.ts`'s `FullscreenSettleTimeout` arm doc: a wrong guess
  * strands `preBounds` or leaves a black macOS Space behind — the machine

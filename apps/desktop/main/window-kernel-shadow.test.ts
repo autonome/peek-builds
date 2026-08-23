@@ -1063,30 +1063,25 @@ describe('window-kernel-shadow: fullscreen feed', () => {
     assert.strictEqual(mode.pendingDesire, false, 'the coalesced desire is recorded on the still-in-flight mode');
   });
 
-  it('a settle timeout on an in-flight window writes a fresh lastFsReconcile naming it and leaves fsMode transitional (8152196c: the machine asks the OS rather than guessing)', () => {
+  it('a settle timeout on an in-flight window marks it unverified and leaves fsMode transitional (8152196c: the machine asks the OS rather than guessing)', () => {
     const id = wid(183);
     registerWindow(id);
     shadowKernelSetFullscreen(id, true);
-    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
-    assert.strictEqual(
-      getShadowKernelExecutor().getState().lastFsReconcile,
-      null,
-      'precondition: nothing has asked for a reconcile yet',
-    );
+    const beforeMode = record(id)?.fsMode;
+    assert.strictEqual(beforeMode?.name, 'entering', 'precondition: the window is entering');
+    if (beforeMode?.name !== 'entering') throw new Error('unreachable — asserted above');
+    assert.strictEqual(beforeMode.unverified, undefined, 'precondition: nothing has asked for a reconcile yet');
 
     shadowKernelFullscreenSettleTimeout(id);
 
-    const state = getShadowKernelExecutor().getState();
-    assert.deepStrictEqual(
-      state.lastFsReconcile,
-      { ids: [id], seq: 1 },
-      'the settle timeout must record a fresh reconcile ask naming the in-flight window',
-    );
+    const afterMode = record(id)?.fsMode;
     assert.strictEqual(
-      record(id)?.fsMode.name,
+      afterMode?.name,
       'entering',
       'fsMode must be left exactly where it was — a wrong guess would strand preBounds or leave a black Space',
     );
+    if (afterMode?.name !== 'entering') throw new Error('unreachable — asserted above');
+    assert.strictEqual(afterMode.unverified, true, 'the settle timeout must mark the in-flight window unverified');
   });
 
   it('never throws across a fullscreen feed naming a window with no record', () => {

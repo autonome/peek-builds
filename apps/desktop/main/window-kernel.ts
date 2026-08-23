@@ -69,12 +69,21 @@ export interface Rectangle {
  * load-bearing. `pendingDesire` coalesces a request that arrives mid-flight
  * (§0.1.8's async edge): it is applied when the in-flight transition
  * settles, never opens a second transition.
+ *
+ * `unverified` marks that the machine no longer trusts this belief — the
+ * settle timeout expired with no native report, or the app just came back
+ * active after a possible background transition — and is answered by
+ * `react`'s fullscreen-reconcile rule (see its doc). It is unrepresentable on
+ * `normal`/`fullscreen` by construction: only a transition still in flight can
+ * be unverified. It self-clears for free rather than needing an explicit
+ * clear step: `nextFsModeForOsEntered`/`nextFsModeForOsLeft` build a fresh
+ * mode object on every settle, and a fresh object has no `unverified` key.
  */
 export type FsMode =
   | { name: 'normal' }
-  | { name: 'entering'; preBounds: Rectangle | null; pendingDesire?: boolean }
+  | { name: 'entering'; preBounds: Rectangle | null; pendingDesire?: boolean; unverified?: true }
   | { name: 'fullscreen'; preBounds: Rectangle | null }
-  | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean };
+  | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean; unverified?: true };
 
 /**
  * Bounded wait for the native macOS fullscreen enter/leave animation to
@@ -578,46 +587,6 @@ export interface State {
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
   /**
-   * The most recent FULLSCREEN RECONCILE request, or `null` before any — "the
-   * machine no longer trusts its own `fsMode` for these windows; go read the
-   * OS and report back".
-   *
-   * WHY THE MACHINE CANNOT JUST DECIDE. `fsMode` is a belief about a
-   * transition the OS performs asynchronously, and two situations leave that
-   * belief unverifiable from inside: the settle timeout has expired with no
-   * native report, and the app has just come back active (macOS can enter or
-   * leave fullscreen while Peek is in the background, so an in-flight
-   * transition may have completed unobserved). Guessing is not a substitute.
-   * A window guessed into `fullscreen` that is really `normal` strands its
-   * `preBounds`, and a window guessed into `normal` that is really fullscreen
-   * leaves a black macOS Space behind. `electron-window-backend.ts
-   * reconcileFullscreen` holds the one sanctioned `isFullScreen()` read, and
-   * its answer arrives as an ordinary `OsFullscreenEntered`/`OsFullscreenLeft`
-   * event — command in, event out, the same shape every other OS truth enters
-   * through.
-   *
-   * WHY IT IS STATE AT ALL, and it is the same reason `lastTeardown` and
-   * `lastFocusAssert` above are: asking is not itself a state change. The
-   * records stay exactly where they were — still `entering`, still `leaving` —
-   * so `prev` and `next` are identical everywhere else, and `react` is a pure
-   * structural projection that may not branch on `ev.type`. The request has to
-   * become a FACT `react` can diff, and this field is that fact.
-   *
-   * `ids` is a LIST because one transition can need many: an app activation
-   * reconciles every window caught mid-transition, which the old machine did
-   * by pushing one effect per record from inside its `APP_ACTIVATED` arm. A
-   * settle timeout names exactly one.
-   *
-   * `seq` is what makes repetition visible, for the same reason it is on
-   * `TeardownRequest`: a second timeout for the same still-in-flight window is
-   * a second question, and comparing payloads would collapse the two.
-   *
-   * Nothing clears the field. The value means "the last reconcile asked for
-   * was this one", not "a reconcile is pending" — the answer arrives as its
-   * own event and settles `fsMode` there.
-   */
-  readonly lastFsReconcile: FsReconcileRequest | null;
-  /**
    * THE MOST RECENT ATTENTION REPORT, or `null` before any — the fact that
    * lets `react` apply transient autoclose (§0: "no dispatch site can
    * silently skip running it") as a pure structural diff instead of a branch
@@ -694,19 +663,6 @@ export interface State {
 export interface FocusAssertRequest {
   id: WindowId;
   seq: number;
-}
-
-/**
- * A fullscreen reconcile the kernel was asked to perform — see
- * `State.lastFsReconcile` for why asking is a fact at all. `ids` is a LIST,
- * unlike `FocusAssertRequest`'s single target: an app activation can catch
- * many windows mid-transition at once, while a settle timeout names exactly
- * one. Same shape family as `TeardownRequest`/`FocusAssertRequest` otherwise
- * — a `seq` that makes repetition visible.
- */
-export interface FsReconcileRequest {
-  readonly ids: readonly WindowId[];
-  readonly seq: number;
 }
 
 /**
@@ -1412,7 +1368,6 @@ export function initialState(): State {
     pendingAppResignSweep: false,
     lastTeardown: null,
     lastFocusAssert: null,
-    lastFsReconcile: null,
     lastAttention: null,
     pendingColdStartFocus: null,
   };
@@ -1443,17 +1398,6 @@ function nextAttentionSeq(state: State): number {
  */
 function nextFocusAssertSeq(state: State): number {
   return (state.lastFocusAssert?.seq ?? 0) + 1;
-}
-
-/**
- * The next `FsReconcileRequest.seq` — one per reconcile event, monotone,
- * never reused. Derived from state rather than from a module counter, same
- * as `nextTeardownSeq`/`nextFocusAssertSeq` above: a module counter would
- * make `evolve` read something other than its two arguments and would break
- * replay determinism.
- */
-function nextFsReconcileSeq(state: State): number {
-  return (state.lastFsReconcile?.seq ?? 0) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1500,6 +1444,22 @@ function nextFsModeForOsLeft(mode: FsMode): FsMode {
     case 'normal':
       return mode;
   }
+}
+
+/**
+ * Mark a still-in-flight mode `unverified` — the machine no longer trusts
+ * this belief, see `FsMode`'s doc. A no-op (same reference back) on
+ * `normal`/`fullscreen`, where the flag is unrepresentable, so a caller may
+ * apply this unconditionally to every record without first testing `.name`.
+ */
+function markFsModeUnverified(mode: FsMode): FsMode {
+  if (mode.name !== 'entering' && mode.name !== 'leaving') return mode;
+  return { ...mode, unverified: true };
+}
+
+/** Whether a mode is a still-in-flight transition the machine has flagged unverified. */
+function isFsModeUnverified(mode: FsMode): boolean {
+  return (mode.name === 'entering' || mode.name === 'leaving') && mode.unverified === true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2163,11 +2123,9 @@ export function evolve(state: State, ev: Event): State {
       // record from inside this same handler). macOS can enter or leave
       // fullscreen while Peek is backgrounded, so a transition still marked
       // `entering`/`leaving` here may have completed unobserved — every such
-      // record is named on one reconcile request rather than trusted as-is.
-      const inFlightIds = state.order
-        .filter((w) => w.fsMode.name === 'entering' || w.fsMode.name === 'leaving')
-        .map((w) => w.id);
-
+      // record is marked `unverified` (see `FsMode`'s doc) rather than
+      // trusted as-is; `react`'s reconcile rule turns the mark into one
+      // `ReconcileFullscreen` per record it newly sees.
       const opSeq = reshown || assertsFocus ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
@@ -2178,13 +2136,15 @@ export function evolve(state: State, ev: Event): State {
           // One op means one token: a window both re-shown and raised carries
           // that single number once.
           const stamped = (reshow && !w.visible) || (assertsFocus && w.id === latched);
-          if (!reshow && !stamped) {
+          const unverifiedMode = markFsModeUnverified(w.fsMode);
+          if (!reshow && !stamped && unverifiedMode === w.fsMode) {
             return w;
           }
           return {
             ...w,
             ...(reshow ? { visible: true, hiddenByAppBlur: false } : {}),
             ...(stamped ? { lastOpSeq: opSeq } : {}),
+            fsMode: unverifiedMode,
           };
         }),
         opSeqCounter: opSeq,
@@ -2194,11 +2154,6 @@ export function evolve(state: State, ev: Event): State {
         // activation would project to a spurious raise.
         lastFocusAssert:
           latched !== null ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
-        // Untouched when nothing is in flight — an activation with no
-        // straggling transition must not bump the reconcile `seq`, same
-        // reasoning as `lastFocusAssert` just above.
-        lastFsReconcile:
-          inFlightIds.length > 0 ? { ids: inFlightIds, seq: nextFsReconcileSeq(state) } : state.lastFsReconcile,
         version: state.version + 1,
       };
     }
@@ -2374,20 +2329,19 @@ export function evolve(state: State, ev: Event): State {
       // that is really `normal` strands its `preBounds`, and guessing
       // `normal` on a window that is really fullscreen leaves a black macOS
       // Space behind. So every record's `fsMode` is left exactly where it
-      // was, and this becomes a REQUEST instead — recorded on
-      // `lastFsReconcile` for `react` to turn into a `ReconcileFullscreen`
-      // effect — for a named record still genuinely in flight
-      // (`entering`/`leaving`). A record that has already settled, or that
-      // names nothing in `order`, has nothing to ask about: the field is left
-      // untouched (`state.lastFsReconcile`, not a fresh one), which diffs to
-      // no effect.
+      // was, and this becomes a REQUEST instead — the record is marked
+      // `unverified` (see `FsMode`'s doc) for `react` to turn into a
+      // `ReconcileFullscreen` effect — for a named record still genuinely in
+      // flight (`entering`/`leaving`). A record that has already settled, or
+      // that names nothing in `order`, has nothing to ask about: `order` is
+      // left untouched, which diffs to no effect.
       const record = state.order.find((w) => w.id === ev.id);
       const inFlight = record !== undefined && (record.fsMode.name === 'entering' || record.fsMode.name === 'leaving');
       return {
         ...state,
-        lastFsReconcile: inFlight
-          ? { ids: [ev.id], seq: nextFsReconcileSeq(state) }
-          : state.lastFsReconcile,
+        order: inFlight
+          ? state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: markFsModeUnverified(w.fsMode) } : w))
+          : state.order,
         version: state.version + 1,
       };
     }
@@ -3171,18 +3125,18 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // Fullscreen reconcile: a structural diff of `State.lastFsReconcile`, same
-  // shape as the teardown rule just above — one `ReconcileFullscreen` per id
-  // on the request, never a branch on `ev.type`. The `seq` comparison is what
-  // makes it a diff rather than a read: a transition that asked nothing
-  // leaves the field alone and emits nothing, and two timeouts for the same
-  // still-in-flight window carry different `seq` values, so the second is a
-  // second question, not a repeat of the first.
-  const recon = next.lastFsReconcile;
-  if (recon !== null && recon.seq !== prev.lastFsReconcile?.seq) {
-    for (const id of recon.ids) {
-      effects.push({ type: 'ReconcileFullscreen', id });
-    }
+  // Fullscreen reconcile: a per-record structural diff of `fsMode.unverified`
+  // (see `FsMode`'s doc) — one `ReconcileFullscreen` for every record whose
+  // mark newly went false -> true, never a branch on `ev.type`. A record
+  // already unverified in `prev` (a second settle timeout, or a second
+  // `AppActivated`, while it is still in flight) emits nothing a second time
+  // — safe, because `electron-window-backend.ts reconcileFullscreen` answers
+  // synchronously, so an unverified window is one pump-drain wide.
+  for (const record of next.order) {
+    if (!isFsModeUnverified(record.fsMode)) continue;
+    const prevRecord = prev.order.find((w) => w.id === record.id);
+    if (prevRecord !== undefined && isFsModeUnverified(prevRecord.fsMode)) continue;
+    effects.push({ type: 'ReconcileFullscreen', id: record.id });
   }
 
   // Focus assert: a structural diff of `State.lastFocusAssert`, the same shape

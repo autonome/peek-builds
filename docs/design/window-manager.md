@@ -157,6 +157,18 @@ both current tables and `izui-escape.spec.ts` carry the standing rule and agree 
 Two earlier records in this document described the arm as silently lost in the port; both are
 corrected. The `order`/never-shown-windows question in §0.1.10 is still open.
 
+The `lastFsReconcile` one-shot request channel is dissolved as of 2026-08-23: `FsMode`'s
+`entering`/`leaving` variants now carry an `unverified?: true` flag instead of a separate
+`seq`-stamped record on `State`. The same two writers set it — `AppActivated`'s in-flight sweep and
+`FullscreenSettleTimeout` — and it self-clears for free, because `nextFsModeForOsEntered` /
+`nextFsModeForOsLeft` build a fresh mode object on every settle. `react`'s reconcile rule is now a
+per-record diff of that flag rather than a diff of one request fact. Behavior change: a second
+still-in-flight ask (a second settle timeout, or a second `AppActivated`) while a record is already
+unverified now emits no second `ReconcileFullscreen` — safe, because `electron-window-backend.ts
+reconcileFullscreen` answers synchronously, so an unverified window is one pump-drain wide. The
+other three `seq`-stamped one-shot channels on `State` (`lastTeardown`, `lastFocusAssert`,
+`lastAttention`) are unchanged.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,
