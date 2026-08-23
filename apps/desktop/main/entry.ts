@@ -186,18 +186,18 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
   // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
-  // is reducer state (`pendingColdStartFocus`), fired by APP_ACTIVATED. Drive it
-  // from a spec by dispatching COLD_START_FOCUS_ARMED + APP_ACTIVATED, or cover
-  // it in the window-state unit table; no spec used this bridge.)
+  // is kernel state (`pendingColdStartFocus`), spent by `AppActivated`. Drive it
+  // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
+  // in window-kernel.test.ts; no spec used this bridge.)
   /**
    * Simulate "Peek is / is not the active app" for drift-detection tests,
-   * across BOTH app-active mirrors: the window-state machine's
-   * `AppWindowState.appActive` (which the restore-focus decision reads — see
-   * session.ts `restore-focus-decision`) and the IZUI coordinator's
-   * `isAppFocused()` (still read by ipc.ts's transient classification).
+   * across BOTH app-active mirrors: the kernel's `State.appActive` (which the
+   * restore-focus decision reads — see session.ts `restore-focus-decision`)
+   * and the IZUI coordinator's `isAppFocused()` (still read by ipc.ts's
+   * transient classification).
    *
-   * The machine half is a plain `APP_ACTIVATED`/`APP_RESIGNED` dispatch — the
-   * exact event `electron-window-backend.ts attachAppListeners` emits from
+   * The kernel half feeds the same `AppActivated`/`AppResigned` events
+   * `electron-window-backend.ts attachAppListeners` emits from
    * did-become/resign-active, so the reducer cannot tell a simulated switch
    * from a real one.
    *
@@ -222,11 +222,9 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     }
   },
   /**
-   * Release the coordinator override and hand both mirrors back to the OS.
-   * The machine has no override to release, so restore its optimistic launch
-   * value (`appActive: true`) explicitly — otherwise a spec that simulated a
-   * resign would leave every later spec sharing the runner believing Peek is
-   * backgrounded.
+   * Release the coordinator override and hand app-focus back to the OS.
+   * Only the coordinator carries an override; the kernel is left alone,
+   * for the reason spelled out at the reset itself.
    */
   clearAppFocusedForTest: () => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
