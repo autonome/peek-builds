@@ -350,9 +350,10 @@ export interface WindowRecord {
    * above OTHER applications' windows too). `AppResignSettled` re-runs the
    * same sweep only as a backstop for a window that became eligible in the
    * gap between the two events. Both are reversible visibility, so both are
-   * undone by the same re-show. What waits for the settle is DISMISSAL
-   * (`lastAttention`), because dismissal is destructive — a dismissed palette
-   * does not come back, so the activation dance must not trigger it. A hide
+   * undone by the same re-show. What waits for the settle is DISMISSAL (the
+   * `pendingAppResignSweep`/`appActive` diff `react` sweeps off, not this
+   * flag), because dismissal is destructive — a dismissed palette does not
+   * come back, so the activation dance must not trigger it. A hide
    * that `AppActivated` will undo carries no such risk, and a floating window
    * cannot afford the delay: 500ms of it is 500ms of Peek's chrome or HUD
    * hanging over the app the user just switched to.
@@ -587,29 +588,26 @@ export interface State {
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
   /**
-   * THE MOST RECENT ATTENTION REPORT, or `null` before any — the fact that
-   * lets `react` apply transient autoclose (§0: "no dispatch site can
-   * silently skip running it") as a pure structural diff instead of a branch
-   * on `ev.type`. Dismissal is ONE condition, not a list of triggers: every
-   * event that changes where attention sits — a window taking OS focus, the
-   * app losing it entirely — writes this same fact, and `react` diffs it once.
+   * THE MOST RECENT FOCUS REPORT, or `null` before any — the fact that lets
+   * `react` apply transient autoclose (§0: "no dispatch site can silently
+   * skip running it") as a pure structural diff instead of a branch on
+   * `ev.type`. `OsFocusGained` is its only writer. The app-resign half of
+   * dismissal (attention leaving Peek entirely) is a SEPARATE structural diff
+   * now, over `pendingAppResignSweep`/`appActive` — see `react`'s resign-sweep
+   * rule — because that half needed no payload of its own beyond a flag a
+   * prior transition already had to store for the dance guard.
    *
-   * `holder` is the window attention is on, or `null` for "on nothing of
-   * ours" — EXPLICIT, not read off `key`. `key` cannot stand in for it: an
-   * app-deactivation settle (`AppResignSettled`) never touches `key` (RULE 2),
-   * so at the moment attention truly leaves, `key` still names whichever
-   * window last held it, and a selector reading `key` would spare exactly
-   * that window — typically the palette itself — reproducing the dismiss-
-   * missed-the-palette bug by construction. `holder` is written by each cause
-   * directly instead: `ev.id` on `OsFocusGained`, `null` on a real
-   * `AppResignSettled` settle.
+   * `holder` is the window attention is on — EXPLICIT, not derived at diff
+   * time from `key`, even though `OsFocusGained`'s two branches always write
+   * it the same `ev.id` that lands on `key` in the same transition: `react`
+   * reads this field alone, so the sweep never has to reach past it into a
+   * differently-shaped field.
    *
    * WHY IT IS STATE AT ALL, and the shape mirrors `lastTeardown` /
    * `lastFocusAssert` exactly: `react(prev, ev, next)` may not read `ev`
-   * (§0.1.1), so `selectTransientAutoclose`'s `cause` (and now `holder`)
-   * arguments — which would otherwise ride on the triggering event's own
-   * payload — have to become a FACT `react` can diff before the sweep can be
-   * driven off `next` alone.
+   * (§0.1.1), so `selectTransientAutoclose`'s `cause` argument — which would
+   * otherwise ride on the triggering event's own payload — has to become a
+   * FACT `react` can diff before the sweep can be driven off `next` alone.
    *
    * `seq` is what makes repetition visible, for the same reason it is on
    * `TeardownRequest`/`FocusAssertRequest`: the old machine ran the sweep on
@@ -666,13 +664,15 @@ export interface FocusAssertRequest {
 }
 
 /**
- * The most recent report of where attention sits — see `State.lastAttention`.
- * `holder` is EXPLICIT rather than read off `key`: see that field's doc for
- * why `key` cannot stand in for it once attention can legitimately be on
- * nothing of Peek's.
+ * The most recent focus report — see `State.lastAttention`. `holder` is
+ * EXPLICIT rather than read off `key`: see that field's doc for why `key`
+ * cannot stand in for it. `OsFocusGained` is the only writer, so `holder` is
+ * always a real `WindowId` — the app-resign half of dismissal (attention
+ * landing on nothing of Peek's) is a separate structural diff now, over
+ * `pendingAppResignSweep`/`appActive`, and never comes through here.
  */
 export interface Attention {
-  holder: WindowId | null;
+  holder: WindowId;
   cause: FocusCause;
   seq: number;
 }
@@ -1257,8 +1257,10 @@ export type Effect =
   | { type: 'CloseWindow'; id: WindowId }
   /**
    * Dismiss a transient sibling the transient-autoclose sweep named
-   * (`selectTransientAutoclose`, emitted by `react` off `State
-   * .lastAttention`'s `seq` diff) — DISTINCT from `CloseWindow` above,
+   * (`selectTransientAutoclose`, emitted by `react` off two structural diffs
+   * — `State.lastAttention`'s `seq` diff for a focus report, and the
+   * `pendingAppResignSweep`/`appActive` diff for an app-resign settle) —
+   * DISTINCT from `CloseWindow` above,
    * and deliberately not reused as one. `CloseWindow` is realized as a hard
    * `backend.closeWindow`, which has no keepLive branch and no
    * exit-native-fullscreen preamble; the old machine's equivalent sweep
@@ -1379,11 +1381,10 @@ function nextTeardownSeq(state: State): number {
 }
 
 /**
- * The next `Attention.seq` — one per attention-writing event (`OsFocusGained`,
- * and an armed, real `AppResignSettled`), monotone, never reused. Derived from
- * state rather than a module counter, same as
- * `nextTeardownSeq`/`nextFocusAssertSeq`: a module counter would make `evolve`
- * read something other than its two arguments and would break replay
+ * The next `Attention.seq` — one per `OsFocusGained`, its only writer,
+ * monotone, never reused. Derived from state rather than a module counter,
+ * same as `nextTeardownSeq`/`nextFocusAssertSeq`: a module counter would make
+ * `evolve` read something other than its two arguments and would break replay
  * determinism.
  */
 function nextAttentionSeq(state: State): number {
@@ -2178,15 +2179,19 @@ export function evolve(state: State, ev: Event): State {
       // the app came back active without an `AppActivated` reaching the
       // machine. Belief-vs-reality here is `appActive`'s job, and a visible
       // surface must never be dismissed while the app is front — so this
-      // settle still disarms and still runs the backstop hide above, but does
-      // NOT record attention as having left. `attentionLost` is a
-      // STATE test (`state.appActive`), not an event test, which is why the
-      // guard belongs here, on the write, rather than in `react`.
+      // settle still disarms and still runs the backstop hide above, but must
+      // not let `react` treat attention as having left either. This arm never
+      // touches `appActive` (RULE 2's sibling for this field), so `next.appActive`
+      // below is exactly `state.appActive`, and `react`'s resign-sweep rule
+      // reads `!next.appActive` off the very state this write produces — no
+      // separate signal needed. `attentionLost` names that same test locally,
+      // for `dismissVictims` below.
       const attentionLost = !state.appActive;
       // A REVERSIBLE HIDE MUST NEVER CLAIM A DISMISSAL VICTIM (see the
-      // `AppResigned` arm's matching note). Computed only on the branch that
-      // actually writes `lastAttention` below: a settle that does not dismiss
-      // runs the backstop hide unfiltered, exactly as it does today.
+      // `AppResigned` arm's matching note). Computed only when `react`'s
+      // resign-sweep rule will actually fire (`attentionLost`): a settle that
+      // does not dismiss runs the backstop hide unfiltered, exactly as it does
+      // today.
       const dismissVictims = attentionLost ? new Set(selectTransientAutoclose(state, null)) : null;
       return {
         ...state,
@@ -2196,9 +2201,6 @@ export function evolve(state: State, ev: Event): State {
             ? { ...w, visible: false, hiddenByAppBlur: true }
             : w,
         ),
-        lastAttention: attentionLost
-          ? { holder: null, cause: WORLD_CAUSE, seq: nextAttentionSeq(state) }
-          : state.lastAttention,
         version: state.version + 1,
       };
     }
@@ -2794,9 +2796,10 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // fires but the trailing `SetStacking` sweep may briefly restack over it —
   // accepted until the real OS focus change this raise causes echoes back as
   // `OsFocusGained` and reconciles `order` for real. `DismissWindow`
-  // (transient autoclose) is unaffected either way: it diffs `lastAttention`,
-  // which a plain `WindowClosed` never touches, so it fires here or later
-  // with identical (empty) result for this transition.
+  // (transient autoclose) is unaffected either way: it diffs `lastAttention`
+  // and `pendingAppResignSweep`/`appActive`, neither of which a plain
+  // `WindowClosed` touches, so it fires here or later with identical (empty)
+  // result for this transition.
   for (const prevRecord of prev.order) {
     if (next.order.some((w) => w.id === prevRecord.id)) continue;
     if (prevRecord.parentId === undefined) continue;
@@ -2981,22 +2984,22 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // Transient autoclose (§0: "the machine applies the rule; no caller does" —
   // `selectTransientAutoclose` stays a pure QUERY, and `react` is what turns
   // its answer into effects, so rule application is non-optional). Dismissal
-  // is ONE condition — a structural diff of `State.lastAttention`, the same
-  // shape as the teardown/focus-assert rules below it in this function: the
-  // `seq` comparison is what makes it a diff rather than a read, so a
+  // used to be ONE condition; it is now TWO structural diffs, kept at this
+  // same slot — immediately after the `RaiseWindow` rule and before
+  // `SetStacking` — so emitted effect ordering is unchanged: the old
+  // machine's fixed effect order was `[autoclose…, FOCUS_CONTENT]`, sweep
+  // before the trailing focus re-assert, and both halves below still ride
+  // right after the raise they are triggered alongside.
+  //
+  // (a) FOCUS-REPORT SWEEP — a structural diff of `State.lastAttention`, the
+  // same shape as the teardown/focus-assert rules below it in this function:
+  // the `seq` comparison is what makes it a diff rather than a read, so a
   // transition that did not write a fresh attention fact leaves the field
   // alone and emits nothing, and two reports for the same holder — even an
   // echo re-confirming the window that already holds key — carry different
   // `seq` values and are each swept independently, mirroring the old
   // machine's `OS_FOCUS_GAINED` arm running `selectTransientAutoclose` on
   // every report, not just the ones that moved `front`.
-  //
-  // PLACED HERE, immediately after the `RaiseWindow` rule and before
-  // `SetStacking`: the old machine's fixed effect order was
-  // `[autoclose…, FOCUS_CONTENT]`, sweep before the trailing focus re-assert,
-  // and this mirrors it — the sweep rides right after the raise it is
-  // triggered alongside and before the stacking re-assert an order change
-  // provokes.
   //
   // decide's `RaiseWindow` COMMAND is translated into an `OsFocusGained`
   // event, so a machine-issued raise sweeps where the old machine's
@@ -3014,21 +3017,39 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   const attention = next.lastAttention;
   if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
     const holder = attention.holder;
-    // A NON-NULL holder absent from `order` is INDETERMINATE: the machine
-    // holds no record for it, so it cannot evaluate the ownership relation
-    // (`parentId`/`overlayFor`) `selectTransientAutoclose` needs and declines
-    // rather than guess — the same guard the `RaiseWindow` rule above holds
-    // for a dangling `key`, since `evolve` writes `holder` (and `key`) even
-    // for a focuser absent from `order`.
-    //
-    // A NULL holder gets NO such guard, and that asymmetry is not a special
-    // case: `null` is a DETERMINATE recorded fact — attention is on nothing
-    // of ours — so the sweep proceeds. It looks like the odd case out only
-    // because the other writer (`OsFocusGained`) can never produce it.
-    if (holder === null || next.order.some((w) => w.id === holder)) {
+    // An INDETERMINATE holder — absent from `order` — declines rather than
+    // guesses: the machine holds no record for it, so it cannot evaluate the
+    // ownership relation (`parentId`/`overlayFor`) `selectTransientAutoclose`
+    // needs — the same guard the `RaiseWindow` rule above holds for a
+    // dangling `key`, since `evolve` writes `holder` (and `key`) even for a
+    // focuser absent from `order`. `holder` is always a real `WindowId` here
+    // (`Attention.holder`'s type, narrowed once the app-resign write below
+    // stopped sharing this field) — attention landing on nothing of Peek's
+    // is rule (b) below, not a `null` holder here.
+    if (next.order.some((w) => w.id === holder)) {
       for (const id of selectTransientAutoclose(next, holder, attention.cause)) {
         effects.push({ type: 'DismissWindow', id });
       }
+    }
+  }
+
+  // (b) RESIGN SWEEP — a structural diff of `pendingAppResignSweep`/
+  // `appActive`, replacing the `holder: null` write `AppResignSettled` used
+  // to stamp onto `State.lastAttention` as a one-shot message. The diff is
+  // that arm's own `attentionLost` test (`!state.appActive`) restated so
+  // `react` can read it without branching on `ev.type`: the arm never
+  // touches `appActive`, so `next.appActive === state.appActive` there, and
+  // `!next.appActive` IS `attentionLost`. `AppActivated` also disarms
+  // `pendingAppResignSweep`, but sets `appActive: true` in the same
+  // transition, so `!next.appActive` is exactly what separates a real settle
+  // from the dance cancel; an inert settle (the early return on
+  // `!state.pendingAppResignSweep`) never even satisfies
+  // `prev.pendingAppResignSweep`. `focusedId: null` — attention on nothing of
+  // Peek's — is a DETERMINATE fact, so unlike (a) this rule needs no
+  // indeterminate guard.
+  if (prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive) {
+    for (const id of selectTransientAutoclose(next, null)) {
+      effects.push({ type: 'DismissWindow', id });
     }
   }
 

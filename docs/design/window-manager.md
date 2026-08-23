@@ -165,9 +165,22 @@ The `lastFsReconcile` one-shot request channel is dissolved as of 2026-08-23: `F
 per-record diff of that flag rather than a diff of one request fact. Behavior change: a second
 still-in-flight ask (a second settle timeout, or a second `AppActivated`) while a record is already
 unverified now emits no second `ReconcileFullscreen` — safe, because `electron-window-backend.ts
-reconcileFullscreen` answers synchronously, so an unverified window is one pump-drain wide. The
-other three `seq`-stamped one-shot channels on `State` (`lastTeardown`, `lastFocusAssert`,
-`lastAttention`) are unchanged.
+reconcileFullscreen` answers synchronously, so an unverified window is one pump-drain wide. Of the
+other three `seq`-stamped one-shot channels on `State`, `lastTeardown` and `lastFocusAssert` are
+unchanged; `lastAttention`'s app-resign half is dissolved next, below.
+
+The APP-RESIGN half of the `lastAttention` one-shot channel is dissolved as of 2026-08-23 as well:
+`AppResignSettled` no longer writes a `holder: null` record onto `State.lastAttention`. `react`'s
+transient-autoclose sweep is now split into two rules at the same slot (immediately after the
+`RaiseWindow` rule, before `SetStacking`, so emitted effect ordering is unchanged): a focus-report
+sweep still diffing `State.lastAttention`'s `seq`, and a resign sweep diffing
+`pendingAppResignSweep`/`appActive` instead — exactly `AppResignSettled`'s own `attentionLost` test
+(`!state.appActive`), restated as a structural comparison the arm's own write no longer has to
+carry. `Attention.holder` narrows from `WindowId | null` to `WindowId`, since `OsFocusGained` is its
+only writer now. The OS-FOCUS half — `OsFocusGained` writing `holder: ev.id` unconditionally on
+every report, including one that re-confirms the window already holding key — is IRREDUCIBLE and
+stays a one-shot write: it needs both `holder` and `cause`, and a structural diff of `key` alone
+cannot tell an echo apart from silence.
 
 ### First macOS evidence for this branch, 2026-08-17
 

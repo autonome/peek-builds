@@ -1085,17 +1085,22 @@ function checkAutocloseInvariants(state: State): string[] {
  * `react`'s emitted `DismissWindow` effects are actually its output for the
  * ONE real transition that just happened.
  *
- * `next.lastAttention` is the same fact `react` diffs, so this check reads no
- * event payload either — a genuine `prev`/`next` comparison, not a
- * restatement of `react`'s own condition. A non-null `holder` absent from
- * `next.order` is INDETERMINATE and expects no dismissal, mirroring `react`'s
- * own guard; a `null` holder is a determinate fact and expects the sweep to
- * run — see `react`'s own comment for why the two are not symmetric.
+ * TWO structural diffs feed `DismissWindow` now, and this check derives an
+ * expected set from whichever one advanced:
+ *
+ *   - `next.lastAttention`'s `seq` diff (a focus report) — the same fact
+ *     `react`'s rule (a) diffs, so this reads no event payload either. A
+ *     `holder` absent from `next.order` is INDETERMINATE and expects no
+ *     dismissal, mirroring `react`'s own guard; `Attention.holder` is always
+ *     a real `WindowId` here, never `null`.
+ *   - the `pendingAppResignSweep`/`appActive` diff (an app-resign settle) —
+ *     the same diff `react`'s rule (b) reads, restating that arm's own
+ *     `attentionLost` test. `focusedId: null` is always determinate, so this
+ *     branch never has an indeterminate case to guard.
  *
  * Kept per-EVENT (`Step`, same unit `checkOpSeqInvariants` uses above), not
  * per-log-item: a command can fold into several events, and aggregating their
- * effects would blur which transition's attention advance produced which
- * dismissal.
+ * effects would blur which transition's diff produced which dismissal.
  */
 function checkAutocloseWiring(step: Step): string[] {
   const { prev, next, effects } = step;
@@ -1107,11 +1112,20 @@ function checkAutocloseWiring(step: Step): string[] {
   const holder = attention?.holder ?? null;
   const indeterminate = holder !== null && !next.order.some((w) => w.id === holder);
 
+  const resignSwept = prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive;
+
   if (advanced && !indeterminate && attention !== null) {
     const expected = new Set(selectTransientAutoclose(next, holder, attention.cause));
     if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
       violations.push(
         `react's DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
+      );
+    }
+  } else if (resignSwept) {
+    const expected = new Set(selectTransientAutoclose(next, null));
+    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
+      violations.push(
+        `react's resign-sweep DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
       );
     }
   } else if (dismissed.size > 0) {
