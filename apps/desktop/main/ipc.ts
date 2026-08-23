@@ -91,7 +91,6 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  type MachineWindowSpec,
 } from './window-state-singleton.js';
 import {
   shadowKernelDestroyWindow,
@@ -1015,7 +1014,7 @@ function assembleHybridPageHost(
     role,
     class: classifyWindowRegistration(role, { alwaysOnTop: alwaysOnTopResolved }),
     satellite: role === 'overlay' || role === 'palette' || role === 'switcher',
-    escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
+    escapeMode: options.escapeMode === 'ignore' ? 'ignore' : undefined,
     ...deriveWindowSurface({ alwaysOnTop: alwaysOnTopResolved, focusable: options.focusable === undefined ? undefined : !!options.focusable }),
     win: baseWin,
     contentWC: view.webContents,
@@ -3467,7 +3466,7 @@ export function registerWindowHandlers(): void {
           modal: options.modal === true,
           focusable: options.focusable === undefined ? undefined : !!options.focusable,
         }),
-        escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
+        escapeMode: options.escapeMode === 'ignore' ? 'ignore' : undefined,
         ...deriveWindowSurface({
           alwaysOnTop: winOptions.alwaysOnTop === true,
           focusable: options.focusable === undefined ? undefined : !!options.focusable,

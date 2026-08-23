@@ -48,14 +48,15 @@ import type { WindowClass, StackingLevel } from './izui-roles.js';
 
 /**
  * The declared Escape-handling override a registration spec may carry.
- * `window-kernel.ts WindowRecord.escapeMode` stores only the one value it
- * ever branches on (`'ignore'`) — see that field's doc for why the other
- * three names survive as prose rather than kernel state. This is the
- * caller-facing vocabulary (`api.window.open({ escapeMode })`), moved here
- * (rather than re-pointed at the kernel's narrower field type) because the
- * two are not the same type.
+ * One live value: `'ignore'`, which marks the window pass-through so Escape
+ * never reaches the switcher (`window-escape.ts interpretEscape` step 3).
+ * Every other window's Escape behaviour is decided by that same function's
+ * role × session table — there is nothing left for a caller to override.
+ * This is the caller-facing vocabulary (`api.window.open({ escapeMode })`),
+ * moved here (rather than re-pointed at the kernel's narrower field type)
+ * because the two are not the same type.
  */
-export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
+export type EscapeMode = 'ignore';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
 export type { Rectangle as Rect } from './window-kernel.js';

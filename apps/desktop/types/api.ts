@@ -126,7 +126,7 @@ export interface WindowOptions {
   transparent?: boolean;
   frame?: boolean;
   type?: string;
-  escapeMode?: 'close' | 'navigate' | 'auto';
+  escapeMode?: 'ignore';
   openDevTools?: boolean;
   detachedDevTools?: boolean;
   debug?: boolean;
