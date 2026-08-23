@@ -408,7 +408,13 @@ which is exactly the slack that let the overlay land unnoticed.
 
 #### Live observations, and what they cost to interpret
 
-Observed live at tip `dc1b6051` with `PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true`:
+Observed live at tip `dc1b6051` with `PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true`.
+
+> `PEEK_SHADOW_KERNEL_COMPARE` no longer exists. It gated `compareShadowKernelState`, which
+> diffed the kernel's view against the old machine's; both were removed in `db8db214` once the
+> kernel became the only machine. Every mention of the flag below is a record of the run
+> conditions at the time, not a command that can be re-run.
+
 
 - **A click on a background page host did not raise it; a second click did.** Cmd+` cycled once
   and then stopped moving it forward. Recorded here because the fix landed afterwards (`a raise on

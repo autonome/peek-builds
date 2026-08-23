@@ -24,7 +24,7 @@ hash.
 
 ## The run
 
-    PROFILE=<a profile of your own> PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true yarn start
+    PROFILE=<a profile of your own> E2E_TEST=true yarn start
 
 Once it's up, stage a known starting state instead of hand-arranging one:
 
