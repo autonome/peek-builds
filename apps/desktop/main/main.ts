@@ -768,15 +768,16 @@ export async function initialize(): Promise<void> {
 
         const coordinator = getIzuiCoordinator();
 
-        // (Stale-front cleanup removed — the window-state machine clears `front`
-        // on WINDOW_CLOSED, dispatched by the OS adapter's own 'closed' listener
-        // for every registered window; the overlay-window close likewise clears
-        // the mirrored switcher state via that same WINDOW_CLOSED.)
+        // (Stale-front cleanup removed — the kernel clears `front`/`key` on
+        // `WindowClosed`, dispatched by `electron-window-backend.ts`'s own
+        // 'closed' listener for every registered window; the overlay-window
+        // close likewise clears the mirrored switcher state via that same
+        // `WindowClosed`.)
 
         // (Parent refocus removed — a window registered with `parentWindowId`
-        // carries `parentId` on its machine record, and the reducer's
-        // WINDOW_CLOSED transition hands `front` back to the parent + emits
-        // the raise. See window-state.ts.)
+        // carries `parentId` on its machine record, and the kernel's
+        // `WindowClosed` transition hands `front` back to the parent + emits
+        // the raise. See `window-kernel.ts`.)
 
         if (windowData) {
           // Overlay restoration: use coordinator as single source of truth

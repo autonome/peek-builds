@@ -153,7 +153,7 @@ class NoopKernelBackend implements WindowBackend {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The single shadow executor — lazily constructed, same pattern as
-// `window-machine.ts getWindowOsAdapter()`.
+// `window-machine.ts getWindowBackend()`.
 //
 // EXECUTOR PROVIDER — the injection seam the cutover installs into, INJECTION
 // NOT IMPORT, same shape as `izui-state.ts setFrontWindowIdProvider` /
@@ -162,9 +162,9 @@ class NoopKernelBackend implements WindowBackend {
 // the production accessor itself. It cannot: the production executor
 // (`window-kernel-singleton.ts getKernelExecutor`) is reached through
 // `window-machine.ts getKernelExecutorForApp()`, and value-importing
-// that module here would (a) pull in `window-os-adapter.ts` →
-// `electron-window-backend.ts`'s value `import { app } from 'electron'`, which
-// throws under the `ELECTRON_RUN_AS_NODE=1` unit runner this module's own
+// that module here would (a) pull in `electron-window-backend.ts`'s value
+// `import { app } from 'electron'`, which throws under the
+// `ELECTRON_RUN_AS_NODE=1` unit runner this module's own
 // `.test.ts` suite runs under, and (b) close an import cycle —
 // `window-machine.ts` already value-imports THIS module for the feed
 // helpers below, so importing it back would make the two modules mutually
@@ -381,8 +381,8 @@ export function shadowKernelOsFocusSettled(): void {
 // machine's real front against a permanent `null`. Translated at every
 // production site that reports the old machine's mirrored `WINDOW_SHOWN` /
 // `WINDOW_HIDDEN` (`electron-window-backend.ts`'s native `'show'`/`'hide'`
-// listeners, `raiseWindow`, `showWindow`, `hideWindow`; `window-os-adapter.ts
-// registerWindow`'s already-visible-at-registration import; `ipc.ts`'s
+// listeners, `raiseWindow`, `showWindow`, `hideWindow`; `window-machine.ts
+// registerWindowWithMachine`'s already-visible-at-registration import; `ipc.ts`'s
 // headless open-time visibility import; `hybrid-overlay.ts`'s test-bridge
 // `setActive`/`focusHost`/`focusContentWC`/`focusElsewhere`), dispatched as
 // EVENTS (past-tense facts, same as OS focus above), alongside the existing
@@ -489,7 +489,8 @@ export function shadowKernelAppResigned(): void {
  * hid every attached overlay and sweep-eligible floater on the raw
  * `AppResigned` edge — the kernel is what performs that hide now, over the
  * real backend, not the old machine (`window-os-adapter.ts runEffect`'s
- * `HIDE_WINDOW` arm is a no-op post-cutover). So by the time this settle
+ * `HIDE_WINDOW` arm was a no-op post-cutover, before that module was
+ * deleted). So by the time this settle
  * reaches the kernel, everything visible at the raw edge already reads
  * `visible: false`, and this arm's `isAppResignSweepEligible` sweep only
  * catches a record that became eligible in the window between the raw edge

@@ -3,8 +3,8 @@
  * `WindowBackend` port (design §3, rule R3).
  *
  * Blueprint: `docs/design/window-manager.md`. THIS IS THE ONLY WINDOW-MANAGER
- * MODULE THAT IMPORTS ELECTRON. The executor (`window-os-adapter.ts`) issues
- * port commands; this backend performs them against the native handles it
+ * MODULE THAT IMPORTS ELECTRON. The executor (`window-kernel-executor.ts`)
+ * issues port commands; this backend performs them against the native handles it
  * retains, and pushes native reality straight into the shadow kernel
  * (`window-kernel-shadow.ts shadowKernel*`) at each native-event call site —
  * the only remaining machine. It never dispatches into a reducer itself.
@@ -38,8 +38,8 @@
  *
  * NEITHER `showWindow` NOR `raiseWindow` ever emits `OS_FOCUS_GAINED` for a
  * show it performed. That event means "the OS moved focus", and it is the ONLY
- * event that runs the transient-autoclose sweep (`window-state.ts
- * selectTransientAutoclose`) and `applyOsFocusRealized`. Emitting it for a show
+ * event that runs the transient-autoclose sweep (`window-kernel.ts
+ * selectTransientAutoclose`). Emitting it for a show
  * this backend drove would feed the machine's own decision back in as fresh OS
  * evidence, and would sweep a live palette/quick-view out from under a show
  * that never meant to touch it — a headless show that arrives late enough
@@ -66,13 +66,13 @@ import {
   closeOrHideWindow,
   addEscHandler,
 } from './windows.js';
-// `window-machine.js` value-imports `window-os-adapter.js`, which
-// value-imports THIS file (for the default `ElectronWindowBackend`
-// construction) — a real module cycle, already tolerated one hop over via the
-// `windows.js` import just above (which imports `window-machine.js`
-// itself). Safe here for the same reason it is safe there: `dispatchEscapePress`
-// is called only from inside `escGrabHandler`'s closure body, never at this
-// module's top level, so it is never read before the cycle finishes resolving.
+// `window-machine.js` value-imports THIS file directly (for the default
+// `ElectronWindowBackend` construction) — a real module cycle, already
+// tolerated one hop over via the `windows.js` import just above (which
+// imports `window-machine.js` itself). Safe here for the same reason it is
+// safe there: `dispatchEscapePress` is called only from inside
+// `escGrabHandler`'s closure body, never at this module's top level, so it
+// is never read before the cycle finishes resolving.
 import { dispatchEscapePress } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
@@ -328,7 +328,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /**
    * "I am expecting a self-caused focus on this window, from op N" — the op
-   * token (`window-state.ts Effect.opSeq`) of the last focus-family command this
+   * token (`window-kernel.ts Effect.opSeq`) of the last focus-family command this
    * backend performed on each window, still awaiting its native `'focus'`.
    *
    * This is the ONLY honest source of focus provenance (`FocusCause`), and it
@@ -558,12 +558,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * and leaves listeners alone.
    *
    * The branch itself is NOT decided here: `decideWindowRegistration`
-   * (`window-state.ts`) owns it, so it stays unit-testable away from this
+   * (`izui-roles.ts`) owns it, so it stays unit-testable away from this
    * file's value-side `electron` import (unloadable under the unit gate's
    * `ELECTRON_RUN_AS_NODE=1`). This method executes the decision's
    * BACKEND half (merge + native-listener attach) and returns the decision;
-   * the executor (`window-os-adapter.ts registerWindow`) performs the pump +
-   * Esc-attach half — it stays the one dispatch owner.
+   * the caller (`window-machine.ts registerWindowWithMachine`) performs the
+   * pump + Esc-attach half — it stays the one dispatch owner.
    */
   registerWindow(spec: RegisterWindowSpec): BackendRegistration {
     const { kind, win } = spec;
@@ -955,7 +955,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   /**
    * Show + raise + activate a window, kind-appropriately (headless stays
    * focus-free). `raiseWindow` is reachable from the `RAISE_WINDOW` effect,
-   * whose sole emitter is `window-state.ts applyRaiseRequest` — a raise at a
+   * whose sole emitter is `window-kernel.ts react` — a raise at a
    * target something named (switcher selection, Escape closing the switcher,
    * devtools, parent handoff on close, the successor after the front hid),
    * never a re-drive of the machine's own belief. A raise is an activating show, so its
@@ -964,9 +964,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * (`selectTransientAutoclose` runs only off `OS_FOCUS_GAINED`). Echoing
    * `OS_FOCUS_GAINED` instead would both feed the machine's own belief back in
    * as fresh OS evidence and sweep a live palette/quick-view out from under a
-   * raise that never meant to touch it — see `applyOsFocusRealized`'s docblock
-   * for the shape of that feedback loop. The same holds for `showWindow`; see
-   * the module header.
+   * raise that never meant to touch it — see the module header for the shape
+   * of that feedback loop. The same holds for `showWindow`; see the module
+   * header.
    *
    * ONE OF THESE RAISES IS ALSO WHAT A FOCUS REPORT DRIVES BACK AT THE OS
    * (`applyRaiseRequest`, called off `OS_FOCUS_GAINED` for a window that was
@@ -1099,10 +1099,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /**
    * The `escape-pressed` IPC, unchanged protocol. Resolves to the renderer's
-   * own `handled` verdict — the caller (`window-os-adapter.ts`'s
-   * `ASK_RENDERER` arm) is the one that still turns it into the old
-   * machine's `ESC_RENDERER_ANSWER` dispatch; this method never touches the
-   * reducer.
+   * own `handled` verdict — the caller (`window-escape-runtime.ts
+   * handleEscapePress`) re-reads state and re-runs `interpretEscape` with
+   * the answer; this method never touches the reducer.
    */
   askRendererHandledEscape(id: WindowId): Promise<boolean> {
     const wc = this.windows.get(id)?.rendererWC;
@@ -1174,9 +1173,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * the fullscreen preamble still runs even with the guard set, since it
    * guards a different hazard.
    *
-   * This is the SOLE terminal-close path both machines drive now: the old
-   * adapter's `CLOSE_WINDOW`/`CLOSE_WINDOW_DIRECT` effects are labelled
-   * no-ops (`window-os-adapter.ts runEffect`), and the kernel's `CloseWindow`
+   * This is the SOLE terminal-close path the kernel drives now: the old
+   * adapter's `CLOSE_WINDOW`/`CLOSE_WINDOW_DIRECT` effects were labelled
+   * no-ops (`window-os-adapter.ts runEffect`, before that module was
+   * deleted), and the kernel's `CloseWindow`
    * (`react`'s membership-shrink diff) and `CloseWindowDirect`
    * (`windows.ts closeHostWindow`'s feed) effects both call this method — so
    * the preamble belongs HERE rather than above the port (design §"Electron
@@ -1477,7 +1477,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * (the property the legacy restore pass relied on). The two caveats — macOS
    * no-ops it for a non-frontmost app, and a page-host's NSWindow no-ops it
    * until first composited frame — are modeled in the MACHINE
-   * (`window-state.ts` appActive gate + `WINDOW_CONTENT_ORDERABLE`), not
+   * (`window-kernel.ts` appActive gate + `WindowContentOrderable`), not
    * worked around here.
    *
    * A `pinned` window (the chrome overlay) is a DIFFERENT native operation:
@@ -1583,8 +1583,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * inside the executor's `performEffect`, mid-`pump()`, against a state that
    * may not yet contain events the same transition already queued; a command
    * decided there is the exact re-entrancy this effect exists to remove (see
-   * that helper's doc). Never feeds the old `window-state.ts` machine: that
-   * machine is on the deletion path and gains no new call sites.
+   * that helper's doc). Never fed the old `window-state.ts` machine: that
+   * machine was on the deletion path, gained no new call sites, and has
+   * since been deleted.
    *
    * Reports an attach to `null` (detach) on every failure path — a missing
    * `hostId`, a host not resolvable through the registry, or anything

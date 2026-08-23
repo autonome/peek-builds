@@ -17,9 +17,9 @@
  *
  * Placement math itself stays in `window-placement.ts` (`computePlacement`);
  * this module only decides who gets asked and what to do with the answer. It
- * runs AT THE DISPATCH SITE, before the event is built, because the window
- * state machine's reducer keeps zero value imports and cannot do rect math
- * (see `window-state.ts` `DISPLAY_CHANGED`).
+ * runs AT THE DISPATCH SITE, before the event is built, because the
+ * kernel (`window-kernel.ts`) keeps zero value imports and cannot do rect math
+ * (see its `DisplayChanged` evolve arm).
  */
 
 import { computePlacement, type Placement } from './window-placement.js';
@@ -94,8 +94,8 @@ export interface ProjectionDecision {
  *    wants it on the new layout.
  *
  * Note what is NOT filtered here: visibility and fullscreen. Both are answered
- * from the state machine's own mirror inside the reducer (`window-state.ts`
- * `DISPLAY_CHANGED`) rather than by asking the OS a second time.
+ * from the kernel's own mirror inside its `DisplayChanged` evolve arm
+ * (`window-kernel.ts`) rather than by asking the OS a second time.
  *
  * Order is preserved: decisions come out in `sources.windows` order, which is
  * the order the resulting `SET_BOUNDS` effects run in.

@@ -201,8 +201,8 @@ describe('windowSelfClosesOnBlur (the misnamed `modal` close-on-blur — peek 5b
 });
 
 // `selectTransientSiblingsToClose`'s 8-case table moved to
-// `window-state.test.ts` ("transient-sibling autoclose on focus change") with
-// the selector itself — see `window-state.ts selectTransientAutoclose`.
+// `window-kernel.test.ts` ("window-kernel: transient autoclose") with
+// the selector itself — see `window-kernel.ts selectTransientAutoclose`.
 
 describe('shouldCloseContentWCOnFinalize (quit-teardown null-deref → SIGSEGV — peek 9a591551)', () => {
   // The live crash: on quit, runHybridFinalize read `view.webContents

@@ -6114,7 +6114,7 @@ describe('window-kernel: the stack-order import', () => {
   it('a window the import does not name keeps its index — NOT demoted below the imported set', () => {
     // The conscious divergence from `window-state.ts`'s `STACK_ORDER_IMPORTED`,
     // which rebuilds the list as `[...unnamed, ...imported]`. The old behavior
-    // is pinned by `window-state.test.ts` "members the import does not name
+    // was pinned by `window-state.test.ts` "members the import does not name
     // keep their relative order BELOW the imported set", and that test is
     // deliberately not ported: this kernel's `order` holds EVERY registered
     // window, so demoting the palette and the HUD beneath every restored page

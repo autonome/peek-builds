@@ -21,9 +21,10 @@
  *   present display (own or primary) for every mode it dispatches. But a
  *   window that is fullscreen or hidden when a change lands is skipped by the
  *   reducer's `fsMode`/`visible` guards on `DISPLAY_CHANGED`, not stranded:
- *   the reducer holds the computed rect on
+ *   the kernel holds the computed rect on
  *   `WindowRecord.pendingProjectedBounds` and flushes it once the window
- *   returns to normal and visible (`flushPendingProjection`, `window-state.ts`).
+ *   returns to normal and visible (`window-kernel.ts
+ *   withPendingProjectionFlushed`).
  *   So the off-screen-by-construction guarantee is conditional on that later
  *   flush firing, not solely on this module's projection math.
  *

@@ -8,9 +8,9 @@
  * SCOPE: no longer greenfield. A cutover moved production readers of the old
  * reducer's `front` field onto this file's queries (`isContentWindow`,
  * `isFrontEligibleWindow`, `topmost`, `keyWindow`) — `windows.ts`, `ipc.ts` and
- * `hybrid-overlay.ts` among them; `window-state.ts` stays in the tree but is no
- * longer the sole authority those callers read. This file carries the first
- * two slices of the ~45-event surface
+ * `hybrid-overlay.ts` among them; `window-state.ts` has since been deleted,
+ * and this file is now the sole authority those callers read. This file
+ * carries the first two slices of the ~45-event surface
  * (§0.1.1's "~17 commands, ~20 events" split) — visibility + raise, 5
  * commands/8 events — plus fullscreen (§0.1.8: pulled forward out of the
  * geometry slice because it is orthogonal to `key`/`order` and needs no
@@ -28,7 +28,8 @@
  *      enforced by a standing test (`window-kernel.test.ts`), not just a
  *      sentence here — see §0.1.8 item 2.
  *
- * ZERO value imports (mirrors the existing rule on `window-state.ts`): this
+ * ZERO value imports (mirrors the rule `window-state.ts` followed before it
+ * was deleted): this
  * file must stay loadable under plain `node --test` / `ELECTRON_RUN_AS_NODE=1
  * electron --test` with no display and no window plumbing. Type-only imports
  * are fine; there are none needed yet.
@@ -437,9 +438,9 @@ export interface WindowRecord {
    * THREE-VALUED ON PURPOSE — `undefined` is NOT `false`, and collapsing the
    * two is a bug, not a simplification. `undefined` means "nothing has been
    * reported yet"; `false` means "an observed loss of first responder". The
-   * consumer this exists for (`window-state.ts deriveEscGrabRegistered`, and
-   * whatever replaces it outside the kernel) tests `=== false` explicitly,
-   * because the two absent cases must NOT behave like an observed loss:
+   * consumer this exists for (`window-escape.ts shouldArmEscapeGrab`, the
+   * replacement for `window-state.ts deriveEscGrabRegistered`) tests
+   * `=== false` explicitly, because the two absent cases must NOT behave like an observed loss:
    *
    *   - a `kind: 'browser'` window never gets a report at all (its root web
    *     contents IS first responder whenever the window is key, so there is
@@ -1128,7 +1129,7 @@ export type Command =
    * retired microseconds earlier, in the same synchronous body — on every
    * hybrid close; the opener-initiated path has the same shape, its
    * `hostMachineId` being a captured constant that is never re-resolved. The
-   * old machine accepts this deliberately (`window-state.ts`, pinned by
+   * old machine accepted this deliberately (`window-state.ts`, pinned by
    * `window-state.test.ts` "even after the record retired"), and the port must
    * too: rejecting would silently drop every hybrid content-WC teardown. The
    * port resolves the native handle itself and no-ops when it is already gone,
@@ -2495,11 +2496,11 @@ export function evolve(state: State, ev: Event): State {
       // contributes nothing, and a repeated id is collapsed by `seen`.
       //
       // WHERE UNNAMED WINDOWS GO — a conscious divergence from the old
-      // machine. `window-state.ts`'s `STACK_ORDER_IMPORTED` arm rebuilds the
+      // machine. `window-state.ts`'s `STACK_ORDER_IMPORTED` arm rebuilt the
       // list as `[...unnamed, ...imported]`, pushing every member the import
-      // does not name BELOW the entire imported set (pinned by
+      // did not name BELOW the entire imported set (was pinned by
       // `window-state.test.ts` "members the import does not name keep their
-      // relative order BELOW the imported set" — that test is deliberately NOT
+      // relative order BELOW the imported set" — that test was deliberately NOT
       // ported). It cannot carry over, because the two structures hold
       // different populations: the old `stackOrder` held only stack members,
       // while RULE 1 makes this kernel's `order` hold EVERY registered window
@@ -2920,7 +2921,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //    stack-order import during session restore permutes `order` wholesale;
   //    an activating raise there would take key from whatever holds it and —
   //    since a raise SHOWS what it raises — could put a hidden window on
-  //    screen. The old machine forbids it outright (`window-state.ts`
+  //    screen. The old machine forbade it outright (`window-state.ts`
   //    `STACK_ORDER_IMPORTED`: an order import must never activate anything).
   //  - a focus report on a window that is ALREADY topmost still raises when it
   //    takes key from somebody else (after an `OsFocusLost`, or with a palette
@@ -3697,8 +3698,8 @@ export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette
  * guarantee, and the property suite's generator did produce a counterexample
  * once `isAppResignSweepEligible` stopped testing `canBecomeKey` at all; the
  * explicit clause closes that gap for good.) A property invariant asserts the
- * disjointness rather than leaving it to this comment. The separate
- * `window-state.ts selectAppResignTransients` dismissal is also disjoint: it
+ * disjointness rather than leaving it to this comment. The resign sweep's
+ * `selectTransientAutoclose(state, null)` call is also disjoint: it
  * takes only transient roles, none of which are in `CONTENT_ROLES`.
  *
  * ONE PREDICATE, NOT THE ONLY ONE. Two upcoming callers want a NARROWER set
@@ -3945,8 +3946,9 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
 
 /**
  * The roles that are TRANSIENT — they open and close frequently and ride above
- * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (via
- * `window-state.ts`); all three copies must agree.
+ * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (which
+ * `window-state.ts` also carried a copy of before it was deleted); both
+ * remaining copies must agree.
  */
 export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 

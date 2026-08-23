@@ -6,8 +6,9 @@
  *
  * ONE PRODUCTION CALL SITE, AND IT IS THE CUTOVER.
  * `window-machine.ts getKernelExecutorForApp` is that call site: it
- * passes the adapter's own backend (`window-os-adapter.ts getBackend`), so
- * the kernel and the old machine drive the same `ElectronWindowBackend` and
+ * passes its own module-scope singleton backend (`window-machine.ts
+ * getWindowBackend`), so the kernel and the rest of `window-machine.ts`'s
+ * read/dispatch surface drive the same `ElectronWindowBackend` and
  * speak the same `WindowId` space. An executor built over the real backend
  * performs REAL window effects (`show`, `raise`, `close`, stacking, …) the
  * moment anything feeds it a command or event — unlike the shadow executor

@@ -2,9 +2,9 @@
  * window-backend.ts — the `WindowBackend` port (design §3, rule R3).
  *
  * Blueprint: `docs/design/window-manager.md`. The executor
- * (`window-os-adapter.ts`) performs every OS window operation THROUGH this
- * interface; `electron-window-backend.ts` is the Electron implementation and
- * the only window-manager module that imports Electron. This file has ZERO
+ * (`window-kernel-executor.ts`) performs every OS window operation THROUGH
+ * this interface; `electron-window-backend.ts` is the Electron implementation
+ * and the only window-manager module that imports Electron. This file has ZERO
  * platform imports — types or values — and must stay that way: it is the seam
  * that makes Tauri / ElectroBun / a native Swift shell a reimplementation
  * rather than a rewrite (§3).
@@ -127,7 +127,7 @@ export interface WindowSpec {
 
 /**
  * The backend port. One instance per app, driven only by the executor
- * (`window-os-adapter.ts` — rule R2's one effect funnel).
+ * (`window-kernel-executor.ts` — rule R2's one effect funnel).
  *
  * Commands are fire-and-forget against a window that is gone: a backend
  * resolves the id internally and silently no-ops on an unknown/destroyed
@@ -153,7 +153,7 @@ export interface WindowBackend {
    * show, no focus) while the `WINDOW_SHOWN` echo still records the raise's
    * focus intent for the machine.
    *
-   * `opSeq` is the effect's op token (`window-state.ts Effect.opSeq`): the
+   * `opSeq` is the effect's op token (`window-kernel.ts Effect.opSeq`): the
    * backend arms "expecting a self-caused focus, op N" on the target before the
    * native call, so the focus it provokes comes back as `OS_FOCUS_GAINED
    * { cause: { kind: 'machine', opSeq: N } }` instead of masquerading as a user
@@ -203,10 +203,9 @@ export interface WindowBackend {
    * `ASK_RENDERER` effect — the `escape-pressed` IPC, unchanged protocol).
    * Resolves to the renderer's own `handled` verdict; a missing/destroyed
    * renderer resolves `false` immediately so ESC still resolves. This port
-   * only answers the question — it never touches the reducer itself. The
-   * caller that still owes the old machine an `ESC_RENDERER_ANSWER` dispatch
-   * (`window-os-adapter.ts`'s `ASK_RENDERER` arm) carries the ask's own
-   * `seq` and turns this answer into that event.
+   * only answers the question — the caller (`window-escape-runtime.ts
+   * handleEscapePress`) re-reads state and re-runs `interpretEscape` with
+   * the answer instead of feeding it back through a reducer event.
    */
   askRendererHandledEscape(id: WindowId): Promise<boolean>;
 
@@ -331,7 +330,7 @@ export interface WindowBackend {
   // ── §5 step 10 command (macOS Spaces) ────────────────────────────────────
   //
   // The raw path behind `window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
-  // / `SPACES_POLICY_REQUESTED` — called only by `window-os-adapter.ts`
+  // / `SPACES_POLICY_REQUESTED` — was called only by `window-os-adapter.ts`
   // driving that frozen reducer — used to live here as `setVisibleOnAllSpaces`.
   // It predates the governing platform-neutral rule
   // (`docs/design/window-manager.md` §0) and its signature carries Electron's

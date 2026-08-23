@@ -1792,7 +1792,7 @@ export function wireHybridContentEvents(
   // under a maximized window (display swap, dock/menubar toggle, scale
   // change), and it also stole resize from any window a user had merely sized to
   // exactly fill the work area. The machine record's flag is the single source
-  // of truth (window-state.ts WindowRecord.maximized); geometry no longer votes.
+  // of truth (window-kernel.ts WindowRecord.maximized); geometry no longer votes.
   const resizeDirAt = (
     b: { x: number; y: number; width: number; height: number }, gx: number, gy: number, engaged: boolean,
   ): ResizeDir | null => {

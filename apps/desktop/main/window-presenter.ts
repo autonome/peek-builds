@@ -134,8 +134,8 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
  * mirrors the Live and Pending paths byte-for-byte so a hybrid window is
  * indistinguishable from a canvas page in the windows feature.
  *
- * Maximize/preMaxBounds are read off the window-state machine record (§5
- * step 7B — window-state.ts WindowRecord), written only by the reducer's
+ * Maximize/preMaxBounds are read off the kernel's window record (§5
+ * step 7B — window-kernel.ts WindowRecord), written only by the kernel's
  * maximize transitions, driven by the page:maximize/page:unmaximize
  * dispatches in ipc.ts and by reopen/session-restore's MAXIMIZE_RESTORED
  * seed for a window that was maximized when it was closed or saved. Unlike

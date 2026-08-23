@@ -279,8 +279,8 @@ export function installFirstFrameOrderableProducer(): void {
 // the backend already emits from that same `did-become-active` — consumes it,
 // re-fronts the window and lets the closing assertion drive raise + first
 // responder + stacking. Same one-shot, no timer, one fewer copy of "which
-// window is meant to be in front". See `window-state.ts
-// AppWindowState.pendingColdStartFocus`.
+// window is meant to be in front". See `window-kernel.ts
+// State.pendingColdStartFocus`.
 
 export interface SessionMetadata {
   lastSaveReason: string;

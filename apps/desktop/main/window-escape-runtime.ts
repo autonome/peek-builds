@@ -98,7 +98,7 @@ function rendererCouldHavePreempted(outcome: EscapeOutcome): boolean {
  * Turn a decided `EscapeOutcome` into the one side effect it names — the
  * counterpart to `window-os-adapter.ts runEffect`'s `ASK_RENDERER` /
  * `OPEN_SWITCHER_WINDOW` / Escape-decided arms, minus the reducer plumbing
- * those arms exist only to feed back.
+ * those arms existed only to feed back.
  */
 function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): void {
   switch (outcome.kind) {
@@ -122,7 +122,7 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
       // `window-escape.ts`'s "WHY FOUR OF THESE CARRY command: null"), so
       // opening the switcher is an app-level publish — the same
       // `cmd:execute:windows` trigger `window-os-adapter.ts`'s
-      // `OPEN_SWITCHER_WINDOW` arm uses today.
+      // `OPEN_SWITCHER_WINDOW` arm used before that module was deleted.
       wmLog('esc-action', { action: 'open-switcher', topic: 'cmd:execute:windows' });
       deps.publish('cmd:execute:windows', {});
       return;
@@ -130,11 +130,12 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
     case 'close-switcher': {
       // `outcome.restoreTargetId` is deliberately left unread. The old
       // machine's restore path (`applyRaiseRequest` -> `RAISE_WINDOW` /
-      // `FOCUS_CONTENT` / `SET_STACKING`) is a labelled no-op in
-      // `window-os-adapter.ts runEffect` today, so closing the switcher via
-      // Escape restores nothing in production as it stands. Reading the
-      // target here and raising it would be NEW behavior, not the preserved
-      // behavior this module exists to carry forward.
+      // `FOCUS_CONTENT` / `SET_STACKING`) was a labelled no-op in
+      // `window-os-adapter.ts runEffect`, so closing the switcher via
+      // Escape restores nothing in production, and this module preserves
+      // that no-op. Reading the target here and raising it would be NEW
+      // behavior, not the preserved behavior this module exists to carry
+      // forward.
       wmLog('esc-action', {
         action: 'close-switcher',
         type: outcome.command.type,

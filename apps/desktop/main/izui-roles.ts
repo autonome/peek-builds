@@ -148,9 +148,9 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
 // (`ALWAYS_CLOSEABLE_ESC_ROLES`, `resolveHybridEscapeTarget`,
 // `escExitsHybridFullscreen`, `shouldRegisterGlobalEscFallback`,
 // `shouldFocusHybridContentOnHostFocus`) are DELETED — each is now a clause of
-// the window-state reducer's `decideEscape` / front-arbitration / derived-grab
-// (`window-state.ts`), with their regression tests ported to
-// `window-state.test.ts`.
+// `window-escape.ts interpretEscape` / front-arbitration / derived-grab (the
+// replacement for the old reducer's `decideEscape`), with their regression
+// tests ported to `window-escape.test.ts`.
 
 /**
  * Whether the post-loop focused-descriptor block of `restoreSessionSnapshot`
@@ -242,7 +242,7 @@ export function spacesPolicyForRole(
  * intention takes any native calls at all.
  *
  * `spacesPolicyForRole` itself is UNCHANGED and stays the derivation
- * `window-state.ts`'s frozen `SPACES_POLICY_REQUESTED` dispatch sites use —
+ * `window-state.ts`'s frozen `SPACES_POLICY_REQUESTED` dispatch sites used —
  * this is an additional, separate function for the rewritten kernel's feed
  * sites, not a replacement.
  */
@@ -531,7 +531,7 @@ export interface WindowSurfaceProperties {
  * (`hybrid-overlay.ts ensureOverlay`).
  *
  * NOT keyed on role or class, even though the two sets coincide today.
- * `window-state.ts classifyWindowRegistration` hands out class `'overlay'` /
+ * `classifyWindowRegistration` below hands out class `'overlay'` /
  * `'palette'` on role alone, so `deriveStackingLevel` calls such a window
  * pinned whether or not anything ever pins it — a role-`'overlay'` window
  * opened without `alwaysOnTop` would claim a band the OS never gave it.

@@ -268,7 +268,7 @@ class IzuiStateCoordinator {
     //
     // Ordering guarantee (why the seed can't be the overlay itself): the
     // switcher window registers with role 'overlay', which
-    // `isSatelliteRegistration` (window-state.ts) marks satellite — and the
+    // `isSatelliteRegistration` (izui-roles.ts) marks satellite — and the
     // reducer structurally never lets a satellite become `front`
     // (`applyFocusGained` / `isEligibleFront`), nor does losing OS focus
     // clear `front` (OS_FOCUS_SETTLED_NULL keeps it: front is the TARGET,
@@ -445,8 +445,8 @@ class IzuiStateCoordinator {
   }
 }
 
-// ESC policy (`escPolicy` / `escUnhandledPolicy`) moved into the window-state
-// reducer's `decideEscape` step 6 (`window-state.ts`) — the machine is now the
+// ESC policy (`escPolicy` / `escUnhandledPolicy`) moved into
+// `window-escape.ts interpretEscape` step 6 — that module is now the
 // single ESC decider. This coordinator keeps ONLY the session tri-state
 // (idle/transient/active), `setAppFocused`, and the switcher-overlay WINDOW
 // teardown executor (enterOverlay/exitOverlay/…), which the machine invokes via

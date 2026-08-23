@@ -306,14 +306,14 @@ export function askWebContentsToHandleEscape(
 }
 
 /**
- * ESC decision has moved to the window-state machine. The `before-input-event`
+ * ESC decision lives in `window-escape.ts interpretEscape`, reached through
+ * `dispatchEscapePress` (`window-machine.ts`). The `before-input-event`
  * attach + editable guard + 200ms debounce + webview-guest routing stay here
- * (input hygiene, `addEscHandler` below); only the DECISION moved — the handler
- * dispatches `ESC_PRESSED` and `decideEscape` (window-state.ts) owns the
- * outcome. `handleHybridEscape`/`handleEscapeForWindow`/`handleEscapeForWindowId`
+ * (input hygiene, `addEscHandler` below); only the DECISION lives elsewhere.
+ * `handleHybridEscape`/`handleEscapeForWindow`/`handleEscapeForWindowId`
  * (and their `resolveHybridEscapeTarget`/`escExitsHybridFullscreen`/
- * `escPolicy`/`escUnhandledPolicy` reads) are DELETED — each is now a
- * `decideEscape` clause.
+ * `escPolicy`/`escUnhandledPolicy` reads) are DELETED — each is now an
+ * `interpretEscape` clause.
  */
 
 /**
@@ -370,8 +370,9 @@ export function addEscHandler(bw: BrowserWindow): void {
         // The mirrored "renderer already consumed this Escape" fact (this
         // window's tile-preload's last reported `onEscape` answer), read
         // synchronously — see window-escape-renderer-handled.ts. Not yet
-        // threaded into `ESC_PRESSED` (window-state.ts's reducer event has no
-        // field for it); real once the interpreter cutover lands.
+        // threaded into the `dispatchEscapePress` call below as
+        // `EscapeKeyPress.rendererHandled` (`window-escape.ts`) — this call
+        // site has no producer for it yet.
         const rendererHandled = rendererHandledEscapeForWc(wc.id);
         DEBUG && console.log(`[esc] window ${bw.id} source:${source} rendererHandled=${rendererHandled}`);
 

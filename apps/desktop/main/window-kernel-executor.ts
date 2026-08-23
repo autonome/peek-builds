@@ -593,7 +593,7 @@ export class WindowKernelExecutor {
   //                                       a record's fullscreen state off
   //                                       `fsMode.name`.
   //   - the old log's trailing `satellite=.. eligible=..` fragment (emitted
-  //     only for `OS_FOCUS_GAINED`) is DROPPED, not adapted: it reads
+  //     only for `OS_FOCUS_GAINED`) is DROPPED, not adapted: it read
   //     `window-state.ts`'s `WindowRecord.satellite` and `isEligibleFront`,
   //     neither of which this kernel's `WindowRecord` has (no satellite
   //     concept in this slice, §0.1.4's field list). Nothing to map it onto.

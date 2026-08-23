@@ -11,18 +11,19 @@
  *
  * This file is the replacement for `window-state.ts`'s `decideEscape`,
  * `applyEscape`, `decideEscapeUnhandled`, `escPolicy`, `escUnhandledPolicy`,
- * `applyUnhandledEscape` and `deriveEscGrabRegistered`. Nothing is wired to it
- * yet; the old reducer arm is still live.
+ * `applyUnhandledEscape` and `deriveEscGrabRegistered`. Wired through
+ * `window-escape-runtime.ts handleEscapePress`, reached via
+ * `window-machine.ts dispatchEscapePress`; the old reducer arm is gone.
  *
  * ─── THE BUG THIS EXISTS TO FIX ──────────────────────────────────────────────
  *
- * `window-state.ts`'s `ESC_PRESSED` arm calls `applyEscape(state, effects)` and
- * never reads `event.landedId`, which the event type declares. `decideEscape`
- * always targets `state.front`, and `front` is deliberately satellite-excluding
+ * `window-state.ts`'s `ESC_PRESSED` arm called `applyEscape(state, effects)` and
+ * never read `event.landedId`, which the event type declares. `decideEscape`
+ * always targeted `state.front`, and `front` was deliberately satellite-excluding
  * — so a palette holding key was never a possible target, and Escape asked an
  * unrelated content window what to do. Reproduced live, twelve consecutive
  * presses on a command palette with nothing closing. All four dispatch sites
- * resolve `landedId` correctly; the reducer discarded it.
+ * resolved `landedId` correctly; the reducer discarded it.
  *
  * Here the target is derived from the two facts that actually describe where
  * the keystroke went — the kernel's `key` and the keypress's own `landedId` —
@@ -34,9 +35,10 @@
  *
  * ─── IMPORTS ────────────────────────────────────────────────────────────────
  *
- * `window-kernel.ts` and `window-state.ts` keep ZERO value imports so the unit
- * runner can parse them under `ELECTRON_RUN_AS_NODE=1` (no transitive
- * `electron`). This file keeps that property with exactly one permitted value
+ * `window-kernel.ts` keeps ZERO value imports (the same rule `window-state.ts`
+ * followed before it was deleted) so the unit runner can parse it under
+ * `ELECTRON_RUN_AS_NODE=1` (no transitive `electron`). This file keeps that
+ * property with exactly one permitted value
  * import — `./window-kernel.js` itself, which imports nothing at all, so the
  * load still terminates without touching `electron`. Re-implementing
  * `keyWindow` / `topmost` / `isContentWindow` / `roleIn` locally would satisfy

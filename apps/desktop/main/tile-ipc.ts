@@ -227,9 +227,9 @@ export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 // The `fsDiag` / `[fs-toggle]` / `[fs-target]` file-based traces are DELETED —
-// the window-state machine's DEBUG-gated transition log (window-os-adapter.ts
-// `logTransition`) is the permanent replacement, so the next live repro needs
-// zero instrumentation.
+// the kernel's DEBUG-gated transition log (`window-kernel-executor.ts
+// WindowKernelExecutor.logTransition`) is the permanent replacement, so the
+// next live repro needs zero instrumentation.
 
 /**
  * Handle a capability check failure.
