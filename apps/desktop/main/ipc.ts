@@ -407,7 +407,7 @@ export function applyDarkModeSetting(mode: string): void {
  * Called from both the IPC handler and the keyboard shortcut.
  *
  * Drives the window-open handler directly (rather than round-tripping
- * through bgWindow via pubsub) so `registerWindow()` lands in the
+ * through bgWindow via pubsub) so the window-open payload lands in the
  * registry on the same tick as the user's keypress. The pubsub path
  * was async: a fast Cmd+Q after Cmd+Shift+T would fire `before-quit`
  * (and its synchronous `saveSessionSnapshot`) while the reopen was

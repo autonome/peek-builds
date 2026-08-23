@@ -112,7 +112,7 @@ import {
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
-import { getWindowInfo, registerWindow } from './main.js';
+import { getWindowInfo, attachWindowOpenPayload } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
 import { expandToOverlayFrame, OVERLAY_GUTTERS } from './overlay-frame.js';
@@ -2816,7 +2816,7 @@ function installTestBridge(): void {
         contentWC: view.webContents,
       });
       wireHybridContentEvents(view.webContents, baseWin.id, dataUrl, {});
-      registerWindow(baseWin.id, 'test-esc', { address: dataUrl, ...params });
+      attachWindowOpenPayload(baseWin.id, 'test-esc', { address: dataUrl, ...params });
       return view.webContents
         .loadURL(dataUrl)
         .then(() => baseWin.id)
@@ -2951,16 +2951,17 @@ function installTestBridge(): void {
     },
     /**
      * keepLive regression (2026-06-09): `makeFakeHybridWindow` registers the
-     * window in the hybrid registry but NOT in the window-manager registry
-     * (`registerWindow`), so `getWindowInfo(id)` is undefined and the close path
-     * can't read `params.keepLive`. The real hybrid open ALWAYS calls
-     * `registerWindow(baseWin.id, source, windowParams)` (ipc.ts ~2211). This
-     * hook seeds the same registry entry so a test can mark a fake hybrid host
-     * `keepLive: true` (the music-slide case) or `false` and then drive a close
-     * path that must hide-vs-destroy on that flag. Returns false if the id is
-     * not a live fake hybrid host.
+     * window in the hybrid registry but attaches no window-open payload
+     * (`attachWindowOpenPayload`), so `getWindowInfo(id)` is undefined and the
+     * close path can't read `params.keepLive`. The real hybrid open passes the
+     * same payload on its registration spec (`ipc.ts`'s page-host
+     * `registerWindowWithMachine`, `source`/`params`). This hook seeds the same
+     * registry entry so a test can mark a fake hybrid host `keepLive: true`
+     * (the music-slide case) or `false` and then drive a close path that must
+     * hide-vs-destroy on that flag. Returns false if the id is not a live fake
+     * hybrid host.
      *
-     * `registerWindow` above only reaches the OLD `main.ts` registry — the
+     * The payload attach above reaches ONLY the window-open registry — the
      * close path's kernel branch decides hide-vs-close off the KERNEL's own
      * record, which `makeFakeHybridWindow`'s `registerFakeHostWithMachine`
      * registered as `role: 'content'` with no `keepLive`. So also re-register
@@ -2973,7 +2974,7 @@ function installTestBridge(): void {
     registerHybridWindowParams(id: number, params: Record<string, unknown>): boolean {
       const entry = getHybridWindow(id);
       if (!entry || entry.baseWin.isDestroyed()) return false;
-      registerWindow(id, params.source ? String(params.source) : 'page', params);
+      attachWindowOpenPayload(id, params.source ? String(params.source) : 'page', params);
       const role = typeof params.role === 'string' ? params.role : 'content';
       registerWindowWithMachine({
         kind: 'page-host',

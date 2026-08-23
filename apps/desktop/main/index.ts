@@ -148,7 +148,7 @@ export {
   isDevTile,
   getDevTileIds,
   reloadTile,
-  registerWindow,
+  attachWindowOpenPayload,
   getWindowInfo,
   findWindowByKey,
   findWindowByUrl,
