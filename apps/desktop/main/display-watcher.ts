@@ -42,7 +42,7 @@ import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registr
 import { getWindowInfo } from './main.js';
 import { DEBUG } from './config.js';
 import { collectDisplayProjection, type ProjectionWindow } from './display-projection.js';
-import { getWindowIdFor } from './window-state-singleton.js';
+import { getWindowIdFor } from './window-machine.js';
 import { shadowKernelDisplayChanged } from './window-kernel-shadow.js';
 
 /**

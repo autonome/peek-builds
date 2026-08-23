@@ -1352,9 +1352,9 @@ describe('window-kernel-shadow: executor provider seam', () => {
   });
 
   it('an app-active edge subscriber made AFTER the provider install hears the production feed', () => {
-    // PIN, not a bug repro: records the boot ordering `window-state-singleton.ts
+    // PIN, not a bug repro: records the boot ordering `window-machine.ts
     // subscribeAppActive` depends on. That helper cannot be imported here
-    // (`window-state-singleton.ts` value-imports `electron`, which throws under
+    // (`window-machine.ts` value-imports `electron`, which throws under
     // ELECTRON_RUN_AS_NODE=1), so this rebuilds its exact shape — an
     // edge-deduped read of `state.appActive` layered over
     // `getShadowKernelExecutor().subscribe` — and drives it with the same feed

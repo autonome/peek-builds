@@ -8,7 +8,7 @@ also done, with a negative result — see "What this does and does not fix" belo
 ## What is wrong today
 
 `hybrid-overlay.ts retarget()` runs from a `subscribeFrontChange()` callback
-(`window-state-singleton.ts`), which `window-kernel-executor.ts subscribe()` fires at the tail of
+(`window-machine.ts`), which `window-kernel-executor.ts subscribe()` fires at the tail of
 `apply()`. The callback re-reads `topmostBaseLayerPageHost` and issues an `AttachOverlay` command
 back into the executor while its pump is still draining.
 
@@ -170,7 +170,7 @@ Measured, not suspected: `hybrid-overlay.spec.ts` "clicking the chrome (overlay 
 blur) does NOT deactivate" fails deterministically on this branch and passes on the pre-cutover
 baseline `f6262895`. The overlay stays attached to the page host after focus leaves it.
 
-Cause: `window-state-singleton.ts subscribeFrontChange` used to read a front-conditioned selector
+Cause: `window-machine.ts subscribeFrontChange` used to read a front-conditioned selector
 (null when the front record was not a page host) and now reads `topmostBaseLayerPageHost`, which is
 order-only. A record with `kind: 'browser'` is excluded from `isBaseLayerPageHost` entirely, so
 focusing one cannot displace a still-visible page host from the answer. The query never goes null,

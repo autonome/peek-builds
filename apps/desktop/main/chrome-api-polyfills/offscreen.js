@@ -18,7 +18,7 @@ import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
 // chrome-extensions.ts `_spawnBridgeWindow` / `destroyWindowViaMachine`. These
 // relative paths resolve in dist/ (the polyfills are copied next to the
 // compiled main modules by the build's `cp -r` step).
-import { registerWindowWithMachine, getWindowIdFor } from '../window-state-singleton.js';
+import { registerWindowWithMachine, getWindowIdFor } from '../window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from '../izui-roles.js';
 import { shadowKernelDestroyWindow } from '../window-kernel-shadow.js';
 

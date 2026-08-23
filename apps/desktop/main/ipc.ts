@@ -91,7 +91,7 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import {
   shadowKernelDestroyWindow,
   shadowKernelCloseContent,
@@ -235,7 +235,7 @@ import {
 // Focused-window tracking (S1 `lastFocusedVisibleWindowId` / S4 `lastContentWindowId`
 // / `focus-order.ts`) is GONE — the kernel's `key`/`order` are the single
 // authority now. Consumers read `getTopmostContentWindowId()` from
-// `window-state-singleton.ts`; every window's focus is fed to the kernel by the
+// `window-machine.ts`; every window's focus is fed to the kernel by the
 // backend's native `focus` listeners (attached at `registerWindowWithMachine`),
 // so there are no `track*` feeds to maintain here.
 

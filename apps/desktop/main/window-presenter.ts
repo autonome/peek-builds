@@ -23,7 +23,7 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
-import { getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
+import { getWindowIdFor, getMachineWindowRecord } from './window-machine.js';
 import { restorableBoundsFromRecord } from './session-projection.js';
 import { getShadowKernelExecutor } from './window-kernel-shadow.js';
 import type { WindowId } from './window-kernel.js';

@@ -66,14 +66,14 @@ import {
   closeOrHideWindow,
   addEscHandler,
 } from './windows.js';
-// `window-state-singleton.js` value-imports `window-os-adapter.js`, which
+// `window-machine.js` value-imports `window-os-adapter.js`, which
 // value-imports THIS file (for the default `ElectronWindowBackend`
 // construction) — a real module cycle, already tolerated one hop over via the
-// `windows.js` import just above (which imports `window-state-singleton.js`
+// `windows.js` import just above (which imports `window-machine.js`
 // itself). Safe here for the same reason it is safe there: `dispatchEscapePress`
 // is called only from inside `escGrabHandler`'s closure body, never at this
 // module's top level, so it is never read before the cycle finishes resolving.
-import { dispatchEscapePress } from './window-state-singleton.js';
+import { dispatchEscapePress } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import {
@@ -271,13 +271,13 @@ export interface BackendRegistration {
  *     absorbed when window CREATION moves behind the port — §5 step 4
  *     (special window classes + registry unification) introduces
  *     `create(spec)` and retires handle-carrying registration. Callers today:
- *     `window-state-singleton.ts registerWindowWithMachine` (ipc.ts /
+ *     `window-machine.ts registerWindowWithMachine` (ipc.ts /
  *     tile-launcher / hybrid-overlay open sites).
  *   - `getWindowIdFor` / `getNativeWindowFor` (the numeric-id ↔ handle seam):
  *     absorbed when the renderer-facing id economy flips to `WindowId` — the
  *     session/context-store step (§5 step 11, per the §3 scope decision) —
  *     and the legacy Electron-keyed registries they join against are re-keyed
- *     (§5 steps 4–8). Callers today: `window-state-singleton.ts` only.
+ *     (§5 steps 4–8). Callers today: `window-machine.ts` only.
  */
 export interface BackendMigrationShims {
   registerWindow(spec: RegisterWindowSpec): BackendRegistration;

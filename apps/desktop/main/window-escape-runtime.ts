@@ -16,7 +16,7 @@
  * static import of any real backend would fail this module's own unit tests
  * at load time.
  *
- * WIRED. `window-state-singleton.ts dispatchEscapePress` is the one bound
+ * WIRED. `window-machine.ts dispatchEscapePress` is the one bound
  * caller — every dispatch site that used to feed `window-state.ts`'s
  * `ESC_PRESSED` arm calls it instead, so `handleEscapePress` below is now the
  * live Escape decider.
@@ -65,7 +65,7 @@ export interface EscapeRuntimeDeps {
    * Register a promise that outlives this call so a test bridge can await its
    * settlement — the same channel `window-kernel-executor.ts
    * trackExternalAsyncEffect` feeds, reachable through
-   * `window-state-singleton.ts waitForPendingWindowEffects`. `handleEscapePress`
+   * `window-machine.ts waitForPendingWindowEffects`. `handleEscapePress`
    * itself returns `void`; this is how its async half becomes observable.
    */
   track(pending: Promise<unknown>): void;

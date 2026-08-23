@@ -26,7 +26,7 @@
  * **Active-window / fullscreen tracking has moved.** Front-window, active-hybrid,
  * and native-fullscreen tracking are now owned by the kernel
  * (`window-kernel.ts` + `window-kernel-executor.ts`, fed via
- * `window-kernel-shadow.ts` + `window-state-singleton.ts`), not this registry.
+ * `window-kernel-shadow.ts` + `window-machine.ts`), not this registry.
  * This module owns object lifecycle/lookup/dedup only.
  */
 
@@ -143,7 +143,7 @@ const entries = new Map<number, InternalEntry>();
 
 // Active-window tracking, the focus-group model, and native-fullscreen
 // tracking now live in the kernel (window-kernel.ts + window-kernel-executor.ts,
-// fed via window-kernel-shadow.ts + window-state-singleton.ts). This module
+// fed via window-kernel-shadow.ts + window-machine.ts). This module
 // owns object lifecycle/lookup/dedup only.
 
 function safeUrl(wc: WebContents): string {

@@ -22,7 +22,7 @@
  *     (`window-kernel-shadow.ts shadowKernel*`, called directly at each
  *     native-event site in `electron-window-backend.ts`), never back through
  *     this port. Escape is decided by `window-escape.ts interpretEscape`,
- *     reached via `window-state-singleton.ts dispatchEscapePress`.
+ *     reached via `window-machine.ts dispatchEscapePress`.
  *     `askRendererHandledEscape` below still returns the renderer's ask
  *     answer directly.
  *
@@ -142,7 +142,7 @@ export interface WindowBackend {
    * don't exist — no machine consumes this fact today, so it is logged rather
    * than fed anywhere, see `electron-window-backend.ts
    * attachSpaceChangeListener`). Called once at boot wiring
-   * (`window-state-singleton.ts initWindowStateMachine`).
+   * (`window-machine.ts initWindowStateMachine`).
    */
   attachAppListeners(): void;
 

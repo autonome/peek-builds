@@ -33,7 +33,7 @@ import {
   getMachineWindowRecord,
   listMachineWindowRecords,
   getKernelExecutorForApp,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { wmLog } from './window-diag.js';
 import type { WindowClass } from './izui-roles.js';
 import {
@@ -376,7 +376,7 @@ export function addEscHandler(bw: BrowserWindow): void {
         DEBUG && console.log(`[esc] window ${bw.id} source:${source} rendererHandled=${rendererHandled}`);
 
         // Decision lives in `window-escape.ts interpretEscape`, reached
-        // through `dispatchEscapePress` (`window-state-singleton.ts`). The
+        // through `dispatchEscapePress` (`window-machine.ts`). The
         // attach/debounce/webview routing above stays here as input hygiene.
         // The landed id is resolved to the WM's WindowId at keypress time
         // (registration has long happened); an unregistered window degrades

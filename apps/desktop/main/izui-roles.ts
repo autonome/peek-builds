@@ -115,7 +115,7 @@ export function inferIzuiRole(
  * the same direction.
  *
  * Pure, and role-only by design — the callers that need liveness and
- * stacking (`window-state-singleton.ts getTopmostWebPageWindowId`) compose
+ * stacking (`window-machine.ts getTopmostWebPageWindowId`) compose
  * this with `isContentWindow` rather than restating its clauses.
  */
 export function isWebPageRole(role: string | undefined): boolean {
@@ -182,7 +182,7 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
  *
  * @param coldStart   this restore is the app's boot restore (not in-session)
  * @param appFocused  app-active at restore time — the window-state machine's
- *                    `AppWindowState.appActive` (`window-state-singleton.ts
+ *                    `AppWindowState.appActive` (`window-machine.ts
  *                    getAppActive()`). Was `getIzuiCoordinator().isAppFocused()`
  *                    until that third copy was retired.
  * @param headless    the run is headless/CI (focus-free)
@@ -755,7 +755,7 @@ export function classifyWindowRegistration(
  * What one registration call must do. Every field is a decision, not a value,
  * executed verbatim in two halves: the backend
  * (`electron-window-backend.ts registerWindow`) performs the merge +
- * native-listener attach, `window-state-singleton.ts
+ * native-listener attach, `window-machine.ts
  * registerWindowWithMachine` performs the kernel feed + the Esc-interceptor
  * port command.
  */
@@ -833,12 +833,12 @@ export interface WindowRegistrationDecision {
 /**
  * decideWindowRegistration — the SINGLE owner of the "is this a re-registration,
  * and if so what carries over vs. what the new spec overwrites?" branch that
- * `electron-window-backend.ts registerWindow` / `window-state-singleton.ts
+ * `electron-window-backend.ts registerWindow` / `window-machine.ts
  * registerWindowWithMachine` execute.
  *
  * WHY it lives here and not next to its callers: `electron-window-backend.ts`
  * (which executes the merge/listener half) has a value-side
- * `import { app, globalShortcut } from 'electron'`, and `window-state-singleton.ts`
+ * `import { app, globalShortcut } from 'electron'`, and `window-machine.ts`
  * (which executes the feed/Esc-attach half) pulls it in transitively via that
  * same backend. The main-process unit gate runs its tests under
  * `ELECTRON_RUN_AS_NODE=1`, where that import throws at parse ("The requested

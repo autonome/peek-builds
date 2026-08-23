@@ -743,7 +743,7 @@ edge that owns state, dispatches, and performs effects) exist and carry test cov
 `apps/desktop/main/window-state.ts` and `window-os-adapter.ts` still own registration and OS
 effects, but a cutover wired the ONE production `WindowKernelExecutor`
 (`window-kernel-singleton.ts`, constructed over the real `ElectronWindowBackend` and reached
-through `window-state-singleton.ts getKernelExecutorForApp`) so both machines drive the same
+through `window-machine.ts getKernelExecutorForApp`) so both machines drive the same
 backend and the same `WindowId` space. Production reads the kernel's own queries directly for
 "which window is front" now too — `windows.ts resolveFocusedWindowIdForClose`, `ipc.ts`'s
 focus-assert call sites and `hybrid-overlay.ts`'s overlay-attachment target all read
@@ -1136,7 +1136,7 @@ break `isContentWindow` the same way.
   kernel's fact (a background open registers below the key window), not re-pointed at the new
   fields.
 
-**`window-state.ts getDevtoolsTargetId` (exported through `window-state-singleton.ts`) is a third
+**`window-state.ts getDevtoolsTargetId` (exported through `window-machine.ts`) is a third
 unsurveyed `focusSeq` reader, with no `visible` clause** — a live behavior difference from any
 `topmost` replacement. Resolution: `lastHttpUrl` does not join the kernel record — its only reader
 is this caller, `applyFocusGained` only ever sets it and never clears it (a window that navigates
@@ -1157,7 +1157,7 @@ the current selector lacks — an intended behavior change, not a preserving tra
   deletes. Resolution: re-pointing its `activeId()` is not enough; the bridge contract must be
   rewritten against `hostOf(overlay)`.
 
-**`window-state-singleton.ts getFocusOrder` reads `focusSeq` and has zero callers** — dead, and
+**`window-machine.ts getFocusOrder` reads `focusSeq` and has zero callers** — dead, and
 still a compile blocker. Resolution: delete.
 
 **`shortcuts.ts LocalShortcutEntry.callback` takes no arguments today.** Threading
@@ -1185,7 +1185,7 @@ remaining 37, grouped by process:
 | `tile-ipc.ts` `tile:theme:setWindowColorScheme` handler | Tier 2 of explicit-id → front → headless "highest-numbered focusable window" | silent — tier 3 masks a wrong or null tier 2 and themes an arbitrary window |
 | `tile-ipc.ts tileResolveWebWindow` | Default target for `tile:nav:back/forward/reload/state`; post-filters on a live `webContents.getURL()` http(s) check | mixed — `'No web page window'` on null, silent wrong-window navigation otherwise |
 | `ipc.ts` window-open modal-blur handler (the `blur` listener inside `wireWindowOpenHandler`) | `getFrontPageHostId()` in a DEBUG log naming the focus thief | compile-loud; behaviorally inert |
-| `window-state-singleton.ts seedSessionMirror` | Installs `coord.setFrontWindowIdProvider(() => front → native id)` — the injection point that hands `front` to izui | silent |
+| `window-machine.ts seedSessionMirror` | Installs `coord.setFrontWindowIdProvider(() => front → native id)` — the injection point that hands `front` to izui | silent |
 | `izui-state.ts IzuiCoordinator.enterOverlay` | Calls that provider to seed `session.preOverlayFocusTarget`, the switcher's focus-restore target | silent, and its correctness argument rests on two facts the cutover deletes: its comment states "a satellite can never be `front`" and "`OS_FOCUS_SETTLED_NULL` keeps it: front is the TARGET, not the key window". Under `key`, the switcher — shown and focused before `enterOverlay` runs — can seed itself. |
 | `window-os-adapter.ts logTransition` | Formats `before.front→after.front`, the `contentFocused` delta of `after.front`, and the `stackOrder` delta | compile-loud |
 | `window-kernel-shadow.ts compareShadowKernelState` | Reads `oldMachine.front` and `oldMachine.stackOrder` and compares against `topmost(kernel, isContentWindow)`; runs on every shadow feed (only the console line is env-gated) | compile-loud — but deleting it removes the cutover's only automated divergence oracle, which needs its own decision rather than a fold-in |
@@ -1193,7 +1193,7 @@ remaining 37, grouped by process:
 | `session.ts saveSpaceWorkspaces` | Same → `serializeSpaceWorkspaces` | compile-loud |
 | `session.ts restoreSessionSnapshot` | Sorts descriptors by persisted `zOrder` descending (`zOrderSorted`), hoists `focusedDescriptor`, and that ordering drives the eager/deferred staged-restore split and the focus-restore target | silent — one hop out from `serializeSession`'s `zOrder`; changed provenance re-orders which windows load hot |
 | `session-projection.ts readStackIndex` + `orderRestoredWindowsBottomToTop` | Read the persisted `stackIndex` (the deleted `stackOrder` fact) to compute the bottom-to-top replay, with a legacy branch for pre-`stackIndex` snapshots | silent for aged profiles — the legacy branch stacks by a different rule with no error path |
-| `window-state-singleton.ts getFrontPageHostId` + `subscribeFrontChange` | The two intermediary selectors: `getFrontPageHostId` is `front` iff its record is `kind: 'page-host'`; `subscribeFrontChange` re-reads it on every dispatch and edge-dedups | silent — the map assigns the hybrid consumers but never these two. Under `key` the selector goes null whenever the overlay holds key, so the subscriber fires a spurious `retarget(null)` and detaches chrome from a still-visible page. |
+| `window-machine.ts getFrontPageHostId` + `subscribeFrontChange` | The two intermediary selectors: `getFrontPageHostId` is `front` iff its record is `kind: 'page-host'`; `subscribeFrontChange` re-reads it on every dispatch and edge-dedups | silent — the map assigns the hybrid consumers but never these two. Under `key` the selector goes null whenever the overlay holds key, so the subscriber fires a spurious `retarget(null)` and detaches chrome from a still-visible page. |
 
 **The `resolveFocusedWindowIdForClose` composition is provably redundant, not just readable.**
 Key-when-itself-eligible-else-topmost equals a bare `topmost(state, isFrontEligibleWindow)` in
@@ -1238,7 +1238,7 @@ and every file under `chrome-api-polyfills/`.
 
 The three highest-risk among all 52: `windows.ts resolveFocusedWindowIdForClose` (destructive and
 silent), `izui-state.ts enterOverlay` (its correctness comment cites two deleted facts by name), and
-`window-state-singleton.ts getFrontPageHostId` / `subscribeFrontChange` (a silent chrome detach that
+`window-machine.ts getFrontPageHostId` / `subscribeFrontChange` (a silent chrome detach that
 no named hybrid consumer can see, because the map re-points the consumers and leaves the selector
 beneath them).
 
@@ -1274,7 +1274,7 @@ their http/https post-filter into the predicate. `window-kernel.ts` states the o
 http/https set needs a URL fact the kernel does not carry (`WindowRecord.lastHttpUrl`), so those
 callers post-filter until it does. Either add the field or keep the filtered scan; a post-filtered
 `topmost` is not `topmost`. Separately `window-state.ts getDevtoolsTargetId` (exported through
-`window-state-singleton.ts`) is a third unsurveyed `focusSeq` reader, and it carries no `visible`
+`window-machine.ts`) is a third unsurveyed `focusSeq` reader, and it carries no `visible`
 clause — a live behavior difference from any `topmost` replacement.
 
 **Two test-bridge readers are unlisted, and one depends on deleted behavior.** `entry.ts`
@@ -1287,7 +1287,7 @@ closing assertion promotes and re-raises the MRU successor — it is written aga
 deletes. Re-pointing its `activeId()` is not enough; the bridge contract must be rewritten against
 `hostOf(overlay)`.
 
-**Smaller, but each a compile site.** `window-state-singleton.ts getFocusOrder` reads `focusSeq`
+**Smaller, but each a compile site.** `window-machine.ts getFocusOrder` reads `focusSeq`
 and has zero callers — dead, and still a compile blocker. The "incidental blur log" is anchored to
 `ipc.ts wireHybridContentEvents`, which contains no front read at all; the log is in the
 window-open modal-blur handler and reads `getFrontPageHostId()`. The color-scheme channel is now
@@ -1298,7 +1298,7 @@ widening `shortcuts.ts` `LocalShortcutEntry.callback`, which takes no arguments 
 
 The three traps hold. Trap 1 is understated rather than wrong: two of the readers that most need
 `topmost(state, isContentWindow)` are ones the map never listed. Trap 2 is clean — no caller has
-grown a rival page-host predicate, and `window-state-singleton.ts getFrontPageHostId` remains the
+grown a rival page-host predicate, and `window-machine.ts getFrontPageHostId` remains the
 only outside one, still in the defective shape this section warns about. Trap 3 holds exactly:
 `deriveWindowSurface()` has zero production callers, and fifteen registration sites (ten
 production, five `E2E_TEST`-gated: four in `hybrid-overlay.ts installTestBridge()`, plus
@@ -1428,7 +1428,7 @@ and if moving one is hard that is the work, not an exemption.
 Every symbol below is confirmed present in the tree.
 
 **Prerequisite, and a gap — ATTEMPTED AND REVERTED.** The cutover is
-`window-state-singleton.ts initWindowStateMachine` calling
+`window-machine.ts initWindowStateMachine` calling
 `setKernelExecutorProvider(() => getKernelExecutorForApp())`. It was installed and reverted, and
 what the attempt proved is recorded under "What the first cutover attempt found" below. The
 paragraph after this one records why the seam has the shape it does.
@@ -1436,18 +1436,18 @@ paragraph after this one records why the seam has the shape it does.
 `window-kernel-executor.ts WindowKernelExecutor.waitForSettledFsMode(id, mode, timeoutMs)` exists
 and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`. The accessor is
 `window-kernel-singleton.ts getKernelExecutor(backend)` built over the real
-`ElectronWindowBackend`, reached by `window-state-singleton.ts getKernelExecutorForApp()` (injects
+`ElectronWindowBackend`, reached by `window-machine.ts getKernelExecutorForApp()` (injects
 `window-os-adapter.ts getWindowOsAdapter().getBackend()`, the same backend every old-machine effect
 already goes through). `window-kernel-shadow.ts` itself may not import
-`getKernelExecutorForApp` directly, because that would value-import `window-state-singleton.ts`,
+`getKernelExecutorForApp` directly, because that would value-import `window-machine.ts`,
 which pulls `window-os-adapter.ts` → `electron-window-backend.ts`'s value import of the platform
 module (throwing under the `ELECTRON_RUN_AS_NODE=1` unit runner `window-kernel-shadow.test.ts` runs
-under) and closes an import cycle, since `window-state-singleton.ts` already imports
+under) and closes an import cycle, since `window-machine.ts` already imports
 `window-kernel-shadow.ts` for the feed helpers.
 
 The three `waitForMode` call sites below (`windows.ts closeOrHideWindow`, the `tile-ipc.ts
 tile:window:hide` handler, `hybrid-overlay.ts installTestBridge driveHostFullscreen`) still read the
-OLD machine's settled `fsMode` through `window-state-singleton.ts waitForMode`, and that keeps
+OLD machine's settled `fsMode` through `window-machine.ts waitForMode`, and that keeps
 working after the swap for a reason worth stating: the backend's fullscreen listeners feed BOTH
 machines, so the settle they wait on still arrives. What changed is who asks for it — the reconcile
 is now issued by the kernel's `ReconcileFullscreen`. Repointing them onto
@@ -1455,7 +1455,7 @@ is now issued by the kernel's `ReconcileFullscreen`. Repointing them onto
 the return type is an outcome, not `void`.
 
 Two accessors have to repoint with the swap, both silent if missed.
-`window-state-singleton.ts waitForGuestTeardown` must reach the kernel executor, whose
+`window-machine.ts waitForGuestTeardown` must reach the kernel executor, whose
 `DestroyAllGuests` arm holds the teardown promise — left on the adapter it resolves immediately
 and the quit stops waiting for guests, observable only on a real quit.
 `waitForPendingWindowEffects` must await BOTH executors, because the responsibilities are split and
@@ -1524,7 +1524,7 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
    `getFrontWindowId(state)`, `WindowStateOwner.getFrontWindowId()`,
    `WindowStateOwner.waitForMode(id, mode)` — the owner surface beneath them retires.
 
-3. **`window-state-singleton.ts` — the shim layer every consumer imports.**
+3. **`window-machine.ts` — the shim layer every consumer imports.**
    `getFrontWindowId()` → `topmost(state, isContentWindow)`, never `keyWindow`.
    `getFrontPageHostId()` — today `getFrontWindowId()` filtered on `rec.kind === 'page-host'` →
    `topmostBaseLayerPageHost(state)`. `subscribeFrontChange(cb)` — landed as a deletion, not a
@@ -1647,7 +1647,7 @@ performs:
   `RegisterWindow`/`WindowRegistered` pair is not a substitute.
 - `getWindowIdFor` / `getNativeWindowFor` — structurally unreachable, because
   `WindowKernelExecutor` types its backend as plain `WindowBackend`, without the handle-map shims
-  the adapter carries. The module that replaces `window-state-singleton.ts` should delegate to the
+  the adapter carries. The module that replaces `window-machine.ts` should delegate to the
   backend instance directly rather than reach through the executor.
 - `reconcileEscGrab(snap)` — no `setEscGrab` call anywhere in the kernel stack. `window-kernel.ts`'s
   own comment on `WindowRecord.contentFocused` already flags this as unbuilt.
@@ -1698,7 +1698,7 @@ unimplemented.
 
 `hostOf(overlay)` (the `overlayFor` relation) and `topmost(state, isContentWindow)` name different
 windows and nothing makes them the same. Attachment is driven by the front signal filtered on
-`kind === 'page-host'` (`window-state-singleton.ts` `getFrontPageHostId`, polled by
+`kind === 'page-host'` (`window-machine.ts` `getFrontPageHostId`, polled by
 `subscribeFrontChange`, consumed by `hybrid-overlay.ts` `retarget`); order is moved by
 `OsFocusGained` and mutated by `WindowRegistered` / `WindowClosed`. The two coincide in the case
 most tests exercise — focusing a page-host raises it and makes it front in the same motion — and
@@ -1778,7 +1778,7 @@ the wrong window.
 rather than filtering after), and `entry.ts`'s Close Window menu handler (reads `front` only for
 its detached-devtools guard and can delegate to `resolveFocusedWindowIdForClose` instead — that
 function itself is NOT a bare `topmost` mapping; see the "Wiring map" entry for its
-key-when-eligible-else-topmost composition). `window-state-singleton.ts` `getFrontWindowId` becomes a
+key-when-eligible-else-topmost composition). `window-machine.ts` `getFrontWindowId` becomes a
 thin wrapper over the same query, or is deleted in favor of per-caller predicates; its one injected
 consumer is `seedSessionMirror` → `coord.setFrontWindowIdProvider(...)`, read by `izui-state.ts`
 `enterOverlay` for `session.preOverlayFocusTarget` — the content window session restore should
@@ -1986,7 +1986,7 @@ from somebody else` carry this forward.
 
 **`getDevtoolsTargetId`'s replacement stays outside the kernel, and stores nothing.**
 `WindowRecord` carries no `lastHttpUrl` and `State` no `focusSeq`, and neither is restored: the
-selector is `window-state-singleton.ts getTopmostWebPageWindowId`, a composition over the kernel's
+selector is `window-machine.ts getTopmostWebPageWindowId`, a composition over the kernel's
 own facts, read by `tile-ipc.ts`'s `tile:window:devtools` handler as
 `getTopmostWebPageWindowId() ?? getTopmostContentWindowId()`.
 
@@ -2943,7 +2943,7 @@ Taking it literally is the reading that requires no exception.
 
 **They already register, through the one shared path.** `background` (`core-glue.ts`), `bridge`
 (`chrome-extensions.ts`), `offscreen` (`chrome-api-polyfills/offscreen.js`), `test-fixture`
-(`test-fixture-glue.ts`) and `devtools` (`main.ts`) each call `window-state-singleton.ts`
+(`test-fixture-glue.ts`) and `devtools` (`main.ts`) each call `window-machine.ts`
 `registerWindowWithMachine`, which reaches the reducer through `window-os-adapter.ts`
 `WindowOsAdapter.registerWindow`. There is no second registration path and no bypass, so excluding
 these windows means *adding* a filter that does not exist today rather than declining to add one.
@@ -3382,7 +3382,7 @@ a reimplementation rather than a rewrite.
 idempotent per native window, returning the existing id on re-registration. The backend is
 the **sole** `WindowId` ↔ Electron mapper — a private `idByOsWindowId` reverse map; no
 other module translates. The reducer (`window-state.ts`), the executor
-(`window-os-adapter.ts`), and the singleton (`window-state-singleton.ts`) are re-keyed to
+(`window-os-adapter.ts`), and the singleton (`window-machine.ts`) are re-keyed to
 `WindowId`, and `webview-guest-registry.ts guestToHost` now holds `WindowId` values.
 
 When this document was written there were **three colliding id spaces**: Electron window
@@ -3398,7 +3398,7 @@ WM core:
 **Deliberate scope decision — the renderer-facing id economy stays NUMERIC for now.** The
 `tile-api.d.ts` window/context APIs, pubsub `windowId` payloads, the persisted
 `datastore.ts windowContextState`, and the overlay focus protocol still speak numeric
-Electron window ids. Conversion happens at the seams via `window-state-singleton.ts
+Electron window ids. Conversion happens at the seams via `window-machine.ts
 getWindowIdFor()` / `getNativeWindowFor()`. Flipping that economy to `WindowId` is
 **deferred to the session/context-store step**, not skipped.
 
@@ -3678,7 +3678,7 @@ test-fixture | devtools`), declared at registration — `window-state.ts
 classifyWindowRegistration` owns the ordinary-window rule; the infrastructure classes
 are declared by their glue modules. `main.ts mainWindow`/`backgroundWindow`,
 `core-glue.ts coreBackgroundWindow` and `test-fixture-glue.ts testFixtureWindow` are
-deleted — their accessors are lookups by class (`window-state-singleton.ts
+deleted — their accessors are lookups by class (`window-machine.ts
 getNativeWindowByClass`). The HUD-sniffing predicate (`isAlwaysOnTop() &&
 !isFocusable()`) and the `__hudHidden` expando are deleted: the reducer's
 APP_RESIGNED/APP_ACTIVATED clauses sweep class-`hud` records (a `hiddenByAppBlur`
@@ -3776,7 +3776,7 @@ their values hold no window ids, so no window-id collision exists in them. Their
 **10. Per-window context / mode** — OUT OF SCOPE (but re-key — deliberately deferred).
 `datastore.ts windowContextState`, keyed by window id plus a `null` key for global. This is
 application content state, not window management. It stays where it is; it still speaks
-numeric Electron window ids today (converted at the seams via `window-state-singleton.ts
+numeric Electron window ids today (converted at the seams via `window-machine.ts
 getWindowIdFor()` / `getNativeWindowFor()`), and adopting the WM id space is deferred to
 the session/context-store step (§3 scope decision). It must be told when a window dies.
 
@@ -4187,7 +4187,7 @@ failure mode this document exists to prevent (§2).**
 
 1. **Id space — DONE** (commits 90becfc5, 5d760baf, 04d2eb94). Branded-string `WindowId`
    (`"wm-N"`), minted only by `window-os-adapter.ts registerWindow()`; the reducer, the
-   adapter, and `window-state-singleton.ts` are re-keyed to it; the synthetic ids are
+   adapter, and `window-machine.ts` are re-keyed to it; the synthetic ids are
    deleted grep-zero; `guestToHost` holds `WindowId` values. The renderer-facing id
    economy deliberately stays numeric until the session/context-store step (§3 scope
    decision).
@@ -4775,7 +4775,7 @@ step 8) are all DONE; overlay attach/retarget + transient autoclose (§5 step 9)
 PARTIAL — its write debt is closed but two commits' non-write-op scope remains unaudited;
 session save/restore (§5 step 11) is PARTIAL with 8 tasks landed. See "Where we are" for
 the live per-step table. The
-machine is live behind the seams already cut over (`window-state-singleton.ts` lists the
+machine is live behind the seams already cut over (`window-machine.ts` lists the
 authorities it replaced).
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
@@ -4812,7 +4812,7 @@ step-4 command family (guest-safe `closeWindow` — the absorbed d1cf0b9a UAF gu
 `moveTop` — legal only here, the R2-exempt file), and carries the comment-annotated migration shims
 (`BackendMigrationShims`) — deleted when creation moves behind the port and at step 11.
 
-**`apps/desktop/main/window-state-singleton.ts`** — the composition point: holds the one
+**`apps/desktop/main/window-machine.ts`** — the composition point: holds the one
 machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 `getNativeWindowFor()`) that the still-numeric renderer-facing id economy converts
 through (§3 scope decision).
@@ -4820,7 +4820,7 @@ through (§3 scope decision).
 **The §0.1 rewrite is wired and performs every window operation.** `apps/desktop/main/window-kernel.ts`
 (the kernel), `window-escape.ts` (the Escape interpreter) and `window-kernel-executor.ts`
 (`WindowKernelExecutor`, the impure edge) drive the running app; the executor provider is installed
-by `window-state-singleton.ts initWindowStateMachine`, and the arms of `window-os-adapter.ts runEffect`
+by `window-machine.ts initWindowStateMachine`, and the arms of `window-os-adapter.ts runEffect`
 they replaced are labelled no-ops. Four responsibilities still sit on the old machine: the Escape
 renderer round trip, opening and closing the switcher, `reconcileEscGrab`, and two Escape-decided
 arms that carry kernel feeds and perform nothing. `window-state.ts` and `window-os-adapter.ts` are

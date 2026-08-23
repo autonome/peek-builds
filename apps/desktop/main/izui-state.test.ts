@@ -58,7 +58,7 @@ describe('IZUI State Coordinator Tests', () => {
   // Stub for the injected machine-front provider (see
   // setFrontWindowIdProvider): enterOverlay seeds preOverlayFocusTarget from
   // the window-state machine's `front`, which unit tests drive through this
-  // variable (production wires the real machine in window-state-singleton.ts).
+  // variable (production wires the real machine in window-machine.ts).
   let mockFrontWindowId: number | null;
 
   before(async () => {
@@ -657,7 +657,7 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should save null preOverlayFocusTarget when no provider is registered', () => {
-      // Boot-order safety: before window-state-singleton.ts wires the
+      // Boot-order safety: before window-machine.ts wires the
       // provider, the seed degrades to null rather than throwing.
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.setFrontWindowIdProvider(null);

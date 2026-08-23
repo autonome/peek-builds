@@ -52,7 +52,7 @@ async function listTags() {
  *
  * The id comes from `getFocusedVisibleWindowId()`, whose main-side handler now
  * returns `getFrontWindowId()` from the window-state machine
- * (window-state-singleton.ts): the single arbitrated `front` authority that
+ * (window-machine.ts): the single arbitrated `front` authority that
  * collapsed the old tracked-id + active-hybrid-host + first-visible-window
  * cascade. Satellites (command palette / modal issuers, the chrome + switcher
  * overlays) can never be `front`, so the modal-exclusion and overlay redirects

@@ -44,7 +44,7 @@ import {
   getNativeWindowFor,
   getMachineWindowRecord,
   getTopmostContentWindowId,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';

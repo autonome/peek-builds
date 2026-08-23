@@ -51,7 +51,7 @@ import { ensureTileIpcHandlers } from './tile-compat.js';
 import { registerBgWindow } from './tile-lifecycle.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession } from './session-partition.js';
-import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
+import { registerWindowWithMachine, getNativeWindowByClass } from './window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
 
 const requireElectron = createRequire(import.meta.url);

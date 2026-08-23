@@ -5,7 +5,7 @@
  * `window-kernel-shadow.ts` runs over.
  *
  * ONE PRODUCTION CALL SITE, AND IT IS THE CUTOVER.
- * `window-state-singleton.ts getKernelExecutorForApp` is that call site: it
+ * `window-machine.ts getKernelExecutorForApp` is that call site: it
  * passes the adapter's own backend (`window-os-adapter.ts getBackend`), so
  * the kernel and the old machine drive the same `ElectronWindowBackend` and
  * speak the same `WindowId` space. An executor built over the real backend
@@ -31,7 +31,7 @@
  * loadable (and unit-testable with a fake backend) with no display and no
  * window plumbing, exactly like `window-kernel-shadow.ts`.
  *
- * LAZY, IDEMPOTENT CONSTRUCTION — same pattern as `window-state-singleton.ts
+ * LAZY, IDEMPOTENT CONSTRUCTION — same pattern as `window-machine.ts
  * getWindowOsAdapter()` and `window-kernel-shadow.ts getShadowKernelExecutor()`.
  * Nothing is built at import time: the first call constructs the executor
  * with the backend it was given; every later call — whatever backend it is
@@ -48,7 +48,7 @@ let executorInstance: WindowKernelExecutor | null = null;
 
 /**
  * The single production `WindowKernelExecutor`, constructed on first call
- * over `backend`. See the module header — `window-state-singleton.ts
+ * over `backend`. See the module header — `window-machine.ts
  * getKernelExecutorForApp` is the one production caller.
  */
 export function getKernelExecutor(backend: WindowBackend): WindowKernelExecutor {

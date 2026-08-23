@@ -89,7 +89,7 @@ import {
   getAppActive,
   subscribeAppActive,
   getKernelExecutorForApp,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { wmLog } from './window-diag.js';
 import type { WindowId } from './window-kernel.js';
 import {
@@ -2834,7 +2834,7 @@ function installTestBridge(): void {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
       // Decision lives in `window-escape.ts interpretEscape`, reached through
-      // `dispatchEscapePress` (`window-state-singleton.ts`).
+      // `dispatchEscapePress` (`window-machine.ts`).
       dispatchEscapePress(getWindowIdFor(id) ?? 'global', 'hybrid-overlay.runHybridEscape');
       // Honor the pre-cutover contract (the old impl AWAITED the full
       // handleHybridEscape round trip) DETERMINISTICALLY: the adapter tracks

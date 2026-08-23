@@ -73,7 +73,7 @@ class IzuiStateCoordinator {
   // idle/transient/active tri-state via `SESSION_CHANGED` (staged cutover: the
   // coordinator stays the single session authority; the reducer only records
   // what it is told, for `decideEscape` step 6). Seeded once at boot by
-  // `window-state-singleton.ts`. One-way — this module never imports the machine.
+  // `window-machine.ts`. One-way — this module never imports the machine.
   private sessionChangeListener: ((state: IzuiState) => void) | null = null;
 
   /** Register (or clear, with null) the session-change mirror callback. */
@@ -83,11 +83,11 @@ class IzuiStateCoordinator {
 
   // Front-window provider: returns the NUMERIC Electron id of the window-state
   // machine's `front` (or null). Injected — not imported — because value-
-  // importing `window-state-singleton.ts` from here would (a) drag electron
+  // importing `window-machine.ts` from here would (a) drag electron
   // into the electron-free unit run via `electron-window-backend.ts`, and
   // (b) create an import cycle (the singleton already value-imports this
   // module for the session mirror). Wired once at boot by
-  // `window-state-singleton.ts seedSessionMirror`, same one-way pattern as
+  // `window-machine.ts seedSessionMirror`, same one-way pattern as
   // `onSessionChange`. Stubbed directly in unit tests.
   private frontWindowIdProvider: (() => number | null) | null = null;
 

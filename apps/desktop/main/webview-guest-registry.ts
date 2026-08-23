@@ -25,7 +25,7 @@ import {
   getNativeWindowFor,
   getWindowIdFor,
   waitForGuestTeardown,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { shadowKernelDestroyAllGuests } from './window-kernel-shadow.js';
 
 const guestToHost = new Map<number, WindowId>();

@@ -25,7 +25,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
-import { getWindowIdFor } from './window-state-singleton.js';
+import { getWindowIdFor } from './window-machine.js';
 import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';

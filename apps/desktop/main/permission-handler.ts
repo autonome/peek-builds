@@ -26,7 +26,7 @@
  */
 
 import type { Session } from 'electron';
-import { getNativeWindowFor, getWindowIdFor } from './window-state-singleton.js';
+import { getNativeWindowFor, getWindowIdFor } from './window-machine.js';
 
 import { publish, subscribe } from './pubsub.js';
 import { findHostWindowId } from './webview-guest-registry.js';

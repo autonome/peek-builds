@@ -14,7 +14,7 @@
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
 import { getAllHybridWindows } from './hybrid-page-host-registry.js';
-import { getWindowModeName, getWindowIdFor } from './window-state-singleton.js';
+import { getWindowModeName, getWindowIdFor } from './window-machine.js';
 import { collectProcessMetrics, probeVisibilityState } from './process-metrics.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';

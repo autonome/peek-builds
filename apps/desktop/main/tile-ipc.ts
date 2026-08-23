@@ -131,7 +131,7 @@ import {
   getNativeWindowFor,
   getMachineWindowRecord,
   getKernelExecutorForApp,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { wmLog } from './window-diag.js';
 import {
   shadowKernelSetFullscreen,

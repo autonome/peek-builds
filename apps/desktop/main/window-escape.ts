@@ -62,7 +62,7 @@
  *     `{ kind: 'close-window' }`. The policy here returns `'close'` for both
  *     situations, so the distinction disappears rather than being carried as a
  *     value nothing branches on.
- *  3. `escUnhandledPolicy`'s `'overlay'` SESSION arm. `window-state-singleton.ts
+ *  3. `escUnhandledPolicy`'s `'overlay'` SESSION arm. `window-machine.ts
  *     clampSession` maps the coordinator's `'overlay'` to `'active'` before
  *     dispatch, so it was already dead. `EscapeSession` below is the clamped
  *     vocabulary, which makes it unrepresentable rather than merely unreached.
@@ -126,7 +126,7 @@ import {
 /**
  * The app's session mode. Mirrors `window-state.ts IzuiSession` — deliberately
  * re-declared rather than imported, because it is the CLAMPED vocabulary
- * (`window-state-singleton.ts clampSession` folds the coordinator's `'overlay'`
+ * (`window-machine.ts clampSession` folds the coordinator's `'overlay'`
  * into `'active'`), and because this file's only import is the kernel.
  *
  * It stays an interpreter-side input rather than becoming a kernel field: it is

@@ -29,7 +29,7 @@ import { DEBUG, isHeadless } from './config.js';
 import {
   registerWindowWithMachine,
   getWindowIdFor,
-} from './window-state-singleton.js';
+} from './window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
 import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-kernel-shadow.js';
 

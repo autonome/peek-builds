@@ -8,10 +8,10 @@
  * machine sees — registration, OS focus, visibility, app activation, close
  * reports, teardown, stack-order import, raise, overlay attach — into the
  * kernel's own command/event vocabulary, at the call site that produces each
- * one today. `window-state-singleton.ts initWindowStateMachine` installs a
+ * one today. `window-machine.ts initWindowStateMachine` installs a
  * provider (`setKernelExecutorProvider`) that points `getShadowKernelExecutor()`
  * at the production kernel built over the real `ElectronWindowBackend`
- * (`window-kernel-singleton.ts`, `window-state-singleton.ts
+ * (`window-kernel-singleton.ts`, `window-machine.ts
  * getKernelExecutorForApp`) — from boot onward, every feed helper below drives
  * that executor, whose effects reach the OS for real. Production code also
  * now READS through this module's `getShadowKernelExecutor()` for decisions
@@ -81,7 +81,7 @@ export function _shadowEffectLogForTests(): readonly ShadowEffectLogEntry[] {
  * and nothing it decided reached a real window. `getShadowKernelExecutor()`
  * only builds an executor over this backend when no provider has been
  * installed (`installedProvider`) — production installs one at boot
- * (`window-state-singleton.ts initWindowStateMachine`), so this class backs
+ * (`window-machine.ts initWindowStateMachine`), so this class backs
  * only tests and any executor use before that boot step runs.
  */
 class NoopKernelBackend implements WindowBackend {
@@ -153,7 +153,7 @@ class NoopKernelBackend implements WindowBackend {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The single shadow executor — lazily constructed, same pattern as
-// `window-state-singleton.ts getWindowOsAdapter()`.
+// `window-machine.ts getWindowOsAdapter()`.
 //
 // EXECUTOR PROVIDER — the injection seam the cutover installs into, INJECTION
 // NOT IMPORT, same shape as `izui-state.ts setFrontWindowIdProvider` /
@@ -161,12 +161,12 @@ class NoopKernelBackend implements WindowBackend {
 // module exposes a setter the production wiring calls IN, and never imports
 // the production accessor itself. It cannot: the production executor
 // (`window-kernel-singleton.ts getKernelExecutor`) is reached through
-// `window-state-singleton.ts getKernelExecutorForApp()`, and value-importing
+// `window-machine.ts getKernelExecutorForApp()`, and value-importing
 // that module here would (a) pull in `window-os-adapter.ts` →
 // `electron-window-backend.ts`'s value `import { app } from 'electron'`, which
 // throws under the `ELECTRON_RUN_AS_NODE=1` unit runner this module's own
 // `.test.ts` suite runs under, and (b) close an import cycle —
-// `window-state-singleton.ts` already value-imports THIS module for the feed
+// `window-machine.ts` already value-imports THIS module for the feed
 // helpers below, so importing it back would make the two modules mutually
 // dependent.
 //
@@ -196,8 +196,8 @@ let installedProvider: (() => WindowKernelExecutor) | null = null;
  * instance forever: nothing production drives that object, this module
  * swallows every exception by design, so the subscription goes silently dead
  * for the rest of the process. The subscribers today are
- * `window-state-singleton.ts subscribeOverlayAttachment` (the shared chrome
- * overlay's re-frame) and `window-state-singleton.ts subscribeAppActive` (the
+ * `window-machine.ts subscribeOverlayAttachment` (the shared chrome
+ * overlay's re-frame) and `window-machine.ts subscribeAppActive` (the
  * overlay's app-active pointer-policy gate, `hybrid-overlay.ts
  * wireAppActiveGate`) — both made from `initHybridOverlay()`. They stay alive
  * because boot installs the provider first: `entry.ts` awaits
@@ -275,7 +275,7 @@ function shadowDispatch(event: Event): void {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration — every `registerWindowWithMachine(...)` path
-// (`window-state-singleton.ts`).
+// (`window-machine.ts`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The registration fields the kernel's `Event.WindowRegistered` needs — a subset of `MachineWindowSpec`. */
@@ -305,7 +305,7 @@ export interface ShadowRegisterWindowSpec {
 
 /**
  * Translate a completed registration into the kernel's `RegisterWindow`
- * command, called from `window-state-singleton.ts registerWindowWithMachine`
+ * command, called from `window-machine.ts registerWindowWithMachine`
  * once its own registration has settled.
  */
 export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void {

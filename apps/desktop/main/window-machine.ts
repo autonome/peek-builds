@@ -1,5 +1,5 @@
 /**
- * window-state-singleton.ts — the ONE live `ElectronWindowBackend` for the
+ * window-machine.ts — the ONE live `ElectronWindowBackend` for the
  * desktop app, plus the thin read/dispatch surface the seam consumers use.
  *
  * Blueprint: `docs/design/window-manager.md`. The kernel triple
