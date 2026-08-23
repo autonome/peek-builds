@@ -327,6 +327,31 @@ describe('window-escape: escapeMode and fullscreen come before the policy table'
     });
   });
 
+  it('escapeMode ignore is the ONLY escape hatch — without it the same record falls to the policy table', () => {
+    // Pinned against the simplicity-review proposal to delete
+    // `WindowRecord.escapeMode`: no role in `ESC_CLOSE_ROLES` /
+    // `ESC_FALLBACK_ROLES` means "pass Escape through" on its own, so removing
+    // the field would silently hand the HUD's Escape to the switcher.
+    const withIgnore = fold([regHud(hud), show(hud), focus(hud)], loneHost());
+    assert.strictEqual(interpretEscape(press({ landedId: hud }), withIgnore).kind, 'pass-through');
+
+    const withoutIgnore = fold(
+      [
+        {
+          type: 'WindowRegistered', id: hud, kind: 'browser', layer: FLOATING,
+          canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace',
+        },
+        show(hud),
+        focus(hud),
+      ],
+      loneHost(),
+    );
+    assert.deepStrictEqual(interpretEscape(press({ landedId: hud }), withoutIgnore), {
+      kind: 'open-switcher',
+      command: null,
+    });
+  });
+
   it('a non-normal fullscreen mode exits fullscreen, whatever the role would say', () => {
     // A quick-view: its role would CLOSE it. Fullscreen wins.
     const base = fold([regQuickView(quickView), show(quickView), focus(quickView)], loneHost());
