@@ -182,6 +182,33 @@ every report, including one that re-confirms the window already holding key — 
 stays a one-shot write: it needs both `holder` and `cause`, and a structural diff of `key` alone
 cannot tell an echo apart from silence.
 
+`State.lastTeardown` and `State.lastFocusAssert` are IRREDUCIBLE TOO, for reasons that are
+structural rather than stylistic — recorded here so the "dissolve the one-shot channels" idea is
+not re-attempted from scratch:
+
+- `lastTeardown` must describe windows that DO NOT EXIST. Its three id-carrying events are exempt
+  from `decide`'s unknown-window guard and routinely name a record that retired microseconds
+  earlier — `ipc.ts runHybridFinalize` does this on every hybrid close — and its fourth,
+  `DestroyAllGuests`, names no window at all by construction. Record-level state cannot hold either
+  fact. Repetition is also meaningful: two identical destroys are two teardowns.
+- `lastFocusAssert` is DEFINED BY THE ABSENCE of a state change — the target is already topmost,
+  already visible, already key, and the arm deliberately leaves `key` and `order` untouched. It
+  cannot move to the command boundary either: its second writer is the cold-start latch spend
+  inside the `AppActivated` EVENT arm, and `AppActivated` has no command, so relocating it would
+  strand that writer and require keeping a reducer-side channel anyway.
+
+The honest disposition, if the remaining two are ever revisited, is to merge them into ONE declared
+outbound channel (`State.outbound`, one `seq`, one `react` rule switching on kind) rather than to
+pursue deletion — one acknowledged escape hatch instead of two undeclared ones. That buys clarity,
+not purity, and is unbuilt.
+
+Still-open size reductions, none acted on: `State.pendingColdStartFocus` (armed by
+`ColdStartFocusArmed`, spent by `AppActivated`, projects to zero effects), `WindowRecord.class`
+(stored; its only readers are outside the kernel), `traceTransientAutoclose` (a second statement of
+`selectTransientAutoclose` that exists to explain it), and `WindowRecord.tracksBaseLayerTop`.
+`WindowRecord.escapeMode` was ON that list and has been REMOVED from it — see its docblock in
+`window-kernel.ts`: deleting it is a live regression, not a cleanup.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

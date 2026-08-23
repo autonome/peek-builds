@@ -385,6 +385,14 @@ export interface WindowRecord {
    * The kernel stores this and nothing more. WHAT Escape does is interpreted
    * outside the machine (§0: "input interpretation lives OUTSIDE the window
    * manager") — the kernel never learns that a key called Escape exists.
+   *
+   * DO NOT DELETE THIS FIELD as unread. No rule in this file branches on it,
+   * which makes it look like dead weight to a size-reduction pass; its reader
+   * is `window-escape.ts interpretEscape`, which is outside the kernel by
+   * design. Nothing in that function's role x session table means "pass
+   * Escape through", so removing the field sends the HUD (role `workspace`)
+   * and extension pages (role `content`) to `escapeFallbackPolicy`, and
+   * Escape opens the switcher instead of reaching their own DOM handlers.
    */
   escapeMode?: 'ignore';
 
