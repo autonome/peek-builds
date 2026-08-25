@@ -743,6 +743,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // An absent `OsFocusGained` is exactly the signature to look for when a
         // window the test focused is not the window the machine ends up on.
         getKernelExecutor().markTimeline(`focus suppressed stacking-provoked ${String(id)} cause=${cause.kind}`);
+        wmLog('os-focus-suppressed', { id, reason: 'stacking-provoked', causeKind: cause.kind });
         return;
       }
       // The hide half of the same principle, one arming consumed by the one
@@ -751,6 +752,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.pendingHideProvokedFocus = false;
       if (hideProvoked && cause.kind !== 'machine') {
         getKernelExecutor().markTimeline(`focus suppressed hide-provoked ${String(id)} cause=${cause.kind}`);
+        wmLog('os-focus-suppressed', { id, reason: 'hide-provoked', causeKind: cause.kind });
         return;
       }
       // Feeds the kernel (window-kernel-dispatch.ts), which drives the real
@@ -921,8 +923,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    */
   private takeFocusCause(id: WindowId): FocusCause {
     const opSeq = this.pendingSelfCausedFocus.get(id);
-    if (opSeq === undefined) return { kind: 'world' };
+    if (opSeq === undefined) {
+      wmLog('focus-cause-taken', { id, kind: 'world' });
+      return { kind: 'world' };
+    }
     this.pendingSelfCausedFocus.delete(id);
+    wmLog('focus-cause-taken', { id, kind: 'machine', opSeq });
     return { kind: 'machine', opSeq };
   }
 

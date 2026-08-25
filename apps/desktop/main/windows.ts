@@ -678,6 +678,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         const hybridRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
         if (machineId != null && hybridRec?.keepLive === true) {
           DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
+          wmLog('close-or-hide-keeplive', { id, machineId });
           kernelCloseOrHideRequested(machineId);
           maybeHideApp(id);
           return;
@@ -686,11 +687,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         // as a guest of baseWin.id) is destroyed BEFORE the BaseWindow closes —
         // same page-host close UAF guard as the canvas/tile-ipc paths.
         DEBUG && console.log(`CLOSING hybrid page-host BaseWindow ${id}`);
+        wmLog('close-or-hide-hybrid-close', { id });
         closeHostWindow(id, hybrid.baseWin);
         maybeHideApp(id);
         return;
       }
       DEBUG && console.log('Window already destroyed or invalid');
+      wmLog('close-or-hide-already-destroyed', { id });
       return;
     }
 
@@ -699,6 +702,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
 
     if (!entry) {
       DEBUG && console.log('Window not found in window manager, closing directly');
+      wmLog('close-or-hide-no-entry', { id });
       closeHostWindow(id, win);
       return;
     }
@@ -714,6 +718,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // Never close the background window
     if (params.address === WEB_CORE_ADDRESS) {
       DEBUG && console.log('Refusing to close background window');
+      wmLog('close-or-hide-refuse-background', { id });
       return;
     }
 

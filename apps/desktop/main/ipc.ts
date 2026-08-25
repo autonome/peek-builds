@@ -109,6 +109,7 @@ import {
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, isContentWindow } from './window-kernel.js';
+import { wmLog } from './window-diag.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -2592,6 +2593,7 @@ export function registerWindowHandlers(): void {
       // Race guard: if another call is already creating this window, skip
       if (pendingWindowKeys.has(fullKey)) {
         DEBUG && console.log('Window with key already being created, skipping:', options.key);
+        wmLog('window-open-race-skipped', { key: options.key, fullKey });
         return { success: true, id: null, reused: true };
       }
 
@@ -2651,6 +2653,12 @@ export function registerWindowHandlers(): void {
               kernelShowRequested(reusedId, hybridReuseActivate);
             }
           }
+          wmLog('window-open-reused', {
+            key: options.key,
+            variant: 'hybrid',
+            id: existingHybrid.windowId,
+            transient: hybridInfo?.params.transient as boolean | undefined,
+          });
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
       }
@@ -2752,6 +2760,12 @@ export function registerWindowHandlers(): void {
         } catch (err) {
           console.error('[window-open] tile:lifecycle:visible send threw:', err);
         }
+        wmLog('window-open-reused', {
+          key: options.key,
+          variant: 'keepLive',
+          id: existingWindow.id,
+          transient: existingData.params.transient as boolean | undefined,
+        });
         return { success: true, id: existingWindow.id, reused: true };
       }
 

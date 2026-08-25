@@ -439,6 +439,11 @@ export class WindowKernelExecutor {
     if (event.type === 'OsFocusGained' && event.cause !== undefined) {
       if (isStaleSelfEcho(this.state, event.id, event.cause)) {
         DEBUG && console.log('[window-kernel] dropped stale self-echo for', event.id);
+        wmLog('stale-focus-echo-dropped', {
+          id: event.id,
+          causeKind: event.cause.kind,
+          opSeq: event.cause.kind === 'machine' ? event.cause.opSeq : undefined,
+        });
         return;
       }
     }
@@ -455,6 +460,7 @@ export class WindowKernelExecutor {
     if ((event.type === 'WindowShown' || event.type === 'WindowHidden') && event.opSeq !== undefined) {
       if (isStaleWindowEcho(this.state, event.id, event.opSeq)) {
         DEBUG && console.log('[window-kernel] dropped stale visibility echo for', event.id, event.type);
+        wmLog('stale-visibility-echo-dropped', { id: event.id, echoType: event.type, opSeq: event.opSeq });
         return;
       }
     }
@@ -823,6 +829,7 @@ export class WindowKernelExecutor {
         // The transient-autoclose sweep's own dismissal effect is the
         // DIFFERENT `DismissWindow` below, which deliberately DOES go through
         // `closeOrHide` — see that case.
+        wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.trackAsyncEffect(this.backend.closeWindow(effect.id));
         return;
       }
@@ -837,6 +844,7 @@ export class WindowKernelExecutor {
         // strands a black macOS Space. Fire-and-forget for the machine —
         // tracked so the test bridge can await it, same as
         // `window-os-adapter.ts`'s CLOSE_WINDOW/CLOSE_SWITCHER_WINDOW.
+        wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.trackAsyncEffect(this.backend.closeOrHide(effect.id));
         return;
       }
@@ -844,6 +852,7 @@ export class WindowKernelExecutor {
         const record = this.state.order.find((w) => w.id === effect.id);
         switch (planRaise(record, this.headless, this.state.appActive)) {
           case 'suppressed':
+            wmLog('raise-suppressed', { id: effect.id, appActive: this.state.appActive, headless: this.headless });
             return;
           case 'inactive-show':
             this.backend.showWindow(effect.id, { activate: false, opSeq: effect.opSeq });
@@ -906,6 +915,7 @@ export class WindowKernelExecutor {
         // No guest pass, by construction: this is not the teardown for a
         // window that owns page-host guests, and `CloseWindowDirect` below is
         // (peek `d1cf0b9a`).
+        wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.backend.destroyWindow(effect.id);
         return;
       }
@@ -914,6 +924,7 @@ export class WindowKernelExecutor {
         // `CloseContent` command). The port's guard finds an already-destroyed
         // WebContents and returns, so on every ordinary path this call does
         // nothing at all.
+        wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.backend.closeContent(effect.id);
         return;
       }
@@ -922,6 +933,7 @@ export class WindowKernelExecutor {
         // guests before closing the host. Fire-and-forget for the machine
         // here, same as `CloseWindow` — tracked so the test bridge can await
         // it. No keepLive policy is re-applied: the caller's intent was close.
+        wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.trackAsyncEffect(this.backend.closeWindow(effect.id));
         return;
       }
