@@ -740,11 +740,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // here only so the resolved close (the kernel's CloseWindow answer
     // routes back through this seam) can't re-feed the intent forever.
     else if (wmId != null && rec?.keepLive === true) {
+      wmLog('close-or-hide-keeplive', { id, wmId });
       kernelCloseOrHideRequested(wmId);
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);
       DEBUG && console.log(`CLOSING window ${id} (${params.address})`);
+      wmLog('close-or-hide-close', { id });
       closeHostWindow(id, win);
     }
 
