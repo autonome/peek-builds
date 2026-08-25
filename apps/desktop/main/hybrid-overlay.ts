@@ -100,17 +100,17 @@ import {
 } from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
-  shadowKernelDestroyWindow,
-  shadowKernelWindowShown,
-  shadowKernelWindowHidden,
-  shadowKernelSetFullscreen,
-  shadowKernelShowRequested,
-  shadowKernelWindowContentOrderable,
-  shadowKernelAppActivated,
-  shadowKernelAppResigned,
-  shadowKernelWindowAcceptsInputChanged,
-  getShadowKernelExecutor,
-} from './window-kernel-shadow.js';
+  kernelDestroyWindow,
+  kernelWindowShown,
+  kernelWindowHidden,
+  kernelSetFullscreen,
+  kernelShowRequested,
+  kernelWindowContentOrderable,
+  kernelAppActivated,
+  kernelAppResigned,
+  kernelWindowAcceptsInputChanged,
+  getKernelExecutor,
+} from './window-kernel-dispatch.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, attachWindowOpenPayload } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -140,7 +140,7 @@ import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
  */
 function overlayHostOsId(): number | null {
   if (overlayWmId == null) return null;
-  const host = hostForOverlay(getShadowKernelExecutor().getState(), overlayWmId);
+  const host = hostForOverlay(getKernelExecutor().getState(), overlayWmId);
   if (host == null) return null;
   const win = getNativeWindowFor(host.id);
   return win ? win.id : null;
@@ -472,7 +472,7 @@ function wireClickCapture(): void {
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — capture:true means the overlay now takes
     // input, capture:false means it is click-through again.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, capture);
+    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, capture);
   });
 }
 
@@ -511,7 +511,7 @@ function wireAppActiveGate(): void {
     }
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — forced click-through on this edge.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false);
+    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, false);
     // The WINDOW half of this edge is the reducer's (§5 step 9): `APP_RESIGNED`
     // pushes `HIDE_WINDOW` for every attached overlay (peek 88797f2d / R6), so
     // the chrome leaves the screen while Peek is backgrounded. The old
@@ -533,7 +533,7 @@ function wireAppActiveGate(): void {
     // Machine click-through mirror (window-kernel.ts
     // WindowAcceptsInputChanged) — restored to default click-through, still
     // not capturing.
-    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false);
+    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, false);
     // The re-reveal is the reducer's: `APP_ACTIVATED` runs `applyOverlayFollow`
     // for every attached overlay, restoring its z-pin and re-showing it over the
     // host it is still attached to (the attachment survived the resign, so no
@@ -617,7 +617,7 @@ function wireShowNavbarFocus(): void {
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
-    shadowKernelShowRequested(overlayWmId, true);
+    kernelShowRequested(overlayWmId, true);
   });
 }
 
@@ -871,7 +871,7 @@ function installTestBridge(): void {
     registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
     const wid = getWindowIdFor(baseWin.id);
     if (wid == null) return;
-    shadowKernelWindowContentOrderable(wid);
+    kernelWindowContentOrderable(wid);
   };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
     makeFakeHybridWindow(bounds: { x: number; y: number; width: number; height: number }): number {
@@ -964,17 +964,17 @@ function installTestBridge(): void {
       // present in the snapshot taken before any hide fired.
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
-      const drained = getShadowKernelExecutor().getState().order.filter(isBaseLayerPageHost);
-      getShadowKernelExecutor().markTimeline(
+      const drained = getKernelExecutor().getState().order.filter(isBaseLayerPageHost);
+      getKernelExecutor().markTimeline(
         `setActive(${String(wid)}) drain=[${drained.map((r) => String(r.id)).join(',')}]`,
       );
       for (const record of drained) {
-        shadowKernelWindowHidden(record.id);
+        kernelWindowHidden(record.id);
       }
       if (wid != null) {
-        shadowKernelWindowShown(wid, true);
+        kernelWindowShown(wid, true);
       }
-      getShadowKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
+      getKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
       return true;
     },
     /**
@@ -984,11 +984,11 @@ function installTestBridge(): void {
      * which transitions produced it — the two are read together.
      */
     kernelTimeline(): readonly string[] {
-      return getShadowKernelExecutor().timelineForTests();
+      return getKernelExecutor().timelineForTests();
     },
     /** E2E-only: drop a labelled marker into the kernel timeline. */
     markKernelTimeline(label: string): void {
-      getShadowKernelExecutor().markTimeline(label);
+      getKernelExecutor().markTimeline(label);
     },
     /**
      * TEST-ONLY circuit breaker for the overlay-retarget runaway
@@ -1005,7 +1005,7 @@ function installTestBridge(): void {
      * so nothing needs to restore the originals.
      */
     capKernelBackendEchoForTest(cap: number): void {
-      const backend = (getShadowKernelExecutor() as unknown as {
+      const backend = (getKernelExecutor() as unknown as {
         backend: {
           showWindow: (id: unknown, opts: unknown) => void;
           hideWindow: (id: unknown, opSeq?: number) => void;
@@ -1066,7 +1066,7 @@ function installTestBridge(): void {
       if (!w || w.isDestroyed()) return false;
       const wid = getWindowIdFor(w);
       if (wid == null) return false;
-      shadowKernelShowRequested(wid, false);
+      kernelShowRequested(wid, false);
       return true;
     },
     /**
@@ -1092,9 +1092,9 @@ function installTestBridge(): void {
           `destroyFakeHybridWindow: fake host ${id} is not registered with the window-state machine`,
         );
       }
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager.
-      shadowKernelDestroyWindow(wid);
+      kernelDestroyWindow(wid);
       fakeHosts.delete(id);
       return true;
     },
@@ -1127,7 +1127,7 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(w);
         if (wid != null) {
-          shadowKernelWindowShown(wid, true);
+          kernelWindowShown(wid, true);
         }
       }
       w.emit('focus');
@@ -1157,7 +1157,7 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(id);
         if (wid != null) {
-          shadowKernelWindowShown(wid, true);
+          kernelWindowShown(wid, true);
         }
       }
       entry.contentWC.emit('focus');
@@ -1246,7 +1246,7 @@ function installTestBridge(): void {
       }
       const wid = getWindowIdFor(elsewhereWin);
       if (wid != null) {
-        shadowKernelWindowShown(wid, true);
+        kernelWindowShown(wid, true);
       }
     },
     runDeferredBlur(_id: number): number | null {
@@ -1269,7 +1269,7 @@ function installTestBridge(): void {
      * assertion the suite has today.
      */
     attachDiagnostic(): unknown {
-      const state = getShadowKernelExecutor().getState();
+      const state = getKernelExecutor().getState();
       const host = overlayWmId == null ? null : hostForOverlay(state, overlayWmId);
       return {
         overlayWmId,
@@ -1435,16 +1435,16 @@ function installTestBridge(): void {
      * (alwaysOnTop true) and click-through re-armed with forwarding.
      */
     simAppResignActive(): boolean {
-      // Feeds the kernel (window-kernel-shadow.ts) the resign edge — this
+      // Feeds the kernel (window-kernel-dispatch.ts) the resign edge — this
       // bridge is the only resign input a headless run has (see
-      // `shadowKernelAppResigned` / `electron-window-backend.ts
+      // `kernelAppResigned` / `electron-window-backend.ts
       // 'did-resign-active'`).
-      shadowKernelAppResigned();
+      kernelAppResigned();
       return true;
     },
     simAppBecomeActive(): boolean {
       // Feeds the kernel, for the same reason as `simAppResignActive` above.
-      shadowKernelAppActivated();
+      kernelAppActivated();
       return true;
     },
     /** R1: whether the machine currently considers the app active. */
@@ -3028,7 +3028,7 @@ function installTestBridge(): void {
       // to read or pass bounds.
       const machineId = getWindowIdFor(id);
       if (machineId == null) return;
-      shadowKernelSetFullscreen(machineId, desired);
+      kernelSetFullscreen(machineId, desired);
       const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, desired ? 'fullscreen' : 'normal');
       if (outcome !== 'settled') {
         wmLog('fs-settle-wait-non-settled', { site: 'driveHostFullscreen', id: machineId, desired, outcome });

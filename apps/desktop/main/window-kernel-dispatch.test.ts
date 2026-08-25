@@ -1,5 +1,5 @@
 /**
- * Unit tests for `window-kernel-shadow.ts` — the shadow kernel's registration
+ * Unit tests for `window-kernel-dispatch.ts` — the kernel's registration
  * feed. Harness conventions follow `window-kernel-executor.test.ts`
  * (`node:test` + `node:assert`, `.js`-suffixed import of the compiled output).
  */
@@ -7,42 +7,42 @@
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import {
-  _resetShadowKernelForTests,
-  getShadowKernelExecutor,
+  _resetKernelForTests,
+  getKernelExecutor,
   setKernelExecutorProvider,
-  shadowKernelAppActivated,
-  shadowKernelAppResigned,
-  shadowKernelAppResignSettled,
-  shadowKernelArmColdStartFocus,
-  shadowKernelAssertFocus,
-  shadowKernelAttachOverlay,
-  shadowKernelCloseContent,
-  shadowKernelCloseWindowDirect,
-  shadowKernelContentFirstResponderChanged,
-  shadowKernelDestroyAllGuests,
-  shadowKernelDestroyWindow,
-  shadowKernelFullscreenSettleTimeout,
-  shadowKernelImportStackOrder,
-  shadowKernelOsFocusGained,
-  shadowKernelOsFocusSettled,
-  shadowKernelOsFullscreenEntered,
-  shadowKernelOsFullscreenLeft,
-  shadowKernelRaiseWindow,
-  shadowKernelRegisterWindow,
-  shadowKernelSetFullscreen,
-  shadowKernelWindowClosed,
-  shadowKernelWindowContentOrderable,
-  shadowKernelWindowHidden,
-  shadowKernelWindowShown,
-  shadowKernelBoundsChanged,
-  shadowKernelDisplayChanged,
-  shadowKernelMaximizeExitedByResize,
-  shadowKernelSetBounds,
-  shadowKernelMaximize,
-  shadowKernelUnmaximize,
-  shadowKernelSetDesktopMembership,
-  shadowKernelWindowAcceptsInputChanged,
-} from './window-kernel-shadow.js';
+  kernelAppActivated,
+  kernelAppResigned,
+  kernelAppResignSettled,
+  kernelArmColdStartFocus,
+  kernelAssertFocus,
+  kernelAttachOverlay,
+  kernelCloseContent,
+  kernelCloseWindowDirect,
+  kernelContentFirstResponderChanged,
+  kernelDestroyAllGuests,
+  kernelDestroyWindow,
+  kernelFullscreenSettleTimeout,
+  kernelImportStackOrder,
+  kernelOsFocusGained,
+  kernelOsFocusSettled,
+  kernelOsFullscreenEntered,
+  kernelOsFullscreenLeft,
+  kernelRaiseWindow,
+  kernelRegisterWindow,
+  kernelSetFullscreen,
+  kernelWindowClosed,
+  kernelWindowContentOrderable,
+  kernelWindowHidden,
+  kernelWindowShown,
+  kernelBoundsChanged,
+  kernelDisplayChanged,
+  kernelMaximizeExitedByResize,
+  kernelSetBounds,
+  kernelMaximize,
+  kernelUnmaximize,
+  kernelSetDesktopMembership,
+  kernelWindowAcceptsInputChanged,
+} from './window-kernel-dispatch.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
@@ -87,15 +87,15 @@ class InertBackend implements WindowBackend {
   attachOverlayTo(): void {}
 }
 
-/** Registers a plain window in the shadow kernel — enough for `AttachOverlay`'s existence checks, nothing more. */
+/** Registers a plain window in the kernel — enough for `AttachOverlay`'s existence checks, nothing more. */
 function registerWindow(id: WindowId): void {
-  shadowKernelRegisterWindow(
+  kernelRegisterWindow(
     { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' });
 }
 
-/** Registers a visible content-role window in the shadow kernel — the shape `isContentWindow`/`topmost` admit. */
+/** Registers a visible content-role window in the kernel — the shape `isContentWindow`/`topmost` admit. */
 function registerVisibleContentWindow(id: WindowId): void {
-  shadowKernelRegisterWindow(
+  kernelRegisterWindow(
     {
       id,
       kind: 'page-host',
@@ -105,17 +105,17 @@ function registerVisibleContentWindow(id: WindowId): void {
       class: 'primary',
       role: 'content',
     });
-  getShadowKernelExecutor().dispatch({ type: 'WindowShown', id });
+  getKernelExecutor().dispatch({ type: 'WindowShown', id });
 }
 
-describe('window-kernel-shadow: registration feed', () => {
+describe('window-kernel-dispatch: registration feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('a registration reaches the shadow kernel state (peek 7fffa286)', () => {
+  it('a registration reaches the kernel state (peek 7fffa286)', () => {
     const id = wid(1);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -126,10 +126,10 @@ describe('window-kernel-shadow: registration feed', () => {
         role: 'main',
       });
 
-    const record = getShadowKernelExecutor()
+    const record = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === id);
-    assert.ok(record !== undefined, 'the registered window must appear in the shadow kernel state');
+    assert.ok(record !== undefined, 'the registered window must appear in the kernel state');
     assert.strictEqual(record?.kind, 'browser');
     assert.strictEqual(record?.layer, BASE_LAYER);
     assert.strictEqual(record?.canBecomeKey, true);
@@ -142,7 +142,7 @@ describe('window-kernel-shadow: registration feed', () => {
     // Two registrations in a row exercise the version-carrying path — a bug
     // that pins `expectedVersion` to a stale value would surface here as a
     // silently-dropped second registration.
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id: wid(2),
         kind: 'page-host',
@@ -151,7 +151,7 @@ describe('window-kernel-shadow: registration feed', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id: wid(3),
         kind: 'page-host',
@@ -161,20 +161,20 @@ describe('window-kernel-shadow: registration feed', () => {
         class: 'primary',
       });
 
-    const order = getShadowKernelExecutor().getState().order;
+    const order = getKernelExecutor().getState().order;
     assert.ok(order.some((w) => w.id === wid(2)));
     assert.ok(order.some((w) => w.id === wid(3)));
   });
 });
 
-describe('window-kernel-shadow: OS focus feed', () => {
+describe('window-kernel-dispatch: OS focus feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('a focus gain reaches the shadow kernel as OsFocusGained, naming the window', () => {
+  it('a focus gain reaches the kernel as OsFocusGained, naming the window', () => {
     const id = wid(10);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -184,14 +184,14 @@ describe('window-kernel-shadow: OS focus feed', () => {
         class: 'primary',
       });
 
-    shadowKernelOsFocusGained(id);
+    kernelOsFocusGained(id);
 
-    assert.strictEqual(getShadowKernelExecutor().getState().key, id);
+    assert.strictEqual(getKernelExecutor().getState().key, id);
   });
 
   it('the settle emits OsFocusLost naming the currently-held key', () => {
     const id = wid(11);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -200,31 +200,31 @@ describe('window-kernel-shadow: OS focus feed', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelOsFocusGained(id);
-    assert.strictEqual(getShadowKernelExecutor().getState().key, id, 'precondition: id holds key');
+    kernelOsFocusGained(id);
+    assert.strictEqual(getKernelExecutor().getState().key, id, 'precondition: id holds key');
 
-    shadowKernelOsFocusSettled();
+    kernelOsFocusSettled();
 
-    assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'OsFocusLost nulls the held key');
+    assert.strictEqual(getKernelExecutor().getState().key, null, 'OsFocusLost nulls the held key');
   });
 
   it('the settle emits nothing when no key is held', () => {
-    // Fresh shadow kernel: nothing has ever taken key.
-    assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'precondition: no key held');
-    const versionBefore = getShadowKernelExecutor().getState().version;
+    // Fresh kernel: nothing has ever taken key.
+    assert.strictEqual(getKernelExecutor().getState().key, null, 'precondition: no key held');
+    const versionBefore = getKernelExecutor().getState().version;
 
-    shadowKernelOsFocusSettled();
+    kernelOsFocusSettled();
 
     // No event reached the kernel at all — version is untouched, not merely
     // key staying null (which an inert OsFocusLost would also leave true).
-    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore);
-    assert.strictEqual(getShadowKernelExecutor().getState().key, null);
+    assert.strictEqual(getKernelExecutor().getState().version, versionBefore);
+    assert.strictEqual(getKernelExecutor().getState().key, null);
   });
 });
 
-describe('window-kernel-shadow: teardown feed', () => {
+describe('window-kernel-dispatch: teardown feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   const teardownCases: Array<{
@@ -233,21 +233,21 @@ describe('window-kernel-shadow: teardown feed', () => {
     call: (id: WindowId) => void;
     carriesId: boolean;
   }> = [
-    { name: 'DestroyWindow', kind: 'destroy-window', call: shadowKernelDestroyWindow, carriesId: true },
-    { name: 'CloseContent', kind: 'close-content', call: shadowKernelCloseContent, carriesId: true },
-    { name: 'CloseWindowDirect', kind: 'close-window-direct', call: shadowKernelCloseWindowDirect, carriesId: true },
+    { name: 'DestroyWindow', kind: 'destroy-window', call: kernelDestroyWindow, carriesId: true },
+    { name: 'CloseContent', kind: 'close-content', call: kernelCloseContent, carriesId: true },
+    { name: 'CloseWindowDirect', kind: 'close-window-direct', call: kernelCloseWindowDirect, carriesId: true },
     {
       name: 'DestroyAllGuests',
       kind: 'destroy-all-guests',
-      call: () => shadowKernelDestroyAllGuests(),
+      call: () => kernelDestroyAllGuests(),
       carriesId: false,
     },
   ];
 
   for (const { name, kind, call, carriesId } of teardownCases) {
-    it(`${name} reaches the shadow kernel (recorded on lastTeardown) — membership stays untouched (peek 7fffa286)`, () => {
+    it(`${name} reaches the kernel (recorded on lastTeardown) — membership stays untouched (peek 7fffa286)`, () => {
       const id = wid(30);
-      shadowKernelRegisterWindow(
+      kernelRegisterWindow(
         {
           id,
           kind: 'page-host',
@@ -256,11 +256,11 @@ describe('window-kernel-shadow: teardown feed', () => {
           acceptsInput: true,
           class: 'primary',
         });
-      const versionBefore = getShadowKernelExecutor().getState().version;
+      const versionBefore = getKernelExecutor().getState().version;
 
       call(id);
 
-      const state = getShadowKernelExecutor().getState();
+      const state = getKernelExecutor().getState();
       const lastTeardown = state.lastTeardown;
       assert.strictEqual(lastTeardown?.kind, kind, `${name} must be recorded as lastTeardown`);
       if (carriesId && lastTeardown && 'id' in lastTeardown) assert.strictEqual(lastTeardown.id, id);
@@ -277,33 +277,33 @@ describe('window-kernel-shadow: teardown feed', () => {
   }
 
   it('a teardown naming a window whose record is already gone is absorbed, not thrown or rejected into the caller', () => {
-    const danglingId = wid(31); // never registered with the shadow kernel
-    const versionBefore = getShadowKernelExecutor().getState().version;
+    const danglingId = wid(31); // never registered with the kernel
+    const versionBefore = getKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelDestroyWindow(danglingId));
-    assert.doesNotThrow(() => shadowKernelCloseContent(danglingId));
-    assert.doesNotThrow(() => shadowKernelCloseWindowDirect(danglingId));
-    assert.doesNotThrow(() => shadowKernelDestroyAllGuests());
+    assert.doesNotThrow(() => kernelDestroyWindow(danglingId));
+    assert.doesNotThrow(() => kernelCloseContent(danglingId));
+    assert.doesNotThrow(() => kernelCloseWindowDirect(danglingId));
+    assert.doesNotThrow(() => kernelDestroyAllGuests());
 
     // All four commands are exempt from `decide`'s unknown-window rejection
     // (window-kernel.ts, §0.1.5) — a dangling id is accepted traffic, not a
     // rejection, so the version must have advanced once per call rather than
     // staying pinned the way a genuine rejection would leave it.
-    const state = getShadowKernelExecutor().getState();
+    const state = getKernelExecutor().getState();
     assert.strictEqual(state.version, versionBefore + 4);
     assert.strictEqual(state.lastTeardown?.kind, 'destroy-all-guests');
     assert.strictEqual(state.order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: close report feed', () => {
+describe('window-kernel-dispatch: close report feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('a close report removes the window from the shadow kernel order (peek 7fffa286)', () => {
+  it('a close report removes the window from the kernel order (peek 7fffa286)', () => {
     const id = wid(40);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -313,47 +313,47 @@ describe('window-kernel-shadow: close report feed', () => {
         class: 'primary',
       });
     assert.ok(
-      getShadowKernelExecutor().getState().order.some((w) => w.id === id),
+      getKernelExecutor().getState().order.some((w) => w.id === id),
       'precondition: the window is a member before the close report',
     );
 
-    shadowKernelWindowClosed(id);
+    kernelWindowClosed(id);
 
     // RULE 1 (window-kernel.ts): `WindowClosed` is the ONLY event that
-    // shrinks `order`. Without this feed the shadow kernel's `order` only
+    // shrinks `order`. Without this feed the kernel's `order` only
     // ever grows, diverging further from reality with every real close.
     assert.ok(
-      !getShadowKernelExecutor().getState().order.some((w) => w.id === id),
+      !getKernelExecutor().getState().order.some((w) => w.id === id),
       'a close report must remove the window from order',
     );
   });
 
   it('a close report naming a window with no record is absorbed, not thrown or rejected into the caller', () => {
-    const danglingId = wid(41); // never registered with the shadow kernel
-    const versionBefore = getShadowKernelExecutor().getState().version;
+    const danglingId = wid(41); // never registered with the kernel
+    const versionBefore = getKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelWindowClosed(danglingId));
+    assert.doesNotThrow(() => kernelWindowClosed(danglingId));
 
     // `WindowClosed` is an event (`evolve`, not `decide`) — there is no
     // `decide`-side rejection to exempt here; `evolve`'s unconditional
     // filter simply no-ops on an id that was never a member, while the
     // dispatch itself still advances version, same as any other event.
-    const state = getShadowKernelExecutor().getState();
+    const state = getKernelExecutor().getState();
     assert.strictEqual(state.version, versionBefore + 1);
     assert.strictEqual(state.order.length, 0, 'a dangling close report never adds a member');
   });
 
 });
 
-describe('window-kernel-shadow: stack-order import feed', () => {
+describe('window-kernel-dispatch: stack-order import feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('an import permutes only the slots the payload names, naming a partial subset with an unknown id and a duplicate (peek 7fffa286)', () => {
     const [a, b, c, d] = [wid(50), wid(51), wid(52), wid(53)];
     for (const id of [a, b, c, d]) {
-      shadowKernelRegisterWindow(
+      kernelRegisterWindow(
         {
           id,
           kind: 'browser',
@@ -364,7 +364,7 @@ describe('window-kernel-shadow: stack-order import feed', () => {
         });
     }
     assert.deepStrictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.map((w) => w.id),
       [a, b, c, d],
@@ -377,14 +377,14 @@ describe('window-kernel-shadow: stack-order import feed', () => {
     // from `order` cannot pass this: it has nothing to say about b/c (absent
     // from the payload entirely), and would place a/d adjacent in payload
     // order rather than back into their own original slots.
-    shadowKernelImportStackOrder([d, wid(999), a, a]);
+    kernelImportStackOrder([d, wid(999), a, a]);
 
     // Correct result: `d` and `a` are the only named ids, so they are written
     // back into the two slots they already occupied (index 0, originally
     // `a`'s, and index 3, originally `d`'s) in the payload's relative order
     // (d then a) — while `b` and `c` keep their own slots untouched.
     assert.deepStrictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.map((w) => w.id),
       [d, b, c, a],
@@ -393,34 +393,34 @@ describe('window-kernel-shadow: stack-order import feed', () => {
   });
 
   it('an import naming no known window is absorbed, not thrown into the caller', () => {
-    const danglingId = wid(60); // never registered with the shadow kernel
-    const versionBefore = getShadowKernelExecutor().getState().version;
+    const danglingId = wid(60); // never registered with the kernel
+    const versionBefore = getKernelExecutor().getState().version;
 
     assert.doesNotThrow(() =>
-      shadowKernelImportStackOrder([danglingId]),
+      kernelImportStackOrder([danglingId]),
     );
 
     // `ImportStackOrder` is a command (`decide`), answered before the
     // unknown-window guard — a dangling id is accepted traffic, so the
     // version still advances rather than the call being rejected.
-    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore + 1);
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0);
+    assert.strictEqual(getKernelExecutor().getState().version, versionBefore + 1);
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0);
   });
 });
 
-describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
+describe('window-kernel-dispatch: visibility feed (peek 7fffa286)', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('THE MEASURED DEFECT, pinned: a registration alone never makes a record visible — topmost(state, isContentWindow) stays null', () => {
     // `RegisterWindow` always creates a record `visible: false`
     // (window-kernel.ts) — this is the state every production window sits in
     // until something feeds a show. Without a `WindowShown` feed, `topmost`
-    // can never return it: this is the live 126/126 divergence the shadow
+    // can never return it: this is the live 126/126 divergence the
     // kernel measured before any visibility input was wired.
     const id = wid(110);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -431,12 +431,12 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
         role: 'content',
       });
 
-    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow), null);
+    assert.strictEqual(topmost(getKernelExecutor().getState(), isContentWindow), null);
   });
 
   it('a registration followed by a show feed makes topmost(state, isContentWindow) return that window (the fix)', () => {
     const id = wid(111);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -447,19 +447,19 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
         role: 'content',
       });
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow),
+      topmost(getKernelExecutor().getState(), isContentWindow),
       null,
       'precondition: registration alone is not enough',
     );
 
-    shadowKernelWindowShown(id);
+    kernelWindowShown(id);
 
-    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id, id);
+    assert.strictEqual(topmost(getKernelExecutor().getState(), isContentWindow)?.id, id);
   });
 
   it('a hide feed reported after a show flips the record back off topmost', () => {
     const id = wid(112);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -469,24 +469,24 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
         class: 'primary',
         role: 'content',
       });
-    shadowKernelWindowShown(id);
+    kernelWindowShown(id);
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       id,
       'precondition: the window is topmost after the show feed',
     );
 
-    shadowKernelWindowHidden(id);
+    kernelWindowHidden(id);
 
-    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow), null);
+    assert.strictEqual(topmost(getKernelExecutor().getState(), isContentWindow), null);
   });
 
   it('never throws across a show/hide feed naming a window with no record', () => {
-    const danglingId = wid(113); // never registered with the shadow kernel
+    const danglingId = wid(113); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelWindowShown(danglingId));
-    assert.doesNotThrow(() => shadowKernelWindowHidden(danglingId));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelWindowShown(danglingId));
+    assert.doesNotThrow(() => kernelWindowHidden(danglingId));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 
   it('AppActivated re-shows a record hiddenByAppBlur and clears the mark, mirroring the old machine (window-kernel.ts AppActivated evolve arm)', () => {
@@ -497,7 +497,7 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
     // `topmost(state, isContentWindow)`, which by design never sees it either
     // way.
     const id = wid(114);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -506,31 +506,31 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelWindowShown(id);
-    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    kernelWindowShown(id);
+    const record = () => getKernelExecutor().getState().order.find((w) => w.id === id);
     assert.strictEqual(record()?.visible, true, 'precondition: the window is visible after the show feed');
 
     // Land the record in the exact state the old machine's app-resign sweep
     // leaves behind: hidden, marked `hiddenByAppBlur`. `AppResigned`/
-    // `AppResignSettled` have no shadow feed yet, so this fixture drives the
+    // `AppResignSettled` have no feed exercised here yet, so this fixture drives the
     // kernel there directly, the same way `registerVisibleContentWindow`
     // above dispatches straight to the executor for a state no feed helper
     // produces on its own.
-    getShadowKernelExecutor().dispatch({ type: 'AppResigned' });
-    getShadowKernelExecutor().dispatch({ type: 'AppResignSettled' });
+    getKernelExecutor().dispatch({ type: 'AppResigned' });
+    getKernelExecutor().dispatch({ type: 'AppResignSettled' });
     assert.strictEqual(record()?.visible, false, 'precondition: the sweep hid the eligible window');
     assert.strictEqual(record()?.hiddenByAppBlur, true);
 
-    shadowKernelAppActivated();
+    kernelAppActivated();
 
     assert.strictEqual(record()?.visible, true, 'AppActivated must re-show it');
     assert.strictEqual(record()?.hiddenByAppBlur, false);
   });
 });
 
-describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
+describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('THE MEASURED GAP, pinned: a raise of an ALREADY-VISIBLE, non-topmost window moves topmost(state, isContentWindow) to it', () => {
@@ -546,31 +546,31 @@ describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       b,
       'precondition: b is topmost, a is the lower window being raised',
     );
 
-    shadowKernelRaiseWindow(a);
+    kernelRaiseWindow(a);
 
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       a,
       'raising the lower window must move it to topmost',
     );
   });
 
   it('never throws across a raise naming a window with no record', () => {
-    const danglingId = wid(122); // never registered with the shadow kernel
+    const danglingId = wid(122); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelRaiseWindow(danglingId));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelRaiseWindow(danglingId));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
+describe('window-kernel-dispatch: activating show feed (peek 7fffa286)', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('THE MEASURED DEFECT, pinned: an ACTIVATING show feed on an already-visible, non-topmost window moves topmost(state, isContentWindow) to it', () => {
@@ -582,7 +582,7 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
     // registered+shown last). An activating show feed on the LOWER window `a`
     // must move it to topmost even though `window-kernel.ts`'s `WindowShown`
     // arm itself never reorders `order` (`OsFocusGained` is its only
-    // reorderer, by design) — this is exactly why `shadowKernelWindowShown`
+    // reorderer, by design) — this is exactly why `kernelWindowShown`
     // must translate an activating show into a companion `OsFocusGained`.
     // This fixture cannot pass vacuously: a single-window fixture, or one that
     // activating-shows the already-topmost `b`, would pass with no companion
@@ -592,15 +592,15 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       b,
       'precondition: b is topmost, a is the lower window being re-shown',
     );
 
-    shadowKernelWindowShown(a, true);
+    kernelWindowShown(a, true);
 
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       a,
       'an activating show feed on the lower window must move it to topmost',
     );
@@ -618,27 +618,27 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       b,
       'precondition: b is topmost, a is the lower window being re-shown',
     );
 
-    shadowKernelWindowShown(a, false);
+    kernelWindowShown(a, false);
 
     assert.strictEqual(
-      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      topmost(getKernelExecutor().getState(), isContentWindow)?.id,
       b,
       'a non-activating show feed must not move topmost off b',
     );
   });
 });
 
-describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () => {
+describe('window-kernel-dispatch: overlay attach/detach feed (peek 7fffa286)', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('THE MEASURED GAP, pinned: an overlay attach reaches the shadow kernel and sets overlayFor', () => {
+  it('THE MEASURED GAP, pinned: an overlay attach reaches the kernel and sets overlayFor', () => {
     // `AttachOverlay` has no production dispatcher anywhere until this feed —
     // without it, `overlayFor` stays undefined forever, even after a genuine
     // attach. Two real registered records (an overlay-shaped one and a host)
@@ -646,14 +646,14 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
     const [overlay, host] = [wid(200), wid(201)];
     registerWindow(overlay);
     registerWindow(host);
-    const before = getShadowKernelExecutor()
+    const before = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === overlay);
     assert.strictEqual(before?.overlayFor, undefined, 'precondition: a freshly registered overlay carries no overlayFor');
 
-    shadowKernelAttachOverlay(overlay, host);
+    kernelAttachOverlay(overlay, host);
 
-    const after = getShadowKernelExecutor()
+    const after = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === overlay);
     assert.strictEqual(after?.overlayFor, host, 'attach must set overlayFor to the host');
@@ -665,18 +665,18 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
     registerWindow(hostA);
     registerWindow(hostB);
 
-    shadowKernelAttachOverlay(overlay, hostA);
+    kernelAttachOverlay(overlay, hostA);
     assert.strictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.find((w) => w.id === overlay)?.overlayFor,
       hostA,
       'precondition: overlay is attached to hostA',
     );
 
-    shadowKernelAttachOverlay(overlay, hostB);
+    kernelAttachOverlay(overlay, hostB);
     assert.strictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.find((w) => w.id === overlay)?.overlayFor,
       hostB,
@@ -688,19 +688,19 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
     const [overlay, host] = [wid(205), wid(206)];
     registerWindow(overlay);
     registerWindow(host);
-    shadowKernelAttachOverlay(overlay, host);
+    kernelAttachOverlay(overlay, host);
     assert.strictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.find((w) => w.id === overlay)?.overlayFor,
       host,
       'precondition: overlay is attached',
     );
 
-    shadowKernelAttachOverlay(overlay, null);
+    kernelAttachOverlay(overlay, null);
 
     assert.strictEqual(
-      getShadowKernelExecutor()
+      getKernelExecutor()
         .getState()
         .order.find((w) => w.id === overlay)?.overlayFor,
       undefined,
@@ -712,21 +712,21 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
     const danglingOverlay = wid(207); // never registered
     const danglingHost = wid(208); // never registered
 
-    assert.doesNotThrow(() => shadowKernelAttachOverlay(danglingOverlay, danglingHost));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling attach joins nothing');
+    assert.doesNotThrow(() => kernelAttachOverlay(danglingOverlay, danglingHost));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling attach joins nothing');
   });
 });
 
-describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
+describe('window-kernel-dispatch: app-resign feed (peek 7fffa286)', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('AppResigned arms pendingAppResignSweep and clears appActive, mirroring the old machine (window-kernel.ts AppResigned evolve arm)', () => {
 
-    shadowKernelAppResigned();
+    kernelAppResigned();
 
-    const state = getShadowKernelExecutor().getState();
+    const state = getKernelExecutor().getState();
     assert.strictEqual(state.appActive, false, 'AppResigned must clear appActive');
     assert.strictEqual(state.pendingAppResignSweep, true, 'AppResigned must arm the sweep');
   });
@@ -737,7 +737,7 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
     // not self-closing, not content) — a HUD-shaped surface, not a content
     // window.
     const id = wid(115);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -746,36 +746,36 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelWindowShown(id);
-    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    kernelWindowShown(id);
+    const record = () => getKernelExecutor().getState().order.find((w) => w.id === id);
     assert.strictEqual(record()?.visible, true, 'precondition: the window is visible after the show feed');
 
-    shadowKernelAppResigned();
-    shadowKernelAppResignSettled();
+    kernelAppResigned();
+    kernelAppResignSettled();
 
     assert.strictEqual(record()?.visible, false, 'AppResignSettled must hide the sweep-eligible window');
     assert.strictEqual(record()?.hiddenByAppBlur, true);
-    const state = getShadowKernelExecutor().getState();
+    const state = getKernelExecutor().getState();
     assert.strictEqual(state.pendingAppResignSweep, false, 'a resign that settled without an intervening AppActivated must disarm the sweep');
     assert.strictEqual(state.appActive, false, 'and leave appActive false — the pair react\'s resign-sweep rule diffs');
   });
 
   it('never throws across an app-resign feed with nothing registered', () => {
 
-    assert.doesNotThrow(() => shadowKernelAppResigned());
-    assert.doesNotThrow(() => shadowKernelAppResignSettled());
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'no record to touch');
+    assert.doesNotThrow(() => kernelAppResigned());
+    assert.doesNotThrow(() => kernelAppResignSettled());
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'no record to touch');
   });
 });
 
-describe('window-kernel-shadow: content orderable feed', () => {
+describe('window-kernel-dispatch: content orderable feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('THE MEASURED DEFECT, pinned: without the feed a shown page-host stays permanently non-orderable and topmostBaseLayerPageHost reads null', () => {
     const id = wid(140);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -785,10 +785,10 @@ describe('window-kernel-shadow: content orderable feed', () => {
         class: 'primary',
         role: 'content',
       });
-    shadowKernelWindowShown(id);
+    kernelWindowShown(id);
 
     assert.strictEqual(
-      topmostBaseLayerPageHost(getShadowKernelExecutor().getState()),
+      topmostBaseLayerPageHost(getKernelExecutor().getState()),
       null,
       'visible alone is not enough — orderable is still false',
     );
@@ -796,7 +796,7 @@ describe('window-kernel-shadow: content orderable feed', () => {
 
   it('a first-composited-frame feed flips orderable to true, and topmostBaseLayerPageHost returns the record (the fix)', () => {
     const id = wid(141);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -806,42 +806,42 @@ describe('window-kernel-shadow: content orderable feed', () => {
         class: 'primary',
         role: 'content',
       });
-    shadowKernelWindowShown(id);
+    kernelWindowShown(id);
     assert.strictEqual(
-      topmostBaseLayerPageHost(getShadowKernelExecutor().getState()),
+      topmostBaseLayerPageHost(getKernelExecutor().getState()),
       null,
       'precondition: not orderable yet',
     );
 
-    shadowKernelWindowContentOrderable(id);
+    kernelWindowContentOrderable(id);
 
-    const record = getShadowKernelExecutor()
+    const record = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === id);
     assert.strictEqual(record?.orderable, true, 'the feed must flip orderable to true');
     assert.strictEqual(
-      topmostBaseLayerPageHost(getShadowKernelExecutor().getState())?.id,
+      topmostBaseLayerPageHost(getKernelExecutor().getState())?.id,
       id,
       'topmostBaseLayerPageHost must now return the record',
     );
   });
 
   it('never throws across a content-orderable feed naming a window with no record', () => {
-    const danglingId = wid(142); // never registered with the shadow kernel
+    const danglingId = wid(142); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelWindowContentOrderable(danglingId));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelWindowContentOrderable(danglingId));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: content first responder feed', () => {
+describe('window-kernel-dispatch: content first responder feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('a held report reaches the shadow kernel as contentFocused: true, naming the window', () => {
+  it('a held report reaches the kernel as contentFocused: true, naming the window', () => {
     const id = wid(150);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -851,9 +851,9 @@ describe('window-kernel-shadow: content first responder feed', () => {
         class: 'primary',
       });
 
-    shadowKernelContentFirstResponderChanged(id, true);
+    kernelContentFirstResponderChanged(id, true);
 
-    const record = getShadowKernelExecutor()
+    const record = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === id);
     assert.strictEqual(record?.contentFocused, true);
@@ -861,7 +861,7 @@ describe('window-kernel-shadow: content first responder feed', () => {
 
   it('a released report flips it back to false', () => {
     const id = wid(151);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'page-host',
@@ -870,31 +870,31 @@ describe('window-kernel-shadow: content first responder feed', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelContentFirstResponderChanged(id, true);
-    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    kernelContentFirstResponderChanged(id, true);
+    const record = () => getKernelExecutor().getState().order.find((w) => w.id === id);
     assert.strictEqual(record()?.contentFocused, true, 'precondition: held');
 
-    shadowKernelContentFirstResponderChanged(id, false);
+    kernelContentFirstResponderChanged(id, false);
 
     assert.strictEqual(record()?.contentFocused, false);
   });
 
   it('never throws across a content-first-responder feed naming a window with no record', () => {
-    const danglingId = wid(152); // never registered with the shadow kernel
+    const danglingId = wid(152); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelContentFirstResponderChanged(danglingId, true));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelContentFirstResponderChanged(danglingId, true));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: window accepts-input feed', () => {
+describe('window-kernel-dispatch: window accepts-input feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  it('a click-through report reaches the shadow kernel as acceptsInput: false, naming the window', () => {
+  it('a click-through report reaches the kernel as acceptsInput: false, naming the window', () => {
     const id = wid(160);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -904,9 +904,9 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
         class: 'primary',
       });
 
-    shadowKernelWindowAcceptsInputChanged(id, false);
+    kernelWindowAcceptsInputChanged(id, false);
 
-    const record = getShadowKernelExecutor()
+    const record = getKernelExecutor()
       .getState()
       .order.find((w) => w.id === id);
     assert.strictEqual(record?.acceptsInput, false);
@@ -914,7 +914,7 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
 
   it('a capturing report flips it back to true', () => {
     const id = wid(161);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       {
         id,
         kind: 'browser',
@@ -923,106 +923,106 @@ describe('window-kernel-shadow: window accepts-input feed', () => {
         acceptsInput: true,
         class: 'primary',
       });
-    shadowKernelWindowAcceptsInputChanged(id, false);
-    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    kernelWindowAcceptsInputChanged(id, false);
+    const record = () => getKernelExecutor().getState().order.find((w) => w.id === id);
     assert.strictEqual(record()?.acceptsInput, false, 'precondition: click-through');
 
-    shadowKernelWindowAcceptsInputChanged(id, true);
+    kernelWindowAcceptsInputChanged(id, true);
 
     assert.strictEqual(record()?.acceptsInput, true);
   });
 
   it('never throws across an accepts-input feed naming a window with no record', () => {
-    const danglingId = wid(162); // never registered with the shadow kernel
+    const danglingId = wid(162); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelWindowAcceptsInputChanged(danglingId, false));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelWindowAcceptsInputChanged(danglingId, false));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: cold-start focus latch feed', () => {
+describe('window-kernel-dispatch: cold-start focus latch feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('arming with a real id writes pendingColdStartFocus', () => {
     const id = wid(160);
 
-    shadowKernelArmColdStartFocus(id);
+    kernelArmColdStartFocus(id);
 
-    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, id);
+    assert.strictEqual(getKernelExecutor().getState().pendingColdStartFocus, id);
   });
 
   it('arming with null clears a previously-armed latch', () => {
     const id = wid(161);
-    shadowKernelArmColdStartFocus(id);
+    kernelArmColdStartFocus(id);
     assert.strictEqual(
-      getShadowKernelExecutor().getState().pendingColdStartFocus,
+      getKernelExecutor().getState().pendingColdStartFocus,
       id,
       'precondition: latch armed',
     );
 
-    shadowKernelArmColdStartFocus(null);
+    kernelArmColdStartFocus(null);
 
-    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, null);
+    assert.strictEqual(getKernelExecutor().getState().pendingColdStartFocus, null);
   });
 
   it('never throws arming a latch with an id naming no registered window', () => {
-    const danglingId = wid(162); // never registered with the shadow kernel
+    const danglingId = wid(162); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelArmColdStartFocus(danglingId));
+    assert.doesNotThrow(() => kernelArmColdStartFocus(danglingId));
     // Not exempt from being recorded — ArmColdStartFocus answers before the
     // unknown-window guard, so an id naming nothing is legitimate traffic,
     // not a rejection (window-kernel.ts decide's ArmColdStartFocus arm).
-    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, danglingId);
+    assert.strictEqual(getKernelExecutor().getState().pendingColdStartFocus, danglingId);
   });
 });
 
-describe('window-kernel-shadow: focus assert feed', () => {
+describe('window-kernel-dispatch: focus assert feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('asserting focus on a registered content window records lastFocusAssert', () => {
     const id = wid(170);
     registerVisibleContentWindow(id);
 
-    shadowKernelAssertFocus(id);
+    kernelAssertFocus(id);
 
-    assert.strictEqual(getShadowKernelExecutor().getState().lastFocusAssert?.id, id);
+    assert.strictEqual(getKernelExecutor().getState().lastFocusAssert?.id, id);
   });
 
   it('a target with no record is rejected (logged, never thrown into the caller) and advances nothing', () => {
-    const danglingId = wid(171); // never registered with the shadow kernel
-    const versionBefore = getShadowKernelExecutor().getState().version;
+    const danglingId = wid(171); // never registered with the kernel
+    const versionBefore = getKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelAssertFocus(danglingId));
+    assert.doesNotThrow(() => kernelAssertFocus(danglingId));
 
     // AssertFocus is NOT exempt from decide's unknown-window rejection
     // (window-kernel.ts, AssertFocus's own doc) — unlike the four teardown
     // commands, a dangling target is a genuine rejection, so version must
     // stay pinned.
-    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore);
+    assert.strictEqual(getKernelExecutor().getState().version, versionBefore);
   });
 });
 
-describe('window-kernel-shadow: fullscreen feed', () => {
+describe('window-kernel-dispatch: fullscreen feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const record = (id: WindowId) => getKernelExecutor().getState().order.find((w) => w.id === id);
 
   it('SetFullscreen(true) on an idle window starts entering, and the following OsFullscreenEntered settles it to fullscreen', () => {
     const id = wid(180);
     registerWindow(id);
     assert.strictEqual(record(id)?.fsMode.name, 'normal', 'precondition: a freshly registered window starts normal');
 
-    shadowKernelSetFullscreen(id, true);
+    kernelSetFullscreen(id, true);
 
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'SetFullscreen(true) on an idle window must start entering');
 
-    shadowKernelOsFullscreenEntered(id);
+    kernelOsFullscreenEntered(id);
 
     assert.strictEqual(record(id)?.fsMode.name, 'fullscreen', 'OsFullscreenEntered must settle entering -> fullscreen');
   });
@@ -1030,15 +1030,15 @@ describe('window-kernel-shadow: fullscreen feed', () => {
   it('SetFullscreen(false) on a fullscreen window starts leaving, and the following OsFullscreenLeft settles it back to normal', () => {
     const id = wid(181);
     registerWindow(id);
-    shadowKernelSetFullscreen(id, true);
-    shadowKernelOsFullscreenEntered(id);
+    kernelSetFullscreen(id, true);
+    kernelOsFullscreenEntered(id);
     assert.strictEqual(record(id)?.fsMode.name, 'fullscreen', 'precondition: the window is fullscreen');
 
-    shadowKernelSetFullscreen(id, false);
+    kernelSetFullscreen(id, false);
 
     assert.strictEqual(record(id)?.fsMode.name, 'leaving', 'SetFullscreen(false) on a fullscreen window must start leaving');
 
-    shadowKernelOsFullscreenLeft(id);
+    kernelOsFullscreenLeft(id);
 
     assert.strictEqual(record(id)?.fsMode.name, 'normal', 'OsFullscreenLeft must settle leaving -> normal');
   });
@@ -1046,10 +1046,10 @@ describe('window-kernel-shadow: fullscreen feed', () => {
   it('a SetFullscreen arriving mid-transition records the desire rather than restarting the transition', () => {
     const id = wid(182);
     registerWindow(id);
-    shadowKernelSetFullscreen(id, true);
+    kernelSetFullscreen(id, true);
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
 
-    shadowKernelSetFullscreen(id, false);
+    kernelSetFullscreen(id, false);
 
     const mode = record(id)?.fsMode;
     assert.strictEqual(
@@ -1064,13 +1064,13 @@ describe('window-kernel-shadow: fullscreen feed', () => {
   it('a settle timeout on an in-flight window marks it unverified and leaves fsMode transitional (8152196c: the machine asks the OS rather than guessing)', () => {
     const id = wid(183);
     registerWindow(id);
-    shadowKernelSetFullscreen(id, true);
+    kernelSetFullscreen(id, true);
     const beforeMode = record(id)?.fsMode;
     assert.strictEqual(beforeMode?.name, 'entering', 'precondition: the window is entering');
     if (beforeMode?.name !== 'entering') throw new Error('unreachable — asserted above');
     assert.strictEqual(beforeMode.unverified, undefined, 'precondition: nothing has asked for a reconcile yet');
 
-    shadowKernelFullscreenSettleTimeout(id);
+    kernelFullscreenSettleTimeout(id);
 
     const afterMode = record(id)?.fsMode;
     assert.strictEqual(
@@ -1083,22 +1083,22 @@ describe('window-kernel-shadow: fullscreen feed', () => {
   });
 
   it('never throws across a fullscreen feed naming a window with no record', () => {
-    const danglingId = wid(184); // never registered with the shadow kernel
+    const danglingId = wid(184); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelOsFullscreenEntered(danglingId));
-    assert.doesNotThrow(() => shadowKernelOsFullscreenLeft(danglingId));
-    assert.doesNotThrow(() => shadowKernelFullscreenSettleTimeout(danglingId));
-    assert.doesNotThrow(() => shadowKernelSetFullscreen(danglingId, true));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelOsFullscreenEntered(danglingId));
+    assert.doesNotThrow(() => kernelOsFullscreenLeft(danglingId));
+    assert.doesNotThrow(() => kernelFullscreenSettleTimeout(danglingId));
+    assert.doesNotThrow(() => kernelSetFullscreen(danglingId, true));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: geometry feed', () => {
+describe('window-kernel-dispatch: geometry feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const record = (id: WindowId) => getKernelExecutor().getState().order.find((w) => w.id === id);
   const RECT_A = { x: 10, y: 20, width: 300, height: 400 };
   const RECT_B = { x: 50, y: 60, width: 500, height: 600 };
 
@@ -1107,7 +1107,7 @@ describe('window-kernel-shadow: geometry feed', () => {
     registerWindow(id);
     assert.strictEqual(record(id)?.bounds, undefined, 'precondition: no rect has ever been reported');
 
-    shadowKernelBoundsChanged(id, RECT_A);
+    kernelBoundsChanged(id, RECT_A);
 
     assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'BoundsChanged must be the sole writer of the mirror');
   });
@@ -1115,11 +1115,11 @@ describe('window-kernel-shadow: geometry feed', () => {
   it('SetBounds on a record whose fsMode is not normal is refused by decide and leaves bounds untouched', () => {
     const id = wid(191);
     registerWindow(id);
-    shadowKernelBoundsChanged(id, RECT_A);
-    shadowKernelSetFullscreen(id, true);
+    kernelBoundsChanged(id, RECT_A);
+    kernelSetFullscreen(id, true);
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: fsMode is non-normal');
 
-    shadowKernelSetBounds(id, RECT_B);
+    kernelSetBounds(id, RECT_B);
 
     assert.deepStrictEqual(
       record(id)?.bounds,
@@ -1132,15 +1132,15 @@ describe('window-kernel-shadow: geometry feed', () => {
     const [a, b] = [wid(192), wid(193)];
     registerWindow(a);
     registerWindow(b);
-    shadowKernelBoundsChanged(a, RECT_A);
-    shadowKernelBoundsChanged(b, RECT_A);
+    kernelBoundsChanged(a, RECT_A);
+    kernelBoundsChanged(b, RECT_A);
     // A hidden record's projection is BLOCKED (evolve's DisplayChanged arm
     // holds it on pendingProjectedBounds instead) — `visible: true` is what
     // this test needs unblocked, so show both windows first.
-    getShadowKernelExecutor().dispatch({ type: 'WindowShown', id: a });
-    getShadowKernelExecutor().dispatch({ type: 'WindowShown', id: b });
+    getKernelExecutor().dispatch({ type: 'WindowShown', id: a });
+    getKernelExecutor().dispatch({ type: 'WindowShown', id: b });
 
-    shadowKernelDisplayChanged([{ id: a, bounds: RECT_B }]);
+    kernelDisplayChanged([{ id: a, bounds: RECT_B }]);
 
     assert.deepStrictEqual(record(a)?.bounds, RECT_B, 'the named window must be repositioned');
     assert.deepStrictEqual(record(b)?.bounds, RECT_A, 'a window absent from the projection must be left untouched');
@@ -1149,52 +1149,52 @@ describe('window-kernel-shadow: geometry feed', () => {
   it('MaximizeExitedByResize clears maximized and preMaxBounds without touching bounds', () => {
     const id = wid(194);
     registerWindow(id);
-    shadowKernelBoundsChanged(id, RECT_A);
-    shadowKernelMaximize(id);
+    kernelBoundsChanged(id, RECT_A);
+    kernelMaximize(id);
     assert.strictEqual(record(id)?.maximized, true, 'precondition: the window is maximized');
 
-    shadowKernelMaximizeExitedByResize(id);
+    kernelMaximizeExitedByResize(id);
 
     assert.strictEqual(record(id)?.maximized, false, 'a resize gesture must invalidate maximize');
     assert.strictEqual(record(id)?.preMaxBounds, null, 'the stash must be cleared alongside the flag');
   });
 
   it('never throws across a geometry feed naming a window with no record', () => {
-    const danglingId = wid(195); // never registered with the shadow kernel
+    const danglingId = wid(195); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelBoundsChanged(danglingId, RECT_A));
-    assert.doesNotThrow(() => shadowKernelDisplayChanged([{ id: danglingId, bounds: RECT_A }]));
-    assert.doesNotThrow(() => shadowKernelMaximizeExitedByResize(danglingId));
-    assert.doesNotThrow(() => shadowKernelSetBounds(danglingId, RECT_A));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelBoundsChanged(danglingId, RECT_A));
+    assert.doesNotThrow(() => kernelDisplayChanged([{ id: danglingId, bounds: RECT_A }]));
+    assert.doesNotThrow(() => kernelMaximizeExitedByResize(danglingId));
+    assert.doesNotThrow(() => kernelSetBounds(danglingId, RECT_A));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: maximize / unmaximize feed', () => {
+describe('window-kernel-dispatch: maximize / unmaximize feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const record = (id: WindowId) => getKernelExecutor().getState().order.find((w) => w.id === id);
   const RECT_A = { x: 10, y: 20, width: 300, height: 400 };
   const WORK_AREA = { x: 0, y: 0, width: 1920, height: 1080 };
 
   it('maximize then unmaximize round-trips the bounds through the stash', () => {
     const id = wid(210);
     registerWindow(id);
-    shadowKernelBoundsChanged(id, RECT_A);
+    kernelBoundsChanged(id, RECT_A);
 
-    shadowKernelMaximize(id);
+    kernelMaximize(id);
 
     assert.strictEqual(record(id)?.maximized, true, 'Maximize must set the flag');
     assert.deepStrictEqual(record(id)?.preMaxBounds, RECT_A, 'decide stashes preMaxBounds from the bounds mirror');
     assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'Maximized itself never writes bounds — the dispatch site snaps it separately');
 
     // Mirrors the real dispatch site: a separate SetBounds drives the visual snap.
-    shadowKernelSetBounds(id, WORK_AREA);
+    kernelSetBounds(id, WORK_AREA);
     assert.deepStrictEqual(record(id)?.bounds, WORK_AREA, 'precondition: the window is snapped to the work area');
 
-    shadowKernelUnmaximize(id);
+    kernelUnmaximize(id);
 
     assert.strictEqual(record(id)?.maximized, false, 'Unmaximize must clear the flag');
     assert.strictEqual(record(id)?.preMaxBounds, null, 'Unmaximize must clear the stash');
@@ -1204,11 +1204,11 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
   it('Maximize on a record whose fsMode is not normal is refused by decide', () => {
     const id = wid(211);
     registerWindow(id);
-    shadowKernelBoundsChanged(id, RECT_A);
-    shadowKernelSetFullscreen(id, true);
+    kernelBoundsChanged(id, RECT_A);
+    kernelSetFullscreen(id, true);
     assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: fsMode is non-normal');
 
-    shadowKernelMaximize(id);
+    kernelMaximize(id);
 
     assert.strictEqual(record(id)?.maximized, false, 'fullscreen owns the display — decide must answer [] ');
   });
@@ -1216,46 +1216,46 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
   it('Unmaximize on a not-maximized record is a no-op', () => {
     const id = wid(212);
     registerWindow(id);
-    shadowKernelBoundsChanged(id, RECT_A);
+    kernelBoundsChanged(id, RECT_A);
 
-    shadowKernelUnmaximize(id);
+    kernelUnmaximize(id);
 
     assert.strictEqual(record(id)?.maximized, false, 'still not maximized');
     assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'nothing to restore — bounds must stay put');
   });
 
   it('never throws across a maximize/unmaximize feed naming a window with no record', () => {
-    const danglingId = wid(213); // never registered with the shadow kernel
+    const danglingId = wid(213); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelMaximize(danglingId));
-    assert.doesNotThrow(() => shadowKernelUnmaximize(danglingId));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelMaximize(danglingId));
+    assert.doesNotThrow(() => kernelUnmaximize(danglingId));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-// `shadowKernelSetDesktopMembership` is the one helper behind all THREE
-// production feed sites (`window-kernel-shadow.ts`'s own doc names them):
+// `kernelSetDesktopMembership` is the one helper behind all THREE
+// production feed sites (`window-kernel-dispatch.ts`'s own doc names them):
 // `tile-ipc.ts`'s raw `tile:window:set-visible-on-all-workspaces` handler
 // (boolean translated to an intention before the call), and `ipc.ts`'s
 // `windowOpenHandler()` + its keepLive-reuse path (role-derived, already an
 // intention at the call site). All three move kernel state through this one
 // function, so exercising it here covers what each site actually changes.
-describe('window-kernel-shadow: desktop membership feed', () => {
+describe('window-kernel-dispatch: desktop membership feed', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
-  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const record = (id: WindowId) => getKernelExecutor().getState().order.find((w) => w.id === id);
 
   it('starts undefined, then moves to the requested intention', () => {
     const id = wid(230);
     registerWindow(id);
     assert.strictEqual(record(id)?.desktopMembership, undefined, 'precondition: nobody has asked yet');
 
-    shadowKernelSetDesktopMembership(id, 'follow');
+    kernelSetDesktopMembership(id, 'follow');
     assert.strictEqual(record(id)?.desktopMembership, 'follow', 'the tile-ipc raw-boolean feed (true -> follow)');
 
-    shadowKernelSetDesktopMembership(id, 'anchor');
+    kernelSetDesktopMembership(id, 'anchor');
     assert.strictEqual(record(id)?.desktopMembership, 'anchor', 'the tile-ipc raw-boolean feed (false -> anchor)');
   });
 
@@ -1266,66 +1266,66 @@ describe('window-kernel-shadow: desktop membership feed', () => {
     registerWindow(reused);
 
     // windowOpenHandler(): role-derived, either intention.
-    shadowKernelSetDesktopMembership(opened, 'anchor');
+    kernelSetDesktopMembership(opened, 'anchor');
     assert.strictEqual(record(opened)?.desktopMembership, 'anchor');
 
     // keepLive-reuse path: only ever reached for 'follow' (an anchored
     // window's creation-time pair must not be replayed on reuse).
-    shadowKernelSetDesktopMembership(reused, 'follow');
+    kernelSetDesktopMembership(reused, 'follow');
     assert.strictEqual(record(reused)?.desktopMembership, 'follow');
   });
 
   it('never throws naming a window with no record', () => {
-    const danglingId = wid(231); // never registered with the shadow kernel
+    const danglingId = wid(231); // never registered with the kernel
 
-    assert.doesNotThrow(() => shadowKernelSetDesktopMembership(danglingId, 'follow'));
-    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+    assert.doesNotThrow(() => kernelSetDesktopMembership(danglingId, 'follow'));
+    assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
 
-describe('window-kernel-shadow: executor provider seam', () => {
+describe('window-kernel-dispatch: executor provider seam', () => {
   beforeEach(() => {
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
   });
 
   it('with no provider installed, returns the same (default, noop-backed) instance across calls', () => {
-    const first = getShadowKernelExecutor();
-    const second = getShadowKernelExecutor();
+    const first = getKernelExecutor();
+    const second = getKernelExecutor();
     assert.strictEqual(first, second, "today's memoized behavior — unchanged by the seam's presence");
   });
 
   it('a feed helper lands on the installed provider\'s executor, not the default one', () => {
     // Obtain (and memoize) the default instance BEFORE installing a provider,
     // so the test can prove the feed below does NOT reach it.
-    const defaultExecutor = getShadowKernelExecutor();
+    const defaultExecutor = getKernelExecutor();
 
     const injectedExecutor = new WindowKernelExecutor(new InertBackend());
     setKernelExecutorProvider(() => injectedExecutor);
     assert.strictEqual(
-      getShadowKernelExecutor(),
+      getKernelExecutor(),
       injectedExecutor,
       'the accessor must return the installed provider\'s executor',
     );
 
     const id = wid(900);
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' });
 
     const onInjected = injectedExecutor.getState().order.find((w) => w.id === id);
-    assert.ok(onInjected !== undefined, "shadowKernelRegisterWindow's dispatch must land on the injected executor");
+    assert.ok(onInjected !== undefined, "kernelRegisterWindow's dispatch must land on the injected executor");
 
     const onDefault = defaultExecutor.getState().order.find((w) => w.id === id);
     assert.strictEqual(onDefault, undefined, 'the default noop-backed executor must never see this registration');
   });
 
-  it('_resetShadowKernelForTests clears the installed provider', () => {
+  it('_resetKernelForTests clears the installed provider', () => {
     const injectedExecutor = new WindowKernelExecutor(new InertBackend());
     setKernelExecutorProvider(() => injectedExecutor);
-    assert.strictEqual(getShadowKernelExecutor(), injectedExecutor);
+    assert.strictEqual(getKernelExecutor(), injectedExecutor);
 
-    _resetShadowKernelForTests();
+    _resetKernelForTests();
 
-    const backToDefault = getShadowKernelExecutor();
+    const backToDefault = getKernelExecutor();
     assert.notStrictEqual(
       backToDefault,
       injectedExecutor,
@@ -1337,7 +1337,7 @@ describe('window-kernel-shadow: executor provider seam', () => {
     // Subscribing (with no provider installed yet) constructs and binds to
     // the fallback — the exact shape `initHybridOverlay()` would produce if
     // it ever ran before `initWindowStateMachine()` installs the provider.
-    const unsub = getShadowKernelExecutor().subscribe(() => {});
+    const unsub = getKernelExecutor().subscribe(() => {});
     try {
       assert.throws(
         () => setKernelExecutorProvider(() => new WindowKernelExecutor(new InertBackend())),
@@ -1355,14 +1355,14 @@ describe('window-kernel-shadow: executor provider seam', () => {
     // (`window-machine.ts` value-imports `electron`, which throws under
     // ELECTRON_RUN_AS_NODE=1), so this rebuilds its exact shape — an
     // edge-deduped read of `state.appActive` layered over
-    // `getShadowKernelExecutor().subscribe` — and drives it with the same feed
+    // `getKernelExecutor().subscribe` — and drives it with the same feed
     // helpers `electron-window-backend.ts attachAppListeners` calls.
     const injectedExecutor = new WindowKernelExecutor(new InertBackend());
     setKernelExecutorProvider(() => injectedExecutor);
 
     const edges: boolean[] = [];
-    let last = getShadowKernelExecutor().getState().appActive;
-    const unsub = getShadowKernelExecutor().subscribe((state) => {
+    let last = getKernelExecutor().getState().appActive;
+    const unsub = getKernelExecutor().subscribe((state) => {
       if (state.appActive !== last) {
         last = state.appActive;
         edges.push(state.appActive);
@@ -1371,8 +1371,8 @@ describe('window-kernel-shadow: executor provider seam', () => {
 
     try {
       assert.strictEqual(injectedExecutor.getState().appActive, true, 'precondition: the kernel boots app-active');
-      shadowKernelAppResigned();
-      shadowKernelAppActivated();
+      kernelAppResigned();
+      kernelAppActivated();
     } finally {
       unsub();
     }
@@ -1387,7 +1387,7 @@ describe('window-kernel-shadow: executor provider seam', () => {
   it('does not throw when the fallback was merely constructed (feeds ran) with no subscriber ever attached', () => {
     const id = wid(901);
     // Constructs the fallback via the ordinary feed path — nobody subscribes.
-    shadowKernelRegisterWindow(
+    kernelRegisterWindow(
       { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' });
 
     assert.doesNotThrow(() => setKernelExecutorProvider(() => new WindowKernelExecutor(new InertBackend())));

@@ -26,7 +26,7 @@ import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
 import { getWindowIdFor } from './window-machine.js';
-import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
+import { kernelCloseWindowDirect } from './window-kernel-dispatch.js';
 import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';
 
@@ -349,7 +349,7 @@ function closeWindowViaMachine(win: { id: number }): void {
     DEBUG && console.log('[download] close target', win.id, 'is not machine-registered — skipping');
     return;
   }
-  shadowKernelCloseWindowDirect(id);
+  kernelCloseWindowDirect(id);
 }
 
 function _registerDownloadHandlerImpl(ses: Session): void {

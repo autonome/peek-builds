@@ -31,7 +31,7 @@ import {
   getWindowIdFor,
 } from './window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
-import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-kernel-shadow.js';
+import { kernelDestroyWindow, kernelShowRequested } from './window-kernel-dispatch.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -43,7 +43,7 @@ import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-k
 function destroyWindowViaMachine(win: BrowserWindow): void {
   const id = getWindowIdFor(win);
   if (id == null) return; // never registered / already retired — nothing to destroy
-  shadowKernelDestroyWindow(id);
+  kernelDestroyWindow(id);
 }
 
 /**
@@ -1052,7 +1052,7 @@ export function openChromeExtensionPage(
   if (existing && !existing.isDestroyed()) {
     const existingId = getWindowIdFor(existing);
     if (existingId != null) {
-      shadowKernelShowRequested(existingId, true);
+      kernelShowRequested(existingId, true);
     }
     return existing;
   }
@@ -1158,7 +1158,7 @@ export function openChromeExtensionPage(
       try {
         const id = getWindowIdFor(win);
         if (id != null) {
-          shadowKernelShowRequested(id, false);
+          kernelShowRequested(id, false);
         }
       } catch { /* ignore */ }
       try { win.webContents.openDevTools({ mode: 'detach', activate: false }); } catch { /* ignore */ }

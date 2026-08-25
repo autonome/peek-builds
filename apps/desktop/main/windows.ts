@@ -37,13 +37,13 @@ import {
 import { wmLog } from './window-diag.js';
 import type { WindowClass } from './izui-roles.js';
 import {
-  shadowKernelCloseWindowDirect,
-  shadowKernelSetFullscreen,
-  shadowKernelShowRequested,
-  shadowKernelHideRequested,
-  shadowKernelCloseOrHideRequested,
-  getShadowKernelExecutor,
-} from './window-kernel-shadow.js';
+  kernelCloseWindowDirect,
+  kernelSetFullscreen,
+  kernelShowRequested,
+  kernelHideRequested,
+  kernelCloseOrHideRequested,
+  getKernelExecutor,
+} from './window-kernel-dispatch.js';
 import { keyWindow, topmost, isFrontEligibleWindow } from './window-kernel.js';
 import {
   initRendererHandledEscapeTracking,
@@ -105,7 +105,7 @@ export function showWindowHeadlessSafe(
     DEBUG && console.log('[windows] showWindowHeadlessSafe: window not machine-registered — show dropped');
     return;
   }
-  shadowKernelShowRequested(id, opts?.active === true);
+  kernelShowRequested(id, opts?.active === true);
 }
 
 /**
@@ -223,7 +223,7 @@ export function showHybridHost(
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
-    shadowKernelShowRequested(id, opts?.inactive !== true);
+    kernelShowRequested(id, opts?.inactive !== true);
   }
   return intent;
 }
@@ -243,7 +243,7 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
     if (id == null) {
       DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
     } else {
-      shadowKernelHideRequested(id);
+      kernelHideRequested(id);
     }
   }
   if (params.action === 'show') {
@@ -471,9 +471,9 @@ export function closeHostWindow(hostId: number, _win: ClosableWindow): void {
     DEBUG && console.log('closeHostWindow: window', hostId, 'is not machine-registered — nothing to close');
     return;
   }
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
   // window manager.
-  shadowKernelCloseWindowDirect(hostWmId);
+  kernelCloseWindowDirect(hostWmId);
 }
 
 /**
@@ -644,9 +644,9 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         const machineId = getWindowIdFor(id);
         const fsMode = machineId != null ? getWindowModeName(machineId) : null;
         if (machineId != null && fsMode != null && fsMode !== 'normal') {
-          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+          // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
           // the window manager.
-          shadowKernelSetFullscreen(machineId, false);
+          kernelSetFullscreen(machineId, false);
           const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
           if (outcome !== 'settled') {
             // Timed out or vanished: proceed into the destroyed re-check and
@@ -678,7 +678,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         const hybridRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
         if (machineId != null && hybridRec?.keepLive === true) {
           DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
-          shadowKernelCloseOrHideRequested(machineId);
+          kernelCloseOrHideRequested(machineId);
           maybeHideApp(id);
           return;
         }
@@ -735,7 +735,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // here only so the resolved close (the kernel's CloseWindow answer
     // routes back through this seam) can't re-feed the intent forever.
     else if (wmId != null && rec?.keepLive === true) {
-      shadowKernelCloseOrHideRequested(wmId);
+      kernelCloseOrHideRequested(wmId);
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);
@@ -796,7 +796,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
  * window, i.e. the page it frames).
  */
 export function resolveFocusedWindowIdForClose(): number | null {
-  const state = getShadowKernelExecutor().getState();
+  const state = getKernelExecutor().getState();
   const key = keyWindow(state);
   const target = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
   if (target == null) return null;

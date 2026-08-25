@@ -127,7 +127,7 @@ known concept. The backend already computes overlay frames with the same helper 
 Two consequences worth stating plainly:
 
 - **`AttachOverlay` stops being a production command.** The relation is written only by the
-  backend's report. The command survives for the test bridge (`window-kernel-shadow.test.ts`
+  backend's report. The command survives for the test bridge (`window-kernel-dispatch.test.ts`
   exercises it directly); `detachOverlayFromMachine`, its last production caller, has since been
   deleted along with the old machine.
 - **Attachment becomes asynchronous.** Today `retarget()` writes the relation synchronously within
@@ -138,7 +138,7 @@ Two consequences worth stating plainly:
 ### 5. What replaces `subscribeFrontChange`
 
 Delete it. Its one production caller is `hybrid-overlay.ts initHybridOverlay`, and deleting it
-removes the last `getShadowKernelExecutor().subscribe` consumer.
+removes the last `getKernelExecutor().subscribe` consumer.
 
 The overlay renderer still needs `sendActiveHandoff` — url, title, favicon, nav state, bounds,
 gutters — which is renderer payload, not window management, and which `retarget()`'s own docblock
@@ -249,7 +249,7 @@ green.
   `opSeqCounter` to advance by exactly 1 iff the transition emits a `ShowWindow`/`RaiseWindow`.
   `AttachOverlayTo` emits neither and must not touch it.
 - `decide` has no `never` default, so a missing case falls through silently, and
-  `window-kernel-shadow.ts shadowExecute` swallows rejections behind a DEBUG log. A wrongly
+  `window-kernel-dispatch.ts kernelExecute` swallows rejections behind a DEBUG log. A wrongly
   rejected command is invisible.
 - `ensureOverlay()`'s `'closed'` handler nulls the ids and would re-mint from inside a dispatch.
   This change does not touch that hazard, and an effect-driven attach makes it worse rather than

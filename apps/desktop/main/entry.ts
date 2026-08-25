@@ -116,7 +116,7 @@ import {
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
-import { getShadowKernelExecutor, shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
+import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -210,15 +210,15 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   setAppFocusedForTest: (focused: boolean) => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(focused);
-    // Shadow-feed the kernel (window-kernel-shadow.ts) the app-activation
+    // Feed the kernel (window-kernel-dispatch.ts) the app-activation
     // edge — this test bridge is the ONLY app-activation input on a
     // headless/Linux run (`did-become-active`/`did-resign-active` never fire
     // under Xvfb), so without this the kernel's `appActive` mirror stays false
     // for the whole run and every executor raise reads as suppressed.
     if (focused) {
-      shadowKernelAppActivated();
+      kernelAppActivated();
     } else {
-      shadowKernelAppResigned();
+      kernelAppResigned();
     }
   },
   /**
@@ -283,7 +283,7 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * which no state snapshot can — including, as a recorded absence, a focus the
    * backend suppressed before it ever became an event.
    */
-  kernelTimelineForTest: (): readonly string[] => getShadowKernelExecutor().timelineForTests(),
+  kernelTimelineForTest: (): readonly string[] => getKernelExecutor().timelineForTests(),
   /**
    * Test-only: is `windowId` a live hybrid page-host (BaseWindow) window?
    * Lets the session-restore-page-host spec skip its canvas-only chrome-param

@@ -850,8 +850,8 @@ export type Event =
    * site the same way `AttachOverlay.frame` is (see
    * `WindowRecord.overlayFrame`'s doc for why): the backend already computes
    * it for every page-host's bounds report and only needs to stop dropping
-   * it at the kernel's edge (`window-kernel-shadow.ts
-   * shadowKernelBoundsChanged`). Absent when this window has no overlay
+   * it at the kernel's edge (`window-kernel-dispatch.ts
+   * kernelBoundsChanged`). Absent when this window has no overlay
    * attached, or the dispatch site could not read a work area — `evolve`
    * treats an absent frame as "nothing new to reframe to", same as
    * `AttachOverlay` with no `frame`.
@@ -3019,8 +3019,8 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // machine-driven raise from sweeping something opened after it was issued.
   // That floor arms ONLY on a `machine` cause, so every producer of a
   // machine-issued focus report owes one: `decide`'s `RaiseWindow` arm above,
-  // `window-kernel-shadow.ts`'s `shadowKernelOsFocusGained` (threading the
-  // backend's `takeFocusCause`) and `shadowKernelWindowShown`'s companion
+  // `window-kernel-dispatch.ts`'s `kernelOsFocusGained` (threading the
+  // backend's `takeFocusCause`) and `kernelWindowShown`'s companion
   // focus. A producer that omits it reads as the world, the floor disarms, and
   // a raise sweeps the window whose own opening provoked it.
   const attention = next.lastAttention;

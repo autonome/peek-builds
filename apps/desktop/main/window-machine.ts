@@ -4,7 +4,7 @@
  *
  * Blueprint: `docs/design/window-manager.md`. The kernel triple
  * (`window-kernel.ts` + `window-kernel-executor.ts`, fed via
- * `window-kernel-shadow.ts`) is the only window machine now; THIS module holds
+ * `window-kernel-dispatch.ts`) is the only window machine now; THIS module holds
  * the single backend instance and exposes it to the rest of main (ipc.ts /
  * tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts / tile-launcher.ts).
  *
@@ -15,7 +15,7 @@
 
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { ElectronWindowBackend, type RegisterWindowSpec } from './electron-window-backend.js';
-import { getKernelExecutor } from './window-kernel-singleton.js';
+import { getKernelExecutor as buildKernelExecutor } from './window-kernel-singleton.js';
 import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { EscapeSession } from './window-escape.js';
@@ -24,10 +24,10 @@ import type { Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecor
 import { isWebPageRole, type WindowClass } from './izui-roles.js';
 import {
   setKernelExecutorProvider,
-  shadowKernelRegisterWindow,
-  shadowKernelWindowShown,
-  getShadowKernelExecutor,
-} from './window-kernel-shadow.js';
+  kernelRegisterWindow,
+  kernelWindowShown,
+  getKernelExecutor,
+} from './window-kernel-dispatch.js';
 import { topmost, isContentWindow, windowById } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
@@ -93,7 +93,7 @@ function getWindowBackend(): ElectronWindowBackend {
  * same ids.
  */
 export function getKernelExecutorForApp(): WindowKernelExecutor {
-  return getKernelExecutor(getWindowBackend());
+  return buildKernelExecutor(getWindowBackend());
 }
 
 /**
@@ -104,7 +104,7 @@ export function getKernelExecutorForApp(): WindowKernelExecutor {
  */
 export function initWindowStateMachine(): void {
   // INJECTION, NOT IMPORT: the provider is a lazy thunk because
-  // `window-kernel-shadow.ts` must not value-import this module — see that
+  // `window-kernel-dispatch.ts` must not value-import this module — see that
   // file's executor-provider banner for the cycle and the
   // `ELECTRON_RUN_AS_NODE=1` reasons.
   setKernelExecutorProvider(() => getKernelExecutorForApp());
@@ -165,7 +165,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   if (decision.attachEscHandler) {
     getWindowBackend().attachEscHandler(id);
   }
-  shadowKernelRegisterWindow({
+  kernelRegisterWindow({
     id,
     kind: spec.kind,
     layer: spec.layer,
@@ -185,7 +185,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // already visible at registration time, which never fires a native 'show'
   // transition — this import is the only report the kernel ever gets of it.
   if (decision.pumpShownEvent) {
-    shadowKernelWindowShown(id, true);
+    kernelWindowShown(id, true);
   }
   return id;
 }
@@ -239,9 +239,9 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
   const session = clampSession(getIzuiCoordinator().getState());
   wmLog('esc-dispatch', { site, landedId, session });
   const deps: EscapeRuntimeDeps = {
-    getState: () => getShadowKernelExecutor().getState(),
+    getState: () => getKernelExecutor().getState(),
     execute: (command) => {
-      getShadowKernelExecutor().execute(command);
+      getKernelExecutor().execute(command);
     },
     publish: (topic, payload) => publish(getSystemAddress(), topic, payload),
     ask: (id) => getWindowBackend().askRendererHandledEscape(id),
@@ -262,7 +262,7 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
  * hold it, so a naive `key` read silently answers with the wrong window.
  */
 export function getTopmostContentWindowId(): WindowId | null {
-  return topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id ?? null;
+  return topmost(getKernelExecutor().getState(), isContentWindow)?.id ?? null;
 }
 
 /**
@@ -293,7 +293,7 @@ export function getTopmostContentWindowId(): WindowId | null {
 export function getTopmostWebPageWindowId(): WindowId | null {
   return (
     topmost(
-      getShadowKernelExecutor().getState(),
+      getKernelExecutor().getState(),
       (r) => isContentWindow(r) && isWebPageRole(r.role),
     )?.id ?? null
   );
@@ -322,11 +322,11 @@ export function getTopmostWebPageWindowId(): WindowId | null {
  */
 export function subscribeOverlayAttachment(cb: (hostId: WindowId | null) => void): () => void {
   const read = (): WindowId | null => {
-    const state = getShadowKernelExecutor().getState();
+    const state = getKernelExecutor().getState();
     return state.order.find((r) => r.tracksBaseLayerTop)?.overlayFor ?? null;
   };
   let last = read();
-  return getShadowKernelExecutor().subscribe(() => {
+  return getKernelExecutor().subscribe(() => {
     const now = read();
     if (now !== last) {
       last = now;
@@ -342,7 +342,7 @@ export function subscribeOverlayAttachment(cb: (hostId: WindowId | null) => void
  * its own `did-resign-active` mirror.
  */
 export function getAppActive(): boolean {
-  return getShadowKernelExecutor().getState().appActive;
+  return getKernelExecutor().getState().appActive;
 }
 
 /**
@@ -353,11 +353,11 @@ export function getAppActive(): boolean {
  * actually flips, not on every dispatch. Returns an unsubscribe function.
  *
  * ORDERING: like `subscribeOverlayAttachment`, this binds to whichever
- * executor `getShadowKernelExecutor()` answers with AT CALL TIME, and
+ * executor `getKernelExecutor()` answers with AT CALL TIME, and
  * `initWindowStateMachine()` above is what points that accessor at
  * `getKernelExecutorForApp()`. Calling this first would bind the callback to
  * the pre-cutover noop-backed fallback, which nothing production ever drives
- * again. That is not a silent hazard: `window-kernel-shadow.ts
+ * again. That is not a silent hazard: `window-kernel-dispatch.ts
  * setKernelExecutorProvider` throws when it finds a listener already on the
  * fallback, so the wrong order fails at startup. Boot satisfies it because
  * `entry.ts` awaits `main.ts initialize()` (→ `initWindowStateMachine()`)
@@ -365,7 +365,7 @@ export function getAppActive(): boolean {
  */
 export function subscribeAppActive(cb: (appActive: boolean) => void): () => void {
   let last = getAppActive();
-  return getShadowKernelExecutor().subscribe((state) => {
+  return getKernelExecutor().subscribe((state) => {
     const now = state.appActive;
     if (now !== last) {
       last = now;
@@ -389,7 +389,7 @@ export function subscribeAppActive(cb: (appActive: boolean) => void): () => void
  * handling at the call site rather than behind a same-shape passthrough.
  */
 export function getWindowModeName(id: WindowId): 'normal' | 'entering' | 'fullscreen' | 'leaving' | null {
-  return getShadowKernelExecutor().getState().order.find((w) => w.id === id)?.fsMode.name ?? null;
+  return getKernelExecutor().getState().order.find((w) => w.id === id)?.fsMode.name ?? null;
 }
 
 /**
@@ -400,12 +400,12 @@ export function getWindowModeName(id: WindowId): 'normal' | 'entering' | 'fullsc
  * `removeWindow`) still read this.
  */
 export function getMachineWindowRecord(id: WindowId): KernelWindowRecord | undefined {
-  return windowById(getShadowKernelExecutor().getState(), id) ?? undefined;
+  return windowById(getKernelExecutor().getState(), id) ?? undefined;
 }
 
 /** All live kernel records — `State.order` itself (bottom -> top, not copied — read-only by contract). */
 export function listMachineWindowRecords(): readonly KernelWindowRecord[] {
-  return getShadowKernelExecutor().getState().order;
+  return getKernelExecutor().getState().order;
 }
 
 /**
@@ -416,7 +416,7 @@ export function listMachineWindowRecords(): readonly KernelWindowRecord[] {
  * registered or the native window is gone.
  */
 export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWindow | null {
-  for (const rec of getShadowKernelExecutor().getState().order) {
+  for (const rec of getKernelExecutor().getState().order) {
     if (rec.class !== cls) continue;
     const native = getNativeWindowFor(rec.id);
     if (native) return native;

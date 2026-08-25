@@ -62,7 +62,7 @@ const SCANNED = [
   `${MAIN}/window-kernel.ts`,
   `${MAIN}/window-kernel-executor.ts`,
   `${MAIN}/window-kernel-singleton.ts`,
-  `${MAIN}/window-kernel-shadow.ts`,
+  `${MAIN}/window-kernel-dispatch.ts`,
   `${MAIN}/window-backend.ts`,
   `${MAIN}/window-escape.ts`,
   `${MAIN}/izui-roles.ts`,

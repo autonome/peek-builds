@@ -31,7 +31,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
-import { shadowKernelImportStackOrder, shadowKernelWindowContentOrderable, shadowKernelArmColdStartFocus, getShadowKernelExecutor } from './window-kernel-shadow.js';
+import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -251,10 +251,10 @@ export function installFirstFrameOrderableProducer(): void {
     if (!entry) return;
     const machineId = getWindowIdFor(entry.windowId);
     if (machineId != null) {
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager; the sole writer of `orderable`, without which
       // `topmostBaseLayerPageHost` returns null forever.
-      shadowKernelWindowContentOrderable(machineId);
+      kernelWindowContentOrderable(machineId);
     }
     // Restore-spec bookkeeping only (see the counter block above).
     if (_restorePendingFirstFrameIds.delete(entry.windowId)) {
@@ -452,7 +452,7 @@ function buildSessionSaveWindows(
  * inert for that read.
  */
 function readKernelOrderFacts(): { kernelState: State; kernelOrder: WindowId[]; topmostContentWindowId: WindowId | null } {
-  const kernelState = getShadowKernelExecutor().getState();
+  const kernelState = getKernelExecutor().getState();
   return {
     kernelState,
     kernelOrder: kernelState.order.filter(isFrontEligibleWindow).map((rec) => rec.id),
@@ -873,9 +873,9 @@ export async function restoreSessionSnapshot(
   resetRestoreFocusCounters();
   // Clear any stale cold-start re-raise latch from a prior restore; this pass
   // re-arms it only if it activates the focused descriptor at cold start.
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
   // window manager.
-  shadowKernelArmColdStartFocus(null);
+  kernelArmColdStartFocus(null);
 
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
@@ -1428,9 +1428,9 @@ export async function restoreSessionSnapshot(
       if (isColdStart && !isHeadless() && (focusWin || (hybridFocus && !hybridFocus.baseWin.isDestroyed()))) {
         const coldStartMachineId = getWindowIdFor(focusedWindowId);
         if (coldStartMachineId != null) {
-          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+          // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
           // the window manager.
-          shadowKernelArmColdStartFocus(coldStartMachineId);
+          kernelArmColdStartFocus(coldStartMachineId);
         }
       }
 
@@ -1463,9 +1463,9 @@ export async function restoreSessionSnapshot(
           const machineId = getWindowIdFor(id);
           if (machineId != null) savedOrderBottomToTop.push(machineId);
         }
-        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
         // the window manager.
-        shadowKernelImportStackOrder(savedOrderBottomToTop);
+        kernelImportStackOrder(savedOrderBottomToTop);
         _restoreStackDriveCount = savedOrderBottomToTop.length;
         // Counter bookkeeping for the cold-start spec: each restored page-host
         // reports first-frame once; the permanent producer (top of file) counts

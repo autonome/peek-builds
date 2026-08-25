@@ -35,7 +35,7 @@ locally over `http://127.0.0.1:8777`) as page windows, and prints an inventory o
 Leave it running — it keeps serving the two pages for the duration of the run.
 
 Then drive the checks below by hand and, at the end, grep that profile's `logs/main.log` for
-`[window-kernel-shadow] divergence`.
+`[window-kernel-dispatch] divergence`.
 
 **A divergence is not automatically a bug.** Several rules on this branch changed behaviour
 deliberately, and the comparator never compares window visibility at all. Report divergences as
@@ -160,7 +160,7 @@ No automated check can reach any of these. For each, record what happened, not w
 ## What to report back
 
 - Each numbered check, with what was observed.
-- Any `[window-kernel-shadow] divergence` lines, with the gesture that produced them.
+- Any `[window-kernel-dispatch] divergence` lines, with the gesture that produced them.
 - macOS version and whether the machine has multiple displays or Spaces in use — several of the
   rules above are display- and Space-sensitive.
 
@@ -182,7 +182,7 @@ one reopened, the bar returns, shows the correct URL, and accepts typing.
 
 **Checks 3-12: NOT RUN in this run. Checks 3-5 were run on 2026-08-21 — see below.**
 
-`[window-kernel-shadow] divergence` lines seen during the run were all `kind=stackOrder` (open
+`[window-kernel-dispatch] divergence` lines seen during the run were all `kind=stackOrder` (open
 question 1, §0.1.10: whether `order` includes never-shown windows) plus `kind=front` during
 close/reopen, where the kernel names the surviving or newly opened window while the old machine
 still names the window that just closed — the kernel giving the better answer.
@@ -229,7 +229,7 @@ press with no predecessor nothing is swept and the window survives, which is the
 
 Proposed fix, not yet applied: stamp `cause: { kind: 'machine', opSeq }` on the kernel's
 self-synthesized focus reports — `window-kernel.ts decide`'s `RaiseWindow` arm and the companion
-`OsFocusGained` in `window-kernel-shadow.ts shadowKernelWindowShown`. The `RaiseWindow` effect
+`OsFocusGained` in `window-kernel-dispatch.ts kernelWindowShown`. The `RaiseWindow` effect
 already carries an `opSeq` token. That arms the ordering floor and leaves the sweep on genuine
 world focus unchanged. **One claim in that trace is unverified**: whether this peek slot is
 actually non-`keepLive`. `keepLive` appears in the logged `options keys`, but that log prints keys
@@ -279,12 +279,12 @@ page hosts trading the top of the stack forever —
 with `front` flipping `wm-6` ↔ `wm-4` (ALPHA and BRAVO) between them. This is the same family as
 the already-fixed peek-close hang where `AttachOverlayTo` and `HideWindow` alternated forever, and
 it is plausibly the same root cause as Defect A: a re-entrant seam, where `windows.ts
-closeOrHideWindow` feeds `shadowKernelCloseOrHideRequested` back into the kernel while it is itself
+closeOrHideWindow` feeds `kernelCloseOrHideRequested` back into the kernel while it is itself
 executing the kernel's `DismissWindow`, so one sweep produces a second decision pass. That
 connection is a hypothesis; the ping-pong itself is measured.
 
 **Both defects are branch-introduced.** None of the kernel files exist on `main`.
 
-`[window-kernel-shadow] divergence` lines outside the hang were `kind=stackOrder` (settled by the
+`[window-kernel-dispatch] divergence` lines outside the hang were `kind=stackOrder` (settled by the
 2026-08-21 decision that `order` includes never-shown windows — the kernel column is the correct
 one) and `kind=front` during close/reopen, matching the 2026-08-19 run.

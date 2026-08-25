@@ -20,7 +20,7 @@ import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
 // compiled main modules by the build's `cp -r` step).
 import { registerWindowWithMachine, getWindowIdFor } from '../window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from '../izui-roles.js';
-import { shadowKernelDestroyWindow } from '../window-kernel-shadow.js';
+import { kernelDestroyWindow } from '../window-kernel-dispatch.js';
 
 const API = 'offscreen';
 const DEBUG = !!process.env.DEBUG;
@@ -78,7 +78,7 @@ function getExtensionId(event) {
 function destroyWindowViaMachine(win) {
   const id = getWindowIdFor(win);
   if (id == null) return; // never registered / already retired — nothing to destroy
-  shadowKernelDestroyWindow(id);
+  kernelDestroyWindow(id);
 }
 
 /**

@@ -108,7 +108,7 @@ either machine, so its provenance is unknown rather than established. **All thre
 
 The earlier entries below are the defects closed before this sign-off, and remain closed. The one open defect — the restore-time maximize seed reaching the old machine but not the
 kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and its
-`shadowKernelSeedMaximized` pair, with the previously `test.fail()`-marked spec now passing as an
+`kernelSeedMaximized` pair, with the previously `test.fail()`-marked spec now passing as an
 ordinary test. Write-up: "The restore-time maximize seed never reached the kernel" below.
 
 The overlay race on macOS is CLOSED as of 2026-08-18: `electron-window-backend.ts`'s
@@ -145,7 +145,8 @@ the full test suite — see `docs/design/window-manager-macos-signoff.md`.
 
 The retirement of `window-state.ts` / `window-os-adapter.ts` is DONE: commit `f189496b` deleted
 both files along with `window-state.test.ts`. `window-kernel.ts` + `window-kernel-executor.ts`,
-fed by `window-kernel-shadow.ts`, are the only window machine left — no shadow comparison, no
+fed by `window-kernel-dispatch.ts` (the dispatch surface production facts and requests reach the
+kernel through), are the only window machine left — no shadow comparison, no
 dual-write, no fallback path. What remains open on this branch is not code defects but unrun
 verification: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks — 1
 and 2 observed passing on the 2026-08-19 run, 3-12 not run) and the remaining decision in
@@ -415,9 +416,9 @@ The cause was the shape §0.1 warns about, in its purest form. `ipc.ts`, at the
 `options.maximized === true` branch of the hybrid window-open path, seeded restore-time maximize
 state with a bare `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …, preMaxBounds})`. That reached
 the **old machine only**. Every other maximize site pairs its dispatch with a kernel feed —
-`page:maximize` calls `shadowKernelMaximize` alongside its dispatch, `page:unmaximize` calls
-`shadowKernelUnmaximize` — for the stated reason that the kernel is what drives the window manager.
-That site had no pair, and `window-kernel-shadow.ts` had no entry point to call.
+`page:maximize` calls `kernelMaximize` alongside its dispatch, `page:unmaximize` calls
+`kernelUnmaximize` — for the stated reason that the kernel is what drives the window manager.
+That site had no pair, and `window-kernel-dispatch.ts` had no entry point to call.
 
 So the old machine held the saved stash, `window-presenter.ts getHybridPresentation` read it from
 there, and the registry reported `preMaxBounds` correctly — which is exactly why the sibling test
@@ -434,7 +435,7 @@ in the old machine. It is a seed and nothing more: `decide` returns a lone
 `Maximized{preMaxBounds}` with no paired `BoundsChanged` (the window is already at that rect) and
 no `PendingProjectionDiscarded` (it matches a record to geometry that already exists rather than
 deciding new geometry), under the same non-`normal` `fsMode` guard `Maximize` carries.
-`shadowKernelSeedMaximized` is the pair for the `ipc.ts` dispatch.
+`kernelSeedMaximized` is the pair for the `ipc.ts` dispatch.
 
 Proven by removing nothing: the spec ran as `test.fail()` while the defect stood, and the fix made
 Playwright report *"Expected to fail, but passed"* — a failing-first proof landing on the intended
@@ -462,7 +463,7 @@ which is exactly the slack that let the overlay land unnoticed.
 
 Observed live at tip `dc1b6051` with `PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true`.
 
-> `PEEK_SHADOW_KERNEL_COMPARE` no longer exists. It gated `compareShadowKernelState`, which
+> `PEEK_SHADOW_KERNEL_COMPARE` no longer exists. It gated `compareKernelState`, which
 > diffed the kernel's view against the old machine's; both were removed in `db8db214` once the
 > kernel became the only machine. Every mention of the flag below is a record of the run
 > conditions at the time, not a command that can be re-run.
@@ -1228,7 +1229,7 @@ remaining 37, grouped by process:
 | `window-machine.ts seedSessionMirror` | Installs `coord.setFrontWindowIdProvider(() => front → native id)` — the injection point that hands `front` to izui | silent |
 | `izui-state.ts IzuiCoordinator.enterOverlay` | Calls that provider to seed `session.preOverlayFocusTarget`, the switcher's focus-restore target | silent, and its correctness argument rests on two facts the cutover deletes: its comment states "a satellite can never be `front`" and "`OS_FOCUS_SETTLED_NULL` keeps it: front is the TARGET, not the key window". Under `key`, the switcher — shown and focused before `enterOverlay` runs — can seed itself. |
 | `window-os-adapter.ts logTransition` | Formats `before.front→after.front`, the `contentFocused` delta of `after.front`, and the `stackOrder` delta | compile-loud |
-| `window-kernel-shadow.ts compareShadowKernelState` | Reads `oldMachine.front` and `oldMachine.stackOrder` and compares against `topmost(kernel, isContentWindow)`; runs on every shadow feed (only the console line is env-gated) | compile-loud — but deleting it removes the cutover's only automated divergence oracle, which needs its own decision rather than a fold-in |
+| `window-kernel-dispatch.ts compareKernelState` | Reads `oldMachine.front` and `oldMachine.stackOrder` and compares against `topmost(kernel, isContentWindow)`; runs on every kernel feed (only the console line is env-gated) | compile-loud — but deleting it removes the cutover's only automated divergence oracle, which needs its own decision rather than a fold-in |
 | `session.ts saveSessionSnapshot` | The read phase: `getWindowStateSnapshot()` → `serializeSession` | compile-loud |
 | `session.ts saveSpaceWorkspaces` | Same → `serializeSpaceWorkspaces` | compile-loud |
 | `session.ts restoreSessionSnapshot` | Sorts descriptors by persisted `zOrder` descending (`zOrderSorted`), hoists `focusedDescriptor`, and that ordering drives the eager/deferred staged-restore split and the focus-restore target | silent — one hop out from `serializeSession`'s `zOrder`; changed provenance re-orders which windows load hot |
@@ -1478,12 +1479,12 @@ and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`
 `window-kernel-singleton.ts getKernelExecutor(backend)` built over the real
 `ElectronWindowBackend`, reached by `window-machine.ts getKernelExecutorForApp()` (injects
 `window-os-adapter.ts getWindowOsAdapter().getBackend()`, the same backend every old-machine effect
-already goes through). `window-kernel-shadow.ts` itself may not import
+already goes through). `window-kernel-dispatch.ts` itself may not import
 `getKernelExecutorForApp` directly, because that would value-import `window-machine.ts`,
 which pulls `window-os-adapter.ts` → `electron-window-backend.ts`'s value import of the platform
-module (throwing under the `ELECTRON_RUN_AS_NODE=1` unit runner `window-kernel-shadow.test.ts` runs
+module (throwing under the `ELECTRON_RUN_AS_NODE=1` unit runner `window-kernel-dispatch.test.ts` runs
 under) and closes an import cycle, since `window-machine.ts` already imports
-`window-kernel-shadow.ts` for the feed helpers.
+`window-kernel-dispatch.ts` for the feed helpers.
 
 The three `waitForMode` call sites below (`windows.ts closeOrHideWindow`, the `tile-ipc.ts
 tile:window:hide` handler, `hybrid-overlay.ts installTestBridge driveHostFullscreen`) still read the
@@ -1641,7 +1642,7 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
 
 9. **`session.ts`.** `restoreSessionSnapshot(...)` — the `dispatchWindowEvent({ type:
    'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop })` plus its adjacent
-   `shadowKernelImportStackOrder(...)` collapse into a single kernel `StackOrderImported` dispatch.
+   `kernelImportStackOrder(...)` collapse into a single kernel `StackOrderImported` dispatch.
    `saveSessionSnapshot(reason, opts)` and `saveSpaceWorkspaces()` feed the two projections; update
    the snapshot they pass.
 
@@ -2364,11 +2365,11 @@ or effect consults it.
 
 #### Measured: a live shadow run against session restore, opens, close, and quit
 
-`window-kernel-shadow.ts` runs a `WindowKernelExecutor` over a no-op backend (`NoopKernelBackend`
+`window-kernel-dispatch.ts` runs a `WindowKernelExecutor` over a no-op backend (`NoopKernelBackend`
 — records effects, performs none) fed every input the old machine receives: registration,
 OS focus and the blur settle, teardown commands, the OS close report, session restore's
 stack-order import, window show/hide with the activate flag, `AppActivated`'s re-show, and
-explicit raise requests. `compareShadowKernelState` diffs the two views after each feed, logged
+explicit raise requests. `compareKernelState` diffs the two views after each feed, logged
 under `PEEK_SHADOW_KERNEL_COMPARE=1`. Production behavior is unchanged by any of this — the
 executor's effects have nowhere to land, and the kernel is authoritative over nothing yet.
 Headless runs driving session restore, fresh opens, re-opens of already-open URLs, a close, and a
@@ -2379,7 +2380,7 @@ graceful quit-and-relaunch measured the following.
 creates records with `visible: false`; only `WindowShown` and `AppActivated`'s re-show ever set it
 true. Before visibility was fed, the kernel returned `null` on all 126 comparisons across two
 runs while the old machine's `front` tracked the app correctly. This is why the visibility feed
-(`shadowKernelWindowShown`/`shadowKernelWindowHidden`/`shadowKernelAppActivated`) exists. No unit
+(`kernelWindowShown`/`kernelWindowHidden`/`kernelAppActivated`) exists. No unit
 test caught it — the suites construct records directly rather than driving them through
 registration.
 
@@ -2388,7 +2389,7 @@ registration.
 `WINDOW_SHOW_REQUESTED`, never `RAISE_WINDOW_REQUESTED`; the old reducer's `WINDOW_SHOWN` arm
 moves `front` via `applyFocusGained` when `focused` is true. The kernel's `WindowShown` arm never
 reorders `order`, by design, so the shadow needed the activate flag threaded through and
-translated into a companion `OsFocusGained` (`shadowKernelWindowShown`'s `focused` parameter). On
+translated into a companion `OsFocusGained` (`kernelWindowShown`'s `focused` parameter). On
 a real display a native `'focus'` echo follows an activating `show()` anyway; the synthetic feed
 is idempotent with it, because the echo names the window `key` already holds, so its diff is
 empty. Headless masks OS activation, which is why this was only visible headless.
@@ -2410,7 +2411,7 @@ run recorded 1611 `OS_FOCUS_GAINED` events; the two headless runs above recorded
 masks OS activation (the same fact that motivated the activate-flag feed above), and this is its
 second-order effect on stacking. Consequence: `session-projection.ts`'s `stackIndex` derivation,
 which reads `stackOrder`, is unaffected at cutover, and the synthetic focus feed
-(`shadowKernelWindowShown`'s `focused` parameter) is idempotent with the real OS echo exactly as
+(`kernelWindowShown`'s `focused` parameter) is idempotent with the real OS echo exactly as
 predicted. The headless numbers above stay on record as the evidence trail that motivated checking
 a real display in the first place.
 
@@ -3108,7 +3109,7 @@ is the claim that nulling breaks a caller.
 §0's rule is built and, since the cutover, wired: `window-kernel-executor.ts` performs the
 dismissals `react` emits over the production `WindowBackend`, the same backend
 `window-state.ts`/`window-os-adapter.ts` used to drive alone (see §0.1's "Built, and now wired for
-queries" and `window-kernel-shadow.ts`'s header for how production reaches this executor). This
+queries" and `window-kernel-dispatch.ts`'s header for how production reaches this executor). This
 records what the implementation froze so the rule can be checked against the running app, rather
 than re-derived. The ownership relation itself — `overlayFor` and `parentId` — is now proven at
 runtime (see "The gap" below); what the rewrite below settles separately is a narrower question —
@@ -3134,8 +3135,8 @@ runs through the same query.
 
 **The app-resign half is fed, not skipped.** `AppResigned` and `AppResignSettled` reach the shadow
 kernel from `electron-window-backend.ts attachAppListeners`'s `did-resign-active` handler and its
-`APP_RESIGN_SETTLE_MS` timer (`window-kernel-shadow.ts shadowKernelAppResigned` /
-`shadowKernelAppResignSettled`) — the same production dispatch sites that already feed the old
+`APP_RESIGN_SETTLE_MS` timer (`window-kernel-dispatch.ts kernelAppResigned` /
+`kernelAppResignSettled`) — the same production dispatch sites that already feed the old
 machine, not only a unit-test construction. `holder` could not be read off `key` in place of a
 stored field: an app-resign event never touches `key` (RULE 2), so at the settle `key` may still name
 whichever window held it before the app resigned, and a selector reading `key` would spare exactly
@@ -3168,15 +3169,15 @@ resigns it.
 **At the time of this run, not proof of the hide/re-show half.** The shadow feed alone could not show
 that a real app switch hides and later re-shows the right windows: the old machine hid, on the raw
 resign and well before the 500ms settle, the windows `isAppResignSweepEligible` selects; its native
-`'hide'` report reached the kernel first (`shadowKernelWindowHidden`), so by the time the settle
+`'hide'` report reached the kernel first (`kernelWindowHidden`), so by the time the settle
 arrived those records already read `visible: false` and the arm marked nothing.
-`compareShadowKernelState` does not compare `visible` at all, so a clean shadow run was evidence the
+`compareKernelState` does not compare `visible` at all, so a clean shadow run was evidence the
 compared facts — membership, `front`, `stackOrder` — held, not evidence the hide/re-show behavior was
 equivalent. That resolved at cutover: `window-os-adapter.ts`'s `HIDE_WINDOW` arm is a no-op
 post-cutover, and the kernel's own `AppResigned` arm now performs the attached-overlay and
 sweep-eligible hide directly — on the raw edge, over the real backend — so this is production
-behavior now, not a question a later cutover still owes (see `window-kernel-shadow.ts
-shadowKernelAppResigned`'s doc, and §0.1.11 above).
+behavior now, not a question a later cutover still owes (see `window-kernel-dispatch.ts
+kernelAppResigned`'s doc, and §0.1.11 above).
 
 **`window-state.ts selectAppResignTransients` becomes dead at cutover, and its restriction is not
 carried forward.** The old arm scopes dismissal to `rec.kind === 'page-host'`, on the assumption that
@@ -3252,8 +3253,8 @@ records directly, plus a source-drift test pinning that `openChainPopup()` still
 `declareParent: true` and that `ipc.ts` still resolves it; a predicate that is correct in form but
 matches nothing in practice is this codebase's documented recurring bug shape, and the same shape
 that made `AttachOverlay` a dead command in the first place. A live run with
-`PEEK_SHADOW_KERNEL_COMPARE=1` and temporary `[relation-diag]` logging in `window-kernel-shadow.ts`
-(`shadowKernelRegisterWindow` / `shadowKernelAttachOverlay`) closed it: opening a chain popup from
+`PEEK_SHADOW_KERNEL_COMPARE=1` and temporary `[relation-diag]` logging in `window-kernel-dispatch.ts`
+(`kernelRegisterWindow` / `kernelAttachOverlay`) closed it: opening a chain popup from
 the command palette logged `register {"id":"wm-29","role":"utility","parentId":"wm-27"}` — a real
 `parentId` naming the palette, not `null` — and the shared chrome overlay logged `attach-overlay
 {"overlayId":"wm-3","hostId":"wm-2"}` against a real page-host id. The directional one-hop exemption
@@ -4126,13 +4127,13 @@ reaching one machine or owner and not the other — but with three sites rather 
 - `window-kernel.ts` `decide`'s `RaiseWindow` arm manufactured `OsFocusGained` from a COMMAND, the
   most unambiguously machine-caused focus there is, and stamped no cause. It now carries
   `{ kind: 'machine', opSeq: state.opSeqCounter }`.
-- `window-kernel-shadow.ts` `shadowKernelOsFocusGained` dropped the cause on the floor.
+- `window-kernel-dispatch.ts` `kernelOsFocusGained` dropped the cause on the floor.
   `electron-window-backend.ts`'s `win.on('focus')` listener already computes it (`takeFocusCause`,
   consuming the `pendingSelfCausedFocus` arming a focus-family native call left) and hands it to the
   OLD machine's `OS_FOCUS_GAINED` — the kernel simply was not told. Both focus listeners now pass
   the same value; `takeFocusCause` is one-shot, so the already-consumed local is reused rather than
   read twice.
-- `window-kernel-shadow.ts` `shadowKernelWindowShown`'s companion focus for an activating show
+- `window-kernel-dispatch.ts` `kernelWindowShown`'s companion focus for an activating show
   stamped nothing either. It now carries the show's own `opSeq`, and stays `world` when the caller
   reported no token.
 

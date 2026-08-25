@@ -19,7 +19,7 @@
  *     there is settlement plumbing for the E2E test bridge
  *     (`WindowOsAdapter.trackAsyncEffect`), not an answer.
  *   - Inbound: the backend pushes native reality straight to the kernel
- *     (`window-kernel-shadow.ts shadowKernel*`, called directly at each
+ *     (`window-kernel-dispatch.ts kernel*`, called directly at each
  *     native-event site in `electron-window-backend.ts`), never back through
  *     this port. Escape is decided by `window-escape.ts interpretEscape`,
  *     reached via `window-machine.ts dispatchEscapePress`.

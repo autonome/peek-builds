@@ -26,7 +26,7 @@ import {
   getWindowIdFor,
   waitForGuestTeardown,
 } from './window-machine.js';
-import { shadowKernelDestroyAllGuests } from './window-kernel-shadow.js';
+import { kernelDestroyAllGuests } from './window-kernel-dispatch.js';
 
 const guestToHost = new Map<number, WindowId>();
 
@@ -170,9 +170,9 @@ export function getAllGuestWebContentsIds(): number[] {
  */
 export function destroyAllPageHostGuests(): Promise<void> {
   try {
-    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
     // window manager.
-    shadowKernelDestroyAllGuests();
+    kernelDestroyAllGuests();
   } catch {
     /* best-effort during shutdown — nothing was requested, nothing to await */
     return Promise.resolve();

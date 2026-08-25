@@ -8,13 +8,13 @@
  * `computePlacement` says actually move. `display-watcher.ts` itself is not
  * importable here (it pulls the Electron runtime + `main.js`), so its
  * remaining job — the `screen` snapshot, the two registry walks, the log lines
- * and the single `shadowKernelDisplayChanged` call — is thin wiring around
+ * and the single `kernelDisplayChanged` call — is thin wiring around
  * this function and is NOT covered by these tests.
  *
  * The complementary half — what the kernel does with the batch — is split
  * across two files. The feed itself (a named window repositioned, an unnamed
  * one left alone, a dangling id surviving without a throw) is
- * `window-kernel-shadow.test.ts` "window-kernel-shadow: geometry feed"; that
+ * `window-kernel-dispatch.test.ts` "window-kernel-dispatch: geometry feed"; that
  * describe shows both windows first, so it deliberately sidesteps the hidden
  * case. The reducer's own hold-while-blocked / flush-when-clear handling is
  * `window-kernel.test.ts` "DisplayChanged: held while blocked".

@@ -256,7 +256,7 @@ export class WindowKernelExecutor {
   /**
    * How many listeners are currently attached via `subscribe` — a narrow,
    * count-only accessor for callers that need to know WHETHER something is
-   * listening without ever seeing WHAT (`window-kernel-shadow.ts
+   * listening without ever seeing WHAT (`window-kernel-dispatch.ts
    * setKernelExecutorProvider`'s orphaned-subscriber guard is the one caller
    * today). Never exposes the listener set itself.
    */

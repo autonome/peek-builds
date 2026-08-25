@@ -44,7 +44,7 @@ import { getWindowInfo } from './main.js';
 import { DEBUG } from './config.js';
 import { collectDisplayProjection, type ProjectionWindow } from './display-projection.js';
 import { getWindowIdFor } from './window-machine.js';
-import { shadowKernelDisplayChanged } from './window-kernel-shadow.js';
+import { kernelDisplayChanged } from './window-kernel-dispatch.js';
 
 /**
  * Resolve the bounds of a `parent-centered` placement's parent. The parent may
@@ -146,7 +146,7 @@ function projectAllWindows(reason: string): void {
   // survive (unknown / hidden / non-normal fsMode are dropped there) and
   // emits the SetBounds effects. The feed is synchronous, so the add/remove
   // path keeps its no-deferred-reposition guarantee.
-  shadowKernelDisplayChanged(
+  kernelDisplayChanged(
     decisions.map(({ id, bounds }) => ({ id, bounds })));
 
   console.log(`[display-watcher] Dispatched reprojection for ${decisions.length} window(s)`);

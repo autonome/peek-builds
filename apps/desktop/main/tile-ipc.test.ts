@@ -190,11 +190,11 @@ describe('tile:window:set-visible-on-all-workspaces — caller options are inert
 
   it('never forwards args.options to the window machine', () => {
     const block = extractHandlerBlock(readFileSync(compiledTileIpc, 'utf8'));
-    const callSite = block.match(/shadowKernelSetDesktopMembership\([^)]*\)/);
-    assert.ok(callSite, 'shadowKernelSetDesktopMembership call site not found');
+    const callSite = block.match(/kernelSetDesktopMembership\([^)]*\)/);
+    assert.ok(callSite, 'kernelSetDesktopMembership call site not found');
     assert.ok(
       !callSite![0].includes('options'),
-      `shadowKernelSetDesktopMembership call must not reference args.options: ${callSite![0]}`
+      `kernelSetDesktopMembership call must not reference args.options: ${callSite![0]}`
     );
   });
 

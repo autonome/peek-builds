@@ -50,12 +50,12 @@ import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
 import {
-  shadowKernelWindowClosed,
-  shadowKernelCloseWindowDirect,
-  shadowKernelAssertFocus,
-  shadowKernelCloseOrHideRequested,
-  shadowKernelRaiseWindow,
-} from './window-kernel-shadow.js';
+  kernelWindowClosed,
+  kernelCloseWindowDirect,
+  kernelAssertFocus,
+  kernelCloseOrHideRequested,
+  kernelRaiseWindow,
+} from './window-kernel-dispatch.js';
 import { wmLog } from './window-diag.js';
 import {
   setWindowOpenPayload,
@@ -239,9 +239,9 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   // dispatch is the one that retires the record.
   {
     const wmId = getWindowIdFor(windowId);
-    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
     // window manager; RULE 1 makes this the only event that shrinks its `order`.
-    if (wmId != null) shadowKernelWindowClosed(wmId);
+    if (wmId != null) kernelWindowClosed(wmId);
     // Drop the open-registry entry (window-open-registry.ts) here too — this
     // is the one teardown tail every window kind (BrowserWindow and hybrid
     // BaseWindow) funnels through, so a dead window's source/params never
@@ -474,9 +474,9 @@ export async function initialize(): Promise<void> {
         console.error('[tile-launcher] closeTileWindow: window', win.id, 'is not machine-registered — cannot close (leak risk)');
         return;
       }
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager.
-      shadowKernelCloseWindowDirect(id);
+      kernelCloseWindowDirect(id);
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
     // INTENT — the reducer branches on the record's keepLive (hide vs the
@@ -488,7 +488,7 @@ export async function initialize(): Promise<void> {
         console.error('[tile-launcher] closeOrHideTileWindow: window', win.id, 'is not machine-registered — cannot hide');
         return;
       }
-      shadowKernelCloseOrHideRequested(id);
+      kernelCloseOrHideRequested(id);
     },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the
@@ -812,7 +812,7 @@ export async function initialize(): Promise<void> {
                 const wmId = getWindowIdFor(selectedTargetId);
                 if (wmId != null) {
                   wmLog('switcher-select-raise', { id: wmId, osId: selectedTargetId });
-                  shadowKernelRaiseWindow(wmId);
+                  kernelRaiseWindow(wmId);
                 } else {
                   wmLog('switcher-select-raise', { osId: selectedTargetId, outcome: 'no-record' });
                 }
@@ -855,7 +855,7 @@ export async function initialize(): Promise<void> {
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
         try {
           const wmId = getWindowIdFor(windowId);
-          if (wmId != null) shadowKernelWindowClosed(wmId);
+          if (wmId != null) kernelWindowClosed(wmId);
         } catch {
           // already in error path; suppress
         }
@@ -943,20 +943,20 @@ export async function initialize(): Promise<void> {
         /* detached devtools window not resolvable — attached mode, or races teardown */
       }
       if (hostId != null) {
-        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
         // the window manager, re-raising focus onto the kernel's own
         // topmost-content-window query.
         const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
+        if (topmostContentId != null) kernelAssertFocus(topmostContentId);
       }
     });
     wc.on('devtools-closed', () => {
       const hostId = hostMachineId();
       if (hostId != null) {
-        // Feed the kernel (window-kernel-shadow.ts) — same re-raise target
+        // Feed the kernel (window-kernel-dispatch.ts) — same re-raise target
         // as devtools-opened above.
         const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId);
+        if (topmostContentId != null) kernelAssertFocus(topmostContentId);
       }
     });
 
@@ -1490,7 +1490,7 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
 export function removeWindow(windowId: number): boolean {
   const id = getWindowIdFor(windowId);
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
-  shadowKernelWindowClosed(id);
+  kernelWindowClosed(id);
   removeWindowOpenPayload(id);
   return true;
 }

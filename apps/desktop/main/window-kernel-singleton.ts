@@ -2,7 +2,7 @@
  * window-kernel-singleton.ts — the single PRODUCTION `WindowKernelExecutor`,
  * built over a real `WindowBackend` (`electron-window-backend.ts`
  * `ElectronWindowBackend`) rather than the `NoopKernelBackend`
- * `window-kernel-shadow.ts` runs over.
+ * `window-kernel-dispatch.ts` runs over.
  *
  * ONE PRODUCTION CALL SITE, AND IT IS THE CUTOVER.
  * `window-machine.ts getKernelExecutorForApp` is that call site: it
@@ -11,8 +11,8 @@
  * read/dispatch surface drive the same `ElectronWindowBackend` and
  * speak the same `WindowId` space. An executor built over the real backend
  * performs REAL window effects (`show`, `raise`, `close`, stacking, …) the
- * moment anything feeds it a command or event — unlike the shadow executor
- * (`window-kernel-shadow.ts`), which can only ever reach a
+ * moment anything feeds it a command or event — unlike the pre-cutover
+ * fallback executor (`window-kernel-dispatch.ts`), which can only ever reach a
  * `NoopKernelBackend` that records and discards. Nothing else may build one:
  * a second executor over a second backend would mint a disjoint id space.
  *
@@ -30,10 +30,10 @@
  * supplied by whichever production module eventually constructs the real
  * backend and calls in — this module never constructs one itself, so it stays
  * loadable (and unit-testable with a fake backend) with no display and no
- * window plumbing, exactly like `window-kernel-shadow.ts`.
+ * window plumbing, exactly like `window-kernel-dispatch.ts`.
  *
  * LAZY, IDEMPOTENT CONSTRUCTION — same pattern as `window-machine.ts
- * getWindowOsAdapter()` and `window-kernel-shadow.ts getShadowKernelExecutor()`.
+ * getWindowOsAdapter()` and `window-kernel-dispatch.ts getKernelExecutor()`.
  * Nothing is built at import time: the first call constructs the executor
  * with the backend it was given; every later call — whatever backend it is
  * passed — returns that same instance. A caller cannot swap the backend

@@ -1,5 +1,5 @@
 /**
- * window-kernel-shadow.ts — the one `WindowKernelExecutor` for the app, fed
+ * window-kernel-dispatch.ts — the one `WindowKernelExecutor` for the app, fed
  * from the old machine's production call sites and read by the production
  * code that needs a real answer.
  *
@@ -9,12 +9,12 @@
  * reports, teardown, stack-order import, raise, overlay attach — into the
  * kernel's own command/event vocabulary, at the call site that produces each
  * one today. `window-machine.ts initWindowStateMachine` installs a
- * provider (`setKernelExecutorProvider`) that points `getShadowKernelExecutor()`
+ * provider (`setKernelExecutorProvider`) that points `getKernelExecutor()`
  * at the production kernel built over the real `ElectronWindowBackend`
  * (`window-kernel-singleton.ts`, `window-machine.ts
  * getKernelExecutorForApp`) — from boot onward, every feed helper below drives
  * that executor, whose effects reach the OS for real. Production code also
- * now READS through this module's `getShadowKernelExecutor()` for decisions
+ * now READS through this module's `getKernelExecutor()` for decisions
  * that matter: the Cmd+W close target (`windows.ts
  * resolveFocusedWindowIdForClose`) and the saved session's window order
  * (`session.ts readKernelOrderFacts`) both resolve against the kernel's live
@@ -22,7 +22,7 @@
  *
  * WHAT STILL MAKES THIS SAFE TO CALL BLINDLY — one invariant survives cutover:
  * no exception from the kernel path escapes into the caller.
- * `shadowKernelRegisterWindow` and its siblings wrap their `execute`/`dispatch`
+ * `kernelRegisterWindow` and its siblings wrap their `execute`/`dispatch`
  * calls in try/catch and swallow (DEBUG-gated log only); a rejected command
  * (`decide` rejects on a stale `expectedVersion`) is likewise recorded, never
  * thrown. A feed caller can still invoke these without a try/catch of its own.
@@ -30,15 +30,15 @@
  * THE NOOP BACKEND IS A PRE-CUTOVER FALLBACK, NOT WHAT PRODUCTION LANDS ON.
  * `NoopKernelBackend` below implements the whole `WindowBackend` surface
  * doing nothing but recording the call (a bounded ring,
- * `_shadowEffectLogForTests`) — that is what every feed helper drove before a
+ * `_kernelEffectLogForTests`) — that is what every feed helper drove before a
  * provider was installed, and it is still what a test gets when it never
- * installs one. `getShadowKernelExecutor()` only falls back to it when
+ * installs one. `getKernelExecutor()` only falls back to it when
  * `setKernelExecutorProvider` has not been called; production always calls it
  * at boot, so a production run never reaches this fallback.
  *
  * NO DIVERGENCE COMPARATOR ANY LONGER. This module used to also check the
  * kernel's view against the old machine's current state on every feed
- * (`compareShadowKernelState`, gated behind `PEEK_SHADOW_KERNEL_COMPARE`) —
+ * (`compareKernelState`, gated behind `PEEK_SHADOW_KERNEL_COMPARE`) —
  * both are gone. The kernel is the only machine now; there is nothing left to
  * diff it against.
  */
@@ -53,32 +53,32 @@ import type { StackingLevel } from './izui-roles.js';
 // The no-op effect port
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One entry in the bounded shadow-effect ring — diagnostic only, never read by production. */
-interface ShadowEffectLogEntry {
+/** One entry in the bounded effect-log ring — diagnostic only, never read by production. */
+interface KernelEffectLogEntry {
   name: string;
   args: unknown[];
 }
 
 const EFFECT_LOG_CAP = 50;
-const effectLog: ShadowEffectLogEntry[] = [];
+const effectLog: KernelEffectLogEntry[] = [];
 
 function recordEffect(name: string, ...args: unknown[]): void {
   effectLog.push({ name, args });
   if (effectLog.length > EFFECT_LOG_CAP) effectLog.shift();
-  DEBUG && console.log('[window-kernel-shadow] effect (not performed):', name, ...args);
+  DEBUG && console.log('[window-kernel-dispatch] effect (not performed):', name, ...args);
 }
 
 /** Test-only read of the bounded effect ring. */
-export function _shadowEffectLogForTests(): readonly ShadowEffectLogEntry[] {
+export function _kernelEffectLogForTests(): readonly KernelEffectLogEntry[] {
   return effectLog;
 }
 
 /**
  * The pre-cutover fallback `WindowBackend` — implements the whole port so a
  * new port method cannot be silently unimplemented here, and every method
- * performs NOTHING beyond recording that it was asked for. This is what made
- * shadow mode safe before cutover: the kernel could decide anything it liked
- * and nothing it decided reached a real window. `getShadowKernelExecutor()`
+ * performs NOTHING beyond recording that it was asked for. This is what makes
+ * the pre-cutover fallback safe: the kernel could decide anything it liked
+ * and nothing it decided reached a real window. `getKernelExecutor()`
  * only builds an executor over this backend when no provider has been
  * installed (`installedProvider`) — production installs one at boot
  * (`window-machine.ts initWindowStateMachine`), so this class backs
@@ -152,7 +152,7 @@ class NoopKernelBackend implements WindowBackend {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The single shadow executor — lazily constructed, same pattern as
+// The single kernel executor — lazily constructed, same pattern as
 // `window-machine.ts getWindowBackend()`.
 //
 // EXECUTOR PROVIDER — the injection seam the cutover installs into, INJECTION
@@ -170,7 +170,7 @@ class NoopKernelBackend implements WindowBackend {
 // helpers below, so importing it back would make the two modules mutually
 // dependent.
 //
-// `getShadowKernelExecutor()` returns `installedProvider()` when one is
+// `getKernelExecutor()` returns `installedProvider()` when one is
 // installed, otherwise falls back to the lazily-constructed
 // `NoopKernelBackend`-over instance below — the fallback is the PRE-CUTOVER
 // DEFAULT, not a permanent second mode: nothing installs a provider yet, so
@@ -180,12 +180,12 @@ class NoopKernelBackend implements WindowBackend {
 // production wiring; nothing else about this file changes at that point.
 // ─────────────────────────────────────────────────────────────────────────────
 
-let shadowExecutorInstance: WindowKernelExecutor | null = null;
+let kernelExecutorInstance: WindowKernelExecutor | null = null;
 let installedProvider: (() => WindowKernelExecutor) | null = null;
 
 /**
  * Install the provider the cutover routes through — see the banner above.
- * Once installed, every call to `getShadowKernelExecutor()` (and so every feed
+ * Once installed, every call to `getKernelExecutor()` (and so every feed
  * helper below) returns `provider()` instead of the noop-backed default.
  *
  * THROWS if the noop-backed fallback has already been constructed AND already
@@ -220,56 +220,56 @@ let installedProvider: (() => WindowKernelExecutor) | null = null;
  * instance about to be orphaned.
  */
 export function setKernelExecutorProvider(provider: () => WindowKernelExecutor): void {
-  if (shadowExecutorInstance !== null && shadowExecutorInstance.subscriberCount() > 0) {
+  if (kernelExecutorInstance !== null && kernelExecutorInstance.subscriberCount() > 0) {
     throw new Error(
-      '[window-kernel-shadow] setKernelExecutorProvider: a listener is already subscribed to the ' +
+      '[window-kernel-dispatch] setKernelExecutorProvider: a listener is already subscribed to the ' +
         'pre-cutover fallback executor and would never fire again once a provider is installed — ' +
-        'install the provider before anything calls getShadowKernelExecutor().subscribe().',
+        'install the provider before anything calls getKernelExecutor().subscribe().',
     );
   }
   installedProvider = provider;
 }
 
 /**
- * The single shadow `WindowKernelExecutor` — `installedProvider()` if one is
+ * The single `WindowKernelExecutor` — `installedProvider()` if one is
  * installed, else the lazily-constructed noop-backed default. Constructed on
  * first use.
  */
-export function getShadowKernelExecutor(): WindowKernelExecutor {
+export function getKernelExecutor(): WindowKernelExecutor {
   if (installedProvider) return installedProvider();
-  if (!shadowExecutorInstance) shadowExecutorInstance = new WindowKernelExecutor(new NoopKernelBackend());
-  return shadowExecutorInstance;
+  if (!kernelExecutorInstance) kernelExecutorInstance = new WindowKernelExecutor(new NoopKernelBackend());
+  return kernelExecutorInstance;
 }
 
-/** Test-only: reset the shadow singleton (drops the executor + its state) and clears any installed provider. */
-export function _resetShadowKernelForTests(): void {
-  shadowExecutorInstance = null;
+/** Test-only: reset the kernel-executor singleton (drops the executor + its state) and clears any installed provider. */
+export function _resetKernelForTests(): void {
+  kernelExecutorInstance = null;
   installedProvider = null;
   effectLog.length = 0;
 }
 
-/** Execute a command against the shadow kernel. Never throws; a rejection is logged, not surfaced. */
-function shadowExecute(command: Command): void {
+/** Execute a command against the kernel. Never throws; a rejection is logged, not surfaced. */
+function kernelExecute(command: Command): void {
   try {
-    const outcome = getShadowKernelExecutor().execute(command);
+    const outcome = getKernelExecutor().execute(command);
     if ('rejected' in outcome) {
-      DEBUG && console.log('[window-kernel-shadow] command rejected:', command.type, outcome.rejected);
+      DEBUG && console.log('[window-kernel-dispatch] command rejected:', command.type, outcome.rejected);
     }
   } catch (err) {
-    DEBUG && console.log('[window-kernel-shadow] command threw:', command.type, err);
+    DEBUG && console.log('[window-kernel-dispatch] command threw:', command.type, err);
   }
 }
 
 /**
- * Feed a past-tense fact straight into the shadow kernel (`WindowKernelExecutor.dispatch`,
+ * Feed a past-tense fact straight into the kernel (`WindowKernelExecutor.dispatch`,
  * NOT `execute` — there is no `decide` step to reject, so this is the OS-focus
- * counterpart of `shadowExecute` above). Never throws.
+ * counterpart of `kernelExecute` above). Never throws.
  */
-function shadowDispatch(event: Event): void {
+function kernelDispatch(event: Event): void {
   try {
-    getShadowKernelExecutor().dispatch(event);
+    getKernelExecutor().dispatch(event);
   } catch (err) {
-    DEBUG && console.log('[window-kernel-shadow] event threw:', event.type, err);
+    DEBUG && console.log('[window-kernel-dispatch] event threw:', event.type, err);
   }
 }
 
@@ -279,7 +279,7 @@ function shadowDispatch(event: Event): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The registration fields the kernel's `Event.WindowRegistered` needs — a subset of `MachineWindowSpec`. */
-export interface ShadowRegisterWindowSpec {
+export interface RegisterWindowSpec {
   id: WindowId;
   kind: WindowKind;
   layer: number;
@@ -308,8 +308,8 @@ export interface ShadowRegisterWindowSpec {
  * command, called from `window-machine.ts registerWindowWithMachine`
  * once its own registration has settled.
  */
-export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void {
-  shadowExecute({
+export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
+  kernelExecute({
     type: 'RegisterWindow',
     id: spec.id,
     kind: spec.kind,
@@ -324,7 +324,7 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void
     ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
-    expectedVersion: getShadowKernelExecutor().getState().version,
+    expectedVersion: getKernelExecutor().getState().version,
   });
 }
 
@@ -353,8 +353,8 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void
  * production, because a `world` cause is never stale. Omitted means `world`,
  * the same reading `Event.OsFocusGained` gives an absent cause.
  */
-export function shadowKernelOsFocusGained(id: WindowId, cause?: FocusCause): void {
-  shadowDispatch({ type: 'OsFocusGained', id, cause });
+export function kernelOsFocusGained(id: WindowId, cause?: FocusCause): void {
+  kernelDispatch({ type: 'OsFocusGained', id, cause });
 }
 
 /**
@@ -367,18 +367,18 @@ export function shadowKernelOsFocusGained(id: WindowId, cause?: FocusCause): voi
  * window — so this emits nothing when no key is held, rather than a null-id
  * event the kernel has no vocabulary for.
  */
-export function shadowKernelOsFocusSettled(): void {
-  const { key } = getShadowKernelExecutor().getState();
-  if (key !== null) shadowDispatch({ type: 'OsFocusLost', id: key });
+export function kernelOsFocusSettled(): void {
+  const { key } = getKernelExecutor().getState();
+  if (key !== null) kernelDispatch({ type: 'OsFocusLost', id: key });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Visibility — window-kernel.ts's `topmost(state, isContentWindow)` can only
 // ever return a record whose `visible` is true (`isContentWindow`
 // short-circuits on `!record.visible`, `window-kernel.ts`), and `RegisterWindow`
-// always creates a record `visible: false`. Without this, no shadow record can
-// ever become visible and the comparator's `front` check is comparing the old
-// machine's real front against a permanent `null`. Translated at every
+// always creates a record `visible: false`. Without this, no record could
+// ever become visible, leaving `topmost(state, isContentWindow)` permanently
+// null for every window. Translated at every
 // production site that reports the old machine's mirrored `WINDOW_SHOWN` /
 // `WINDOW_HIDDEN` (`electron-window-backend.ts`'s native `'show'`/`'hide'`
 // listeners, `raiseWindow`, `showWindow`, `hideWindow`; `window-machine.ts
@@ -404,13 +404,13 @@ export function shadowKernelOsFocusSettled(): void {
  * an already-visible window through a reuse path
  * (`ipc.ts windowOpenHandler`'s four reuse branches, `windows.ts
  * showWindowHeadlessSafe`) moves the old machine's `front` but leaves the
- * shadow kernel's `topmost(state, isContentWindow)` on the previous window —
+ * kernel's `topmost(state, isContentWindow)` on the previous window —
  * exactly the divergence a headless run measured. This function is the
- * translation at the shadow's edge; `window-kernel.ts` itself is untouched.
+ * translation at the dispatch edge; `window-kernel.ts` itself is untouched.
  *
  * NOT DOUBLE-COUNTING ON A REAL DISPLAY: there, an activating `win.show()`
  * also provokes a native `'focus'`, which already feeds `OsFocusGained`
- * through `shadowKernelOsFocusGained` via the normal focus listener. So the
+ * through `kernelOsFocusGained` via the normal focus listener. So the
  * synthetic feed below can arrive alongside a real echo for the same window —
  * harmless, because the second `OsFocusGained` names the window `key`
  * already holds, making its diff against the first empty. Headless masks OS
@@ -421,15 +421,15 @@ export function shadowKernelOsFocusSettled(): void {
  * `focused` defaults to `false` (today's behavior — no companion focus feed)
  * for a caller that omits it, rather than guessing.
  */
-export function shadowKernelWindowShown(id: WindowId, focused = false, opSeq?: number): void {
-  shadowDispatch({ type: 'WindowShown', id, opSeq });
+export function kernelWindowShown(id: WindowId, focused = false, opSeq?: number): void {
+  kernelDispatch({ type: 'WindowShown', id, opSeq });
   // The companion focus carries the SHOW's own token as its provenance: an
   // activating show is a machine-issued focus, so the report has to say so or
   // `selectTransientAutoclose` reads it as the world taking key and sweeps
   // transients newer than the show. A show with no token (a caller not yet
   // reporting one) has no provenance to claim and stays `world`.
   if (focused) {
-    shadowDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
+    kernelDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
   }
 }
 
@@ -439,8 +439,8 @@ export function shadowKernelWindowShown(id: WindowId, focused = false, opSeq?: n
  * rides along so a stale echo of a superseded hide can be told apart from a
  * genuine one — see `window-kernel.ts isStaleWindowEcho`.
  */
-export function shadowKernelWindowHidden(id: WindowId, opSeq?: number): void {
-  shadowDispatch({ type: 'WindowHidden', id, opSeq });
+export function kernelWindowHidden(id: WindowId, opSeq?: number): void {
+  kernelDispatch({ type: 'WindowHidden', id, opSeq });
 }
 
 /**
@@ -449,11 +449,11 @@ export function shadowKernelWindowHidden(id: WindowId, opSeq?: number): void {
  * into the kernel's `AppActivated` event — one of the three production inputs
  * that affect visibility: it re-shows every record still carrying
  * `hiddenByAppBlur` (`window-kernel.ts`'s `AppActivated` evolve arm), mirroring
- * the old machine's own re-show. The other two are `shadowKernelAppResigned`
- * and `shadowKernelAppResignSettled` directly below.
+ * the old machine's own re-show. The other two are `kernelAppResigned`
+ * and `kernelAppResignSettled` directly below.
  */
-export function shadowKernelAppActivated(): void {
-  shadowDispatch({ type: 'AppActivated' });
+export function kernelAppActivated(): void {
+  kernelDispatch({ type: 'AppActivated' });
 }
 
 /**
@@ -465,12 +465,12 @@ export function shadowKernelAppActivated(): void {
  * edge, not deferred to the settle — hides every attached overlay and every
  * `isAppResignSweepEligible` floater still visible (see that evolve arm's own
  * doc for why those two victim sets hide immediately rather than waiting out
- * the settle delay `shadowKernelAppResignSettled` handles below). Same shape
- * and containment as `shadowKernelAppActivated`: `shadowDispatch` (an event,
+ * the settle delay `kernelAppResignSettled` handles below). Same shape
+ * and containment as `kernelAppActivated`: `kernelDispatch` (an event,
  * not a command — this is a past-tense fact `decide` never sees).
  */
-export function shadowKernelAppResigned(): void {
-  shadowDispatch({ type: 'AppResigned' });
+export function kernelAppResigned(): void {
+  kernelDispatch({ type: 'AppResigned' });
 }
 
 /**
@@ -483,9 +483,9 @@ export function shadowKernelAppResigned(): void {
  * when the app never came back active in between, writes `lastAttention`
  * `{ holder: null }` — the one write `react`'s transient-dismissal rule reads
  * (see this module's header / `window-kernel.ts` §0's autoclose exemption
- * doc). Same shape and containment as `shadowKernelAppResigned`.
+ * doc). Same shape and containment as `kernelAppResigned`.
  *
- * A BACKSTOP, NOT THE PRIMARY HIDE. `shadowKernelAppResigned` above already
+ * A BACKSTOP, NOT THE PRIMARY HIDE. `kernelAppResigned` above already
  * hid every attached overlay and sweep-eligible floater on the raw
  * `AppResigned` edge — the kernel is what performs that hide now, over the
  * real backend, not the old machine (`window-os-adapter.ts runEffect`'s
@@ -498,8 +498,8 @@ export function shadowKernelAppResigned(): void {
  * backgrounded) — the same backstop `window-kernel.ts`'s `AppResignSettled`
  * arm documents on its own.
  */
-export function shadowKernelAppResignSettled(): void {
-  shadowDispatch({ type: 'AppResignSettled' });
+export function kernelAppResignSettled(): void {
+  kernelDispatch({ type: 'AppResignSettled' });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,36 +518,36 @@ export function shadowKernelAppResignSettled(): void {
 // a window whose record already retired microseconds earlier in the same
 // synchronous body (the hybrid finalize race: `runHybridFinalize` retires the
 // record via `finalizeWindowClose` before dispatching the content-close a few
-// lines later). That exemption lives in `decide`, not here; `shadowExecute`'s
+// lines later). That exemption lives in `decide`, not here; `kernelExecute`'s
 // existing try/catch is what keeps a rejection or a thrown error from ever
 // reaching these callers, same as every command above.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Translate a forceful native-destroy teardown into the kernel's `DestroyWindow` command. */
-export function shadowKernelDestroyWindow(id: WindowId): void {
-  shadowExecute({ type: 'DestroyWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelDestroyWindow(id: WindowId): void {
+  kernelExecute({ type: 'DestroyWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 /** Translate the hybrid finalize's content-surface teardown into the kernel's `CloseContent` command. */
-export function shadowKernelCloseContent(id: WindowId): void {
-  shadowExecute({ type: 'CloseContent', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelCloseContent(id: WindowId): void {
+  kernelExecute({ type: 'CloseContent', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 /** Translate a guest-safe direct close (`windows.ts closeHostWindow`) into the kernel's `CloseWindowDirect` command. */
-export function shadowKernelCloseWindowDirect(id: WindowId): void {
-  shadowExecute({ type: 'CloseWindowDirect', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelCloseWindowDirect(id: WindowId): void {
+  kernelExecute({ type: 'CloseWindowDirect', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 /** Translate the quit-time guest teardown into the kernel's `DestroyAllGuests` command. Names no window. */
-export function shadowKernelDestroyAllGuests(): void {
-  shadowExecute({ type: 'DestroyAllGuests', expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelDestroyAllGuests(): void {
+  kernelExecute({ type: 'DestroyAllGuests', expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Close report — the fourth real input this step feeds the kernel.
 // `window-kernel.ts` RULE 1 makes `WindowClosed` the ONLY event that shrinks
 // `order`; the four teardown commands above deliberately retire no record.
-// Without this, the shadow kernel's `order` only ever grows and diverges
+// Without this, the kernel's `order` only ever grows and diverges
 // further from reality with every window that actually closes. Translated at
 // every production site that reports a completed close to the old machine's
 // mirrored `WINDOW_CLOSED` (`main.ts finalizeWindowClose`, that same handler's
@@ -566,8 +566,8 @@ export function shadowKernelDestroyAllGuests(): void {
  * an event naming an unknown window rather than rejecting it, so no guard is
  * needed here.
  */
-export function shadowKernelWindowClosed(id: WindowId): void {
-  shadowDispatch({ type: 'WindowClosed', id });
+export function kernelWindowClosed(id: WindowId): void {
+  kernelDispatch({ type: 'WindowClosed', id });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,8 +586,8 @@ export function shadowKernelWindowClosed(id: WindowId): void {
  * is preserved by construction. None of that reconciliation belongs here;
  * this function only translates and feeds.
  */
-export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
-  shadowExecute({ type: 'ImportStackOrder', order, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelImportStackOrder(order: readonly WindowId[]): void {
+  kernelExecute({ type: 'ImportStackOrder', order, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -613,16 +613,16 @@ export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
  *     unlike the old machine, which only ever moved `front` from the real OS
  *     echo. A known, recorded lossy port, not a bug this function works around.
  *   - `react` emits its own `RaiseWindow` effect off a `key` diff, and the OS
- *     echo that follows (`shadowKernelOsFocusGained`) names the window `key`
+ *     echo that follows (`kernelOsFocusGained`) names the window `key`
  *     already holds, so that echo's diff is empty and emits nothing. No
  *     de-duplication is added for it.
  *
- * Same shape and containment as `shadowKernelDestroyWindow` et al.: routed
- * through `shadowExecute` (a rejected stale `expectedVersion` is logged, never
+ * Same shape and containment as `kernelDestroyWindow` et al.: routed
+ * through `kernelExecute` (a rejected stale `expectedVersion` is logged, never
  * thrown into the caller).
  */
-export function shadowKernelRaiseWindow(id: WindowId): void {
-  shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelRaiseWindow(id: WindowId): void {
+  kernelExecute({ type: 'RaiseWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -635,7 +635,7 @@ export function shadowKernelRaiseWindow(id: WindowId): void {
 // mirrored dispatch itself, are gone now: attach/detach is decided entirely
 // inside the kernel (`window-kernel.ts react`'s `AttachOverlayTo` diff loop),
 // realized through the port, and reported back as the `OverlayAttached`
-// EVENT (`shadowKernelOverlayAttached` below), not this COMMAND. This
+// EVENT (`kernelOverlayAttached` below), not this COMMAND. This
 // function has no production caller any more — kept for the tests that
 // exercise `AttachOverlay` directly, and as the historical record of the gap
 // this feed closed.
@@ -651,39 +651,39 @@ export function shadowKernelRaiseWindow(id: WindowId): void {
  * Translate a completed overlay attach/retarget/detach report into the
  * kernel's `AttachOverlay` command — `hostId: null` is detach, the same one
  * transition the old machine's `OVERLAY_ATTACH_REQUESTED` was. Same shape and
- * containment as `shadowKernelRaiseWindow` et al.: routed through
- * `shadowExecute` (a rejected stale `expectedVersion`, or a `hostId`/
+ * containment as `kernelRaiseWindow` et al.: routed through
+ * `kernelExecute` (a rejected stale `expectedVersion`, or a `hostId`/
  * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
  * caller). No production
- * caller remains (see the section comment above); `shadowKernelOverlayAttached`
+ * caller remains (see the section comment above); `kernelOverlayAttached`
  * is what the live attach/detach path uses.
  *
  * `frame` is the freshly expanded overlay frame for `hostId` — see
  * `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the kernel takes
  * this as data rather than computing it. Omitted on a detach.
  */
-export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
-  shadowExecute({
+export function kernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
+  kernelExecute({
     type: 'AttachOverlay',
     overlayId,
     hostId,
     ...(frame !== undefined ? { frame } : {}),
-    expectedVersion: getShadowKernelExecutor().getState().version,
+    expectedVersion: getKernelExecutor().getState().version,
   });
 }
 
 /**
  * Feed a completed `AttachOverlayTo` effect's realization straight into the
  * kernel as the `OverlayAttached` EVENT — `hostId: null` is detach, same
- * shape as `shadowKernelAttachOverlay` above, but dispatched rather than
- * executed. Deliberately NOT routed through `shadowKernelAttachOverlay`'s
+ * shape as `kernelAttachOverlay` above, but dispatched rather than
+ * executed. Deliberately NOT routed through `kernelAttachOverlay`'s
  * `AttachOverlay` COMMAND: this report is the backend's answer to an effect
  * the kernel itself asked for (`window-kernel.ts Effect.AttachOverlayTo`),
  * issued from inside `WindowKernelExecutor.performEffect` while `pump()` may
  * already be draining events queued by the same transition. A command
  * decided from there would be judged against a state that does not yet
  * contain those queued events — the exact re-entrancy the effect exists to
- * remove — and a wrongly rejected command is invisible (`shadowExecute`
+ * remove — and a wrongly rejected command is invisible (`kernelExecute`
  * logs a rejection only behind `DEBUG`). Dispatched as an event instead: a
  * past-tense fact `evolve` cannot reject.
  *
@@ -693,8 +693,8 @@ export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId 
  * Omitted on a detach, or when the backend could not read the host's
  * bounds.
  */
-export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
-  shadowDispatch({
+export function kernelOverlayAttached(overlayId: WindowId, hostId: WindowId | null, frame?: Rectangle): void {
+  kernelDispatch({
     type: 'OverlayAttached',
     overlayId,
     hostId,
@@ -712,7 +712,7 @@ export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowI
 // THE HIGHEST-STAKES GAP OF THE FOUR THIS STEP CLOSES. `RegisterWindow` always
 // creates a record `orderable: false` (window-kernel.ts), and
 // `WindowContentOrderable` is the ONLY writer that ever flips it. Without this
-// feed no shadow record can ever become orderable, and `topmostBaseLayerPageHost`
+// feed no record can ever become orderable, and `topmostBaseLayerPageHost`
 // (window-kernel.ts), whose predicate requires `orderable` alongside `visible`,
 // returns null forever — not a transient divergence but a structural one, wrong
 // from the very first composited frame of the very first window.
@@ -725,8 +725,8 @@ export function shadowKernelOverlayAttached(overlayId: WindowId, hostId: WindowI
  * adds). `evolve`'s arm never resets `orderable` back to false and no-ops on
  * an unregistered id, so no guard is needed here.
  */
-export function shadowKernelWindowContentOrderable(id: WindowId): void {
-  shadowDispatch({ type: 'WindowContentOrderable', id });
+export function kernelWindowContentOrderable(id: WindowId): void {
+  kernelDispatch({ type: 'WindowContentOrderable', id });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -744,8 +744,8 @@ export function shadowKernelWindowContentOrderable(id: WindowId): void {
  * is stored as reported, same as the old machine: the kernel never infers
  * first-responder status, only records what the OS said.
  */
-export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boolean): void {
-  shadowDispatch({ type: 'ContentFirstResponderChanged', id, held });
+export function kernelContentFirstResponderChanged(id: WindowId, held: boolean): void {
+  kernelDispatch({ type: 'ContentFirstResponderChanged', id, held });
 }
 
 /**
@@ -756,8 +756,8 @@ export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boo
  * infers click-through state, only records what the causing site already did
  * (see the event's own doc for why this is fed rather than observed).
  */
-export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput: boolean): void {
-  shadowDispatch({ type: 'WindowAcceptsInputChanged', id, acceptsInput });
+export function kernelWindowAcceptsInputChanged(id: WindowId, acceptsInput: boolean): void {
+  kernelDispatch({ type: 'WindowAcceptsInputChanged', id, acceptsInput });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -777,11 +777,11 @@ export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput
  * unknown-window guard, exactly as `decide` itself does — there is no window
  * here to guard existence against on either payload shape, so a `null` clear
  * and a real id naming a window not yet registered are both legitimate
- * traffic. Same shape and containment as `shadowKernelAttachOverlay` et al.:
- * routed through `shadowExecute`.
+ * traffic. Same shape and containment as `kernelAttachOverlay` et al.:
+ * routed through `kernelExecute`.
  */
-export function shadowKernelArmColdStartFocus(id: WindowId | null): void {
-  shadowExecute({ type: 'ArmColdStartFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelArmColdStartFocus(id: WindowId | null): void {
+  kernelExecute({ type: 'ArmColdStartFocus', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -806,12 +806,12 @@ export function shadowKernelArmColdStartFocus(id: WindowId | null): void {
  * `AssertFocus` command, naming the window the caller resolved as the target
  * (see the banner above for why that is never the devtools window itself).
  * NOT exempt from `decide`'s unknown-window rejection (`AssertFocus`'s own doc
- * in `window-kernel.ts`) — a target absent from the shadow kernel's `order` is
- * logged by `shadowExecute` as a rejection, never thrown into the caller. Same
- * shape and containment as `shadowKernelRaiseWindow` et al.
+ * in `window-kernel.ts`) — a target absent from the kernel's `order` is
+ * logged by `kernelExecute` as a rejection, never thrown into the caller. Same
+ * shape and containment as `kernelRaiseWindow` et al.
  */
-export function shadowKernelAssertFocus(id: WindowId): void {
-  shadowExecute({ type: 'AssertFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelAssertFocus(id: WindowId): void {
+  kernelExecute({ type: 'AssertFocus', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -834,8 +834,8 @@ export function shadowKernelAssertFocus(id: WindowId): void {
  * straight through to `leaving` on a coalesced cancel (`nextFsModeForOsEntered`,
  * `window-kernel.ts`).
  */
-export function shadowKernelOsFullscreenEntered(id: WindowId): void {
-  shadowDispatch({ type: 'OsFullscreenEntered', id });
+export function kernelOsFullscreenEntered(id: WindowId): void {
+  kernelDispatch({ type: 'OsFullscreenEntered', id });
 }
 
 /**
@@ -844,8 +844,8 @@ export function shadowKernelOsFullscreenEntered(id: WindowId): void {
  * through to `entering` on a coalesced re-enter (`nextFsModeForOsLeft`,
  * `window-kernel.ts`).
  */
-export function shadowKernelOsFullscreenLeft(id: WindowId): void {
-  shadowDispatch({ type: 'OsFullscreenLeft', id });
+export function kernelOsFullscreenLeft(id: WindowId): void {
+  kernelDispatch({ type: 'OsFullscreenLeft', id });
 }
 
 /**
@@ -858,8 +858,8 @@ export function shadowKernelOsFullscreenLeft(id: WindowId): void {
  * strands `preBounds` or leaves a black macOS Space behind — the machine
  * asks the OS rather than guessing).
  */
-export function shadowKernelFullscreenSettleTimeout(id: WindowId): void {
-  shadowDispatch({ type: 'FullscreenSettleTimeout', id });
+export function kernelFullscreenSettleTimeout(id: WindowId): void {
+  kernelDispatch({ type: 'FullscreenSettleTimeout', id });
 }
 
 /**
@@ -870,16 +870,16 @@ export function shadowKernelFullscreenSettleTimeout(id: WindowId): void {
  * `FullscreenDesireRecorded` (coalesced, no second transition started),
  * already at the requested state -> `[]` (no-op, no OS call). None of that
  * branching is reproduced here — the command is executed and `decide`
- * decides. Same shape and containment as `shadowKernelRaiseWindow` et al.:
- * routed through `shadowExecute` (a rejected stale `expectedVersion`, or a
+ * decides. Same shape and containment as `kernelRaiseWindow` et al.:
+ * routed through `kernelExecute` (a rejected stale `expectedVersion`, or a
  * target absent from `order`, is logged, never thrown into the caller).
  */
-export function shadowKernelSetFullscreen(id: WindowId, desired: boolean): void {
-  shadowExecute({
+export function kernelSetFullscreen(id: WindowId, desired: boolean): void {
+  kernelExecute({
     type: 'SetFullscreen',
     id,
     desired,
-    expectedVersion: getShadowKernelExecutor().getState().version,
+    expectedVersion: getKernelExecutor().getState().version,
   });
 }
 
@@ -914,8 +914,8 @@ export function shadowKernelSetFullscreen(id: WindowId, desired: boolean): void 
  * See `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the frame
  * rides here as data rather than being computed inside the kernel.
  */
-export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, overlayFrame?: Rectangle): void {
-  shadowDispatch({ type: 'BoundsChanged', id, bounds, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
+export function kernelBoundsChanged(id: WindowId, bounds: Rectangle, overlayFrame?: Rectangle): void {
+  kernelDispatch({ type: 'BoundsChanged', id, bounds, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
 }
 
 /**
@@ -928,22 +928,22 @@ export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, overl
  * window this event does not name untouched. None of that branching is
  * reproduced here — the event is dispatched and `evolve` decides.
  */
-export function shadowKernelDisplayChanged(
+export function kernelDisplayChanged(
   projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }>): void {
-  shadowDispatch({ type: 'DisplayChanged', projections });
+  kernelDispatch({ type: 'DisplayChanged', projections });
 }
 
 /**
  * Translate a resize gesture's maximize-invalidation into the kernel's
  * `MaximizeExitedByResize` event — clears `maximized` + `preMaxBounds`,
  * drives nothing back at the OS: the gesture itself owns the window's
- * bounds. Guard-free at the shadow's edge, same as `evolve`'s own arm (a
+ * bounds. Guard-free at the dispatch edge, same as `evolve`'s own arm (a
  * not-maximized record already holds these values, so this is an idempotent
  * no-op for it — the old reducer's "not maximized -> nothing to restore"
  * guard is unnecessary here).
  */
-export function shadowKernelMaximizeExitedByResize(id: WindowId): void {
-  shadowDispatch({ type: 'MaximizeExitedByResize', id });
+export function kernelMaximizeExitedByResize(id: WindowId): void {
+  kernelDispatch({ type: 'MaximizeExitedByResize', id });
 }
 
 /**
@@ -955,12 +955,12 @@ export function shadowKernelMaximizeExitedByResize(id: WindowId): void {
  * explicit geometry decision supersedes any held `DisplayChanged`
  * projection, discarding it without flushing). None of that branching is
  * reproduced here — the command is executed and `decide` decides. Same
- * shape and containment as `shadowKernelRaiseWindow` et al.: routed through
- * `shadowExecute` (a rejected stale `expectedVersion` is logged, never
+ * shape and containment as `kernelRaiseWindow` et al.: routed through
+ * `kernelExecute` (a rejected stale `expectedVersion` is logged, never
  * thrown into the caller).
  */
-export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle): void {
-  shadowExecute({ type: 'SetBounds', id, bounds, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelSetBounds(id: WindowId, bounds: Rectangle): void {
+  kernelExecute({ type: 'SetBounds', id, bounds, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -988,14 +988,14 @@ export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle): void {
  * else `PendingProjectionDiscarded` + `Maximized{preMaxBounds: rec.bounds ??
  * null}` + (when `workArea` was given) `BoundsChanged{bounds: workArea}` —
  * the actual snap. None of that branching is reproduced here. Same shape
- * and containment as `shadowKernelSetBounds`.
+ * and containment as `kernelSetBounds`.
  */
-export function shadowKernelMaximize(id: WindowId, workArea?: Rectangle): void {
-  shadowExecute({
+export function kernelMaximize(id: WindowId, workArea?: Rectangle): void {
+  kernelExecute({
     type: 'Maximize',
     id,
     ...(workArea !== undefined ? { workArea } : {}),
-    expectedVersion: getShadowKernelExecutor().getState().version,
+    expectedVersion: getKernelExecutor().getState().version,
   });
 }
 
@@ -1006,15 +1006,15 @@ export function shadowKernelMaximize(id: WindowId, workArea?: Rectangle): void {
  * session restore reach with `maximized: true` plus the saved
  * `preMaxBounds`. `preMaxBounds` rides the command explicitly because the
  * window's creation bounds already ARE the maximized rect, so the stash
- * cannot be derived from the bounds mirror the way `shadowKernelMaximize`
+ * cannot be derived from the bounds mirror the way `kernelMaximize`
  * lets `decide` derive it (see the command's own doc). `decide`'s own
  * branching: `fsMode` non-`normal` -> `[]` (the aa34cb50 family), else a
  * lone `Maximized{preMaxBounds}` — no snap, no projection discard. None of
  * that is reproduced here. Same shape and containment as
- * `shadowKernelMaximize`.
+ * `kernelMaximize`.
  */
-export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null): void {
-  shadowExecute({ type: 'SeedMaximized', id, preMaxBounds, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null): void {
+  kernelExecute({ type: 'SeedMaximized', id, preMaxBounds, expectedVersion: getKernelExecutor().getState().version });
 }
 
 /**
@@ -1023,10 +1023,10 @@ export function shadowKernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle 
  * else `PendingProjectionDiscarded` + `Unmaximized`, PLUS a `BoundsChanged`
  * restoring the stash when `preMaxBounds` is non-null (a null stash just
  * clears the flag — nowhere to restore to). None of that branching is
- * reproduced here. Same shape and containment as `shadowKernelMaximize`.
+ * reproduced here. Same shape and containment as `kernelMaximize`.
  */
-export function shadowKernelUnmaximize(id: WindowId): void {
-  shadowExecute({ type: 'Unmaximize', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelUnmaximize(id: WindowId): void {
+  kernelExecute({ type: 'Unmaximize', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1043,7 +1043,7 @@ export function shadowKernelUnmaximize(id: WindowId): void {
 //     (`SPACES_POLICY_REQUESTED`) — role-derived. What used to block this feed
 //     was that the boolean command could not express `'follow'`/`'anchor'`
 //     without re-implementing the reducer's ordered-pair expansion at the
-//     shadow's edge; the kernel's `SetDesktopMembership` command carries the
+//     dispatch edge; the kernel's `SetDesktopMembership` command carries the
 //     resolved intention directly; that expansion now lives in
 //     `electron-window-backend.ts setDesktopMembership`, never here or in the
 //     kernel. Both call sites already compute the role's policy for their old
@@ -1058,14 +1058,14 @@ export function shadowKernelUnmaximize(id: WindowId): void {
  * `SetDesktopMembership` command — `decide`'s arm (`window-kernel.ts`'s
  * `SetDesktopMembership` case) is unconditional, always emitting
  * `DesktopMembershipSet{membership: cmd.membership}`; no branching to
- * reproduce. Same shape and containment as `shadowKernelMaximize` et al.
+ * reproduce. Same shape and containment as `kernelMaximize` et al.
  */
-export function shadowKernelSetDesktopMembership(id: WindowId, membership: DesktopMembership): void {
-  shadowExecute({
+export function kernelSetDesktopMembership(id: WindowId, membership: DesktopMembership): void {
+  kernelExecute({
     type: 'SetDesktopMembership',
     id,
     membership,
-    expectedVersion: getShadowKernelExecutor().getState().version,
+    expectedVersion: getKernelExecutor().getState().version,
   });
 }
 
@@ -1083,16 +1083,16 @@ export function shadowKernelSetDesktopMembership(id: WindowId, membership: Deskt
  * visibility and key are separate stored facts, each written only by its own
  * event, so neither command alone reproduces an activating show.
  */
-export function shadowKernelShowRequested(id: WindowId, activate: boolean): void {
-  shadowExecute({ type: 'ShowWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelShowRequested(id: WindowId, activate: boolean): void {
+  kernelExecute({ type: 'ShowWindow', id, expectedVersion: getKernelExecutor().getState().version });
   if (activate) {
-    shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+    kernelExecute({ type: 'RaiseWindow', id, expectedVersion: getKernelExecutor().getState().version });
   }
 }
 
 /** Translate a window-hide request into the kernel's `HideWindow` command. */
-export function shadowKernelHideRequested(id: WindowId): void {
-  shadowExecute({ type: 'HideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelHideRequested(id: WindowId): void {
+  kernelExecute({ type: 'HideWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
 /**
@@ -1101,7 +1101,7 @@ export function shadowKernelHideRequested(id: WindowId): void {
  * inside the kernel's own `decide()` arm for this command, not here — the
  * caller passes no keepLive flag.
  */
-export function shadowKernelCloseOrHideRequested(id: WindowId): void {
-  shadowExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function kernelCloseOrHideRequested(id: WindowId): void {
+  kernelExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }
 

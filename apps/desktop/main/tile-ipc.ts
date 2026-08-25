@@ -134,15 +134,15 @@ import {
 } from './window-machine.js';
 import { wmLog } from './window-diag.js';
 import {
-  shadowKernelSetFullscreen,
-  shadowKernelSetBounds,
-  shadowKernelMaximize,
-  shadowKernelUnmaximize,
-  shadowKernelSetDesktopMembership,
-  shadowKernelShowRequested,
-  shadowKernelHideRequested,
-  shadowKernelWindowAcceptsInputChanged,
-} from './window-kernel-shadow.js';
+  kernelSetFullscreen,
+  kernelSetBounds,
+  kernelMaximize,
+  kernelUnmaximize,
+  kernelSetDesktopMembership,
+  kernelShowRequested,
+  kernelHideRequested,
+  kernelWindowAcceptsInputChanged,
+} from './window-kernel-dispatch.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -3036,7 +3036,7 @@ export function registerTileIpcHandlers(): void {
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           const machineId = getWindowIdFor(args.id);
           if (machineId != null) {
-            shadowKernelShowRequested(machineId, true);
+            kernelShowRequested(machineId, true);
           }
           return { success: true };
         }
@@ -3082,9 +3082,9 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(args.id);
           const fsMode = machineId != null ? getWindowModeName(machineId) : null;
           if (machineId != null && fsMode != null && fsMode !== 'normal') {
-            // Feed the kernel (window-kernel-shadow.ts) — this is what
+            // Feed the kernel (window-kernel-dispatch.ts) — this is what
             // drives the window manager.
-            shadowKernelSetFullscreen(machineId, false);
+            kernelSetFullscreen(machineId, false);
             const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
             if (outcome !== 'settled') {
               // Timed out or vanished: proceed into the destroyed re-check
@@ -3101,7 +3101,7 @@ export function registerTileIpcHandlers(): void {
           // lag) is gone, the same acceptance the 6A-3 keepLive cutover made
           // in closeOrHideWindow.
           if (machineId != null) {
-            shadowKernelHideRequested(machineId);
+            kernelHideRequested(machineId);
           }
           return { success: true };
         }
@@ -3111,7 +3111,7 @@ export function registerTileIpcHandlers(): void {
       {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          shadowKernelHideRequested(machineId);
+          kernelHideRequested(machineId);
         }
       }
       return { success: true };
@@ -3161,7 +3161,7 @@ export function registerTileIpcHandlers(): void {
       }
       const machineId = getWindowIdFor(args.id);
       if (machineId != null) {
-        shadowKernelShowRequested(machineId, true);
+        kernelShowRequested(machineId, true);
       }
       return { success: true };
     } catch (err) {
@@ -3221,7 +3221,7 @@ export function registerTileIpcHandlers(): void {
       {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          shadowKernelHideRequested(machineId);
+          kernelHideRequested(machineId);
         }
       }
       return { success: true };
@@ -3265,7 +3265,7 @@ export function registerTileIpcHandlers(): void {
       // observe (Electron has no getter for `setIgnoreMouseEvents`).
       const machineId = getWindowIdFor(win);
       if (machineId != null) {
-        shadowKernelWindowAcceptsInputChanged(machineId, args.ignore !== true);
+        kernelWindowAcceptsInputChanged(machineId, args.ignore !== true);
       }
       return { success: true };
     } catch (err) {
@@ -3316,7 +3316,7 @@ export function registerTileIpcHandlers(): void {
         // driven as the kernel's SetBounds effect through the port.
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
-          shadowKernelSetBounds(machineId, result.bounds);
+          kernelSetBounds(machineId, result.bounds);
         }
       }
       return { success: true };
@@ -3363,7 +3363,7 @@ export function registerTileIpcHandlers(): void {
           // §5 step 7E — same kernel-routed write as tile:window:center.
           const machineId = getWindowIdFor(win);
           if (machineId != null) {
-            shadowKernelSetBounds(machineId, result.bounds);
+            kernelSetBounds(machineId, result.bounds);
           }
         }
         centered++;
@@ -3441,10 +3441,10 @@ export function registerTileIpcHandlers(): void {
       // pre-maximize rect, and after the feed the record already reflects
       // the maximize.
       const recBefore = getMachineWindowRecord(machineId);
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager. The kernel's `Maximize` command carries the work
-      // area as data (`459ed219` shape — see `shadowKernelMaximize`'s doc).
-      shadowKernelMaximize(machineId, workAreaRect);
+      // area as data (`459ed219` shape — see `kernelMaximize`'s doc).
+      kernelMaximize(machineId, workAreaRect);
       // Targeted notification to the window's renderer — a renderer that
       // owns internal layout state subscribes via
       // api.window.onMaximizeRequest to keep its layout in sync without
@@ -3509,9 +3509,9 @@ export function registerTileIpcHandlers(): void {
         );
       } catch { /* logging must never throw */ }
 
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager.
-      shadowKernelUnmaximize(machineId);
+      kernelUnmaximize(machineId);
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
@@ -3563,17 +3563,17 @@ export function registerTileIpcHandlers(): void {
         if (typeof args.id === 'number') return { success: true };
         return { success: false, error: 'Window not found' };
       }
-      // Toggle off the CURRENT fsMode so the shadow kernel's `SetFullscreen`
+      // Toggle off the CURRENT fsMode so the kernel's `SetFullscreen`
       // carries an explicit boolean rather than one this module invents:
       // `normal` and `leaving` both want fullscreen next, `fullscreen` and
       // `entering` both want out. Skipped when the kernel holds no record
       // for this id.
       const oldMode = getWindowModeName(machineId);
-      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
       // window manager.
       if (oldMode !== null) {
         const desired = oldMode === 'normal' || oldMode === 'leaving';
-        shadowKernelSetFullscreen(machineId, desired);
+        kernelSetFullscreen(machineId, desired);
       }
       return { success: true };
     } catch (err) {
@@ -3759,11 +3759,11 @@ export function registerTileIpcHandlers(): void {
       // caller-supplied platform options (`args.options`) are NOT fed — they
       // are Electron `setVisibleOnAllWorkspaces` argument names and have no
       // meaning to the kernel's platform-neutral command. This predates the
-      // legacy-engine deletion (`f189496b`): the shadow-kernel feed already
+      // legacy-engine deletion (`f189496b`): this feed already
       // dropped `args.options` before that commit, which only removed the
       // parallel dispatch into the OLD machine's already-no-op effect arm —
       // the caller-supplied options never reached Electron either way.
-      shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor');
+      kernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor');
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3873,7 +3873,7 @@ export function registerTileIpcHandlers(): void {
     // the backend's BOUNDS_CHANGED echo.
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
-      shadowKernelSetBounds(machineId, next);
+      kernelSetBounds(machineId, next);
     }
 
     const info = getWindowInfo(win.id);

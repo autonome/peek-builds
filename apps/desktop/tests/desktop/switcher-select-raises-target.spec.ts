@@ -12,7 +12,7 @@ import http from 'http';
  * `api.window.setOverlayFocusTarget(win.id)`, then closes the switcher
  * window. `main.ts`'s switcher-overlay `closed` handler reads the stashed
  * `overlayFocusTarget` off the IZUI session and raises it via
- * `shadowKernelRaiseWindow`. `hybrid-windows-feature.spec.ts` drives the
+ * `kernelRaiseWindow`. `hybrid-windows-feature.spec.ts` drives the
  * test bridge's `focusHost` directly and never exercises this chain, so the
  * legacy-engine deletion (`f189496b`) left the `closed` handler's raise
  * block empty with no test noticing — selecting a window in the switcher
@@ -69,7 +69,7 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  test('selecting a card in the switcher raises that window via shadowKernelRaiseWindow', async () => {
+  test('selecting a card in the switcher raises that window via kernelRaiseWindow', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // A real content window (http://) — a hybrid BaseWindow, the same kind
@@ -125,7 +125,7 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
 
     // The kernel's own transition record: a fresh `OsFocusGained` for the
     // target, landing the key on it — the same decision `RaiseWindow`
-    // (`shadowKernelRaiseWindow`, called from the `closed` handler) makes
+    // (`kernelRaiseWindow`, called from the `closed` handler) makes
     // synchronously, headless or not.
     await expect.poll(async () => {
       const timeline = (await app.evaluateMain!((_e: unknown) => {

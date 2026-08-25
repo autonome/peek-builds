@@ -990,7 +990,7 @@ test.describe('Session Restore Page Host @desktop', () => {
     // while the sibling test asserting `preMaxBounds` passed the whole time —
     // the presenter reads that field off the old machine, so the data looked
     // right and only the behavior was wrong. The pair is now
-    // `shadowKernelSeedMaximized`, whose `SeedMaximized` command carries the
+    // `kernelSeedMaximized`, whose `SeedMaximized` command carries the
     // saved rect EXPLICITLY (replaying `Maximize` would stash the window's
     // creation bounds, which at restore time already are the maximized rect).
     // The live control above stays the other half of the pair: it passed
