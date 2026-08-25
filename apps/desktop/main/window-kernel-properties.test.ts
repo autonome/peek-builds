@@ -1998,3 +1998,165 @@ describe('window-kernel: the settle-timeout invariant names the violation', () =
     ]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The `WindowRegistered` key-carry, pinned against a hand-built two-press
+// scene — "a peek opens only on every other hotkey press", where the peek is
+// a transient (`role:'quick-view'`, `keepLive:false`, `acceptsInput:true`)
+// registered while another page-host holds key, and ~30-50ms later that host
+// retakes focus and either spares or dismisses the peek depending on whether
+// its `OsFocusGained` carries `cause:'machine'` (the `newer-than-focuser`
+// exemption arms) or `cause:'world'` (it does not).
+//
+// A LEADING HYPOTHESIS for what alternates between presses: `WindowClosed`
+// deliberately leaves `state.key` naming the closed window (see that arm's
+// own doc — a dangling key is made unobservable by `keyWindow` rather than
+// repaired there), and `OsFocusGained` is the only writer of `key`. So how
+// press N's peek died decides what press N+1 inherits — dismissed WHILE it
+// still held key leaves `key` DANGLING; dismissed AFTER the other host
+// already retook key leaves `key` LIVE. `WindowRegistered`'s fresh-record
+// branch reads exactly that carry to place the next peek: `insertAt =
+// keyIdx === -1 ? state.order.length : keyIdx` — dangling appends it on top
+// of `order`, live inserts it below the key window.
+//
+// THIS IS REFUTED BELOW. The carry genuinely moves `order` (proven by the
+// second `it`) and genuinely changes which `SetStacking` effects `react`
+// emits on the next show (proven by the third) — but
+// `transientAutocloseExemption` never reads `order` position: its only
+// ordering input is `rec.openSeq` against the FOCUSER's own `openSeq`
+// (`selectTransientAutoclose`'s `orderingFloor`), and `openSeq` is a
+// monotonic counter (`state.openSeqCounter`) assigned at registration,
+// untouched by where the fresh record lands in `order`. The last `it` plays
+// the SAME press-2 scene from each carry with the second host's refocus
+// cause held fixed, and the dismiss/spare verdict is identical either way —
+// the carry is staging, not the alternation's cause.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the WindowRegistered key-carry moves staging, not the transient-autoclose verdict', () => {
+  const hostA = wid(0);
+  const peek1 = wid(1);
+  const peek2 = wid(2);
+
+  const machineCause: FocusCause = { kind: 'machine', opSeq: 0 };
+  const worldCause: FocusCause = { kind: 'world' };
+
+  const registerHost = (): Event => ({
+    type: 'WindowRegistered',
+    id: hostA,
+    kind: 'page-host',
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+  const registerPeek = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'browser',
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'quick-view',
+    keepLive: false,
+  });
+
+  /** hostA registered, orderable, shown, and holding key — what every press below opens against. */
+  const baseline = (): State =>
+    fold([registerHost(), { type: 'WindowContentOrderable', id: hostA }, { type: 'WindowShown', id: hostA }, { type: 'OsFocusGained', id: hostA, cause: worldCause }]);
+
+  /**
+   * Press 1, dismissed by hostA retaking focus AFTER it already holds key —
+   * `OsFocusGained` writes `key` before the sweep it triggers runs
+   * (`react`'s raise-then-sweep ordering), so the closed peek's
+   * `WindowClosed` lands with `key` already naming a LIVE record. Produces
+   * the "live" carry.
+   */
+  const liveCarryPrefix = (): State =>
+    fold(
+      [
+        registerPeek(peek1),
+        { type: 'WindowShown', id: peek1 },
+        { type: 'OsFocusGained', id: peek1, cause: machineCause },
+        { type: 'OsFocusGained', id: hostA, cause: worldCause },
+        { type: 'WindowClosed', id: peek1 },
+      ],
+      baseline(),
+    );
+
+  /**
+   * Press 1, closed directly WHILE it still holds key — e.g. Escape closing
+   * the still-focused peek — before hostA (or anything else) ever retakes
+   * focus. `WindowClosed` leaves `key` naming the just-closed peek: dangling.
+   */
+  const danglingCarryPrefix = (): State =>
+    fold(
+      [registerPeek(peek1), { type: 'WindowShown', id: peek1 }, { type: 'OsFocusGained', id: peek1, cause: machineCause }, { type: 'WindowClosed', id: peek1 }],
+      baseline(),
+    );
+
+  it('the two prefixes disagree only on the key carry, so the comparison below is of that carry alone', () => {
+    const live = liveCarryPrefix();
+    const dangling = danglingCarryPrefix();
+    assert.deepStrictEqual(live.order.map((w) => w.id), [hostA]);
+    assert.deepStrictEqual(dangling.order.map((w) => w.id), [hostA]);
+    assert.strictEqual(live.key, hostA);
+    assert.strictEqual(dangling.key, peek1);
+    assert.ok(!dangling.order.some((w) => w.id === dangling.key), 'the dangling prefix must actually be dangling');
+    assert.deepStrictEqual(checkInvariants(live), []);
+    assert.deepStrictEqual(checkInvariants(dangling), []);
+  });
+
+  it('the carry moves where the next peek is registered — dangling appends on top, live inserts below the key window', () => {
+    const afterLive = evolve(liveCarryPrefix(), registerPeek(peek2));
+    const afterDangling = evolve(danglingCarryPrefix(), registerPeek(peek2));
+    assert.deepStrictEqual(afterLive.order.map((w) => w.id), [peek2, hostA]);
+    assert.deepStrictEqual(afterDangling.order.map((w) => w.id), [hostA, peek2]);
+  });
+
+  it('the carry changes which SetStacking effects the next peek’s show emits', () => {
+    const stackingTargets = (prefix: State): WindowId[] => {
+      const prev = evolve(prefix, registerPeek(peek2));
+      const shown: Event = { type: 'WindowShown', id: peek2 };
+      const next = evolve(prev, shown);
+      return react(prev, shown, next)
+        .filter((e) => e.type === 'SetStacking')
+        .map((e) => e.id);
+    };
+    // Live: registration already sat peek2 BELOW hostA, so hostA's own
+    // stacking position also has to be replayed once peek2's show forces it
+    // into the band (the minimal-diff suffix search — see `react`'s
+    // `SetStacking` doc). Dangling: peek2 was already registered on top of
+    // `order`, so its own show is the whole replay.
+    assert.deepStrictEqual(stackingTargets(liveCarryPrefix()), [peek2, hostA]);
+    assert.deepStrictEqual(stackingTargets(danglingCarryPrefix()), [peek2]);
+  });
+
+  /**
+   * THE VERDICT, held fixed against the carry. Press 2 replays exactly
+   * press 1's shape (peek2 opens, takes key, hostA retakes it), with hostA's
+   * refocus `cause` — the actual defect's real binary — the only input that
+   * varies BETWEEN the two cases below, and held IDENTICAL across the two
+   * carries WITHIN each case. If the leading hypothesis held, the two
+   * carries would disagree here; they do not.
+   */
+  const dismissVerdict = (prefix: State, hostRefocusCause: FocusCause): boolean => {
+    let state = evolve(prefix, registerPeek(peek2));
+    state = evolve(state, { type: 'WindowShown', id: peek2 });
+    state = evolve(state, { type: 'OsFocusGained', id: peek2, cause: machineCause });
+    const refocus: Event = { type: 'OsFocusGained', id: hostA, cause: hostRefocusCause };
+    const next = evolve(state, refocus);
+    return react(state, refocus, next).some((e) => e.type === 'DismissWindow' && e.id === peek2);
+  };
+
+  it('a world-caused refocus dismisses press 2’s peek identically for both carries', () => {
+    assert.strictEqual(dismissVerdict(liveCarryPrefix(), worldCause), true);
+    assert.strictEqual(dismissVerdict(danglingCarryPrefix(), worldCause), true);
+  });
+
+  it('a machine-caused refocus spares press 2’s peek identically for both carries (the newer-than-focuser exemption)', () => {
+    assert.strictEqual(dismissVerdict(liveCarryPrefix(), machineCause), false);
+    assert.strictEqual(dismissVerdict(danglingCarryPrefix(), machineCause), false);
+  });
+});
