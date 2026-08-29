@@ -8,7 +8,6 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import {
   WEB_CORE_ADDRESS,
-  SETTINGS_ADDRESS,
   isTestProfile,
   isHeadless,
   DEBUG,
@@ -30,7 +29,6 @@ import {
   dispatchEscapePress,
   getWindowIdFor,
   getNativeWindowFor,
-  getMachineWindowRecord,
   listMachineWindowRecords,
   getKernelExecutorForApp,
 } from './window-machine.js';
@@ -618,7 +616,13 @@ export function maybeHideApp(excludeId: number): void {
 }
 
 /**
- * Close or hide a window based on its parameters
+ * Resolve the native window for `id` (BrowserWindow or hybrid page-host
+ * BaseWindow) and dispatch it into the kernel's `CloseOrHideWindow` command.
+ * Whether that closes, hides, refuses, or cascades onto other windows is
+ * decided entirely by `window-kernel.ts decide` — this function no longer
+ * holds any of that policy itself; a fullscreen-exit preamble for the hybrid
+ * branch and the app-hide followup are the only things left here (see their
+ * own comments below for why they stay).
  */
 export async function closeOrHideWindow(id: number): Promise<void> {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
@@ -656,39 +660,30 @@ export async function closeOrHideWindow(id: number): Promise<void> {
           }
         }
         if (hybrid.baseWin.isDestroyed()) return;
-        // keepLive parity with the BrowserWindow branch below: a hybrid
-        // peek/slide opened with keepLive:true (e.g. the left slide playing
-        // music) must be HIDDEN, not destroyed, so its WebContentsView keeps
-        // running in the background and the window-open key/url-reuse path can
-        // re-show it (ipc.ts → baseWin.show()). A hide does NOT emit 'close',
-        // so the close-finalize tail (which destroys the content wc +
-        // unregisters) never runs on hide — exactly the keep-alive semantics
-        // required (see the runHybridFinalize comment in ipc.ts). Only a
-        // genuine closeHostWindow frees the resources.
-        //
-        // The hide is a KERNEL decision (§5 step 6A-3): feed
-        // CloseOrHideRequested and let the kernel branch on the record's
-        // first-class keepLive (registered at the ipc.ts open) → HideWindow
-        // → backend.hideWindow. The backend's native 'hide' event is the
-        // only WINDOW_HIDDEN source now — the old synchronous hand-dispatch
-        // (peek 71cfde09's "the BaseWindow 'hide' event fires a tick late"
-        // admission) is gone. This function reads the SAME record field only
-        // to keep the resolved close (the kernel's CloseWindow answer routes
-        // back through this seam) from re-feeding the intent forever.
-        const hybridRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
-        if (machineId != null && hybridRec?.keepLive === true) {
-          DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
-          wmLog('close-or-hide-keeplive', { id, machineId });
+        // Close, hide, or refuse is a KERNEL decision now (`window-kernel.ts`
+        // `decide`'s `CloseOrHideWindow` case): `keepLive` hides rather than
+        // closes (so a slide's WebContentsView keeps running in the
+        // background — a hide does not emit 'close', so the close-finalize
+        // tail that destroys the content wc + unregisters never runs on
+        // hide, exactly the keep-alive semantics required, see the
+        // runHybridFinalize comment in ipc.ts), an `appLifetime` record
+        // refuses outright, and a cascade over the record's own `parentId`
+        // edges closes everything it opened. This seam only resolves the
+        // machine id and dispatches into it — see `WindowRecord.keepLive`/
+        // `appLifetime`'s docs for the branch this now runs.
+        if (machineId != null) {
+          wmLog('close-or-hide-dispatch', { id, machineId });
           kernelCloseOrHideRequested(machineId);
-          maybeHideApp(id);
-          return;
+        } else {
+          // Not machine-registered — nothing for the kernel to decide about.
+          // Route through closeHostWindow so the content WebContents
+          // (registered as a guest of baseWin.id) is destroyed BEFORE the
+          // BaseWindow closes — same page-host close UAF guard as the
+          // canvas/tile-ipc paths.
+          DEBUG && console.log(`hybrid page-host BaseWindow ${id} is not machine-registered — closing directly`);
+          wmLog('close-or-hide-hybrid-unregistered', { id });
+          closeHostWindow(id, hybrid.baseWin);
         }
-        // Route through closeHostWindow so the content WebContents (registered
-        // as a guest of baseWin.id) is destroyed BEFORE the BaseWindow closes —
-        // same page-host close UAF guard as the canvas/tile-ipc paths.
-        DEBUG && console.log(`CLOSING hybrid page-host BaseWindow ${id}`);
-        wmLog('close-or-hide-hybrid-close', { id });
-        closeHostWindow(id, hybrid.baseWin);
         maybeHideApp(id);
         return;
       }
@@ -710,49 +705,30 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     const params = entry.params;
     DEBUG && console.log('Window parameters - modal:', params.modal, 'keepLive:', params.keepLive);
 
-    // The machine record for this window (a non-null `entry` implies it is
-    // machine-registered — the registry payload lives ON the record).
+    // Close, hide, or refuse is a KERNEL decision now (`window-kernel.ts`
+    // `decide`'s `CloseOrHideWindow` case): `keepLive` hides rather than
+    // closes, an `appLifetime` record (the background window) refuses
+    // outright, and a cascade over the record's own `parentId` edges closes
+    // everything this window opened — replacing the address-keyed checks
+    // and the `closeChildWindows` address-string walk this function used to
+    // run itself. This seam only resolves the machine id and dispatches
+    // into it.
     const wmId = getWindowIdFor(id);
-    const rec = wmId != null ? getMachineWindowRecord(wmId) : undefined;
-
-    // Never close the background window
-    if (params.address === WEB_CORE_ADDRESS) {
-      DEBUG && console.log('Refusing to close background window');
-      wmLog('close-or-hide-refuse-background', { id });
-      return;
-    }
-
-    // Special case for settings window - always close it on ESC
-    if (params.address === SETTINGS_ADDRESS) {
-      DEBUG && console.log(`CLOSING settings window ${id}`);
-      closeChildWindows(params.address as string);
-      closeHostWindow(id, win);
-    }
-    // Check if window should be hidden rather than closed.
-    // Only keepLive windows are preserved in the background — modal windows
-    // without keepLive (peeks, quick-views) should be closed so they can be
-    // cleanly recreated on next invocation.
-    //
-    // The hide is a KERNEL decision (§5 step 6A-3): feed CloseOrHideRequested
-    // and the kernel branches on the record's first-class keepLive
-    // (registered at the ipc.ts open) → HideWindow → backend.hideWindow; the
-    // native 'hide' event then feeds WINDOW_HIDDEN. The record field is read
-    // here only so the resolved close (the kernel's CloseWindow answer
-    // routes back through this seam) can't re-feed the intent forever.
-    else if (wmId != null && rec?.keepLive === true) {
-      wmLog('close-or-hide-keeplive', { id, wmId });
+    if (wmId != null) {
+      wmLog('close-or-hide-dispatch', { id, wmId });
       kernelCloseOrHideRequested(wmId);
     } else {
-      // close any open windows this window opened
-      closeChildWindows(params.address as string);
-      DEBUG && console.log(`CLOSING window ${id} (${params.address})`);
-      wmLog('close-or-hide-close', { id });
+      // Not machine-registered — nothing for the kernel to decide about.
+      DEBUG && console.log('Window entry has no machine id, closing directly');
+      wmLog('close-or-hide-no-machine-id', { id });
       closeHostWindow(id, win);
     }
 
     // Hide app to return focus to previous app (only if no other visible windows).
     // Skip for overlay windows — they manage their own restoration flow via the
-    // IZUI coordinator and should not trigger app hiding.
+    // IZUI coordinator and should not trigger app hiding. Untouched by the
+    // move above: the kernel has no model of "app hidden" — see
+    // `maybeHideApp`/`getVisibleWindowCount`'s own docs.
     const isOverlay = params.role === 'overlay';
     if (!isOverlay) {
       maybeHideApp(id);
@@ -834,7 +810,15 @@ export function closeFocusedWindow(): number | null {
 }
 
 /**
- * Close all child windows of a given address
+ * Close all child windows of a given address — an address-string walk over
+ * the legacy registry's `source`/`params.address` linkage, a different graph
+ * from the kernel's own `parentId` edges (it can name windows the kernel has
+ * no closure edge for). `closeOrHideWindow` no longer calls this: its cascade
+ * is now `window-kernel.ts decide`'s `CloseOrHideWindow` case
+ * (`descendantsToCascadeClose`), walked over `parentId`. The sole remaining
+ * caller is `closeWindow` above, the separate forceful close that ignores
+ * `keepLive` — left on the legacy graph rather than migrated, since it has no
+ * exercised production caller of its own to verify against.
  */
 export function closeChildWindows(aAddress: string): void {
   DEBUG && console.log('closeChildWindows()', aAddress);

@@ -140,11 +140,17 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
   // window gets no Esc interceptor (it never receives input) and no
   // registry payload (`source`/`params` come from `createBackgroundWindow`'s
   // legacy-address merge, preserving the WEB_CORE_ADDRESS identity checks).
+  // `appLifetime: true` is what makes `CloseOrHideWindow` refuse this record
+  // (`window-kernel.ts WindowRecord.appLifetime`) — the former
+  // `windows.ts closeOrHideWindow` address check against `WEB_CORE_ADDRESS`,
+  // now a declared fact on the one record that needs it instead of a test
+  // every caller had to repeat.
   registerWindowWithMachine({
     kind: 'browser',
     role: 'utility',
     class: 'background',
     satellite: isSatelliteRegistration('utility', { windowClass: 'background' }),
+    appLifetime: true,
     ...deriveWindowSurface({}),
     win,
     contentWC: win.webContents,

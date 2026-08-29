@@ -436,6 +436,23 @@ export interface WindowRecord {
   selfClosesOnBlur?: boolean;
 
   /**
+   * Declared at registration, same shape as `selfClosesOnBlur`/
+   * `tracksBaseLayerTop` above: this window's lifetime is the app's own, not
+   * an ordinary user-closable surface. `decide`'s `CloseOrHideWindow` branch
+   * REJECTS a command naming a record with this set — neither hiding nor
+   * closing it — and the cascade that branch runs for a closing window's
+   * descendants (`descendantsToCascadeClose`) skips a record carrying this
+   * flag, and its whole subtree, rather than sweeping it. The one live
+   * producer is the hidden core background window (`core-glue.ts`, the
+   * `WEB_CORE_ADDRESS` document) — its teardown is a quit concern
+   * (`GuestTeardownRequested`/`WindowDestroyRequested`), never an ordinary
+   * close request, so an ordinary close request must never reach it. Absent
+   * is the meaningful default: every other window is an ordinary closable
+   * surface.
+   */
+  appLifetime?: boolean;
+
+  /**
    * Whether this window's CONTENT web contents currently holds macOS
    * first-responder status — the mirror of the native `rendererWC
    * 'focus'`/`'blur'` pair, written solely by
@@ -724,6 +741,8 @@ export type Event =
       tracksBaseLayerTop?: boolean;
       /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
       selfClosesOnBlur?: boolean;
+      /** See `WindowRecord.appLifetime`'s doc — declared here. */
+      appLifetime?: boolean;
     }
   /**
    * `opSeq` is present only when this event is the backend's own echo of a
@@ -1026,6 +1045,8 @@ export type Command =
       tracksBaseLayerTop?: boolean;
       /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
       selfClosesOnBlur?: boolean;
+      /** See `WindowRecord.appLifetime`'s doc — declared here. */
+      appLifetime?: boolean;
       expectedVersion: number;
     }
   /**
@@ -1243,7 +1264,7 @@ export type Command =
    */
   | { type: 'ArmColdStartFocus'; id: WindowId | null; expectedVersion: number };
 
-export type Rejection = 'stale-version' | 'no-such-window';
+export type Rejection = 'stale-version' | 'no-such-window' | 'app-lifetime-window';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — described by `decide`'s future effect-emitting counterpart (not
@@ -1665,6 +1686,16 @@ export function evolve(state: State, ev: Event): State {
             : existing.selfClosesOnBlur !== undefined
               ? { selfClosesOnBlur: existing.selfClosesOnBlur }
               : {}),
+          // Intrinsic, same shape as `role`/`keepLive`/`escapeMode`/
+          // `tracksBaseLayerTop`/`selfClosesOnBlur` above — see
+          // `WindowRecord.appLifetime`'s doc: a DECLARED fact, so an event
+          // that names it overwrites, and an event that omits it keeps the
+          // existing value rather than erasing it.
+          ...(ev.appLifetime !== undefined
+            ? { appLifetime: ev.appLifetime }
+            : existing.appLifetime !== undefined
+              ? { appLifetime: existing.appLifetime }
+              : {}),
         };
         // A REVERSIBLE HIDE MUST NEVER SURVIVE INTO A TRANSIENT IDENTITY IT
         // WOULD NOT HAVE BEEN GIVEN IN THE FIRST PLACE (same law as
@@ -1732,6 +1763,7 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
         ...(ev.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: ev.tracksBaseLayerTop } : {}),
         ...(ev.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: ev.selfClosesOnBlur } : {}),
+        ...(ev.appLifetime !== undefined ? { appLifetime: ev.appLifetime } : {}),
         // `contentFocused` is deliberately NOT seeded: registration is
         // exactly the moment nothing has been reported, and absent is the
         // honest answer for that (see the field's doc).
@@ -3220,6 +3252,42 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   return effects;
 }
 
+/**
+ * The ids `CloseOrHideWindow` must ALSO close when it closes `rootId` — every
+ * window `rootId` opened, transitively, walked over the kernel's OWN
+ * `parentId` edges rather than any address/string graph a caller might keep
+ * (ported intent of the old `windows.ts closeChildWindows`, which walked a
+ * legacy registry's `params.parentAddress` string instead — a different
+ * graph, and one that could close windows this graph has no edge for; see
+ * the migration note on `closeChildWindows`'s own call site).
+ *
+ * DEEPEST FIRST (post-order): a child's own descendants come before the
+ * child itself, and `rootId`'s descendants all come before `rootId`'s own
+ * event — `decide`'s caller appends that separately — mirroring the old
+ * function's recurse-then-close shape, so a leaf's teardown always precedes
+ * the ancestor that owned it.
+ *
+ * SKIPS an `appLifetime` record AND its whole subtree, never descending into
+ * one — same boundary `closeChildWindows` drew for `WEB_CORE_ADDRESS`
+ * (return immediately rather than recurse). A window whose lifetime is the
+ * app's own is never swept as someone else's descendant.
+ *
+ * ALWAYS a close, never a hide, for every id this returns — `keepLive` is
+ * read only for `rootId` itself (`decide`'s `CloseOrHideWindow` case); a
+ * cascaded descendant is torn down unconditionally, matching
+ * `closeChildWindows`'s own unconditional `closeHostWindow` call, which never
+ * consulted a child's own keepLive.
+ */
+function descendantsToCascadeClose(state: State, rootId: WindowId): WindowId[] {
+  const ids: WindowId[] = [];
+  for (const child of state.order.filter((w) => w.parentId === rootId)) {
+    if (child.appLifetime === true) continue;
+    ids.push(...descendantsToCascadeClose(state, child.id));
+    ids.push(child.id);
+  }
+  return ids;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // decide — ALL guards live here. Rejects on a stale `expectedVersion` or a
 // command naming a window that isn't in `order`.
@@ -3251,6 +3319,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
           ...(cmd.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: cmd.tracksBaseLayerTop } : {}),
           ...(cmd.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: cmd.selfClosesOnBlur } : {}),
+          ...(cmd.appLifetime !== undefined ? { appLifetime: cmd.appLifetime } : {}),
         },
       ],
     };
@@ -3348,13 +3417,26 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     case 'HideWindow':
       return { events: [{ type: 'WindowHidden', id: cmd.id }] };
     case 'CloseOrHideWindow': {
+      // REFUSAL FIRST (§0.1): a record whose lifetime is the app's own
+      // (`WindowRecord.appLifetime`) rejects the command outright — neither
+      // hidden nor closed, and no cascade runs. Ported from
+      // `windows.ts closeOrHideWindow`'s address-keyed background-window
+      // refusal, now a property of the record instead of an address test.
+      const record = state.order.find((w) => w.id === cmd.id)!;
+      if (record.appLifetime === true) {
+        return { rejected: 'app-lifetime-window' };
+      }
+      // CASCADE: every window this one opened, transitively, over the
+      // kernel's own `parentId` edges (`descendantsToCascadeClose`) — closed
+      // unconditionally, deepest first, before `cmd.id`'s own event.
+      const cascade: Event[] = descendantsToCascadeClose(state, cmd.id).map((id) => ({ type: 'WindowClosed', id }));
       // THE branch point (§0.1): keepLive === true hides, never closes, so
       // its content keeps running; otherwise it closes. This guard lives
-      // here, never in `evolve`.
-      const record = state.order.find((w) => w.id === cmd.id)!;
-      return record.keepLive
-        ? { events: [{ type: 'WindowHidden', id: cmd.id }] }
-        : { events: [{ type: 'WindowClosed', id: cmd.id }] };
+      // here, never in `evolve`, and applies only to `cmd.id` itself — a
+      // cascaded descendant above is torn down regardless of its own
+      // keepLive (see `descendantsToCascadeClose`'s doc).
+      const own: Event = record.keepLive ? { type: 'WindowHidden', id: cmd.id } : { type: 'WindowClosed', id: cmd.id };
+      return { events: [...cascade, own] };
     }
     case 'SetFullscreen': {
       const rec = state.order.find((w) => w.id === cmd.id)!;

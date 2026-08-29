@@ -301,6 +301,8 @@ export interface RegisterWindowSpec {
   tracksBaseLayerTop?: boolean;
   /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
   selfClosesOnBlur?: boolean;
+  /** See `WindowRecord.appLifetime`'s doc — declared here. */
+  appLifetime?: boolean;
 }
 
 /**
@@ -324,6 +326,7 @@ export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
     ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
+    ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     expectedVersion: getKernelExecutor().getState().version,
   });
 }
