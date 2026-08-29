@@ -78,7 +78,6 @@ import {
 
 import {
   winDevtoolsConfig,
-  closeOrHideWindow,
   getSystemThemeBackgroundColor,
   getPrefs,
   showWindowHeadlessSafe,
@@ -96,7 +95,6 @@ import {
   kernelDestroyWindow,
   kernelCloseContent,
   kernelCloseWindowDirect,
-  kernelRaiseWindow,
   kernelWindowShown,
   kernelSetFullscreen,
   kernelMaximizeExitedByResize,
@@ -2693,15 +2691,6 @@ export function registerWindowHandlers(): void {
             'keepLive-reuse',
           );
 
-          // Stamp show-time so the modal blur handler can suppress the
-          // spurious blur that NSPanel + `alwaysOnTop:'floating'` emits
-          // during the first ~200ms after show(). Without this, hitting
-          // the global hotkey from another app produces: show → immediate
-          // blur → hide(), and the NSPanel's floating-level order race
-          // leaves the panel rendered even though Electron reports
-          // isVisible=false. See commit 1b568d40 for original fix; this
-          // was lost in the tile system refactor.
-          (existingWindow.window as { __lastShowTime?: number }).__lastShowTime = Date.now();
           // Re-apply Spaces visibility for transient roles so the hidden
           // window follows the user to the active Space rather than dragging
           // them back to its home Space. Non-transient (anchored) windows
@@ -3810,95 +3799,6 @@ export function registerWindowHandlers(): void {
         // 9/10). Dev-only path; prod never auto-opens devtools so this is inert
         // there.
         win.webContents.openDevTools({ mode: 'detach', activate: false });
-      }
-
-      // Set up modal behavior if requested
-      // Delay blur handler attachment to avoid race condition where focus events
-      // are still settling after window creation (can cause immediate close).
-      //
-      // Under Playwright (E2E_TEST=true), skip the close-on-blur handler
-      // entirely. Parallel workers cause focus events to flicker between
-      // windows in ways they don't in real user sessions, closing modal
-      // cmd panels mid-test with "Target page, context or browser has
-      // been closed" errors on the next .press() / .evaluate(). Gating on
-      // `E2E_TEST` rather than `isTestProfile()` lets a developer run the
-      // packaged app with `PROFILE=test-sandbox` (required to bypass the
-      // single-instance lock for a manual smoke) and still see real
-      // close-on-blur behaviour.
-      if (windowSelfClosesOnBlur(options) && process.env.E2E_TEST !== 'true') {
-        setTimeout(() => {
-          if (!win.isDestroyed()) {
-            win.on('blur', () => {
-              // Don't close if focus moved to a child utility window (e.g., chain popup)
-              const focused = BrowserWindow.getFocusedWindow();
-              if (focused && !focused.isDestroyed()) {
-                const focusedInfo = getWindowInfo(focused.id);
-                if (focusedInfo?.params?.role === 'utility') {
-                  DEBUG && console.log('window-open: blur for modal window suppressed — focus went to utility child', url);
-                  return;
-                }
-                // Warn when focus jumped to a workspace child. Before the
-                // ipc.ts:1182 default flipped from 'utility' to 'workspace',
-                // an unmarked child window was implicitly utility and would
-                // have hit the suppression above. If a feature spawned a
-                // small "child utility" popup without declaring its role,
-                // the modal will now close on blur instead of staying open.
-                // Fix: that child needs `role: 'utility'` explicit.
-                if (focusedInfo?.params?.role === 'workspace') {
-                  console.warn(
-                    `[window-open] modal "${url}" closing on blur — focus went to workspace child "${focusedInfo?.params?.address}". ` +
-                    `If this is unexpected, the child window should declare role:'utility' explicitly ` +
-                    `(was implicitly utility before the workspace-default change).`
-                  );
-                }
-              }
-              // Suppress spurious blurs that fire shortly after show. When a
-              // keepLive modal NSPanel is (re-)shown — especially triggered
-              // from another app via global hotkey — the macOS activation
-              // policy change plus the `alwaysOnTop: 'floating'` window level
-              // produces a brief focus dance that fires blur before focus
-              // actually settles. Hiding during this window leaves the
-              // NSPanel layer rendered even though `isVisible()` flips to
-              // false. Suppressing the hide is the load-bearing half and it
-              // still happens unconditionally (the `return` below); the
-              // re-focus is the best-effort half. Original fix: commit 1b568d40.
-              //
-              // §5 step 9 (R2): the direct `win.focus()` is gone — the raise is
-              // a machine dispatch, so `electron-window-backend.ts` stays the
-              // only module that touches an Electron window. Two reducer gates
-              // make this raise BEST-EFFORT and, for this call site, usually a
-              // no-op — knowingly accepted, because the failure mode is "panel
-              // stays up but unkeyed", never "panel vanishes":
-              //   1. `applyRaiseRequest` bails on `!state.appActive`, and this
-              //      is exactly the macOS activation dance where `appActive`
-              //      may still read false.
-              //   2. `isEligibleFront` rejects satellites, and every window
-              //      that gets this handler is `modal:true` — which
-              //      `isSatelliteRegistration` classifies as a satellite. So
-              //      the raise is dropped by construction here.
-              // Neither gate may be relaxed or bypassed to make this land:
-              // `applyRaiseRequest` is the sole `RAISE_WINDOW` emitter and that
-              // is what terminates the OS-adapter pump drain.
-              const showTime = (win as { __lastShowTime?: number }).__lastShowTime;
-              if (showTime && Date.now() - showTime < 200) {
-                DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
-                // Feed the kernel (window-kernel-dispatch.ts) — this is what
-                // drives the window manager.
-                kernelRaiseWindow(machineWindowId);
-                return;
-              }
-              // Name the focus thief in the log: which window (or hybrid host)
-              // took key and is dismissing this modal. Diagnostic for the
-              // palette-dies-over-fullscreen trace (peek 7fffa286 follow-up).
-              DEBUG && console.log(
-                'window-open: blur for modal window', url,
-                '— focus went to:', focused && !focused.isDestroyed() ? `bw ${focused.id} (${getWindowInfo(focused.id)?.params?.address ?? '?'})` : 'no BrowserWindow',
-              );
-              // Fire-and-forget (async, never rejects) — blur dismissal.
-              void closeOrHideWindow(win.id);
-            });
-          }
-        }, 100);
       }
 
       // Maximize window if requested (fills screen without OS fullscreen).
