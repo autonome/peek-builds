@@ -3921,7 +3921,36 @@ export function registerTileIpcHandlers(): void {
     if (!Number.isFinite(width) || !Number.isFinite(height)) {
       return { success: false, error: 'Invalid dimensions' };
     }
-    win.setSize(width, height);
+    const current = win.getBounds();
+    const next: Electron.Rectangle = { x: current.x, y: current.y, width, height };
+    // Kernel-owned, same route as tile:window:set-bounds (§5 step 7E): the
+    // write is the kernel's SetBounds effect through the port. The bounds
+    // mirror updates only via the backend's BOUNDS_CHANGED echo.
+    const machineId = getWindowIdFor(win);
+    if (machineId != null) {
+      kernelSetBounds(machineId, next);
+    }
+
+    const info = getWindowInfo(win.id);
+    if (info) {
+      const prev = info.params.placement as { mode?: string } | undefined;
+      const isByDesign =
+        prev?.mode === 'centered' ||
+        prev?.mode === 'edge' ||
+        prev?.mode === 'parent-centered';
+      if (!isByDesign) {
+        const displays = screen.getAllDisplays();
+        const primaryId = screen.getPrimaryDisplay().id;
+        const target = ownDisplay(next, displays, primaryId);
+        const { relX, relY } = toProportional(next, target);
+        info.params.placement = { mode: 'proportional', relX, relY };
+        // Drop legacy mirrored flags so a subsequent session save+restore
+        // doesn't re-derive a non-proportional Placement from stale
+        // primitives.
+        delete info.params.center;
+        delete info.params.screenEdge;
+      }
+    }
     return { success: true };
   });
 
