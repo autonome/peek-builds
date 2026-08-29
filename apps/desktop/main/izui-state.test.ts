@@ -60,6 +60,11 @@ describe('IZUI State Coordinator Tests', () => {
   // the window-state machine's `front`, which unit tests drive through this
   // variable (production wires the real machine in window-machine.ts).
   let mockFrontWindowId: number | null;
+  // Stub for the injected app-active fact provider (see
+  // setAppActiveProvider): evaluateOnShow reads this instead of an
+  // OS-event-driven mirror of its own — production wires the real kernel
+  // fact (`window-machine.ts getAppActive()`) in `seedSessionMirror`.
+  let mockAppActive: boolean;
 
   before(async () => {
     // Dynamic import of the compiled module
@@ -70,31 +75,33 @@ describe('IZUI State Coordinator Tests', () => {
     // Clear mock windows before each test
     mockWindows = [];
     mockFrontWindowId = null;
-    // Reset all state (session, appFocused, etc.)
+    mockAppActive = true;
+    // Reset all state (session, etc.)
     const coordinator = izuiState.getIzuiCoordinator();
     coordinator._resetAll();
     coordinator.setFrontWindowIdProvider(() => mockFrontWindowId);
+    coordinator.setAppActiveProvider(() => mockAppActive);
   });
 
   describe('evaluateOnShow', () => {
     it('should return active when app has OS-level focus', () => {
       const coordinator = izuiState.getIzuiCoordinator();
-      // appFocused defaults to true (app startup)
+      // mockAppActive defaults to true (app startup)
       const result = coordinator.evaluateOnShow();
       assert.strictEqual(result, 'active');
     });
 
     it('should return transient when app does NOT have OS-level focus', () => {
       const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.setAppFocused(false); // User is in another app
+      mockAppActive = false; // User is in another app
       const result = coordinator.evaluateOnShow();
       assert.strictEqual(result, 'transient');
     });
 
-    it('should return active at app startup (appFocused defaults to true)', () => {
+    it('should return active at app startup (appActive defaults to true)', () => {
       // At startup, app is focused even though no content windows exist yet
       const coordinator = izuiState.getIzuiCoordinator();
-      // Don't call setAppFocused - verify default is active
+      // Don't flip mockAppActive - verify default is active
       const result = coordinator.evaluateOnShow();
       assert.strictEqual(result, 'active');
     });
@@ -103,18 +110,18 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
       // Start transient (app not focused)
-      coordinator.setAppFocused(false);
+      mockAppActive = false;
       coordinator.evaluateOnShow();
       assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
 
       // User focuses Peek (app gains focus)
-      coordinator.setAppFocused(true);
+      mockAppActive = true;
       coordinator.evaluateOnShow();
       // Should promote from transient to active
       assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
 
       // User switches to another app
-      coordinator.setAppFocused(false);
+      mockAppActive = false;
       coordinator.evaluateOnShow();
       // Should NOT downgrade from active to transient (one-way ratchet)
       assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
@@ -135,12 +142,41 @@ describe('IZUI State Coordinator Tests', () => {
       const originalSessionId = coordinator.getSession()!.id;
 
       // User switches to another app
-      coordinator.setAppFocused(false);
+      mockAppActive = false;
       coordinator.evaluateOnShow();
 
       const session = coordinator.getSession();
       assert.strictEqual(session!.id, originalSessionId, 'Should be same session');
       assert.strictEqual(session!.entryMode, 'active', 'Entry mode should NOT be downgraded');
+    });
+  });
+
+  describe('notifyAppActiveGained', () => {
+    it('promotes a transient session to active immediately, without waiting for the next window open', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      mockAppActive = false;
+      coordinator.evaluateOnShow();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
+
+      // Regains focus without any new window opening (no evaluateOnShow call).
+      coordinator.notifyAppActiveGained();
+
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
+      assert.strictEqual(coordinator.getState(), 'active');
+    });
+
+    it('is a no-op with no session', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      assert.strictEqual(coordinator.getSession(), null);
+      coordinator.notifyAppActiveGained();
+      assert.strictEqual(coordinator.getSession(), null);
+    });
+
+    it('is a no-op for an already-active session', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.notifyAppActiveGained();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
     });
   });
 
@@ -164,7 +200,7 @@ describe('IZUI State Coordinator Tests', () => {
 
     it('should persist transient state even after windows are pushed', () => {
       const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.setAppFocused(false); // App not focused
+      mockAppActive = false; // App not focused
       coordinator.evaluateOnShow(); // Starts as transient
       coordinator.pushWindow(1);
 
@@ -487,7 +523,7 @@ describe('IZUI State Coordinator Tests', () => {
     it('should maintain transient mode when opening windows from transient session', () => {
       // Simulate: user invokes cmd bar via global hotkey (app not focused)
       const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.setAppFocused(false);
+      mockAppActive = false;
 
       // Cmd bar evaluates on show - detects transient (app not focused)
       const entryMode = coordinator.evaluateOnShow();
@@ -512,7 +548,7 @@ describe('IZUI State Coordinator Tests', () => {
     it('should maintain active mode when user is working within app', () => {
       // Simulate: user is working in Peek (app focused), opens cmd bar
       const coordinator = izuiState.getIzuiCoordinator();
-      // appFocused defaults to true
+      // mockAppActive defaults to true
 
       // Cmd bar evaluates on show - detects active (app focused)
       const entryMode = coordinator.evaluateOnShow();
@@ -536,7 +572,7 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
       // 1. App not focused - user invokes via global hotkey
-      coordinator.setAppFocused(false);
+      mockAppActive = false;
 
       // 2. Cmd bar opens and evaluates state
       const entryMode = coordinator.evaluateOnShow();
@@ -562,7 +598,7 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
       // 1. User is working in Peek (app focused)
-      // appFocused defaults to true
+      // mockAppActive defaults to true
       coordinator.startSession('active');
       coordinator.pushWindow(50);
 

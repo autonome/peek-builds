@@ -613,15 +613,18 @@ export async function initialize(): Promise<void> {
   // the izui→machine session mirror.
   initWindowStateMachine();
 
-  // Track OS-level app focus for IZUI transient detection.
-  // When Peek is the active app, windows opened are "active."
-  // When Peek is in the background, windows opened are "transient."
+  // Broadcast OS-level app focus changes for listeners outside the window
+  // machine (HUD, spaces feature — see their `app:focus-changed` subscribers).
+  // The IZUI coordinator no longer mirrors this itself: `evaluateOnShow`
+  // reads the kernel's `getAppActive()` through an injected provider
+  // (`window-machine.ts seedSessionMirror`), fed by this same did-become/
+  // resign-active pair via `electron-window-backend.ts attachAppListeners` —
+  // "THE copy; no module may keep its own did-resign-active mirror."
   if (process.platform === 'darwin') {
     // macOS: use did-become-active / did-resign-active for reliable OS-level focus.
     // browser-window-blur/focus are per-window and unreliable with utility windows
     // (e.g. HUD with alwaysOnTop+focusable:false confuses getFocusedWindow()).
     (app as any).on('did-become-active', () => {
-      getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), 'app:focus-changed', { focused: true });
       // (Cold-start trailing-dance re-raise removed — the reducer's
       // APP_ACTIVATED clause consumes the `pendingColdStartFocus` latch a boot
@@ -639,9 +642,8 @@ export async function initialize(): Promise<void> {
       // dispatches.)
     });
     (app as any).on('did-resign-active', () => {
-      const coordBefore = getIzuiCoordinator();
-      DEBUG && console.log('[izui] did-resign-active fired. state:', coordBefore.getState(), 'isOverlay:', coordBefore.isOverlay(), 'exitCooldown:', coordBefore.isWithinOverlayExitCooldown(), 'entryCooldown:', coordBefore.isWithinOverlayEntryCooldown());
-      coordBefore.setAppFocused(false);
+      const coord = getIzuiCoordinator();
+      DEBUG && console.log('[izui] did-resign-active fired. state:', coord.getState(), 'isOverlay:', coord.isOverlay(), 'exitCooldown:', coord.isWithinOverlayExitCooldown(), 'entryCooldown:', coord.isWithinOverlayEntryCooldown());
       publish(getSystemAddress(), 'app:focus-changed', { focused: false });
 
       // (Overlay-switcher close removed — §5 step 9's LAST direct window call
@@ -664,14 +666,12 @@ export async function initialize(): Promise<void> {
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
     app.on('browser-window-focus', () => {
-      getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), 'app:focus-changed', { focused: true });
     });
     app.on('browser-window-blur', () => {
       // Only mark unfocused if NO window has focus (user switched to another app).
       // During window switches within Peek, one window blurs before another focuses.
       if (!BrowserWindow.getFocusedWindow()) {
-        getIzuiCoordinator().setAppFocused(false);
         publish(getSystemAddress(), 'app:focus-changed', { focused: false });
       }
     });

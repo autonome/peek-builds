@@ -769,7 +769,6 @@ interface HybridHostAssembleCtx {
   contentW: number;
   contentH: number;
   isWebPage: boolean;
-  isTransient: boolean;
   openerWindow: Electron.BrowserWindow | null;
   isRealParent: boolean;
   deferContentLoad: boolean;
@@ -792,7 +791,7 @@ function assembleHybridPageHost(
   const {
     url, options, source, placement,
     contentX, contentY, contentW, contentH,
-    isWebPage, isTransient, openerWindow, isRealParent,
+    isWebPage, openerWindow, isRealParent,
     deferContentLoad, rtPreloadApplied,
   } = ctx;
 
@@ -966,7 +965,6 @@ function assembleHybridPageHost(
   const windowParams: Record<string, unknown> = {
     ...options,
     address: url,
-    transient: isTransient,
     parentWindowId: isRealParent ? openerWindow!.id : null,
     role,
     placement,
@@ -2064,7 +2062,6 @@ export function wireHybridContentEvents(
               contentW: placedBounds.width,
               contentH: placedBounds.height,
               isWebPage: true,
-              isTransient: false,
               openerWindow: null,
               isRealParent: false,
               deferContentLoad: false,
@@ -2569,20 +2566,13 @@ export function registerWindowHandlers(): void {
     };
     perfMark('entry');
 
-    // IMPORTANT: Determine transient state BEFORE creating the window
-    // A window is transient if:
-    // 1. The current IZUI session is transient (user invoked from background), OR
-    // 2. No Peek window was focused when evaluated
-    // Check session state FIRST before evaluateOnShow() might change it
+    // Evaluate app-focus against the IZUI session (starts one if none
+    // exists yet, and ratchets a transient session to active if Peek now
+    // has focus) — see izui-state.ts evaluateOnShow. The per-window
+    // `params.transient` flag this used to feed is gone; a window's real
+    // transience is its `role` (`window-kernel.ts TRANSIENT_ROLES`).
     const coordinator = getIzuiCoordinator();
-    const sessionWasTransient = coordinator.isTransient();
-
-    // Now evaluate (this might update session state based on current focus)
-    const entryMode = coordinator.evaluateOnShow();
-
-    // Use session state if available, otherwise use evaluated state
-    const isTransient = sessionWasTransient || entryMode === 'transient';
-    DEBUG && console.log('[izui] Transient detection:', { sessionWasTransient, entryMode, isTransient });
+    coordinator.evaluateOnShow();
 
     // Check if window with this key already exists or is being created
     if (options.key) {
@@ -2605,17 +2595,11 @@ export function registerWindowHandlers(): void {
         const existingHybrid = findHybridWindowByKey(options.key, msg.source);
         if (existingHybrid) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
-          // Parity with the canvas key-reuse below: refresh the per-window
-          // transient flag from real-time OS focus (the session's isTransient()
-          // has a one-way active→never-transient ratchet, so reuse from another
-          // app must read appFocused directly) and let the stored Placement
+          // Parity with the canvas key-reuse below: let the stored Placement
           // intent rescue/re-center the window on a display change. A hybrid
           // window is a BaseWindow, but applyPlacementOnReuse only touches
           // getBounds/setBounds/id — BaseWindow-safe, same cast trackWindow uses.
           const hybridInfo = getWindowInfo(existingHybrid.windowId);
-          if (hybridInfo) {
-            hybridInfo.params.transient = !coordinator.isAppFocused();
-          }
           if (!isHeadless()) {
             try {
               applyPlacementOnReuse(
@@ -2655,7 +2639,6 @@ export function registerWindowHandlers(): void {
             key: options.key,
             variant: 'hybrid',
             id: existingHybrid.windowId,
-            transient: hybridInfo?.params.transient as boolean | undefined,
           });
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
@@ -2665,16 +2648,7 @@ export function registerWindowHandlers(): void {
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
 
-        // For keepLive reuse, update the per-window transient flag from OS-level app focus.
-        // Use isAppFocused() (real-time OS focus) instead of session's isTransient()
-        // because the session has a one-way ratchet (active never downgrades to transient).
-        // When a user switches to another app and then invokes cmd via global hotkey,
-        // the session may still be 'active' from earlier use, but appFocused correctly
-        // reflects that Peek was NOT the foreground app at invocation time.
-        const coordinator = getIzuiCoordinator();
         const existingData = existingWindow.data as { params: Record<string, unknown> };
-        existingData.params.transient = !coordinator.isAppFocused();
-        DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
           // Display-change safety for keepLive reuse: read the stored
@@ -2753,7 +2727,6 @@ export function registerWindowHandlers(): void {
           key: options.key,
           variant: 'keepLive',
           id: existingWindow.id,
-          transient: existingData.params.transient as boolean | undefined,
         });
         return { success: true, id: existingWindow.id, reused: true };
       }
@@ -3200,7 +3173,6 @@ export function registerWindowHandlers(): void {
           contentW,
           contentH,
           isWebPage,
-          isTransient,
           openerWindow,
           isRealParent: !!isRealParent,
           deferContentLoad,
@@ -3411,8 +3383,6 @@ export function registerWindowHandlers(): void {
       const loadUrl = url;
 
       // Add to window manager with modal parameter
-      // Note: isTransient was determined BEFORE window creation (at top of handler)
-      // to avoid the race condition where the new window becomes focused before we check
       // Role + parentWindowId were derived earlier (right after window
       // creation) using ./izui-roles.ts. Re-bound here for the registration
       // payload below.
@@ -3434,12 +3404,11 @@ export function registerWindowHandlers(): void {
       const windowParams: Record<string, unknown> = {
         ...options,
         address: url,
-        transient: isTransient,
         parentWindowId,
         role,
         placement,
       };
-      console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
+      console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'placement:', placement);
       // Register the BrowserWindow with the window-state machine. Front-
       // ineligibility (satellite) is decided by the shared
       // `isSatelliteRegistration` predicate — see its doc for why a modal /

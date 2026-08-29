@@ -114,7 +114,6 @@ import {
   registerDownloadHandler,
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
-import { getIzuiCoordinator } from './izui-state.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -190,31 +189,24 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
   // in window-kernel.test.ts; no spec used this bridge.)
   /**
-   * Simulate "Peek is / is not the active app" for drift-detection tests,
-   * across BOTH app-active mirrors: the kernel's `State.appActive` (which the
-   * restore-focus decision reads — see session.ts `restore-focus-decision`)
-   * and the IZUI coordinator's `isAppFocused()` (still read by ipc.ts's
-   * transient classification).
+   * Simulate "Peek is / is not the active app" for drift-detection tests, by
+   * feeding the kernel's `State.appActive` — the restore-focus decision
+   * (session.ts `restore-focus-decision`) and the IZUI coordinator's
+   * `evaluateOnShow` transient classification (`ipc.ts`) both read this ONE
+   * fact now (the coordinator's own `isAppFocused()` mirror, which needed a
+   * separate forced override here, is retired — see `izui-state.ts
+   * appActiveProvider`).
    *
-   * The kernel half feeds the same `AppActivated`/`AppResigned` events
+   * Feeds the same `AppActivated`/`AppResigned` events
    * `electron-window-backend.ts attachAppListeners` emits from
    * did-become/resign-active, so the reducer cannot tell a simulated switch
-   * from a real one.
-   *
-   * The coordinator half sets a forced OVERRIDE (not just the OS-event-driven
-   * value) because opening a new BrowserWindow during restore can fire
-   * did-become-active on macOS, which would otherwise overwrite the test's
-   * intent. That override sticks until `clearAppFocusedForTest()`. See
-   * tests/desktop/session-restore-focus.spec.ts.
+   * from a real one — and this test bridge is the ONLY app-activation input
+   * on a headless/Linux run (`did-become-active`/`did-resign-active` never
+   * fire under Xvfb), so without it the kernel's `appActive` mirror stays
+   * false for the whole run and every executor raise reads as suppressed.
+   * See tests/desktop/session-restore-focus.spec.ts.
    */
   setAppFocusedForTest: (focused: boolean) => {
-    (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
-      ._setAppFocusOverride(focused);
-    // Feed the kernel (window-kernel-dispatch.ts) the app-activation
-    // edge — this test bridge is the ONLY app-activation input on a
-    // headless/Linux run (`did-become-active`/`did-resign-active` never fire
-    // under Xvfb), so without this the kernel's `appActive` mirror stays false
-    // for the whole run and every executor raise reads as suppressed.
     if (focused) {
       kernelAppActivated();
     } else {
@@ -222,19 +214,13 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     }
   },
   /**
-   * Release the coordinator override and hand app-focus back to the OS.
-   * Only the coordinator carries an override; the kernel is left alone,
-   * for the reason spelled out at the reset itself.
+   * No-op: kept so existing specs calling it don't break. There is no
+   * override left to release — `setAppFocusedForTest` feeds the kernel's own
+   * `appActive` mirror, the same one real did-become/resign-active events
+   * feed, so it self-corrects on the next real OS focus event with nothing
+   * to explicitly clear.
    */
-  clearAppFocusedForTest: () => {
-    (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
-      ._setAppFocusOverride(null);
-    // No kernel feed here: the APP_ACTIVATED dispatch this reset used to make
-    // reached only the old window machine (deleted), never the kernel, so
-    // feeding it here would hand the kernel a fact it never had rather than
-    // preserving one — and it would disarm pendingAppResignSweep and re-show
-    // every hiddenByAppBlur window at teardown.
-  },
+  clearAppFocusedForTest: () => {},
   /**
    * Read the restoreSessionSnapshot drift-detection counters. Reset at
    * the top of every restoreSessionSnapshot call, incremented at each

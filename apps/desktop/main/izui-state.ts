@@ -51,11 +51,24 @@ class IzuiStateCoordinator {
   private state: IzuiState = 'idle';
   private session: IzuiSession | null = null;
 
-  // OS-level app focus state. True when Peek is the active app.
-  // Updated by browser-window-focus/blur events in main.ts.
-  // Initial value is true: at app launch, Peek IS the active app.
-  // In headless mode, stays true (no real focus events fire).
-  private appFocused: boolean = true;
+  // App-active fact provider: real-time "is Peek the OS-focused app"
+  // — INJECTED, not imported, same one-way pattern as
+  // `frontWindowIdProvider` below. Wired once at boot by `window-machine.ts
+  // seedSessionMirror` to `getAppActive()`, the kernel's own app-active
+  // mirror (fed by `electron-window-backend.ts attachAppListeners`'
+  // did-become/resign-active listeners — "THE copy; no module may keep its
+  // own did-resign-active mirror," per that function's doc). This
+  // coordinator used to keep such a mirror itself (`appFocused`, fed
+  // straight off `app.on('did-become-active'/…)` in main.ts); that was a
+  // second copy of the same OS fact and is gone. `null` before boot wiring
+  // runs (or in an unseeded unit test) reads as focused, matching the old
+  // mirror's construction-time default (Peek IS the active app at launch).
+  private appActiveProvider: (() => boolean) | null = null;
+
+  /** Register (or clear, with null) the app-active fact provider. */
+  setAppActiveProvider(provider: (() => boolean) | null): void {
+    this.appActiveProvider = provider;
+  }
 
   // Cooldown: timestamp of last overlay exit. Used to prevent the macOS focus dance
   // (did-resign-active → did-become-active cycle during window restoration) from
@@ -106,22 +119,19 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Update OS-level app focus state.
-   * Called from main.ts browser-window-focus/blur event handlers.
+   * Notify the coordinator that Peek just regained OS-level app focus. Runs
+   * the same one-way ratchet `evaluateOnShow` runs on the next window open —
+   * promotes a transient session to active immediately, instead of waiting
+   * for the next window to open, so a session left transient while the user
+   * was away updates the instant they click back in.
    *
-   * Suppressed while a test override is in effect — see _testAppFocusOverride.
+   * Wired by `window-machine.ts seedSessionMirror` to the kernel's
+   * `subscribeAppActive` edge (the gained-focus transition only — losing
+   * focus has no session-side effect of its own; `evaluateOnShow` reads the
+   * live `appActiveProvider` on the next open regardless).
    */
-  setAppFocused(focused: boolean): void {
-    if (this._testAppFocusOverride !== null) {
-      DEBUG && console.log('[izui] App focus change suppressed by test override:', focused, '(override=', this._testAppFocusOverride, ')');
-      return;
-    }
-    this.appFocused = focused;
-    DEBUG && console.log('[izui] App focus changed:', focused);
-
-    // One-way ratchet: when app gains focus during a transient session,
-    // promote to active. The user is now working in Peek.
-    if (focused && this.session && this.session.entryMode === 'transient') {
+  notifyAppActiveGained(): void {
+    if (this.session && this.session.entryMode === 'transient') {
       this.session.entryMode = 'active';
       this.state = 'active';
       this.emitSessionChange();
@@ -130,37 +140,11 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Test-only override for `isAppFocused()`. When non-null, this value is
-   * returned instead of the OS-event-driven `appFocused` state, and
-   * `setAppFocused()` becomes a no-op. Needed by drift-detection tests
-   * for the restore focus-gate: opening a new BrowserWindow during
-   * restore can trigger macOS to fire did-become-active mid-loop, which
-   * would otherwise overwrite the test's intent ("simulate user is away").
-   *
-   * Pass null to release the override and restore OS-driven behavior.
-   */
-  private _testAppFocusOverride: boolean | null = null;
-  _setAppFocusOverride(focused: boolean | null): void {
-    this._testAppFocusOverride = focused;
-    DEBUG && console.log('[izui] Test app-focus override:', focused);
-  }
-
-  /**
-   * Check if app currently has OS-level focus.
-   * Returns the test override when set, otherwise the OS-driven state.
-   */
-  isAppFocused(): boolean {
-    if (this._testAppFocusOverride !== null) return this._testAppFocusOverride;
-    return this.appFocused;
-  }
-
-  /**
    * Reset all state (for testing only)
    */
   _resetAll(): void {
     this.state = 'idle';
     this.session = null;
-    this.appFocused = true;
     this.lastOverlayExitTime = 0;
     this.lastOverlayEntryTime = 0;
   }
@@ -221,13 +205,15 @@ class IzuiStateCoordinator {
    * @returns 'active' if Peek has OS focus, 'transient' if not
    */
   evaluateOnShow(_excludeWindowId?: number): 'active' | 'transient' {
-    // IZUI policy: app focused → active, app not focused → transient.
-    // appFocused is tracked via browser-window-focus/blur events in main.ts.
-    // At startup, appFocused defaults to true (app is active when launched).
-    // In headless mode, appFocused stays true (no real focus events fire).
-    const result = this.appFocused ? 'active' : 'transient';
+    // IZUI policy: app focused → active, app not focused → transient. The
+    // fact comes from the injected `appActiveProvider` (see its doc) rather
+    // than an OS-event mirror this module keeps itself. Unwired reads as
+    // focused (app is active when launched / in headless mode, where no
+    // real focus events fire).
+    const appActive = this.appActiveProvider ? this.appActiveProvider() : true;
+    const result = appActive ? 'active' : 'transient';
 
-    DEBUG && console.log('[izui] evaluateOnShow:', result, 'appFocused:', this.appFocused);
+    DEBUG && console.log('[izui] evaluateOnShow:', result, 'appActive:', appActive);
 
     if (!this.session) {
       this.startSession(result);
@@ -448,9 +434,11 @@ class IzuiStateCoordinator {
 // ESC policy (`escPolicy` / `escUnhandledPolicy`) moved into
 // `window-escape.ts interpretEscape` step 6 — that module is now the
 // single ESC decider. This coordinator keeps ONLY the session tri-state
-// (idle/transient/active), `setAppFocused`, and the switcher-overlay WINDOW
-// teardown executor (enterOverlay/exitOverlay/…), which the machine invokes via
-// the CLOSE_SWITCHER seam.
+// (idle/transient/active), the overlay entry/exit cooldowns (wall-clock
+// windows the kernel does not model — see `electron-window-backend.ts
+// attachAppListeners`), and the switcher-overlay WINDOW teardown executor
+// (enterOverlay/exitOverlay/…), which the machine invokes via the
+// CLOSE_SWITCHER seam.
 
 // Singleton instance
 const coordinator = new IzuiStateCoordinator();

@@ -116,10 +116,13 @@ export function initWindowStateMachine(): void {
 
 /**
  * Front-id provider for the coordinator's switcher focus-restore seed
- * (`enterOverlay` → `preOverlayFocusTarget`). The kernel models no session, so
- * this is the ONLY half of the old session mirror that survives — the
- * coordinator's own session state is read straight off `getIzuiCoordinator()`
- * wherever a caller needs it (`dispatchEscapePress` below, `clampSession`).
+ * (`enterOverlay` → `preOverlayFocusTarget`), plus the coordinator's app-active
+ * fact provider and gained-focus edge. The kernel models no session, so these
+ * are the ONLY seams the old session mirror still needs — the coordinator's
+ * own session state is read straight off `getIzuiCoordinator()` wherever a
+ * caller needs it (`dispatchEscapePress` below, `clampSession`), and its
+ * app-focus mirror (`appFocused`/`setAppFocused`/`isAppFocused`) is gone in
+ * favor of reading the kernel's `getAppActive()` directly.
  */
 function seedSessionMirror(): void {
   if (sessionSeeded) return;
@@ -130,6 +133,12 @@ function seedSessionMirror(): void {
     if (front == null) return null;
     const native = getNativeWindowFor(front);
     return native ? native.id : null;
+  });
+  coord.setAppActiveProvider(() => getAppActive());
+  // Gained-focus edge only (see `notifyAppActiveGained`'s doc) — losing focus
+  // has no session-side effect of its own.
+  subscribeAppActive((active) => {
+    if (active) coord.notifyAppActiveGained();
   });
 }
 
