@@ -109,6 +109,7 @@ import {
   kernelFullscreenSettleTimeout,
   kernelBoundsChanged,
   kernelOverlayAttached,
+  kernelCloseOrHideRequested,
 } from './window-kernel-dispatch.js';
 
 /**
@@ -427,6 +428,40 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   private readonly pendingShowOpSeq = new Map<WindowId, number>();
   private readonly pendingHideOpSeq = new Map<WindowId, number>();
 
+  /**
+   * "My own `closeWindow` is mid-call on this window and its `win.close()`
+   * is about to fire" — the close-family counterpart of `pendingShowOpSeq`.
+   * A native `'close'` normally means the OS or the user asked to close the
+   * window (a red-button click, an OS-level Cmd+W), and the `'close'`
+   * listener vetoes it and hands the decision to the kernel
+   * (`kernelCloseOrHideRequested`) so `decide()` can resolve keepLive to a
+   * hide. But the kernel's OWN `CloseWindow`/`CloseWindowDirect` effects are
+   * realized by THIS backend calling `win.close()` right back (`closeWindow`
+   * below) — without a way to tell that apart, the listener would veto its
+   * own close and hand it back to the kernel forever.
+   *
+   * No token needed (unlike `pendingShowOpSeq`): a close is terminal, so
+   * there is nothing later to distinguish a stale arming from a fresh one —
+   * ARMED immediately before each `win.close()` call `closeWindow` makes,
+   * CONSUMED (one shot) by the very next `'close'` on that window.
+   */
+  private readonly pendingMachineClose = new Set<WindowId>();
+
+  /**
+   * Set once the app has genuinely started quitting (`app.on('before-quit')`
+   * fired at least once). Every window the OS is about to tear down as part
+   * of quit fires a native `'close'` exactly like a user-initiated one, and
+   * that close must reach `win.close()` for real — vetoing it and asking the
+   * kernel would leave `entry.ts`'s deferred quit-cleanup sequence
+   * (`izui-roles.ts planBeforeQuit`) waiting on windows that never finish
+   * closing, hanging the quit. `before-quit` always fires — vetoed or not —
+   * strictly before Electron ever begins closing windows for that quit
+   * attempt, so latching this true on the first sighting and never clearing
+   * it is enough: by the time any window's `'close'` fires as part of an
+   * actual (non-vetoed) quit pass, this is already set.
+   */
+  private quitting = false;
+
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
 
@@ -476,6 +511,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * the process.
    */
   attachAppListeners(): void {
+    // Latches `quitting` true — see that field's doc for why "fired at least
+    // once" is the whole fact the native `'close'` listener needs, and why a
+    // vetoed quit attempt setting it early is harmless (nothing closes any
+    // window during a vetoed attempt).
+    (app as unknown as { on(e: string, l: () => void): void }).on('before-quit', () => {
+      this.quitting = true;
+    });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       // Feeds the kernel (window-kernel-dispatch.ts), which drives the real
       // window operations post-cutover — see that module's header.
@@ -706,9 +748,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Native listeners (§2.6): each is a one-line event translation — the sole
-  // exception is `blur`, which arms the ONE deferred-blur settle instead of
-  // emitting (§4.4).
+  // Native listeners (§2.6): each is a one-line event translation — the two
+  // exceptions are `blur`, which arms the ONE deferred-blur settle instead of
+  // emitting (§4.4), and `close`, which vetoes and redirects into the kernel
+  // instead of reporting (see the listener's own doc below).
   // ───────────────────────────────────────────────────────────────────────────
 
   private attachNativeListeners(
@@ -815,12 +858,52 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!win.isDestroyed() && win.isVisible()) return;
       kernelWindowHidden(id, opSeq);
     });
+    // THE GAP THIS CLOSES: previously the only listener here was `'closed'`
+    // (below), fired AFTER the fact — nothing asked the kernel BEFORE a
+    // native close happened, so its `decide()`'s `CloseOrHideWindow` rule
+    // (`record.keepLive ? WindowHidden : WindowClosed`) never ran for an
+    // OS-initiated close, and a keepLive tile was destroyed instead of
+    // hidden the moment the user closed it by any native means (red button,
+    // an OS-level Cmd+W, a window-manager close) rather than through a
+    // command this app already routed through `windows.ts
+    // closeOrHideWindow` (cmd+W, the switcher, etc). `tile-launcher.ts` used
+    // to paper over exactly this gap with its own `win.on('close')` veto;
+    // that veto is deleted as a rival decider (§0: the kernel is the only
+    // one now), so this listener is what replaces it — for every registered
+    // window, not only the tiles the old veto singled out.
+    //
+    // Two escapes, checked in order, both load-bearing:
+    //   - `quitting`: the OS is tearing every window down as part of a real
+    //     app quit — see that field's doc for why letting it through here is
+    //     what keeps `entry.ts`'s deferred quit-cleanup sequence from hanging
+    //     on a window this listener vetoed forever.
+    //   - `pendingMachineClose`: THIS backend's own `closeWindow` is the one
+    //     calling `win.close()` right now, realizing the kernel's own
+    //     `CloseWindow`/`CloseWindowDirect` effect — the answer to the very
+    //     `kernelCloseOrHideRequested` a prior native close attempt on this
+    //     window issued. Reporting that as fresh evidence would ask the
+    //     kernel the same question forever: veto, ask, decide "close", close,
+    //     veto again. See `pendingMachineClose`'s own doc for why a one-shot
+    //     Set (no token) is enough here, unlike the show/hide echo guards.
+    //
+    // Neither armed: a genuine, not-yet-decided native close attempt. Veto it
+    // and let the kernel answer — its `CloseWindow` effect (non-keepLive) or
+    // `HideWindow` effect (keepLive) is the only thing that decides what
+    // actually happens to this window next.
+    win.on('close', (...args: unknown[]) => {
+      if (this.quitting) return;
+      if (this.pendingMachineClose.delete(id)) return;
+      const event = args[0] as { preventDefault(): void } | undefined;
+      event?.preventDefault();
+      kernelCloseOrHideRequested(id);
+    });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
       this.pendingSelfCausedFocus.delete(id);
       this.pendingStackingFocus.delete(id);
       this.pendingShowOpSeq.delete(id);
       this.pendingHideOpSeq.delete(id);
+      this.pendingMachineClose.delete(id);
       this.windows.delete(id);
       // `osWindowId` was captured at registration — reading `win.id` here would
       // throw on the already-destroyed native window.
@@ -1214,6 +1297,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     const guestIds = getGuestsForWindow(id);
     if (guestIds.length === 0 || process.env.PEEK_DISABLE_PAGEHOST_CLOSE_GUARD === '1') {
+      // Arm immediately before the native call it labels — see
+      // `pendingMachineClose`'s doc: the `'close'` this provokes is the
+      // kernel's own decision being realized, not fresh OS evidence.
+      this.pendingMachineClose.add(id);
       try {
         win.close();
       } catch {
@@ -1221,7 +1308,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }
       return;
     }
-    await this.destroyGuestsThenClose(win, guestIds);
+    await this.destroyGuestsThenClose(id, win, guestIds);
   }
 
   /**
@@ -1278,11 +1365,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
   }
 
-  private async destroyGuestsThenClose(win: NativeWindow, guestIds: number[]): Promise<void> {
+  private async destroyGuestsThenClose(id: WindowId, win: NativeWindow, guestIds: number[]): Promise<void> {
     DEBUG && console.log('[window-backend] destroying', guestIds.length, 'guest(s) before closing host');
     await destroyGuestsAndWait(this.resolveLiveGuests(guestIds), requestGuestDestroy);
     try {
-      if (!win.isDestroyed()) win.close();
+      if (!win.isDestroyed()) {
+        // Arm immediately before the native call it labels — see
+        // `pendingMachineClose`'s doc.
+        this.pendingMachineClose.add(id);
+        win.close();
+      }
     } catch {
       /* torn down while guests settled */
     }
