@@ -135,32 +135,6 @@ api.subscribe('cmd:url-mode', () => {
   }
 });
 
-// Close the panel when the user focuses another Peek window.
-//
-// macOS Cmd+` cycles through "standard" windows only — panel-type +
-// alwaysOnTop windows (like this cmd panel) are skipped, so the panel
-// never fires `blur` in that flow and the modal blur handler can't
-// clean up. Subscribe to the global `window:focused` pubsub (published
-// by apps/desktop/main/ipc.ts for every focus event) and hide the
-// panel when another non-utility window gains focus. Utility children
-// (chain popup, etc.) are excluded so opening one doesn't dismiss the
-// panel it spawned.
-let ownWindowId = null;
-api.window.getWindowId().then((result) => {
-  ownWindowId = result?.id ?? result;
-});
-api.subscribe('window:focused', async (msg) => {
-  if (!msg || !msg.id) return;
-  if (msg.id === ownWindowId) return;
-  if (msg.role === 'utility') return;
-  if (!ownWindowId) return;
-  try {
-    await api.window.hide(ownWindowId);
-  } catch (err) {
-    log.error('cmd:panel', 'Failed to hide panel on other-window focus:', err);
-  }
-});
-
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
 
