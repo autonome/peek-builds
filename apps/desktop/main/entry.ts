@@ -1740,8 +1740,7 @@ if (isHeadless() && isTestProfile()) {
   // app-level creation event for them: `browser-window-created` fires ONLY for
   // BrowserWindow (verified against the pinned Electron: constructing a
   // BaseWindow emits no app event at all). So the ctor guard above is blind to
-  // exactly the windows this app shows most, and a `show: true` BaseWindow
-  // never calls .show(), so the prototype guard below can't see it either.
+  // exactly the windows this app shows most.
   //
   // Trigger: `web-contents-created`, which fires for every page-host's content
   // WebContentsView — i.e. once per page-host being assembled, a tick or so
@@ -1780,160 +1779,6 @@ if (isHeadless() && isTestProfile()) {
   });
   console.log('[headless-guard] BaseWindow visible-at-ctor sweep active (no base-window-created event exists)');
 
-  // ── show / showInactive prototype guard ────────────────────────────────
-  // Any call to win.show() or win.showInactive() that bypasses
-  // showWindowHeadlessSafe() will reach here with opacity != 0 and will
-  // therefore be visible on the real display. Intercept both methods and
-  // throw if the window's opacity wasn't zeroed first, so future
-  // accidental call sites are caught immediately rather than silently
-  // flashing windows onto the user's screen.
-  //
-  // Exempt: the opacity is checked BEFORE the original method runs.
-  // showWindowHeadlessSafe() already calls setOpacity(0) first, so
-  // compliant callers always pass the check.
-  //
-  // Patched on BaseWindow.prototype ONCE — not on BaseWindow AND BrowserWindow.
-  // In Electron, `BrowserWindow extends BaseWindow`, and show/showInactive/
-  // setOpacity are OWN properties of `BaseWindow.prototype` that
-  // `BrowserWindow.prototype` merely INHERITS (verified against the pinned
-  // Electron: BrowserWindow.prototype has no own `show`). So a single patch
-  // here intercepts BOTH kinds, and intercepts each call exactly once — no
-  // double-throw and no double-report. Patching both classes would instead
-  // stack two wrappers on the same call, which is the ambiguity this avoids.
-  // The violating kind is read off the instance (`this instanceof
-  // BrowserWindow`) so a BrowserWindow violation still reads as a
-  // BrowserWindow and carries the page URL, while a BaseWindow one carries the
-  // window title (a BaseWindow has no root `.webContents`).
-  const _origShow = BaseWindow.prototype.show;
-  const _origShowInactive = BaseWindow.prototype.showInactive;
-
-  function headlessWindowKind(win: BaseWindow): string {
-    return win instanceof BrowserWindow ? 'BrowserWindow' : 'BaseWindow';
-  }
-
-  /** URL for a BrowserWindow, title for a pure BaseWindow — both best-effort. */
-  function headlessWindowLabel(win: BaseWindow): string {
-    if (win instanceof BrowserWindow) {
-      let url = '(no-url)';
-      try { url = win.webContents.getURL() || '(no-url)'; } catch { /* destroyed */ }
-      return `url=${url}`;
-    }
-    let title = '(no-title)';
-    try { title = win.getTitle() || '(no-title)'; } catch { /* destroyed */ }
-    return `title=${title}`;
-  }
-
-  function headlessShowGuard(this: BaseWindow, methodName: 'show' | 'showInactive', origFn: () => void): void {
-    if (!this.isDestroyed() && this.getOpacity() !== 0) {
-      const msg = `[headless-violation] ${headlessWindowKind(this)}.${methodName}() called on id=${this.id} with opacity=${this.getOpacity()} (not 0) ${headlessWindowLabel(this)} — use showWindowHeadlessSafe()`;
-      console.error(msg);
-      console.error(new Error(msg).stack);
-      process.exitCode = 1;
-      throw new Error(msg);
-    }
-    origFn.call(this);
-  }
-
-  BaseWindow.prototype.show = function(this: BaseWindow) {
-    headlessShowGuard.call(this, 'show', _origShow);
-  };
-  BaseWindow.prototype.showInactive = function(this: BaseWindow) {
-    headlessShowGuard.call(this, 'showInactive', _origShowInactive);
-  };
-
-  console.log('[headless-guard] BaseWindow+BrowserWindow show/showInactive prototype guard active (opacity must be 0)');
-
-  // ── focus / moveTop / restore / center / setVisibleOnAllWorkspaces no-op guard ──
-  // These methods can steal OS-level focus from the user's foreground app or
-  // trigger a visible flash on macOS, but ONLY when called on a hidden window.
-  // Visible windows (cmd panel, modals being interacted with by Playwright)
-  // legitimately need real focus behavior — cmd-hashtag-search, cmdl-on-error-page,
-  // and transient-on-blur tests all depend on this.
-  //
-  // Gate: identical to the show/showInactive guard above — use opacity===0 as
-  // the "hidden" signal. showWindowHeadlessSafe sets opacity=0 first, so a
-  // window in mid-show transition is correctly considered hidden until opacity
-  // is restored to 1. Visible windows pass through to the original method.
-  //
-  // Strategy: count + warn (first 3 per method) when no-op fires, with stack,
-  // so the worst call sites can be hardened individually later.
-  const _headlessNoOpCounts = {
-    focus: 0,
-    moveTop: 0,
-    restore: 0,
-    center: 0,
-    setVisibleOnAllWorkspaces: 0,
-  };
-
-  type NoOpMethodName = keyof typeof _headlessNoOpCounts;
-
-  function makeHeadlessNoOp<K extends NoOpMethodName>(
-    name: K,
-    orig: (...args: unknown[]) => unknown,
-  ): (...args: unknown[]) => unknown {
-    return function(this: BrowserWindow, ...args: unknown[]) {
-      // Gate on opacity (same signal as the show/showInactive guard).
-      // Hidden window → no-op + warn; visible window → real behavior.
-      if (!this.isDestroyed() && this.getOpacity() === 0) {
-        _headlessNoOpCounts[name]++;
-        if (_headlessNoOpCounts[name] <= 3) {
-          let url = '(no-url)';
-          try { url = this.webContents?.getURL?.() ?? '(no-url)'; } catch { /* destroyed */ }
-          console.warn(`[headless-noop] ${name}() called on id=${this.id} url=${url} opacity=0 — no-op in headless`);
-          console.warn(new Error('[headless-noop] stack').stack);
-        }
-        return;
-      }
-      return orig.apply(this, args);
-    };
-  }
-
-  // Deliberately BrowserWindow-only (unlike the show/opacity guards above):
-  // these SILENTLY no-op the call, and BaseWindow page-hosts drive moveTop
-  // through the window machine's SET_STACKING effect — swallowing those would
-  // change headless stacking behaviour, not just catch a violation.
-  const _origFocus = BrowserWindow.prototype.focus;
-  const _origMoveTop = BrowserWindow.prototype.moveTop;
-  const _origRestore = BrowserWindow.prototype.restore;
-  const _origCenter = BrowserWindow.prototype.center;
-  const _origSetVisibleOnAllWorkspaces = BrowserWindow.prototype.setVisibleOnAllWorkspaces;
-  BrowserWindow.prototype.focus = makeHeadlessNoOp('focus', _origFocus as never) as typeof BrowserWindow.prototype.focus;
-  BrowserWindow.prototype.moveTop = makeHeadlessNoOp('moveTop', _origMoveTop as never) as typeof BrowserWindow.prototype.moveTop;
-  BrowserWindow.prototype.restore = makeHeadlessNoOp('restore', _origRestore as never) as typeof BrowserWindow.prototype.restore;
-  BrowserWindow.prototype.center = makeHeadlessNoOp('center', _origCenter as never) as typeof BrowserWindow.prototype.center;
-  BrowserWindow.prototype.setVisibleOnAllWorkspaces = makeHeadlessNoOp('setVisibleOnAllWorkspaces', _origSetVisibleOnAllWorkspaces as never) as typeof BrowserWindow.prototype.setVisibleOnAllWorkspaces;
-
-  app.on('before-quit', () => {
-    console.log('[headless-noop] final counts:', JSON.stringify(_headlessNoOpCounts));
-  });
-
-  console.log('[headless-guard] BrowserWindow focus/moveTop/restore/center/setVisibleOnAllWorkspaces no-op guard active');
-
-  // ── headless opacity-restore guard ──────────────────────────────────────
-  // Catches any code path that restores opacity from 0 to a nonzero value
-  // on a hidden window during headless test runs, which would cause a visible
-  // flash. The show/showInactive guard above already blocks shows on opacity!=0
-  // windows; this guard is the complementary protection for the restore path.
-  //
-  // Patched on BaseWindow.prototype for the same reason as the show guard: one
-  // patch, inherited by BrowserWindow, so both kinds are covered exactly once.
-  const _origSetOpacity = BaseWindow.prototype.setOpacity;
-  BaseWindow.prototype.setOpacity = function(this: BaseWindow, opacity: number) {
-    if (!this.isDestroyed()) {
-      const prev = this.getOpacity();
-      if (prev === 0 && opacity !== 0) {
-        const msg = `[headless-violation] ${headlessWindowKind(this)}.setOpacity id=${this.id} from=0 to=${opacity} ${headlessWindowLabel(this)} — restoring opacity on hidden window causes flash`;
-        console.error(msg);
-        console.error(new Error(msg).stack);
-        process.exitCode = 1;
-        throw new Error(msg);
-      }
-    }
-    return _origSetOpacity.call(this, opacity);
-  };
-
-  console.log('[headless-guard] setOpacity 0→nonzero guard active');
-
   // ── globalShortcut neutralization (single chokepoint) ───────────────────
   // globalShortcut.register grabs a SYSTEM-WIDE hotkey on the user's real
   // machine — the packaged build has a live globalShortcut. Both the ESC
@@ -1948,10 +1793,10 @@ if (isHeadless() && isTestProfile()) {
 
   // ── per-webContents UI-surface neutralization ───────────────────────────
   // openDevTools and the native beforeunload "Leave site?" modal both surface
-  // OS-level UI that steals focus, and neither is a BrowserWindow method, so the
-  // prototype guards above can't see them. Neutralize them once at the
-  // web-contents-created chokepoint, which fires for EVERY webContents (windows
-  // + webview guests) regardless of which code path created it.
+  // OS-level UI that steals focus, and neither is a BrowserWindow method.
+  // Neutralize them once at the web-contents-created chokepoint, which fires
+  // for EVERY webContents (windows + webview guests) regardless of which code
+  // path created it.
   app.on('web-contents-created', (_e, contents) => {
     // DevTools: nothing should pop a detached inspector onto the user's real
     // desktop during a headless run. No-op + flag drift (exitCode) so a future
