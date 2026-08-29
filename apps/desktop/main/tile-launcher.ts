@@ -100,12 +100,6 @@ export interface TileWindowRegistration {
 // the machine singleton transitively value-imports electron, which this
 // module's unit tests cannot load.
 let _closeTileWindow: ((win: BrowserWindow) => void) | null = null;
-// Injected from main.ts: dispatches WINDOW_CLOSE_OR_HIDE_REQUESTED for a tile
-// window — the reducer (not this module) decides hide-vs-close from the
-// record's keepLive flag (registered via `_registerWindow` below). Used by the
-// keepLive 'close' intercept; injected for the same ELECTRON_RUN_AS_NODE
-// reason as the other hooks.
-let _closeOrHideTileWindow: ((win: BrowserWindow) => void) | null = null;
 
 /** Close a tile window via the injected machine hook; loud no-op when unconfigured (production always configures it in main.ts initialize()). */
 function closeTileWindowViaHook(win: BrowserWindow): void {
@@ -114,15 +108,6 @@ function closeTileWindowViaHook(win: BrowserWindow): void {
     return;
   }
   console.error('[tile-launcher] closeTileWindow hook not configured — window', win.id, 'not closed');
-}
-
-/** Close-or-hide a tile window (keepLive policy — the reducer decides) via the injected machine hook; loud no-op when unconfigured. */
-function closeOrHideTileWindowViaHook(win: BrowserWindow): void {
-  if (_closeOrHideTileWindow) {
-    _closeOrHideTileWindow(win);
-    return;
-  }
-  console.error('[tile-launcher] closeOrHideTileWindow hook not configured — window', win.id, 'not hidden');
 }
 
 /**
@@ -169,20 +154,11 @@ export function configureTileLauncher(hooks: {
    * rule R2: nothing here calls a window API directly.
    */
   closeTileWindow?: (win: BrowserWindow) => void;
-  /**
-   * Close-or-hide a tile window through the window-state machine
-   * (WINDOW_CLOSE_OR_HIDE_REQUESTED): the reducer branches on the record's
-   * keepLive flag — hide (record kept, tile stays warm for showSelf) vs the
-   * resolved close. The keepLive 'close' intercept routes through this hook —
-   * rule R2: nothing here calls a window API directly.
-   */
-  closeOrHideTileWindow?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
   if (hooks.registerWindow) _registerWindow = hooks.registerWindow;
   if (hooks.closeTileWindow) _closeTileWindow = hooks.closeTileWindow;
-  if (hooks.closeOrHideTileWindow) _closeOrHideTileWindow = hooks.closeOrHideTileWindow;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks

@@ -53,9 +53,12 @@ import {
   kernelWindowClosed,
   kernelCloseWindowDirect,
   kernelAssertFocus,
-  kernelCloseOrHideRequested,
   kernelRaiseWindow,
+  kernelAppActivated,
+  kernelAppResigned,
+  getKernelExecutor,
 } from './window-kernel-dispatch.js';
+import type { WindowId } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
   setWindowOpenPayload,
@@ -136,6 +139,63 @@ export interface CapturedClosePresentation {
 }
 
 /**
+ * A `BrowserWindow`'s `CapturedClosePresentation` plus its numeric Electron
+ * id, staged by the pre-destroy `'close'` listener (`browser-window-created`
+ * below) and keyed by kernel `WindowId` so the WindowClosed-driven bookkeeping
+ * below — which runs AFTER `electron-window-backend.ts`'s own native
+ * `'closed'` listener has already deleted its numeric-id map entry for this
+ * window — can still find both. Drained (read + deleted) the moment that
+ * bookkeeping runs; an entry surviving past that point would mean its window
+ * closed without the kernel ever reporting it.
+ */
+interface PendingWindowClose extends CapturedClosePresentation {
+  electronId: number;
+}
+const pendingWindowCloseCapture = new Map<WindowId, PendingWindowClose>();
+
+/**
+ * Run the reopen-stack / `window:closed` publish / close-finalize tail for
+ * `closedId` off the kernel's own `WindowClosed` notification, instead of a
+ * second native `'closed'` listener racing `electron-window-backend.ts`'s.
+ * No-ops for a `WindowId` this file never staged a capture for — a hybrid
+ * `BaseWindow` (never routed through `browser-window-created`, so it has no
+ * entry here; `ipc.ts`'s own `baseWin 'closed'` handler runs its own
+ * `finalizeWindowClose` tail directly) or a window destroyed before its
+ * `'close'` listener ran.
+ *
+ * Installed from `initialize()` via the kernel's base `subscribe`
+ * (`window-kernel-dispatch.ts getKernelExecutor`), diffing `state.order`
+ * between notifications the same way `window-machine.ts`'s
+ * `subscribeAppActive`/`subscribeOverlayAttachment` dedup a fact off that
+ * same base surface: RULE 1 (`window-kernel.ts`) makes `WindowClosed` the
+ * only event that removes an id from `order`, so an id present on one
+ * notification and gone on the next is exactly the set of windows that just
+ * closed.
+ */
+function runWindowClosedBookkeeping(closedId: WindowId): void {
+  const capture = pendingWindowCloseCapture.get(closedId);
+  pendingWindowCloseCapture.delete(closedId);
+  if (!capture) return;
+  const { electronId, bounds, presentation } = capture;
+
+  // Same `window:closed` publish the old per-window `'closed'` listener sent
+  // (gated on the SAME registry-payload check — only a window that carries an
+  // open-time source/params gets one), just resolved off the WindowId this
+  // notification already gives us instead of a numeric lookup that would no
+  // longer succeed here.
+  const windowData = getWindowOpenPayload(closedId);
+  if (windowData) {
+    publish(windowData.source, 'window:closed', { id: electronId, source: windowData.source });
+  }
+
+  // Close-finalize tail — push to the reopen stack, drop from the registry +
+  // publish `window:removed`, and schedule the close-snapshot. `closedId` is
+  // handed through as `knownWmId` for the same reason `windowData` above is
+  // resolved off it directly.
+  finalizeWindowClose(electronId, { bounds, presentation }, closedId);
+}
+
+/**
  * The shared "close finalize tail" run for EVERY window when it is destroyed,
  * regardless of whether it is a `BrowserWindow` (canvas / generic) or a
  * `BaseWindow` (hybrid page-host). It does the three lifecycle side-effects a
@@ -153,19 +213,34 @@ export interface CapturedClosePresentation {
  *   (c) `scheduleSnapshotOnClose()` so a force-kill before the next autosave
  *       can't resurrect the just-closed window from a stale on-disk snapshot.
  *
- * This was extracted verbatim from the `browser-window-created → 'closed'`
- * handler below so the canvas behavior stays byte-identical, and is the SAME
- * routine the hybrid page-host's `baseWin 'closed'` handler invokes (ipc.ts
- * hybrid branch) — a `BaseWindow` never flows through `browser-window-created`,
- * so without this its reopen-stack push, `window:removed`, and close-snapshot
+ * Originally extracted verbatim from the `browser-window-created → 'closed'`
+ * handler so the canvas behavior stayed byte-identical; that handler's call
+ * site has since moved to `runWindowClosedBookkeeping` above (off the
+ * kernel's own `WindowClosed` notification, not the raw native event), but
+ * the tail itself is unchanged and is still the SAME routine the hybrid
+ * page-host's `baseWin 'closed'` handler invokes directly (ipc.ts hybrid
+ * branch) — a `BaseWindow` never flows through `browser-window-created`, so
+ * without this its reopen-stack push, `window:removed`, and close-snapshot
  * never ran. Each window finalizes EXACTLY ONCE: the two call sites are gated
  * to disjoint window kinds (BrowserWindow vs hybrid BaseWindow).
  *
  * `captured` carries the pre-destroy bounds/presentation; pass it from the
  * matching `'close'` listener (the window must still be alive when captured).
+ *
+ * `knownWmId`, when the caller already has it, is used in place of
+ * `getWindowIdFor(windowId)`'s numeric→WindowId lookup. A caller driven by
+ * the kernel's own `WindowClosed` notification (`main.ts`'s
+ * `browser-window-created` bookkeeping) runs AFTER
+ * `electron-window-backend.ts`'s native `'closed'` listener has already
+ * deleted its `windowId`↔`WindowId` map entry for this window, so the
+ * numeric lookup would come back null there — the caller passes the id it
+ * already has from the notification instead. Omitted (the ipc.ts hybrid
+ * `baseWin 'closed'` call site), this falls back to the numeric lookup,
+ * unchanged from before.
  */
-export function finalizeWindowClose(windowId: number, captured: CapturedClosePresentation): void {
-  const windowData = getWindowInfo(windowId);
+export function finalizeWindowClose(windowId: number, captured: CapturedClosePresentation, knownWmId?: WindowId | null): void {
+  const wmId = knownWmId !== undefined ? knownWmId : getWindowIdFor(windowId);
+  const windowData = wmId != null ? getWindowOpenPayload(wmId) : undefined;
 
   // (a) Save to closed window stack for reopen-last-closed.
   // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
@@ -238,7 +313,6 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   // BaseWindow (which never emits 'closed' on the normal close path) this
   // dispatch is the one that retires the record.
   {
-    const wmId = getWindowIdFor(windowId);
     // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
     // window manager; RULE 1 makes this the only event that shrinks its `order`.
     if (wmId != null) kernelWindowClosed(wmId);
@@ -478,18 +552,6 @@ export async function initialize(): Promise<void> {
       // window manager.
       kernelCloseWindowDirect(id);
     },
-    // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
-    // INTENT — the reducer branches on the record's keepLive (hide vs the
-    // resolved close). Injected for the same ELECTRON_RUN_AS_NODE reason as
-    // closeTileWindow above.
-    closeOrHideTileWindow: (win) => {
-      const id = getWindowIdFor(win);
-      if (id == null) {
-        console.error('[tile-launcher] closeOrHideTileWindow: window', win.id, 'is not machine-registered — cannot hide');
-        return;
-      }
-      kernelCloseOrHideRequested(id);
-    },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the
     // single owner and a window registered twice can't get two interceptors.
@@ -613,6 +675,26 @@ export async function initialize(): Promise<void> {
   // the izui→machine session mirror.
   initWindowStateMachine();
 
+  // Window-closed bookkeeping (reopen stack / `window:closed` publish /
+  // close-finalize tail) hangs off the kernel's own `WindowClosed`
+  // notification from here on — see `runWindowClosedBookkeeping`'s doc.
+  // Layered over the kernel's base `subscribe` the same way
+  // `window-machine.ts`'s `subscribeAppActive`/`subscribeOverlayAttachment`
+  // are, and installed here (after `initWindowStateMachine()`) for the same
+  // ordering reason `subscribeAppActive`'s doc gives: `getKernelExecutor()`
+  // only resolves to the live executor once `initWindowStateMachine()` has
+  // pointed it there.
+  {
+    let lastOrderIds = new Set(getKernelExecutor().getState().order.map((w) => w.id));
+    getKernelExecutor().subscribe((state) => {
+      const nowIds = new Set(state.order.map((w) => w.id));
+      for (const id of lastOrderIds) {
+        if (!nowIds.has(id)) runWindowClosedBookkeeping(id);
+      }
+      lastOrderIds = nowIds;
+    });
+  }
+
   // Broadcast OS-level app focus changes for listeners outside the window
   // machine (HUD, spaces feature — see their `app:focus-changed` subscribers).
   // The IZUI coordinator no longer mirrors this itself: `evaluateOnShow`
@@ -664,15 +746,26 @@ export async function initialize(): Promise<void> {
       // dispatches; `appActive:false` makes the grab predicate false.)
     });
   } else {
-    // Non-macOS fallback: use browser-window-focus/blur with focused-window check
+    // Non-macOS fallback: use browser-window-focus/blur with focused-window check.
+    // `electron-window-backend.ts attachAppListeners` feeds the kernel's
+    // `appActive` (window-machine.ts getAppActive) from `did-become-active`/
+    // `did-resign-active` alone, and those never fire off darwin — so without
+    // this pair the kernel's `appActive` would never move on Linux/Windows at
+    // all. This is the only app-focus signal this platform pair has, so it is
+    // re-pointed at the SAME kernel inputs the darwin branch above feeds
+    // (`kernelAppActivated`/`kernelAppResigned`, window-kernel-dispatch.ts),
+    // alongside the existing `app:focus-changed` broadcast this pair already
+    // does for HUD/spaces listeners outside the window machine.
     app.on('browser-window-focus', () => {
       publish(getSystemAddress(), 'app:focus-changed', { focused: true });
+      kernelAppActivated();
     });
     app.on('browser-window-blur', () => {
       // Only mark unfocused if NO window has focus (user switched to another app).
       // During window switches within Peek, one window blurs before another focuses.
       if (!BrowserWindow.getFocusedWindow()) {
         publish(getSystemAddress(), 'app:focus-changed', { focused: false });
+        kernelAppResigned();
       }
     });
   }
@@ -731,24 +824,31 @@ export async function initialize(): Promise<void> {
     setTimeout(() => fireRegistrationTripwire(window, 'browser-window-created'), REGISTRATION_TRIPWIRE_DELAY_MS);
     const windowId = window.id;
 
-    // Capture the window's canonical presentation before destruction so the
-    // 'closed' handler can persist correct bounds, address, and maximize
-    // state for reopen-last-closed. The presenter encapsulates the canvas /
-    // generic split — main.ts no longer parses the page-host shell URL.
-    let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
-    let lastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
+    // Capture the window's canonical presentation before destruction, keyed
+    // by its kernel WindowId, for the WindowClosed-driven bookkeeping
+    // (`runWindowClosedBookkeeping`) to pick up once the window is actually
+    // gone. The presenter encapsulates the canvas / generic split — main.ts
+    // no longer parses the page-host shell URL. Nothing here is a decision:
+    // it is a live read (title/URL/favicon, none of it kernel-tracked) that
+    // can only happen while the window still exists, which is why this stays
+    // a native `'close'` listener rather than something the kernel's
+    // post-destroy notification could feed instead.
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
-          // Machine-owned geometry (§5 step 7D): the raw-bounds fallback
-          // (used when the presentation below is null) reads the machine via
-          // the ONE restorable-geometry rule (window-presenter.ts
-          // getRestorableBounds — fullscreen → preBounds, else the bounds
-          // mirror) so undo-close of a fullscreen/maximized window restores
-          // sanely. The live getBounds() survives only for a window the
-          // machine never saw (unregistered — the tripwire hunts those).
-          lastBounds = getRestorableBounds(getWindowIdFor(window)) ?? window.getBounds();
-          lastPresentation = getWindowPresentation(windowId);
+          const wmId = getWindowIdFor(window);
+          if (wmId != null) {
+            // Machine-owned geometry (§5 step 7D): the raw-bounds fallback
+            // (used when the presentation below is null) reads the machine via
+            // the ONE restorable-geometry rule (window-presenter.ts
+            // getRestorableBounds — fullscreen → preBounds, else the bounds
+            // mirror) so undo-close of a fullscreen/maximized window restores
+            // sanely. The live getBounds() survives only for a window the
+            // machine never saw (unregistered — the tripwire hunts those).
+            const bounds = getRestorableBounds(wmId) ?? window.getBounds();
+            const presentation = getWindowPresentation(windowId);
+            pendingWindowCloseCapture.set(wmId, { electronId: windowId, bounds, presentation });
+          }
         }
       } catch {
         // Ignore errors during shutdown
@@ -759,12 +859,27 @@ export async function initialize(): Promise<void> {
       // apps/desktop/main/ipc.ts windowOpenHandler for the rationale.)
     });
 
-    // Handle window close
-    // Wrapped in try-catch to prevent errors during shutdown from stalling the quit sequence.
-    // During app.quit(), windows close concurrently and some may already be destroyed.
+    // Switcher-selection focus restoration — the ONE decision this file still
+    // makes about a closing window, kept on the native 'closed' event (rather
+    // than the kernel's WindowClosed notification the bookkeeping above moved
+    // to) because it needs the closing window's numeric Electron id to match
+    // against the IZUI coordinator's `overlayWindowId`/`overlayFocusTarget`
+    // (izui-state.ts — a parallel session the kernel has no concept of), and
+    // by the time the kernel's own notification fires,
+    // electron-window-backend.ts has already dropped its numeric-id map entry
+    // for this window; the kernel has no reason to retain platform ids past
+    // that point (apps/desktop/CLAUDE.md, "Electron is ONE backend, not the
+    // design"), so there is nothing for a subscription to hand back to
+    // resolve it. The rule itself: only restore focus on an explicit switcher
+    // selection, never on a plain ESC dismiss.
+    //
+    // Wrapped in try-catch to prevent errors during shutdown from stalling
+    // the quit sequence. During app.quit(), windows close concurrently and
+    // some may already be destroyed.
     window.on('closed', () => {
       try {
         const windowData = getWindowInfo(windowId);
+        if (!windowData) return;
 
         const coordinator = getIzuiCoordinator();
 
@@ -779,92 +894,61 @@ export async function initialize(): Promise<void> {
         // `WindowClosed` transition hands `front` back to the parent + emits
         // the raise. See `window-kernel.ts`.)
 
-        if (windowData) {
-          // Overlay restoration: use coordinator as single source of truth
-          const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
-          if (isOverlayWindow) {
-            const session = coordinator.getSession()!;
-            const isTransient = coordinator.isTransient();
+        // Overlay restoration: use coordinator as single source of truth
+        const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
+        if (isOverlayWindow) {
+          const session = coordinator.getSession()!;
+          const isTransient = coordinator.isTransient();
 
-            if (!isTransient) {
-              // Capture the explicit selection BEFORE exitOverlay clears it.
-              // Important: ONLY focus when the user explicitly chose a target
-              // via the switcher (overlayFocusTarget). On a plain ESC dismiss
-              // overlayFocusTarget is null and we fall through with no
-              // focus call — that preserves the user's current Space, which
-              // .focus() on the preOverlayFocusTarget would silently break
-              // if that window happened to be anchored to a different Space.
-              const selectedTargetId = session.overlayFocusTarget;
+          if (!isTransient) {
+            // Capture the explicit selection BEFORE exitOverlay clears it.
+            // Important: ONLY focus when the user explicitly chose a target
+            // via the switcher (overlayFocusTarget). On a plain ESC dismiss
+            // overlayFocusTarget is null and we fall through with no
+            // focus call — that preserves the user's current Space, which
+            // .focus() on the preOverlayFocusTarget would silently break
+            // if that window happened to be anchored to a different Space.
+            const selectedTargetId = session.overlayFocusTarget;
 
-              // exitOverlay resets overlay state (the hiddenWindowIds list
-              // is empty in the no-hide overlay model, so the showInactive
-              // loop inside is a no-op).
-              coordinator.exitOverlay();
+            // exitOverlay resets overlay state (the hiddenWindowIds list
+            // is empty in the no-hide overlay model, so the showInactive
+            // loop inside is a no-op).
+            coordinator.exitOverlay();
 
-              if (selectedTargetId != null) {
-                // Both BrowserWindows and hybrid BaseWindows seed
-                // idByOsWindowId at registration, so one dispatch covers
-                // both id spaces — no more getLiveWindow/getHybridWindow
-                // fork. The machine path (RAISE_WINDOW + FOCUS_CONTENT for
-                // a page-host + SET_STACKING) also restores the target's
-                // content first responder and stack position, which the old
-                // bare `.focus()` calls did not.
-                const wmId = getWindowIdFor(selectedTargetId);
-                if (wmId != null) {
-                  wmLog('switcher-select-raise', { id: wmId, osId: selectedTargetId });
-                  kernelRaiseWindow(wmId);
-                } else {
-                  wmLog('switcher-select-raise', { osId: selectedTargetId, outcome: 'no-record' });
-                }
+            if (selectedTargetId != null) {
+              // Both BrowserWindows and hybrid BaseWindows seed
+              // idByOsWindowId at registration, so one dispatch covers
+              // both id spaces — no more getLiveWindow/getHybridWindow
+              // fork. The machine path (RAISE_WINDOW + FOCUS_CONTENT for
+              // a page-host + SET_STACKING) also restores the target's
+              // content first responder and stack position, which the old
+              // bare `.focus()` calls did not.
+              const wmId = getWindowIdFor(selectedTargetId);
+              if (wmId != null) {
+                wmLog('switcher-select-raise', { id: wmId, osId: selectedTargetId });
+                kernelRaiseWindow(wmId);
+              } else {
+                wmLog('switcher-select-raise', { osId: selectedTargetId, outcome: 'no-record' });
               }
-            } else {
-              DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
             }
-
-            // Pop AFTER exitOverlay — order matters to avoid premature session end
-            coordinator.popWindow(windowId);
           } else {
-            // Non-overlay close. There used to be a fallback here that
-            // re-showed `params.overlayHiddenWindows` for a "non-coordinator"
-            // overlay, left behind when 9904f113 stopped the switcher hiding
-            // windows. Nothing has written that key since, so the branch could
-            // only ever be entered with an empty list — it is gone along with
-            // the rest of the side channel (§5 step 11 task 6).
-            coordinator.popWindow(windowId);
+            DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
           }
 
-          publish(windowData.source, 'window:closed', {
-            id: windowId,
-            source: windowData.source
-          });
+          // Pop AFTER exitOverlay — order matters to avoid premature session end
+          coordinator.popWindow(windowId);
+        } else {
+          // Non-overlay close. There used to be a fallback here that
+          // re-showed `params.overlayHiddenWindows` for a "non-coordinator"
+          // overlay, left behind when 9904f113 stopped the switcher hiding
+          // windows. Nothing has written that key since, so the branch could
+          // only ever be entered with an empty list — it is gone along with
+          // the rest of the side channel (§5 step 11 task 6).
+          coordinator.popWindow(windowId);
         }
-
-        // Close-finalize tail — push to the reopen stack, drop from the
-        // registry + publish `window:removed`, and schedule the close-snapshot.
-        // Extracted into a shared routine so a hybrid page-host BaseWindow
-        // (which never flows through `browser-window-created`) runs the
-        // identical tail from its own `baseWin 'closed'` handler. Bounds come
-        // from the presentation captured in this window's pre-destroy 'close'
-        // listener above.
-        finalizeWindowClose(windowId, {
-          bounds: lastBounds,
-          presentation: lastPresentation,
-        });
       } catch (err) {
         // During shutdown, errors here must not prevent the quit sequence
-        DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
-        try {
-          const wmId = getWindowIdFor(windowId);
-          if (wmId != null) kernelWindowClosed(wmId);
-        } catch {
-          // already in error path; suppress
-        }
-        try {
-          publish('system', 'window:removed', { id: windowId });
-        } catch {
-          // already in error path; suppress
-        }
-        scheduleSnapshotOnClose();
+        DEBUG && console.error('[lifecycle] Error in window overlay-close handler:', err);
       }
     });
 
