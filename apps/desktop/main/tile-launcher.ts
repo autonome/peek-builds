@@ -21,22 +21,6 @@ import path from 'node:path';
 const requireElectron = createRequire(import.meta.url);
 let _BrowserWindow: typeof import('electron').BrowserWindow | null = null;
 
-// Set to true once the Electron app starts quitting. The keepLive close
-// interceptor must let the BrowserWindow actually close in this case —
-// otherwise the app hangs forever waiting for the resident tile to die.
-let _isAppQuitting = false;
-function _wireQuittingFlag(): void {
-  try {
-    const electron = requireElectron('electron') as typeof import('electron');
-    if (electron.app && typeof electron.app.on === 'function') {
-      electron.app.on('before-quit', () => { _isAppQuitting = true; });
-    }
-  } catch {
-    // Running under ELECTRON_RUN_AS_NODE=1 — `app` may be unavailable.
-    // Tests that don't trigger close events are unaffected.
-  }
-}
-_wireQuittingFlag();
 function getBrowserWindowCtor(): typeof import('electron').BrowserWindow {
   if (_BrowserWindow) return _BrowserWindow;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -531,28 +515,6 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
       }
     }
   });
-
-  // keepLive: hide instead of destroy on close. Preserves the BrowserWindow,
-  // its DOM, JS heap, registered commands, and pubsub subscriptions so a
-  // later showSelf() reveals it instantly. Without this, closing a resident
-  // tile via cmd+W destroys it and the next `tile:window:show-self` IPC
-  // returns "Tile window not found". Skip the intercept once the app is
-  // quitting — otherwise the resident tile never dies and shutdown hangs.
-  //
-  // The hide itself is a machine decision (§5 step 6A-3): preventDefault the
-  // native close, then dispatch WINDOW_CLOSE_OR_HIDE_REQUESTED via the
-  // injected hook — the reducer reads the record's keepLive (registered with
-  // this entry's flag above) and emits HIDE_WINDOW; the backend performs the
-  // OS hide and its native 'hide' event is the only WINDOW_HIDDEN source.
-  if (entry?.keepLive === true) {
-    win.on('close', (e) => {
-      if (_isAppQuitting) return;
-      if (!win.isDestroyed()) {
-        e.preventDefault();
-        closeOrHideTileWindowViaHook(win);
-      }
-    });
-  }
 
   // Normal close: same cleanup as crash, minus the crash broadcast.
   //
