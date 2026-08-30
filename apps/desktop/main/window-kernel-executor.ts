@@ -900,6 +900,12 @@ export class WindowKernelExecutor {
         this.backend.setDesktopMembership(effect.id, effect.membership);
         return;
       }
+      case 'SetAcceptsInput': {
+        // No headless gate — click-through neither activates, takes key, nor
+        // brings a hidden window on screen (same reasoning as `SetBounds` above).
+        this.backend.setAcceptsInput(effect.id, effect.acceptsInput);
+        return;
+      }
       case 'SetStacking': {
         // Handled by the band replay in `runEffects`; never reached.
         this.backend.setStacking(effect.id, stackingLevelForLayer(effect.layer));

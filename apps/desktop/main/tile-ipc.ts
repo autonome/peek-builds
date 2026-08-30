@@ -141,7 +141,7 @@ import {
   kernelSetDesktopMembership,
   kernelShowRequested,
   kernelHideRequested,
-  kernelWindowAcceptsInputChanged,
+  kernelSetAcceptsInput,
 } from './window-kernel-dispatch.js';
 import {
   registerGlobalShortcut,
@@ -3233,10 +3233,12 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:set-ignore-mouse ──────────────────────────────────
   //
-  // Toggle click-through on a window. Gated by `window.manage`.
-  // `options.forward` matches the Electron `setIgnoreMouseEvents`
-  // second-argument shape (only `{ forward: true }` is honoured, per
-  // the legacy `window-set-ignore-mouse-events` handler).
+  // Toggle click-through on a window. Gated by `window.manage`. `options` is
+  // accepted for API-compat but no longer read: the native realization,
+  // `forward` option included, is now entirely `electron-window-backend.ts
+  // setAcceptsInput`'s decision (window-kernel.ts SetAcceptsInput), not this
+  // handler's — same platform-neutral-port discipline as every other
+  // `tile:window:*` mutation here.
   registerTileIpc('tile:window:set-ignore-mouse', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
@@ -3257,15 +3259,12 @@ export function registerTileIpcHandlers(): void {
       if (!win) {
         return { success: false, error: 'Window not found' };
       }
-      const forward = args.options?.forward === true;
-      win.setIgnoreMouseEvents(args.ignore === true, forward ? { forward: true } : undefined);
-      // Machine click-through mirror (window-kernel.ts
-      // WindowAcceptsInputChanged) — fed from here because this IS the
-      // chokepoint that causes the change; there is no native echo to
-      // observe (Electron has no getter for `setIgnoreMouseEvents`).
+      // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
+      // only the backend touches `setIgnoreMouseEvents` now; this handler asks
+      // the machine and the executor realizes it.
       const machineId = getWindowIdFor(win);
       if (machineId != null) {
-        kernelWindowAcceptsInputChanged(machineId, args.ignore !== true);
+        kernelSetAcceptsInput(machineId, args.ignore !== true);
       }
       return { success: true };
     } catch (err) {

@@ -108,7 +108,7 @@ import {
   kernelWindowContentOrderable,
   kernelAppActivated,
   kernelAppResigned,
-  kernelWindowAcceptsInputChanged,
+  kernelSetAcceptsInput,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { getFaviconForUrl } from './datastore.js';
@@ -444,11 +444,13 @@ function sendActiveHandoff(id: number | null): void {
 /**
  * Subscribe (once) to the overlay renderer's click-capture toggle. When the
  * pointer is over an interactive chrome region (navbar / trigger zone) the
- * renderer publishes `{capture:true}`; main flips the overlay window to CAPTURE
- * pointer events (`setIgnoreMouseEvents(false)`). When the pointer leaves chrome
- * it publishes `{capture:false}` and we restore click-through
- * (`setIgnoreMouseEvents(true,{forward:true})`) so the content window below
- * stays fully interactive everywhere the chrome isn't.
+ * renderer publishes `{capture:true}`; main asks the machine to flip the
+ * overlay window to CAPTURE pointer events. When the pointer leaves chrome it
+ * publishes `{capture:false}` and we ask for click-through again so the
+ * content window below stays fully interactive everywhere the chrome isn't —
+ * realizing either ask (`setIgnoreMouseEvents`) is the backend's job
+ * (`window-kernel.ts SetAcceptsInput`, `electron-window-backend.ts
+ * setAcceptsInput`).
  */
 function wireClickCapture(): void {
   if (captureWired) return;
@@ -464,15 +466,11 @@ function wireClickCapture(): void {
     const capture = !!(msg && msg.capture) && getAppActive();
     lastCaptureState = capture;
     if (!overlayWin || overlayWin.isDestroyed()) return;
-    if (capture) {
-      overlayWin.setIgnoreMouseEvents(false);
-    } else {
-      overlayWin.setIgnoreMouseEvents(true, { forward: true });
-    }
-    // Machine click-through mirror (window-kernel.ts
-    // WindowAcceptsInputChanged) — capture:true means the overlay now takes
-    // input, capture:false means it is click-through again.
-    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, capture);
+    // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
+    // only the backend calls `setIgnoreMouseEvents` now. capture:true means
+    // the overlay now takes input, capture:false means it is click-through
+    // again.
+    if (overlayWmId != null) kernelSetAcceptsInput(overlayWmId, capture);
   });
 }
 
@@ -480,15 +478,18 @@ function wireClickCapture(): void {
  * R1: install the app-active POINTER-POLICY gate. When Electron resigns active
  * (the user clicks into ANOTHER app), the floating overlay must not capture
  * pointer events — otherwise a click in the other app lands on the (then-opaque)
- * overlay, activates Electron, and is swallowed. On resign-active we force the
- * overlay click-through with forwarding OFF; on become-active we restore the
- * default forwarded click-through. Idempotent: a second call is a no-op. Every
- * overlayWin access is guarded with isDestroyed().
+ * overlay, activates Electron, and is swallowed. On resign-active we ask the
+ * machine to force the overlay click-through; on become-active we ask it to
+ * restore the default click-through (still not capturing). Idempotent: a
+ * second call is a no-op. Every overlayWin access is guarded with
+ * isDestroyed().
  *
- * `setIgnoreMouseEvents` is CONTENT policy, not window management, which is why
- * it is the only thing left here: the visibility + z half of both edges is the
- * reducer's (`APP_RESIGNED` -> `HIDE_WINDOW` for attached overlays,
- * `APP_ACTIVATED` -> `applyOverlayFollow`), §5 step 9.
+ * Realizing the change (`setIgnoreMouseEvents`) is the backend's job now
+ * (`window-kernel.ts SetAcceptsInput`, `electron-window-backend.ts
+ * setAcceptsInput`) — this function only dispatches the intent, same R2
+ * discipline as every other window mutation; the visibility + z half of both
+ * edges is the reducer's (`APP_RESIGNED` -> `HIDE_WINDOW` for attached
+ * overlays, `APP_ACTIVATED` -> `applyOverlayFollow`), §5 step 9.
  *
  * The EDGE comes from the machine (`subscribeAppActive`, edge-deduped over
  * `AppWindowState.appActive`), not from a private `app.on('did-resign-active')`
@@ -500,18 +501,11 @@ function wireAppActiveGate(): void {
 
   const onAppResignActive = () => {
     if (!overlayWin || overlayWin.isDestroyed()) return;
-    try {
-      // Force click-through (no forwarding either — we don't want the renderer's
-      // mousemove loop to fire while we're backgrounded), so no click over the
-      // overlay can hit it / activate Electron.
-      overlayWin.setIgnoreMouseEvents(true, { forward: false });
-      lastCaptureState = false;
-    } catch {
-      /* setIgnoreMouseEvents unsupported in some envs */
-    }
-    // Machine click-through mirror (window-kernel.ts
-    // WindowAcceptsInputChanged) — forced click-through on this edge.
-    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, false);
+    lastCaptureState = false;
+    // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
+    // only the backend calls `setIgnoreMouseEvents` now. Force click-through
+    // so no click over the overlay can hit it / activate Electron.
+    if (overlayWmId != null) kernelSetAcceptsInput(overlayWmId, false);
     // The WINDOW half of this edge is the reducer's (§5 step 9): `APP_RESIGNED`
     // pushes `HIDE_WINDOW` for every attached overlay (peek 88797f2d / R6), so
     // the chrome leaves the screen while Peek is backgrounded. The old
@@ -522,18 +516,14 @@ function wireAppActiveGate(): void {
 
   const onAppBecomeActive = () => {
     if (!overlayWin || overlayWin.isDestroyed()) return;
-    try {
-      // Restore default click-through WITH forwarding (so the renderer's
-      // mousemove loop can re-arm capture over the chrome band as normal).
-      overlayWin.setIgnoreMouseEvents(true, { forward: true });
-      lastCaptureState = false;
-    } catch {
-      /* unsupported */
-    }
-    // Machine click-through mirror (window-kernel.ts
-    // WindowAcceptsInputChanged) — restored to default click-through, still
-    // not capturing.
-    if (overlayWmId != null) kernelWindowAcceptsInputChanged(overlayWmId, false);
+    lastCaptureState = false;
+    // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
+    // only the backend calls `setIgnoreMouseEvents` now. Restored to default
+    // click-through, still not capturing (the backend's own realization keeps
+    // move events forwarded — see `electron-window-backend.ts
+    // setAcceptsInput` — so the renderer's mousemove loop can re-arm capture
+    // over the chrome band as normal).
+    if (overlayWmId != null) kernelSetAcceptsInput(overlayWmId, false);
     // The re-reveal is the reducer's: `APP_ACTIVATED` runs `applyOverlayFollow`
     // for every attached overlay, restoring its z-pin and re-showing it over the
     // host it is still attached to (the attachment survived the resign, so no

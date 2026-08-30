@@ -810,25 +810,25 @@ export type Event =
    * A window's click-through state changed AFTER registration — the report
    * that closes the gap `izui-roles.ts deriveAcceptsInput` names in its own
    * doc: "A window whose click-through changes after registration needs an
-   * event, not a re-derivation." The Space border
-   * (`features/spaces/background.js showBorder`) is the case that gap left
-   * open — its `api.window.setIgnoreMouseEvents(...)` is a separate IPC round
-   * trip issued after `api.window.open` resolves, so the OS is already
-   * click-through by the time this arrives. Drives no effect: it is a report
+   * event, not a re-derivation." Drives no effect of its own: it is a report
    * ABOUT the OS, not a request OF it, same as `ContentFirstResponderChanged`
    * above. A report naming an unregistered window is a no-op, like every
    * other dangling-id event here.
    *
-   * FED FROM THE SITES THAT CAUSE THE CHANGE, not a backend observation —
-   * Electron has no getter for `setIgnoreMouseEvents` (the same reason
+   * NOW REACHED THROUGH THE `SetAcceptsInput` COMMAND for every production
+   * site: `tile-ipc.ts`'s `tile:window:set-ignore-mouse` handler (the Space
+   * border's, `features/spaces/background.js showBorder`, route to it) and
+   * `hybrid-overlay.ts`'s `wireClickCapture`/`wireAppActiveGate` used to
+   * dispatch this event directly, at the moment each made the native change
+   * — Electron has no getter for `setIgnoreMouseEvents` (the same reason
    * `hybrid-overlay.ts` keeps its own `lastCaptureState` mirror rather than
-   * asking the OS), so this arrives from `tile-ipc.ts`'s
-   * `tile:window:set-ignore-mouse` handler and `hybrid-overlay.ts`'s
-   * `wireClickCapture`/`wireAppActiveGate`, at the moment each makes the
-   * change, rather than from a native echo. `WindowContentOrderable` above is
-   * the existing precedent for that compromise: the OS has no "is this window
-   * orderable" query either, so that fact too is fed from the site that
-   * observes it happen rather than polled.
+   * asking the OS), so there was no native echo to await. They now issue the
+   * command instead and let `decide` produce this same event, so today NO
+   * production site feeds it directly. The shape stays: a backend that COULD
+   * observe an externally-caused click-through change (one this machine never
+   * asked for) still has this event to report it through, unlike
+   * `WindowContentOrderable` above's genuinely-still-fed "no query exists"
+   * compromise.
    */
   | { type: 'WindowAcceptsInputChanged'; id: WindowId; acceptsInput: boolean }
   /**
@@ -1120,6 +1120,19 @@ export type Command =
    */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
   /**
+   * App code wants this window's click-through state changed (see
+   * `WindowRecord.acceptsInput`) — the REQUEST counterpart to the report-only
+   * `WindowAcceptsInputChanged` event: this is the machine deciding to make
+   * the change happen, as opposed to a fact fed in from a site that already
+   * made it happen natively (the Space border's separate IPC round trip — see
+   * that event's doc for why that case has no command to go through).
+   * `decide`'s arm is unconditional, always emitting
+   * `WindowAcceptsInputChanged{acceptsInput: cmd.acceptsInput}` — the SAME
+   * event, reused rather than inventing a second acceptsInput-writing fact,
+   * the same reuse `SetBounds`/`Maximize`/`Unmaximize` make of `BoundsChanged`.
+   */
+  | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean; expectedVersion: number }
+  /**
    * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
    * is detach. One transition, no separate detach command (see the doc on
    * `WindowRecord.overlayFor`). `decide` rejects if either named window is
@@ -1325,6 +1338,15 @@ export type Effect =
    * backend's decision, never this kernel's.
    */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership }
+  /**
+   * Realize the window's click-through state (see `WindowRecord.acceptsInput`)
+   * — emitted by `react` as a structural diff of `acceptsInput`, same pattern
+   * as `SetBounds`/`SetDesktopMembership` above. Fires regardless of whether
+   * the transition came from the `SetAcceptsInput` command or from a genuine
+   * externally-caused `WindowAcceptsInputChanged` report — same accepted echo
+   * the bounds family's `SetBounds` effect above already lives with.
+   */
+  | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean }
   /**
    * TEARDOWN (§0.1.5) — the four below are emitted by `react` as a structural
    * diff of `State.lastTeardown`, one per teardown transition, and each may
@@ -2942,6 +2964,22 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Click-through (see `WindowRecord.acceptsInput`) — same diff pattern as
+  // bounds/desktop-membership above. Fires whether the mirror moved via the
+  // `SetAcceptsInput` command or a genuine externally-caused
+  // `WindowAcceptsInputChanged` report (the Space border) — never branches on
+  // `ev.type`. A window's own registration transition emits nothing here
+  // (`prevRecord` is undefined for it), same as bounds/desktop-membership.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    if (prevRecord.acceptsInput !== nextRecord.acceptsInput) {
+      effects.push({ type: 'SetAcceptsInput', id: nextRecord.id, acceptsInput: nextRecord.acceptsInput });
+    }
+  }
+
   // RaiseWindow: `State.key` now names a different window. Same structural
   // shape as every rule above — one field, diffed between `prev` and `next` —
   // so it reads `prev`/`next` only and never asks which event caused the move.
@@ -3530,6 +3568,8 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     }
     case 'SetDesktopMembership':
       return { events: [{ type: 'DesktopMembershipSet', id: cmd.id, membership: cmd.membership }] };
+    case 'SetAcceptsInput':
+      return { events: [{ type: 'WindowAcceptsInputChanged', id: cmd.id, acceptsInput: cmd.acceptsInput }] };
     case 'AssertFocus': {
       // Reached only after the unknown-window guard above — this command is
       // NOT exempt from it (see the command's own doc for why the teardown

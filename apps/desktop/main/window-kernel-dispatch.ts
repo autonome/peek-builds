@@ -146,6 +146,9 @@ class NoopKernelBackend implements WindowBackend {
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
     recordEffect('setDesktopMembership', id, membership);
   }
+  setAcceptsInput(id: WindowId, acceptsInput: boolean): void {
+    recordEffect('setAcceptsInput', id, acceptsInput);
+  }
   attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void {
     recordEffect('attachOverlayTo', overlayId, hostId);
   }
@@ -1068,6 +1071,34 @@ export function kernelSetDesktopMembership(id: WindowId, membership: DesktopMemb
     type: 'SetDesktopMembership',
     id,
     membership,
+    expectedVersion: getKernelExecutor().getState().version,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Click-through — feeds the kernel's `SetAcceptsInput` command, closing the
+// gap that used to force `hybrid-overlay.ts`'s `wireClickCapture`/
+// `wireAppActiveGate` and `tile-ipc.ts`'s `tile:window:set-ignore-mouse`
+// handler to call `setIgnoreMouseEvents` directly and mirror the machine by
+// hand with `kernelWindowAcceptsInputChanged` afterward. Those three sites now
+// dispatch this command instead, so `kernelWindowAcceptsInputChanged` (the
+// direct event-feed helper above) currently has no production caller — it
+// stays for a backend that could one day OBSERVE an externally-caused
+// click-through change, the case its own doc still describes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a click-through request into the kernel's `SetAcceptsInput`
+ * command — `decide`'s arm (`window-kernel.ts`'s `SetAcceptsInput` case) is
+ * unconditional, always emitting `WindowAcceptsInputChanged{acceptsInput:
+ * cmd.acceptsInput}`; no branching to reproduce. Same shape and containment
+ * as `kernelSetDesktopMembership` above.
+ */
+export function kernelSetAcceptsInput(id: WindowId, acceptsInput: boolean): void {
+  kernelExecute({
+    type: 'SetAcceptsInput',
+    id,
+    acceptsInput,
     expectedVersion: getKernelExecutor().getState().version,
   });
 }

@@ -84,6 +84,7 @@ class InertBackend implements WindowBackend {
   setStacking(_id: WindowId, _level: StackingLevel): void {}
   setWindowBounds(_id: WindowId, _rect: Rect): void {}
   setDesktopMembership(): void {}
+  setAcceptsInput(): void {}
   attachOverlayTo(): void {}
 }
 

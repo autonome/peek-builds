@@ -207,6 +207,8 @@ export interface NativeWindow {
     visible: boolean,
     options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
   ): void;
+  /** Click-through toggle (the `setAcceptsInput` command). On both kinds in Electron 40. */
+  setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void;
   /**
    * Outer-bounds read — used ONLY inside the resize/move listeners to build
    * the `BOUNDS_CHANGED` emission (§2.5's sanctioned pattern: the backend
@@ -1665,6 +1667,34 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }
     } catch {
       /* Spaces write against a torn-down window — the machine already recorded intent */
+    }
+  }
+
+  /**
+   * Realize the window's click-through state (the platform-neutral
+   * `SetAcceptsInput` effect, `window-kernel.ts WindowRecord.acceptsInput`) as
+   * the native `setIgnoreMouseEvents` call. Named off the intention,
+   * deliberately NOT the platform method name: same convention as
+   * `setFullscreen` / `pinAlwaysOnTop` / `setWindowBounds` /
+   * `setDesktopMembership` — the R2 mechanical check
+   * (`scripts/check-r2-window-ops.mjs`) greps platform call names verbatim.
+   *
+   * `forward: true` rides every click-through (`acceptsInput: false`) call —
+   * ONE fixed realization of the one intention this port exposes, not a
+   * second knob threaded through from the caller: it is what lets a
+   * click-through window's own renderer keep seeing pointer-move, which the
+   * chrome overlay's reveal/hover UI (`hybrid-overlay.ts
+   * wireClickCapture`/`wireAppActiveGate`) depends on, and Electron simply
+   * ignores the options object on an `acceptsInput: true` call.
+   */
+  setAcceptsInput(id: WindowId, acceptsInput: boolean): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (win.isDestroyed()) return;
+      win.setIgnoreMouseEvents(!acceptsInput, { forward: true });
+    } catch {
+      /* torn-down window mid-command — the machine already recorded intent */
     }
   }
 

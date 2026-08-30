@@ -364,6 +364,28 @@ export interface WindowBackend {
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void;
 
   /**
+   * Realize the window's click-through state (the `SetAcceptsInput` effect,
+   * `window-kernel.ts WindowRecord.acceptsInput`) — the missing counterpart
+   * to the report-only `WindowAcceptsInputChanged` event, closing the gap
+   * that used to force `hybrid-overlay.ts` and `tile-ipc.ts` to call a
+   * platform method directly and mirror the machine by hand. Named off the
+   * intention, deliberately NOT the platform method name
+   * `setIgnoreMouseEvents`: same convention as `setFullscreen` /
+   * `pinAlwaysOnTop` / `setWindowBounds` / `setDesktopMembership` — the R2
+   * mechanical check (`scripts/check-r2-window-ops.mjs`) greps the platform
+   * call names verbatim, and the port is a different namespace.
+   *
+   * The signature carries ONLY the intention — accepts input, or doesn't.
+   * HOW a given backend realizes either one — one native call, an option this
+   * port never sees, or none at all on a platform with no such concept — is
+   * entirely the backend's decision (`electron-window-backend.ts
+   * setAcceptsInput`). A second backend that has no notion of click-through
+   * implements this as a no-op and every argument here still means something
+   * to it: there is no platform-specific shape left to misinterpret.
+   */
+  setAcceptsInput(id: WindowId, acceptsInput: boolean): void;
+
+  /**
    * Realize the machine's request that `overlayId` frame `hostId` (the
    * `AttachOverlayTo` effect, `window-kernel.ts Effect`) — a REQUEST, not an
    * assertion: the kernel does not enforce that attachment agrees with

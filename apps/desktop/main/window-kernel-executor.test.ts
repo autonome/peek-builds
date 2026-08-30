@@ -126,6 +126,9 @@ class RecordingBackend implements WindowBackend {
   setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
     this.record('setDesktopMembership', id, membership);
   }
+  setAcceptsInput(id: BackendWindowId, acceptsInput: boolean): void {
+    this.record('setAcceptsInput', id, acceptsInput);
+  }
   attachOverlayTo(overlayId: BackendWindowId, hostId: BackendWindowId | null): void {
     this.record('attachOverlayTo', overlayId, hostId);
   }
