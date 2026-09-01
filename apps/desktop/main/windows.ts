@@ -518,53 +518,13 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
 // below filters by machine window CLASS now, not by this role set.
 export { TRANSIENT_ROLES } from './izui-roles.js';
 
-/**
- * Window classes that never hold the app open (§5 step 6B): a window of one
- * of these classes is not "a window the user is working in", so it does not
- * count toward the visible-window total maybeHideApp reads. The set
- * reproduces the pre-machine exclusion semantics exactly:
- *   - 'background'                    was: entry.params.address === WEB_CORE_ADDRESS
- *   - 'quick-view'/'palette'/'overlay' was: TRANSIENT_ROLES on the registry role
- *     (classifyWindowRegistration maps those roles 1:1 to these classes)
- *   - 'hud'                           was: role 'utility' + focusable === false
- * Deliberately a CLASS set, not the record's `satellite` flag: quick-view is
- * satellite:false yet transient-excluded, while a detached devtools window
- * (satellite:true) and extension-ui popups are real visible surfaces that
- * kept the app open before and must keep doing so.
- */
-const APP_HIDE_EXCLUDED_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
-  'background',
-  'quick-view',
-  'palette',
-  'overlay',
-  'hud',
-]);
-
-/**
- * Get count of visible persistent windows (excluding background, transients, HUD).
- * Used by maybeHideApp to decide whether to hide the app when a window closes.
- *
- * Derived from the window-state machine (§5 step 6B): `visible` is reducer
- * state (written by the backend's WINDOW_SHOWN / WINDOW_HIDDEN echoes), so
- * BrowserWindows and hybrid page-host BaseWindows come out of ONE table —
- * no isVisible() polling, no per-registry split.
- */
-export function getVisibleWindowCount(excludeId: number | null = null): number {
-  // excludeId is the numeric Electron id of the window whose close/hide is in
-  // flight — its native hide event may not have echoed into the machine yet,
-  // so it must not hold the app open. Convert it to the machine WindowId and
-  // exclude that record.
-  const excludeMachineId = excludeId != null ? getWindowIdFor(excludeId) : null;
-  return listMachineWindowRecords().filter(rec => {
-    if (excludeMachineId != null && rec.id === excludeMachineId) return false;
-    if (!rec.visible) return false;
-    // `rec.class` is a plain `string` on the kernel record (no `WindowClass`
-    // brand — see `window-kernel.ts WindowRecord.class`); the excluded set is
-    // typed as the branded lookup-only vocabulary. Cast, non-behavioral: the
-    // kernel's `class` values are drawn from the same vocabulary.
-    return !APP_HIDE_EXCLUDED_CLASSES.has(rec.class as WindowClass);
-  }).length;
-}
+// (The app-hide census moved into the kernel. `APP_HIDE_EXCLUDED_CLASSES` and
+// `getVisibleWindowCount` are now `window-kernel.ts holdsAppOnScreen`, and the
+// decision they fed is a `react` rule that diffs the count across a transition
+// — "this transition took the app-holding windows from some to none" — which
+// is also why the census no longer needs an `excludeId`: the closing window is
+// already out of `next.order`, rather than being a window whose native hide
+// had not echoed yet.)
 
 /**
  * Apply dock visibility based on user preference.
@@ -593,27 +553,13 @@ export function applyDockPreference(): void {
   }
 }
 
-/**
- * Hide the app if there are no other visible windows.
- *
- * app.hide() is an APP-level operation, not a window operation — it is out of
- * the window-backend port's scope by design (§5 step 6B): the machine's job
- * ends at supplying the visibility state this decision reads, and the
- * app-surface call sits here.
- */
-export function maybeHideApp(excludeId: number): void {
-  if (process.platform !== 'darwin') return;
-
-  const visibleCount = getVisibleWindowCount(excludeId);
-  DEBUG && console.log('maybeHideApp: visible windows (excluding', excludeId + '):', visibleCount);
-
-  if (visibleCount === 0) {
-    DEBUG && console.log('No other visible windows, hiding app');
-    app.hide();
-  } else {
-    DEBUG && console.log('Other windows visible, not hiding app');
-  }
-}
+// (`maybeHideApp` is gone. Handing the user back to the app they came from,
+// once nothing of Peek's is left holding the screen, is a kernel rule now —
+// `window-kernel.ts react`'s app-hide diff, performed through the window
+// port's `hideApp`. It used to be called from the two `closeOrHideWindow`
+// tails, which meant a close reaching the kernel by any other route did not
+// get it. The macOS-only guard went to the backend, where the platform
+// vocabulary belongs.)
 
 /**
  * Resolve the native window for `id` (BrowserWindow or hybrid page-host
@@ -684,7 +630,6 @@ export async function closeOrHideWindow(id: number): Promise<void> {
           wmLog('close-or-hide-hybrid-unregistered', { id });
           closeHostWindow(id, hybrid.baseWin);
         }
-        maybeHideApp(id);
         return;
       }
       DEBUG && console.log('Window already destroyed or invalid');
@@ -724,15 +669,12 @@ export async function closeOrHideWindow(id: number): Promise<void> {
       closeHostWindow(id, win);
     }
 
-    // Hide app to return focus to previous app (only if no other visible windows).
-    // Skip for overlay windows — they manage their own restoration flow via the
-    // IZUI coordinator and should not trigger app hiding. Untouched by the
-    // move above: the kernel has no model of "app hidden" — see
-    // `maybeHideApp`/`getVisibleWindowCount`'s own docs.
-    const isOverlay = params.role === 'overlay';
-    if (!isOverlay) {
-      maybeHideApp(id);
-    }
+    // (The app-hide followup is gone from here. Returning the user to the app
+    // they came from, once nothing of Peek's is left holding the screen, is a
+    // kernel rule now — see the note where `maybeHideApp` used to live. The
+    // switcher exemption that used to sit here went with it: the switcher's
+    // class never held the app open, so its close cannot be what empties the
+    // screen, and there is no case left to write.)
 
     DEBUG && console.log('closeOrHideWindow completed');
   } catch (error) {

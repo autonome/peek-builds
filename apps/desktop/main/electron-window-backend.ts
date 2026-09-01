@@ -1891,6 +1891,25 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
   }
 
+  /**
+   * Hand the user back to whatever they were in before (the `HideApp` effect).
+   *
+   * macOS ONLY, and that gate is this backend's to hold rather than the
+   * kernel's: `app.hide()` is the AppKit notion of an application stepping out
+   * of the way, and no other platform this backend runs on has one. A platform
+   * without the concept answers with nothing, which is the correct answer — the
+   * kernel does not need to know which platforms have it. The previous owner
+   * (`windows.ts maybeHideApp`) held the same guard at the same layer.
+   *
+   * The app coming back is reported through the ordinary activation edge, so
+   * there is nothing to echo here.
+   */
+  hideApp(): void {
+    if (process.platform !== 'darwin') return;
+    DEBUG && console.log('[window-backend] hiding the app — nothing left holding it on screen');
+    app.hide();
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // The ONE deferred-blur settle (§4.4). The lowest layer: the OS/Chromium
   // boundary where "focus left all Peek windows" is only knowable one tick after

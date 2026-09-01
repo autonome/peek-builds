@@ -1286,7 +1286,10 @@ const TEARDOWN_EFFECTS_MAY_NAME_A_RETIRED_WINDOW: ReadonlySet<Effect['type']> = 
 function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
+    // The two effects that name no window at all — nothing here to check
+    // against `order`.
     if (effect.type === 'DestroyAllGuests') continue;
+    if (effect.type === 'HideApp') continue;
     // `AttachOverlayTo` names a RELATION, not a single window (§ Effect
     // docblock) — `overlayId` and, when not a detach, `hostId` each get the
     // same "still in next.order" check the rest of this function runs, just

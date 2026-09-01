@@ -976,6 +976,14 @@ export class WindowKernelExecutor {
         this.trackAsyncEffect(teardown);
         return;
       }
+      case 'HideApp': {
+        // Process-wide, names no window (like `DestroyAllGuests` above).
+        // Synchronous and unawaited: nothing downstream depends on when the
+        // app finishes going away, and the app coming back is reported through
+        // the ordinary activation edge rather than as this call's result.
+        this.backend.hideApp();
+        return;
+      }
       case 'AttachOverlayTo': {
         // No headless gate — an attach neither activates, takes key, nor
         // brings a hidden window on screen (the same reasoning the `SetBounds`

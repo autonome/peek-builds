@@ -958,7 +958,14 @@ describe('window-kernel: CloseOrHideWindow', () => {
     const ev = decision.events[0];
     const next = evolve(state, ev);
     const effects = react(state, ev, next);
-    assert.deepStrictEqual(effects, [{ type: 'HideWindow', id: wid(1), opSeq: next.opSeqCounter }]);
+    // Filtered to the close/hide family, the same shape the sibling test above
+    // uses: this is about which of the two a keepLive window gets, and hiding
+    // the app's last window also hands the user back to where they came from
+    // (`react`'s app-hide rule), which is a different rule's business.
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'HideWindow' || e.type === 'CloseWindow'),
+      [{ type: 'HideWindow', id: wid(1), opSeq: next.opSeqCounter }],
+    );
     assert.ok(!effects.some((e) => e.type === 'CloseWindow'));
   });
 });
@@ -5608,8 +5615,12 @@ describe('window-kernel: teardown commands and effects', () => {
     const state = oneWindow();
     const teardown = run(state, { type: 'DestroyWindow', id: wid(1), expectedVersion: state.version });
     const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], teardown.state);
+    // Filtered to the effects that name this window: hiding the app's last
+    // visible window also hands the user back to where they came from
+    // (`react`'s app-hide rule), which names no window and is not what this
+    // test is about.
     assert.deepStrictEqual(
-      after.effects,
+      after.effects.filter((e) => 'id' in e),
       [{ type: 'HideWindow', id: wid(1), opSeq: after.state.opSeqCounter }],
       'no second DestroyWindow',
     );
@@ -5776,8 +5787,11 @@ describe('window-kernel: the focus assert', () => {
     const asserted = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
     const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], asserted.state);
 
+    // Filtered to the effects that name this window, same reason as the
+    // teardown block's sibling test: hiding the app's last visible window also
+    // hands the user back to where they came from, and that effect names none.
     assert.deepStrictEqual(
-      after.effects,
+      after.effects.filter((e) => 'id' in e),
       [{ type: 'HideWindow', id: wid(1), opSeq: after.state.opSeqCounter }],
       'no second RaiseWindow, no second FocusContent',
     );
@@ -7027,5 +7041,111 @@ describe('window-kernel: whether Peek came up while the user was in another app'
     assert.strictEqual(state.openedInBackground, false);
     const again = fold([contentWindow(wid(1))], state);
     assert.strictEqual(again.openedInBackground, false, 'a merge is not a window opening');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The app steps aside when nothing of Peek's is left on screen.
+//
+// Ported from `windows.ts maybeHideApp` + `getVisibleWindowCount`, which the
+// two `closeOrHideWindow` tails called themselves — so a close reaching the
+// kernel by any other route never got it. Now a `react` rule, which means every
+// route does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: handing the user back when nothing is left on screen', () => {
+  const reg = (id: WindowId, cls: string): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: cls,
+    role: 'content',
+  });
+
+  const hidesApp = (effects: Effect[]): boolean => effects.some((e) => e.type === 'HideApp');
+
+  it('closing the only window on screen hides the app', () => {
+    const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]);
+    const after = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], state);
+    assert.ok(hidesApp(after.effects));
+  });
+
+  it('hiding the only window on screen hides the app too — a keepLive window still empties it', () => {
+    const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]);
+    const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], state);
+    assert.ok(hidesApp(after.effects));
+  });
+
+  it('closing one of two leaves the app where it is', () => {
+    const state = fold([
+      reg(wid(1), 'primary'),
+      reg(wid(2), 'primary'),
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'WindowShown', id: wid(2) },
+    ]);
+    const after = foldWithEffects([{ type: 'WindowClosed', id: wid(2) }], state);
+    assert.ok(!hidesApp(after.effects), 'the user can still see window 1');
+  });
+
+  it('a background, quick-view, palette, overlay or hud window never held the app open', () => {
+    // So closing the real window while one of these is up still empties the
+    // screen as far as this rule is concerned.
+    for (const cls of ['background', 'quick-view', 'palette', 'overlay', 'hud']) {
+      const state = fold([
+        reg(wid(1), 'primary'),
+        reg(wid(2), cls),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+      ]);
+      const after = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], state);
+      assert.ok(hidesApp(after.effects), `${cls} should not hold the app open`);
+    }
+  });
+
+  it('the switcher closing never hides the app — the old special case, now falling out of the rule', () => {
+    // `windows.ts` wrote this as a named exemption. Here the switcher's class
+    // is one that never held the app open, so its close cannot take the count
+    // from some to none and there is nothing to exempt.
+    const state = fold([reg(wid(9), 'overlay'), { type: 'WindowShown', id: wid(9) }]);
+    const after = foldWithEffects([{ type: 'WindowClosed', id: wid(9) }], state);
+    assert.ok(!hidesApp(after.effects));
+  });
+
+  it('the hide is issued once, not on every later transition', () => {
+    // Both halves of the diff are load-bearing. Without the "was some" half,
+    // every transition in an already-empty app would re-issue it.
+    const emptied = foldWithEffects(
+      [{ type: 'WindowClosed', id: wid(1) }],
+      fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]),
+    );
+    assert.ok(hidesApp(emptied.effects));
+    const later = foldWithEffects([{ type: 'AppResigned' }], emptied.state);
+    assert.ok(!hidesApp(later.effects), 'nothing left to empty, so nothing to do');
+  });
+
+  it('a teardown REQUEST does not hide the app — only the window actually going does', () => {
+    // The window is still on screen when a teardown is requested, and the app
+    // must not step aside while the user can still see it. A request that never
+    // completes would otherwise have hidden the app for nothing.
+    const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]);
+    const requested = foldWithEffects([{ type: 'WindowDestroyRequested', id: wid(1) }], state);
+    assert.ok(!hidesApp(requested.effects), 'still visible');
+    const gone = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], requested.state);
+    assert.ok(hidesApp(gone.effects), 'and now it is not');
+  });
+
+  it('a window that was never shown closing hides nothing — it was not holding the app open', () => {
+    const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }, reg(wid(2), 'primary')]);
+    const after = foldWithEffects([{ type: 'WindowClosed', id: wid(2) }], state);
+    assert.ok(!hidesApp(after.effects));
+  });
+
+  it('the effect names no window at all', () => {
+    const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]);
+    const after = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], state);
+    assert.deepStrictEqual(after.effects.filter((e) => e.type === 'HideApp'), [{ type: 'HideApp' }]);
   });
 });

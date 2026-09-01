@@ -81,6 +81,7 @@ class InertBackend implements WindowBackend {
   destroyAllContentGuests(): Promise<void> {
     return Promise.resolve();
   }
+  hideApp(): void {}
   setStacking(_id: WindowId, _level: StackingLevel): void {}
   setWindowBounds(_id: WindowId, _rect: Rect): void {}
   setDesktopMembership(): void {}

@@ -290,6 +290,21 @@ export interface WindowBackend {
    */
   destroyAllContentGuests(): Promise<void>;
 
+  /**
+   * Put the whole app out of the way, handing the user back to whatever they
+   * were in before (the `HideApp` effect) — issued when the last window that
+   * was keeping Peek on screen goes away, so closing your final window returns
+   * you where you came from instead of leaving an empty app in front.
+   *
+   * APP-LEVEL, and deliberately named for the intention rather than for any
+   * platform's verb: a backend on a system with no such concept answers with
+   * nothing, and that is a correct answer rather than a case for the kernel to
+   * special-case. Peek's own windows are untouched — this is about where the
+   * app sits relative to other applications, not about window visibility, so
+   * nothing here reports back as a window fact.
+   */
+  hideApp(): void;
+
   // ── §5 step 5 command (z-order / stacking) ────────────────────────────────
 
   /**

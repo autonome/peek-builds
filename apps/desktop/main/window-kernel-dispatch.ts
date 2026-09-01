@@ -137,6 +137,9 @@ class NoopKernelBackend implements WindowBackend {
     recordEffect('destroyAllContentGuests');
     return Promise.resolve();
   }
+  hideApp(): void {
+    recordEffect('hideApp');
+  }
   setStacking(id: WindowId, level: StackingLevel): void {
     recordEffect('setStacking', id, level);
   }

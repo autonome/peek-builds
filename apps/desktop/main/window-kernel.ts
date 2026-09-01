@@ -1483,6 +1483,14 @@ export type Effect =
   /** Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window. */
   | { type: 'DestroyAllGuests' }
   /**
+   * Put the app out of the way, handing the user back to whatever they were in
+   * before — issued when the last window that was keeping Peek on screen goes
+   * away (see `react`'s rule and `holdsAppOnScreen`). Names no window, like
+   * `DestroyAllGuests`, because it is about the app rather than any one
+   * window; the backend's `hideApp` performs it.
+   */
+  | { type: 'HideApp' }
+  /**
    * Make the window's CONTENT surface the OS first responder — the port of the
    * old `FOCUS_CONTENT` effect, and the half of a raise that an already-front
    * window still needs when something took first responder off it without
@@ -3466,6 +3474,33 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     effects.push({ type: 'ReconcileFullscreen', id: record.id });
   }
 
+  // App hide: the last window that was keeping Peek on screen has gone away,
+  // so hand the user back to whatever they were in before. Ported from
+  // `windows.ts maybeHideApp`, which the two `closeOrHideWindow` tails called
+  // themselves.
+  //
+  // A STRUCTURAL DIFF, like every other rule here: the app hides when this
+  // transition took the count of app-holding windows from some to none. Both
+  // halves are needed. Without the "was some" half every later transition in
+  // an app with nothing on screen would re-issue the hide; without the "now
+  // none" half a close that leaves other windows up would hide the app out
+  // from under them.
+  //
+  // THE OLD OVERLAY EXEMPTION FALLS OUT rather than being carried. `windows.ts`
+  // skipped the hide when the CLOSING window was the switcher, as a named
+  // special case. Here the switcher's class is one that never held the app open
+  // in the first place, so its close cannot take the count from some to none —
+  // the diff is simply false, and there is no case to write.
+  //
+  // A HIDE, not a quit, and not a window operation: Peek's own windows are
+  // untouched. The backend's `hideApp` performs it, and a platform without the
+  // concept answers with nothing.
+  const heldBefore = prev.order.some(holdsAppOnScreen);
+  const heldAfter = next.order.some(holdsAppOnScreen);
+  if (heldBefore && !heldAfter) {
+    effects.push({ type: 'HideApp' });
+  }
+
   // Focus assert: a structural diff of `State.lastFocusAssert`, the same shape
   // as the teardown rule above and for the same reason — the transition it
   // projects changes nothing else, so there is nothing else to diff. The `seq`
@@ -4115,6 +4150,50 @@ export function isContentWindow(record: WindowRecord): boolean {
   if (record.pendingHidden) return false;
   if (!record.canBecomeKey) return false;
   return roleIn(CONTENT_ROLES, record.role);
+}
+
+/**
+ * The window CLASSES that never keep the app on screen. Ported verbatim from
+ * `windows.ts APP_HIDE_EXCLUDED_CLASSES`, which carried this note about where
+ * each entry came from:
+ *   - 'background'                     was: the web-core address
+ *   - 'quick-view'/'palette'/'overlay' was: the transient roles
+ *   - 'hud'                            was: role 'utility' + not focusable
+ *
+ * A CLASS SET, not the record's `satellite` flag, and the reason is in the two
+ * disagreements: a quick-view is `satellite: false` yet does not hold the app
+ * open, while a detached devtools window (`satellite: true`) and the
+ * extension-UI popups are real surfaces the user is looking at, and always
+ * did keep it open.
+ */
+const APP_HOLD_EXCLUDED_CLASSES: ReadonlySet<string> = new Set([
+  'background',
+  'quick-view',
+  'palette',
+  'overlay',
+  'hud',
+]);
+
+/**
+ * THIS WINDOW IS A REASON FOR PEEK TO STAY ON SCREEN — a surface the user is
+ * actually looking at, as opposed to chrome, a peek, or the invisible
+ * background window.
+ *
+ * The one input to `react`'s app-hide rule, and it replaces `windows.ts
+ * getVisibleWindowCount`, whose `excludeId` parameter has no counterpart here:
+ * that argument existed because the closing window's native hide had not yet
+ * echoed into the machine when the old caller counted, and asking `next.order`
+ * inside the transition that removed or hid it does not have that problem.
+ */
+export function holdsAppOnScreen(record: WindowRecord): boolean {
+  // `visible` ALONE, deliberately — no `pendingHidden` clause, unlike
+  // `isContentWindow` above. A window on its way out is still on the screen,
+  // and the app must not step aside while the user can still see it: gating on
+  // the intent instead of the fact made every teardown REQUEST hide the app,
+  // including requests that never complete. The real edge is the visibility
+  // report that follows, and that is what this reads.
+  if (!record.visible) return false;
+  return !APP_HOLD_EXCLUDED_CLASSES.has(record.class);
 }
 
 /**

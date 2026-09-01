@@ -98,6 +98,9 @@ class FakeBackend implements WindowBackend {
   pinAlwaysOnTop(id: BackendWindowId, on: boolean): void {
     this.record('pinAlwaysOnTop', id, on);
   }
+  hideApp(): void {
+    this.record('hideApp');
+  }
   destroyAllContentGuests(): Promise<void> {
     this.record('destroyAllContentGuests');
     return Promise.resolve();
