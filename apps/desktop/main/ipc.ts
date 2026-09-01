@@ -1184,6 +1184,34 @@ function assembleHybridPageHost(
     unregisterHybridWindow(baseWin.id);
   };
 
+  // ORDERING INVARIANT, checked rather than assumed. Both this listener and
+  // the backend's close veto (`electron-window-backend.ts`, attached inside
+  // `registerWindowWithMachine`) are bound to the SAME `'close'` emit, and an
+  // Electron `preventDefault()` does not stop the emitter from running the
+  // rest of its listeners — so both bodies run on every native close, in
+  // attach order.
+  //
+  // The backend MUST go first. It vetoes the native close and asks the kernel
+  // synchronously (`kernelCloseOrHideRequested`), which is what lets the
+  // kernel's `decide` see a live record and answer close-vs-hide. Reversed,
+  // `runHybridFinalize` retires the record and tears down the content WC
+  // first, the kernel is then asked about a window it no longer has, and the
+  // host is left vetoed-open around destroyed content with nothing able to
+  // close it.
+  //
+  // A hybrid host is a `BaseWindow`, so it never gets `main.ts`'s
+  // `browser-window-created` close-capture listener: at this point the only
+  // thing that can have bound `'close'` is the backend, and a count of zero
+  // means registration did not attach it. This throws rather than warns —
+  // both hybrid build sites catch and route the partially-built host through
+  // `destroyUnassembledHybridHost`, so a loud failure here leaks nothing.
+  if (baseWin.listenerCount('close') === 0) {
+    throw new Error(
+      `[hybrid-page-host:${baseWin.id}] the window backend's close veto is not attached; ` +
+      'the finalize tail must be wired AFTER registerWindowWithMachine so the kernel ' +
+      'decides the close before the record is retired',
+    );
+  }
   baseWin.on('close', () => {
     captureHybridClose();
     runHybridFinalize();
