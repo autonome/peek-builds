@@ -29,10 +29,16 @@ import http from 'http';
  * So the raise is observed the way this suite observes any hybrid-host
  * state change it cannot see through a `Page`: the kernel's own transition
  * record (`window-kernel-executor.ts timelineForTests`, reachable here via
- * `__peek_test.kernelTimelineForTest`). `RaiseWindow`'s `decide` manufactures
- * its `OsFocusGained` event synchronously, with no real OS confirmation
- * involved — a headless-safe read of the SAME decision a real raise makes,
- * not a stand-in for one.
+ * `__peek_test.kernelTimelineForTest`). The switcher's close is the spend:
+ * `window-kernel.ts` `evolve`'s `WindowClosed` case reads the armed
+ * `pendingSelectionFocus`, clears the latch, and stamps `lastFocusAssert`
+ * with the picked window in that SAME transition; `react`'s focus-assert
+ * diff turns that into a `RaiseWindow` effect on the very same timeline
+ * line. Under headless, `window-kernel-executor.ts performEffect` performs
+ * that `RaiseWindow` via `planRaise`'s `'inactive-show'` (the general
+ * never-steal-OS-focus policy), so the effect lands as a `WindowShown` for
+ * the target, never an `OsFocusGained` — a headless-safe read of the same
+ * decision a real raise makes, not a stand-in for one.
  *
  * The switcher window itself (`peek://windows/windows.html`) is an ordinary
  * tile `BrowserWindow` (Tile Architecture — not a hybrid page-host), so it
@@ -72,7 +78,7 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  test('selecting a card in the switcher raises that window via kernelRaiseWindow', async () => {
+  test('selecting a card in the switcher raises that window via the WindowClosed selection spend', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // A real content window (http://) — a hybrid BaseWindow, the same kind
@@ -115,6 +121,22 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
       return (globalThis as any).__peek_test.kernelTimelineForTest().length;
     })) as number;
 
+    // The switcher's own WindowId, resolved the same way targetWmId was —
+    // by finding its live BrowserWindow and asking the machine's id lookup
+    // (`getWindowIdFor`, exposed here as `machineWindowIdFor`; despite
+    // living on the hybrid overlay bridge it is generic — it resolves any
+    // registered window, not only hybrid ones). Needed to name the
+    // switcher's own `WindowClosed(...)` line below rather than any close.
+    const switcherWmId = (await app.evaluateMain!((({ webContents, BrowserWindow }: any) => {
+      const all = webContents.getAllWebContents();
+      const target = all.find((wc: any) => (wc.getURL() || '').includes('windows/windows.html'));
+      if (!target) return null;
+      const win = BrowserWindow.fromWebContents(target);
+      if (!win) return null;
+      return (globalThis as any).__peekHybridOverlayTest.machineWindowIdFor(win.id);
+    }) as any)) as string | null;
+    expect(switcherWmId, 'switcher never registered with the window-state machine').toBeTruthy();
+
     // The real selection path: click the card (`card-click` →
     // `api.window.setOverlayFocusTarget(win.id)` → `window.close()`), the
     // exact chain `features/windows/windows.js createWindowCard` wires up.
@@ -126,17 +148,30 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
     // rule (the code under test) can only spend one that is already armed.
     await expect.poll(() => switcherWindow.isClosed(), { timeout: 5000 }).toBe(true);
 
-    // The kernel's own transition record: a fresh `OsFocusGained` for the
-    // target, landing the key on it — the same decision `RaiseWindow`
-    // (`kernelRaiseWindow`, called from the `closed` handler) makes
-    // synchronously, headless or not.
+    // The kernel's own transition record, checked for the ordered pair that
+    // proves both halves of the decision — not just that some window got
+    // shown:
+    //
+    //   1. a `WindowClosed(<switcherWmId>)` line whose own `eff=[...]`
+    //      already names `RaiseWindow(<targetWmId>)` — proof the latch was
+    //      spent BY THE SWITCHER'S OWN CLOSE (the `WindowClosed` case only
+    //      emits `RaiseWindow` for the id it stamped into `lastFocusAssert`,
+    //      which is `pendingSelectionFocus.target` when the closing window
+    //      is the armer) and that the picked window (`targetWmId`) is the
+    //      one it named, not merely "a" window;
+    //   2. a later `WindowShown(<targetWmId>)` line — proof the executor
+    //      actually carried out that decision, in order, rather than the
+    //      effect being emitted and dropped.
     await expect.poll(async () => {
       const timeline = (await app.evaluateMain!((_e: unknown) => {
         return (globalThis as any).__peek_test.kernelTimelineForTest();
       })) as string[];
       const fresh = timeline.slice(baselineLen);
-      const pattern = new RegExp(`OsFocusGained\\(${targetWmId}\\) key=(?:\\S*->)?${targetWmId}\\b`);
-      return fresh.some((line) => pattern.test(line));
+      const spendPattern = new RegExp(`^#\\d+ WindowClosed\\(${switcherWmId}\\).*RaiseWindow\\(${targetWmId}\\)`);
+      const spendIndex = fresh.findIndex((line) => spendPattern.test(line));
+      if (spendIndex === -1) return false;
+      const shownPattern = new RegExp(`^#\\d+ WindowShown\\(${targetWmId}\\)`);
+      return fresh.slice(spendIndex + 1).some((line) => shownPattern.test(line));
     }, { timeout: 5000 }).toBe(true);
   });
 });
