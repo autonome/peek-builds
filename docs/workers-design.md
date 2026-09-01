@@ -320,11 +320,19 @@ MCP remains the right answer for the *other* direction — an agent calling *int
   fetching the parent item with `?events=N`, one request per item, and `fetchEvents()` caps the
   result at 20 however many are asked for. `pollFeed()` in `apps/desktop/features/feeds/background.js`
   deduplicates by reading its last 100 entries and skipping guids it already has; against this API
-  it sees 20. Polling a 50-entry feed twice writes 50 entries and then 30 more, and every poll
-  after that writes 30 again, forever. There is also no route that deletes an item event, so
-  `unsubscribeFeed()` throws and a removed feed leaves its entries behind. **A worker that touches
-  item events needs `/mcp/*` routes that do not exist yet**, and unlike the generic-table gap this
-  one is hit by a bundled feature that already ships.
+  it sees 20. Confirmed against the deployed server with a 25-entry feed: the first poll writes
+  25, and **every poll after it writes the 5 it cannot see, indefinitely**.
+
+  Cleanup is worse than absent. There is no route that deletes an item event, so
+  `unsubscribeFeed()` throws before it reaches the feed item — and `deleteItem()` in
+  `apps/server/db.js` is a soft delete that sets `deletedAt` on the item and never touches
+  `item_events`, so the rows survive the item that owned them with no way to reach them again
+  through this API. A worker polling on a schedule therefore grows the table without bound and
+  cannot clean up after itself.
+
+  **A worker that touches item events needs `/mcp/*` routes that do not exist yet** — at minimum a
+  paged event read, a create that preserves `content` and `occurredAt`, and a delete. Unlike the
+  generic-table gap, this one is hit by a bundled feature that already ships.
 - **`api.network` and `api.datastore` diverge in where they are enforced.** On the desktop both
   are checked by `tile-ipc-gate.ts` against the manifest grant. For a worker, datastore scope
   and the readonly bit are properties of the *credential*, enforced server-side — that is the
@@ -844,17 +852,19 @@ is the intended shape, not a transitional one.
 
    Bootstrap is not the problem. Process launch through the feature's module graph being imported
    and ready — Node's own startup, `linkedom`, `remote-store.js`, the `peek://` resolver, and both
-   `background.js` and `nouns.js` — is **134–159ms over five runs**. That is unbundled, from
-   source, with a live resolver in the path; a bundle can only be faster.
+   `background.js` and `nouns.js` — is **~145ms** with no server in the path. That is unbundled,
+   from source, with a live resolver; a bundle can only be faster.
 
-   The poll is where the budget goes, and it scales with the feed rather than sitting flat.
-   Against a store with no network in it, one `pollAllFeeds()` with nothing new to write is
-   17–19ms over a 10-entry feed and ~100ms over a 50-entry one, nearly all of it the feed fetch.
-   Against `/mcp/*` the same poll is one
-   `GET /mcp/items`, one `GET /mcp/items/:id?events=20`, one `PATCH /mcp/items/:id`, and **one
-   `POST /mcp/items/:id/events` per new entry**, issued sequentially by `pollFeed()`'s `for` loop.
-   A 30-entry poll is therefore ~33 serial round trips to `apps/server` — the dominant term by a
-   wide margin, and it grows with entries and with the number of feeds subscribed.
+   The poll is where the budget goes, and it does not sit flat. Measured against the deployed
+   `apps/server` over a 25-entry feed with 5 new entries to write: **process launch to first
+   completed poll is 955–1208ms over four runs**, of which the poll itself is 522–599ms. A single
+   `/mcp/*` request costs ~50–60ms from this box, and the `describe()` at open costs ~200ms.
+
+   That per-request figure is the whole story, because `pollFeed()` issues one `GET /mcp/items`,
+   one `GET /mcp/items/:id?events=N`, one `PATCH /mcp/items/:id`, and **one
+   `POST /mcp/items/:id/events` per new entry**, serially, in a `for` loop. Five new entries cost
+   eight requests. Thirty would cost thirty-three, roughly 1.8 seconds of pure round trip, and the
+   count grows with entries and again with the number of feeds subscribed.
 
    Two consequences for §8. A worker whose work is one write fits inside a tool call comfortably.
    A worker whose work is a fan-out of writes does not, and no amount of runtime tuning changes
@@ -862,10 +872,7 @@ is the intended shape, not a transitional one.
    write, or `call_worker` is fire-and-read-back for anything that writes per item — which is most
    of what a scheduled worker does.
 
-   **Still to measure:** the round-trip figure against the deployed server, which needs a
-   credential in the environment. Re-run
-   `PEEK_MCP_REMOTE_URL=… PEEK_MCP_TOKEN=… SKIP_LIFECYCLE=1 node tools/feeds-worker-spike/run.mjs`
-   and the numbers above are replaced with real ones.
+   These are one box against one deployment; the shape is the finding, not the milliseconds.
 
 8. **Who operates the fleet.** celld runs "one application deployment" per fleet with the
    operator's own bucket; Cloudflare is an account with a bill. Whether a Peek user brings their

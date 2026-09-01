@@ -19,14 +19,24 @@
  *
  * Environment:
  *   PEEK_MCP_REMOTE_URL   base URL of the server
- *   PEEK_MCP_TOKEN        grant credential (read-write, scoped to a tag)
+ *   PEEK_MCP_CREDENTIAL   lookup key into ~/.config/peek/mcp-credentials.json
+ *   PEEK_MCP_TOKEN        the grant credential itself, when there is no file
  *   FEED_URL              feed to poll (default: an RSS feed of HN's front page)
  *   KEEP                  set to leave the created feed item in place
+ *   SKIP_LIFECYCLE        set to run the poll alone, for a clean cold start
+ *
+ * The credential resolves the same two ways `remoteStoreConfig()` in
+ * `apps/desktop/features/mcp-server/server.js` resolves it, and the file it
+ * reads is the one `setup.js writeCredentialFile()` writes, mode 0600, outside
+ * any repository. Nothing here writes a key anywhere.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import os from 'node:os';
 import path from 'node:path';
 import { DOMParser } from 'linkedom';
+
+import { normalizeCredentialKey } from '../../apps/desktop/features/mcp-server/credential-key.js';
 
 import { installPeekResolver, resolvedSpecifiers } from './peek-hooks.mjs';
 import { buildWorkerApi, installNetworkGuard, gapLedger, callCount, networkLog } from './worker-api.mjs';
@@ -35,6 +45,30 @@ import { openRemoteStore } from '../../apps/desktop/features/mcp-server/store/re
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FEATURE_DIR = path.resolve(HERE, '../../apps/desktop/features/feeds');
 const FEED_URL = process.env.FEED_URL || 'https://hnrss.org/frontpage';
+
+/**
+ * Read one token out of the 0600 credential file, by the same key rules
+ * `resolveCredentialFromFile()` in `apps/desktop/features/mcp-server/server.js`
+ * uses: normalized first, then the raw key, so a file written before the
+ * normalization still resolves. The token is returned and never printed.
+ */
+function resolveCredentialFromFile(key) {
+  const filePath = path.join(os.homedir(), '.config', 'peek', 'mcp-credentials.json');
+  let data;
+  try {
+    data = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`Could not read ${filePath}: ${err.code || 'invalid JSON'}`);
+  }
+  const credentials = data?.credentials ?? {};
+  const entry = credentials[normalizeCredentialKey(key)] || credentials[key];
+  if (!entry || typeof entry.token !== 'string') {
+    throw new Error(
+      `No credential for key "${key}" in ${filePath}. Keys present: ${Object.keys(credentials).join(', ') || '(none)'}.`
+    );
+  }
+  return entry.token;
+}
 
 /** Milliseconds since the process started, which is what a cold start means. */
 const since = () => Math.round(performance.now());
@@ -76,17 +110,17 @@ mark('host globals installed');
 // which reproduces the server's item and event semantics but reaches no network.
 // A cold-start figure from that run is a floor, not the answer, and it is
 // labelled as such in the report.
-const usingRemote = Boolean(process.env.PEEK_MCP_REMOTE_URL && process.env.PEEK_MCP_TOKEN);
+const credential = process.env.PEEK_MCP_CREDENTIAL
+  ? resolveCredentialFromFile(process.env.PEEK_MCP_CREDENTIAL)
+  : process.env.PEEK_MCP_TOKEN;
+const usingRemote = Boolean(process.env.PEEK_MCP_REMOTE_URL && credential);
 if (!usingRemote) {
   console.log('PEEK_MCP_REMOTE_URL / PEEK_MCP_TOKEN are unset — running against the memory store.');
   console.log('Nothing below is evidence about the real server except where it is the feature failing.');
 }
 
 const store = usingRemote
-  ? await openRemoteStore({
-      remoteUrl: process.env.PEEK_MCP_REMOTE_URL,
-      credential: process.env.PEEK_MCP_TOKEN,
-    })
+  ? await openRemoteStore({ remoteUrl: process.env.PEEK_MCP_REMOTE_URL, credential })
   : await (await import('./memory-store.mjs')).openMemoryStore();
 mark(usingRemote ? 'remote store opened' : 'memory store opened');
 
