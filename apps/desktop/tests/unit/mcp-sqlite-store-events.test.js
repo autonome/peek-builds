@@ -164,6 +164,27 @@ describe('mcp sqlite-store.js: recordEventSync()/listEventsSync()/deleteEventSyn
     assert.equal(row.value, 42);
   });
 
+  it('a numeric string value alongside metadata is accepted and coerced to a number', async () => {
+    await store.recordEvent(ITEM_ID, 'score', '42', { metadata: { source: 'test' } });
+    const row = readEventRow(dbPath, ITEM_ID);
+    assert.equal(row.value, 42);
+  });
+
+  it('a non-numeric value alongside metadata throws instead of silently coercing to 0', async () => {
+    await assert.rejects(
+      () => store.recordEvent(ITEM_ID, 'started', 'kicked off', { metadata: { source: 'test' } }),
+      /value must be a number/,
+    );
+    const row = readEventRow(dbPath, ITEM_ID);
+    assert.equal(row, undefined, 'a refused write must not leave a row behind');
+  });
+
+  it('an absent or empty value alongside metadata still defaults to 0, no throw', async () => {
+    await store.recordEvent(ITEM_ID, 'started', undefined, { metadata: { source: 'test' } });
+    const row = readEventRow(dbPath, ITEM_ID);
+    assert.equal(row.value, 0);
+  });
+
   it('listEvents pages, ordered by occurredAt descending', async () => {
     for (let i = 0; i < 5; i++) {
       await store.recordEvent(ITEM_ID, `evt-${i}`, '', { occurredAt: 1000 + i });

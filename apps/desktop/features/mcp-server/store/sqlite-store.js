@@ -714,6 +714,22 @@ function untagItemSync(itemId, tagName) {
   return { success: true, itemId, tagName };
 }
 
+// Matches apps/server/mcp-items.js parseNumericEventValue() exactly: when
+// `metadata` is supplied, `value` has to actually be a number (or numeric
+// string) — `Number(value) || 0` would silently turn a caller's real text
+// into a bare 0 with no error, right on the shape someone migrating off the
+// old (itemId, type, value)-only call would plausibly send.
+function parseNumericEventValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 // `opts.content`/`occurredAt`/`metadata` are additions matching the server-
 // side parity requirement (apps/server/mcp-items.js recordEvent()) — a
 // caller sending only (itemId, type, value) gets the exact legacy row:
@@ -721,7 +737,9 @@ function untagItemSync(itemId, tagName) {
 // with no value), occurredAt = now. `type` still falls back into the
 // content column whenever `opts.content` is omitted. Supplying
 // `opts.metadata` switches `value` to a real number in the value column
-// instead of notes-wrapped text, same rule as the server side.
+// instead of notes-wrapped text, same rule as the server side — and, same as
+// the server side, throws rather than coercing when `value` is present but
+// isn't cleanly numeric.
 function recordEventSync(itemId, type, value = '', opts = {}) {
   const { content, occurredAt, metadata } = opts;
   const id = randomUUID();
@@ -733,7 +751,17 @@ function recordEventSync(itemId, type, value = '', opts = {}) {
   let valueVal;
   if (metadata !== undefined) {
     metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
-    valueVal = typeof value === 'number' ? value : (Number(value) || 0);
+    if (!value) {
+      valueVal = 0;
+    } else {
+      const parsed = parseNumericEventValue(value);
+      if (parsed === null) {
+        throw new Error(
+          'value must be a number when metadata is supplied — put free-form text in metadata itself, not value.'
+        );
+      }
+      valueVal = parsed;
+    }
   } else {
     metaStr = value ? JSON.stringify({ notes: value }) : '{}';
     valueVal = 0;

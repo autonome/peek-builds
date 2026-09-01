@@ -4181,6 +4181,47 @@ describe("MCP Item Write Routes Tests", () => {
       });
       assert.strictEqual(res.status, 400);
     });
+
+    it("a numeric STRING value alongside metadata is accepted and coerced to a number", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "score", value: "42", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 42);
+    });
+
+    it("a non-numeric value alongside metadata is refused with 400, not silently coerced to 0", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", value: "kicked off", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /value must be a number/);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT * FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row, null, "a refused write must not leave a row behind");
+    });
+
+    it("an absent or empty value alongside metadata still defaults to 0, no refusal", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 0);
+    });
   });
 
   describe("writes force-add the scope tag (design doc §4.1)", () => {

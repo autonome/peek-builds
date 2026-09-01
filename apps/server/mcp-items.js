@@ -803,12 +803,54 @@ function untagItem(userId, profileId, scopeTag, id, tagName) {
 // choosing, e.g. "feed_entry". Supplying `metadata` explicitly also switches
 // `value` from notes-wrapped text to a real number stored in the value
 // column, since an explicit metadata object means the caller isn't relying
-// on the old notes-wrapping behavior for it.
+// on the old notes-wrapping behavior for it — which means `value` has to
+// actually BE a number in that case. Coercing a non-numeric string (e.g.
+// `Number("some text") || 0`) would silently turn a caller's real text into
+// a bare 0 with no error, right on the shape someone migrating off the old
+// {type, value} API would plausibly send (real value text, newly-added
+// metadata). parseNumericEventValue() below refuses instead of coercing.
+function parseNumericEventValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function recordEvent(userId, profileId, scopeTag, id, body = {}) {
   const { type, value = "", content, occurredAt, metadata } = body;
   if (typeof type !== "string" || type === "") {
     return { status: "invalid", error: "type is required" };
   }
+
+  // metaStr/valueVal need metadata's presence resolved before touching the
+  // DB, same as the type check above — an invalid body is invalid
+  // regardless of whether the item exists.
+  let metaStr;
+  let valueVal;
+  if (metadata !== undefined) {
+    metaStr = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
+    if (!value) {
+      valueVal = 0;
+    } else {
+      const parsed = parseNumericEventValue(value);
+      if (parsed === null) {
+        return {
+          status: "invalid",
+          error:
+            "value must be a number when metadata is supplied — put free-form text in metadata itself, not value.",
+        };
+      }
+      valueVal = parsed;
+    }
+  } else {
+    metaStr = value ? JSON.stringify({ notes: value }) : "{}";
+    valueVal = 0;
+  }
+
   const conn = getConnection(userId, profileId);
   const existing = fetchItemRowById(conn, id, scopeTag);
   if (!existing) return { status: "not_found" };
@@ -818,15 +860,6 @@ function recordEvent(userId, profileId, scopeTag, id, body = {}) {
 
   const contentVal = content !== undefined ? content : type;
   const occurredAtVal = occurredAt !== undefined ? toTimestamp(occurredAt) : now;
-  let metaStr;
-  let valueVal;
-  if (metadata !== undefined) {
-    metaStr = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
-    valueVal = typeof value === "number" ? value : Number(value) || 0;
-  } else {
-    metaStr = value ? JSON.stringify({ notes: value }) : "{}";
-    valueVal = 0;
-  }
 
   conn.run(
     `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)

@@ -290,6 +290,17 @@ describe('openRemoteStore()', () => {
       });
     });
 
+    it('recordEvent: a 400 (e.g. a non-numeric value alongside metadata) surfaces the server\'s message rather than being swallowed', async () => {
+      stubFetch([() => fakeResponse(400, {
+        error: 'value must be a number when metadata is supplied — put free-form text in metadata itself, not value.',
+      })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await assert.rejects(
+        () => store.recordEvent('x', 'started', 'kicked off', { metadata: { source: 'test' } }),
+        /value must be a number/,
+      );
+    });
+
     it('listEvents: GET /mcp/items/:id/events with limit/offset, returns the events array', async () => {
       stubFetch([() => fakeResponse(200, { events: [{ id: 'ev1', type: 'started' }] })]);
       const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
