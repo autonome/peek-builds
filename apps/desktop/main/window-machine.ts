@@ -116,11 +116,17 @@ export function initWindowStateMachine(): void {
 /**
  * Front-id provider for the coordinator's switcher focus-restore seed
  * (`enterOverlay` → `preOverlayFocusTarget`), plus the coordinator's app-active
- * fact provider and gained-focus edge. The kernel models no session, so these
- * are the ONLY seams the old session mirror still needs — the coordinator's
- * own session state is read straight off `getIzuiCoordinator()` wherever a
- * caller needs it (`dispatchEscapePress` below, `clampSession`), and its
- * app-focus mirror (`appFocused`/`setAppFocused`/`isAppFocused`) is gone in
+ * fact provider and gained-focus edge — the last three seams the old session
+ * mirror needs.
+ *
+ * NOTHING DECIDES ON THE COORDINATOR'S SESSION ANY MORE. The Escape decider was
+ * the last reader, and the one fact it wanted is a kernel field now
+ * (`window-kernel.ts State.openedInBackground`, read by `interpretEscape` off
+ * the state it is already given). What remains here keeps the coordinator's own
+ * four states accurate for DISPLAY — the mode indicator and the tile-facing
+ * `tile:izui:*` handlers.
+ *
+ * Its app-focus mirror (`appFocused`/`setAppFocused`/`isAppFocused`) is gone in
  * favor of reading the kernel's `getAppActive()` directly.
  */
 function seedSessionMirror(): void {

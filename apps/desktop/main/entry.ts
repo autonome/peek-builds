@@ -180,7 +180,7 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * set FALSE (simulating the startup did-resign-active dance), a cold-start
    * restore must STILL activate the focused descriptor — the bug fix. The
    * in-session forceRestoreSession above keeps isColdStart false. See
-   * shouldActivateFocusedOnRestore() in izui-roles.ts and
+   * planRestoreFocus() in window-kernel-executor.ts and
    * tests/desktop/session-restore-focus.spec.ts.
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
@@ -1500,7 +1500,7 @@ const onReady = async () => {
           // raised+activated even if the macOS startup activation dance
           // transiently flips appFocused false mid-restore. (_forceForTest=false
           // here; the cold-start signal is the 4th positional arg.) See
-          // shouldActivateFocusedOnRestore() in izui-roles.ts.
+          // planRestoreFocus() in window-kernel-executor.ts.
           const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState, false, true);
           DEBUG && console.log(`[session] Restore result:`, restoreResult);
           if (restoreResult.restored === 0) {
