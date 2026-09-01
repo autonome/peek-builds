@@ -223,6 +223,23 @@ Anyone rehearsing again should expect this and check `GET /profiles` before and 
 fix is to get the stray directories off the volume, since they are the input that makes step 6 look
 wrong when it is doing what disaster recovery needs.
 
+Four of the five were deleted from the volume on 2026-09-01, leaving four profile directories where
+there had been eight. What made them disposable, established by opening each live `datastore.sqlite`
+*with its `-wal` sidecar present* rather than trusting the archive — an un-checkpointed WAL can hold
+rows the archive predates:
+
+- `092cc9e1-…`, `deadbeef-0000-4000-8000-000000000001` and a literal `default` held one or two
+  `settings` rows and nothing else.
+- `7ba1e42b-…` held two urls, both already in the main profile, one of them `https://example.com/`.
+
+`8ccb036b-…` was kept. Thirteen of its fifteen notes are duplicated in the main profile but two are
+not, so it is the only copy of those. Deleting it would lose them.
+
+The general rule this leaves: a profile directory is disposable when every row it holds is either
+`settings` or content that already exists in the registered profile, judged against the live file
+plus its WAL. Take a backup and copy it off the volume first — the 2026-09-01 archive in
+`$HOME/peek-backups/` contains all eight directories as they stood before the deletion.
+
 Retention is 7 deep and a backup taken by hand counts against it: taking two during the rehearsal
 purged the two oldest daily archives about two days earlier than they would have rotated out.
 
