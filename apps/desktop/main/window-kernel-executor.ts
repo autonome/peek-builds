@@ -274,9 +274,13 @@ export class WindowKernelExecutor {
    * SYNCHRONOUSLY, so a consumer of that report (the hybrid page-host close
    * capture, `ipc.ts captureHybridClose`) needs these facts available the
    * instant the native call starts, not after it returns. Read-only by the
-   * same contract as `getState`'s records; entries are never removed
-   * (a `WindowId` is never reused, so a stale entry cannot be misread as a
-   * different, later window's facts).
+   * same contract as `getState`'s records.
+   *
+   * An entry lives exactly as long as the close that needs it: it is dropped
+   * when the backend's close settles, by which point the native close report
+   * and its synchronous capture have both run. The map holds only closes in
+   * flight rather than every window ever closed, so it cannot become a second,
+   * permanent store of window facts outside the kernel.
    */
   getRetiredPresentation(id: WindowId): { maximized: boolean; preMaxBounds: Rectangle | null } | undefined {
     return this.retiredPresentation.get(id);
@@ -903,7 +907,11 @@ export class WindowKernelExecutor {
         // `closeOrHide` — see that case.
         wmLog('effect-close', { effect: effect.type, id: effect.id });
         this.retiredPresentation.set(effect.id, { maximized: effect.maximized, preMaxBounds: effect.preMaxBounds });
-        this.trackAsyncEffect(this.backend.closeWindow(effect.id));
+        this.trackAsyncEffect(
+          this.backend.closeWindow(effect.id).finally(() => {
+            this.retiredPresentation.delete(effect.id);
+          }),
+        );
         return;
       }
       case 'DismissWindow': {
