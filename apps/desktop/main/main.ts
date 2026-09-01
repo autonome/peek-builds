@@ -53,7 +53,6 @@ import {
   kernelWindowClosed,
   kernelCloseWindowDirect,
   kernelAssertFocus,
-  kernelRaiseWindow,
   kernelAppActivated,
   kernelAppResigned,
   getKernelExecutor,

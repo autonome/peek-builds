@@ -784,9 +784,10 @@ a spec asserting the deleted `ipc.ts` blur handler directly (see the transient-l
 §0), and one unattributed intermittent (`hybrid-overlay.spec.ts`, entities panel) that passed 4/4
 tests across 3 isolated runs and does not carry the overlay-race diagnostic string.
 
-**`kernelRaiseWindow` has no production callers.** It manufactures an `OsFocusGained` inside
-`decide`, bypassing the executor and its headless mask — a rival path surviving as dead code.
-Deleting it is unstarted.
+**`kernelRaiseWindow` is deleted.** It manufactured an `OsFocusGained` inside `decide`,
+bypassing the executor and its headless mask, and had no production callers. An explicit raise
+now reaches the kernel's `RaiseWindow` command only through `kernelShowRequested`'s activate
+branch (`windows.ts`'s `active`/non-`inactive` show path, the one a switcher selection reaches).
 
 **One failure in the main-process unit runner is NOT this branch's**: `sync.test.ts`, "a deleted
 never-synced item does not pin the watermark", fails 2 runs in 6 standalone with the watermark

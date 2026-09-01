@@ -27,9 +27,9 @@ import {
   kernelOsFocusSettled,
   kernelOsFullscreenEntered,
   kernelOsFullscreenLeft,
-  kernelRaiseWindow,
   kernelRegisterWindow,
   kernelSetFullscreen,
+  kernelShowRequested,
   kernelWindowClosed,
   kernelWindowContentOrderable,
   kernelWindowHidden,
@@ -535,7 +535,7 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
     _resetKernelForTests();
   });
 
-  it('THE MEASURED GAP, pinned: a raise of an ALREADY-VISIBLE, non-topmost window moves topmost(state, isContentWindow) to it', () => {
+  it('THE MEASURED GAP, pinned: an activating show of an ALREADY-VISIBLE, non-topmost window moves topmost(state, isContentWindow) to it', () => {
     // Two visible content windows, both registered and shown — `b` lands last
     // and is topmost by construction (`topmost` scans from the end of
     // `order`), exactly the shape the live trace found: raising `a` (the
@@ -543,7 +543,12 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
     // that raised the already-topmost `b`, would pass with no raise feed at
     // all — `topmost` would already read the raised window either way. This
     // fixture cannot pass vacuously: without a raise feed nothing ever moves
-    // `a` back to the top of `order`, so `topmost` stays pinned on `b`.
+    // `a` back to the top of `order`, so `topmost` stays pinned on `b`. Driven
+    // through `kernelShowRequested(id, true)` — the live production entry
+    // point for an explicit raise (`windows.ts showWindowHeadlessSafe`'s
+    // `active`/non-`inactive` branch, the path a switcher selection reaches)
+    // — rather than a direct `RaiseWindow` translation, which has no
+    // production caller.
     const [a, b] = [wid(120), wid(121)];
     registerVisibleContentWindow(a);
     registerVisibleContentWindow(b);
@@ -553,7 +558,7 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
       'precondition: b is topmost, a is the lower window being raised',
     );
 
-    kernelRaiseWindow(a);
+    kernelShowRequested(a, true);
 
     assert.strictEqual(
       topmost(getKernelExecutor().getState(), isContentWindow)?.id,
@@ -562,10 +567,10 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
     );
   });
 
-  it('never throws across a raise naming a window with no record', () => {
+  it('never throws across an activating show naming a window with no record', () => {
     const danglingId = wid(122); // never registered with the kernel
 
-    assert.doesNotThrow(() => kernelRaiseWindow(danglingId));
+    assert.doesNotThrow(() => kernelShowRequested(danglingId, true));
     assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });

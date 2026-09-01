@@ -600,41 +600,6 @@ export function kernelImportStackOrder(order: readonly WindowId[]): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Raise — the sixth real input this step feeds the kernel. Translated at the
-// one production site that dispatches the old machine's mirrored
-// `RAISE_WINDOW_REQUESTED` (`ipc.ts`'s modal-blur re-raise inside the
-// show-settle window), alongside that dispatch, never in place of it.
-//
-// This closes the measured gap: a raise of an ALREADY-VISIBLE window moved the
-// old machine's `front` but nothing fed the kernel a raise at all, so
-// `topmost(state, isContentWindow)` stayed on whichever window was already
-// topmost — observed live as a `front` divergence after re-opening a window
-// that collapsed onto an existing one.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Translate an explicit, user-requested raise into the kernel's `RaiseWindow`
- * command. Two consequences of `decide`/`react`'s existing shape are
- * DELIBERATELY not compensated for here:
- *
- *   - `decide` on `RaiseWindow` synchronously manufactures `OsFocusGained`, so
- *     the kernel's `key` moves optimistically, with no OS confirmation —
- *     unlike the old machine, which only ever moved `front` from the real OS
- *     echo. A known, recorded lossy port, not a bug this function works around.
- *   - `react` emits its own `RaiseWindow` effect off a `key` diff, and the OS
- *     echo that follows (`kernelOsFocusGained`) names the window `key`
- *     already holds, so that echo's diff is empty and emits nothing. No
- *     de-duplication is added for it.
- *
- * Same shape and containment as `kernelDestroyWindow` et al.: routed
- * through `kernelExecute` (a rejected stale `expectedVersion` is logged, never
- * thrown into the caller).
- */
-export function kernelRaiseWindow(id: WindowId): void {
-  kernelExecute({ type: 'RaiseWindow', id, expectedVersion: getKernelExecutor().getState().version });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Overlay attach/detach (peek 7fffa286) — originally the seventh real input
 // this step fed the kernel, translated at the two production sites that
 // dispatched the old machine's mirrored `OVERLAY_ATTACH_REQUESTED`
@@ -660,7 +625,7 @@ export function kernelRaiseWindow(id: WindowId): void {
  * Translate a completed overlay attach/retarget/detach report into the
  * kernel's `AttachOverlay` command — `hostId: null` is detach, the same one
  * transition the old machine's `OVERLAY_ATTACH_REQUESTED` was. Same shape and
- * containment as `kernelRaiseWindow` et al.: routed through
+ * containment as `kernelDestroyWindow` et al.: routed through
  * `kernelExecute` (a rejected stale `expectedVersion`, or a `hostId`/
  * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
  * caller). No production
@@ -830,7 +795,7 @@ export function kernelArmSelectionFocus(armer: WindowId, target: WindowId | null
  * NOT exempt from `decide`'s unknown-window rejection (`AssertFocus`'s own doc
  * in `window-kernel.ts`) — a target absent from the kernel's `order` is
  * logged by `kernelExecute` as a rejection, never thrown into the caller. Same
- * shape and containment as `kernelRaiseWindow` et al.
+ * shape and containment as `kernelDestroyWindow` et al.
  */
 export function kernelAssertFocus(id: WindowId): void {
   kernelExecute({ type: 'AssertFocus', id, expectedVersion: getKernelExecutor().getState().version });
@@ -892,7 +857,7 @@ export function kernelFullscreenSettleTimeout(id: WindowId): void {
  * `FullscreenDesireRecorded` (coalesced, no second transition started),
  * already at the requested state -> `[]` (no-op, no OS call). None of that
  * branching is reproduced here — the command is executed and `decide`
- * decides. Same shape and containment as `kernelRaiseWindow` et al.:
+ * decides. Same shape and containment as `kernelDestroyWindow` et al.:
  * routed through `kernelExecute` (a rejected stale `expectedVersion`, or a
  * target absent from `order`, is logged, never thrown into the caller).
  */
@@ -977,7 +942,7 @@ export function kernelMaximizeExitedByResize(id: WindowId): void {
  * explicit geometry decision supersedes any held `DisplayChanged`
  * projection, discarding it without flushing). None of that branching is
  * reproduced here — the command is executed and `decide` decides. Same
- * shape and containment as `kernelRaiseWindow` et al.: routed through
+ * shape and containment as `kernelDestroyWindow` et al.: routed through
  * `kernelExecute` (a rejected stale `expectedVersion` is logged, never
  * thrown into the caller).
  */
