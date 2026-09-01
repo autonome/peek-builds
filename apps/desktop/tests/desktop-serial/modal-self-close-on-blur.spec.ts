@@ -3,25 +3,36 @@ import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 
 /**
- * The modal self-close-on-blur handler (apps/desktop/main/ipc.ts, gated on
- * `windowSelfClosesOnBlur(options)`) is what `modal:true` ACTUALLY does in this
- * codebase: it wires `win.on('blur', …close)` so the window DESTROYS itself when
- * it loses focus. That transient-class behavior is what broke Lex OAuth login —
- * the auth window was opened `modal:true` and died the instant the user switched
- * to a password manager / 2FA app mid-login (peek 5b4fefdc). The fix opens such
- * windows with a persistent role (`utility`) instead, which must NOT self-close.
+ * The transient-dismissal law (`docs/design/window-manager.md` § "0. The
+ * governing rule set") is what makes `modal:true` matter in this codebase: a
+ * modal/panel window is a transient-autoclose candidate
+ * (`window-kernel.ts isTransientAutocloseCandidate`, via
+ * `WindowRecord.selfClosesOnBlur`), and the kernel dismisses it the moment
+ * some other window genuinely takes key (`OsFocusGained` →
+ * `selectTransientAutoclose`, run from `react`). That is what broke Lex OAuth
+ * login — the auth window was opened `modal:true` and died the instant the
+ * user switched to a password manager / 2FA app mid-login (peek 5b4fefdc).
+ * The fix opens such windows with a persistent role (`utility`) instead,
+ * which the law excludes from candidacy entirely (`TRANSIENT_ROLES` doesn't
+ * name it, and it never sets `selfClosesOnBlur`).
  *
- * Why this lives in desktop-serial and toggles E2E_TEST:
- * The handler is deliberately suppressed under E2E_TEST (`&& process.env.E2E_TEST
- * !== 'true'`) because parallel workers flicker focus and would close modal
- * cmd-panels mid-test — which is exactly the env this harness runs in. So to
- * exercise the PRODUCTION handler each test clears `process.env.E2E_TEST` in the
- * main process, lets the handler attach, then restores it in a finally. Serial
- * project (workers=1) so that global toggle can't race another worker's windows.
+ * The dismissal trigger is "another holder takes attention," not "loses
+ * focus, any reason" — a bare blur with nothing gaining focus produces no
+ * `OsFocusGained` and dismisses nothing (`window-kernel.ts evolve`'s
+ * `OsFocusLost` arm only clears `key`; the focus-report sweep in `react`
+ * diffs `State.lastAttention`, which only `OsFocusGained` writes). So these
+ * tests drive the trigger the kernel actually acts on: open a second window
+ * and hand it focus — the closest in-harness match to the real OAuth-window
+ * gesture (the user clicking over to a password manager / 2FA app).
+ * `__peek_test.showWindow` (`entry.ts`) makes a window visible without
+ * focusing it — headless Electron / macOS NSPanels don't fire reliable
+ * native show/focus — and `__peek_test.fireWindowFocus` drives the kernel's
+ * `win.on('focus')` listener (`electron-window-backend.ts`) deterministically.
  *
- * Blur is driven synthetically via `__peek_test.fireWindowBlur` (win.emit('blur')):
- * headless Electron / macOS NSPanels don't emit reliable native blur on a window-
- * or app-switch (same reason the focus-driven autoclose path exists).
+ * Serial project (workers=1): both tests fire focus events against the same
+ * process-global kernel, and a parallel worker's window opens would be
+ * arbitrary extra `OsFocusGained` noise for `selectTransientAutoclose` to
+ * chew on.
  */
 test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc) @desktop', () => {
   let app: DesktopApp;
@@ -35,16 +46,6 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
     if (app) await app.close();
   });
 
-  /** Set or clear process.env.E2E_TEST in the MAIN process. */
-  async function setE2ETest(on: boolean): Promise<void> {
-    if (!app.evaluateMain) throw new Error('evaluateMain not available');
-    await app.evaluateMain<boolean, boolean>((_ctx, value) => {
-      if (value) process.env.E2E_TEST = 'true';
-      else delete process.env.E2E_TEST;
-      return true;
-    }, on);
-  }
-
   /** Open an invisible (show:false) about:blank window; returns its id. */
   async function openWindow(options: Record<string, unknown>): Promise<number> {
     const r = await bgWindow.evaluate(async (opts) => {
@@ -54,12 +55,24 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
     return r.id as number;
   }
 
-  async function fireBlur(id: number): Promise<void> {
+  /** Make a window visible WITHOUT focusing it (`entry.ts __peek_test.showWindow`). */
+  async function showWindow(id: number): Promise<void> {
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
-    await app.evaluateMain<boolean, number>(
-      (_ctx, wid) => (globalThis as any).__peek_test.fireWindowBlur(wid),
+    const shown = await app.evaluateMain<boolean, number>(
+      (_ctx, wid) => (globalThis as any).__peek_test.showWindow(wid),
       id,
     );
+    if (!shown) throw new Error(`__peek_test.showWindow returned false for id=${id}`);
+  }
+
+  /** Drive the kernel's real `win.on('focus')` listener for the given window. */
+  async function fireFocus(id: number): Promise<void> {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    const fired = await app.evaluateMain<boolean, number>(
+      (_ctx, wid) => (globalThis as any).__peek_test.fireWindowFocus(wid),
+      id,
+    );
+    if (!fired) throw new Error(`__peek_test.fireWindowFocus returned false for id=${id}`);
   }
 
   async function isPresent(id: number): Promise<boolean> {
@@ -78,40 +91,33 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
     } catch { /* may already be gone */ }
   }
 
-  test('modal:true window destroys itself on blur', async () => {
-    await setE2ETest(false); // let the production handler attach
-    try {
-      const id = await openWindow({ modal: true, type: 'panel', key: 'modal-blur-closes' });
-      // The handler attaches ~100ms after open (setTimeout in ipc.ts). Fire blur
-      // on a bounded poll until the window is gone — deterministic, no fixed-sleep
-      // gamble on the exact attach moment.
-      const deadline = Date.now() + 4000;
-      let gone = false;
-      while (Date.now() < deadline) {
-        await fireBlur(id);
-        if (!(await isPresent(id))) { gone = true; break; }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(gone).toBe(true);
-    } finally {
-      await setE2ETest(true);
-    }
+  test('modal:true window is dismissed when another window takes focus', async () => {
+    const modalId = await openWindow({ modal: true, type: 'panel', key: 'modal-focus-sweep' });
+    await showWindow(modalId);
+    const focuserId = await openWindow({ key: 'modal-focus-sweep-other' });
+    await showWindow(focuserId);
+
+    // The OAuth-window gesture: attention moves to a different window, and
+    // the kernel's transient-dismissal sweep runs off that `OsFocusGained`.
+    await fireFocus(focuserId);
+
+    expect(await isPresent(modalId)).toBe(false);
+    await closeWindow(focuserId);
   });
 
-  test("role:'utility' window survives blur (the OAuth-window fix)", async () => {
-    await setE2ETest(false); // handler logic fully active — utility must still be exempt
-    try {
-      const id = await openWindow({ role: 'utility', key: 'utility-blur-survives' });
-      // Blur repeatedly across (and well past) the modal handler's ~100ms attach
-      // window: a utility window must NEVER receive the self-close handler.
-      for (let i = 0; i < 6; i++) {
-        await fireBlur(id);
-        await new Promise((r) => setTimeout(r, 40));
-      }
-      expect(await isPresent(id)).toBe(true);
-      await closeWindow(id);
-    } finally {
-      await setE2ETest(true);
-    }
+  test("role:'utility' window survives the same trigger (the OAuth-window fix)", async () => {
+    const utilityId = await openWindow({ role: 'utility', key: 'utility-focus-survives' });
+    await showWindow(utilityId);
+    const focuserId = await openWindow({ key: 'utility-focus-survives-other' });
+    await showWindow(focuserId);
+
+    // Same trigger as above, proving the law discriminates by candidacy
+    // (utility is neither a TRANSIENT_ROLES member nor selfClosesOnBlur), not
+    // "dismiss everything that isn't the newly-focused window."
+    await fireFocus(focuserId);
+
+    expect(await isPresent(utilityId)).toBe(true);
+    await closeWindow(utilityId);
+    await closeWindow(focuserId);
   });
 });

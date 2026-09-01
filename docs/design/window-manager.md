@@ -910,7 +910,15 @@ selectTransientAutoclose`, implemented against the kernel as recorded in §0.1.1
   non-optional: the machine remains the only thing that can dismiss a transient, and no dispatch
   site can silently skip running it.
 
-**A transient window closes when it loses focus. Any reason. Always.** The exemptions are
+**A transient window is dismissed when another window genuinely takes key, or when attention
+settles on nothing of Peek's at all (a settled app resign) — never on a bare loss of focus with
+nothing gaining it.** A blur with no new holder produces no `OsFocusGained` and writes no
+`lastAttention`: `evolve`'s `OsFocusLost` arm (`window-kernel.ts`) only clears `key`, and the
+focus-report sweep in `react` runs off a diff of `State.lastAttention`, which only a settled
+attention change writes — so a blur that nothing answers dismisses nothing. Whether macOS
+reassigns focus at all when the focused window is HIDDEN (as opposed to blurred while still shown)
+is unproven, and only sign-off check 12 can answer it — that case stays open, not settled either
+way. The exemptions are
 relational, never per window kind: an overlay is attached to it (`rec.overlayFor !== undefined`);
 it is click-through (`!rec.acceptsInput`) and so can never be in the user's way; the focuser names
 it as parent (`focuser.parentId === rec.id`) or is its overlay (`focuser.overlayFor === rec.id`);
