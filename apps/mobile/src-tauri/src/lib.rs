@@ -3556,6 +3556,15 @@ fn get_sync_status() -> Result<SyncStatus, String> {
     })
 }
 
+/// Count items the server permanently rejected during push (parked with a
+/// `sync_error`). Surfaced separately from `get_sync_status`'s pending count so a
+/// rejected item doesn't just vanish from the badge without a trace.
+#[tauri::command]
+fn get_sync_failed_count() -> Result<usize, String> {
+    let store = get_store()?;
+    store.get_sync_failed_count()
+}
+
 /// Drain any share intents queued to disk by the Android side (MainActivity writes
 /// ACTION_SEND payloads to <container>/pending_shares.txt, one per line). The file
 /// outlives the app process, so cold-launch shares are picked up here deterministically
@@ -3814,6 +3823,7 @@ pub fn run() {
             push_to_server,
             sync_all,
             get_sync_status,
+            get_sync_failed_count,
             // Legacy/deprecated
             get_shared_url,
             // Debug

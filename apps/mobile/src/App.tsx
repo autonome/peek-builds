@@ -1025,6 +1025,7 @@ function App() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncFailedCount, setSyncFailedCount] = useState(0);
   const [profileInfo, setProfileInfo] = useState<ProfileInfo | null>(null);
   const [profileInput, setProfileInput] = useState("");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
@@ -1576,6 +1577,12 @@ function App() {
       }
     } catch (error) {
       console.error("Failed to load sync status:", error);
+    }
+    try {
+      const failedCount = await invoke<number>("get_sync_failed_count");
+      setSyncFailedCount(failedCount);
+    } catch (error) {
+      console.error("Failed to load sync failed count:", error);
     }
   };
 
@@ -3885,6 +3892,12 @@ ${content.html}
             {syncStatus && syncStatus.pending_count > 0 && (
               <p className="sync-pending-info">
                 {syncStatus.pending_count} item{syncStatus.pending_count === 1 ? '' : 's'} pending sync
+              </p>
+            )}
+
+            {syncFailedCount > 0 && (
+              <p className="sync-failed-info">
+                {syncFailedCount} item{syncFailedCount === 1 ? '' : 's'} couldn't sync
               </p>
             )}
 
