@@ -38,11 +38,26 @@ Test counts as landed, each from a run in the primary checkout:
 | `node --test apps/desktop/features/mcp-server/setup.test.js` | 23 |
 | `node --test apps/desktop/features/mcp-server/schema-drift.test.js` | 43 |
 
-**What is not proven: the two halves have never talked to each other over a real
-socket.** Every test stubs one side — the server tests exercise the routes through a
-mirror app, and the remote store's tests stub `fetch`. An end-to-end run needs a
-deployed server, a minted grant, and a project scaffolded with `peek-mcp-init --remote`.
-Until that happens, "green" means each half behaves as specified in isolation.
+**The two halves have now talked to each other over a real socket, and they agree.**
+Every unit test still stubs one side — the server tests exercise the routes through a
+mirror app, and the remote store's tests stub `fetch` — so the end-to-end evidence comes
+from `tools/socket-proof.mjs` and `tools/socket-proof-ambiguous.mjs`, which drive
+`openRemoteStore()` against the live deployment. All twenty-one steps of the first and
+both branches of the second passed on the first run, with no change required to either
+half.
+
+What that covers: `describe`, the list and search reads against both an empty and a
+populated scope, `createItem`, `getItem`, `getItemTags`, `updateItem`, `tagItem`,
+`untagItem`, `recordEvent`, `getTaskContext`, `resolveItemId` for a miss, a full-id hit
+and an ambiguous prefix, and `deleteItem`. The ambiguity payload comes back in the shape
+`resolveItemIdSync()` in `store/sqlite-store.js` defines — `{ id, ambiguous, candidates,
+truncated }` — and `getItem()` turns it into the same text `formatAmbiguous()` produces,
+which is the one place a non-200 has to become a value-bearing error.
+
+Two things this does not cover. A readonly grant was never exercised, so the `readonly`
+bit is confirmed only as a value `describe()` reports, not as an enforced refusal. And
+`peek-mcp-init --remote` was not used — the harness constructs the store directly, so the
+scaffolder's own credential resolution is still unproven.
 
 A related survey, `docs/sync-coverage-gaps.md`, records what the sync engine does not
 carry between devices. **It is deliberately out of scope for this work.** Nothing in
@@ -51,15 +66,16 @@ is a signal to stop and report, not to widen the change.
 
 ### Next steps
 
-**First, the end-to-end run — it needs a human and nothing else can substitute for
-it.** Deploy the server, mint a grant through `POST /admin/mcp-grants`, scaffold a
-throwaway project with `peek-mcp-init --remote <url> --store-token`, restart Claude
-Code there, and confirm a scoped session lists and writes items. That exercise is the
-first time the two halves meet. Expect the first failure to be in the seam nothing
-tested: credential resolution, header shape, or an error body that does not map back to
-the text `formatAmbiguous()` produces.
+The end-to-end run is done — see above. What it left open, and then the rest in no
+particular order:
 
-Then, in no particular order:
+- **Prove a readonly grant actually refuses writes.** Minting one is a second
+  `POST /admin/mcp-grants` with `readonly: true`; the harness then expects every write
+  step to fail rather than succeed. Until that runs, `readonly` is a field the server
+  reports, not a restriction anything has watched hold.
+- **Run the scaffolder path.** `peek-mcp-init --remote <url> --store-token` resolves the
+  credential its own way, and `tools/socket-proof.mjs` bypasses it by constructing the
+  store directly. `setup.js` is what that exercises.
 
 - **Make `apps/server/index.js` testable** — guard the listener with
   `require.main === module` and export the app, so routes can be tested through the real
