@@ -994,8 +994,12 @@ function checkAutocloseInvariants(state: State): string[] {
     if (rec === undefined) return false;
     if (rec.id === focusedId) return false;
     if (!rec.visible) return false;
-    if (rec.role === undefined) return false;
-    if (!TRANSIENT_ROLES_EXPECTED.has(rec.role)) return false;
+    // Candidacy: a transient role, OR `selfClosesOnBlur` (the `modal` open
+    // option, roleless — `izui-roles.ts windowSelfClosesOnBlur`). Restated
+    // independently of `isTransientAutocloseCandidate`, same reason as the
+    // role set above.
+    const isTransientRole = rec.role !== undefined && TRANSIENT_ROLES_EXPECTED.has(rec.role);
+    if (!isTransientRole && rec.selfClosesOnBlur !== true) return false;
     if (rec.overlayFor !== undefined) return false;
     // Policy, not a relation (window-kernel.ts selectTransientAutoclose's own
     // doc): a window the pointer passes through is never a victim.

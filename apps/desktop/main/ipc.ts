@@ -3489,11 +3489,11 @@ export function registerWindowHandlers(): void {
         // keepLive rides the registration (first-class on the kernel record)
         // — the kernel's CloseOrHideRequested clause branches on it.
         keepLive: options.keepLive === true,
-        // See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc —
-        // `isAppResignSweepEligible` reads this to skip a window that already
-        // tears itself down on blur. Same predicate the `windowSelfClosesOnBlur`
-        // call below gates the close-on-blur handler on, so the two never
-        // disagree about which windows self-close.
+        // See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc — this
+        // is the one stamp of that DECLARED fact, read by
+        // `isAppResignSweepEligible` (skip a window that already tears itself
+        // down on blur) and by `isTransientAutocloseCandidate` (admit it to
+        // the transient-dismissal sweep regardless of role).
         selfClosesOnBlur: windowSelfClosesOnBlur(options),
       });
 

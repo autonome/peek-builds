@@ -421,13 +421,21 @@ export interface WindowRecord {
 
   /**
    * Whether this window tears itself down the moment it loses focus — the
-   * `modal` open option (`izui-roles.ts windowSelfClosesOnBlur`), wired to a
-   * `win.on('blur', …close)` handler in `ipc.ts`. A DECLARED fact, same shape
-   * as `tracksBaseLayerTop` above: written at registration from the caller's
-   * open-time options, never revisited, and OVERWRITTEN rather than preserved
-   * by the re-registration merge.
+   * `modal` open option (`izui-roles.ts windowSelfClosesOnBlur`). A DECLARED
+   * fact, same shape as `tracksBaseLayerTop` above: written at registration
+   * from the caller's open-time options, never revisited, and OVERWRITTEN
+   * rather than preserved by the re-registration merge.
    *
-   * The one thing `isAppResignSweepEligible` reads it for: a window that
+   * There is no dedicated blur handler anywhere in the backend — a `modal`
+   * window closes through the same route as everything else: a blur feeds
+   * the ordinary focus/app-resign flow (`electron-window-backend.ts`'s
+   * deferred blur settle), and `isTransientAutocloseCandidate` admits a
+   * record with this field set as a candidate for the transient-dismissal law
+   * (`selectTransientAutoclose`) alongside every `TRANSIENT_ROLES` window,
+   * roleless or not — so it is dismissed by `react`'s ordinary sweep, not a
+   * call site of its own.
+   *
+   * The other thing `isAppResignSweepEligible` reads it for: a window that
    * already closes itself on blur already owns its own app-resign policy, so
    * the raw-edge sweep hiding it too would be redundant — and worse, would
    * stamp `hiddenByAppBlur` on a record that is about to be torn down anyway,
@@ -1870,11 +1878,13 @@ export function evolve(state: State, ev: Event): State {
         // silent omission: `undefined` focuser, because a re-registration
         // names no focuser at all and so nothing can be spared by the
         // focuser-relation clause; `null` ordering floor, because with no
-        // focuser there is no `openSeq` to be newer than. Role membership is
-        // candidacy, which the caller owns, so it is tested here.
+        // focuser there is no `openSeq` to be newer than. Candidacy is the
+        // caller's to test, so it is tested here — via the same
+        // `isTransientAutocloseCandidate` the other two readers use, not a
+        // restated `roleIn` check.
         const strandedByRoleChange =
           merged.hiddenByAppBlur === true &&
-          roleIn(TRANSIENT_ROLES, merged.role) &&
+          isTransientAutocloseCandidate(merged) &&
           transientAutocloseExemption(merged, undefined, null) === null;
         const mergedRecord = strandedByRoleChange ? { ...merged, hiddenByAppBlur: false } : merged;
         return {
@@ -4437,6 +4447,29 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
   return role !== undefined && set.has(role);
 }
 
+/**
+ * Candidacy for the transient-dismissal law — the gate every reader of
+ * `transientAutocloseExemption` applies BEFORE asking it anything, so the law
+ * is asked only about a record it actually governs. A record is a candidate
+ * either by role (`TRANSIENT_ROLES`) or by declaring `selfClosesOnBlur` —
+ * `izui-roles.ts windowSelfClosesOnBlur`'s `modal` open option, which opens a
+ * window carrying no role at all (the cmd panel is `type:'panel'`, roleless).
+ * A `selfClosesOnBlur` candidate runs through the same four exemptions as any
+ * other: a modal window parented to its focuser, or one an overlay is
+ * attached to, is spared exactly like any other candidate would be.
+ *
+ * ALL THREE readers of the law — `selectTransientAutoclose`,
+ * `traceTransientAutoclose`, and `evolve`'s `WindowRegistered` merge arm's
+ * `strandedByRoleChange` check — call this instead of restating
+ * `roleIn(TRANSIENT_ROLES, rec.role)` by hand, for the same reason
+ * `transientAutocloseExemption` itself is shared rather than copied: a
+ * restated candidacy test is exactly how one of the three came to omit a
+ * clause silently.
+ */
+export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
+  return roleIn(TRANSIENT_ROLES, rec.role) || rec.selfClosesOnBlur === true;
+}
+
 /** Which of the four exemption clauses in the transient-dismissal law spared a candidate. */
 export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
 
@@ -4580,7 +4613,7 @@ export function selectTransientAutoclose(
   for (const rec of state.order) {
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
-    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (!isTransientAutocloseCandidate(rec)) continue;
     if (transientAutocloseExemption(rec, focuser, orderingFloor) !== null) continue;
     out.push(rec.id);
   }
@@ -4629,7 +4662,7 @@ export function traceTransientAutoclose(
   for (const rec of state.order) {
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
-    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (!isTransientAutocloseCandidate(rec)) continue;
     const exemption = transientAutocloseExemption(rec, focuser, orderingFloor);
     out.push(exemption === null ? { id: rec.id, dismissed: true } : { id: rec.id, dismissed: false, exemption });
   }

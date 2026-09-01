@@ -4174,6 +4174,34 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+  it("a roleless modal:true window (windowSelfClosesOnBlur) is a candidate on selfClosesOnBlur alone — no role required", () => {
+    const workspace = wid(1);
+    const modalWindow = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: workspace, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+        {
+          type: 'WindowRegistered',
+          id: modalWindow,
+          kind: 'browser',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          selfClosesOnBlur: true,
+        },
+        { type: 'WindowShown', id: workspace },
+        { type: 'WindowShown', id: modalWindow },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, workspace, { kind: 'world' }),
+      [modalWindow],
+      'a modal:true window declares no role and no relation — selfClosesOnBlur alone must make it a candidate',
+    );
+  });
+
   // The Space border (features/spaces/background.js showBorder): role
   // 'overlay', never attached to a host, click-through. Every OTHER clause
   // admits it as a victim — only the acceptsInput policy spares it.
