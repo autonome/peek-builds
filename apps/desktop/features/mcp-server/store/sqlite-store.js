@@ -781,6 +781,9 @@ function recordEventSync(itemId, type, value = '', opts = {}) {
 // different behavior depending on which store answered.
 const EVENTS_PAGE_LIMIT = 200;
 
+// Returns the `content` column unaliased, matching listEvents() in
+// apps/server/mcp-items.js — see that function's comment for why the paged
+// read drops the `content as type` alias the embedded window keeps.
 function listEventsSync(itemId, { limit = 50, offset = 0 } = {}) {
   const parsedLimit = Number(limit);
   const boundedLimit =
@@ -789,7 +792,7 @@ function listEventsSync(itemId, { limit = 50, offset = 0 } = {}) {
   const boundedOffset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? Math.floor(parsedOffset) : 0;
 
   return requireDb().prepare(`
-    SELECT id, content as type, value, occurredAt, metadata
+    SELECT id, content, value, occurredAt, metadata
     FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT ? OFFSET ?
   `).all(itemId, boundedLimit, boundedOffset);
 }
