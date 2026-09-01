@@ -79,6 +79,8 @@ const FORBIDDEN_WRITE = [
   'restore',
   'blur',
   'setSkipTaskbar',
+  'setIgnoreMouseEvents',
+  'setOpacity',
 ];
 
 /**
@@ -156,6 +158,10 @@ const WRITE_ALLOWLIST = [
     why: 'WebContentsView content fill (assembleHybridPageHost fillView) — a child-view op inside the host, not a window op; every WINDOW setBounds in this file died in §5 step 7E (SET_BOUNDS_REQUESTED → reducer → port)' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setBounds', count: 5,
     why: 'NOT window ops (re-classified in the §5 step 9 cutover): 4× view.setBounds filling a WebContentsView inside a fake host + 1× the test-bridge setHostBounds, all inside installTestBridge (E2E_TEST only). The one production WINDOW setBounds died with frameBounds() — the overlay frame now rides OVERLAY_ATTACH_REQUESTED.frame / BOUNDS_CHANGED.overlayFrame into the reducer' },
+
+  // ── Real, permanent exception: can't be a dispatch by construction ────────
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setIgnoreMouseEvents', count: 1,
+    why: 'ensureOverlay sets the overlay click-through BEFORE registerTrustedBuiltinWindow — the window has no machine id yet, so a kernelSetAcceptsInput dispatch naming it would be rejected as unknown-window. Not scheduled to migrate: this ordering is deliberate, not pre-R2 debt' },
 
   // ── App/Dock-level surface, not per-window, but same API family ──────────
   { file: 'apps/desktop/main/headless-policy.ts', call: 'hide', count: 1,

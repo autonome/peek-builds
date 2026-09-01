@@ -3299,8 +3299,8 @@ reducer makes it.
 Exactly one module turns effects into real window operations. Nothing outside it calls a
 window API. Not `focus`, `show`, `showInactive`, `hide`, `close`, `destroy`, `setBounds`,
 `moveTop`, `setAlwaysOnTop`, `setFullScreen`, `setVisibleOnAllWorkspaces`, `maximize`,
-`unmaximize`, `minimize`, `restore`, `blur`, `setSkipTaskbar`, `webContents.focus()`, or
-any successor API in any successor toolkit.
+`unmaximize`, `minimize`, `restore`, `blur`, `setSkipTaskbar`, `setIgnoreMouseEvents`,
+`setOpacity`, `webContents.focus()`, or any successor API in any successor toolkit.
 
 Code that wants a window to change **dispatches an event**. It does not perform the
 change and then inform anybody. It does not perform the change instead of informing
