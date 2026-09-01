@@ -184,9 +184,56 @@ the central directory bytes of an otherwise-valid archive directly, rather than 
 write the escape attempt — `archiver` normalizes `../../evil` to `evil` and similar on the way in,
 so a zip built through it can never actually carry the name the guard is checking for.
 
+## The production restore rehearsal, 2026-09-01
+
+The restore path had never been run against production. It has now, and it works: a rehearsal
+restored a freshly taken archive back onto the live volume and left the data byte-identical.
+
+The method is worth repeating whenever the restore path changes, because it is safe by
+construction: take a backup, then restore *that same archive*. What gets written back is what is
+already there, so a successful restore is a no-op on content while still exercising every step.
+The only exposure is writes landing between the backup and the restore, which that ordering keeps
+to a couple of minutes.
+
+What the rehearsal established, in order:
+
+- The archive was downloaded through `GET /backups/:filename`, unzipped off-box, and its largest
+  profile snapshot opened read-only with row counts read out of it — `items` 12452, `tags` 518,
+  `item_tags` 17752, `item_events` 24142, matching the live server. Until this, backups were proven
+  readable only by the test suite, never as production bytes on another machine.
+- `dryRun: true` reported all eight profile snapshots resolvable with an existing datastore at each
+  target, and wrote nothing.
+- The real restore completed in 1.4 s with `countsMatch: true` on every profile, leaving a
+  `datastore.sqlite.pre-restore-<timestamp>` beside each replaced database.
+- Independent verification, not the server's own report: per-profile item and tag counts plus a
+  sha256 over sorted item ids and over `id:updatedAt` pairs, captured before and after. All three
+  registered profiles hashed identically, so the restore changed no content.
+
+**A restore onto a live volume registers every profile directory in the archive.** `restore.js`
+step 6 calls `users.createProfileWithId()` for each restored profile, deliberately — the comment
+there is correct that a fresh volume would otherwise have `resolveProfileId()` mint a new UUID for
+a directory the registry never learned about. The consequence on a volume that already has data is
+that stray directories which were never registered profiles become visible ones, named after their
+own UUID (`existing ? existing.name : profileId`) with a doubled slug such as `default-default`.
+The rehearsal promoted five such directories — test residue including `deadbeef-0000-4000-8000-000000000001`
+and a literal `default` — from invisible to first-class, and they were unregistered afterwards with
+`DELETE /profiles/:profileId`, which drops the registry row and preserves the data directory.
+
+Anyone rehearsing again should expect this and check `GET /profiles` before and after. The cleaner
+fix is to get the stray directories off the volume, since they are the input that makes step 6 look
+wrong when it is doing what disaster recovery needs.
+
+Retention is 7 deep and a backup taken by hand counts against it: taking two during the rehearsal
+purged the two oldest daily archives about two days earlier than they would have rotated out.
+
 ## What settles this
 
-A backup is proven both as an archive (round-trip test, production verification above) and as a
-recovery mechanism (restore round-trip test, `POST /admin/restore` against a live route). What
-remains manual is getting the very first copy off a volume that has none yet, or reconstructing one
-by hand when the automated path itself is suspect — see "Taking a backup by hand".
+A backup is proven as an archive (round-trip test, production verification above), as bytes
+readable off-box, and as a recovery mechanism — both by the restore round-trip test and by the
+2026-09-01 rehearsal against the live server described above. What remains manual is getting the
+very first copy off a volume that has none yet, or reconstructing one by hand when the automated
+path itself is suspect — see "Taking a backup by hand".
+
+Backups still live on the same Railway volume as the live database, so they remain no protection
+against volume loss. `GET /backups/:filename` is the first half of fixing that; nothing pulls them
+off-box on a schedule yet.
