@@ -12,11 +12,10 @@ Read this table first. §4 and §5 below are the detailed record; this block is 
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
 
-The two R2 counts below are current as of 2026-08-17 (via
-`scripts/check-r2-window-ops.mjs`). Steps 8 and 9 in the table below are verified against
-the allowlist and live code as of the same date; steps 1-7, 10, and 11 track the older
-11-step migration (§5), not the current window-kernel rewrite (§0.1), and carry forward
-unverified.
+The R2 count below is current as of 2026-09-01 (via `scripts/check-r2-window-ops.mjs`).
+Steps 8 and 9 in the table below are verified against the allowlist and live code as of
+2026-08-17, not re-verified since; steps 1-7, 10, and 11 track the older 11-step migration
+(§5), not the current window-kernel rewrite (§0.1), and carry forward unverified.
 
 ### Step status (§5 migration sequence, 11 steps)
 
@@ -36,10 +35,11 @@ unverified.
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (re-verified 2026-08-17): **15 allowlisted entries / 23
-calls**. This number — not the table above, not any other prose in this document — is the
-honest measure of how much window-op code still bypasses the machine. It is expected to
-shrink monotonically to zero; the check fails a PR that grows it.
+`node scripts/check-r2-window-ops.mjs` (re-verified 2026-09-01): **16 allowlisted entries / 24
+calls** (write debt; the check also reports 8 entries / 11 calls of read debt, tracked
+separately and not part of this count). This number — not the table above, not any other
+prose in this document — is the honest measure of how much window-op code still bypasses the
+machine. It is expected to shrink monotonically to zero; the check fails a PR that grows it.
 
 ### Open design decisions
 
@@ -578,6 +578,65 @@ marked window through a re-registration into a transient role with `acceptsInput
 and assert the opposite outcomes. The examples are hand-built rather than left to the generator
 because the re-registration path is measured-thin — `window-kernel-properties.test.ts`, "Pinned
 merge coverage — MEASURED, not assumed".
+
+### Close, focus-mirror and headless duplication removed, 2026-09-01
+
+Several remaining places where a second module decided something the kernel already decides,
+or where a headless run diverged from a real one, are closed.
+
+- **The rival modal close-on-blur handler is gone.** `ipc.ts windowOpenHandler`'s own
+  `win.on('blur', ...)` — with its `E2E_TEST` gate, its utility-child and workspace-child-warn
+  suppressions, its post-show settle window, and the `__lastShowTime` stamp that fed that
+  settle window — duplicated `window-kernel.ts selectTransientAutoclose` with its own,
+  disagreeing suppression rules. A `modal: true` window whose role is outside
+  `window-kernel.ts TRANSIENT_ROLES` no longer self-closes on blur by any mechanism; dismissal
+  for a transient role runs only through the kernel's sweep. `WindowRecord.selfClosesOnBlur`
+  is still declared at registration (`ipc.ts` still calls `windowSelfClosesOnBlur(options)`)
+  and `isAppResignSweepEligible` still excludes a window carrying it from the app-resign sweep
+  — recorded here as a fact to re-check, since the sweep exclusion was built on the assumption
+  that such a window already closes itself on blur, which this change removes.
+- **The command panel's own focus-loss dismissal is gone.** `renderer/cmd/panel.js` no longer
+  subscribes to `window:focused` to hide itself; the palette (`role: 'palette'`, in
+  `TRANSIENT_ROLES`) is dismissed by the kernel's `selectTransientAutoclose` like every other
+  transient role. **Open question, not yet resolved either way:** macOS Cmd+` window cycling is
+  reported to skip panel-type windows, so the palette may receive no native blur event during a
+  Cmd+` cycle — whether the kernel's focus-driven sweep still catches that case is unverified.
+- **Close/hide policy moved from `windows.ts` into the kernel reducer.** `windows.ts
+  closeOrHideWindow` held three decisions that a caller could get answered differently
+  depending on entry point: refusing to close the background window, force-closing the settings
+  window regardless of any future `keepLive`, and cascading a close onto every window opened by
+  the one being closed. All three now live in `window-kernel.ts decide`'s `CloseOrHideWindow`
+  case. `WindowRecord.appLifetime`, declared at registration, replaces the hardcoded
+  `WEB_CORE_ADDRESS` check — `core-glue.ts`'s background window is the sole producer, and
+  `decide` rejects `CloseOrHideWindow` outright for a record carrying it (`'app-lifetime-window'`).
+  The settings-window special case is dropped outright, redundant with the `keepLive` branch
+  `decide` already had. `descendantsToCascadeClose` walks the kernel's own `parentId` edges
+  (deepest first, `appLifetime` subtrees skipped) in place of `closeChildWindows`'s
+  address-string walk over the legacy registry; `closeChildWindows` itself is untouched and
+  still address-keyed, as the last dependency of the separate `closeWindow` export.
+- **The IZUI coordinator's own app-focus mirror is retired.** `izui-state.ts` kept its own
+  OS-focus mirror (`appFocused`, fed by `main.ts`'s `did-become/resign-active` and
+  `browser-window-focus`/`blur` listeners) beside the window kernel's `getAppActive()` — the
+  same fact tracked twice. `evaluateOnShow()` now reads app-active through an injected
+  `setAppActiveProvider`, wired to `getAppActive()`. The per-window `params.transient` flag
+  `ipc.ts` used to stamp from the mirror is deleted outright — it had no reader outside `ipc.ts`
+  itself; a window's real transience is role membership in `window-kernel.ts TRANSIENT_ROLES`.
+- **`entry.ts`'s headless `BrowserWindow`/`BaseWindow` prototype patches are gone.** A headless
+  run now delivers raise, stacking and desktop-membership effects to the real Electron calls
+  instead of a patched-out no-op prototype, closing a source of headless/real divergence this
+  document has repeatedly had to call out (see "First macOS evidence for this branch" above).
+- **The tile launcher no longer vetoes a native close.** `tile-launcher.ts`'s `keepLive` native
+  close veto is gone; `electron-window-backend.ts attachNativeListeners` owns a single `'close'`
+  listener that calls `preventDefault()` and dispatches `kernelCloseOrHideRequested` for every
+  window, using a counting `pendingMachineClose` map (so a close already in flight from the
+  kernel doesn't re-enter) and a `quitting` flag set on `before-quit` and cleared on
+  `will-quit`/`quit` (so quit-time closes aren't vetoed). `main.ts`'s window-close bookkeeping
+  moved onto a kernel-order-diff subscription, finalizing a close only once both
+  `pendingWindowCloseCapture` and `pendingKernelRemoval` are known for a given window.
+- **A new `SetAcceptsInput` command/effect/port method** replaces three call sites that used to
+  call `setIgnoreMouseEvents` directly; `hybrid-overlay.ts ensureOverlay` keeps its one direct
+  call because it runs before the window has a machine id, and is allowlisted in
+  `scripts/check-r2-window-ops.mjs` for that reason.
 
 ### Maintenance directive
 

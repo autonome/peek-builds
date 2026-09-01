@@ -94,24 +94,26 @@ evaluateOnShow(excludeWindowId?: number): 'active' | 'transient' {
 
 ### Transient Propagation
 
-When opening a new window, transient state propagates from the session:
+Opening a window updates the session's own transient/active state, but stamps nothing onto
+the window itself:
 
 ```typescript
 // In window-open IPC handler
-const sessionWasTransient = coordinator.isTransient();
-const entryMode = coordinator.evaluateOnShow();
-const isTransient = sessionWasTransient || entryMode === 'transient';
+coordinator.evaluateOnShow();
 ```
 
-This ensures windows opened FROM a transient session are also transient.
+There is no per-window transient flag: a window's real transience is its `role`, checked
+against `window-kernel.ts TRANSIENT_ROLES`. The session-level state is what "windows opened
+FROM a transient session are also transient" refers to.
 
 ### Overlay Close Behavior
 
-When an overlay closes, it only restores hidden windows if NOT in transient mode:
+When an overlay closes, it only restores hidden windows if the session is NOT in transient
+mode, read straight off the coordinator rather than off the window:
 
 ```typescript
 // In window 'closed' handler
-const isTransient = windowData.params.transient === true;
+const isTransient = coordinator.isTransient();
 if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
   // Active mode: restore hidden windows
   for (const id of hiddenWindowIds) {

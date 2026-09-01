@@ -227,4 +227,4 @@ The save command uses a separate window approach to avoid modal blur issues:
 6. Background sends data to download window
 7. Download window calls `api.files.save()` for native dialog
 
-This approach works because the download window is not modal and doesn't have a blur handler that would close it when the native dialog takes focus.
+This approach avoids a modal command window competing with the native save dialog for focus. There is no per-window blur-close handler left to worry about either way — `ipc.ts windowOpenHandler` no longer installs one for any window, modal or not; a transient window's dismissal now runs only through the window kernel's `selectTransientAutoclose`.

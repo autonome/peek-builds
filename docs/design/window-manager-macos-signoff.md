@@ -56,9 +56,11 @@ observations with the gesture that produced them; do not treat them as a pass/fa
 
   Deactivate with `open -a Finder`, and allow the app-resign settle delay (500ms) before judging
   the result.
-- `E2E_TEST=true` also suppresses the blur self-close for **every** modal window, and installs a
-  hidden non-focusable fixture window that shows up as an extra row in any window inventory.
-  Expect it; it is not a leak.
+- `E2E_TEST=true` installs a hidden non-focusable fixture window that shows up as an extra row
+  in any window inventory. Expect it; it is not a leak. (There is no longer a blur self-close
+  for `E2E_TEST` to suppress — `ipc.ts windowOpenHandler`'s own close-on-blur handler is deleted;
+  a transient window's dismissal runs only through the kernel's `selectTransientAutoclose`, which
+  is not `E2E_TEST`-gated.)
 - **Live test pages must be visually distinct, and must be real `http://` URLs.** A restored
   profile can come back with a dozen identical pages, so each staged page carries a large unique
   label. `data:` and `peek://` URLs cannot be used for this: `main/izui-roles.ts` `inferIzuiRole`
