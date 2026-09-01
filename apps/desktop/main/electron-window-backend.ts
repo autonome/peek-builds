@@ -444,23 +444,89 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *
    * No token needed (unlike `pendingShowOpSeq`): a close is terminal, so
    * there is nothing later to distinguish a stale arming from a fresh one —
+   * only HOW MANY are outstanding. A count, not a one-shot flag: `closeWindow`
+   * has two suspension points ahead of its `win.close()` call
+   * (`exitFullscreenBeforeClose`, and `destroyGuestsAndWait` inside
+   * `destroyGuestsThenClose`), and two distinct commands reach it
+   * (`CloseWindow` from the membership diff, `CloseWindowDirect` from
+   * `windows.ts closeHostWindow` / `ipc.ts`'s content-`destroyed` handler) —
+   * so two overlapping `closeWindow` calls for the SAME window are a real
+   * shape, each arming independently and each expecting its own `win.close()`
+   * to be recognized as its own. A one-shot Set collapses two overlapping
+   * armings into one: if the first `win.close()` is then vetoed downstream
+   * (e.g. by the OS), the second's `'close'` arrives with nothing armed, is
+   * read as fresh evidence, and gets handed to a kernel record that may
+   * already be gone. A counter fixes this by construction: each arm
+   * increments, each native `'close'` this triggers decrements one (deleting
+   * the entry at zero) — so N overlapping arms always consume exactly N
+   * native closes, with no way for a count to go negative or for one arm to
+   * leak into unrelated close traffic.
+   *
    * ARMED immediately before each `win.close()` call `closeWindow` makes,
-   * CONSUMED (one shot) by the very next `'close'` on that window.
+   * CONSUMED one increment per native `'close'` on that window — see
+   * `armMachineClose` / `consumeMachineCloseArm`. Cleared entirely (whatever
+   * the remaining count) on `win.on('closed')`, same as before: an arm
+   * cannot outlive its window.
    */
-  private readonly pendingMachineClose = new Set<WindowId>();
+  private readonly pendingMachineClose = new Map<WindowId, number>();
+
+  /** ARM one outstanding machine-initiated close for `id` — see `pendingMachineClose`. */
+  private armMachineClose(id: WindowId): void {
+    this.pendingMachineClose.set(id, (this.pendingMachineClose.get(id) ?? 0) + 1);
+  }
 
   /**
-   * Set once the app has genuinely started quitting (`app.on('before-quit')`
-   * fired at least once). Every window the OS is about to tear down as part
-   * of quit fires a native `'close'` exactly like a user-initiated one, and
-   * that close must reach `win.close()` for real — vetoing it and asking the
-   * kernel would leave `entry.ts`'s deferred quit-cleanup sequence
-   * (`izui-roles.ts planBeforeQuit`) waiting on windows that never finish
-   * closing, hanging the quit. `before-quit` always fires — vetoed or not —
-   * strictly before Electron ever begins closing windows for that quit
-   * attempt, so latching this true on the first sighting and never clearing
-   * it is enough: by the time any window's `'close'` fires as part of an
-   * actual (non-vetoed) quit pass, this is already set.
+   * CONSUME one outstanding machine-initiated close for `id`, if any —
+   * `true` when a native `'close'` should be treated as this backend's own
+   * doing (the caller then skips the veto), `false` when none was armed and
+   * the close is genuine OS/user evidence. See `pendingMachineClose`.
+   */
+  private consumeMachineCloseArm(id: WindowId): boolean {
+    const count = this.pendingMachineClose.get(id);
+    if (!count) return false;
+    if (count > 1) this.pendingMachineClose.set(id, count - 1);
+    else this.pendingMachineClose.delete(id);
+    return true;
+  }
+
+  /**
+   * True while a quit attempt is genuinely under way. Every window the OS is
+   * about to tear down as part of quit fires a native `'close'` exactly like
+   * a user-initiated one, and that close must reach `win.close()` for real —
+   * vetoing it and asking the kernel would leave `entry.ts`'s deferred
+   * quit-cleanup sequence (`izui-roles.ts planBeforeQuit`) waiting on windows
+   * that never finish closing, hanging the quit.
+   *
+   * SET by `before-quit`, which always fires — vetoed or not — strictly
+   * before Electron ever begins closing windows for that attempt, so by the
+   * time any window's `'close'` fires as part of an actual (non-vetoed) quit
+   * pass this is already true.
+   *
+   * CLEARED by `will-quit` and (belt-and-suspenders) `quit`: `will-quit`
+   * fires only once every window is ALREADY closed for that attempt (Electron
+   * docs), so no window can still be mid-close when this flips back to
+   * false — clearing here can never unveto a close that quit itself is
+   * driving. A `before-quit` vetoed immediately (nothing closed yet, the
+   * `entry.ts` deferred-cleanup-and-requeue dance) never reaches `will-quit`
+   * either, so the flag simply stays latched true across that gap, exactly
+   * as harmless as before — the requeued `app.quit()` fires `before-quit`
+   * again before anything relies on the flag being false.
+   *
+   * WHAT THIS STILL MISSES: Electron has no event for "a window's own
+   * `beforeunload` handler cancelled the quit" — `app.quit()`'s own docs say
+   * a window can cancel the quit this way, but neither `will-quit` nor `quit`
+   * fires when it does, and the cancelling window's `'close'` never fires
+   * either (the cancellation happens inside `win.close()`, before the native
+   * event). So a quit that gets THIS FAR — past `before-quit`, into actually
+   * closing windows — and is then cancelled by one window's beforeunload
+   * prompt leaves this flag stuck true with no further edge to clear it,
+   * exactly the failure this rework otherwise closes. Fixing that
+   * exhaustively needs a per-webContents `will-prevent-unload` hook (outside
+   * this file's app-level listeners, and outside this port's remit — see
+   * `entry.ts`'s headless-guard use of it), not a comment. What clearing on
+   * `will-quit`/`quit` DOES cover is the overwhelmingly common case: any quit
+   * that actually completes, plus self-correction if some future handler
+   * ever vetoes `will-quit` itself.
    */
   private quitting = false;
 
@@ -513,12 +579,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * the process.
    */
   attachAppListeners(): void {
-    // Latches `quitting` true — see that field's doc for why "fired at least
-    // once" is the whole fact the native `'close'` listener needs, and why a
-    // vetoed quit attempt setting it early is harmless (nothing closes any
-    // window during a vetoed attempt).
+    // Latches `quitting` true (see that field's doc for the full set/clear
+    // story, including what a beforeunload-cancelled quit still misses).
     (app as unknown as { on(e: string, l: () => void): void }).on('before-quit', () => {
       this.quitting = true;
+    });
+    // `will-quit` fires only once every window this attempt was closing is
+    // already gone — see `quitting`'s doc for why that makes clearing here
+    // safe. `quit` is a belt-and-suspenders second clear on the same field
+    // for the same reason, in case something one day vetoes `will-quit`.
+    (app as unknown as { on(e: string, l: () => void): void }).on('will-quit', () => {
+      this.quitting = false;
+    });
+    (app as unknown as { on(e: string, l: () => void): void }).on('quit', () => {
+      this.quitting = false;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       // Feeds the kernel (window-kernel-dispatch.ts), which drives the real
@@ -885,8 +959,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     //     `kernelCloseOrHideRequested` a prior native close attempt on this
     //     window issued. Reporting that as fresh evidence would ask the
     //     kernel the same question forever: veto, ask, decide "close", close,
-    //     veto again. See `pendingMachineClose`'s own doc for why a one-shot
-    //     Set (no token) is enough here, unlike the show/hide echo guards.
+    //     veto again. See `pendingMachineClose`'s own doc for why a counting
+    //     arm (no token) is enough here, unlike the show/hide echo guards.
     //
     // Neither armed: a genuine, not-yet-decided native close attempt. Veto it
     // and let the kernel answer — its `CloseWindow` effect (non-keepLive) or
@@ -894,7 +968,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // actually happens to this window next.
     win.on('close', (...args: unknown[]) => {
       if (this.quitting) return;
-      if (this.pendingMachineClose.delete(id)) return;
+      if (this.consumeMachineCloseArm(id)) return;
       const event = args[0] as { preventDefault(): void } | undefined;
       event?.preventDefault();
       kernelCloseOrHideRequested(id);
@@ -1302,7 +1376,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Arm immediately before the native call it labels — see
       // `pendingMachineClose`'s doc: the `'close'` this provokes is the
       // kernel's own decision being realized, not fresh OS evidence.
-      this.pendingMachineClose.add(id);
+      this.armMachineClose(id);
       try {
         win.close();
       } catch {
@@ -1374,7 +1448,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!win.isDestroyed()) {
         // Arm immediately before the native call it labels — see
         // `pendingMachineClose`'s doc.
-        this.pendingMachineClose.add(id);
+        this.armMachineClose(id);
         win.close();
       }
     } catch {
