@@ -54,10 +54,27 @@ and an ambiguous prefix, and `deleteItem`. The ambiguity payload comes back in t
 truncated }` — and `getItem()` turns it into the same text `formatAmbiguous()` produces,
 which is the one place a non-200 has to become a value-bearing error.
 
-Two things this does not cover. A readonly grant was never exercised, so the `readonly`
-bit is confirmed only as a value `describe()` reports, not as an enforced refusal. And
-`peek-mcp-init --remote` was not used — the harness constructs the store directly, so the
-scaffolder's own credential resolution is still unproven.
+A readonly grant is enforced, not merely reported. Running the same harness against a
+grant minted with `readonly: true` refuses all six mutating routes with HTTP 403 and
+leaves every read working; `tools/socket-proof.mjs` inverts its expectation for write
+steps when `PEEK_MCP_EXPECT_READONLY` is set, so a readonly run that quietly succeeded at
+writing fails rather than reading as green.
+
+**The scaffolded path found the one real defect, in `entryEnvMatchesCurrent()`.** For a
+remote install, `setup.js` writes `PEEK_MCP_REMOTE_URL` and `PEEK_MCP_CREDENTIAL` as
+`${PEEK_SYNC_URL}` reference text, which the client expands before spawning the server.
+The drift check compared that reference text against the expanded value, so it never
+matched: a correctly scaffolded remote project failed the check on every spawn and exited,
+and the client respawning produced the same result again. The diagnostic hid the cause by
+printing only the scope, readonly and database-path fields, none of which differ, so it
+showed two identical lines and called them a mismatch.
+
+An on-disk value in `${...}` form now matches anything, because there is no on-disk value
+to have drifted, while a literal still has to match exactly; the message prints the fields
+the comparison actually used. Every existing test for this function used literal values,
+which is why it survived — the two added cases use the reference form real installs write.
+With the fix, `tools/socket-proof-scaffolded.mjs` drives a scaffolded child through
+`initialize`, `tools/list`, and a create/list/delete round trip against the live server.
 
 A related survey, `docs/sync-coverage-gaps.md`, records what the sync engine does not
 carry between devices. **It is deliberately out of scope for this work.** Nothing in
@@ -66,16 +83,14 @@ is a signal to stop and report, not to widen the change.
 
 ### Next steps
 
-The end-to-end run is done — see above. What it left open, and then the rest in no
+The end-to-end run is done — see above. What it leaves open, and then the rest in no
 particular order:
 
-- **Prove a readonly grant actually refuses writes.** Minting one is a second
-  `POST /admin/mcp-grants` with `readonly: true`; the harness then expects every write
-  step to fail rather than succeed. Until that runs, `readonly` is a field the server
-  reports, not a restriction anything has watched hold.
-- **Run the scaffolder path.** `peek-mcp-init --remote <url> --store-token` resolves the
-  credential its own way, and `tools/socket-proof.mjs` bypasses it by constructing the
-  store directly. `setup.js` is what that exercises.
+- **Redeploy before trusting the scaffolded path in practice.** The
+  `entryEnvMatchesCurrent()` fix is in this repository, and the running deployment does
+  not carry it. That does not affect the deployment (the drift check runs in the local
+  MCP child, not on the server), but any project scaffolded from an older checkout still
+  exits on every spawn.
 
 - **Make `apps/server/index.js` testable** — guard the listener with
   `require.main === module` and export the app, so routes can be tested through the real

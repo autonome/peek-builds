@@ -13,11 +13,17 @@
  * Credentials come from the environment and are never written to disk:
  *   PEEK_MCP_REMOTE_URL   base URL of the server
  *   PEEK_MCP_TOKEN        grant credential
+ *   PEEK_MCP_EXPECT_READONLY  set when the credential is a readonly grant
  *
  * Writes are confined by the grant's own scope tag; the store cannot widen it.
+ *
+ * The readonly expectation is inverted here rather than read off the summary by
+ * eye, because a readonly run that quietly succeeds at writing looks identical
+ * to a passing run unless something asserts the refusal.
  */
 import { openRemoteStore } from '../apps/desktop/features/mcp-server/store/remote-store.js';
 
+const expectReadonly = !!process.env.PEEK_MCP_EXPECT_READONLY;
 const results = [];
 let created = null;
 
@@ -31,6 +37,25 @@ async function step(name, fn) {
     results.push({ name, ok: false, error: err });
     console.log(`  FAIL  ${name}`);
     console.log(`        ${err?.constructor?.name}: ${err?.message}`);
+    return undefined;
+  }
+}
+
+/**
+ * A step that writes. Under a readonly grant the refusal IS the pass, and a
+ * success is the failure — an unenforced readonly bit is worse than a broken
+ * one, since it reads as working everywhere it is reported.
+ */
+async function writeStep(name, fn) {
+  if (!expectReadonly) return step(name, fn);
+  try {
+    const value = await fn();
+    results.push({ name, ok: false, error: new Error('write succeeded under a readonly grant') });
+    console.log(`  FAIL  ${name} — write succeeded under a readonly grant`);
+    return value;
+  } catch (err) {
+    results.push({ name, ok: true, value: `refused: ${err?.message}` });
+    console.log(`  ok    ${name} (refused, as a readonly grant must)`);
     return undefined;
   }
 }
@@ -56,11 +81,22 @@ await step('listTasks', () => store.listTasks({}));
 await step('resolveItemId (miss)', () => store.resolveItemId('zzzzzzzz'));
 await step('getItem (miss)', () => store.getItem('zzzzzzzzzzzz'));
 
-console.log('\n--- writes');
-created = await step('createItem', () =>
+console.log(`\n--- writes${expectReadonly ? ' (expecting every one to be refused)' : ''}`);
+created = await writeStep('createItem', () =>
   store.createItem({ type: 'text', content: 'socket proof', tags: ['socket-proof'] }));
 
-if (created?.id) {
+if (expectReadonly) {
+  // Nothing was created, so every follow-up would probe a nonexistent id and
+  // report a not-found that says nothing about the readonly bit. Drive the
+  // remaining write methods against a well-formed id instead: what is being
+  // asserted is the refusal, which does not depend on the item existing.
+  const absent = '00000000-0000-4000-8000-000000000000';
+  await writeStep('updateItem', () => store.updateItem(absent, { content: 'x' }));
+  await writeStep('tagItem', () => store.tagItem(absent, 'socket-proof-extra'));
+  await writeStep('untagItem', () => store.untagItem(absent, 'socket-proof-extra'));
+  await writeStep('recordEvent', () => store.recordEvent(absent, 'viewed', null));
+  await writeStep('deleteItem', () => store.deleteItem(absent));
+} else if (created?.id) {
   const id = created.id;
   await step('getItem (hit)', () => store.getItem(id));
   await step('getItemTags', () => store.getItemTags(id));

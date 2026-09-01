@@ -1712,4 +1712,45 @@ describe('entryEnvMatchesCurrent() — remote keys (design doc §4.3)', () => {
       assert.equal(entryEnvMatchesCurrent({ env: { PEEK_DB_PATH: '/b/datastore.sqlite' } }), false);
     });
   });
+
+  // Every case above uses literal on-disk values, but setup.js writes a
+  // ${PEEK_SYNC_URL} reference for every remote install and the client expands
+  // it before spawning. Comparing the reference text against the expanded value
+  // can never match, so a correctly scaffolded project used to fail the drift
+  // check on every spawn and exit in a loop.
+  it('matches a scaffolded entry whose remote url and credential are ${...} references', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: 'peek',
+      PEEK_MCP_READONLY: undefined,
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+      PEEK_DB_PATH: undefined,
+    }, () => {
+      const entry = {
+        env: {
+          PEEK_MCP_SCOPE_TAG: 'peek',
+          PEEK_MCP_REMOTE_URL: '${PEEK_SYNC_URL}',
+          PEEK_MCP_CREDENTIAL: '${PEEK_SYNC_URL}#peek',
+        },
+      };
+      assert.equal(entryEnvMatchesCurrent(entry), true);
+    });
+  });
+
+  it('a reference in the url does not excuse a scope that really did drift', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: 'peek',
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+    }, () => {
+      const entry = {
+        env: {
+          PEEK_MCP_SCOPE_TAG: 'other-scope',
+          PEEK_MCP_REMOTE_URL: '${PEEK_SYNC_URL}',
+          PEEK_MCP_CREDENTIAL: '${PEEK_SYNC_URL}#other-scope',
+        },
+      };
+      assert.equal(entryEnvMatchesCurrent(entry), false);
+    });
+  });
 });
