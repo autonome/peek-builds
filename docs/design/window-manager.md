@@ -12,7 +12,8 @@ Read this table first. §4 and §5 below are the detailed record; this block is 
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
 
-Current through `c2f226b8`. The R2 count below is current as of 2026-09-01 (via
+Current through `16d4acb2`, at which the full gate runs green on macOS on every Playwright runner —
+see "The gate runs green on macOS" below. The R2 count is current as of 2026-09-01 (via
 `scripts/check-r2-window-ops.mjs`).
 Steps 8 and 9 in the table below are verified against the allowlist and live code as of
 2026-08-17, not re-verified since; steps 1-7, 10, and 11 track the older 11-step migration
@@ -733,10 +734,6 @@ behaviour the other three had.
 
 These are deliberate, and none of them should be filled outside the kernel.
 
-- A `modal: true` window whose role is NOT in `window-kernel.ts TRANSIENT_ROLES` no longer
-  self-closes on blur at all, and `window-kernel.ts isAppResignSweepEligible` excludes
-  `selfClosesOnBlur` windows, so nothing dismisses those on app resign either. The exclusion was
-  built on the assumption that such a window closes itself on blur, which no longer holds.
 - **Unverified:** macOS Cmd+` cycling is reported to skip panel-type and `alwaysOnTop` windows, so
   the command palette may receive no native blur on that gesture — which is why `renderer/cmd/panel.js`
   carried its own subscriber. Whether the kernel's focus-driven sweep covers the Cmd+` case has
@@ -744,6 +741,57 @@ These are deliberate, and none of them should be filled outside the kernel.
 - A keepLive tile closed by a native path is destroyed rather than hidden UNLESS
   `electron-window-backend.ts`'s `'close'` listener catches it. That listener is the only bridge;
   `decide` has always had the right rule (`record.keepLive ? WindowHidden : WindowClosed`).
+
+### The gate runs green on macOS, 2026-09-01
+
+The Playwright suite had never run against this branch. It has now run twice, and every failure it
+found is closed. Recorded here because the branch's entire remaining risk surface was this run.
+
+First run, at `8b0389c0`, 11 failures. Second run, after the fixes below plus the merge of `main`,
+**every Playwright runner green**: desktop 435 pass / 0 fail / 31 skip, desktop-serial 40 / 0,
+components 64 / 0, editor 91 / 0, node unit 743 / 0.
+
+Four of the eleven were PRODUCT defects, which is the answer to the tempting reading that a spec
+failing after a sweep is a spec that needs restaging:
+
+- **`ipc.ts`'s parent-eligibility set had drifted from the kernel's transient definition.**
+  `NON_PARENT_ROLES` was `{palette, overlay, switcher}` against `TRANSIENT_ROLES`'s
+  `{palette, quick-view, overlay, switcher}` — two statements of nearly the same fact, differing by
+  exactly `quick-view`. A `quick-view` panel therefore became a real parent of the window it
+  opened; when the new window took focus the panel was correctly swept, and `decide`'s
+  `descendantsToCascadeClose` closed the window the user had just asked for. Six specs failed on
+  this one cause. Parent-eligibility is now `window-kernel.ts isNonParentRole`, derived from
+  `TRANSIENT_ROLES`, and the local set is deleted.
+- **The cascade force-closed keepLive descendants.** `decide`'s `CloseOrHideWindow` honoured
+  `keepLive` for `cmd.id` and not for anything the cascade reached, so a window survived or died
+  depending only on whether it was closed directly or as somebody's child. One `dispose(id)`
+  closure now applies the same rule to the target and every cascade id.
+- **The Escape redirect was lost in the cutover.** `resolveEscapeTarget`'s DISAGREEMENT branch
+  returned `stale` unconditionally, dropping the keystroke, where the predecessor rule
+  (`izui-roles.ts resolveHybridEscapeTarget`, `ALWAYS_CLOSEABLE_ESC_ROLES`) redirected to the
+  active window when its role was unconditionally closeable. Restored as one clause reading
+  `roleIn(ESC_CLOSE_ROLES, holder.role)`. `6e04e8df` had claimed parity without recording the drop.
+- **Close-time presentation capture read a record the transition had already retired.** `evolve`'s
+  `WindowClosed` arm filters the record out of `state.order` before the paired `CloseWindow` effect
+  runs, and that effect's native close fires `ipc.ts captureHybridClose` synchronously — which
+  found no record and read `maximized: false` for EVERY closed hybrid window. The effect now
+  carries the retiring record's `maximized`/`preMaxBounds`, held only for the duration of the close
+  that needs them.
+
+The other failures were a spec asserting the retired `kernelRaiseWindow` command's signature
+(`OsFocusGained`, which the executor's headless `inactive-show` path structurally cannot produce),
+a spec asserting the deleted `ipc.ts` blur handler directly (see the transient-law correction in
+§0), and one unattributed intermittent (`hybrid-overlay.spec.ts`, entities panel) that passed 4/4
+tests across 3 isolated runs and does not carry the overlay-race diagnostic string.
+
+**`kernelRaiseWindow` has no production callers.** It manufactures an `OsFocusGained` inside
+`decide`, bypassing the executor and its headless mask — a rival path surviving as dead code.
+Deleting it is unstarted.
+
+**One failure in the main-process unit runner is NOT this branch's**: `sync.test.ts`, "a deleted
+never-synced item does not pin the watermark", fails 2 runs in 6 standalone with the watermark
+landing exactly 1ms below the event. It arrived with the merge of `main` and is a millisecond
+boundary in the sync watermark, unrelated to any window code.
 
 ### Maintenance directive
 
