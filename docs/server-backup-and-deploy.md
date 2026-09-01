@@ -232,8 +232,17 @@ rows the archive predates:
   `settings` rows and nothing else.
 - `7ba1e42b-…` held two urls, both already in the main profile, one of them `https://example.com/`.
 
-`8ccb036b-…` was kept. Thirteen of its fifteen notes are duplicated in the main profile but two are
-not, so it is the only copy of those. Deleting it would lose them.
+`8ccb036b-…` held two notes that existed nowhere else. They were re-posted into the main profile
+through `POST /items` with their original `createdAt` — `saveItem()` honours a client-supplied
+`createdAt` on INSERT, so both kept their January dates rather than surfacing as new — and the
+directory was then deleted. The volume now holds three profile directories matching the three
+registered profiles exactly.
+
+That move was re-checked immediately before it ran, because a mobile sync had landed in between and
+made the earlier evidence stale: the main profile had grown from 12452 to 12507 items. Re-running
+the comparison against the current profile is what confirmed the two notes were still absent from
+it. The general point outlives this instance — the overlap check is only valid against the profile
+as it stands at the moment of deletion, so it is re-run rather than reused.
 
 The general rule this leaves: a profile directory is disposable when every row it holds is either
 `settings` or content that already exists in the registered profile, judged against the live file
