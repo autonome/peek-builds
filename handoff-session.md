@@ -229,7 +229,8 @@ yarn test:grep 'leaving a note still closes it'                     # 1 passed
 ```
 
 `yarn test:desktop:electron` is the full gate, takes ~15 minutes and pins the CPU. Run it
-whenever a change warrants it; no approval needed. Judge it by diffing the failing spec set
+whenever a change warrants it where `PEEK_GATE_UNATTENDED=1` is set, and ask first where it
+is not — see `apps/desktop/CLAUDE.md`. Judge it by diffing the failing spec set
 against `apps/desktop/tests/gate-baseline.md`, never by the count.
 
 **`test:desktop:electron:spec` does not build.** It runs `PACKAGED=1` against the last

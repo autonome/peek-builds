@@ -1,0 +1,9 @@
+{
+  "name": "@peek/capabilities",
+  "version": "0.0.1",
+  "description": "Tile manifest capability model — detection, validation, and capability resolution shared by apps/desktop and apps/server.",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts"
+}
