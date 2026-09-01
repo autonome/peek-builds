@@ -118,10 +118,13 @@ Four changes closed it:
 - **A one-time migration soft-deletes text items with neither content nor title**
   (`migrateEmptyTextCleanup`, flag `empty_text_cleanup_v1`).
 
-**Unverified: the live effect.** The desktop fixes need a rebuild on the Mac that
-holds the datastore, and no sync has run since. Expect the migration line
-`[empty-text-cleanup] Removed N empty text items` at startup, the six rejections to
-stop, and the event stage to fall to the real delta.
+**Those four changes were not enough — a rebuilt desktop still re-pushes 24,000 events
+every run, with all items now syncing without error.** So the remaining pin is not bad
+data, it is the design: the blocked-event scan holds the watermark below the oldest
+event of ANY live item lacking a `syncId`, and several classes of item never earn one
+by design — a type outside `getSyncedTypes()`, and anything whose content starts with
+`peek://` (filtered in `pushToServer()`). One global watermark for all events means the
+worst item in the datastore decides what every event costs. Next Step 1 replaces it.
 
 **What created the empty notes.** `features/editor/home.js init()` created the row the
 moment a blank editor opened, before any typing — introduced 2026-02-11 (`cb4d5e10`),
@@ -161,11 +164,40 @@ last-seen. Mobile source already declares version 3 in
 
 Ordered by consequence.
 
-1. **Confirm the event stall is actually gone.** Rebuild the desktop app on the Mac and
-   run a sync. The event stage should report a batch plan in the hundreds, not 20,000+,
-   and the six item rejections should stop. If the count stays high, the watermark is
-   pinned by something other than those items and the blocked-event query is where to
-   look. **blocked on: the Mac, which holds the datastore and the build.**
+1. **Track event sync per event, not with one global watermark.** This is the fix for the
+   24,000-event re-push and it supersedes patching the blocked-event scan.
+
+   Add `pushedAt INTEGER NOT NULL DEFAULT 0` to `item_events`, declared in
+   `packages/schema/v1.json` so all three clients regenerate. `pushEventsToServer()` then
+   selects `WHERE i.syncId != '' AND e.pushedAt = 0` and stamps `pushedAt` per chunk on
+   success; `getLastEventPushAt`/`setLastEventPushAt`, the `lastEventPushAt` setting, and
+   the whole blocked-event scan go away. An event whose parent cannot sync then strands
+   exactly itself and is picked up whenever that parent does sync — the protection the
+   pin existed for, without the coupling.
+
+   Backfill decides how expensive the transition is: stamp every event at or below the
+   current watermark as already pushed, and only the tail behind it re-pushes, once. The
+   server takes events idempotently by event id, so a re-push duplicates nothing.
+   **Open decision: whether this needs a datastore version bump.** The standing rule
+   below says adding a synced column does; defaulting `pushedAt = 0` and accepting one
+   re-push avoids the bump and its full item re-push. Check `packages/sync/version.js`
+   before shipping.
+
+   Then, in order: port `mark_item_sync_failed()` from `apps/mobile/peek-core/src/sync.rs`
+   so the desktop parks what `isPermanentPushFailure()` already classifies as hopeless
+   (today it classifies and acts on nothing); batch `POST /items` mirroring `POST /events`
+   (1000 cap, per-row validation, one transaction), turning ~11k sequential requests into
+   ~12; then Next Step 4's pagination.
+
+   **A sync library was reviewed and rejected for this.** ElectricSQL, PowerSync and Zero
+   all require Postgres — PowerSync explicitly does not support a SQLite backend — which
+   this server is not. Zero and Evolu have no Rust client, so `apps/mobile/peek-core`
+   could not speak them; Automerge's Rust and JS implementations are not wire-compatible
+   with each other. Replicache is archived, CR-SQLite is ~2 years stale and self-declared
+   not production ready, and Yjs solves concurrent text editing, which is not the problem
+   here. Evolu otherwise fits (MIT, self-hostable, SQLite) but stores opaque encrypted
+   mutations in its relay, which would end the server's own query surface, the MCP grants
+   and the restore path. Nothing on offer is cheaper than the column above.
 
 2. **Ship a mobile build.** Mobile cannot reproduce the duplication bug — it has no
    version-change reset at all, and `push_to_server()` in
@@ -203,10 +235,10 @@ Ordered by consequence.
    `pullTagsFromServer` in `apps/desktop/main/sync.ts`, and needs a version story so an
    old client still works.
 
-5. **Batch the item push.** A full re-push is one HTTP request per item — roughly 11k
-   sequential requests taking about 25 minutes on a normal connection. `POST /events`
-   already accepts batches of up to 1000 and pushes 24k events in under a minute, so
-   the shape to copy exists.
+5. **Batch the item push** — listed under Next Step 1, which carries the detail. A full
+   re-push is one HTTP request per item, roughly 11k sequential requests taking about 25
+   minutes on a normal connection, while `POST /events` already accepts batches of up to
+   1000 and pushes 24k events in under a minute.
 
 6. **Give the restore path a production rehearsal.** Backups are proven readable and
    the download route works against real data, but nothing has ever restored one.
