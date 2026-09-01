@@ -700,6 +700,16 @@ function updateItem(userId, profileId, scopeTag, id, patch = {}) {
 }
 
 // --- delete_item: DELETE /mcp/items/:id ---
+//
+// Soft delete only — deliberately does NOT cascade into item_events. Making
+// this the one hard delete in the path (item_events has no deletedAt column
+// to tombstone instead) would mean a routine, reversible action silently
+// destroys data a caller has no way to recover, and nothing about existing
+// delete semantics needs to change to fix the item-events gap this file's
+// header comment tracks. A caller that wants an item's events gone uses
+// deleteEvents() (DELETE /mcp/items/:id/events) explicitly, before or after
+// deleting the item itself — either order leaves an orphaned-but-inert
+// event row at worst, never a silent loss tied to an unrelated call.
 function deleteItem(userId, profileId, scopeTag, id) {
   const conn = getConnection(userId, profileId);
   const existing = fetchItemRowById(conn, id, scopeTag);
@@ -775,10 +785,28 @@ function untagItem(userId, profileId, scopeTag, id, tagName) {
 
 // --- record_event: POST /mcp/items/:id/events ---
 //
-// Writes the exact shape recordEventSync() does: content = type, value = 0,
-// metadata = {notes: value} (or '{}' with no value).
-function recordEvent(userId, profileId, scopeTag, id, eventType, value = "") {
-  if (typeof eventType !== "string" || eventType === "") {
+// Backward compatibility is required, not optional (apps/server/test.js pins
+// it): a caller sending only {type, value} — every caller before this
+// comment existed — must get exactly the row recordEventSync() writes for
+// that shape: content = type, value hardcoded to 0, metadata =
+// {notes: value} (or '{}' with no value), occurredAt = the server clock.
+// That branch runs whenever content/occurredAt/metadata are all absent from
+// the body, regardless of what's added below.
+//
+// `content`, `occurredAt` and `metadata` are new, optional body fields that
+// store into the columns of those names directly, unwrapped — the fix for
+// "a feed entry's link and publication date have nowhere to go" (this file's
+// header comment). `type` stays required in every case (it still falls back
+// into the content column when `content` itself is omitted) — a caller with
+// a real content string, a backdated occurredAt or a structured metadata
+// object passes one or more of the three alongside a `type` label of its own
+// choosing, e.g. "feed_entry". Supplying `metadata` explicitly also switches
+// `value` from notes-wrapped text to a real number stored in the value
+// column, since an explicit metadata object means the caller isn't relying
+// on the old notes-wrapping behavior for it.
+function recordEvent(userId, profileId, scopeTag, id, body = {}) {
+  const { type, value = "", content, occurredAt, metadata } = body;
+  if (typeof type !== "string" || type === "") {
     return { status: "invalid", error: "type is required" };
   }
   const conn = getConnection(userId, profileId);
@@ -787,13 +815,100 @@ function recordEvent(userId, profileId, scopeTag, id, eventType, value = "") {
 
   const eventId = crypto.randomUUID();
   const now = Date.now();
-  const metaStr = value ? JSON.stringify({ notes: value }) : "{}";
+
+  const contentVal = content !== undefined ? content : type;
+  const occurredAtVal = occurredAt !== undefined ? toTimestamp(occurredAt) : now;
+  let metaStr;
+  let valueVal;
+  if (metadata !== undefined) {
+    metaStr = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
+    valueVal = typeof value === "number" ? value : Number(value) || 0;
+  } else {
+    metaStr = value ? JSON.stringify({ notes: value }) : "{}";
+    valueVal = 0;
+  }
+
   conn.run(
     `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
-     VALUES (?, ?, ?, 0, ?, ?, ?)`,
-    [eventId, id, eventType, now, metaStr, now]
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [eventId, id, contentVal, valueVal, occurredAtVal, metaStr, now]
   );
-  return { status: "ok", result: { success: true, id: eventId, itemId: id, type: eventType } };
+  return { status: "ok", result: { success: true, id: eventId, itemId: id, type } };
+}
+
+// --- list_events: GET /mcp/items/:id/events ---
+//
+// A dedicated paged read, distinct from the `events=N` convenience embedded
+// in GET /mcp/items/:idOrPrefix (fetchEvents(), capped at 20 to match
+// getTaskContextSync()'s fixed window — that path is a convenience and stays
+// as it is; changing its cap is a separate argument). This route exists
+// because a caller like a feed poller needs to dedupe against however many
+// events an item actually has, not a fixed 20 — see this file's header
+// comment on fetchEvents() capping the result regardless of what's asked
+// for. EVENTS_PAGE_LIMIT (200) is the ceiling, well above 20.
+//
+// Same content-as-type aliasing and raw (unparsed) metadata string
+// fetchEvents() returns — that asymmetry with shapeItemRow() (which parses
+// an item's own metadata) is preserved deliberately here rather than fixed
+// by accident, so every event-shaped response on this API looks the same
+// regardless of which route produced it.
+const EVENTS_PAGE_LIMIT = 200;
+
+function listEvents(userId, profileId, scopeTag, id, { limit = 50, offset = 0 } = {}) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const parsedLimit = Number(limit);
+  const boundedLimit =
+    Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(EVENTS_PAGE_LIMIT, Math.floor(parsedLimit)) : 50;
+  const parsedOffset = Number(offset);
+  const boundedOffset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? Math.floor(parsedOffset) : 0;
+
+  const events = conn.all(
+    `SELECT id, content as type, value, occurredAt, metadata
+     FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT ? OFFSET ?`,
+    [id, boundedLimit, boundedOffset]
+  );
+  return { status: "ok", events };
+}
+
+// --- delete_event: DELETE /mcp/items/:id/events/:eventId ---
+//
+// A hard delete, unlike deleteItem()'s soft one — item_events has no
+// deletedAt column, being an append-only sync-pushed log (saveEvents() /
+// getEventsSince() in db.js) that was never designed with a tombstone.
+// Scoped to the item via fetchItemRowById() (an out-of-scope item id reads
+// as not-found, same as every other write route) AND to itemId in the
+// DELETE itself, so a caller can't reach another item's event by id alone.
+// An eventId that doesn't exist under this item is reported the same way
+// untagItem() reports a missing tag: 200 with {success:false}, not a 404 —
+// the ITEM was found, the requested removal just had nothing to do.
+function deleteEvent(userId, profileId, scopeTag, id, eventId) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const result = conn.run("DELETE FROM item_events WHERE id = ? AND itemId = ?", [eventId, id]);
+  if (result.changes === 0) {
+    return { status: "ok", result: { success: false, error: "Event not found" } };
+  }
+  return { status: "ok", result: { success: true, id: eventId, itemId: id } };
+}
+
+// --- delete_events: DELETE /mcp/items/:id/events ---
+//
+// Removes every event under one item — the explicit, hard-delete
+// alternative deleteItem()'s comment points to, for a caller that wants an
+// item's event history cleared (e.g. before re-polling a feed from scratch)
+// without deleting the item itself.
+function deleteEvents(userId, profileId, scopeTag, id) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const result = conn.run("DELETE FROM item_events WHERE itemId = ?", [id]);
+  return { status: "ok", result: { success: true, itemId: id, deleted: result.changes } };
 }
 
 // --- complete_task: POST /mcp/tasks/:id/complete ---
@@ -844,5 +959,8 @@ module.exports = {
   tagItem,
   untagItem,
   recordEvent,
+  listEvents,
+  deleteEvent,
+  deleteEvents,
   completeTask,
 };

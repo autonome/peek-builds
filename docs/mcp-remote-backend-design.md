@@ -266,7 +266,10 @@ fails fast with 409 rather than silently misreading shapes.
 | `list_tags` | partial — `GET /tags` has no item counts, no search filter, no limit | `GET /mcp/tags?search=&limit=` | Port of `db.js listTags()` including the `LEFT JOIN … deletedAt = 0` count. Returns `{tags: TagView[]}`. |
 | `tag_item` | ✗ — `PATCH /items/:id/tags` replaces the whole set | `POST /mcp/items/:id/tags` | Body `{name}`. Adds one tag, creating it if needed. Must reproduce `db.js tagItemInTx()`: slug via `slugifyTagName()`, `ON CONFLICT(name)` upsert, and the frecency recompute — `apps/server/db.js getOrCreateTagWithConn()` is close but has no slug column and a `float` frecency, so the two policies must be reconciled (§10). |
 | `untag_item` | ✗ — same reason | `DELETE /mcp/items/:id/tags/:name` | Removes one tag. Returns `{success, itemId, tagName}` or `{success:false, error:'Tag not found'}`. |
-| `record_event` | ✗ — server has an `item_events` table (created in `initializeSchema()`) but no route, and `sync.ts` never syncs events | `POST /mcp/items/:id/events` | Body `{type, value}` → row in `item_events` with `content = type`, `value = 0`, `metadata = {notes}` — the exact shape `db.js recordEvent()` writes. |
+| `record_event` | ✗ — server has an `item_events` table (created in `initializeSchema()`) but no route, and `sync.ts` never syncs events | `POST /mcp/items/:id/events` | Body `{type, value}` → row in `item_events` with `content = type`, `value = 0`, `metadata = {notes}` — the exact shape `db.js recordEvent()` writes, preserved byte-for-byte when the body carries only those two fields. `content`, `occurredAt` and `metadata` are additional, optional body fields that store into the columns of those names directly (unwrapped) — the fix for events losing a feed entry's link/publication date (`docs/workers-design.md` §6). `type` stays required in every case. |
+| *(none yet — route only)* | ✗ | `GET /mcp/items/:id/events?limit=&offset=` | A paged read of one item's event history, ordered by `occurredAt DESC` to match `fetchEvents()`. Distinct from the `?events=20` convenience on `get_item` below (that one stays fixed at 20); this one's ceiling is 200 (`EVENTS_PAGE_LIMIT` in `apps/server/mcp-items.js`), so a caller (e.g. a feed poller) can dedupe against however many events an item actually has. Returns `{events: EventView[]}`. |
+| *(none yet — route only)* | ✗ | `DELETE /mcp/items/:id/events/:eventId` | Removes one event — a hard delete, since `item_events` has no `deletedAt` column. Returns `{success, id, itemId}`, or `{success:false, error:'Event not found'}` (200, not 404) when the eventId isn't there, matching `untag_item`'s missing-tag shape. |
+| *(none yet — route only)* | ✗ | `DELETE /mcp/items/:id/events` | Removes every event under one item. `delete_item` (above) is a soft delete and deliberately does not cascade into `item_events` — see its comment in `apps/server/mcp-items.js`; this route is the explicit alternative. Returns `{success, itemId, deleted}`. |
 | `list_tasks` | ✗ | *(none)* | Composes to `GET /mcp/items?tags=todo,<project>&sort=recent`, mirroring `db.js listTasks()` delegating to `queryItems()`. No endpoint. |
 | `complete_task` | ✗ | `POST /mcp/tasks/:id/complete` | Body `{notes}`. Must be one endpoint, not three calls: `db.js completeTask()` wraps add-`done` / remove-`todo` / record-event in a transaction precisely so an item cannot end up carrying both tags. Three round trips reintroduce the state it was written to prevent. Returns the updated `ItemView`. |
 | `get_task_context` | ✗ | *(none — `?events=` on the item GET)* | `GET /mcp/items/:idOrPrefix?events=20` returns `ItemView & {events: [...]}`, matching `db.js getTaskContext()`'s 20-row `ORDER BY occurredAt DESC` window. Folding it into the item GET saves a round trip on the tool that already fetches the item. |
@@ -276,7 +279,11 @@ fails fast with 409 rather than silently misreading shapes.
 Resources (`peek://tasks`, `peek://tasks/{tag}`, `peek://tags`) need no endpoints of their own —
 `handleResourceRead()` already composes them out of `listTasks()` and `listTags()`.
 
-**Count: 13 new endpoints.**
+**Count: 16 new endpoints.** The three item-events additions (paged read, delete-one,
+delete-all) reach `PeekStore`/`remote-store.js`/`sqlite-store.js` but have no `server.js TOOLS`
+binding yet — an agent talking to the local MCP protocol layer cannot reach them until that
+binding is added; only a caller going through the store directly (a worker via
+`remote-store.js`, or the tests) can.
 
 ---
 

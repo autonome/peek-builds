@@ -283,12 +283,41 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
     return body;
   }
 
-  async function recordEvent(id, type, value) {
+  async function recordEvent(id, type, value, opts = {}) {
+    const { content, occurredAt, metadata } = opts;
     const { status, body } = await request('POST', `/mcp/items/${encodeURIComponent(id)}/events`, {
-      body: { type, value },
+      body: { type, value, content, occurredAt, metadata },
     });
     if (status === 404) throw new Error(`No item found with id "${id}".`);
     if (status !== 200) throw unexpectedStatus('record_event', status, body);
+    return body;
+  }
+
+  async function listEvents(id, { limit, offset } = {}) {
+    const { status, body } = await request('GET', `/mcp/items/${encodeURIComponent(id)}/events`, {
+      query: { limit, offset },
+    });
+    if (status === 404) throw new Error(`No item found with id "${id}".`);
+    if (status !== 200) throw unexpectedStatus('list_events', status, body);
+    return body.events;
+  }
+
+  async function deleteEvent(id, eventId) {
+    const { status, body } = await request(
+      'DELETE',
+      `/mcp/items/${encodeURIComponent(id)}/events/${encodeURIComponent(eventId)}`
+    );
+    if (status === 404) throw new Error(`No item found with id "${id}".`);
+    if (status !== 200) throw unexpectedStatus('delete_event', status, body);
+    // 200 covers both {success:true,...} and the sqlite-parity
+    // {success:false, error:'Event not found'} shape — forwarded as-is.
+    return body;
+  }
+
+  async function deleteEvents(id) {
+    const { status, body } = await request('DELETE', `/mcp/items/${encodeURIComponent(id)}/events`);
+    if (status === 404) throw new Error(`No item found with id "${id}".`);
+    if (status !== 200) throw unexpectedStatus('delete_events', status, body);
     return body;
   }
 
@@ -319,6 +348,9 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
     tagItem,
     untagItem,
     recordEvent,
+    listEvents,
+    deleteEvent,
+    deleteEvents,
     listTasks,
     completeTask,
     getTaskContext,

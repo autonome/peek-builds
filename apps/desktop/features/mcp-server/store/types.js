@@ -90,6 +90,28 @@
  * @property {string} itemId
  * @property {string} type
  *
+ * @typedef {Object} RecordEventOptions
+ * @property {string} [content] - stored in the `content` column directly,
+ *   taking precedence over `type` (which otherwise falls back into that
+ *   column, matching the old {type, value}-only shape)
+ * @property {number} [occurredAt] - stored in the `occurredAt` column
+ *   directly; defaults to the time of the call when omitted
+ * @property {Object|string} [metadata] - stored in the `metadata` column
+ *   directly, unwrapped; when given, `value` is stored as a real number in
+ *   the `value` column instead of being wrapped into `metadata.notes`
+ *
+ * @typedef {Object} EventView
+ * @property {string} id
+ * @property {string} type - the `content` column, aliased (matches
+ *   getTaskContextSync()'s embedded event window and fetchEvents() server-
+ *   side)
+ * @property {number} value
+ * @property {number} occurredAt
+ * @property {Object|string} metadata - a raw JSON string on both store
+ *   implementations, not parsed — matches the asymmetry already present in
+ *   the embedded `events` field on ItemView (see fetchEvents() in
+ *   apps/server/mcp-items.js's header comment)
+ *
  * @typedef {Object} TaskQuery
  * @property {string[]} [tags] - default ['todo']
  * @property {string} [project]
@@ -121,7 +143,10 @@
  * @property {(q: TagQuery) => Promise<TagView[]>} listTags
  * @property {(id: string, tagName: string) => Promise<TagMutationResult>} tagItem
  * @property {(id: string, tagName: string) => Promise<TagMutationResult>} untagItem
- * @property {(id: string, type: string, value?: string) => Promise<EventResult>} recordEvent
+ * @property {(id: string, type: string, value?: string, opts?: RecordEventOptions) => Promise<EventResult>} recordEvent
+ * @property {(id: string, opts?: {limit?: number, offset?: number}) => Promise<EventView[]>} listEvents
+ * @property {(id: string, eventId: string) => Promise<{success: boolean, id?: string, itemId?: string, error?: string}>} deleteEvent
+ * @property {(id: string) => Promise<{success: boolean, itemId: string, deleted: number}>} deleteEvents
  * @property {(q: TaskQuery) => Promise<ItemView[]>} listTasks
  * @property {(id: string, notes?: string) => Promise<ItemView>} completeTask
  * @property {(id: string) => Promise<ItemView|null>} getTaskContext

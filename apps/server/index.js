@@ -232,6 +232,9 @@ app.patch("/mcp/items/:id", async (c) => {
 });
 
 // DELETE /mcp/items/:id — server-side port of db.js deleteItem() (delete_item).
+// Soft delete, deliberately not cascaded into item_events — see
+// mcp-items.js deleteItem()'s comment; DELETE /mcp/items/:id/events is the
+// explicit alternative for clearing an item's events.
 app.delete("/mcp/items/:id", (c) => {
   const refused = readonlyRefused(c);
   if (refused) return refused;
@@ -263,16 +266,51 @@ app.delete("/mcp/items/:id/tags/:name", (c) => {
 });
 
 // POST /mcp/items/:id/events — server-side port of db.js recordEvent()
-// (record_event).
+// (record_event). Accepts {type, value} (backward compatible, pinned by
+// test.js) and, additionally, {content, occurredAt, metadata} — see
+// mcp-items.js recordEvent()'s comment for exactly how the two interact.
 app.post("/mcp/items/:id/events", async (c) => {
   const refused = readonlyRefused(c);
   if (refused) return refused;
   const body = await c.req.json().catch(() => ({}));
-  const result = mcpItems.recordEvent(
-    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
-  );
+  const result = mcpItems.recordEvent(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
   if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
   if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// GET /mcp/items/:id/events — a paged read of an item's event history, see
+// mcp-items.js listEvents()'s comment for the ceiling and why this route
+// exists alongside the ?events=N convenience on GET /mcp/items/:idOrPrefix.
+app.get("/mcp/items/:id/events", (c) => {
+  const result = mcpItems.listEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), {
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+  });
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ events: result.events });
+});
+
+// DELETE /mcp/items/:id/events/:eventId — removes one event. See
+// mcp-items.js deleteEvent()'s comment for the 404-vs-200/success:false
+// split.
+app.delete("/mcp/items/:id/events/:eventId", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteEvent(
+    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("eventId")
+  );
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json(result.result);
+});
+
+// DELETE /mcp/items/:id/events — removes every event under one item. See
+// deleteItem()'s comment for why THAT route does not do this itself.
+app.delete("/mcp/items/:id/events", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
   return c.json(result.result);
 });
 

@@ -3884,11 +3884,36 @@ describe("MCP Item Write Routes Tests", () => {
       const refused = readonlyRefused(c);
       if (refused) return refused;
       const body = await c.req.json().catch(() => ({}));
-      const result = mcpItemsMod.recordEvent(
-        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
-      );
+      const result = mcpItemsMod.recordEvent(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
       if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
       if (result.status === "invalid") return c.json({ error: result.error }, 400);
+      return c.json(result.result);
+    });
+
+    app.get("/mcp/items/:id/events", (c) => {
+      const result = mcpItemsMod.listEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), {
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+      });
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json({ events: result.events });
+    });
+
+    app.delete("/mcp/items/:id/events/:eventId", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.deleteEvent(
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("eventId")
+      );
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json(result.result);
+    });
+
+    app.delete("/mcp/items/:id/events", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.deleteEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
       return c.json(result.result);
     });
 
@@ -3969,6 +3994,63 @@ describe("MCP Item Write Routes Tests", () => {
       assert.strictEqual(json.type, "started");
     });
 
+    it("GET /mcp/items/:id/events pages through an item's event history", async () => {
+      const id = makeItem(["work"]);
+      for (let i = 0; i < 3; i++) {
+        await app.request(`/mcp/items/${id}/events`, {
+          method: "POST",
+          headers: scopedHeaders(),
+          body: JSON.stringify({ type: `evt-${i}` }),
+        });
+      }
+      const res = await app.request(`/mcp/items/${id}/events?limit=2&offset=1`, { headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.events.length, 2);
+    });
+
+    it("DELETE /mcp/items/:id/events/:eventId removes one event", async () => {
+      const id = makeItem(["work"]);
+      const created = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started" }),
+      });
+      const { id: eventId } = await created.json();
+      const res = await app.request(`/mcp/items/${id}/events/${eventId}`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      const remaining = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      assert.strictEqual((await remaining.json()).events.length, 0);
+    });
+
+    it("DELETE /mcp/items/:id/events/:eventId reports success:false for an eventId that isn't there", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events/no-such-event`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, false);
+    });
+
+    it("DELETE /mcp/items/:id/events removes every event under the item", async () => {
+      const id = makeItem(["work"]);
+      for (let i = 0; i < 3; i++) {
+        await app.request(`/mcp/items/${id}/events`, {
+          method: "POST",
+          headers: scopedHeaders(),
+          body: JSON.stringify({ type: `evt-${i}` }),
+        });
+      }
+      const res = await app.request(`/mcp/items/${id}/events`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.deleted, 3);
+      const remaining = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      assert.strictEqual((await remaining.json()).events.length, 0);
+    });
+
     it("returns 404 for a write against an out-of-scope item, same as a nonexistent one", async () => {
       const outOfScopeId = makeItem(["personal"]);
       const res = await app.request(`/mcp/items/${outOfScopeId}`, {
@@ -3989,6 +4071,8 @@ describe("MCP Item Write Routes Tests", () => {
         ["POST", `/mcp/items/${id}/tags`, { name: "extra" }],
         ["DELETE", `/mcp/items/${id}/tags/todo`, null],
         ["POST", `/mcp/items/${id}/events`, { type: "note" }],
+        ["DELETE", `/mcp/items/${id}/events/some-event-id`, null],
+        ["DELETE", `/mcp/items/${id}/events`, null],
         ["POST", `/mcp/tasks/${id}/complete`, { notes: "x" }],
         ["DELETE", `/mcp/items/${id}`, null],
       ];
@@ -4021,6 +4105,81 @@ describe("MCP Item Write Routes Tests", () => {
         body: JSON.stringify({ title: "allowed" }),
       });
       assert.strictEqual(res.status, 200);
+    });
+  });
+
+  describe("record_event: {type, value} stays byte-identical, content/occurredAt/metadata are additive", () => {
+    it("a {type, value} body writes the exact legacy row: content=type, value=0, metadata={notes:value}", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", value: "kicked off" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, value, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "started");
+      assert.strictEqual(row.value, 0);
+      assert.deepStrictEqual(JSON.parse(row.metadata), { notes: "kicked off" });
+    });
+
+    it("a {type} body with no value writes metadata '{}' same as before", async () => {
+      const id = makeItem(["work"]);
+      await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started" }),
+      });
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, value, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "started");
+      assert.strictEqual(row.value, 0);
+      assert.strictEqual(row.metadata, "{}");
+    });
+
+    it("content/occurredAt/metadata store directly into the columns of those names", async () => {
+      const id = makeItem(["work"]);
+      const occurredAt = 1700000000000;
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({
+          type: "feed_entry",
+          content: "https://example.com/article",
+          occurredAt,
+          metadata: { guid: "abc123", title: "An article" },
+        }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, occurredAt, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "https://example.com/article");
+      assert.strictEqual(row.occurredAt, occurredAt);
+      assert.deepStrictEqual(JSON.parse(row.metadata), { guid: "abc123", title: "An article" });
+    });
+
+    it("an explicit metadata object also switches value to a real number instead of notes-wrapped text", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "score", value: 42, metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 42);
+    });
+
+    it("type is still required even when content/occurredAt/metadata are present", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ content: "x", occurredAt: 1, metadata: {} }),
+      });
+      assert.strictEqual(res.status, 400);
     });
   });
 
