@@ -4448,6 +4448,21 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
 }
 
 /**
+ * Whether a window in `role` is eligible to be another window's real parent.
+ * A transient (`TRANSIENT_ROLES`) rides above the workspace and is swept on
+ * the first focus it loses — anything registered as ITS child inherits that
+ * fate through `descendantsToCascadeClose` the moment the transient itself is
+ * dismissed. A window the user just opened must outlive the launcher it came
+ * from, so a transient can never be a real parent. This is the same fact
+ * `isTransientAutocloseCandidate`'s role clause states, read from the other
+ * side; `ipc.ts`'s window-open handler is the sole caller, deciding
+ * `isRealParent` for a freshly opened window's opener.
+ */
+export function isNonParentRole(role: string | undefined): boolean {
+  return roleIn(TRANSIENT_ROLES, role);
+}
+
+/**
  * Candidacy for the transient-dismissal law — the gate every reader of
  * `transientAutocloseExemption` applies BEFORE asking it anything, so the law
  * is asked only about a record it actually governs. A record is a candidate

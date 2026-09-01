@@ -431,7 +431,7 @@ describe('hybrid-page-host-registry: content-WC reverse lookup', () => {
 
 // ============================================================================
 // window-open registration: an explicit `declareParent` wins over the
-// isRealParent/NON_PARENT_ROLES derivation (ipc.ts window-open handler).
+// isRealParent/isNonParentRole derivation (ipc.ts window-open handler).
 //
 // `ipc.ts`'s `window:open` handler cannot be exercised directly under
 // `electron --test` (see `tile-window-open.test.ts` — it transitively
@@ -464,7 +464,7 @@ describe('window-open registration: chain popup declares its opener as machine p
     assert.match(
       fnBody, /declareParent:\s*true/,
       'openChainPopup() must declare the palette as the popup\'s machine-level parent ' +
-      '(ipc.ts NON_PARENT_ROLES excludes the palette role from isRealParent, so without ' +
+      '(window-kernel.ts isNonParentRole excludes the palette role from isRealParent, so without ' +
       'this explicit flag the registration gets parentId: null)',
     );
   });
@@ -501,11 +501,11 @@ describe('window-open registration: chain popup declares its opener as machine p
     return declaredParentWindow != null ? declaredParentWindow : parentWindowId;
   }
 
-  it('an explicit declareParent overrides a NON_PARENT_ROLES opener (the chain-popup-from-palette case)', () => {
+  it('an explicit declareParent overrides a non-parent-role opener (the chain-popup-from-palette case)', () => {
     assert.strictEqual(resolveRegistrationParentId(false, 42, true), 42);
   });
 
-  it('without declareParent, a NON_PARENT_ROLES opener still resolves to null (the pre-fix chain-popup behavior)', () => {
+  it('without declareParent, a non-parent-role opener still resolves to null (the pre-fix chain-popup behavior)', () => {
     assert.strictEqual(resolveRegistrationParentId(false, 42, false), null);
   });
 

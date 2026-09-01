@@ -30,6 +30,8 @@ import {
   isStaleSelfEcho,
   selectTransientAutoclose,
   isAppResignSweepEligible,
+  isNonParentRole,
+  TRANSIENT_ROLES,
   BASE_LAYER,
   type State,
   type Event,
@@ -4088,7 +4090,7 @@ describe('window-kernel: transient autoclose', () => {
 
   it('the relation is directional and one-hop — a window a transient merely creates is not exempt', () => {
     // A command palette opens a page host with no parentId declared (opening
-    // FROM the palette does not inherit ownership — ipc.ts NON_PARENT_ROLES).
+    // FROM the palette does not inherit ownership — isNonParentRole below).
     // The page host taking key must still sweep the palette that opened it.
     const palette = wid(1);
     const pageHost = wid(2);
@@ -4259,6 +4261,20 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+});
+
+describe('window-kernel: isNonParentRole', () => {
+  it('every TRANSIENT_ROLES member cannot be a parent — quick-view included', () => {
+    for (const role of TRANSIENT_ROLES) {
+      assert.strictEqual(isNonParentRole(role), true, `${role} must not be a real parent`);
+    }
+  });
+
+  it('a non-transient role, and no role at all, can be a parent', () => {
+    assert.strictEqual(isNonParentRole('workspace'), false);
+    assert.strictEqual(isNonParentRole('utility'), false);
+    assert.strictEqual(isNonParentRole(undefined), false);
+  });
 });
 
 // ── react applies transient autoclose (§0: rule application is non-optional) ─

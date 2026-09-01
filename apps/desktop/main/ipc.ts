@@ -106,7 +106,7 @@ import {
   kernelShowRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow } from './window-kernel.js';
+import { topmost, isContentWindow, isNonParentRole } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
   TRANSIENT_ROLES,
@@ -2996,30 +2996,29 @@ export function registerWindowHandlers(): void {
     // `role: 'child-content'` and `escPolicy()` would close it on ESC —
     // exactly the regression this guard prevents.
     //
-    // NOTE: `utility` is excluded from the non-parent set on purpose —
+    // NOTE: `utility` returns false from `isNonParentRole` on purpose —
     // peek:// content tiles (groups/home, search/home, etc.) currently
     // get role 'utility' from the cascade in window-open even though
     // they're content from the user's perspective. Treating utility as
     // a non-parent breaks the `parentWindowId is set when opened from a
     // content window` test in izui-behavior.spec.ts. Long-term fix is
-    // to stop overloading 'utility'; short-term, only the clearly-
-    // ephemeral roles get excluded here.
+    // to stop overloading 'utility'; short-term, `isNonParentRole` covers
+    // only the roles the transient-dismissal law governs
+    // (`window-kernel.ts TRANSIENT_ROLES`), which excludes `utility`.
     const openerWindow = windowFromWebContents(ev.sender);
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
-    // Launcher / overlay roles that should never act as a real parent.
-    const NON_PARENT_ROLES = new Set(['palette', 'overlay', 'switcher']);
     const openerUrl = openerWindow ? openerWindow.webContents?.getURL() ?? '' : '';
     const openerInfo = openerWindow ? getWindowInfo(openerWindow.id) : null;
     const openerRole = (openerInfo?.params?.role as string | undefined) ?? undefined;
     const isRealParent = openerWindow &&
       !INTERNAL_URLS.some(u => openerUrl === u) &&
       !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p)) &&
-      (openerRole === undefined || !NON_PARENT_ROLES.has(openerRole));
+      !isNonParentRole(openerRole);
 
     // Narrow escape hatch: an open call can declare its own opener as the
-    // registration's machine-level parent even when the opener's role sits
-    // in `NON_PARENT_ROLES` above (e.g. a popup opened from the cmd
+    // registration's machine-level parent even when the opener's role fails
+    // `isNonParentRole` above (e.g. a popup opened from the cmd
     // palette). This affects ONLY the machine registration's `parentId`
     // below — `isRealParent` itself, and everything derived from it
     // (`inferIzuiRole`'s child-content promotion, `parent-centered`
