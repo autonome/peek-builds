@@ -252,7 +252,7 @@ function initializeSchema(adapter) {
   adapter.exec(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
+      type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity', 'event')),
       content TEXT,
       metadata TEXT,
       syncId TEXT DEFAULT '',
@@ -289,16 +289,18 @@ function initializeSchema(adapter) {
   const itemColsPre = adapter.all("PRAGMA table_info(items)");
   console.log(`[schema] items columns before migration: ${itemColsPre.map(c => c.name).join(", ")}`);
 
-  // Pre-2026-06 databases pinned `type` to a 4-value CHECK
-  // (url/text/tagset/image). The server now stores every type (entity/series/feed
-  // too — type validation lives in the API layer, see SYNCABLE_ITEM_TYPES in
-  // index.js), so an items table whose CHECK predates those types rejects them at
-  // INSERT with SQLITE_CONSTRAINT_CHECK. Detect that stale CHECK and force a rebuild
-  // into the CHECK-free shape below. Idempotent: a table with no CHECK (already
-  // rebuilt) or one that already lists 'entity' is left alone.
+  // Older databases pinned `type` to a narrower CHECK — first the 4-value
+  // url/text/tagset/image set, later one without 'event'. The server now stores
+  // every type (type validation lives in the API layer, see SYNCABLE_ITEM_TYPES in
+  // index.js), so an items table whose CHECK predates a type rejects it at INSERT
+  // with SQLITE_CONSTRAINT_CHECK. Detect that stale CHECK and force a rebuild into
+  // the CHECK-free shape below. The test is the newest type in the canonical set
+  // (`packages/schema/v1.json` items.type), so widening that set means widening this
+  // string too. Idempotent: a table with no CHECK (already rebuilt) or one that
+  // already lists 'event' is left alone.
   const itemsTableSql =
     (adapter.all("SELECT sql FROM sqlite_master WHERE type='table' AND name='items'")[0] || {}).sql || "";
-  const hasStaleTypeCheck = itemsTableSql.includes("CHECK") && !itemsTableSql.includes("'entity'");
+  const hasStaleTypeCheck = itemsTableSql.includes("CHECK") && !itemsTableSql.includes("'event'");
   if (hasStaleTypeCheck) {
     console.log("[schema] items has a stale type CHECK constraint — forcing rebuild to allow all item types");
   }

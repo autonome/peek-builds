@@ -1132,6 +1132,105 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
       .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));
   });
 
+  test('draft note: an empty blur creates nothing, a typed blur creates exactly one item', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // Deferred creation (peek fix for the always-empty-junk-row bug): + opens
+    // an in-memory draft with no datastore write. The item is created on the
+    // draft textarea's first non-empty keystroke, not on blur — see
+    // page-notes.js _renderDraftItem. Blurring an untouched draft must leave
+    // the datastore untouched; typing then blurring must leave exactly one row.
+    const url = 'https://notes-draft.example.com/p';
+    await makeActiveWithUrl(url);
+    await waitOverlayReady();
+
+    const countAnnotationItemsForUrl = async () =>
+      app.evaluateMain!(async (_e, arg) => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        return b.evalInOverlay(`
+          (async () => {
+            const ds = window.app.datastore;
+            const tag = await ds.getOrCreateTag('annotation');
+            const tagId = tag && tag.data && tag.data.tag && tag.data.tag.id;
+            if (!tagId) return -1;
+            const items = await ds.getItemsByTag(tagId);
+            const list = (items && items.data) || [];
+            return list.filter((it) => {
+              try {
+                const meta = typeof it.metadata === 'string' ? JSON.parse(it.metadata) : (it.metadata || {});
+                return meta.anchor && meta.anchor.url === ${JSON.stringify((arg as any).url)};
+              } catch { return false; }
+            }).length;
+          })()
+        `);
+      }, { url });
+
+    const clickAddButton = () =>
+      app.evaluateMain!(async () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        await b.evalInOverlay(`document.querySelector('#notes-panel .notes-add-btn').click(); true;`);
+      });
+
+    const waitForDraftTextarea = () =>
+      expect
+        .poll(async () =>
+          app.evaluateMain!(async () => {
+            const b = (globalThis as any).__peekHybridOverlayTest;
+            return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-textarea')`);
+          }),
+        )
+        .toBe(true);
+
+    const before = await countAnnotationItemsForUrl();
+
+    // + then blur without typing — no datastore write at all.
+    await clickAddButton();
+    await waitForDraftTextarea();
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`
+        (() => {
+          const ta = document.querySelector('#notes-panel .notes-textarea');
+          ta.focus();
+          ta.blur();
+          return true;
+        })()
+      `);
+    });
+    expect(await countAnnotationItemsForUrl()).toBe(before);
+
+    // + again, type real content — the item is created on the first keystroke.
+    await clickAddButton();
+    await waitForDraftTextarea();
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`
+        (() => {
+          const ta = document.querySelector('#notes-panel .notes-textarea');
+          ta.focus();
+          ta.value = 'draft note body';
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()
+      `);
+    });
+    await expect.poll(() => countAnnotationItemsForUrl()).toBe(before + 1);
+
+    // Blurring afterward saves the same row — it must not create a second one.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`document.querySelector('#notes-panel .notes-textarea').blur(); true;`);
+    });
+    expect(await countAnnotationItemsForUrl()).toBe(before + 1);
+
+    const text = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.notes?.text ?? '';
+    });
+    expect(text).toContain('draft note body');
+  });
+
   test('OpenSearch widget appears for active windowId, foreign ignored, clears on retarget', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 

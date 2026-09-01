@@ -139,5 +139,4 @@ export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt","slug","color","parentId","description","metadata"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
-  rules: [],
 };

@@ -1960,6 +1960,17 @@ function installTestBridge(): void {
         .catch(() => null);
     },
     /**
+     * Evaluate arbitrary `code` inside the overlay chrome's webContents and
+     * resolve with its result. Resolves `undefined` if the overlay is gone/
+     * destroyed or the script throws. General-purpose escape hatch for tests
+     * that need to drive an overlay-mounted panel (e.g. PageNotesPane) — same
+     * role evalInHybridContent plays for a hybrid window's content view.
+     */
+    evalInOverlay(code: string): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(undefined);
+      return overlayWin.webContents.executeJavaScript(code, true).catch(() => undefined);
+    },
+    /**
      * P1.4b-5: synthetically reveal the chrome (navbar + panels) without a real
      * pointer hover — drives the same showNavbar() path the trigger-zone hover
      * would, so a test can assert panels become visible. Focus-free.

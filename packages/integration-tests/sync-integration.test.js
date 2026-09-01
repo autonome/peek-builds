@@ -20,7 +20,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server');
+const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
 const TEST_PORT = 3457;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 

@@ -28,6 +28,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import { DATASTORE_VERSION } from '../version.js';
 
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-sync-events-server-'));
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -152,6 +153,17 @@ describe('Event push watermark — cross-run stranding regression', () => {
     const res = await serverApp.request('/items', { headers: authHeaders(apiKey) });
     const json = (await res.json()) as { items: unknown[] };
     return json.items.length;
+  }
+
+  /** Reads back the watermark pushEventsToServer() just saved (see
+   * saveEventPushWatermark() in sync.ts — same feature_settings row read by
+   * the version-bump-reset describe block's own readFeatureSetting()). */
+  function readEventPushWatermark(): number {
+    const db = datastore.getDb();
+    const row = db.prepare(`
+      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
+    `).get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : 0;
   }
 
   it('an item whose push fails on run 1 still gets its events synced once its own push succeeds on run 2', async () => {
@@ -380,6 +392,95 @@ describe('Event push watermark — cross-run stranding regression', () => {
     const statusAfterRun2 = sync.getSyncStatus();
     assert.strictEqual(statusAfterRun2.lastError, null, 'run 2: a fully successful run must clear the prior stage error');
   });
+
+  it('a deleted never-synced item does not pin the watermark, but a live never-synced item still does', async () => {
+    const { apiKey } = setup('deleted-vs-live-blocked-item');
+
+    // Parent item already synced on both sides, so its event is eligible for
+    // this run regardless of the watermark — it is what proves the watermark
+    // actually moved (or didn't) past the blocked items' events below.
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Blocked-item watermark series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+
+    // Oldest: a DELETED item that never synced (syncId === ''). It never will —
+    // pushToServer() only sends a tombstone whose syncId is already set — so its
+    // event must not pin the watermark (see the deletedAt = 0 term's comment above
+    // the blocked-event query in sync.ts).
+    const deletedItemId = 'local-deleted-never-synced-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', '', 0, ?, ?, ?)
+    `).run(deletedItemId, now, now, now + 1);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-deleted-item-old', deletedItemId, 1, now, now);
+
+    // Middle: a LIVE item that never synced yet — could still sync on a later
+    // run, so its event MUST keep pinning the watermark, same as before this
+    // change.
+    const liveItemId = 'local-live-never-synced-item';
+    const liveEventCreatedAt = now + 10;
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', '', 0, ?, ?, 0)
+    `).run(liveItemId, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-live-item-old', liveItemId, 2, liveEventCreatedAt, liveEventCreatedAt);
+
+    // Newest: an event on the already-synced item — the one whose fate the
+    // watermark actually controls.
+    const syncedItemId = 'local-blocked-watermark-synced-item';
+    const syncedEventCreatedAt = now + 20;
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(syncedItemId, serverItemId, now, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-synced-item-new', syncedItemId, 3, syncedEventCreatedAt, syncedEventCreatedAt);
+
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-synced-item-new'],
+      'only the already-synced item\'s event should reach the server this run — the other two are still blocked'
+    );
+
+    const watermark = readEventPushWatermark();
+    assert.ok(
+      watermark >= now,
+      `the deleted never-synced item's event (createdAt ${now}) must not pin the watermark below itself — ` +
+      `it can never get a syncId, so holding it down would strand every event after it forever; got watermark ${watermark}`
+    );
+    assert.ok(
+      watermark < liveEventCreatedAt,
+      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must still pin the watermark below ` +
+      `itself — it could still sync on a later run, so this protection must stay intact; got watermark ${watermark}`
+    );
+
+    // Confirm the consequence, not just the number: on the next run, nothing
+    // new is selected — the synced item's event was already delivered, and
+    // the watermark sitting at/above its createdAt (not held down by the
+    // deleted item) means it is correctly not re-selected either.
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-synced-item-new'],
+      'run 2: no new events should have reached the server — the synced item\'s event was already delivered'
+    );
+  });
 });
 
 describe('Sync progress log — sync:progress emission and the bounded ring buffer', () => {
@@ -404,7 +505,20 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
   /** Same shape as the event-sync describe block's setup() above: a fresh
    * profile + fetch stub routed to the real server in-process, optionally
    * rejecting the first POST /events chunk outright. */
-  function setup(name: string, opts: { failFirstEventPushOnce?: boolean } = {}) {
+  function setup(name: string, opts: {
+    failFirstEventPushOnce?: boolean;
+    // Called for every POST /items request; returning a string fails THAT
+    // request with a 500 whose body is the returned string (so it ends up
+    // verbatim as serverFetch()'s thrown error message). Unlike
+    // failFirstItemPushMarker in the other describe block, this applies to
+    // every call, not just the first — the grouping tests below need many
+    // items to fail, not one.
+    itemPushFailureFor?: (bodyText: string) => string | undefined;
+    // Overrides the HTTP status used for an itemPushFailureFor failure —
+    // defaults to 500 (transient) when omitted. Lets a test drive a 4xx
+    // (permanent, per isPermanentPushFailure()) failure through the same stub.
+    itemPushStatusFor?: (bodyText: string) => number;
+  } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
     profiles.initProfilesDb(desktopDir);
@@ -420,6 +534,15 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       const url = typeof input === 'string' ? input : String(input);
       const reqPath = url.replace(FAKE_SERVER_URL, '');
       const method = init.method || 'GET';
+      const bodyText = typeof init.body === 'string' ? init.body : '';
+
+      if (opts.itemPushFailureFor && method === 'POST' && reqPath.startsWith('/items')) {
+        const failMessage = opts.itemPushFailureFor(bodyText);
+        if (failMessage !== undefined) {
+          const status = opts.itemPushStatusFor ? opts.itemPushStatusFor(bodyText) : 500;
+          return new Response(failMessage, { status });
+        }
+      }
 
       if (
         opts.failFirstEventPushOnce &&
@@ -491,6 +614,219 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     );
   });
 
+  it('several item pushes failing with the SAME error produce one grouped log entry, not one per item', async () => {
+    const { apiKey } = setup('item-fail-same-reason', {
+      itemPushFailureFor: () => 'simulated identical push failure',
+    });
+
+    const ITEM_COUNT = 4;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-same-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    // pushToServer() isolates per-item failures — the run as a whole must
+    // still complete even though every item in it fails to push.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.strictEqual(
+      failureEntries.length,
+      1,
+      `expected exactly one grouped entry for identical failures, got ${failureEntries.length}: ` +
+      JSON.stringify(failureEntries.map((e) => e.message))
+    );
+    assert.ok(
+      failureEntries[0].message.includes(`${ITEM_COUNT} item(s)`),
+      `expected the grouped entry to carry the true failure count, got: ${failureEntries[0].message}`
+    );
+    assert.ok(
+      failureEntries[0].message.includes('simulated identical push failure'),
+      `expected the grouped entry to carry the failure reason, got: ${failureEntries[0].message}`
+    );
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      assert.ok(
+        failureEntries[0].message.includes(`local-fail-same-${i}`),
+        `expected the grouped entry to name item local-fail-same-${i} (small failure count), got: ${failureEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('six item pushes failing with the SAME error list all six ids — the raised PUSH_FAILURE_IDS_MAX', async () => {
+    const { apiKey } = setup('item-fail-six-ids', {
+      itemPushFailureFor: () => 'simulated identical push failure',
+    });
+
+    // Past the old cap of 5, within the current cap of 20 — the six ids
+    // must all be listed, which the old cap would have suppressed entirely.
+    const ITEM_COUNT = 6;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-six-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.strictEqual(
+      failureEntries.length,
+      1,
+      `expected exactly one grouped entry for identical failures, got ${failureEntries.length}: ` +
+      JSON.stringify(failureEntries.map((e) => e.message))
+    );
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      assert.ok(
+        failureEntries[0].message.includes(`local-fail-six-${i}`),
+        `expected the grouped entry to name item local-fail-six-${i} (6 failures, within the raised cap), got: ${failureEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('a 4xx item failure logs as permanent and a 5xx item failure logs as retryable in the same run', async () => {
+    const PERMANENT_MARKER = 'permanent-marker';
+    const TRANSIENT_MARKER = 'transient-marker';
+    const { apiKey } = setup('item-fail-mixed-permanence', {
+      itemPushFailureFor: (bodyText) =>
+        bodyText.includes(PERMANENT_MARKER)
+          ? `content is required for type 'text'`
+          : 'simulated server outage',
+      itemPushStatusFor: (bodyText) => (bodyText.includes(PERMANENT_MARKER) ? 400 : 500),
+    });
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `).run('local-permanent-item', PERMANENT_MARKER, now, now);
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `).run('local-transient-item', TRANSIENT_MARKER, now, now);
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    const permanentEntry = failureEntries.find((e) => e.message.includes('local-permanent-item'));
+    assert.ok(permanentEntry, `expected an entry naming the 4xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
+    assert.ok(
+      permanentEntry!.message.includes('will not succeed until the item changes'),
+      `expected the 4xx failure to be worded as permanent, got: ${permanentEntry!.message}`
+    );
+
+    const transientEntry = failureEntries.find((e) => e.message.includes('local-transient-item'));
+    assert.ok(transientEntry, `expected an entry naming the 5xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
+    assert.ok(
+      transientEntry!.message.includes('will retry next run'),
+      `expected the 5xx failure to be worded as retryable, got: ${transientEntry!.message}`
+    );
+
+    assert.ok(
+      !log.some((e) => e.message.includes(PERMANENT_MARKER) || e.message.includes(TRANSIENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('a 4xx event chunk rejection is logged as permanent, not retryable', async () => {
+    const { apiKey } = setup('event-chunk-permanent', { failFirstEventPushOnce: true });
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event chunk permanence series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-chunk-permanent-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-chunk-permanent', localItemId, 1, now, now);
+
+    // setup()'s failFirstEventPushOnce rejects the chunk with a 400 —
+    // exercises isPermanentPushFailure()'s 4xx branch for an event chunk.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const chunkFailure = log.find((e) => e.stage === 'push-events' && e.phase === 'error');
+    assert.ok(chunkFailure, 'expected a log entry for the rejected chunk');
+    assert.ok(
+      chunkFailure!.message.includes('will not succeed until the events change'),
+      `expected the 4xx chunk rejection to be worded as permanent, got: ${chunkFailure!.message}`
+    );
+  });
+
+  it('item pushes failing with DIFFERENT errors produce one entry per distinct reason, capped with a rolled-up tail', async () => {
+    let counter = 0;
+    const { apiKey } = setup('item-fail-different-reasons', {
+      itemPushFailureFor: () => `distinct push failure #${counter++}`,
+    });
+
+    // Comfortably more than any reasonable per-run cap on distinct reasons —
+    // proves the summary collapses instead of growing one line per item.
+    const ITEM_COUNT = 40;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-diff-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.ok(
+      failureEntries.length > 1 && failureEntries.length < ITEM_COUNT,
+      `expected more than one but far fewer than ${ITEM_COUNT} entries (capped + rolled-up tail), got ${failureEntries.length}`
+    );
+    assert.ok(
+      failureEntries.some((e) => e.message.includes('more distinct error')),
+      `expected a rolled-up "N more" tail entry among: ${JSON.stringify(failureEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
   it('a dropped malformed event and a rejected chunk each produce a log entry', async () => {
     const { apiKey } = setup('dropped-and-failed', { failFirstEventPushOnce: true });
 
@@ -534,6 +870,125 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
 
     const chunkFailure = log.find((e) => e.stage === 'push-events' && e.phase === 'error');
     assert.ok(chunkFailure, 'expected a log entry for the rejected chunk');
+    assert.ok(
+      chunkFailure!.message.includes('simulated chunk rejection'),
+      `expected the rejected-chunk entry to carry the server's own error message, got: ${chunkFailure!.message}`
+    );
+  });
+
+  it('several malformed events dropped for the SAME reason produce one grouped log entry, not one per event', async () => {
+    const { apiKey } = setup('event-drop-same-reason');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event drop grouping series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-drop-same-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    const CONTENT_MARKER = 'event-content-must-not-leak-into-the-log';
+    const EVENT_COUNT = 3;
+    const insert = db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, ?, ?, 'not-a-number', '{}', ?)
+    `);
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      insert.run(`evt-drop-same-${i}`, localItemId, `${CONTENT_MARKER}-${i}`, i, now + i);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const droppedEntries = log.filter((e) => e.stage === 'push-events' && e.phase === 'dropped');
+
+    assert.strictEqual(
+      droppedEntries.length,
+      1,
+      `expected exactly one grouped drop entry for identical reasons, got ${droppedEntries.length}: ` +
+      JSON.stringify(droppedEntries.map((e) => e.message))
+    );
+    assert.ok(
+      droppedEntries[0].message.includes(`${EVENT_COUNT} event(s)`),
+      `expected the grouped entry to carry the true drop count, got: ${droppedEntries[0].message}`
+    );
+    assert.ok(
+      droppedEntries[0].message.includes('non-numeric occurredAt'),
+      `expected the grouped entry to say what was wrong, got: ${droppedEntries[0].message}`
+    );
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      assert.ok(
+        droppedEntries[0].message.includes(`evt-drop-same-${i}`),
+        `expected the grouped entry to name evt-drop-same-${i} (small drop count), got: ${droppedEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain event content'
+    );
+  });
+
+  it('malformed events dropped for DIFFERENT reasons produce one entry per distinct reason', async () => {
+    const { apiKey } = setup('event-drop-different-reasons');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event drop reasons series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-drop-diff-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    const CONTENT_MARKER = 'event-content-must-not-leak-into-the-log';
+    // Two independently-bad fields — two distinct reason strings. The second
+    // row uses a missing id (rather than a bad createdAt) to keep this test
+    // clear of createdAt's role in the watermark math below.
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, ?, ?, 'not-a-number', '{}', ?)
+    `).run('evt-drop-diff-occurred', localItemId, `${CONTENT_MARKER}-a`, 1, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES ('', ?, ?, ?, ?, '{}', ?)
+    `).run(localItemId, `${CONTENT_MARKER}-b`, 2, now + 2, now + 1);
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const droppedEntries = log.filter((e) => e.stage === 'push-events' && e.phase === 'dropped');
+
+    assert.strictEqual(
+      droppedEntries.length,
+      2,
+      `expected one entry per distinct drop reason, got ${droppedEntries.length}: ` +
+      JSON.stringify(droppedEntries.map((e) => e.message))
+    );
+    assert.ok(
+      droppedEntries.some((e) => e.message.includes('non-numeric occurredAt') && e.message.includes('evt-drop-diff-occurred')),
+      `expected an entry for the bad-occurredAt row, got: ${JSON.stringify(droppedEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      droppedEntries.some((e) => e.message.includes('missing id') && e.message.includes('(no id)')),
+      `expected an entry for the missing-id row, got: ${JSON.stringify(droppedEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain event content'
+    );
   });
 
   it('the buffer is bounded across a long run and is cleared at the start of a new run', async () => {
@@ -570,6 +1025,59 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     );
     assert.strictEqual(afterRun[0].stage, 'run');
     assert.strictEqual(afterRun[0].phase, 'start');
+  });
+
+  it('event push progress states the batch plan up front and the last entry carries the true final count across multiple batches', async () => {
+    const { apiKey } = setup('event-push-progress');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event push progress series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-push-progress-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    // One more than sync.ts's own MAX_EVENTS_PER_PUSH (500) — forces the chunk
+    // loop to run twice, the exact "tens of thousands of events, nothing
+    // logged until the finish line" shape this progress logging exists for.
+    const MAX_EVENTS_PER_PUSH = 500;
+    const EVENT_COUNT = MAX_EVENTS_PER_PUSH + 1;
+    const insert = db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `);
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      insert.run(`evt-push-progress-${i}`, localItemId, i, now + i, now + i);
+    }
+
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+
+    const progressEntries = sync.getSyncLog().filter((e) => e.stage === 'push-events' && e.phase === 'progress');
+
+    const planEntry = progressEntries.find(
+      (e) => e.message.includes(`${EVENT_COUNT} event(s)`) && e.message.includes('batch(es)')
+    );
+    assert.ok(
+      planEntry,
+      `expected an entry stating the total event count and batch count before the chunk loop starts, got: ${JSON.stringify(progressEntries.map((e) => e.message))}`
+    );
+
+    // Intermediate per-batch entries are time-throttled (ITEM_PUSH_PROGRESS_INTERVAL_MS)
+    // and may not appear at all in a fast test run — assert only that progress
+    // reaches the true final count, not on how many intermediate entries land.
+    const last = progressEntries[progressEntries.length - 1];
+    assert.ok(
+      last.message.includes(`${EVENT_COUNT} / ${EVENT_COUNT}`),
+      `expected the final progress entry to carry the true final count, got: ${last.message}`
+    );
   });
 
   it('emitting progress with no renderer listening does not throw', () => {
@@ -1199,5 +1707,222 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
     } finally {
       scaled.restore();
     }
+  });
+});
+
+// ==================== Datastore-version-bump reset must keep item identity (duplicate-row regression) ====================
+//
+// resetPerItemSyncState() used to clear BOTH syncedAt and syncId on a datastore-version
+// bump — the recovery a server-URL/profile change needs, but not what a version bump
+// needs: the row identity (`syncId`) on the SAME server is still valid, only what was
+// last pushed is stale. Clearing it anyway meant the next push sent the desktop's own
+// local id instead, which matches neither the server row's own id nor its stored syncId
+// column (db.js saveItem(), no content-based fallback on the sync path) for any item
+// that originated elsewhere (pushed by another device, or pulled down from the server) —
+// so the server inserted a duplicate row instead of updating the existing one. See
+// sync.ts resetPerItemSyncState()'s `clearSyncId` doc comment for the fix.
+describe('Datastore-version-bump reset must keep item identity (duplicate-row regression)', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-dsver-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `dsver-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    installRealServerFetch();
+
+    return { apiKey };
+  }
+
+  // Routes every call through the real app via app.request() — parses with the WHATWG
+  // URL API rather than stripping a literal base string, so it works unchanged for
+  // whichever server URL a given test passes syncAll() (the server-URL-change test
+  // deliberately passes a DIFFERENT one than the one syncAll() was previously called
+  // with, to trigger resetSyncStateIfServerChanged()).
+  function installRealServerFetch(): void {
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const parsed = new URL(url);
+      return serverApp.request(parsed.pathname + parsed.search, { method: init.method || 'GET', headers: init.headers, body: init.body });
+    }) as typeof fetch;
+  }
+
+  // Simulates total network failure — every request rejects before reaching the server.
+  // resetSyncStateIfServerChanged()/resetSyncStateIfDatastoreVersionChanged() both run
+  // synchronously, before syncAll()'s first network call, so a run that fails this way
+  // still applies the reset; it just never gets far enough for the push stages to
+  // overwrite what the reset itself wrote (syncedAt/syncId, the event/tag push
+  // watermarks) — letting the tests below read the reset's own effect directly,
+  // undisturbed by anything downstream of it.
+  function installAlwaysFailingFetch(): void {
+    globalThis.fetch = (async () => {
+      throw new Error('simulated total network failure');
+    }) as typeof fetch;
+  }
+
+  async function fetchServerItems(apiKey: string): Promise<Array<{ id: string; content: string | null }>> {
+    const res = await serverApp.request('/items', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { items: Array<{ id: string; content: string | null }> };
+    return json.items;
+  }
+
+  /** Force the next syncAll() onto the datastore-version-changed path by back-dating the
+   * client's own recorded DATASTORE_VERSION — the signal
+   * resetSyncStateIfDatastoreVersionChanged() reads (see its doc comment in sync.ts). */
+  function backdateStoredDatastoreVersion(): void {
+    const db = datastore.getDb();
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES ('sync-lastSyncDatastoreVersion', 'sync', 'lastSyncDatastoreVersion', ?, ?)
+    `).run(JSON.stringify(DATASTORE_VERSION - 1), Date.now());
+  }
+
+  function readFeatureSetting(key: string): unknown {
+    const db = datastore.getDb();
+    const row = db.prepare(`
+      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = ?
+    `).get(key) as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : undefined;
+  }
+
+  it('a version-bump sync updates the existing server row instead of duplicating it, for an item that originated elsewhere', async () => {
+    const { apiKey } = setup('regression');
+
+    // Seed the server directly with an item carrying a syncId from a DIFFERENT device —
+    // the "originated elsewhere" case: neither the server row's own id nor its stored
+    // syncId column will ever match this desktop's own local id.
+    const seedRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'text', content: 'from another device', tags: [], sync_id: 'other-device-local-id-001' }),
+    });
+    const { id: serverItemId } = (await seedRes.json()) as { id: string };
+
+    // First sync: pulls the seeded item down. mergeServerItem() inserts it locally with
+    // syncId = the server's own row id — this is what "hold it locally" means for an
+    // item that originated elsewhere. Also establishes the client's own
+    // lastSyncDatastoreVersion baseline (first-sync path, no reset triggered).
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(
+      (await fetchServerItems(apiKey)).length,
+      1,
+      'sanity: exactly one row on the server before the version-bump sync'
+    );
+
+    const db = datastore.getDb();
+    const localBefore = db.prepare("SELECT syncId FROM items WHERE type = 'text'").get() as { syncId: string };
+    assert.strictEqual(localBefore.syncId, serverItemId, 'sanity: the pulled item is linked to the server row by syncId');
+
+    // Simulate a datastore version bump between app launches.
+    backdateStoredDatastoreVersion();
+
+    // Second sync: takes the version-changed reset path, then re-pushes the item.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const itemsAfter = await fetchServerItems(apiKey);
+    assert.strictEqual(
+      itemsAfter.length,
+      1,
+      'a version-bump sync must update the existing server row, not insert a duplicate'
+    );
+    assert.strictEqual(
+      itemsAfter[0].id,
+      serverItemId,
+      'the single remaining row must still be the original server row, not a new one'
+    );
+  });
+
+  it('a version-bump reset clears syncedAt but leaves syncId populated, and resets the event/tag push watermarks to 0', async () => {
+    const { apiKey } = setup('version-bump-scope');
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'version bump scope item', '{}', '', 0, ?, ?, 0)
+    `).run('local-version-bump-scope-item', now, now);
+
+    // Baseline sync: pushes the item, establishing a non-empty syncId and a non-zero
+    // syncedAt/lastEventPushAt/lastTagPushAt to contrast against after the reset.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
+    assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+    assert.notStrictEqual(readFeatureSetting('lastEventPushAt'), 0, 'sanity: baseline push advanced the event watermark past 0');
+    assert.notStrictEqual(readFeatureSetting('lastTagPushAt'), 0, 'sanity: baseline push advanced the tag watermark past 0');
+
+    backdateStoredDatastoreVersion();
+    installAlwaysFailingFetch();
+
+    // The run fails at the first network call (pull), right after the reset runs — see
+    // installAlwaysFailingFetch()'s doc comment for why that leaves the reset's own
+    // writes readable, undisturbed by the push stages.
+    await assert.rejects(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const afterReset = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.strictEqual(afterReset.syncId, baseline.syncId, 'version-bump reset must leave syncId populated — the row identity is still valid on the same server');
+    assert.strictEqual(afterReset.syncedAt, 0, 'version-bump reset must clear syncedAt so the item is re-pushed');
+    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'version-bump reset must reset the event push watermark to 0 (schema catch-up — see resetPerItemSyncState() doc comment)');
+    assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'version-bump reset must reset the tag push watermark to 0, for the same schema catch-up reason');
+  });
+
+  it('a server-URL-change reset still clears both syncedAt and syncId, and resets the event/tag push watermarks to 0', async () => {
+    const { apiKey } = setup('server-change-scope');
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'server change scope item', '{}', '', 0, ?, ?, 0)
+    `).run('local-server-change-scope-item', now, now);
+
+    // Baseline sync against FAKE_SERVER_URL — records it as the last-known server, so a
+    // later sync against a DIFFERENT url is a genuine "server changed" signal.
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-server-change-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
+    assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+
+    installAlwaysFailingFetch();
+
+    const CHANGED_SERVER_URL = `${FAKE_SERVER_URL}-changed`;
+    // The run fails at the first network call, right after the reset runs — same
+    // reasoning as the version-bump test above.
+    await assert.rejects(() => sync.syncAll(CHANGED_SERVER_URL, apiKey));
+
+    const afterReset = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-server-change-scope-item') as
+      { syncId: string; syncedAt: number };
+    assert.strictEqual(afterReset.syncId, '', 'server-URL-change reset must clear syncId — the old value has no meaning on a different server');
+    assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
+    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'server-URL-change reset must reset the event push watermark to 0');
+    assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
   });
 });

@@ -47,6 +47,11 @@ export function generateSqlite(schema, syncOnly = false) {
   lines.push('');
 
   for (const [tableName, table] of Object.entries(schema.tables)) {
+    // A table whose every column is local-only has no place in the sync schema.
+    // Emitting it anyway produced `CREATE TABLE rules ();` — a syntax error no
+    // backend could execute.
+    if (syncOnly && Object.values(table.columns).every(col => col.sync === false)) continue;
+
     lines.push(`-- ${table.description || tableName}`);
     lines.push(`CREATE TABLE IF NOT EXISTS ${tableName} (`);
 

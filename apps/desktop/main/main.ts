@@ -2179,9 +2179,9 @@ export function registerActivateHandler(): void {
  *   (used by `run:packaged` and parallel Playwright workers that share
  *   the same profile name across workers).
  *
- * The `agent-*` family used by `scripts/spawn-isolated-clone.sh`
- * always runs from source, so it's covered by the !app.isPackaged
- * branch — no special-case needed.
+ * The `agent-*` family used by per-task worktrees always runs from
+ * source, so it's covered by the !app.isPackaged branch — no
+ * special-case needed.
  */
 export function requestSingleInstance(): boolean {
   if (!app.isPackaged || isEphemeralProfile()) {

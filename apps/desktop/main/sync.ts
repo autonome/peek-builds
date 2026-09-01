@@ -659,6 +659,83 @@ interface PushResult {
 const ITEM_PUSH_PROGRESS_EVERY = 100;
 const ITEM_PUSH_PROGRESS_INTERVAL_MS = 3000;
 
+// Shared by this section and the event-push section below (pushEventsToServer's
+// dropped-row and rejected-chunk summaries): a per-row try/catch that only counts
+// failures (the shape both item push and event push use) tells the user nothing
+// about WHY, but logging one entry per failure doesn't scale — a full re-push can
+// fail thousands of items, and a down server fails every one of them with the
+// SAME message. Group by message instead, one line per distinct reason, so a
+// systemic failure is one line and a handful of one-off failures are still legible
+// individually.
+//
+// Capped at 20 distinct reasons: enough to surface every common cause in one
+// screen of the (already-scrollable) sync log without a validation bug that
+// produces a different message per row turning the log into the failure list
+// itself. Reasons past the cap collapse into a single "N more" tail instead of
+// vanishing silently.
+const PUSH_FAILURE_REASONS_MAX = 20;
+// Ids are listed only for a small group — past this, the id list is as
+// unreadable as one line per failure would have been, and the log's job here is
+// to say WHY a class of failure happened, not to enumerate every row. A full
+// re-push can still fail thousands of items with the same reason, so the cap
+// has to hold even then — but a handful of failures (the case a user actually
+// chases down, e.g. one malformed item blocking every future run) is exactly
+// where the ids matter most, and 20 of them is still a readable log entry.
+const PUSH_FAILURE_IDS_MAX = 20;
+
+/**
+ * Turn a reason -> ids map into one summary line per distinct reason, most
+ * common first, capped per PUSH_FAILURE_REASONS_MAX/_IDS_MAX above. `noun`
+ * only affects wording ('item', 'event'); ids are always the row's own id —
+ * never content or values, since this ends up in the Settings sync log.
+ */
+function groupFailuresByReason(idsByReason: Map<string, string[]>, noun: string): string[] {
+  const sorted = [...idsByReason.entries()].sort((a, b) => b[1].length - a[1].length);
+  const shown = sorted.slice(0, PUSH_FAILURE_REASONS_MAX);
+  const lines = shown.map(([reason, ids]) => {
+    const idPart = ids.length <= PUSH_FAILURE_IDS_MAX ? ` (${ids.join(', ')})` : '';
+    return `${ids.length} ${noun}(s): ${reason}${idPart}`;
+  });
+  const rest = sorted.slice(PUSH_FAILURE_REASONS_MAX);
+  if (rest.length > 0) {
+    const restCount = rest.reduce((sum, [, ids]) => sum + ids.length, 0);
+    lines.push(`...and ${rest.length} more distinct error(s) (${restCount} more ${noun}(s))`);
+  }
+  return lines;
+}
+
+/**
+ * A message shaped `Server error <status>: <body>` (serverFetch's own error
+ * throw, above) with a 4xx status means the server looked at this exact row
+ * and rejected it — resending the same body next run cannot change that
+ * outcome. Anything else (a timeout, a network error, a 5xx) means the
+ * server or the link was unavailable, which is exactly the kind of failure
+ * an unchanged retry can clear on its own.
+ */
+function isPermanentPushFailure(message: string): boolean {
+  const match = message.match(/^Server error (\d)\d\d:/);
+  return match !== null && match[1] === '4';
+}
+
+/**
+ * Split a reason -> ids map into the permanent (isPermanentPushFailure()
+ * above) and transient reasons within it, so pushToServer() and
+ * pushEventsToServer() can log the two classes as separate lines — same
+ * grouping, different wording — without duplicating the accumulation loop
+ * per class.
+ */
+function partitionByPermanence(idsByReason: Map<string, string[]>): {
+  permanent: Map<string, string[]>;
+  transient: Map<string, string[]>;
+} {
+  const permanent = new Map<string, string[]>();
+  const transient = new Map<string, string[]>();
+  for (const [reason, ids] of idsByReason) {
+    (isPermanentPushFailure(reason) ? permanent : transient).set(reason, ids);
+  }
+  return { permanent, transient };
+}
+
 /**
  * Push unsynced local items to server
  *
@@ -715,6 +792,10 @@ export async function pushToServer(
 
   let pushed = 0;
   let failed = 0;
+  // Reason (error message) -> ids of every item that failed with it — see
+  // groupFailuresByReason() above for why this is grouped rather than logged
+  // per failure.
+  const failuresByReason = new Map<string, string[]>();
 
   // Throttle state for the item-push progress line — see
   // ITEM_PUSH_PROGRESS_EVERY/_INTERVAL_MS above.
@@ -726,8 +807,15 @@ export async function pushToServer(
       await pushSingleItem(serverUrl, apiKey, item);
       pushed++;
     } catch (error) {
-      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, (error as Error).message);
+      const message = (error as Error).message;
+      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
       failed++;
+      const ids = failuresByReason.get(message);
+      if (ids) {
+        ids.push(item.id);
+      } else {
+        failuresByReason.set(message, [item.id]);
+      }
     }
 
     const done = pushed + failed;
@@ -748,6 +836,23 @@ export async function pushToServer(
   // stale count after the loop is actually done.
   if (items.length > 0) {
     logSyncProgress('push-items', 'progress', `Pushing items — ${pushed + failed} / ${items.length}`);
+  }
+
+  // Surfaced in the Settings sync log — "Pushed N item(s), M failed" (logged
+  // by syncAll() from this function's return value) says HOW MANY, not why;
+  // these lines say why, grouped so a systemic failure (every item hitting
+  // the same server error) reads as one line, not thousands. Split by
+  // isPermanentPushFailure() so a 400 (this item, as-sent, will never be
+  // accepted — retrying it every run is wasted work) reads differently from
+  // a timeout/5xx (the next run can simply succeed).
+  if (failuresByReason.size > 0) {
+    const { permanent, transient } = partitionByPermanence(failuresByReason);
+    for (const line of groupFailuresByReason(permanent, 'item')) {
+      logSyncProgress('push-items', 'error', `Item push rejected, will not succeed until the item changes — ${line}`);
+    }
+    for (const line of groupFailuresByReason(transient, 'item')) {
+      logSyncProgress('push-items', 'error', `Item push failed, will retry next run — ${line}`);
+    }
   }
 
   DEBUG && console.log(`[sync] Push complete: ${pushed} pushed, ${failed} failed`);
@@ -1016,26 +1121,39 @@ export async function pushEventsToServer(
   // than a loud one, since nothing else will ever point at the bad row.
   const validRows: typeof rows = [];
   const droppedRows: typeof rows = [];
+  // Reason (which specific field was bad) -> ids of every row dropped for it —
+  // grouped for the same reason pushToServer() groups item failures (see
+  // groupFailuresByReason() above): a bad batch can drop far more rows than a
+  // one-line-per-row log could stay readable through.
+  const droppedByReason = new Map<string, string[]>();
   for (const row of rows) {
-    if (!row.id || !row.itemSyncId || !Number.isFinite(row.occurredAt) || !Number.isFinite(row.createdAt)) {
+    const badFields: string[] = [];
+    if (!row.id) badFields.push('missing id');
+    if (!row.itemSyncId) badFields.push('missing itemId');
+    if (!Number.isFinite(row.occurredAt)) badFields.push('non-numeric occurredAt');
+    if (!Number.isFinite(row.createdAt)) badFields.push('non-numeric createdAt');
+    if (badFields.length > 0) {
       droppedRows.push(row);
+      const reason = badFields.join(', ');
+      const id = row.id || '(no id)';
+      const ids = droppedByReason.get(reason);
+      if (ids) {
+        ids.push(id);
+      } else {
+        droppedByReason.set(reason, [id]);
+      }
     } else {
       validRows.push(row);
     }
   }
   if (droppedRows.length > 0) {
-    console.log(
-      `[sync] Dropped ${droppedRows.length} malformed event(s) from push (missing id/itemId or ` +
-      `non-finite occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
-    );
-    // Surfaced in the Settings sync log too — a silently dropped event is
-    // exactly what the user needs to see, not just what DEBUG logging sees.
-    logSyncProgress(
-      'push-events',
-      'dropped',
-      `Dropped ${droppedRows.length} malformed event(s) (missing id/itemId or non-finite ` +
-      `occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
-    );
+    console.log(`[sync] Dropped ${droppedRows.length} malformed event(s) from push`);
+    // Surfaced in the Settings sync log too, one line per distinct bad field —
+    // a silently dropped event is exactly what the user needs to see, not
+    // just what DEBUG logging sees.
+    for (const line of groupFailuresByReason(droppedByReason, 'event')) {
+      logSyncProgress('push-events', 'dropped', `Dropped malformed event(s) — ${line}`);
+    }
   }
 
   // Tracks the oldest createdAt among events that did NOT make it to the server this
@@ -1056,6 +1174,29 @@ export async function pushEventsToServer(
 
   let pushed = 0;
   let failed = 0;
+  // Reason (the server's own error message for the chunk) -> ids of every
+  // event in a chunk that failed with it — see groupFailuresByReason() above.
+  const chunkFailuresByReason = new Map<string, string[]>();
+  // How much work this stage is about to do, before it starts doing it. The
+  // count is NOT bounded by what changed since the last run: the watermark is
+  // held below the oldest event whose parent item has no syncId (see the
+  // blocked-event query below), so an item that can never sync pins it and
+  // every run re-pushes the whole tail. Stating the size up front is what
+  // tells that apart from a stage that is merely slow.
+  const chunkCount = Math.ceil(validRows.length / MAX_EVENTS_PER_PUSH);
+  if (validRows.length > 0) {
+    logSyncProgress(
+      'push-events',
+      'progress',
+      `Pushing ${validRows.length} event(s) in ${chunkCount} batch(es) of up to ${MAX_EVENTS_PER_PUSH}`
+    );
+  }
+  // Each batch is one sequential request that can sit for the full fetch
+  // timeout, so a stage covering tens of thousands of events can run for
+  // minutes with nothing to show for it. Emit a line per batch boundary,
+  // throttled the same way item push is (ITEM_PUSH_PROGRESS_INTERVAL_MS) so a
+  // fast run doesn't turn the log into one line per batch.
+  let lastEventProgressAt = Date.now();
   for (let i = 0; i < validRows.length; i += MAX_EVENTS_PER_PUSH) {
     const batch = validRows.slice(i, i + MAX_EVENTS_PER_PUSH);
     const events = batch.map((row) => {
@@ -1092,17 +1233,48 @@ export async function pushEventsToServer(
       // independent request, so a transient failure on chunk N has no bearing on
       // whether chunk N+1 will succeed. The failed chunk's events stay eligible for
       // the next run via notDeliveredMinCreatedAt below.
+      const message = (error as Error).message;
       DEBUG && console.log(
         `[sync] Event push chunk failed (${batch.length} events), will retry next run:`,
-        (error as Error).message
-      );
-      logSyncProgress(
-        'push-events',
-        'error',
-        `Chunk of ${batch.length} event(s) rejected, will retry next run: ${(error as Error).message}`
+        message
       );
       trackNotDelivered(batch);
       failed += batch.length;
+      const ids = chunkFailuresByReason.get(message);
+      const batchIds = batch.map((row) => row.id);
+      if (ids) {
+        ids.push(...batchIds);
+      } else {
+        chunkFailuresByReason.set(message, batchIds);
+      }
+    }
+
+    const doneRows = Math.min(i + MAX_EVENTS_PER_PUSH, validRows.length);
+    const now = Date.now();
+    if (doneRows === validRows.length || now - lastEventProgressAt >= ITEM_PUSH_PROGRESS_INTERVAL_MS) {
+      logSyncProgress(
+        'push-events',
+        'progress',
+        `Pushing events — ${doneRows} / ${validRows.length}`
+      );
+      lastEventProgressAt = now;
+    }
+  }
+
+  // Surfaced in the Settings sync log — grouped by the server's own error
+  // message so N chunks failing for the SAME reason (e.g. the server down for
+  // the whole run) collapse into one line instead of one per chunk. Events in
+  // a failed chunk are not lost — they stay eligible for the next run via
+  // notDeliveredMinCreatedAt above, and are retried unchanged regardless of
+  // which class this is (see isPermanentPushFailure()); only the wording
+  // below tells the two apart, so a 400 doesn't read as if next run will help.
+  if (chunkFailuresByReason.size > 0) {
+    const { permanent, transient } = partitionByPermanence(chunkFailuresByReason);
+    for (const line of groupFailuresByReason(permanent, 'event')) {
+      logSyncProgress('push-events', 'error', `Event chunk(s) rejected, will not succeed until the events change — ${line}`);
+    }
+    for (const line of groupFailuresByReason(transient, 'event')) {
+      logSyncProgress('push-events', 'error', `Event chunk(s) rejected, will retry next run — ${line}`);
     }
   }
 
@@ -1112,11 +1284,17 @@ export async function pushEventsToServer(
   // server/datastore-version reset clears every item's syncId at once), not
   // just ones newer than the watermark this run started with. The watermark
   // must never advance past the oldest of them.
+  // `deletedAt = 0`: a deleted item that never synced can never GET a syncId —
+  // pushToServer() only sends a tombstone whose syncId is already set, so
+  // nothing will ever unblock its events. Without this term such an item pins
+  // the watermark permanently and every subsequent run re-pushes the entire
+  // event tail behind it, which is exactly what deleting an unsyncable item
+  // would otherwise cause.
   const blocked = db.prepare(`
     SELECT MIN(e.createdAt) as minCreatedAt
     FROM item_events e
     JOIN items i ON e.itemId = i.id
-    WHERE i.syncId = ''
+    WHERE i.syncId = '' AND i.deletedAt = 0
   `).get() as { minCreatedAt: number | null };
 
   // `- 1`: the query above (and next run's) is a strict `createdAt > watermark`,
@@ -1618,33 +1796,60 @@ function breakCycle(db: ReturnType<typeof getDb>, cycleIds: string[]): void {
  * Clear per-item sync markers so the next push resends every live item, and reset the
  * profile's high-water mark so the next pull re-fetches everything the server has.
  * Shared by resetSyncStateIfServerChanged() and resetSyncStateIfDatastoreVersionChanged()
- * — same recovery, different trigger.
+ * — same trigger shape ("start over"), but NOT the same scope of reset: see `clearSyncId`.
+ *
+ * `clearSyncId` decides whether `syncId` — the item's record of which SERVER row it
+ * corresponds to — is wiped along with `syncedAt`, or left alone:
+ * - Server/profile change (`clearSyncId: true`): a different server has different row
+ *   ids, so the old syncId means nothing there and must go. The next push has nothing
+ *   to match and INSERTs fresh rows, which is correct — there is nothing on the new
+ *   server to UPDATE yet.
+ * - Datastore-version bump (`clearSyncId: false`): same server, same row ids — the
+ *   version bump only makes what was last pushed stale, not the row identity. Clearing
+ *   syncId here was the bug: the server's saveItem() (db.js) matches a pushed item ONLY
+ *   by row id or the stored syncId, with no content fallback, so a re-push with syncId
+ *   blanked sends the desktop's own local id instead — which matches nothing for an item
+ *   that originated elsewhere (pushed by another device, or pulled down from the server)
+ *   — and the server inserts a duplicate row rather than updating the existing one.
+ *   Clearing `syncedAt` alone is enough to force the re-push; the row identity doesn't
+ *   need to move.
  */
-function resetPerItemSyncState(profileId: string): void {
+function resetPerItemSyncState(profileId: string, clearSyncId: boolean): void {
   const db = getDb();
-  db.prepare(`
-    UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
-  `).run();
+  if (clearSyncId) {
+    db.prepare(`
+      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
+    `).run();
+  } else {
+    db.prepare(`
+      UPDATE items SET syncedAt = 0 WHERE deletedAt = 0
+    `).run();
+  }
   updateLastSyncTime(profileId, 0);
 
-  // Clearing every item's syncId above means pushEventsToServer()'s own
-  // "blocked" scan (WHERE i.syncId = '') would — for exactly one run —
-  // see every item as newly blocked and pull the event watermark back to
-  // cover them. But that scan only protects events whose parent is STILL
-  // blocked at the moment it runs; an item that regains its syncId from
-  // THIS SAME run's own item push (pushToServer always runs immediately
-  // before pushEventsToServer) looks already-resolved by the time the scan
-  // runs, so events excluded by an already-advanced watermark from BEFORE
-  // this reset would never be rescued. Reset the event watermark to 0
-  // explicitly, the same "start over" the item watermark above gets.
+  // Event watermark: reset to 0 either way, but for two independent reasons — only one
+  // of which applies when clearSyncId is false:
+  // - clearSyncId path only: clearing every item's syncId above means
+  //   pushEventsToServer()'s own "blocked" scan (WHERE i.syncId = '') would — for
+  //   exactly one run — see every item as newly blocked and pull the event watermark
+  //   back to cover them. But that scan only protects events whose parent is STILL
+  //   blocked at the moment it runs; an item that regains its syncId from THIS SAME
+  //   run's own item push (pushToServer always runs immediately before
+  //   pushEventsToServer) looks already-resolved by the time the scan runs, so events
+  //   excluded by an already-advanced watermark from BEFORE this reset would never be
+  //   rescued. This does not arise when syncId is left alone — no item goes blocked.
+  // - Either path: a datastore-version bump can add required_sync_columns to
+  //   item_events the same way it can to items/tags, and the event-push query only
+  //   re-sends rows with createdAt past the watermark — an event already pushed under
+  //   the old schema would stay out of that set forever without this reset. Same
+  //   reasoning as the tag watermark below.
   saveEventPushWatermark(0);
 
-  // Tags have no such "blocked" window — a tag isn't gated on any other
-  // entity's sync state the way an event is gated on its parent item's syncId
-  // — but the same "start over" applies for the same underlying reason: the
-  // tag-push query only re-sends rows changed since the last tag push, so
-  // without this reset every tag already on the server would keep whatever
-  // metadata shape the OLD version last sent, forever.
+  // Tags have no "blocked" window — a tag isn't gated on any other entity's sync state
+  // the way an event is gated on its parent item's syncId — but the same "start over"
+  // applies for the schema-catch-up reason above: the tag-push query only re-sends rows
+  // changed since the last tag push, so without this reset every tag already on the
+  // server would keep whatever metadata shape the OLD version last sent, forever.
   saveTagPushWatermark(0);
 }
 
@@ -1687,7 +1892,8 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
 
   if (urlChanged || profileChanged) {
     DEBUG && console.log(`[sync] Server changed (url: '${storedUrl}' -> '${serverUrl}', profile: '${storedProfileId}' -> '${currentProfileId}') — resetting per-item sync state`);
-    resetPerItemSyncState(activeProfile.id);
+    // A different server has different row ids — the old syncId is meaningless there.
+    resetPerItemSyncState(activeProfile.id, true);
     return true;
   }
 
@@ -1702,13 +1908,17 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
  * an item already synced under the old schema stays out of that set forever, so it
  * would never re-push the columns a DATASTORE_VERSION bump just added (the re-push
  * problem: see docs/sync-coverage-gaps.md §1, and the required_sync_columns addition
- * in packages/schema/v1.json this version bump accompanies). This reuses the exact
- * recovery resetSyncStateIfServerChanged() already has for "start over" — it just
- * triggers off a different signal: the client's OWN previously-recorded
- * DATASTORE_VERSION, not the server's. It runs independent of (and before)
- * serverFetch()'s header check, which only refuses sync outright on a live mismatch
- * against the server's reported version — it can't retroactively resend items that
- * synced before this code existed.
+ * in packages/schema/v1.json this version bump accompanies). This triggers the same
+ * "start over" recovery resetSyncStateIfServerChanged() has, off a different signal —
+ * the client's OWN previously-recorded DATASTORE_VERSION, not the server's — but NOT
+ * the same scope: it is still the same server, so the item's `syncId` (which SERVER row
+ * it is) stays valid and must be kept, not cleared (see resetPerItemSyncState()'s
+ * `clearSyncId` doc comment — clearing it here was the duplicate-row bug: the server
+ * can only match a re-push by row id or syncId, so a re-push carrying neither matches
+ * nothing and inserts a second row for any item that originated elsewhere). It runs
+ * independent of (and before) serverFetch()'s header check, which only refuses sync
+ * outright on a live mismatch against the server's reported version — it can't
+ * retroactively resend items that synced before this code existed.
  */
 function resetSyncStateIfDatastoreVersionChanged(): boolean {
   const db = getDb();
@@ -1741,7 +1951,8 @@ function resetSyncStateIfDatastoreVersionChanged(): boolean {
 
   if (storedVersion !== DATASTORE_VERSION) {
     DEBUG && console.log(`[sync] Datastore version changed (${storedVersion || '(untracked)'} -> ${DATASTORE_VERSION}) — resetting per-item sync state`);
-    resetPerItemSyncState(activeProfile.id);
+    // Same server, same row ids — only what was last pushed is stale, so keep syncId.
+    resetPerItemSyncState(activeProfile.id, false);
     saveSyncDatastoreVersion();
     return true;
   }

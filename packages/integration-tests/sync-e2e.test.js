@@ -23,7 +23,7 @@ import * as sync from '../../apps/desktop/dist/main/sync.js';
 import * as profiles from '../../apps/desktop/dist/main/profiles.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server');
+const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
 const TEST_PORT = 3458; // Different port from sync-integration tests
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 

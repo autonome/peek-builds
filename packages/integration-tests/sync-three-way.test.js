@@ -23,7 +23,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server');
+const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
 const TEST_PORT = 3459;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
@@ -428,27 +428,35 @@ async function testWebhookWithProfile() {
   console.log('  PASSED');
 }
 
-async function testUnknownUuidFallsBackToDefault() {
-  console.log('\n--- Test: Unknown UUID Falls Back to Default ---');
+async function testUnknownUuidGetsItsOwnProfile() {
+  console.log('\n--- Test: Unknown UUID Gets Its Own Profile ---');
 
   // Send request with a UUID that doesn't exist on the server
   const unknownUuid = crypto.randomUUID();
   const item = {
     type: 'text',
-    content: 'unknown-uuid-fallback-' + Date.now(),
-    tags: ['fallback-test']
+    content: 'unknown-uuid-isolation-' + Date.now(),
+    tags: ['isolation-test']
   };
   await clientRequest(unknownUuid, 'POST', '/items', item);
   console.log('  Created item with unknown UUID');
 
-  // Item should land in the default profile
-  const defaultItems = await clientRequest(defaultProfileId, 'GET', '/items');
-  const found = defaultItems.items.some(i => i.content === item.content);
-  if (!found) {
-    throw new Error('Item with unknown UUID not found in default profile (fallback failed)');
+  // The item belongs to that UUID's own profile, which the server creates on
+  // demand (users.js resolveProfileId).
+  const ownItems = await clientRequest(unknownUuid, 'GET', '/items');
+  if (!ownItems.items.some(i => i.content === item.content)) {
+    throw new Error('Item not found in the profile created for its own UUID');
   }
 
-  console.log('  Verified: Unknown UUID falls back to default profile');
+  // And it must NOT leak into default. An earlier server fell unknown UUIDs
+  // back to the default profile, which collapsed every unseen profile into one
+  // bucket and leaked data between distinct profiles.
+  const defaultItems = await clientRequest(defaultProfileId, 'GET', '/items');
+  if (defaultItems.items.some(i => i.content === item.content)) {
+    throw new Error('Item leaked into the default profile — unknown UUIDs must stay isolated');
+  }
+
+  console.log('  Verified: Unknown UUID gets an isolated profile, no leak into default');
   console.log('  PASSED');
 }
 
@@ -474,7 +482,7 @@ async function runTests() {
       ['Legacy Slug Backward Compat', testLegacySlugBackwardCompat],
       ['Mobile ↔ Desktop Round Trip', testMobileDesktopRoundTrip],
       ['Webhook with Profile UUID', testWebhookWithProfile],
-      ['Unknown UUID Falls Back to Default', testUnknownUuidFallsBackToDefault],
+      ['Unknown UUID Gets Its Own Profile', testUnknownUuidGetsItsOwnProfile],
     ];
 
     for (const [name, testFn] of tests) {

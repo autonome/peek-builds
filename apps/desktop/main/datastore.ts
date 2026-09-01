@@ -476,6 +476,7 @@ export function initDatabase(dbPath: string): Db {
   migrateAddressesToItems();
   migrateVisitChaining();
   migrateDeduplicateItems();
+  migrateEmptyTextCleanup();
   migrateItemFrecencyColumns();
   migrateAllAddressesToItems();
   migrateVisitsToItemVisits();
@@ -1158,6 +1159,45 @@ function migrateDeduplicateItems(): void {
     console.log(`[dedup] Removed ${totalRemoved} duplicate items`);
   } else {
     DEBUG && console.log('main', 'Dedup cleanup: no duplicates found');
+  }
+}
+
+/**
+ * One-time cleanup of empty text items.
+ * A now-fixed editor bug created a datastore row the moment a blank note
+ * opened, before any typing — leaving rows with type='text', content='',
+ * title=''. They carry no information (tags on them, if any, are just
+ * provenance like 'note'/'from:cmd'/'annotation', not content), and the
+ * server used to reject them on every sync forever. Soft-deletes them, same
+ * as deleteItem(), so a tombstone propagates for any that did sync.
+ *
+ * Exported (rather than module-private) so a node test can drive it against
+ * an in-memory sqlite without booting Electron — see migrateLoadingTitles().
+ */
+export function migrateEmptyTextCleanup(database: Db | null = db): void {
+  if (!database) return;
+
+  // Check if already done
+  const flag = database.prepare('SELECT value FROM settings WHERE key = ?').get('empty_text_cleanup_v1') as { value: string } | undefined;
+  if (flag) return;
+
+  DEBUG && console.log('main', 'Running one-time empty text item cleanup...');
+
+  const timestamp = now();
+  const result = database.prepare(`
+    UPDATE items SET deletedAt = ?, updatedAt = ?
+    WHERE type = 'text' AND deletedAt = 0
+      AND (content IS NULL OR content = '')
+      AND (title IS NULL OR title = '')
+  `).run(timestamp, timestamp);
+
+  // Set flag so this doesn't run again
+  database.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('empty_text_cleanup_v1', '1');
+
+  if (result.changes > 0) {
+    console.log(`[empty-text-cleanup] Removed ${result.changes} empty text items`);
+  } else {
+    DEBUG && console.log('main', 'Empty text cleanup: no empty text items found');
   }
 }
 

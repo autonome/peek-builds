@@ -90,9 +90,12 @@ it would reliably turn the suite red, and not before.
   treats a frozen agent as stalled after two ticks, which converts an overnight
   hang into a fifteen-minute one, but only after the fact.
 
-## Related machinery that is out of date
+## Related machinery
 
-`mpeek-clone-pool`, `agent-review` and `fix` describe the retired isolated-clone
-scripts and a root `CLAUDE.md` that no longer exists. The reviewer decision
-table and reviewer brief in `agent-review` are still correct and are what
-`SKILL.md` points at; its finalize and clean commands are not.
+`agent-review` and `fix` are current: both describe the worktree flow, and
+`agent-review` owns the reviewer decision table, the reviewer brief and the
+land + verify loop `SKILL.md` points at. The isolated-clone scripts and the
+`mpeek-clone-pool` skill they used to reference are gone.
+
+Root `CLAUDE.md` is gitignored, so a fresh checkout has none — nothing may
+depend on it.

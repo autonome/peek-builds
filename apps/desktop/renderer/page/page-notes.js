@@ -14,6 +14,11 @@ export class PageNotesPane {
     this._currentUrl = null;
     this._editingId = null;
     this._pendingEditId = null;
+    // In-memory draft for a note that hasn't been typed into yet. No datastore
+    // row exists until the first non-empty keystroke (see _renderDraftItem),
+    // so a draft that's abandoned empty (blur, teardown, click away) never
+    // creates a row — this is what replaces the old eager-create-on-+-click.
+    this._pendingDraft = null;
 
     // Build DOM
     this.element = document.createElement('div');
@@ -89,12 +94,43 @@ export class PageNotesPane {
 
   /**
    * Load notes for a given URL. Called when the page navigates.
+   * Flushes any pending draft first so retargeting (or clearing, via url=null)
+   * can't silently drop text the user already typed.
    */
   async loadForUrl(url) {
+    await this._flushPendingDraft();
     this._currentUrl = url;
     this._editingId = null;
     this._pendingEditId = null;
     await this._reload();
+  }
+
+  /**
+   * Resolve the current draft (if any) before it's dropped: an empty/never-
+   * typed-into draft is discarded with no datastore write; a draft that has
+   * content is created (if it hasn't been already) and saved so the pane can
+   * be torn down or retargeted without losing what was typed.
+   */
+  async _flushPendingDraft() {
+    const draft = this._pendingDraft;
+    this._pendingDraft = null;
+    if (!draft) return;
+
+    if (draft.committing && draft.createPromise) {
+      await draft.createPromise;
+    }
+
+    if (draft.noteId) {
+      await this._updateNote(draft.noteId, draft.value);
+      return;
+    }
+
+    const value = draft.value || '';
+    if (value.trim().length === 0) return; // never received non-empty input
+
+    // Defensive fallback — the input handler should already have started a
+    // create for any non-empty value, but cover the case it didn't.
+    await this._createDraftNote(draft, value);
   }
 
   async _ensureAnnotationTag() {
@@ -161,6 +197,10 @@ export class PageNotesPane {
 
   async _addNote() {
     if (!this._currentUrl) return;
+    // A draft is already open (its textarea keeps focus even across a second
+    // + click, since the button's mousedown handler prevents the default
+    // focus-out) — don't stomp it with a second in-flight draft.
+    if (this._pendingDraft) return;
 
     const tagId = await this._ensureAnnotationTag();
     if (!tagId) return;
@@ -178,29 +218,42 @@ export class PageNotesPane {
       // webview not ready
     }
 
+    // No datastore write yet — hold the draft in memory and render its
+    // textarea (focused), same as a newly-created note used to look. The
+    // item is created on the first non-empty keystroke, in the draft
+    // textarea's 'input' handler (_renderDraftItem).
+    this._pendingDraft = {
+      anchor: {
+        url: this._currentUrl,
+        text: selectedText || ''
+      },
+      value: '',
+      noteId: null,
+      committing: false,
+      createPromise: null
+    };
+    this._render();
+  }
+
+  /**
+   * Create the datastore row for a draft and tag it as an annotation.
+   * Returns the new item id, or null on failure (logged, not thrown).
+   */
+  async _createDraftNote(draft, content) {
+    const tagId = await this._ensureAnnotationTag();
+    if (!tagId) return null;
+
     try {
-      const metadata = JSON.stringify({
-        anchor: {
-          url: this._currentUrl,
-          text: selectedText || ''
-        }
-      });
-
-      const result = await api.datastore.addItem('text', {
-        content: '',
-        metadata
-      });
-
+      const metadata = JSON.stringify({ anchor: draft.anchor });
+      const result = await api.datastore.addItem('text', { content, metadata });
       if (result?.success && result.data?.id) {
-        // Tag it as annotation
         await api.datastore.tagItem(result.data.id, tagId);
-        // Set pending edit to auto-open textarea
-        this._pendingEditId = result.data.id;
-        await this._reload();
+        return result.data.id;
       }
     } catch (err) {
       console.error('[page-notes] Failed to add note:', err);
     }
+    return null;
   }
 
   async _updateNote(noteId, content) {
@@ -233,7 +286,9 @@ export class PageNotesPane {
   _render() {
     this.content.innerHTML = '';
 
-    if (this._notes.length === 0) {
+    // A draft in progress renders even with zero saved notes — don't let the
+    // empty-state branch hide it.
+    if (this._notes.length === 0 && !this._pendingDraft) {
       const empty = document.createElement('div');
       empty.className = 'notes-empty';
       empty.textContent = 'No notes yet. Click + to add one.';
@@ -242,7 +297,16 @@ export class PageNotesPane {
       return;
     }
 
+    if (this._pendingDraft) {
+      this.content.appendChild(this._renderDraftItem(this._pendingDraft));
+    }
+
     for (const note of this._notes) {
+      // Once the draft's create lands, the note also exists in this._notes —
+      // skip it here so it isn't shown twice (once as the live draft, once
+      // as its own stale-content list entry) until the draft is committed.
+      if (this._pendingDraft && this._pendingDraft.noteId === note.id) continue;
+
       const isEditing = this._editingId === note.id || this._pendingEditId === note.id;
       const meta = this._parseMeta(note);
       const anchorText = meta.anchor?.text || '';
@@ -366,6 +430,100 @@ export class PageNotesPane {
       this._editingId = this._pendingEditId;
       this._pendingEditId = null;
     }
+  }
+
+  /**
+   * Render the draft item's DOM (anchor excerpt + textarea, focused). No
+   * datastore item exists yet. The item is created on the textarea's first
+   * non-empty 'input' event, not on blur — a blur-only commit would leave
+   * typed text sitting only in the DOM, at risk of being lost to navigation
+   * or teardown before the user tabs away.
+   */
+  _renderDraftItem(draft) {
+    const anchorText = draft.anchor?.text || '';
+
+    const item = document.createElement('div');
+    item.className = 'notes-item notes-item-editing';
+
+    const textWrap = document.createElement('div');
+    textWrap.className = 'notes-text-wrap';
+
+    if (anchorText) {
+      const excerpt = document.createElement('div');
+      excerpt.className = 'notes-anchor-text';
+      const truncated = anchorText.length > 80
+        ? anchorText.slice(0, 80) + '\u2026'
+        : anchorText;
+      excerpt.textContent = `\u201C${truncated}\u201D`;
+      textWrap.appendChild(excerpt);
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'notes-textarea';
+    textarea.value = draft.value || '';
+    textarea.placeholder = 'Write a note...';
+    textarea.rows = 3;
+
+    textarea.addEventListener('mousedown', (e) => e.stopPropagation());
+    textarea.addEventListener('click', (e) => e.stopPropagation());
+
+    // Create the datastore row on the first non-empty keystroke. Re-entry is
+    // guarded by draft.committing/draft.noteId; a failed create (noteId
+    // still null, committing reset to false) retries on the next keystroke.
+    textarea.addEventListener('input', () => {
+      const value = textarea.value;
+      draft.value = value;
+      if (draft.noteId || draft.committing) return;
+      if (value.trim().length === 0) return;
+
+      draft.committing = true;
+      draft.createPromise = this._createDraftNote(draft, value).then((id) => {
+        draft.committing = false;
+        if (id) draft.noteId = id;
+        // Deliberately no re-render here: the textarea already shows the
+        // live, correct content, and rebuilding the DOM mid-keystroke would
+        // steal focus/cursor. The note transitions to "existing" bookkeeping
+        // only; blur (or teardown, via _flushPendingDraft) does the reload.
+      });
+    });
+
+    // Save on blur, same as an existing note — but only if the draft ever
+    // became a real item. An empty/never-typed-into draft is discarded with
+    // no datastore write at all.
+    textarea.addEventListener('blur', async () => {
+      if (draft.committing && draft.createPromise) {
+        await draft.createPromise;
+      }
+
+      if (draft.noteId) {
+        this._pendingDraft = null;
+        await this._updateNote(draft.noteId, draft.value);
+        await this._reload();
+      } else {
+        this._pendingDraft = null;
+        this._render();
+      }
+    });
+
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        textarea.blur();
+      }
+    });
+
+    textWrap.appendChild(textarea);
+    item.appendChild(textWrap);
+
+    // Auto-focus after DOM insertion, same as a newly-created note used to.
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.selectionStart = textarea.value.length;
+      textarea.selectionEnd = textarea.value.length;
+    });
+
+    return item;
   }
 
   /**

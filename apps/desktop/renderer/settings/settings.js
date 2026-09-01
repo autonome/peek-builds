@@ -2249,18 +2249,21 @@ const renderSyncSettings = async () => {
   await updateStatus();
 
   // Reflects one `sync:progress` entry in the live status line. A run
-  // finishing or failing hides the line (nothing "current" left to show)
-  // and refreshes the static status block above so pending count / last
-  // sync / last error don't wait for the next manual button press.
+  // finishing or failing leaves its own message showing (dropping the "Now:"
+  // prefix, since it is no longer in progress) rather than hiding the line —
+  // this is the panel's only immediate feedback for a completed Sync All run
+  // now that the transient toast no longer duplicates it (see the Sync All
+  // result handler below) — and refreshes the static status block above so
+  // pending count / last sync / last error don't wait for the next manual
+  // button press. It stays up until the next run's own `start` entry
+  // overwrites it.
   const handleSyncProgressEntry = (entry) => {
-    if (entry.stage === 'run' && (entry.phase === 'finish' || entry.phase === 'error')) {
-      liveStatusLine.style.display = 'none';
-      liveStatusLine.textContent = '';
-      updateStatus();
-      return;
-    }
-    liveStatusLine.textContent = `Now: ${entry.message}`;
+    const isRunEnd = entry.stage === 'run' && (entry.phase === 'finish' || entry.phase === 'error');
+    liveStatusLine.textContent = isRunEnd ? entry.message : `Now: ${entry.message}`;
     liveStatusLine.style.display = '';
+    if (isRunEnd) {
+      updateStatus();
+    }
   };
 
   container.appendChild(statusSection);
@@ -2346,20 +2349,25 @@ const renderSyncSettings = async () => {
         const result = await action();
         if (result.success) {
           const data = result.data || {};
-          let message = '';
+          // A result with both `pulled` and `pushed` only comes from Sync
+          // All (Pull returns just `pulled`, Push just `pushed`) — that
+          // summary now duplicates the log's own run-complete entry and the
+          // live status line above (handleSyncProgressEntry), so it skips
+          // the auto-clearing toast rather than showing the same numbers
+          // twice, once permanent and once about to vanish.
           if (data.pulled !== undefined && data.pushed !== undefined) {
-            message = `Synced: ${data.pulled} pulled, ${data.pushed} pushed`;
-            if (data.conflicts) message += `, ${data.conflicts} conflicts`;
+            // No showResult() here — see comment above.
           } else if (data.pulled !== undefined) {
-            message = `Pulled ${data.pulled} items`;
+            let message = `Pulled ${data.pulled} items`;
             if (data.conflicts) message += ` (${data.conflicts} conflicts)`;
+            showResult(message, false);
           } else if (data.pushed !== undefined) {
-            message = `Pushed ${data.pushed} items`;
+            let message = `Pushed ${data.pushed} items`;
             if (data.skipped) message += ` (${data.skipped} skipped)`;
+            showResult(message, false);
           } else {
-            message = 'Sync completed';
+            showResult('Sync completed', false);
           }
-          showResult(message, false);
         } else {
           showResult(result.error || 'Sync failed', true);
         }
@@ -2467,6 +2475,19 @@ const renderSyncSettings = async () => {
     if (logExpanded) logList.scrollTop = logList.scrollHeight;
   });
 
+  // sync.ts's resetSyncLog() drops the main-process buffer at the start of
+  // every run, but that reset is silent — it doesn't publish anything, so a
+  // panel already open from a PRIOR run would otherwise keep showing that
+  // run's entries with the new run's just appended after them. The run's own
+  // first entry (`run`/`start`) is the signal that a new run has begun; clear
+  // the visible log at that point so it mirrors the main process buffer
+  // instead of accumulating across runs.
+  const clearLogDisplay = () => {
+    logEntries.length = 0;
+    logList.textContent = '';
+    updateLogToggleLabel();
+  };
+
   // Appends one entry to both the in-memory array and the visible list.
   // Auto-scrolls only while expanded — an operator scrolled up to read an
   // earlier line shouldn't get yanked to the bottom by a background run.
@@ -2509,6 +2530,9 @@ const renderSyncSettings = async () => {
   }
 
   api.subscribe('sync:progress', (entry) => {
+    if (entry.stage === 'run' && entry.phase === 'start') {
+      clearLogDisplay();
+    }
     appendLogEntry(entry);
     handleSyncProgressEntry(entry);
   });

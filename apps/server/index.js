@@ -18,11 +18,20 @@ const { DATASTORE_VERSION, PROTOCOL_VERSION } = require("./version");
 // these it actually syncs (e.g. mobile syncs only url/text/tagset/image), but the
 // server stores whatever any client chooses to push so all data can live remotely.
 // Must stay a subset of the `items.type` CHECK constraint in db.js.
-const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed", "entity"];
+const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed", "entity", "event"];
 
 // Types whose payload lives in `content` and so require it on push. entity/series/feed
 // carry their data in `metadata` and are allowed to have null content.
-const CONTENT_REQUIRED_TYPES = ["url", "text"];
+//
+// `text` is deliberately NOT here. A client that holds an empty text item retries it
+// on every sync forever, and the item never earns a syncId — which stalls far more
+// than the one item: the event push holds its watermark below the oldest event of any
+// item without a syncId, so a single permanently-rejected item makes every subsequent
+// run re-push the entire event history behind it. Storing an empty note costs a row;
+// rejecting one costs sync. `url` keeps the requirement for now — an empty url item
+// has no meaning server-side (no domain, nothing to open) and none have been observed
+// in the wild, but it carries the same stall risk if that ever changes.
+const CONTENT_REQUIRED_TYPES = ["url"];
 
 // Resolve a pull/read type filter from the query string. `types` (comma-separated)
 // takes precedence over the legacy single `type`. Returns either an array of types,
