@@ -3315,12 +3315,25 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
  * cascaded descendant is torn down unconditionally, matching
  * `closeChildWindows`'s own unconditional `closeHostWindow` call, which never
  * consulted a child's own keepLive.
+ *
+ * CYCLE-SAFE, by its own guard rather than by a caller's convention. Nothing
+ * constrains `parentId` to point backwards in registration order, so these
+ * edges are a general graph and not a forest; a cycle would otherwise recurse
+ * until the stack overflows inside `decide`. `visited` caps the walk at one
+ * visit per id, so a cycle yields each member once and terminates. On acyclic
+ * input the result is byte-identical to the unguarded walk.
  */
-function descendantsToCascadeClose(state: State, rootId: WindowId): WindowId[] {
+function descendantsToCascadeClose(
+  state: State,
+  rootId: WindowId,
+  visited: Set<WindowId> = new Set([rootId]),
+): WindowId[] {
   const ids: WindowId[] = [];
   for (const child of state.order.filter((w) => w.parentId === rootId)) {
     if (child.appLifetime === true) continue;
-    ids.push(...descendantsToCascadeClose(state, child.id));
+    if (visited.has(child.id)) continue;
+    visited.add(child.id);
+    ids.push(...descendantsToCascadeClose(state, child.id, visited));
     ids.push(child.id);
   }
   return ids;
