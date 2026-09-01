@@ -970,6 +970,44 @@ describe('window-kernel: CloseOrHideWindow', () => {
     );
     assert.ok(!effects.some((e) => e.type === 'CloseWindow'));
   });
+
+  it('a keepLive descendant is hidden by the cascade, not force-closed, same as a direct CloseOrHideWindow on it', () => {
+    // The cascade (`descendantsToCascadeClose`) must not restate `keepLive`
+    // as "always close" — a child carrying it survives its parent's close the
+    // same way it would survive its own.
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+        {
+          type: 'WindowRegistered',
+          id: wid(2),
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          parentId: wid(1),
+          keepLive: true,
+        },
+        { type: 'WindowShown', id: wid(2) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(
+      decision.events,
+      [
+        { type: 'WindowHidden', id: wid(2) },
+        { type: 'WindowClosed', id: wid(1) },
+      ],
+      'the keepLive child is hidden, deepest first, before the non-keepLive parent closes',
+    );
+    const next = fold(decision.events, state);
+    assert.strictEqual(next.order.some((w) => w.id === wid(2)), true, 'keepLive child must stay in order');
+    assert.strictEqual(next.order.find((w) => w.id === wid(2))?.visible, false, 'keepLive child is hidden, not left visible');
+  });
 });
 
 // ── orderable gate on SetStacking ────────────────────────────────────────────

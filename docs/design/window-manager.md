@@ -637,6 +637,12 @@ or where a headless run diverged from a real one, are closed.
   (deepest first, `appLifetime` subtrees skipped) in place of `closeChildWindows`'s
   address-string walk over the legacy registry; `closeChildWindows` itself is untouched and
   still address-keyed, as the last dependency of the separate `closeWindow` export.
+  `descendantsToCascadeClose` returns ids only — `decide`'s `CloseOrHideWindow` case runs each
+  one through the same per-record `keepLive` rule it applies to the window named by the command
+  itself, so a `keepLive` descendant is hidden by the cascade exactly as it would be hidden by a
+  direct `CloseOrHideWindow` on it, and a non-`keepLive` descendant closes. The rule is stated
+  once and read for every id the cascade touches, rather than the walk restating it for
+  descendants on its own terms.
 - **The IZUI coordinator's own app-focus mirror is retired.** `izui-state.ts` kept its own
   OS-focus mirror (`appFocused`, fed by `main.ts`'s `did-become/resign-active` and
   `browser-window-focus`/`blur` listeners) beside the window kernel's `getAppActive()` — the
@@ -738,9 +744,6 @@ These are deliberate, and none of them should be filled outside the kernel.
 - A keepLive tile closed by a native path is destroyed rather than hidden UNLESS
   `electron-window-backend.ts`'s `'close'` listener catches it. That listener is the only bridge;
   `decide` has always had the right rule (`record.keepLive ? WindowHidden : WindowClosed`).
-- `window-kernel.ts descendantsToCascadeClose` force-closes keepLive descendants, so a keepLive
-  guarantee is now conditional on how the window was opened. This matches the old `closeChildWindows`
-  behaviour it replaced.
 
 ### Maintenance directive
 

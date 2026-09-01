@@ -3582,11 +3582,16 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
  * (return immediately rather than recurse). A window whose lifetime is the
  * app's own is never swept as someone else's descendant.
  *
- * ALWAYS a close, never a hide, for every id this returns — `keepLive` is
- * read only for `rootId` itself (`decide`'s `CloseOrHideWindow` case); a
- * cascaded descendant is torn down unconditionally, matching
- * `closeChildWindows`'s own unconditional `closeHostWindow` call, which never
- * consulted a child's own keepLive.
+ * DISPOSITION IS NOT DECIDED HERE — this returns ids only, deepest first.
+ * The `keepLive` hide-vs-close choice `decide`'s `CloseOrHideWindow` case
+ * makes for `rootId` applies identically to every id returned here: the
+ * caller runs each one through that same per-record rule rather than this
+ * walk restating it, so a `keepLive` descendant is hidden, exactly as a
+ * direct `CloseOrHideWindow` on that same window would hide it, and a
+ * non-keepLive descendant closes. (`closeChildWindows`, the function this
+ * cascade replaced, force-closed every child through an unconditional
+ * `closeHostWindow` call that never consulted a child's own keepLive — a gap
+ * this cascade no longer carries forward.)
  *
  * CYCLE-SAFE, by its own guard rather than by a caller's convention. Nothing
  * constrains `parentId` to point backwards in registration order, so these
@@ -3770,17 +3775,22 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       if (record.appLifetime === true) {
         return { rejected: 'app-lifetime-window' };
       }
-      // CASCADE: every window this one opened, transitively, over the
-      // kernel's own `parentId` edges (`descendantsToCascadeClose`) — closed
-      // unconditionally, deepest first, before `cmd.id`'s own event.
-      const cascade: Event[] = descendantsToCascadeClose(state, cmd.id).map((id) => ({ type: 'WindowClosed', id }));
       // THE branch point (§0.1): keepLive === true hides, never closes, so
       // its content keeps running; otherwise it closes. This guard lives
-      // here, never in `evolve`, and applies only to `cmd.id` itself — a
-      // cascaded descendant above is torn down regardless of its own
-      // keepLive (see `descendantsToCascadeClose`'s doc).
-      const own: Event = record.keepLive ? { type: 'WindowHidden', id: cmd.id } : { type: 'WindowClosed', id: cmd.id };
-      return { events: [...cascade, own] };
+      // here, never in `evolve`, and one closure (`dispose`) applies it to
+      // `cmd.id` and to every id `descendantsToCascadeClose` returns alike —
+      // a cascaded descendant gets the exact disposition a direct
+      // `CloseOrHideWindow` on it would produce, never a forced close that
+      // ignores its own keepLive (see `descendantsToCascadeClose`'s doc).
+      const dispose = (id: WindowId): Event => {
+        const target = state.order.find((w) => w.id === id)!;
+        return target.keepLive ? { type: 'WindowHidden', id } : { type: 'WindowClosed', id };
+      };
+      // CASCADE: every window this one opened, transitively, over the
+      // kernel's own `parentId` edges (`descendantsToCascadeClose`), deepest
+      // first, before `cmd.id`'s own event.
+      const cascade: Event[] = descendantsToCascadeClose(state, cmd.id).map(dispose);
+      return { events: [...cascade, dispose(cmd.id)] };
     }
     case 'SetFullscreen': {
       const rec = state.order.find((w) => w.id === cmd.id)!;
