@@ -573,6 +573,18 @@ const pendingWindowKeys = new Set<string>();
  *
  * Single source of truth for "where should this reused window go?" is
  * the pure module — see docs/window-placement.md.
+ *
+ * THE DECISION TO REPOSITION AT ALL LIVES HERE, once. It used to be at the
+ * call sites, as four copies of a headless check, and the four had drifted
+ * apart: three suppressed the reposition on a focus-free run and the fourth
+ * (the keepLive canvas reuse) did not, so the same window could be moved or
+ * left alone depending only on which reuse branch found it. Four copies of one
+ * decision is how that happens; this is the one copy.
+ *
+ * A FOCUS-FREE RUN LEAVES REUSED WINDOWS WHERE THEY ARE. Nothing about
+ * repositioning steals focus — the kernel's own `SetBounds` is deliberately
+ * ungated for exactly that reason — but an agent or CI run should not be
+ * shuffling windows around the desktop it is borrowing.
  */
 function applyPlacementOnReuse(
   win: BrowserWindow,
@@ -580,6 +592,7 @@ function applyPlacementOnReuse(
   reason: string,
 ): void {
   if (!placement) return;
+  if (isHeadless()) return;
   const currentBounds = win.getBounds();
   let parentBounds: Electron.Rectangle | undefined;
   if (placement.mode === 'parent-centered') {
@@ -2628,16 +2641,14 @@ export function registerWindowHandlers(): void {
           // window is a BaseWindow, but applyPlacementOnReuse only touches
           // getBounds/setBounds/id — BaseWindow-safe, same cast trackWindow uses.
           const hybridInfo = getWindowInfo(existingHybrid.windowId);
-          if (!isHeadless()) {
-            try {
-              applyPlacementOnReuse(
-                existingHybrid.baseWin as unknown as BrowserWindow,
-                hybridInfo?.params.placement as Placement | undefined,
-                'hybrid-keepLive-reuse',
-              );
-            } catch (e) {
-              DEBUG && console.log('[hybrid-page-host] placement-on-key-reuse failed:', e);
-            }
+          try {
+            applyPlacementOnReuse(
+              existingHybrid.baseWin as unknown as BrowserWindow,
+              hybridInfo?.params.placement as Placement | undefined,
+              'hybrid-keepLive-reuse',
+            );
+          } catch (e) {
+            DEBUG && console.log('[hybrid-page-host] placement-on-key-reuse failed:', e);
           }
           // Machine show intent (§5 step 6A-4): replaces BOTH the imperative
           // baseWin.show() and the hand-dispatched WINDOW_SHOWN mirror — the
@@ -2781,20 +2792,18 @@ export function registerWindowHandlers(): void {
         const existingHybridByUrl = findHybridWindowByUrl(url);
         if (existingHybridByUrl) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
-          if (!isHeadless()) {
-            try {
-              // Parity with the canvas url-reuse below: honor the stored
-              // Placement intent so a reused window stranded on a now-disconnected
-              // display (or a 'centered' window) is rescued/re-centered.
-              const hybridInfo = getWindowInfo(existingHybridByUrl.windowId);
-              applyPlacementOnReuse(
-                existingHybridByUrl.baseWin as unknown as BrowserWindow,
-                hybridInfo?.params.placement as Placement | undefined,
-                'hybrid-url-reuse',
-              );
-            } catch (e) {
-              DEBUG && console.log('[hybrid-page-host] placement-on-url-reuse failed:', e);
-            }
+          try {
+            // Parity with the canvas url-reuse below: honor the stored
+            // Placement intent so a reused window stranded on a now-disconnected
+            // display (or a 'centered' window) is rescued/re-centered.
+            const hybridInfo = getWindowInfo(existingHybridByUrl.windowId);
+            applyPlacementOnReuse(
+              existingHybridByUrl.baseWin as unknown as BrowserWindow,
+              hybridInfo?.params.placement as Placement | undefined,
+              'hybrid-url-reuse',
+            );
+          } catch (e) {
+            DEBUG && console.log('[hybrid-page-host] placement-on-url-reuse failed:', e);
           }
           // Kernel show intent (§5 step 6A-4) — see the hybrid key-reuse
           // block above: replaces the imperative baseWin.show() and the
@@ -2824,7 +2833,7 @@ export function registerWindowHandlers(): void {
       const existingByUrl = findWindowByUrl(url);
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
-        if (!isHeadless()) {
+        {
           // Display-change safety: read the stored `Placement` intent and
           // let `computePlacement` decide whether to reposition. The
           // stranded-rescue path inside the pure module replaces the
@@ -2836,7 +2845,7 @@ export function registerWindowHandlers(): void {
             'url-reuse',
           );
         }
-        // Machine show intent, OUTSIDE the headless gate (§5 step 6A-4) —
+        // Machine show intent (§5 step 6A-4) —
         // see the keepLive-reuse block above: the backend's WINDOW_SHOWN
         // echo replaces the hand-dispatched mirror that used to cover
         // headless (where the old gate skipped the show seam entirely).

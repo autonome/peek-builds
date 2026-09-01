@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getWindowIdFor, getAppActive } from './window-machine.js';
+import { getWindowIdFor, getAppActive, getKernelExecutorForApp } from './window-machine.js';
 import type { State, WindowId } from './window-kernel.js';
 import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
@@ -25,7 +25,6 @@ import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-
 import { serializeSession, serializeSpaceWorkspaces, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
-import { shouldActivateFocusedOnRestore } from './izui-roles.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
@@ -862,7 +861,7 @@ export async function restoreSessionSnapshot(
   // in-session restore). At cold start the focused descriptor is activated even
   // if the macOS startup dance transiently flipped appFocused false; in-session
   // restore keeps honoring appFocused so a switched-away user isn't yanked back.
-  // See shouldActivateFocusedOnRestore() in izui-roles.ts.
+  // See planRestoreFocus() in window-kernel-executor.ts.
   isColdStart: boolean = false,
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
@@ -1409,12 +1408,13 @@ export async function restoreSessionSnapshot(
       // the same OS state (§4.4 dim 6). Both mirrors are driven by the same two
       // app events, so the value is the same; the machine's is the one the rest
       // of the restore path (stacking, front arbitration) already reads.
+      // The rule and both of its live inputs belong to the executor now
+      // (`window-kernel-executor.ts planRestoreFocus`): app-active is kernel
+      // state, and whether this run is focus-free is the executor's own
+      // injected fact. This seam supplies the one thing neither of them knows —
+      // which restore this is — and reads back the answer.
       const appActive = getAppActive();
-      const willActivate = shouldActivateFocusedOnRestore(
-        isColdStart,
-        appActive,
-        isHeadless(),
-      );
+      const willActivate = getKernelExecutorForApp().shouldRestoreFocus(isColdStart);
       // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
       // ABSENCE of logs (the gated block was silently skipped). Make the
       // decision self-evident in prod main.log for any future occurrence.

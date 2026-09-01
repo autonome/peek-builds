@@ -16,6 +16,7 @@ import { setDebug, __resetDebugFlagsForTest } from './debug-flag.js';
 import {
   WindowKernelExecutor,
   planRaise,
+  planRestoreFocus,
   stackingLevelForLayer,
   type FsSettleOutcome,
 } from './window-kernel-executor.js';
@@ -1348,5 +1349,50 @@ describe('the per-transition trace', () => {
     // `console.log` stay on by design (`window-diag.ts`), so this asserts
     // their absence would be asserting the opposite of that design.
     assert.deepStrictEqual(traceLines(), []);
+  });
+});
+
+describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8f7010a8)', () => {
+  // Moved whole from `izui-roles.test.ts`, where the rule used to live as
+  // `shouldActivateFocusedOnRestore`. Same cases, same reasoning.
+  //
+  // THE FIX: at cold start the macOS startup activation dance fires
+  // did-resign-active mid-restore, so appActive reads false in the post-loop
+  // focused-descriptor block. Pre-fix the block was gated on appActive alone, so
+  // BOTH branches were skipped — the focused window was never raised (z-order
+  // bug) nor activated (not-frontmost/menubar bug). Cold start must activate
+  // anyway.
+  it('cold start activates even when appActive is false (THE FIX)', () => {
+    assert.strictEqual(planRestoreFocus(true, false, false), true);
+  });
+
+  // In-session restore (cold=false) must NOT yank a user who switched away
+  // mid-restore back to Peek.
+  it('in-session restore does NOT activate when appActive is false (don\'t yank a switched-away user)', () => {
+    assert.strictEqual(planRestoreFocus(false, false, false), false);
+  });
+
+  // When the app IS active, activate regardless of cold-start (the happy path,
+  // both cold and in-session).
+  it('activates when appActive is true, regardless of cold-start', () => {
+    assert.strictEqual(planRestoreFocus(false, false, true), true);
+    assert.strictEqual(planRestoreFocus(true, false, true), true);
+  });
+
+  // Headless never steals focus, even at cold start (agent/CI runs stay
+  // accessory — refs headless-no-focus-theft regressions peek 2b55f3af /
+  // d9bb2924). appActive defaults true in headless, but if a test forced it
+  // false, cold start must still NOT activate under headless.
+  it('headless never activates at cold start when appActive is false', () => {
+    assert.strictEqual(planRestoreFocus(true, true, false), false);
+  });
+
+  // Headless with appActive true still activates (appActive dominates) — but in
+  // headless the real OS focus calls are gated downstream by `planRaise`, which
+  // turns every raise into an inactive show. This predicate only encodes the
+  // decision; it stays true here because appActive is the unconditional first
+  // term.
+  it('headless + appActive true returns true (appActive dominates; OS calls gated by planRaise)', () => {
+    assert.strictEqual(planRestoreFocus(false, true, true), true);
   });
 });

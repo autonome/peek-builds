@@ -19,7 +19,6 @@ import {
   planBeforeQuit,
   runDeferredQuitCleanup,
   type QuitCleanupPhase,
-  shouldActivateFocusedOnRestore,
   windowSelfClosesOnBlur,
   hybridResizeDirAt,
   downloadCloseTarget,
@@ -406,46 +405,10 @@ describe('runDeferredQuitCleanup (the re-quit waits for the async cleanup)', () 
   });
 });
 
-describe('shouldActivateFocusedOnRestore (cold-start z-order + frontmost — peek 7bb74c90 / 8f7010a8)', () => {
-  // THE FIX: at cold start the macOS startup activation dance fires
-  // did-resign-active mid-restore, so appFocused reads false in the post-loop
-  // focused-descriptor block. Pre-fix the block was gated on appFocused alone, so
-  // BOTH branches were skipped — the focused window was never raised (z-order
-  // bug) nor activated (not-frontmost/menubar bug). Cold start must activate
-  // anyway.
-  it('cold start activates even when appFocused is false (THE FIX)', () => {
-    assert.strictEqual(shouldActivateFocusedOnRestore(true, false, false), true);
-  });
-
-  // In-session restore (cold=false) must NOT yank a user who switched away
-  // mid-restore back to Peek — the original isAppFocused gate intent.
-  it('in-session restore does NOT activate when appFocused is false (don\'t yank a switched-away user)', () => {
-    assert.strictEqual(shouldActivateFocusedOnRestore(false, false, false), false);
-  });
-
-  // When the app IS focused, activate regardless of cold-start (the happy path,
-  // both cold and in-session).
-  it('activates when appFocused is true, regardless of cold-start', () => {
-    assert.strictEqual(shouldActivateFocusedOnRestore(false, true, false), true);
-    assert.strictEqual(shouldActivateFocusedOnRestore(true, true, false), true);
-  });
-
-  // Headless never steals focus, even at cold start (agent/CI runs stay
-  // accessory — refs headless-no-focus-theft regressions peek 2b55f3af /
-  // d9bb2924). appFocused defaults true in headless, but if a test forced it
-  // false, cold start must still NOT activate under headless.
-  it('headless never activates at cold start when appFocused is false', () => {
-    assert.strictEqual(shouldActivateFocusedOnRestore(true, false, true), false);
-  });
-
-  // Headless with appFocused true still activates (appFocused dominates) — but
-  // in headless the real OS focus calls are gated elsewhere (showHybridHost /
-  // showWindowHeadlessSafe). This predicate only encodes the decision; it stays
-  // true here because appFocused is the unconditional first term.
-  it('headless + appFocused true returns true (appFocused dominates; OS calls gated downstream)', () => {
-    assert.strictEqual(shouldActivateFocusedOnRestore(false, true, true), true);
-  });
-});
+// (The `shouldActivateFocusedOnRestore` block moved to
+// `window-kernel-executor.test.ts` with the rule itself, which is now
+// `planRestoreFocus` — see the note where the function used to live in
+// `izui-roles.ts`.)
 
 describe('spacesPolicyForRole', () => {
   it("returns 'follow' for palette on darwin", () => {

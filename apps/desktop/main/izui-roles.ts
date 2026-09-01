@@ -152,48 +152,14 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
 // replacement for the old reducer's `decideEscape`), with their regression
 // tests ported to `window-escape.test.ts`.
 
-/**
- * Whether the post-loop focused-descriptor block of `restoreSessionSnapshot`
- * should RAISE + ACTIVATE the window that was focused at save time.
- *
- * Two converged user-reported bugs share this gate (peek 7bb74c90 z-order +
- * 8f7010a8 not-frontmost-at-startup). Both reduce to: the focused-descriptor
- * block was gated on `isAppFocused()` alone, and at COLD START the macOS
- * startup "activation dance" fires `did-resign-active` mid-restore
- * (main.ts → coordinator.setAppFocused(false)). So `isAppFocused()` reads
- * FALSE during the post-loop block, both branches are skipped, and the focused
- * window is never moveTop'd (z-order bug) nor activated (menubar/key-window
- * bug). The moveTop()/activate calls were already present — only the gate was
- * wrong.
- *
- * The decision:
- *   - IN-SESSION restore (`coldStart=false`, e.g. the user-triggered "Restore
- *     Previous Session" or `forceRestoreSession`): honor `appFocused`. If the
- *     user switched away mid-restore, do NOT yank them back — preserve the
- *     original isAppFocused gate intent.
- *   - COLD START (`coldStart=true`): Peek is being LAUNCHED and SHOULD own the
- *     foreground, so activate the focused descriptor EVEN IF the startup dance
- *     transiently flipped appFocused false — EXCEPT under headless, where Peek
- *     must NEVER steal the user's focus (agent/CI runs stay accessory; refs the
- *     headless-no-focus-theft regressions peek 2b55f3af / d9bb2924).
- *
- * Pure + deterministic so the cold-start vs in-session distinction is unit-
- * testable without real OS focus (mirrors `shouldRegisterGlobalEscFallback`).
- *
- * @param coldStart   this restore is the app's boot restore (not in-session)
- * @param appFocused  app-active at restore time — the window-state machine's
- *                    `AppWindowState.appActive` (`window-machine.ts
- *                    getAppActive()`). Was `getIzuiCoordinator().isAppFocused()`
- *                    until that third copy was retired.
- * @param headless    the run is headless/CI (focus-free)
- */
-export function shouldActivateFocusedOnRestore(
-  coldStart: boolean,
-  appFocused: boolean,
-  headless: boolean,
-): boolean {
-  return appFocused || (coldStart && !headless);
-}
+// (`shouldActivateFocusedOnRestore` moved to `window-kernel-executor.ts` as
+// `planRestoreFocus`, beside `planRaise`, because that is the layer holding
+// both of its live inputs: app-active is kernel state, and whether the run is
+// focus-free is the executor's own injected fact. `session.ts` asked this
+// module for the rule and then gathered those two itself, which is how
+// app-active came to be read from three places over this decision's history;
+// it asks the executor for the answer now. The rule and its regression tests
+// are unchanged, and both moved whole.)
 
 // `selectTransientSiblingsToClose` + its `TransientSiblingCandidate` shape were
 // retired by the §5 step 9 cutover. The decision lives in the window-kernel

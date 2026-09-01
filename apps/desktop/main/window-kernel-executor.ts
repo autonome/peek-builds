@@ -182,6 +182,44 @@ export function planRaise(record: WindowRecord | undefined, headless: boolean, a
   return 'activating-raise';
 }
 
+/**
+ * Whether restoring a session should put the window that was focused at save
+ * time back in front — the rule `izui-roles.ts shouldActivateFocusedOnRestore`
+ * held, moved here beside `planRaise` because this is the layer that has both
+ * of its inputs.
+ *
+ * WHY HERE AND NOT IN THE KERNEL. The kernel models window facts, and one of
+ * these two is not one: whether the process runs focus-free is a property of
+ * how the app was started, which this executor already carries injected
+ * (`headless`) precisely so it is a value rather than an environment read
+ * buried in a branch. The other input, whether Peek is the active app, IS a
+ * kernel fact and is read straight off the state — the point of the move is
+ * that `session.ts` no longer assembles the pair itself.
+ *
+ * THE RULE:
+ *   - Restoring while the user is IN Peek puts the saved window back in front.
+ *   - Restoring at LAUNCH does too, even though the app may momentarily read as
+ *     inactive: macOS fires a resign partway through starting up, and reading
+ *     that as "the user left" is what left the restored window neither raised
+ *     nor frontmost (the two converged reports, peek 7bb74c90 + 8f7010a8).
+ *   - Otherwise nothing: the user started a restore and then went elsewhere,
+ *     and yanking them back is worse than leaving the windows where they land.
+ *
+ * HEADLESS BARS THE LAUNCH CASE ONLY, and that narrowness is deliberate rather
+ * than an oversight. An agent or CI run must never take the foreground from
+ * whatever the person is actually using, and the launch case is the one that
+ * would: it acts DESPITE the app reading as inactive. A run that is already
+ * active is not stealing anything by putting its own window in front, and
+ * suppressing that would change what the headless suite restores.
+ *
+ * `coldStart` is the caller's to supply — the kernel has no notion of which
+ * restore this is, the same way it takes the cold-start focus latch's target on
+ * trust (`ArmColdStartFocus`).
+ */
+export function planRestoreFocus(coldStart: boolean, headless: boolean, appActive: boolean): boolean {
+  return appActive || (coldStart && !headless);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The executor
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,6 +260,18 @@ export class WindowKernelExecutor {
   /** The current state. Read-only by contract — `State` and its records are frozen by convention, not by `Object.freeze`. */
   getState(): State {
     return this.state;
+  }
+
+  /**
+   * Whether this restore should put the window that was focused at save time
+   * back in front — `planRestoreFocus` against the live state and this
+   * executor's own run mode. `session.ts` asks for the answer instead of
+   * gathering the inputs itself, which is the whole point: app-active had been
+   * read from three different places over this decision's history, and this is
+   * the one that drives the raise.
+   */
+  shouldRestoreFocus(coldStart: boolean): boolean {
+    return planRestoreFocus(coldStart, this.headless, this.state.appActive);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
