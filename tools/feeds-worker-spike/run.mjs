@@ -288,10 +288,12 @@ await phase('find or create the feed subscription', async () => {
 
 // Two polls back to back, counting the writes each one makes. The second should
 // write nothing: `pollFeed()` reads back the existing entries and skips any guid
-// it already has. It can only do that for the entries it can see, and
-// `fetchEvents()` in `apps/server/mcp-items.js` hands back at most 20 whatever
-// the caller asks for — so a feed longer than 20 entries re-adds the invisible
-// tail on every poll, forever. The number below is that leak, measured.
+// it already has, which it can only do for the entries it can see. Reading them
+// through `GET /mcp/items/:id?events=N` capped that at 20 whatever the caller
+// asked for, so a feed longer than 20 entries re-added the invisible tail on
+// every poll, forever. `queryItemEvents()` in worker-api.mjs now reads through
+// `GET /mcp/items/:id/events`, which pages to 200. The number below is what is
+// left of that leak, measured.
 const before1 = callCount('datastore.addItemEvent');
 await phase('pollAllFeeds() — first', () => mod.pollAllFeeds());
 mark('first poll complete');

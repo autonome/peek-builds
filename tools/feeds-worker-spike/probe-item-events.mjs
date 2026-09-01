@@ -64,15 +64,17 @@ const embedded = await store.getItem(item.id, { events: 200 });
 console.log(`listEvents returned ${paged.length}; embedded ?events= returned ${embedded.events.length}`);
 console.log(`newest event: ${JSON.stringify(paged[0])}`);
 
-// `listEvents()` in `apps/server/mcp-items.js` selects `content as type`, so a
-// caller that supplies `content` reads it back in the `type` field and the type
-// label it wrote is nowhere in the response. Reported rather than worked around.
+// `listEvents()` in `apps/server/mcp-items.js` returns the `content` column
+// under its own name. It used to alias it to `type`, which handed a caller that
+// supplied content its own string back in a field named `type` while the label
+// it wrote was nowhere in the response — the state this line reports on.
 const newest = paged[0];
-const typeLooksLikeContent = typeof newest?.type === 'string' && newest.type.startsWith('http');
+const contentSurvived = newest?.content === `https://example.invalid/entry-${ENTRIES}`;
+const aliasedToType = typeof newest?.type === 'string' && newest.type.startsWith('http');
 console.log(
-  typeLooksLikeContent
-    ? 'NOTE: `type` in the response is the content column — the event type label did not survive.'
-    : 'The event type label survived the round trip.'
+  aliasedToType
+    ? 'NOTE: `type` in the response is the content column — the paged read is still aliasing.'
+    : `content returned under its own name: ${contentSurvived}`
 );
 
 const occurredAtHeld = newest?.occurredAt === publishedAt + ENTRIES * 1000;

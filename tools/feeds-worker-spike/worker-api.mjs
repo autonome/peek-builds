@@ -57,48 +57,38 @@ function fail(error) {
 }
 
 /**
- * The type name every feed entry is recorded under.
+ * The type label every feed entry is written under.
  *
- * `POST /mcp/items/:id/events` (`apps/server/index.js`, reaching
- * `apps/server/mcp-items.js recordEvent()`) writes the event's type name into
- * the row's `content` column, hardcodes `value` to 0 and stamps `occurredAt`
- * with the server's clock. The only field that survives from the caller is the
- * `value` string, which lands in `metadata.notes`. A feed entry therefore has to
- * travel as one JSON string inside that field.
+ * `POST /mcp/items/:id/events` requires a `type`, and the tile API's
+ * `addItemEvent(itemId, options)` has no field that corresponds to one — its
+ * options are content/value/occurredAt/metadata (`addItemEvent()` in
+ * `apps/desktop/main/datastore.ts`). The constant fills the required field. It
+ * is not stored: `item_events` has one column for a row's content and a row's
+ * type, and `recordEvent()` in `apps/server/mcp-items.js` resolves it as
+ * `content ?? type`, so a write that supplies content — every write here does —
+ * keeps the content and drops the label. Nothing reads it back, which is why
+ * nothing below filters on it.
  */
 const ENTRY_EVENT_TYPE = 'feed-entry';
 
-function encodeEntryEvent(options) {
-  return JSON.stringify({
-    content: options.content ?? '',
-    occurredAt: options.occurredAt ?? Date.now(),
-    metadata: options.metadata ?? '{}',
-  });
-}
-
-function decodeEntryEvent(event, itemId) {
-  // `fetchEvents()` in `apps/server/mcp-items.js` returns `metadata` as a raw
-  // JSON string while the item's own metadata comes back parsed — the asymmetry
-  // is the server's, not this adapter's.
-  let notes = null;
-  try {
-    notes = JSON.parse(event.metadata || '{}').notes;
-  } catch { /* leave null */ }
-
-  let payload = null;
-  if (typeof notes === 'string') {
-    try { payload = JSON.parse(notes); } catch { /* leave null */ }
-  }
-
+/**
+ * One row from `GET /mcp/items/:id/events` in the shape the tile API's
+ * `queryItemEvents()` returns — `content`, `occurredAt` and `metadata` are the
+ * columns of those names on both sides, so this is a rename of `itemId` onto
+ * the row and nothing more.
+ *
+ * `metadata` stays a raw JSON string, matching the local path
+ * (`queryItemEvents()` in `apps/desktop/main/datastore.ts` selects the column
+ * unparsed) as well as the route.
+ */
+function toEntryEvent(event, itemId) {
   return {
     id: event.id,
     itemId,
-    content: payload?.content ?? '',
-    occurredAt: payload?.occurredAt ?? event.occurredAt,
-    metadata: payload?.metadata ?? '{}',
-    // What the row actually holds, kept alongside so a caller can see the loss.
-    serverOccurredAt: event.occurredAt,
-    serverValue: event.value,
+    content: event.content ?? '',
+    occurredAt: event.occurredAt,
+    metadata: event.metadata ?? '{}',
+    value: event.value,
   };
 }
 
@@ -164,11 +154,17 @@ function buildDatastore(store) {
     async addItemEvent(itemId, options = {}) {
       recordGap(
         'datastore.addItemEvent',
-        'approximated',
-        'PeekStore.recordEvent(id, type, value) is the only write path. The row\'s content column receives the type name, value is hardcoded to 0 and occurredAt is the server clock, so the entry\'s link, publication time and metadata all have to travel as one JSON string in metadata.notes.'
+        'exact',
+        'PeekStore.recordEvent(id, type, value, {content, occurredAt, metadata}) stores content, occurredAt and metadata in the columns of those names, the same three the local addItemEvent() writes. The route\'s required `type` has no counterpart in the tile API and is not stored; `value` must be a number or empty when metadata is supplied, which is what feeds sends.'
       );
       try {
-        return ok(await store.recordEvent(itemId, ENTRY_EVENT_TYPE, encodeEntryEvent(options)));
+        return ok(
+          await store.recordEvent(itemId, ENTRY_EVENT_TYPE, options.value ?? '', {
+            content: options.content,
+            occurredAt: options.occurredAt,
+            metadata: options.metadata,
+          })
+        );
       } catch (err) {
         return fail(err);
       }
@@ -178,7 +174,7 @@ function buildDatastore(store) {
       recordGap(
         'datastore.queryItemEvents',
         'approximated',
-        'No route queries item events on their own. The only read path is GET /mcp/items/:id?events=N, which costs one request per item and is capped at 20 events by fetchEvents() regardless of the requested limit.'
+        'PeekStore.listEvents(id, {limit}) reads an item\'s events on their own, up to 200 — the local query has no cap but nothing here asks for more. It still costs one request per item, and since/until/order have no query parameters on the route, so they are applied to the rows after the read rather than in SQL.'
       );
       const ids = filter.itemIds ?? (filter.itemId ? [filter.itemId] : []);
       if (ids.length === 0) return ok([]);
@@ -186,10 +182,10 @@ function buildDatastore(store) {
       try {
         const events = [];
         for (const id of ids) {
-          const item = await store.getItem(id, { events: filter.limit ?? 20 });
-          for (const event of item?.events ?? []) {
-            if (event.type !== ENTRY_EVENT_TYPE) continue;
-            events.push(decodeEntryEvent(event, id));
+          for (const event of await store.listEvents(id, { limit: filter.limit })) {
+            if (filter.since !== undefined && event.occurredAt < filter.since) continue;
+            if (filter.until !== undefined && event.occurredAt > filter.until) continue;
+            events.push(toEntryEvent(event, id));
           }
         }
         events.sort((a, b) => (filter.order === 'asc' ? a.occurredAt - b.occurredAt : b.occurredAt - a.occurredAt));
@@ -202,12 +198,14 @@ function buildDatastore(store) {
     async deleteItemEvents(itemId) {
       recordGap(
         'datastore.deleteItemEvents',
-        'impossible',
-        'The /mcp/* API has no route that deletes an item event, individually or in bulk. Unsubscribing from a feed cannot clean up its entries.'
+        'exact',
+        'DELETE /mcp/items/:id/events removes every event under one item and reports the count, the same operation as the local deleteItemEvents().'
       );
-      throw new Error(
-        `datastore.deleteItemEvents(${itemId}) has no remote route — the /mcp/* API cannot delete item events.`
-      );
+      try {
+        return ok(await store.deleteEvents(itemId));
+      } catch (err) {
+        return fail(err);
+      }
     },
   };
 }
