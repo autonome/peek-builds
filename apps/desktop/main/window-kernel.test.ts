@@ -4325,6 +4325,52 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+  it('a REPEATED non-stale machine echo of the same op needs no kernel change — a page-host has two native focus producers that can both report it', () => {
+    // electron-window-backend.ts attachNativeListeners: a page-host's host
+    // BaseWindow 'focus' and its content WebContentsView 'focus' both call
+    // takeFocusCause(id) for the same window id, and a single machine-issued
+    // focus operation legitimately provokes both as echoes of the one op — so
+    // the kernel must see two OsFocusGained reports carrying the SAME opSeq
+    // and must not treat the second one specially.
+    const hostA = wid(1);
+    const peek2 = wid(2);
+    const registered = fold([reg(1, undefined, 'page-host'), reg(2, 'quick-view'), show(1), show(2)], initialState());
+    // hostA already holds key from a prior op (opSeq 28) — the state a
+    // page-host sits in the instant its SECOND native focus producer echoes
+    // in, having already reported via its first.
+    const armed: State = {
+      ...registered,
+      key: hostA,
+      opSeqCounter: 28,
+      order: registered.order.map((w) => (w.id === hostA ? { ...w, lastOpSeq: 28 } : w)),
+    };
+    const cause: FocusCause = { kind: 'machine', opSeq: 28 };
+
+    const firstEcho = evolve(armed, { type: 'OsFocusGained', id: hostA, cause });
+    assert.strictEqual(isStaleSelfEcho(firstEcho, hostA, cause), false, 'opSeq 28 matches lastOpSeq 28 — not stale');
+    assert.deepStrictEqual(selectTransientAutoclose(firstEcho, hostA, cause), [], 'peek2, newer than hostA, survives the first echo');
+
+    const secondEcho = evolve(firstEcho, { type: 'OsFocusGained', id: hostA, cause });
+    assert.strictEqual(isStaleSelfEcho(secondEcho, hostA, cause), false, 'still not stale — the second producer echoes the same op, not an older one');
+    assert.deepStrictEqual(
+      selectTransientAutoclose(secondEcho, hostA, cause),
+      [],
+      'peek2 survives the REPEATED echo too — selectTransientAutoclose re-derives the ordering test fresh from cause.kind and focuser.openSeq on every call, so a second machine-labelled report of the same op needs no kernel change',
+    );
+
+    // Fails first, proving this is a real assertion and not a vacuous one:
+    // label the SECOND echo `world` instead — exactly what the pre-fix
+    // `takeFocusCause` produced, by deleting `pendingSelfCausedFocus` on its
+    // first read and returning `{ kind: 'world' }` to the second native
+    // producer — and peek2 IS dismissed. The defect lived in the executor
+    // (electron-window-backend.ts takeFocusCause), not here.
+    assert.deepStrictEqual(
+      selectTransientAutoclose(secondEcho, hostA, { kind: 'world' }),
+      [peek2],
+      'a world-labelled second echo sweeps peek2 — this is the live defect the backend fix prevents',
+    );
+  });
+
 });
 
 describe('window-kernel: isNonParentRole', () => {

@@ -346,7 +346,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     op on the same window overwrites the token — the latest op is the one
    *     whose echo is in flight, and an older token surviving would label that
    *     echo stale.
-   *   - CONSUMED (one shot) by `takeFocusCause` in the `'focus'` listeners.
+   *   - READ, NOT CONSUMED, by `takeFocusCause` in the `'focus'` listeners. A
+   *     page-host has TWO independent native focus producers for the same
+   *     window id — the host `BaseWindow`'s own `'focus'` and its content
+   *     `WebContentsView`'s `'focus'` — and a single machine-issued focus
+   *     operation legitimately provokes both as echoes of the one op. Deleting
+   *     the arming on the first read left the second echo unarmed and
+   *     mislabelled `world`, which is what let a just-opened peek get swept
+   *     (`window-kernel.ts selectTransientAutoclose`'s `newer-than-focuser`
+   *     exemption disarms on a `world` cause) as though a real user click had
+   *     landed elsewhere. The arming survives reads and is cleared only by the
+   *     edges below.
    *   - DROPPED on the window's own `blur` and `closed`: focus went somewhere
    *     else, so whatever arrives next is a NEW event and not our echo. Without
    *     this a never-echoed arming (a `focus()` on a window that already held
@@ -1126,11 +1136,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * Consume the arming for `id` and report the provenance of the focus that just
-   * arrived: `machine` (with the op token) when this backend was expecting it,
-   * `world` otherwise. One shot — a second focus with nothing armed is `world`,
-   * which is what makes a self-caused echo unable to spend a window's "first real
-   * focus".
+   * Report the provenance of the focus that just arrived: `machine` (with the
+   * op token) when this backend is expecting it, `world` otherwise. READS the
+   * arming without deleting it — a page-host has two independent native focus
+   * producers for the same window id (the host `BaseWindow`'s `'focus'` and its
+   * content `WebContentsView`'s `'focus'`), and one machine-issued focus
+   * operation legitimately provokes both, each calling this. Deleting on the
+   * first read would leave the second echo unarmed and mislabel it `world`. The
+   * arming is cleared only by the lifecycle edges `pendingSelfCausedFocus`
+   * documents: the window's own `blur`, its `closed`, and supersession by the
+   * next `armSelfCausedFocus`.
    */
   private takeFocusCause(id: WindowId): FocusCause {
     const opSeq = this.pendingSelfCausedFocus.get(id);
@@ -1138,7 +1153,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       wmLog('focus-cause-taken', { id, kind: 'world' });
       return { kind: 'world' };
     }
-    this.pendingSelfCausedFocus.delete(id);
     wmLog('focus-cause-taken', { id, kind: 'machine', opSeq });
     return { kind: 'machine', opSeq };
   }
