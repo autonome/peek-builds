@@ -13,7 +13,8 @@
  */
 
 import { spawn } from 'child_process';
-import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
+import { createRequire } from 'module';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -26,9 +27,15 @@ import {
   DATASTORE_VERSION as SERVER_DATASTORE_VERSION,
   PROTOCOL_VERSION as SERVER_PROTOCOL_VERSION,
 } from '../../apps/server/version.js';
+import {
+  initDatabase as initDesktopDatabase,
+  closeDatabase as closeDesktopDatabase,
+  isSyncDisabledDueToVersion,
+} from '../../apps/desktop/dist/main/datastore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
+const require = createRequire(import.meta.url);
 const TEST_PORT = 3460;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
@@ -379,223 +386,178 @@ async function test8_bothNoHeaders() {
 
 // ==================== Tests: Database Version ====================
 //
-// These tests verify the version check logic that runs in both desktop (datastore.ts)
-// and server (db.js), replicated inline against a node:sqlite DatabaseSync so this
-// file has no dependency on better-sqlite3 (which desktop still needs, but compiled
-// for Electron's Node version — not importable from plain Node here).
-//
-// The code under test (in datastore.ts) does:
-//   1. Read datastore_version from feature_settings
-//   2. If stored > code: disable sync (downgrade detected)
-//   3. If stored < code: update stored version (upgrade)
-//   4. Write current version to feature_settings
+// Drives the real checkAndWriteDatastoreVersion() in datastore.ts through its actual
+// entry point rather than a restatement of it. That function is module-private, takes
+// no arguments, and operates on the module-level db — so it's exercised the way
+// production code exercises it: through initDatabase() (compiled to
+// apps/desktop/dist/main/datastore.js, which has no electron import and runs fine
+// under plain Node). Its outcome is observable two ways: the feature_settings row it
+// writes or leaves alone, and the exported isSyncDisabledDueToVersion(). Each case
+// opens a temp sqlite file via initDatabase(), closes it, tampers with the stored
+// feature_settings row directly (simulating a database left behind by a different
+// binary version), reopens via initDatabase() again, and asserts on both observables.
 
 const CODE_DATASTORE_VERSION = DESKTOP_DATASTORE_VERSION; // Matches apps/desktop/version.ts
 
-function createTestDesktopDb(dbPath) {
-  const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode = WAL');
-
-  // Create the feature_settings table (same as desktop schema)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS feature_settings (
-      id TEXT PRIMARY KEY,
-      featureId TEXT NOT NULL,
-      key TEXT NOT NULL,
-      value TEXT,
-      updatedAt INTEGER
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_settings_unique
-      ON feature_settings(featureId, key);
-  `);
-
-  return db;
+async function withTempDesktopDb(fn) {
+  const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-db-'));
+  const dbPath = join(tempDir, 'test.db');
+  try {
+    await fn(dbPath);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 /**
- * Replicate the checkAndWriteDatastoreVersion() logic from datastore.ts
- * Returns { syncDisabled: boolean }
+ * Read back the stored datastore_version the same way checkAndWriteDatastoreVersion()
+ * decodes it (JSON.parse first, bare parseInt as a fallback for legacy-encoded
+ * values) — an assertion helper reading the outcome, not a restatement of the
+ * version-comparison logic under test.
  */
-function checkAndWriteDatastoreVersion(db, codeVersion = CODE_DATASTORE_VERSION) {
+function readStoredVersion(db) {
   const row = db.prepare(`
     SELECT value FROM feature_settings
     WHERE featureId = 'system' AND key = 'datastore_version'
   `).get();
-
-  if (row) {
-    let storedVersion;
-    try {
-      storedVersion = parseInt(JSON.parse(row.value), 10);
-    } catch {
-      storedVersion = parseInt(row.value, 10);
-    }
-
-    if (storedVersion > codeVersion) {
-      // Downgrade detected
-      return { syncDisabled: true };
-    }
+  if (!row) return null;
+  try {
+    return parseInt(JSON.parse(row.value), 10);
+  } catch {
+    return parseInt(row.value, 10);
   }
+}
 
-  // Write current version
-  db.prepare(`
+/**
+ * Overwrite the stored feature_settings row directly in sqlite, bypassing the
+ * desktop code entirely — simulates a database left behind by a different binary
+ * version. `encodedValue` is written verbatim so callers choose the encoding
+ * (JSON.stringify(n), or a bare/legacy numeral to exercise the parseInt fallback).
+ */
+function tamperStoredVersion(dbPath, encodedValue) {
+  const raw = new DatabaseSync(dbPath);
+  raw.prepare(`
     INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'system', 'datastore_version', ?, ?)
-  `).run('system-datastore_version', JSON.stringify(codeVersion), Date.now());
-
-  return { syncDisabled: false };
+  `).run('system-datastore_version', encodedValue, Date.now());
+  raw.close();
 }
 
 // Test 9: Version is written to feature_settings after init
 async function test9_initWritesVersion() {
-  const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-db-'));
-  const dbPath = join(tempDir, 'test.db');
-
-  const db = createTestDesktopDb(dbPath);
-  const result = checkAndWriteDatastoreVersion(db);
-
-  // Verify version was written
-  const row = db.prepare(`
-    SELECT value FROM feature_settings
-    WHERE featureId = 'system' AND key = 'datastore_version'
-  `).get();
-
-  assert(row, 'datastore_version should be stored in feature_settings');
-
-  let storedVersion;
-  try {
-    storedVersion = parseInt(JSON.parse(row.value), 10);
-  } catch {
-    storedVersion = parseInt(row.value, 10);
-  }
-  assert(storedVersion === CODE_DATASTORE_VERSION, `Stored version should be ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
-  assert(result.syncDisabled === false, 'Sync should not be disabled on fresh init');
-
-  db.close();
-  await rm(tempDir, { recursive: true, force: true });
+  await withTempDesktopDb(async (dbPath) => {
+    const db = initDesktopDatabase(dbPath);
+    const storedVersion = readStoredVersion(db);
+    assert(storedVersion === CODE_DATASTORE_VERSION, `Stored version should be ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
+    assert(isSyncDisabledDueToVersion() === false, 'Sync should not be disabled on fresh init');
+    closeDesktopDatabase();
+  });
 }
 
 // Test 10: Stored version equals code version — sync enabled normally
 async function test10_versionMatch() {
-  const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-match-'));
-  const dbPath = join(tempDir, 'test.db');
+  await withTempDesktopDb(async (dbPath) => {
+    // First init writes the current version; a second init on the same file
+    // simulates an app restart with no version change in between.
+    initDesktopDatabase(dbPath);
+    closeDesktopDatabase();
 
-  const db = createTestDesktopDb(dbPath);
-
-  // Write the code version (simulating a previous run)
-  checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
-
-  // Check again (simulating app restart with same version)
-  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
-  assert(result.syncDisabled === false, 'Sync should NOT be disabled when versions match');
-
-  db.close();
-  await rm(tempDir, { recursive: true, force: true });
+    const db = initDesktopDatabase(dbPath);
+    assert(isSyncDisabledDueToVersion() === false, 'Sync should NOT be disabled when versions match');
+    const storedVersion = readStoredVersion(db);
+    assert(storedVersion === CODE_DATASTORE_VERSION, `Stored version should stay ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
+    closeDesktopDatabase();
+  });
 }
 
 // Test 11: Stored version > code version (simulate downgrade) — sync disabled
 async function test11_downgradeDetected() {
-  const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-downgrade-'));
-  const dbPath = join(tempDir, 'test.db');
+  await withTempDesktopDb(async (dbPath) => {
+    initDesktopDatabase(dbPath);
+    closeDesktopDatabase();
 
-  const db = createTestDesktopDb(dbPath);
+    // A newer binary wrote a version past what this code knows about. Built off
+    // the code version rather than a hardcoded literal so this stays a genuine
+    // downgrade across future version bumps.
+    const newerVersion = CODE_DATASTORE_VERSION + 1;
+    tamperStoredVersion(dbPath, JSON.stringify(newerVersion));
 
-  // Simulate a newer version having written version 99
-  db.prepare(`
-    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-    VALUES (?, 'system', 'datastore_version', ?, ?)
-  `).run('system-datastore_version', JSON.stringify(99), Date.now());
+    const db = initDesktopDatabase(dbPath);
+    assert(isSyncDisabledDueToVersion() === true, `Sync should be disabled when stored version (${newerVersion}) > code version (${CODE_DATASTORE_VERSION})`);
 
-  // Now run the check with the code version (downgrade scenario — 99 stays well
-  // above any realistic code version)
-  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
-  assert(result.syncDisabled === true, `Sync should be disabled when stored version (99) > code version (${CODE_DATASTORE_VERSION})`);
-
-  // Verify the stored version was NOT overwritten
-  const row = db.prepare(`
-    SELECT value FROM feature_settings
-    WHERE featureId = 'system' AND key = 'datastore_version'
-  `).get();
-  let storedVersion;
-  try {
-    storedVersion = parseInt(JSON.parse(row.value), 10);
-  } catch {
-    storedVersion = parseInt(row.value, 10);
-  }
-  assert(storedVersion === 99, `Stored version should still be 99 (not overwritten), got ${storedVersion}`);
-
-  db.close();
-  await rm(tempDir, { recursive: true, force: true });
+    const storedVersion = readStoredVersion(db);
+    assert(storedVersion === newerVersion, `Stored version should still be ${newerVersion} (not overwritten), got ${storedVersion}`);
+    closeDesktopDatabase();
+  });
 }
 
 // Test 12: Stored version < code version (simulate upgrade) — version updated
 async function test12_upgradeDetected() {
-  const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-upgrade-'));
-  const dbPath = join(tempDir, 'test.db');
+  await withTempDesktopDb(async (dbPath) => {
+    initDesktopDatabase(dbPath);
+    closeDesktopDatabase();
 
-  const db = createTestDesktopDb(dbPath);
+    // An older binary's version is still on disk.
+    const olderVersion = Math.max(CODE_DATASTORE_VERSION - 1, 0);
+    tamperStoredVersion(dbPath, JSON.stringify(olderVersion));
 
-  // Simulate an older version having written version 0
-  db.prepare(`
-    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-    VALUES (?, 'system', 'datastore_version', ?, ?)
-  `).run('system-datastore_version', JSON.stringify(0), Date.now());
+    const db = initDesktopDatabase(dbPath);
+    assert(isSyncDisabledDueToVersion() === false, 'Sync should NOT be disabled after upgrade');
 
-  // Now run the check with the code version (upgrade scenario)
-  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
-  assert(result.syncDisabled === false, 'Sync should NOT be disabled after upgrade');
+    const storedVersion = readStoredVersion(db);
+    assert(storedVersion === CODE_DATASTORE_VERSION, `Version should be updated to ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
+    closeDesktopDatabase();
+  });
+}
 
-  // Verify version was updated
-  const row = db.prepare(`
-    SELECT value FROM feature_settings
-    WHERE featureId = 'system' AND key = 'datastore_version'
-  `).get();
-  let storedVersion;
-  try {
-    storedVersion = parseInt(JSON.parse(row.value), 10);
-  } catch {
-    storedVersion = parseInt(row.value, 10);
-  }
-  assert(storedVersion === CODE_DATASTORE_VERSION, `Version should be updated to ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
+// Test 13: Stored version encoded in a form JSON.parse rejects (a bare numeral with
+// a leading zero) but parseInt still recovers — proves the real fallback branch runs,
+// not just the JSON.stringify() encoding every current write actually produces.
+async function test13_legacyEncodedVersionFallback() {
+  await withTempDesktopDb(async (dbPath) => {
+    initDesktopDatabase(dbPath);
+    closeDesktopDatabase();
 
-  db.close();
-  await rm(tempDir, { recursive: true, force: true });
+    const newerVersion = CODE_DATASTORE_VERSION + 1;
+    const legacyEncoded = '0' + String(newerVersion);
+    assert(
+      (() => { try { JSON.parse(legacyEncoded); return false; } catch { return true; } })(),
+      `Test setup error: "${legacyEncoded}" should not be valid JSON`
+    );
+    tamperStoredVersion(dbPath, legacyEncoded);
+
+    const db = initDesktopDatabase(dbPath);
+    assert(isSyncDisabledDueToVersion() === true, `Sync should be disabled when the legacy-encoded stored version ("${legacyEncoded}" → ${newerVersion}) > code version (${CODE_DATASTORE_VERSION})`);
+
+    const row = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'system' AND key = 'datastore_version'
+    `).get();
+    assert(row.value === legacyEncoded, `Stored value should still be the untouched legacy encoding "${legacyEncoded}", got "${row.value}"`);
+    closeDesktopDatabase();
+  });
 }
 
 // ==================== Server DB Version Test ====================
 
 async function testServerDBVersion() {
-  // The server writes datastore_version to its settings table during initializeSchema().
-  // We verify by creating a connection and checking the settings table.
+  // Drives the real schema initialization in apps/server/db.js. db.js reads its
+  // DATA_DIR from the environment once, at module load — so it's set before the
+  // first require() below rather than passed as an argument.
   const tempDir = await mkdtemp(join(tmpdir(), 'peek-server-db-version-'));
-  const profileDir = join(tempDir, 'testuser', 'profiles', 'default');
-  await mkdir(profileDir, { recursive: true });
-  const dbPath = join(profileDir, 'datastore.sqlite');
+  process.env.DATA_DIR = tempDir;
 
-  // Use the server's db module to create a connection
-  // Since db.js uses DATA_DIR and userId, we simulate by creating the DB directly
-  const serverDb = new DatabaseSync(dbPath);
-  serverDb.exec('PRAGMA journal_mode = WAL');
+  const serverDb = require('../../apps/server/db.js');
+  const userId = 'version-compat-test-user';
+  const profileId = 'default';
 
-  // Create settings table (as server does)
-  serverDb.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
+  // getSetting() -> getConnection() -> initializeSchema(), the same path a real
+  // request takes on its first connection to a profile.
+  const value = serverDb.getSetting(userId, 'datastore_version', profileId);
+  assert(value, 'Server should write datastore_version to settings');
+  assert(value === String(SERVER_DATASTORE_VERSION), `Server datastore_version should be "${SERVER_DATASTORE_VERSION}", got "${value}"`);
 
-  // Write version (as server does in initializeSchema)
-  serverDb.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
-    "datastore_version",
-    String(SERVER_DATASTORE_VERSION)
-  );
-
-  // Verify
-  const row = serverDb.prepare("SELECT value FROM settings WHERE key = 'datastore_version'").get();
-  assert(row, 'Server should write datastore_version to settings');
-  assert(row.value === String(SERVER_DATASTORE_VERSION), `Server datastore_version should be "${SERVER_DATASTORE_VERSION}", got "${row.value}"`);
-
-  serverDb.close();
+  serverDb.closeConnection(userId, profileId);
   await rm(tempDir, { recursive: true, force: true });
 }
 
@@ -704,6 +666,7 @@ async function main() {
     await runTest('#10: Stored version matches code — sync enabled', test10_versionMatch);
     await runTest('#11: Downgrade detected — sync disabled', test11_downgradeDetected);
     await runTest('#12: Upgrade detected — version updated', test12_upgradeDetected);
+    await runTest('#13: Legacy-encoded stored version — parseInt fallback', test13_legacyEncodedVersionFallback);
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

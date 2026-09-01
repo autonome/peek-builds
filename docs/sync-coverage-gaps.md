@@ -187,13 +187,17 @@ treatment as every other column — unscheduled work, since no current client hi
 ## 8. What the sync test suites can and cannot catch
 
 A green suite only means something if it is known what that suite is able to fail
-on. Five suites carry sync coverage; this is what each one exercises for real and
+on. Six suites carry sync coverage; this is what each one exercises for real and
 what is invisible to it by construction. The occasion for writing it down:
 `sync-e2e.test.js` was 2 passed / 11 failed for two months (2026-06-24 to
 2026-08-18) while every other suite stayed green, because the only suite able to
 see that class of fault was the broken one.
 
-All five pass as of 2026-08-18: 41, 13, 9, 8 and 16 cases respectively.
+All six pass as of 2026-09-01: 41, 17, 9, 8, 17 and 7 cases respectively.
+
+A worktree needs `yarn workspace @peek/desktop build` before the two suites that
+import `apps/desktop/dist/main/` can run at all — without it they die on
+`ERR_MODULE_NOT_FOUND` rather than reporting a failure against the code.
 
 ### `apps/desktop/main/sync.test.ts` — 41 cases
 
@@ -221,7 +225,7 @@ handler's stage order changes, the replay still passes.
 Covers all three recent changes: `pushedAt` per-event stamping, the parked-item
 columns, and the batched push including its 404 fallback.
 
-### `packages/integration-tests/sync-e2e.test.js` — 13 cases
+### `packages/integration-tests/sync-e2e.test.js` — 17 cases
 
 `yarn test:sync:e2e`. The only suite where a real desktop client and a real server
 process talk over a real socket: it spawns `apps/server/index.js` on port 3458 and
@@ -229,17 +233,19 @@ drives the compiled `sync.ts` against it. This is the suite that can see a
 client/server disagreement, and the reason step 1 of restoring the foundation was
 repairing it rather than deleting it.
 
-Three limits:
+One limit remains:
 
 - Authentication is bypassed. The server is spawned with `E2E_TEST=true`, which
   short-circuits `deviceMiddleware` and `multiUserMiddleware` in
-  `apps/server/auth.js`, so a credential-handling mismatch on the wire is invisible.
-- Tag and event stages are only incidental. No test calls `pushTagsToServer`,
-  `pullTagsFromServer`, `pushEventsToServer` or `pullEventsFromServer`, and no test
-  requests `/tags/since` or `/events/since`; those stages run only inside the two
-  tests that call `syncAll()` (`testBidirectionalSync`, `testIncrementalSync`), on
-  whatever data those tests happen to hold. `testTagsetSync` covers the `tags`
-  array on `/items`, not the tag-metadata routes.
+  `apps/server/auth.js`, so a credential-handling mismatch on the wire is invisible
+  *here*. `sync-auth-e2e.test.js` below is the suite that covers it.
+
+Tag and event stages are no longer incidental. `testTagStagesOverSocket()` and
+`testEventStagesOverSocket()` call the real `pushTagsToServer()` /
+`pullTagsFromServer()` / `pushEventsToServer()` / `pullEventsFromServer()` and
+confirm what crossed the wire by requesting `/tags/since` and `/events/since`
+directly, in both directions. `testTagsetSync()` still covers only the `tags` array
+on `/items`, which is a different thing from the tag-metadata routes.
 Two cases used to print a pass on every path and never inject a failure. They
 were replaced with assertions of the behaviour that actually holds now:
 `testDeletionTombstonePropagates()` proves a soft delete reaches the server as a
@@ -249,9 +255,15 @@ were replaced with assertions of the behaviour that actually holds now:
 edited. That makes the parked-item mechanism the one recent change proven over a
 real socket rather than only in-process.
 
-`pushedAt` and the `/items/batch` 404 fallback are still in-process only. The
-batch route runs here as an implementation detail of `pushToServer()`, but the
-fallback cannot be reached, because the spawned server always has the route.
+`pushedAt` and the `/items/batch` 404 fallback are now proven here too.
+`testEventPushedAtStamping()` asserts a delivered event's `pushedAt` moves off zero
+while an event whose parent item has no `syncId` stays at zero — the stranding
+invariant §2 describes. The 404 fallback cannot be reached against the spawned
+server, which always has the route, so `testBatchFallbackWhenRouteMissing()` puts a
+`node:http` proxy in front that answers `POST /items/batch` with a 404 and forwards
+everything else. The proxy counts what it sees, and the test asserts on those counts
+rather than on the items alone: asserting only that the items arrive would pass just
+as well if the batch route had never been attempted.
 
 ### `packages/integration-tests/sync-integration.test.js` — 9 cases
 
@@ -271,7 +283,7 @@ resolution and isolation, including that an unregistered UUID gets its own profi
 rather than falling into `default`. Only `/items` is touched; no tag or event
 stages, no batching, no sync-state bookkeeping.
 
-### `packages/integration-tests/sync-version-compat.test.js` — 16 cases
+### `packages/integration-tests/sync-version-compat.test.js` — 17 cases
 
 `yarn test:version-compat`. Two mechanisms in one file:
 
@@ -281,14 +293,34 @@ stages, no batching, no sync-state bookkeeping.
   `X-Peek-Datastore-Version` and friends by hand, not `serverFetch()`. It proves
   the server's reading of those headers, not the desktop's writing of them.
 - Version-bump behaviour (`test9_initWritesVersion` through
-  `test12_upgradeDetected`, `testServerDBVersion`) — not integration tests at all.
-  `checkAndWriteDatastoreVersion()` is redefined inside the test file as a copy of
-  the `datastore.ts` logic, and `testServerDBVersion()` builds its own `settings`
-  table instead of calling `db.js initializeSchema()`. A change to the real
-  implementation that is not mirrored into the copy goes undetected in both
-  directions.
+  `test13_legacyEncodedVersionFallback`, `testServerDBVersion`) — these now drive the
+  real implementations. `checkAndWriteDatastoreVersion()` is module-private in
+  `datastore.ts` and returns void, so it is exercised through its real entry point,
+  `initDatabase()`, with the outcome read from the `feature_settings` row and from
+  `isSyncDisabledDueToVersion()`; `tamperStoredVersion()` writes the stored version
+  straight into sqlite between inits to stand in for a database left by another
+  binary. `testServerDBVersion()` drives the real `db.js initializeSchema()` instead
+  of hand-building a `settings` table. `test13_legacyEncodedVersionFallback` covers
+  the bare-numeral encoding that `JSON.parse` rejects and the implementation's
+  `parseInt` fallback recovers — a branch the previous copy did not distinguish.
 
 Only `/items` is requested; no tag or event stages.
+
+### `packages/integration-tests/sync-auth-e2e.test.js` — 7 cases
+
+`yarn test:sync:auth`. Spawns the real server on port 3461 in multi-user mode with
+no `E2E_TEST`, so `multiUserMiddleware` and `users.resolveDevice()` actually run.
+Credentials are minted at runtime through `POST /admin/devices` behind `ADMIN_TOKEN`.
+It covers the 401 paths (absent header, well-formed but unminted token), a minted
+key succeeding, a revoked device's key failing afterwards — the individual-revocation
+guarantee — the public health check, and that device keys and `ADMIN_TOKEN` cannot
+authenticate each other's routes.
+
+The case that closes the gap is `testRealDesktopClientAuthenticates()`: it configures
+the compiled `sync.js` with a genuinely minted key, pushes, and confirms the item
+lands, then reconfigures with an unminted key and asserts the push fails rather than
+silently reporting success. That puts the client's own header construction under
+test, not just the server's reading of a hand-built header.
 
 ### Nothing runs any of this automatically
 
@@ -299,19 +331,38 @@ rides the desktop gate, which itself requires explicit human approval per
 `apps/desktop/CLAUDE.md` before each run. That is why a June breakage surfaced in
 August.
 
-Decision: the four non-gate suites are grouped under `yarn test:sync:all` and run
+Decision: the five non-gate suites are grouped under `yarn test:sync:all` and run
 before landing any sync change, rather than being wired into a pre-commit hook.
-Each spawns a server process and together they take over a minute, which is too
+Each spawns a server process and together they take a few minutes, which is too
 slow to run on every commit; the desktop gate stays the only place suite 1 runs.
+
+They share fixed ports — 3457, 3458, 3459, 3460, 3461 — and each suite creates a
+fixed-name profile on its own server. So two runs of the same suite at once collide:
+`waitForServer()` polls the port and treats any 200 as its own server, and the second
+run then fails on an already-existing profile. Run the chain serially.
 
 ### The gaps this leaves
 
-- No suite exercises the tag or event stages over a real socket. Every event- and
-  tag-stage assertion lives in the in-process suite, which cannot see a
-  client/server disagreement.
-- No suite exercises real authentication end to end.
-- `pushedAt` and the `POST /items/batch` 404 fallback are proven only in-process.
-- The version-bump logic is proven against a copy of itself.
+The four gaps this section previously named are closed, each by the suite noted above:
+tag and event stages now run over a real socket, real authentication is exercised end
+to end by `sync-auth-e2e.test.js`, `pushedAt` and the `POST /items/batch` 404 fallback
+are proven over the wire, and the version-bump logic drives the real implementation
+rather than a copy.
+
+What remains:
+
+- Nothing runs any of it automatically. The aggregate `yarn test:sync:all` is still
+  something a person has to remember, which is the condition that let a June breakage
+  surface in August.
+- Two suites depend on `apps/desktop/dist/` existing. A worktree that has not run
+  `yarn workspace @peek/desktop build` gets a module-resolution crash from them, which
+  is a louder failure than a silent pass but still not a result about the code.
+- The header-negotiation half of `sync-version-compat.test.js` still builds its
+  requests by hand in `versionedRequest()`, so it proves the server's reading of the
+  version headers, not the desktop's writing of them.
+- The mobile client is not covered by any of this. `sync_e2e_mobile` is a separate
+  cargo suite, and nothing exercises the Rust client against a spawned server in the
+  same way `sync-e2e.test.js` covers the desktop one.
 
 ## Verifying any of this
 

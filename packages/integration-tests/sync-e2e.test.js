@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
+import http from 'http';
 
 // Import compiled desktop modules (from dist/)
 import * as datastore from '../../apps/desktop/dist/main/datastore.js';
@@ -861,6 +862,312 @@ async function testIdenticalTimestamps() {
   console.log('  PASSED');
 }
 
+// ==================== Real-Socket Tag/Event/Batch-Fallback Tests ====================
+//
+// See docs/sync-coverage-gaps.md §8: every tag/event stage assertion previously
+// lived only in the in-process suite (sync.test.ts), which stubs fetch straight
+// into the server's Hono app and so cannot see a client/server disagreement over
+// an actual socket. The tests below call the real pushTagsToServer() /
+// pullTagsFromServer() / pushEventsToServer() / pullEventsFromServer() against
+// the spawned server, and request the tag-metadata and event routes directly
+// through serverRequest() to confirm what actually crossed the wire.
+
+/**
+ * Edge Case Test: Tag metadata stages over a real socket
+ *
+ * testTagsetSync() above covers the `tags` array on POST /items; it never
+ * touches the tag-metadata routes (GET/POST /tags, GET /tags/since). This test
+ * does: push local tag metadata and confirm it lands via GET /tags/since/0,
+ * then create tag metadata server-side and confirm pullTagsFromServer() merges
+ * it into the local datastore.
+ */
+async function testTagStagesOverSocket() {
+  console.log('\n--- Test: Tag Metadata Stages Over Socket ---');
+
+  // Push: create local tag metadata, push it, and read it back through the
+  // tag-metadata route directly — not through /items.
+  const localTagName = 'e2e-tag-push-' + Date.now();
+  const { tag: localTag } = datastore.getOrCreateTag(localTagName);
+  datastore.updateTagColor(localTag.id, '#ff00ff');
+  console.log(`  Created local tag metadata: ${localTagName}`);
+
+  const pushResult = await sync.pushTagsToServer(BASE_URL, apiKey);
+  console.log(`  pushTagsToServer: ${pushResult.pushed} pushed`);
+
+  const sinceRes = await serverRequest('GET', '/tags/since/0');
+  const serverTag = sinceRes.tags.find(t => t.name === localTagName);
+  if (!serverTag) {
+    throw new Error(`Tag metadata for '${localTagName}' not found via GET /tags/since/0 after push`);
+  }
+  if (serverTag.color !== '#ff00ff') {
+    throw new Error(`Expected pushed color #ff00ff, got ${serverTag.color}`);
+  }
+  console.log('  Tag metadata arrived over the socket via /tags/since');
+
+  // Pull: create tag metadata on the server only, then confirm the real pull
+  // stage merges it into the local tags table.
+  const serverTagName = 'e2e-tag-pull-' + Date.now();
+  await serverRequest('POST', '/tags', {
+    tags: [{
+      name: serverTagName,
+      slug: 'e2e-pull-slug',
+      color: '#00ff00',
+      description: 'pulled over a real socket',
+      updatedAt: Date.now(),
+    }],
+  });
+  console.log(`  Created tag metadata on server: ${serverTagName}`);
+
+  const pullResult = await sync.pullTagsFromServer(BASE_URL, apiKey);
+  console.log(`  pullTagsFromServer: ${pullResult.pulled} pulled`);
+
+  const localRow = datastore.getDb().prepare('SELECT * FROM tags WHERE name = ?').get(serverTagName);
+  if (!localRow) {
+    throw new Error(`Tag '${serverTagName}' not found locally after pull`);
+  }
+  if (localRow.color !== '#00ff00') {
+    throw new Error(`Expected pulled color #00ff00, got ${localRow.color}`);
+  }
+
+  console.log('  PASSED');
+}
+
+/**
+ * Edge Case Test: item_events stages over a real socket
+ *
+ * No prior e2e test calls pushEventsToServer()/pullEventsFromServer() or
+ * requests /events/since directly — those stages only ran incidentally inside
+ * syncAll(). This test drives both directions explicitly: an item earns a
+ * syncId, its item_events rows push and are confirmed via GET /events/since/0,
+ * then a server-side event pulls down and merges into the local datastore.
+ */
+async function testEventStagesOverSocket() {
+  console.log('\n--- Test: Event Stages Over Socket ---');
+
+  // Push: the parent item needs a syncId before its events can address it on
+  // the wire (itemId there is always the SERVER's item id).
+  const content = 'https://event-stage-' + Date.now() + '.com';
+  const { id: itemId } = datastore.addItem('url', { content });
+  await sync.pushToServer(BASE_URL, apiKey, 0);
+  const desktopItem = getDesktopItem(content);
+  if (!desktopItem || !desktopItem.syncId) {
+    throw new Error('Item should have earned a syncId before its events can push');
+  }
+  console.log(`  Item pushed, syncId=${desktopItem.syncId}`);
+
+  const { id: eventId } = datastore.addItemEvent(itemId, { content: 'e2e-event', value: 7 });
+  console.log(`  Created local item_events row: ${eventId}`);
+
+  const pushResult = await sync.pushEventsToServer(BASE_URL, apiKey);
+  console.log(`  pushEventsToServer: ${pushResult.pushed} pushed, ${pushResult.failed} failed`);
+
+  const sinceRes = await serverRequest('GET', '/events/since/0');
+  const serverEvent = sinceRes.events.find(e => e.id === eventId);
+  if (!serverEvent) {
+    throw new Error(`Event ${eventId} not found via GET /events/since/0 after push`);
+  }
+  if (serverEvent.itemId !== desktopItem.syncId) {
+    throw new Error(`Server event itemId should be the item's syncId (${desktopItem.syncId}), got ${serverEvent.itemId}`);
+  }
+  console.log('  Event arrived over the socket via /events/since');
+
+  // Pull: create an event on the server against that same synced item, and
+  // confirm the real pull stage merges it into the local item_events table.
+  const serverEventId = 'e2e-server-event-' + Date.now();
+  await serverRequest('POST', '/events', {
+    events: [{
+      id: serverEventId,
+      itemId: desktopItem.syncId,
+      content: 'e2e-server-side',
+      value: 42,
+      occurredAt: Date.now(),
+      createdAt: Date.now(),
+    }],
+  });
+  console.log(`  Created event on server: ${serverEventId}`);
+
+  const pullResult = await sync.pullEventsFromServer(BASE_URL, apiKey);
+  console.log(`  pullEventsFromServer: ${pullResult.pulled} pulled`);
+
+  const localRow = datastore.getDb().prepare('SELECT * FROM item_events WHERE id = ?').get(serverEventId);
+  if (!localRow) {
+    throw new Error(`Event ${serverEventId} not found locally after pull`);
+  }
+  if (localRow.itemId !== itemId) {
+    throw new Error(`Pulled event should attach to local item ${itemId}, got ${localRow.itemId}`);
+  }
+
+  console.log('  PASSED');
+}
+
+/**
+ * Edge Case Test: item_events.pushedAt stamping over a real socket
+ *
+ * docs/sync-coverage-gaps.md §2: pushEventsToServer() stamps delivery per row
+ * rather than against a watermark, specifically so an event whose parent item
+ * has no syncId yet strands exactly itself instead of holding back every event
+ * behind it. This proves both halves against the real server: a delivered
+ * event's pushedAt moves off zero, and a stranded event's does not.
+ */
+async function testEventPushedAtStamping() {
+  console.log('\n--- Test: Event pushedAt Stamping ---');
+
+  // Delivered: parent item already carries a syncId.
+  const syncedContent = 'https://pushedat-synced-' + Date.now() + '.com';
+  const { id: syncedItemId } = datastore.addItem('url', { content: syncedContent });
+  await sync.pushToServer(BASE_URL, apiKey, 0);
+  const syncedItem = getDesktopItem(syncedContent);
+  if (!syncedItem || !syncedItem.syncId) {
+    throw new Error('Item should have earned a syncId before its event can push');
+  }
+  const { id: deliveredEventId } = datastore.addItemEvent(syncedItemId, { content: 'delivered' });
+
+  // Stranded: parent item has never synced, so pushEventsToServer() must skip
+  // its event rather than sending an itemId the server has never seen.
+  const unsyncedContent = 'https://pushedat-unsynced-' + Date.now() + '.com';
+  const { id: unsyncedItemId } = datastore.addItem('url', { content: unsyncedContent });
+  const { id: strandedEventId } = datastore.addItemEvent(unsyncedItemId, { content: 'stranded' });
+
+  await sync.pushEventsToServer(BASE_URL, apiKey);
+
+  const db = datastore.getDb();
+  const delivered = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?').get(deliveredEventId);
+  if (!delivered || !(delivered.pushedAt > 0)) {
+    throw new Error(`Delivered event should carry pushedAt > 0, got ${delivered && delivered.pushedAt}`);
+  }
+  console.log(`  Delivered event stamped pushedAt=${delivered.pushedAt}`);
+
+  const stranded = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?').get(strandedEventId);
+  if (!stranded || stranded.pushedAt !== 0) {
+    throw new Error(`Event whose parent has no syncId should stay at pushedAt = 0, got ${stranded && stranded.pushedAt}`);
+  }
+  console.log('  Event with an unsynced parent stayed at pushedAt = 0, stranded exactly itself');
+
+  console.log('  PASSED');
+}
+
+/**
+ * A tiny transparent proxy in front of the real server, used only by
+ * testBatchFallbackWhenRouteMissing() below. It answers POST /items/batch with
+ * a bare 404 (as an older, pre-batch server would) and forwards every other
+ * request — method, path, query, headers, body — to the real server, piping
+ * the response status/headers/body straight back.
+ */
+function startBatchFallbackProxy() {
+  return new Promise((resolve, reject) => {
+    // Counts what the proxy actually saw, so a caller can tell the fallback was
+    // really traversed rather than inferring it from where the items ended up —
+    // items landing on the real server is also what a proxy that never faked the
+    // 404 at all would produce, which is exactly the "prints a pass on every
+    // path" shape docs/sync-coverage-gaps.md §8 warns about.
+    const counts = { batchAttempts: 0, singleRequests: 0 };
+
+    const server = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks);
+        const path = req.url.split('?')[0];
+
+        if (req.method === 'POST' && path === '/items/batch') {
+          counts.batchAttempts++;
+          log('Proxy: faking 404 for POST /items/batch');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no such route (proxy fake)' }));
+          return;
+        }
+
+        if (req.method === 'POST' && path === '/items') {
+          counts.singleRequests++;
+        }
+
+        const upstream = http.request(
+          { host: '127.0.0.1', port: TEST_PORT, method: req.method, path: req.url, headers: req.headers },
+          (upstreamRes) => {
+            res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+            upstreamRes.pipe(res);
+          }
+        );
+        upstream.on('error', (err) => {
+          res.writeHead(502);
+          res.end(String(err));
+        });
+        upstream.end(body);
+      });
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, url: `http://127.0.0.1:${port}`, counts });
+    });
+  });
+}
+
+/**
+ * Edge Case Test: POST /items/batch 404 fallback, proven over a real socket
+ *
+ * The spawned server always has the batch route, so pushToServer()'s per-item
+ * fallback (triggered when a chunk request comes back 404) is unreachable
+ * against it directly. Routing the push through startBatchFallbackProxy()
+ * instead makes the 404 real, over an actual socket, and this test confirms
+ * both that the client actually attempted the batch route and got a real 404
+ * for it, and that every item still landed on the real server through the
+ * per-item route the fallback switches to — items landing alone would also be
+ * true of a proxy that never faked the 404, so that check on its own proves
+ * nothing about the fallback path specifically.
+ */
+async function testBatchFallbackWhenRouteMissing() {
+  console.log('\n--- Test: POST /items/batch 404 Fallback Over Socket ---');
+
+  const { server: proxyServer, url: proxyUrl, counts } = await startBatchFallbackProxy();
+  console.log(`  Proxy listening at ${proxyUrl}, faking 404 on POST /items/batch`);
+
+  try {
+    const contents = [];
+    for (let i = 0; i < 3; i++) {
+      const content = `https://batch-fallback-${Date.now()}-${i}.com`;
+      datastore.addItem('url', { content });
+      contents.push(content);
+    }
+    console.log(`  Created ${contents.length} items on desktop`);
+
+    // pushToServer() takes the server URL as an explicit argument (every push/pull
+    // stage in this module does — see pushTagsToServer()/pushEventsToServer()
+    // above), so routing through the proxy needs no global sync-config change.
+    const pushResult = await sync.pushToServer(proxyUrl, apiKey, 0);
+    console.log(`  pushToServer via proxy: ${pushResult.pushed} pushed, ${pushResult.failed} failed`);
+    console.log(`  Proxy saw ${counts.batchAttempts} batch attempt(s), ${counts.singleRequests} single-item request(s)`);
+
+    if (pushResult.failed > 0) {
+      throw new Error(`Expected every item to land through the per-item fallback, got ${pushResult.failed} failed`);
+    }
+
+    // Chunking could split this run's items across more than one batch attempt,
+    // so >= 1 rather than === 1 — the point is that the client tried the batch
+    // route and really got a 404 over the socket, not how many chunks it took.
+    if (counts.batchAttempts < 1) {
+      throw new Error('Expected the client to attempt POST /items/batch at least once before falling back');
+    }
+    // Every item pushToServer() reports as delivered must have gone out as its
+    // own POST /items — that is the fallback actually being traversed, not just
+    // items ending up on the server by some other route.
+    if (counts.singleRequests !== pushResult.pushed) {
+      throw new Error(`Expected ${pushResult.pushed} per-item POST /items request(s) from the fallback, saw ${counts.singleRequests}`);
+    }
+
+    for (const content of contents) {
+      if (!(await serverHasItem(content))) {
+        throw new Error(`Item not found on the real server after the batch-route fallback: ${content}`);
+      }
+    }
+    console.log('  Every item landed on the real server through the per-item fallback');
+
+    console.log('  PASSED');
+  } finally {
+    proxyServer.close();
+  }
+}
+
 // ==================== Test Runner ====================
 
 async function runTests() {
@@ -891,6 +1198,11 @@ async function runTests() {
       ['Tagset Sync', testTagsetSync],
       ['Unicode Content Handling', testUnicodeContent],
       ['Identical Timestamps', testIdenticalTimestamps],
+      // Real-socket tag/event/batch-fallback tests
+      ['Tag Metadata Stages Over Socket', testTagStagesOverSocket],
+      ['Event Stages Over Socket', testEventStagesOverSocket],
+      ['Event pushedAt Stamping', testEventPushedAtStamping],
+      ['POST /items/batch 404 Fallback Over Socket', testBatchFallbackWhenRouteMissing],
     ];
 
     for (const [name, testFn] of tests) {
