@@ -141,12 +141,28 @@ export interface CapturedClosePresentation {
 /**
  * A `BrowserWindow`'s `CapturedClosePresentation` plus its numeric Electron
  * id, staged by the pre-destroy `'close'` listener (`browser-window-created`
- * below) and keyed by kernel `WindowId` so the WindowClosed-driven bookkeeping
- * below — which runs AFTER `electron-window-backend.ts`'s own native
- * `'closed'` listener has already deleted its numeric-id map entry for this
- * window — can still find both. Drained (read + deleted) the moment that
- * bookkeeping runs; an entry surviving past that point would mean its window
- * closed without the kernel ever reporting it.
+ * below) and keyed by kernel `WindowId`, for the close-finalize tail
+ * (`drainWindowClose` below) to read once it is safe to run. WHICH of the two
+ * facts a drain needs — this capture, and the kernel's own report that the
+ * window left `state.order` — arrives first depends on how the close started:
+ *
+ *   - a NATIVE-initiated close (red button, an OS-level Cmd+W, a
+ *     window-manager close) fires this file's `'close'` listener FIRST,
+ *     staging the capture; the kernel only learns the window is gone
+ *     afterward, from `electron-window-backend.ts`'s own native `'closed'`
+ *     listener.
+ *   - a KERNEL-initiated close (`windows.ts closeOrHideWindow` — Cmd+W,
+ *     `api.window.close`, the switcher, a dismiss sweep) dispatches
+ *     `WindowClosed` SYNCHRONOUSLY inside `decide`/`apply`, before the
+ *     `CloseWindow` effect's `electron-window-backend.ts closeWindow` — an
+ *     `async` function that suspends at `await exitFullscreenBeforeClose`
+ *     before it ever calls `win.close()` — has had a chance to provoke the
+ *     native `'close'` that stages this capture. The kernel's removal is
+ *     known FIRST here, and this map has nothing to give a drain yet.
+ *
+ * Read + deleted the moment `drainWindowClose` actually runs for an id; an
+ * entry surviving past that point means its window closed without the
+ * capture-side fact ever landing (see that function's doc).
  */
 interface PendingWindowClose extends CapturedClosePresentation {
   electronId: number;
@@ -154,27 +170,37 @@ interface PendingWindowClose extends CapturedClosePresentation {
 const pendingWindowCloseCapture = new Map<WindowId, PendingWindowClose>();
 
 /**
- * Run the reopen-stack / `window:closed` publish / close-finalize tail for
- * `closedId` off the kernel's own `WindowClosed` notification, instead of a
- * second native `'closed'` listener racing `electron-window-backend.ts`'s.
- * No-ops for a `WindowId` this file never staged a capture for — a hybrid
- * `BaseWindow` (never routed through `browser-window-created`, so it has no
- * entry here; `ipc.ts`'s own `baseWin 'closed'` handler runs its own
- * `finalizeWindowClose` tail directly) or a window destroyed before its
- * `'close'` listener ran.
- *
- * Installed from `initialize()` via the kernel's base `subscribe`
- * (`window-kernel-dispatch.ts getKernelExecutor`), diffing `state.order`
- * between notifications the same way `window-machine.ts`'s
- * `subscribeAppActive`/`subscribeOverlayAttachment` dedup a fact off that
- * same base surface: RULE 1 (`window-kernel.ts`) makes `WindowClosed` the
- * only event that removes an id from `order`, so an id present on one
- * notification and gone on the next is exactly the set of windows that just
- * closed.
+ * `WindowId`s whose kernel-side removal (`state.order` shrinking) has been
+ * observed by `runWindowClosedBookkeeping` below before the matching
+ * `pendingWindowCloseCapture` entry existed — the kernel-initiated ordering
+ * `pendingWindowCloseCapture`'s doc describes. Bridges that gap: the `'close'`
+ * listener (`browser-window-created` below) checks this set the moment it
+ * stages a capture, and drains immediately if the kernel already reported the
+ * window gone, instead of leaving a capture nothing will ever come back for.
  */
-function runWindowClosedBookkeeping(closedId: WindowId): void {
+const pendingKernelRemoval = new Set<WindowId>();
+
+/**
+ * The actual reopen-stack / `window:closed` publish / close-finalize tail for
+ * `closedId`, run only once BOTH facts a drain needs are in hand: the staged
+ * `pendingWindowCloseCapture` entry, and the kernel's own report that the
+ * window left `order` (`pendingKernelRemoval`). The two call sites below —
+ * `runWindowClosedBookkeeping` for the kernel-first edge,
+ * `browser-window-created`'s `'close'` listener for the capture-first edge —
+ * are each reached only once per window and each check for the OTHER fact
+ * before calling this, so this runs exactly once per closed window: whichever
+ * fact arrives first only records itself and returns; the second to arrive
+ * finds the first already recorded and is the one that drains.
+ *
+ * Deletes both records before acting — same idempotence
+ * `runWindowClosedBookkeeping` always applied to `pendingWindowCloseCapture`
+ * alone, now covering `pendingKernelRemoval` too — so a stray extra call for
+ * an already-drained id is a no-op rather than a second finalize.
+ */
+function drainWindowClose(closedId: WindowId): void {
   const capture = pendingWindowCloseCapture.get(closedId);
   pendingWindowCloseCapture.delete(closedId);
+  pendingKernelRemoval.delete(closedId);
   if (!capture) return;
   const { electronId, bounds, presentation } = capture;
 
@@ -193,6 +219,37 @@ function runWindowClosedBookkeeping(closedId: WindowId): void {
   // handed through as `knownWmId` for the same reason `windowData` above is
   // resolved off it directly.
   finalizeWindowClose(electronId, { bounds, presentation }, closedId);
+}
+
+/**
+ * Kernel-first edge of `drainWindowClose`. Fired off the kernel's own
+ * `WindowClosed` notification (installed from `initialize()` via the
+ * kernel's base `subscribe`, `window-kernel-dispatch.ts getKernelExecutor`,
+ * diffing `state.order` between notifications the same way
+ * `window-machine.ts`'s `subscribeAppActive`/`subscribeOverlayAttachment`
+ * dedup a fact off that same base surface: RULE 1 (`window-kernel.ts`) makes
+ * `WindowClosed` the only event that removes an id from `order`, so an id
+ * present on one notification and gone on the next is exactly the set of
+ * windows that just closed).
+ *
+ * No capture staged yet for `closedId` means either the kernel-initiated
+ * ordering (the capture is still coming — record the removal in
+ * `pendingKernelRemoval` so that arrival drains instead of staging something
+ * nothing will collect), or a `WindowId` this file never stages a capture for
+ * at all: a hybrid `BaseWindow` (never routed through `browser-window-created`
+ * — `ipc.ts`'s own `baseWin 'closed'` handler runs its own
+ * `finalizeWindowClose` tail directly), or a window destroyed by some path
+ * that skips the native `'close'` event entirely (`BaseWindow.destroy()`,
+ * used for forceful teardown) — for either of those the `pendingKernelRemoval`
+ * entry is never claimed and this window's finalize tail simply never runs,
+ * same as before this file waited on both facts.
+ */
+function runWindowClosedBookkeeping(closedId: WindowId): void {
+  if (!pendingWindowCloseCapture.has(closedId)) {
+    pendingKernelRemoval.add(closedId);
+    return;
+  }
+  drainWindowClose(closedId);
 }
 
 /**
@@ -825,14 +882,14 @@ export async function initialize(): Promise<void> {
     const windowId = window.id;
 
     // Capture the window's canonical presentation before destruction, keyed
-    // by its kernel WindowId, for the WindowClosed-driven bookkeeping
-    // (`runWindowClosedBookkeeping`) to pick up once the window is actually
-    // gone. The presenter encapsulates the canvas / generic split — main.ts
-    // no longer parses the page-host shell URL. Nothing here is a decision:
-    // it is a live read (title/URL/favicon, none of it kernel-tracked) that
-    // can only happen while the window still exists, which is why this stays
-    // a native `'close'` listener rather than something the kernel's
-    // post-destroy notification could feed instead.
+    // by its kernel WindowId, for `drainWindowClose` to pick up once both it
+    // and the kernel's own removal report are in hand. The presenter
+    // encapsulates the canvas / generic split — main.ts no longer parses the
+    // page-host shell URL. Nothing here is a decision: it is a live read
+    // (title/URL/favicon, none of it kernel-tracked) that can only happen
+    // while the window still exists, which is why this stays a native
+    // `'close'` listener rather than something the kernel's post-destroy
+    // notification could feed instead.
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
@@ -848,6 +905,15 @@ export async function initialize(): Promise<void> {
             const bounds = getRestorableBounds(wmId) ?? window.getBounds();
             const presentation = getWindowPresentation(windowId);
             pendingWindowCloseCapture.set(wmId, { electronId: windowId, bounds, presentation });
+            if (pendingKernelRemoval.has(wmId)) {
+              // Kernel-initiated close (`pendingWindowCloseCapture`'s doc):
+              // the kernel already reported this window's removal from
+              // `order`, synchronously, before this native `'close'` — which
+              // its own `CloseWindow` effect provoked — had a chance to fire.
+              // Both facts are now in hand; drain rather than leave this
+              // capture for a notification that already ran.
+              drainWindowClose(wmId);
+            }
           }
         }
       } catch {
