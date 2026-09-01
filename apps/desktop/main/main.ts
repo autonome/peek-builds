@@ -952,19 +952,30 @@ export async function initialize(): Promise<void> {
       // apps/desktop/main/ipc.ts windowOpenHandler for the rationale.)
     });
 
-    // Switcher-selection focus restoration — the ONE decision this file still
-    // makes about a closing window, kept on the native 'closed' event (rather
-    // than the kernel's WindowClosed notification the bookkeeping above moved
-    // to) because it needs the closing window's numeric Electron id to match
-    // against the IZUI coordinator's `overlayWindowId`/`overlayFocusTarget`
-    // (izui-state.ts — a parallel session the kernel has no concept of), and
-    // by the time the kernel's own notification fires,
-    // electron-window-backend.ts has already dropped its numeric-id map entry
-    // for this window; the kernel has no reason to retain platform ids past
-    // that point (apps/desktop/CLAUDE.md, "Electron is ONE backend, not the
-    // design"), so there is nothing for a subscription to hand back to
-    // resolve it. The rule itself: only restore focus on an explicit switcher
-    // selection, never on a plain ESC dismiss.
+    // Switcher-overlay session teardown. This file makes NO decision about a
+    // closing window any more.
+    //
+    // (Switcher-selection focus restoration removed — the kernel owns it. The
+    // rule is unchanged: restore focus only on an explicit switcher selection,
+    // never on a plain ESC dismiss. What moved is WHERE the selection is
+    // recorded. It used to be read here at close time, from the IZUI session's
+    // `overlayFocusTarget`, as a numeric Electron id — which forced the
+    // decision onto this native `'closed'` event, because by the time the
+    // kernel's own removal notification fires the backend has dropped its
+    // numeric-id map and nothing can resolve that id any more. The selection is
+    // now recorded as a `WindowId` when the user makes it, while both windows
+    // are alive (`tile-ipc.ts`'s `tile:window:set-overlay-focus-target` →
+    // `kernelArmSelectionFocus`), and spent by the kernel's own `WindowClosed`
+    // rule — see `window-kernel.ts State.pendingSelectionFocus`. No platform id
+    // survives past the close, which is what let the rule become a kernel rule
+    // at all: `apps/desktop/CLAUDE.md`, "Electron is ONE backend, not the
+    // design".
+    //
+    // The transient guard went with it. Transient means Peek was not the active
+    // app when the session began, and it is a one-way ratchet to active the
+    // moment the app takes focus — so a session in which the user reached into
+    // the switcher and picked a window has already been promoted, and the guard
+    // could not fire on a selection. The kernel needs no equivalent.
     //
     // Wrapped in try-catch to prevent errors during shutdown from stalling
     // the quit sequence. During app.quit(), windows close concurrently and
@@ -990,40 +1001,11 @@ export async function initialize(): Promise<void> {
         // Overlay restoration: use coordinator as single source of truth
         const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
         if (isOverlayWindow) {
-          const session = coordinator.getSession()!;
-          const isTransient = coordinator.isTransient();
-
-          if (!isTransient) {
-            // Capture the explicit selection BEFORE exitOverlay clears it.
-            // Important: ONLY focus when the user explicitly chose a target
-            // via the switcher (overlayFocusTarget). On a plain ESC dismiss
-            // overlayFocusTarget is null and we fall through with no
-            // focus call — that preserves the user's current Space, which
-            // .focus() on the preOverlayFocusTarget would silently break
-            // if that window happened to be anchored to a different Space.
-            const selectedTargetId = session.overlayFocusTarget;
-
+          if (!coordinator.isTransient()) {
             // exitOverlay resets overlay state (the hiddenWindowIds list
             // is empty in the no-hide overlay model, so the showInactive
             // loop inside is a no-op).
             coordinator.exitOverlay();
-
-            if (selectedTargetId != null) {
-              // Both BrowserWindows and hybrid BaseWindows seed
-              // idByOsWindowId at registration, so one dispatch covers
-              // both id spaces — no more getLiveWindow/getHybridWindow
-              // fork. The machine path (RAISE_WINDOW + FOCUS_CONTENT for
-              // a page-host + SET_STACKING) also restores the target's
-              // content first responder and stack position, which the old
-              // bare `.focus()` calls did not.
-              const wmId = getWindowIdFor(selectedTargetId);
-              if (wmId != null) {
-                wmLog('switcher-select-raise', { id: wmId, osId: selectedTargetId });
-                kernelRaiseWindow(wmId);
-              } else {
-                wmLog('switcher-select-raise', { osId: selectedTargetId, outcome: 'no-record' });
-              }
-            }
           } else {
             DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
           }

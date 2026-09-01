@@ -795,41 +795,21 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.enterOverlay(100, [5]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
 
-      // Read the target BEFORE exitOverlay (the caller in main.ts does this)
-      const restoreTarget = coordinator.getSession()!.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
+      // Read the target BEFORE exitOverlay, which clears it.
+      const restoreTarget = coordinator.getPreOverlayFocusTarget();
 
       coordinator.exitOverlay();
 
-      // The target was 5 — the caller (main.ts) uses it to focus window 5.
       assert.strictEqual(restoreTarget, 5);
       // State returns to active
       assert.strictEqual(coordinator.getState(), 'active');
     });
 
-    it('4. User selection overrides pre-overlay: setOverlayFocusTarget(3) → restoration uses 3 not preOverlayFocusTarget', () => {
-      const winA = createMockWindow(5);
-      const winB = createMockWindow(3);
-      winA._visible = false;
-      winB._visible = false;
-      mockWindows.push(winA, winB);
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(5);
-      coordinator.pushWindow(3);
-      mockFrontWindowId = 5;
-
-      coordinator.enterOverlay(100, [5, 3]);
-      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
-
-      // User explicitly selects window 3 in the switcher
-      coordinator.setOverlayFocusTarget(3);
-      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, 3);
-
-      // Caller reads overlayFocusTarget first, falls back to preOverlayFocusTarget
-      const restoreTarget = coordinator.getSession()!.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
-      assert.strictEqual(restoreTarget, 3, 'Should use explicit selection (3), not pre-overlay (5)');
-    });
+    // (Test 4, "user selection overrides pre-overlay", is gone with the field
+    // it exercised. The switcher selection is the kernel's now —
+    // `window-kernel.ts State.pendingSelectionFocus`, armed at selection time
+    // and spent by the switcher's own `WindowClosed`. The rule it asserted is
+    // covered there; asserting it here would be asserting a mirror.)
 
     it('5. ESC works after switcher closes: after exitOverlay, state is active', () => {
       const winA = createMockWindow(5);
@@ -907,25 +887,9 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(winA._visible, false, 'Transient overlay should not restore hidden windows');
     });
 
-    it('9. overlayFocusTarget cleared on exit: after exitOverlay, overlayFocusTarget is null', () => {
-      const winA = createMockWindow(5);
-      winA._visible = false;
-      mockWindows.push(winA);
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(5);
-      coordinator.pushWindow(100);
-
-      coordinator.enterOverlay(100, [5]);
-      coordinator.setOverlayFocusTarget(3);
-      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, 3);
-
-      coordinator.exitOverlay();
-
-      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, null,
-        'overlayFocusTarget should be cleared after exitOverlay');
-    });
+    // (Test 9, "overlayFocusTarget cleared on exit", is gone with the field.
+    // The kernel latch it mirrored clears on the spend instead — see
+    // `window-kernel.ts`'s `WindowClosed` arm.)
 
     it('10. Multiple ESC cycles work: enter overlay → exit → enter overlay → exit → state consistent', () => {
       const coordinator = izuiState.getIzuiCoordinator();

@@ -790,6 +790,19 @@ export function kernelArmColdStartFocus(id: WindowId | null): void {
   kernelExecute({ type: 'ArmColdStartFocus', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
+/**
+ * Arm — or clear (`target: null`) — the switcher selection the kernel restores
+ * focus to when `armer` closes. Dispatched from the switcher's own selection
+ * IPC, while both windows are still alive and resolvable to `WindowId`s; the
+ * old decision matched numeric Electron ids in `main.ts`'s native `'closed'`
+ * handler, which was only possible there because the backend has dropped its id
+ * map by the time the kernel hears about the close. Same shape and containment
+ * as `kernelArmColdStartFocus`: routed through `kernelExecute`.
+ */
+export function kernelArmSelectionFocus(armer: WindowId, target: WindowId | null): void {
+  kernelExecute({ type: 'ArmSelectionFocus', armer, target, expectedVersion: getKernelExecutor().getState().version });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Focus assert — the eleventh real input this step feeds the kernel.
 // Translated at the two production sites that dispatch the old machine's

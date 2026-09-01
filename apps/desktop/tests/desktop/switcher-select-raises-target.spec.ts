@@ -10,13 +10,16 @@ import http from 'http';
  * Selecting a card in the Windows switcher (`features/windows/windows.js`
  * `createWindowCard`'s `card-click` handler) calls
  * `api.window.setOverlayFocusTarget(win.id)`, then closes the switcher
- * window. `main.ts`'s switcher-overlay `closed` handler reads the stashed
- * `overlayFocusTarget` off the IZUI session and raises it via
- * `kernelRaiseWindow`. `hybrid-windows-feature.spec.ts` drives the
- * test bridge's `focusHost` directly and never exercises this chain, so the
- * legacy-engine deletion (`f189496b`) left the `closed` handler's raise
- * block empty with no test noticing — selecting a window in the switcher
- * silently did nothing until `3de858f8` restored it.
+ * window. That IPC arms the kernel's own selection latch
+ * (`window-kernel.ts State.pendingSelectionFocus`) with both windows
+ * resolved to `WindowId`s while they are still alive, and the kernel's
+ * `WindowClosed` rule spends it when the switcher goes, raising the picked
+ * window. `hybrid-windows-feature.spec.ts` drives the test bridge's
+ * `focusHost` directly and never exercises this chain, so the legacy-engine
+ * deletion (`f189496b`) left the raise block empty with no test noticing —
+ * selecting a window in the switcher silently did nothing until `3de858f8`
+ * restored it. This spec is the only end-to-end cover for the chain, which
+ * is why it outlived the move of the decision into the kernel.
  *
  * The target is a real `http://` content window: `izui-roles.ts
  * inferIzuiRole` only ever assigns `content`/`child-content` when
@@ -119,8 +122,8 @@ test.describe('Switcher selection raises the picked window @desktop', () => {
 
     // Wait for the switcher window to actually close — the async
     // `setOverlayFocusTarget` IPC round-trip must land before `window.close()`
-    // runs, and `main.ts`'s `closed` handler (the code under test) only
-    // fires once it does.
+    // runs, because it is what arms the latch, and the kernel's `WindowClosed`
+    // rule (the code under test) can only spend one that is already armed.
     await expect.poll(() => switcherWindow.isClosed(), { timeout: 5000 }).toBe(true);
 
     // The kernel's own transition record: a fresh `OsFocusGained` for the

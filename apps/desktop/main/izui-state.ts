@@ -34,7 +34,6 @@ export interface IzuiSession {
   overlayWindowId: number | null;
   hiddenWindowIds: number[];
   preOverlayFocusTarget: number | null;
-  overlayFocusTarget: number | null;
 }
 
 /**
@@ -166,7 +165,6 @@ class IzuiStateCoordinator {
       overlayWindowId: null,
       hiddenWindowIds: [],
       preOverlayFocusTarget: null,
-      overlayFocusTarget: null,
     };
 
     this.state = entryMode;
@@ -286,7 +284,6 @@ class IzuiStateCoordinator {
     this.session.overlayWindowId = null;
     this.session.hiddenWindowIds = [];
     this.session.preOverlayFocusTarget = null;
-    this.session.overlayFocusTarget = null;
     this.lastOverlayExitTime = Date.now();
     this.emitSessionChange();
   }
@@ -419,16 +416,12 @@ class IzuiStateCoordinator {
     return this.session?.preOverlayFocusTarget ?? null;
   }
 
-  /**
-   * Set the overlay focus target (explicit user selection in the switcher).
-   * Takes priority over preOverlayFocusTarget when restoring focus after overlay close.
-   */
-  setOverlayFocusTarget(windowId: number): void {
-    if (this.session) {
-      this.session.overlayFocusTarget = windowId;
-      DEBUG && console.log('[izui] Set overlay focus target:', windowId);
-    }
-  }
+  // (The switcher selection moved to the kernel — `window-kernel.ts
+  // State.pendingSelectionFocus`, armed by `tile-ipc.ts`'s
+  // `tile:window:set-overlay-focus-target` handler and spent by the kernel's
+  // own `WindowClosed` rule. The session field and its setter that used to
+  // mirror it are gone rather than left write-only: a second copy of a
+  // decision's input is how the decision comes back.)
 }
 
 // ESC policy (`escPolicy` / `escUnhandledPolicy`) moved into

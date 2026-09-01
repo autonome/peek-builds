@@ -676,6 +676,57 @@ export interface State {
    * `react`'s assert rule emits nothing for a target absent from `order`.
    */
   readonly pendingColdStartFocus: WindowId | null;
+  /**
+   * THE ARMED SWITCHER SELECTION — the window to put in front when the
+   * switcher that armed it goes away, or `null` for "nothing armed".
+   *
+   * WHY IT EXISTS. Picking a window in the switcher and dismissing the
+   * switcher with Escape are the same closing window from the outside, and
+   * only the first restores focus: a plain dismiss deliberately leaves the
+   * user's current desktop alone, because raising the previously-focused
+   * window can drag them to a desktop it happens to be anchored to. The
+   * difference between the two is the SELECTION, and it is knowable only
+   * while the switcher is still open — so it is recorded then, not
+   * reconstructed at close time.
+   *
+   * WHY IT IS A PAIR. `armer` is the switcher; `target` is what the user
+   * picked. The spend is keyed on the armer's own removal rather than on any
+   * close, so an unrelated window closing while a selection is armed leaves
+   * it armed — a selection outlives everything except the switcher it was
+   * made in.
+   *
+   * WHY A `WindowId` AND NOT A PLATFORM ID. The decision used to live in
+   * `main.ts`'s native `'closed'` handler, matching the closing window's
+   * numeric Electron id against a parallel session object, and it had to live
+   * there because the backend has already dropped its id map by the time the
+   * kernel hears about the close. Recording the intent as a `WindowId` at
+   * SELECTION time — while the window is alive and resolvable — removes the
+   * need for a platform id at close time entirely, so the rule can be a
+   * kernel rule (`apps/desktop/CLAUDE.md`, "Electron is ONE backend, not the
+   * design").
+   *
+   * Armed by `SelectionFocusArmed` and spent by `WindowClosed` naming the
+   * armer, which clears it to `null` and records the raise on
+   * `lastFocusAssert` — the same one-shot shape `pendingColdStartFocus` has,
+   * and the same reason for going through the assert fact: the transition
+   * changes nothing else `react` could diff.
+   *
+   * The target is stored AS GIVEN, including one naming no member of `order`:
+   * a window that has gone by the time the latch is spent makes the spend a
+   * no-op, because `react`'s assert rule emits nothing for a target absent
+   * from `order`.
+   */
+  readonly pendingSelectionFocus: SelectionFocus | null;
+}
+
+/**
+ * An armed switcher selection — see `State.pendingSelectionFocus`. Always a
+ * pair: the rule is "when THIS window goes, raise THAT one", and neither half
+ * is derivable from the other.
+ */
+export interface SelectionFocus {
+  armer: WindowId;
+  target: WindowId;
 }
 
 /**
@@ -1004,7 +1055,21 @@ export type Event =
    * a pure structural diff and nothing in it reads `pendingColdStartFocus`, so
    * a transition that changes only this field projects to nothing.
    */
-  | { type: 'ColdStartFocusArmed'; id: WindowId | null };
+  | { type: 'ColdStartFocusArmed'; id: WindowId | null }
+  /**
+   * A switcher selection was armed — or cleared — `decide`'s translation of
+   * `ArmSelectionFocus` (see `State.pendingSelectionFocus`). Writes that field
+   * and NOTHING else: not `key` (RULE 2 — arming is not a focus report), not
+   * `order` (RULE 1), no record field. `target: null` is a real payload, the
+   * clear.
+   *
+   * Drives no effect of its own, and no rule in `react` exists to make that
+   * so: `react` is a pure structural diff and nothing in it reads
+   * `pendingSelectionFocus`, so a transition changing only this field projects
+   * to nothing. The effect comes later, when `WindowClosed` spends the latch
+   * onto `lastFocusAssert`.
+   */
+  | { type: 'SelectionFocusArmed'; armer: WindowId; target: WindowId | null };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -1275,7 +1340,24 @@ export type Command =
    * a question for the moment the latch is spent, not for this one, so arming
    * before the named window is registered is legitimate traffic.
    */
-  | { type: 'ArmColdStartFocus'; id: WindowId | null; expectedVersion: number };
+  | { type: 'ArmColdStartFocus'; id: WindowId | null; expectedVersion: number }
+  /**
+   * Arm — or clear — a switcher selection (see `State.pendingSelectionFocus`).
+   * `target: null` is the clear.
+   *
+   * Answered BEFORE the generic unknown-`cmd.id` guard, for the same
+   * structural reason `ArmColdStartFocus` is: this command carries no `id`
+   * field for that guard to read. It carries its own existence check instead,
+   * on the ARMER only — arming a rule about a switcher that is not registered
+   * would leave a latch nothing can ever spend, because only that window's
+   * `WindowClosed` spends it.
+   *
+   * The TARGET is deliberately unchecked. It is a note to be read when the
+   * switcher closes, and whether it is still live is a question for that
+   * moment, not this one — the same reasoning `ArmColdStartFocus` gives for
+   * its own id.
+   */
+  | { type: 'ArmSelectionFocus'; armer: WindowId; target: WindowId | null; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window' | 'app-lifetime-window';
 
@@ -1424,6 +1506,7 @@ export function initialState(): State {
     lastFocusAssert: null,
     lastAttention: null,
     pendingColdStartFocus: null,
+    pendingSelectionFocus: null,
   };
 }
 
@@ -1985,18 +2068,67 @@ export function evolve(state: State, ev: Event): State {
       // reconcile into `order` for real.
       const parent = closedRec?.parentId !== undefined ? filtered.find((w) => w.id === closedRec.parentId) : undefined;
       const raisesParent = parent !== undefined && isContentWindow(parent);
-      const opSeq = raisesParent ? state.opSeqCounter + 1 : state.opSeqCounter;
+      // SPENDING THE SWITCHER SELECTION. `pendingSelectionFocus` names a
+      // switcher and the window the user picked in it; this close is the spend
+      // when it is that switcher going away (see the field's own doc). The
+      // latch is one-shot — cleared below whether or not the target survives to
+      // be raised — so a switcher that closes twice cannot restore focus twice,
+      // and a later close of some unrelated window finds nothing armed.
+      //
+      // The raise goes through `lastFocusAssert`, exactly as `AppActivated`
+      // spends the cold-start latch, and for the same reason: `react` is a pure
+      // structural diff that may not branch on `ev.type`, so the request has to
+      // become a fact it can diff. `react` emits its assert rule LAST, after
+      // the parent-refocus raise this same arm may also drive — which is the
+      // order the two want: an explicit selection is the user's own answer and
+      // belongs on top of a structural parent handoff.
+      //
+      // The raise condition is `admitsFocusAssert` against the POST-REMOVAL
+      // order, mirroring `react`'s assert rule exactly — the same reason
+      // `FocusAssertRequested` mirrors it rather than settling for "present in
+      // `order`". A target that closed while the switcher was open is simply
+      // absent here, and the spend raises nothing.
+      const spentSelection = state.pendingSelectionFocus?.armer === ev.id
+        ? state.pendingSelectionFocus
+        : null;
+      const selectionTarget = spentSelection !== null
+        ? filtered.find((w) => w.id === spentSelection.target && admitsFocusAssert(w, w.visible))
+        : undefined;
+      // ONE TOKEN FOR THE TRANSITION, not one per effect (see
+      // `State.opSeqCounter`): this arm can now issue two focus-family ops —
+      // the parent handoff and the selection raise — and `react` stamps both
+      // with the same `next.opSeqCounter`. So the counter advances if EITHER
+      // fires, and every record either op names is stamped with that one value,
+      // which is what keeps `checkOpSeqInvariants`' biconditional true.
+      const opSeq = raisesParent || selectionTarget !== undefined
+        ? state.opSeqCounter + 1
+        : state.opSeqCounter;
       const stamped = raisesParent ? { ...parent, lastOpSeq: opSeq } : undefined;
       const shouldReorder = raisesParent && closedRec?.id === state.key;
-      const order = shouldReorder
+      const withParent = shouldReorder
         ? [...filtered.filter((w) => w.id !== stamped!.id), stamped!]
         : stamped !== undefined
           ? filtered.map((w) => (w.id === stamped.id ? stamped : w))
           : filtered;
+      // The selection target is STAMPED but never reordered: `key` and the
+      // stack position it implies are the OS echo's to write (RULE 2), the same
+      // way every other raise in this kernel settles. Applied after the parent
+      // map so a window that is both the parent and the selection target — the
+      // user picking the closing switcher's own opener — is stamped once, with
+      // the same token either way.
+      const order = selectionTarget !== undefined
+        ? withParent.map((w) => (w.id === selectionTarget.id ? { ...w, lastOpSeq: opSeq } : w))
+        : withParent;
       return {
         ...state,
         order,
         opSeqCounter: opSeq,
+        ...(spentSelection !== null
+          ? {
+              pendingSelectionFocus: null,
+              lastFocusAssert: { id: spentSelection.target, seq: nextFocusAssertSeq(state) },
+            }
+          : {}),
         version: state.version + 1,
       };
     }
@@ -2735,6 +2867,29 @@ export function evolve(state: State, ev: Event): State {
       return { ...state, pendingColdStartFocus: ev.id, version: state.version + 1 };
     }
 
+    case 'SelectionFocusArmed': {
+      // Latch only, the same shape as `ColdStartFocusArmed` above and for all
+      // the same reasons: `State.pendingSelectionFocus` and nothing else. `key`
+      // is untouched (RULE 2 — a selection is a note about a future close, not
+      // a focus report), `order` is untouched (RULE 1), no record field moves,
+      // and nothing in `react` reads the field, so this transition projects to
+      // no effect.
+      //
+      // `target: null` is applied like any other value, because it IS one: it
+      // clears a selection an earlier arm left behind — the switcher re-arms as
+      // the highlight moves, and a dismissed switcher clears. There is no
+      // separate clear event.
+      //
+      // Total and guard-free: both ids are stored AS GIVEN, including ones
+      // naming no member of `order`. Liveness is a question for the spend, and
+      // that is where `WindowClosed` asks it.
+      return {
+        ...state,
+        pendingSelectionFocus: ev.target === null ? null : { armer: ev.armer, target: ev.target },
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -3415,6 +3570,27 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   // latch is spent. See the command's own doc.
   if (cmd.type === 'ArmColdStartFocus') {
     return { events: [{ type: 'ColdStartFocusArmed', id: cmd.id }] };
+  }
+
+  // ArmSelectionFocus carries `armer`/`target` rather than `id` — handled here,
+  // before the generic `cmd.id` guard below, the same structural reason the
+  // three above are.
+  //
+  // It carries ONE guard of its own, and only on the armer: the latch is spent
+  // by that window's `WindowClosed` and by nothing else, so arming against a
+  // window the kernel does not have leaves a latch nothing can ever spend —
+  // which would then fire on whichever future window happened to be minted the
+  // same id. A clear (`target: null`) still needs a live armer for the same
+  // reason it needs one at all: it names whose selection is being cleared.
+  //
+  // The TARGET is deliberately unguarded, the same call `ArmColdStartFocus`
+  // makes: it is a note to be read when the switcher closes, and a target that
+  // dies in between makes the spend a no-op rather than making this arm wrong.
+  if (cmd.type === 'ArmSelectionFocus') {
+    if (!state.order.some((w) => w.id === cmd.armer)) {
+      return { rejected: 'no-such-window' };
+    }
+    return { events: [{ type: 'SelectionFocusArmed', armer: cmd.armer, target: cmd.target }] };
   }
 
   // TEARDOWN (§0.1.5) — handled BEFORE the existence guard below, and that

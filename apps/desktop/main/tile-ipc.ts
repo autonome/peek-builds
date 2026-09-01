@@ -142,6 +142,7 @@ import {
   kernelShowRequested,
   kernelHideRequested,
   kernelSetAcceptsInput,
+  kernelArmSelectionFocus,
 } from './window-kernel-dispatch.js';
 import {
   registerGlobalShortcut,
@@ -3698,24 +3699,27 @@ export function registerTileIpcHandlers(): void {
       if (!callerWin) {
         return { success: false, error: 'Caller window not found' };
       }
-      // Replicate the work the legacy `window-set-overlay-focus-target`
-      // handler performs: store the target id on the window-manager
-      // params for the caller, and mirror onto the IZUI coordinator
-      // session so the overlay-restore path picks it up.
-      const mainMod = await import('./main.js');
-      const info = (mainMod as { getWindowInfo: (id: number) => { params: Record<string, unknown> } | undefined }).getWindowInfo(callerWin.id);
-      if (!info) {
+      // Arm the kernel's own selection latch, which is what actually restores
+      // focus when this switcher closes (window-kernel.ts
+      // `State.pendingSelectionFocus`). THIS is the moment both windows are
+      // alive and resolvable to `WindowId`s — the decision used to live in
+      // `main.ts`'s native `'closed'` handler and had to, because the backend
+      // has already dropped its numeric-id map by the time the kernel hears
+      // about the close, leaving nothing to resolve the target with.
+      //
+      // A target that no longer resolves clears the latch rather than arming a
+      // dangling one: the user picked a window that has since gone, and the
+      // right answer to that is the same as a plain dismiss — restore nothing
+      // and leave the user's desktop alone.
+      // The armer must be a window the kernel has — the latch is spent by its
+      // `WindowClosed` and by nothing else, so arming against an unregistered
+      // caller would leave one nothing can ever spend. `decide` rejects that
+      // too; refusing here is what turns it into an answer the caller can read.
+      const armerId = getWindowIdFor(callerWin.id);
+      if (armerId == null) {
         return { success: false, error: 'Caller window not in window manager' };
       }
-      info.params.overlayFocusTarget = args.targetWindowId;
-      try {
-        const izuiMod = await import('./izui-state.js');
-        const coordinator = izuiMod.getIzuiCoordinator();
-        const session = coordinator.getSession();
-        if (session) {
-          (session as unknown as Record<string, unknown>).overlayFocusTarget = args.targetWindowId;
-        }
-      } catch { /* coordinator optional */ }
+      kernelArmSelectionFocus(armerId, getWindowIdFor(args.targetWindowId) ?? null);
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

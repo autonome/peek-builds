@@ -6753,3 +6753,167 @@ describe('window-kernel: spending the cold-start focus latch', () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The switcher selection (`State.pendingSelectionFocus`) — both halves.
+//
+// The rule this replaces lived in `main.ts`'s native `'closed'` handler and
+// could only live there: it matched the closing window's numeric Electron id
+// against the IZUI session, and the backend has already dropped its id map by
+// the time the kernel hears about a close. Recording the selection as a
+// `WindowId` while the switcher is still open is what let it become a kernel
+// rule at all.
+//
+// The behaviour is unchanged: an explicit selection restores focus, a plain
+// dismiss does not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the switcher selection restores focus on the switcher close', () => {
+  const contentWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  /**
+   * Two ordinary pages and an open switcher holding key — the shape the app is
+   * in at the moment the user picks a window.
+   */
+  const switcherOpen = (): State =>
+    fold(
+      [
+        contentWindow(wid(1)),
+        contentWindow(wid(2)),
+        contentWindow(wid(9)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'WindowShown', id: wid(9) },
+        { type: 'OsFocusGained', id: wid(9) },
+      ],
+      initialState(),
+    );
+
+  const armSelection = (state: State, target: WindowId | null): State =>
+    fold([{ type: 'SelectionFocusArmed', armer: wid(9), target }], state);
+
+  const closeSwitcher = (state: State): { state: State; effects: Effect[] } =>
+    foldWithEffects([{ type: 'WindowClosed', id: wid(9) }], state);
+
+  it('nothing is armed to begin with', () => {
+    assert.strictEqual(initialState().pendingSelectionFocus, null);
+    assert.strictEqual(switcherOpen().pendingSelectionFocus, null);
+  });
+
+  it('arming stores the armer and the target as a pair', () => {
+    const before = switcherOpen();
+    const after = armSelection(before, wid(1));
+    assert.deepStrictEqual(after.pendingSelectionFocus, { armer: wid(9), target: wid(1) });
+    assert.strictEqual(after.version, before.version + 1, 'the arm is a transition like any other');
+  });
+
+  it('arming emits no effects — the raise waits for the close', () => {
+    // Nothing in `react` diffs `pendingSelectionFocus`, so the arm is
+    // effect-free by construction rather than by a guard. Picking a window in
+    // the switcher must not raise it while the switcher is still up.
+    const { effects } = foldWithEffects(
+      [{ type: 'SelectionFocusArmed', armer: wid(9), target: wid(1) }],
+      switcherOpen(),
+    );
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('arming null clears a selection the user moved off', () => {
+    // The switcher re-arms as the highlight moves and clears on dismissal, so
+    // `null` is a value applied like any other — never a no-op payload.
+    const armed = armSelection(switcherOpen(), wid(1));
+    assert.notStrictEqual(armed.pendingSelectionFocus, null, 'a selection really is held first');
+    const cleared = armSelection(armed, null);
+    assert.strictEqual(cleared.pendingSelectionFocus, null);
+  });
+
+  it('closing the switcher with a selection armed raises the selected window', () => {
+    const after = closeSwitcher(armSelection(switcherOpen(), wid(1)));
+    assert.ok(
+      after.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)),
+      'the selected window is raised',
+    );
+    assert.ok(
+      after.effects.some((e) => e.type === 'FocusContent' && e.id === wid(1)),
+      'and its content takes first responder, which the old bare focus() call did not do',
+    );
+    assert.strictEqual(after.state.pendingSelectionFocus, null, 'the latch is one-shot');
+  });
+
+  it('closing the switcher with NO selection raises nothing — a plain dismiss', () => {
+    // This is the whole point of recording the selection rather than reaching
+    // for the previously-focused window: raising it would drag the user to
+    // whatever desktop it happens to be anchored to.
+    const after = closeSwitcher(switcherOpen());
+    assert.ok(
+      !after.effects.some((e) => e.type === 'RaiseWindow'),
+      'no raise on a dismiss',
+    );
+  });
+
+  it('a selection survives an unrelated window closing', () => {
+    // The spend is keyed on the ARMER's removal, not on any close.
+    const armed = armSelection(switcherOpen(), wid(1));
+    const other = fold([{ type: 'WindowClosed', id: wid(2) }], armed);
+    assert.deepStrictEqual(other.pendingSelectionFocus, { armer: wid(9), target: wid(1) });
+    assert.ok(
+      closeSwitcher(other).effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)),
+      'and is still spent when the switcher itself goes',
+    );
+  });
+
+  it('a target that died while the switcher was open raises nothing', () => {
+    // The arm is deliberately unguarded on the target, so the spend is where
+    // liveness is asked — and the answer is the same as a plain dismiss.
+    const armed = armSelection(switcherOpen(), wid(1));
+    const gone = fold([{ type: 'WindowClosed', id: wid(1) }], armed);
+    const after = closeSwitcher(gone);
+    assert.ok(!after.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)));
+    assert.strictEqual(after.state.pendingSelectionFocus, null, 'and the latch is still spent');
+  });
+
+  it('the switcher closing twice cannot restore focus twice', () => {
+    const armed = armSelection(switcherOpen(), wid(1));
+    const once = closeSwitcher(armed);
+    const twice = closeSwitcher(once.state);
+    assert.ok(once.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)));
+    assert.ok(!twice.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)));
+  });
+
+  it('`decide` refuses to arm against a switcher the kernel does not have', () => {
+    // The latch is spent by the armer's own `WindowClosed` and by nothing
+    // else, so an unregistered armer would leave one nothing can ever spend.
+    const state = switcherOpen();
+    const result = decide(state, {
+      type: 'ArmSelectionFocus',
+      armer: wid(404),
+      target: wid(1),
+      expectedVersion: state.version,
+    });
+    assert.deepStrictEqual(result, { rejected: 'no-such-window' });
+  });
+
+  it('`decide` accepts a target the kernel does not have', () => {
+    // The mirror of the case above: the target is a note to be read later, and
+    // its liveness is the spend's question.
+    const state = switcherOpen();
+    const result = decide(state, {
+      type: 'ArmSelectionFocus',
+      armer: wid(9),
+      target: wid(404),
+      expectedVersion: state.version,
+    });
+    assert.deepStrictEqual(result, {
+      events: [{ type: 'SelectionFocusArmed', armer: wid(9), target: wid(404) }],
+    });
+  });
+});
