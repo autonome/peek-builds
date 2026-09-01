@@ -177,6 +177,17 @@ const pendingWindowCloseCapture = new Map<WindowId, PendingWindowClose>();
  * listener (`browser-window-created` below) checks this set the moment it
  * stages a capture, and drains immediately if the kernel already reported the
  * window gone, instead of leaving a capture nothing will ever come back for.
+ *
+ * Only ever gains an entry for a `WindowId` that still resolves to a live
+ * `BrowserWindow` at the moment of removal (`runWindowClosedBookkeeping`'s
+ * `instanceof BrowserWindow` gate) — the one case where this file's own
+ * native `'close'` listener is guaranteed to fire later and claim it. A
+ * hybrid `BaseWindow` close (never routed through `browser-window-created`)
+ * and a forceful `.destroy()` teardown (the kernel's `DestroyWindow` effect,
+ * which skips native `'close'` entirely) both resolve to something other
+ * than a live `BrowserWindow` there and are never recorded — recording one
+ * for either would park an entry nothing will ever claim, growing this set
+ * for the life of the process.
  */
 const pendingKernelRemoval = new Set<WindowId>();
 
@@ -239,14 +250,30 @@ function drainWindowClose(closedId: WindowId): void {
  * at all: a hybrid `BaseWindow` (never routed through `browser-window-created`
  * — `ipc.ts`'s own `baseWin 'closed'` handler runs its own
  * `finalizeWindowClose` tail directly), or a window destroyed by some path
- * that skips the native `'close'` event entirely (`BaseWindow.destroy()`,
- * used for forceful teardown) — for either of those the `pendingKernelRemoval`
- * entry is never claimed and this window's finalize tail simply never runs,
- * same as before this file waited on both facts.
+ * that skips the native `'close'` event entirely (`BaseWindow.destroy()`/
+ * `BrowserWindow.destroy()`, the kernel's `DestroyWindow` effect, used for
+ * forceful teardown) — for any of those, this file's `'close'` listener is
+ * never going to fire for `closedId`, so a `pendingKernelRemoval` placeholder
+ * would never be claimed; this window's finalize tail simply never runs
+ * through this file, same as before this file waited on both facts.
+ *
+ * `getNativeWindowFor(closedId)` tells the two cases apart at exactly the
+ * moment that matters: the kernel-initiated ordering dispatches `WindowClosed`
+ * synchronously, before the `CloseWindow` effect's own (async) `win.close()`
+ * call, so the window is still a live `BrowserWindow` right here. Every path
+ * this file never stages a capture for resolves to something else instead —
+ * a live `BaseWindow` (hybrid; never a `BrowserWindow`), or `null` (a
+ * `.destroy()` teardown's own native `'closed'` has already dropped the
+ * backend's id→window entry by the time its reactive `WindowClosed` reaches
+ * here). Gating the `add` on `instanceof BrowserWindow` is exactly "will this
+ * file's `'close'` listener ever run for this id" — which is what makes an
+ * unclaimed `pendingKernelRemoval` entry unrepresentable instead of merely
+ * cleaned up later.
  */
 function runWindowClosedBookkeeping(closedId: WindowId): void {
   if (!pendingWindowCloseCapture.has(closedId)) {
-    pendingKernelRemoval.add(closedId);
+    const native = getNativeWindowFor(closedId);
+    if (native instanceof BrowserWindow) pendingKernelRemoval.add(closedId);
     return;
   }
   drainWindowClose(closedId);
