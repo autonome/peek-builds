@@ -12,7 +12,8 @@ Read this table first. §4 and §5 below are the detailed record; this block is 
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
 
-The R2 count below is current as of 2026-09-01 (via `scripts/check-r2-window-ops.mjs`).
+Current through `c2f226b8`. The R2 count below is current as of 2026-09-01 (via
+`scripts/check-r2-window-ops.mjs`).
 Steps 8 and 9 in the table below are verified against the allowlist and live code as of
 2026-08-17, not re-verified since; steps 1-7, 10, and 11 track the older 11-step migration
 (§5), not the current window-kernel rewrite (§0.1), and carry forward unverified.
@@ -35,8 +36,8 @@ Steps 8 and 9 in the table below are verified against the allowlist and live cod
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (re-verified 2026-09-01): **16 allowlisted entries / 24
-calls** (write debt; the check also reports 8 entries / 11 calls of read debt, tracked
+`node scripts/check-r2-window-ops.mjs` (re-verified 2026-09-01 at `c2f226b8`): **16 allowlisted
+entries / 23 calls** (write debt; the check also reports 8 entries / 11 calls of read debt, tracked
 separately and not part of this count). This number — not the table above, not any other
 prose in this document — is the honest measure of how much window-op code still bypasses the
 machine. It is expected to shrink monotonically to zero; the check fails a PR that grows it.
@@ -64,10 +65,30 @@ either machine, so its provenance is unknown rather than established. **All thre
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
   `ipc.ts windowOpenHandler`'s `await ...loadURL(url)`, so reading `baseWin.id` just after throws
-  `Object has been destroyed` and no window ever appears. Which machine decides the dismissal is
-  unproven — `window-state.ts` and the kernel both have a transient-dismissal path, and every close
-  path in the build is DEBUG-gated. Write-up: "Defect A: the peek is destroyed inside its own
-  `loadURL`" below.
+  `Object has been destroyed` and no window ever appears. Write-up: "Defect A: the peek is destroyed
+  inside its own `loadURL`" below.
+
+  **The rival-machine question is closed** — `window-state.ts` is deleted and the kernel's
+  `selectTransientAutoclose` is the only transient-dismissal path left. Static analysis of the
+  kernel narrows the outcome to ONE BIT: the peek is selected by `selectTransientAutoclose` and
+  none of `transientAutocloseExemption`'s four exemptions spares it, so everything turns on whether
+  the other page host's `OsFocusGained` carries `cause: 'machine'` (ordering floor set,
+  `newer-than-focuser` fires, peek spared) or `cause: 'world'` (floor `null`, exemption disarmed,
+  peek dismissed). `window-diag.ts wmLog`'s `focus-cause-taken` record captures exactly that bit.
+  Two candidates remain, both OS-level and both in `electron-window-backend.ts`:
+  `pendingHideProvokedFocus`, a process-wide boolean armed in `hideWindow` and cleared only by the
+  next focus on any window (armed on one press, spent on the next), and `pendingSelfCausedFocus`, a
+  per-window one-shot that a `focus()` on an already-first-responder window never echoes. Two other
+  candidates are REFUTED by test: the `state.key` carry across `WindowClosed` does not change the
+  verdict (`transientAutocloseExemption`'s only ordering input is `openSeq`, assigned at
+  registration and never derived from position in `order`), and `ipc.ts`'s `pendingWindowKeys` race
+  guard is not the alternation source (the hybrid branch's `catch` deletes the key on the throw
+  path). The `loadURL` latency race is refuted too — load latency is near-constant at 64-65ms.
+
+  A live macOS run on 2026-08-29 did NOT reproduce the defect, and that is **not evidence it is
+  fixed**: the run carried `E2E_TEST=true`, which disabled the since-deleted `ipc.ts`
+  close-on-blur decider, and its staging gesture clicked the page, which the sign-off procedure
+  forbids.
 
   A separate, genuine missing-provenance defect was fixed while chasing this — machine-issued focus
   reports reached the kernel as `world`, disarming `selectTransientAutoclose`'s ordering floor — but
@@ -95,8 +116,10 @@ either machine, so its provenance is unknown rather than established. **All thre
   OTHER window, or about none, and both branches end in `OPEN_SWITCHER_WINDOW`. The palette's own
   `escPolicy(session, 'palette') === 'close'` is dead code for the palette itself.
 
-  **The fix is the escape cutover, and it needs no new rule.** `window-escape.ts` `interpretEscape`
-  — written, unit-tested, and with zero production callers — resolves its target through
+  **The fix is the escape cutover, and it needs no new rule** — and that cutover has LANDED:
+  `6e04e8df` gave `window-escape.ts` production callers, so B is believed closed. **Unverified;
+  only a gesture at a real display can confirm it, and B gates C.** `interpretEscape` resolves
+  its target through
   `resolveEscapeTarget`, which reads `keyWindow(state)`, the window in use, rather than `front`;
   and `palette` is in `ESC_CLOSE_ROLES`. Wiring it closes B as a side effect of the migration.
   Making the palette non-satellite instead would break front eligibility everywhere, and a
@@ -637,6 +660,87 @@ or where a headless run diverged from a real one, are closed.
   call `setIgnoreMouseEvents` directly; `hybrid-overlay.ts ensureOverlay` keeps its one direct
   call because it runs before the window has a machine id, and is allowlisted in
   `scripts/check-r2-window-ops.mjs` for that reason.
+
+### The last rival deciders removed, 2026-09-01
+
+Eight commits, `b0dd7b39..c2f226b8`, on top of the sixteen-commit sweep recorded in the section
+above. With them the cutover plan has nothing outstanding: the kernel is the only thing deciding
+window lifecycle, focus, visibility, stacking and dismissal, and every rival path the audit found
+was REMOVED rather than reconciled — even where that leaves a behaviour gap, because a gap is a
+kernel rule waiting to be written and a rival path is a bug that reappears.
+
+- `5860a203` — **a real crash, not a cleanup.** `window-kernel.ts descendantsToCascadeClose` walked
+  `parentId` edges with no visited set, terminating only because every real registration happens to
+  point backwards in registration order. The property generator does not respect that, and 12 seeds
+  were failing with a stack overflow raised inside `decide`. The walk now carries a visited set; on
+  acyclic input the result is unchanged.
+- `3b993832` — the hybrid close-listener ordering is CHECKED rather than assumed. The backend's veto
+  and `ipc.ts`'s finalize tail bind to the same `'close'` emit and both run, in attach order; the
+  backend must go first, or the finalize retires the record before the kernel is asked and leaves a
+  vetoed-open host wrapped around destroyed content. A wiring-time listener-count check throws if
+  that order ever reverses.
+- `004d5a3e` — a quit cancelled at a `beforeunload` prompt no longer strands the quit latch.
+  `electron-window-backend.ts`'s `will-prevent-unload` records the question as `quitPromptPending`;
+  the window closing (quit proceeded) or taking focus (quit cancelled) answers it and clears
+  `quitting`.
+- `90413d4e` — **the switcher selection is a kernel rule.** `State.pendingSelectionFocus` is armed
+  as a `WindowId` pair at selection time, while both windows are alive, and spent by the kernel's
+  `WindowClosed` arm; `main.ts` now makes no decision at all about a closing window. This replaces a
+  match of the closing window's numeric Electron id against a parallel session object — the backend
+  has already dropped its id map by the time the removal fires, so no platform id can survive the
+  close. The IZUI session's `overlayFocusTarget` field, its setter and its tile-ipc mirror are
+  deleted rather than left write-only.
+- `050dc2b5` — the Escape decider reads `State.openedInBackground` off the kernel instead of the
+  coordinator's four-value session. Both policy tables only ever compared against one of the four
+  values, so the fact was always one bit. `EscapeSession` and `clampSession` are gone and the
+  session has left `EscapeKeyPress` entirely.
+- `65f25369` — stepping the app aside when nothing is left on screen is a `react` rule diffing the
+  predicate `holdsAppOnScreen` across a transition. `maybeHideApp`, `getVisibleWindowCount`, the
+  `excludeId` parameter and the switcher exemption are all gone — the exemption because it stopped
+  being a case. `app.hide()` moved behind the port as `hideApp`, which is why the R2 write debt
+  above is 23 calls rather than 24.
+- `e95eec15` — the last two decisions assembled at their call sites each become one decider.
+  `shouldActivateFocusedOnRestore` became `planRestoreFocus` on `window-kernel-executor.ts`, the
+  layer holding both its live inputs (app-active is kernel state; whether the run is focus-free is
+  the executor's own injected fact); `session.ts` supplies only which restore this is and reads back
+  the answer. `applyPlacementOnReuse`'s headless suppression folds into the function, once — it had
+  four call sites each carrying its own copy, and the four had DRIFTED, three suppressing and the
+  fourth not.
+- `c2f226b8` — comments repointed at where the moved rules now live.
+
+**Verification status.** The unit runner is green at 3179 pass / 0 fail, the first green run since
+the sweep began and up from 3145 at `79b40f47`, the last known-green point before any of it.
+`scripts/check-r2-window-ops.mjs` and `scripts/check-platform-leak.mjs` both pass. **The Playwright
+suite has never run against this branch**, now 84 commits deep; that is the entire remaining risk
+surface, and several sweep commits change what a headless run actually does, so the result is
+genuinely unpredictable rather than merely unverified. Judge that run by diffing the failing spec
+set against `apps/desktop/tests/gate-baseline.md`, never by the failure count. A spec asserting a
+deleted rival path is asserting the bug and should be deleted or rewritten against the kernel; a
+spec failing because the kernel does not cover one of the gaps below is a real finding.
+
+One deliberate behaviour change is unit-uncovered and only a Playwright spec can contradict it:
+under a focus-free run, a keepLive canvas window reused by key is no longer repositioned by its
+stored placement intent. That is the drifted fourth call site above, unified onto the guarded
+behaviour the other three had.
+
+### Behaviour gaps now open — each is a kernel rule waiting to be written
+
+These are deliberate, and none of them should be filled outside the kernel.
+
+- A `modal: true` window whose role is NOT in `window-kernel.ts TRANSIENT_ROLES` no longer
+  self-closes on blur at all, and `window-kernel.ts isAppResignSweepEligible` excludes
+  `selfClosesOnBlur` windows, so nothing dismisses those on app resign either. The exclusion was
+  built on the assumption that such a window closes itself on blur, which no longer holds.
+- **Unverified:** macOS Cmd+` cycling is reported to skip panel-type and `alwaysOnTop` windows, so
+  the command palette may receive no native blur on that gesture — which is why `renderer/cmd/panel.js`
+  carried its own subscriber. Whether the kernel's focus-driven sweep covers the Cmd+` case has
+  never been tested.
+- A keepLive tile closed by a native path is destroyed rather than hidden UNLESS
+  `electron-window-backend.ts`'s `'close'` listener catches it. That listener is the only bridge;
+  `decide` has always had the right rule (`record.keepLive ? WindowHidden : WindowClosed`).
+- `window-kernel.ts descendantsToCascadeClose` force-closes keepLive descendants, so a keepLive
+  guarantee is now conditional on how the window was opened. This matches the old `closeChildWindows`
+  behaviour it replaced.
 
 ### Maintenance directive
 
