@@ -309,6 +309,22 @@ MCP remains the right answer for the *other* direction — an agent calling *int
   `getTable` — the generic table access `docs/api.md` documents and several features use — has
   no `/mcp/*` equivalent, so a feature that keeps state in a custom table cannot be a worker
   without one being added.
+- **Item events are the sharpest edge of that subset, and `feeds` falls off it.** Measured by
+  `tools/feeds-worker-spike/run.mjs`. The tile API has `addItemEvent`, `getItemEvent`,
+  `queryItemEvents`, `deleteItemEvent` and `deleteItemEvents`; `/mcp/*` has one write route and no
+  read route. `POST /mcp/items/:id/events` reaches `recordEvent()` in `apps/server/mcp-items.js`,
+  which puts the event's type name in the row's `content` column, hardcodes `value` to 0 and
+  stamps `occurredAt` with the server's clock — so a feed entry's link, publication time and
+  metadata have to travel as one JSON string in `metadata.notes`, and the row's own `occurredAt`
+  is the write time rather than the publication time. Reading them back is only possible by
+  fetching the parent item with `?events=N`, one request per item, and `fetchEvents()` caps the
+  result at 20 however many are asked for. `pollFeed()` in `apps/desktop/features/feeds/background.js`
+  deduplicates by reading its last 100 entries and skipping guids it already has; against this API
+  it sees 20. Polling a 50-entry feed twice writes 50 entries and then 30 more, and every poll
+  after that writes 30 again, forever. There is also no route that deletes an item event, so
+  `unsubscribeFeed()` throws and a removed feed leaves its entries behind. **A worker that touches
+  item events needs `/mcp/*` routes that do not exist yet**, and unlike the generic-table gap this
+  one is hit by a bundled feature that already ships.
 - **`api.network` and `api.datastore` diverge in where they are enforced.** On the desktop both
   are checked by `tile-ipc-gate.ts` against the manifest grant. For a worker, datastore scope
   and the readonly bit are properties of the *credential*, enforced server-side — that is the
@@ -324,11 +340,12 @@ MCP remains the right answer for the *other* direction — an agent calling *int
   inventory. A worker cannot read or write them.
 - **Images are refused.** `create_item` with `type: 'image'` against the remote store is an
   explicit error (§9 of the same document). A worker cannot produce image items.
-- **It is unproven.** `handoff-mcp.md`: the two halves "have never talked to each other over a
-  real socket". The first end-to-end exercise of `remote-store.js` against a deployed
-  `apps/server` is a prerequisite for any worker work, and its expected first failure — "credential
-  resolution, header shape, or an error body that does not map back" — is exactly the seam a
-  worker would sit on.
+- **The store itself is proven; the worker path over it is not.** `tools/socket-proof.mjs`,
+  `tools/socket-proof-ambiguous.mjs` and `tools/socket-proof-scaffolded.mjs` drive
+  `remote-store.js` against a deployed `apps/server` over a real socket, so credential
+  resolution, header shape and error mapping are no longer open. What has not been exercised is a
+  *feature* on top of that store — the seam this section's other bullets describe — and
+  `tools/feeds-worker-spike/run.mjs` is the harness for it.
 
 **Credential.** The same `mcp_grants` bearer token, minted by `POST /admin/mcp-grants` and
 resolved by hash, carrying one `scopeTag`, one `readonly` bit and one `profile_id`. A worker gets
@@ -725,6 +742,16 @@ is the intended shape, not a transitional one.
    to an egress proxy, or whether it is abandoned and `network` becomes an install-time disclosure
    rather than a runtime gate.
 
+   One input, measured. `installNetworkGuard()` in `tools/feeds-worker-spike/worker-api.mjs`
+   replaces `globalThis.fetch` before the feature is imported, checks the hostname against
+   `capabilities.network.domains`, and throws on a miss. It is about twenty lines, it logged every
+   request `feeds` made, and the feature did not notice. So shadowing works and is cheap. What it
+   does not do is *hold*: on Node the feature can reach the network through `node:http` and
+   `node:https` without touching `fetch` at all, so the guard is only a boundary if the runtime
+   also withholds those modules. Shadowing is a guard-rail against a mistake, not a boundary
+   against an author — which is the same conclusion
+   `docs/workers-capabilities.md` §3.3 reaches, now with the cost of the guard-rail known.
+
 3. **Who approves a worker install, and what stops a worker exfiltrating.** A desktop feature
    runs on a machine the user controls, behind a capability gate the user consented to at
    install. A worker runs on rented compute holding a credential scoped to the user's store, with
@@ -748,18 +775,60 @@ is the intended shape, not a transitional one.
    workers is paying early for a threat that is accepted, not designing for one that was never
    accepted.
 
-4. **Whether cross-feature imports are bundled or resolved.** `feeds/background.js` imports
-   `peek://cmd/nouns.js`. Bundling at install time is simpler and matches how
-   `feature-installer.ts` `installFromBundle()` already materialises a whole file set, but it
-   freezes the imported module at bundle time, so a `cmd` update does not reach deployed
-   workers. **Settled by:** deciding whether the `peek://` module graph is a versioned dependency
-   or a live one.
+4. **Whether cross-feature imports are bundled or resolved — settled: bundled.** Both were built
+   and run. `tools/feeds-worker-spike/peek-hooks.mjs` resolves `peek://` live through
+   `module.registerHooks()`, and resolution itself is a non-issue: `peek://cmd/nouns.js` resolved
+   to `apps/desktop/renderer/cmd/nouns.js` in about 2ms, and the hook is forty lines.
 
-5. **Whether the worker API object is `window.app`-shaped at all.** §5 chose "same object,
-   missing namespaces" so that a feature can share code between its desktop and worker halves.
-   The alternative is a deliberately different, smaller object that makes the two halves
-   obviously distinct and impossible to confuse. **Settled by:** actually porting `feeds` and
-   seeing whether the shared code is real or imagined.
+   What decides it is not cost but binding. `apps/desktop/renderer/cmd/nouns.js` evaluates
+   `const api = window.app` once, at its own first import, and holds it for the life of the
+   module. Two instances of `feeds/background.js` importing the same specifier get one cached
+   module instance, so the second instance's `registerNoun()` calls landed on the *first*
+   instance's API object — measured, not inferred: after the second `init()`, the first API object
+   held six noun subscriptions and the second held none. A host that runs more than one feature,
+   or one feature twice, cannot give them separate API objects while a shared module captures a
+   global. Bundling per install gives each deployment its own copy of the graph and removes the
+   sharing entirely.
+
+   The staleness that argued for live resolution is real but is the smaller problem, and it has
+   an ordinary answer: a `cmd` update reaches deployed workers by rebundling them, which is a
+   deploy, which is a thing a fleet already has to do. Live resolution also does not survive
+   packaging — `electron-builder.yml` sets `asar: true`, and stock Node cannot read inside
+   `app.asar`, so a live resolver would need the unpacked tree or `original-fs`. **The `peek://`
+   module graph is a versioned dependency.**
+
+5. **Whether the worker API object is `window.app`-shaped at all — settled: same shape, and §5's
+   absent-not-stubbed rule holds.** `feeds/background.js` was imported unmodified and run under
+   both answers, in `tools/feeds-worker-spike/run.mjs`.
+
+   The shared code is real. `parseFeed()`, `parseRSS()`, `parseAtom()`, `pollFeed()`,
+   `pollAllFeeds()`, `getFeeds()`, `getEntries()`, `subscribeFeed()` all ran untouched against an
+   API object that was the desktop shape minus `window` and `shortcuts`. A deliberately different
+   object would have bought nothing here and cost the port.
+
+   The split is not between the two halves of the feature, though — it is between the feature's
+   *lifecycle* and its *work*. `init()` is the only thing that needs the absent namespaces, and it
+   dies at `api.shortcuts.register`, having already registered the noun and the `refresh feeds`
+   command and not yet reached its `item:created` subscription or its timer. `uninit()` dies the
+   same way at `api.shortcuts.unregister`. Every entry point a scheduled worker actually calls is
+   clean. So the port is: keep the object, drop `init()`/`uninit()`, and let the manifest's
+   `worker.schedule` name the exported function to run.
+
+   Absent beats stubbed, and the run shows why. With the namespaces stubbed to no-ops `init()`
+   returned successfully and installed a 900000ms interval and a 5000ms timeout — a worker
+   holding itself alive for fifteen minutes to do nothing, with no error anywhere to say the
+   shortcut it registered will never fire. With them absent the failure is a `TypeError` naming
+   the namespace, at the line responsible. The cost of absence is that the failure is *partial*:
+   `init()` had already half-registered before it threw, and a host that catches and continues
+   gets a feature in an undefined state. A worker runtime should treat a throw out of the
+   lifecycle as fatal to the instance rather than recoverable.
+
+   `DOMParser` needed a shim and one sufficed: `linkedom`, already a dependency of both the root
+   and `apps/desktop`, parsed a real RSS feed and a real Atom feed with no change to
+   `parseFeed()`, including the escaped-namespace `dc\:creator` selector and Atom's
+   `link[rel="alternate"]` href. The one thing the host must inject beyond the API object is
+   `globalThis.window`, because both `background.js` and `nouns.js` read `window.app` at import
+   time — §5's `globalThis.app` alone fails on the module's first line.
 
 6. **The tag race at unattended write volume.** `docs/mcp-remote-backend-design.md` §7.2 accepts
    a window in which a remotely-added tag is dropped by a desktop push, on the reasoning that
@@ -769,12 +838,34 @@ is the intended shape, not a transitional one.
    section already names (stamping `items.updatedAt` on tag routes; set-difference instead of
    delete-and-reinsert on the push path).
 
-7. **Cold-start budget for `call_worker`.** §8 has an agent's tool call boot an instance.
-   Cloudflare publishes a 1-second startup ceiling and celld self-reports "~4 ms" to wake a
-   hibernated cell, but neither number covers importing and initialising a real feature bundle
-   plus opening a channel to `apps/server`. **Settled by:** measuring a bundled `feeds` cold
-   start end to end. If it does not fit comfortably inside a tool call, §8's synchronous
-   `call_worker` has to become fire-and-read-back for every command, not just long ones.
+7. **Cold-start budget for `call_worker` — the bootstrap is cheap, the poll is not, and the
+   reason is the store round trips.** Measured by `tools/feeds-worker-spike/run.mjs` on Linux,
+   Node 24.
+
+   Bootstrap is not the problem. Process launch through the feature's module graph being imported
+   and ready — Node's own startup, `linkedom`, `remote-store.js`, the `peek://` resolver, and both
+   `background.js` and `nouns.js` — is **134–159ms over five runs**. That is unbundled, from
+   source, with a live resolver in the path; a bundle can only be faster.
+
+   The poll is where the budget goes, and it scales with the feed rather than sitting flat.
+   Against a store with no network in it, one `pollAllFeeds()` with nothing new to write is
+   17–19ms over a 10-entry feed and ~100ms over a 50-entry one, nearly all of it the feed fetch.
+   Against `/mcp/*` the same poll is one
+   `GET /mcp/items`, one `GET /mcp/items/:id?events=20`, one `PATCH /mcp/items/:id`, and **one
+   `POST /mcp/items/:id/events` per new entry**, issued sequentially by `pollFeed()`'s `for` loop.
+   A 30-entry poll is therefore ~33 serial round trips to `apps/server` — the dominant term by a
+   wide margin, and it grows with entries and with the number of feeds subscribed.
+
+   Two consequences for §8. A worker whose work is one write fits inside a tool call comfortably.
+   A worker whose work is a fan-out of writes does not, and no amount of runtime tuning changes
+   that, because the cost is in the API shape rather than the boot. Either `/mcp/*` grows a batch
+   write, or `call_worker` is fire-and-read-back for anything that writes per item — which is most
+   of what a scheduled worker does.
+
+   **Still to measure:** the round-trip figure against the deployed server, which needs a
+   credential in the environment. Re-run
+   `PEEK_MCP_REMOTE_URL=… PEEK_MCP_TOKEN=… SKIP_LIFECYCLE=1 node tools/feeds-worker-spike/run.mjs`
+   and the numbers above are replaced with real ones.
 
 8. **Who operates the fleet.** celld runs "one application deployment" per fleet with the
    operator's own bucket; Cloudflare is an account with a bill. Whether a Peek user brings their
