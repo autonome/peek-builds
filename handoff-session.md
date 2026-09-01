@@ -19,15 +19,13 @@ nothing.
 
 Sync coverage for items, events and tags is complete and proven against production,
 the test foundation under it is repaired and documented, and the bulk pull is paged.
-**Every remaining step on this track needs a human first.** Nothing here should be
-started until the four questions in Next Steps are answered — they gate the gate run,
-the deploy, the mobile build and the dispatch loop respectively, and there is no
-unblocked sync work left behind them.
+The desktop and server halves are landed and deployed; what remains is the phone,
+which still cannot sync, and the durability work behind it.
 
 ### Current state
 
-Thirteen commits sit on `sync`, ahead of `main`, unlanded. The seven from this
-session:
+Landed on `main`. The desktop and server work is done, gated and deployed; the phone
+is the remaining half. The commits that carry it:
 
 - `fe14a3e6` — the end-to-end suite addresses one server profile from both sides. It
   had been 2 passed / 11 failed since 2026-06-24 because its own `serverRequest()`
@@ -53,71 +51,64 @@ The six older ones (`ca55f2ae`, `0234630d`, `e17ed401`, `64c5df6b`, `740cffea`,
 `4aeecd1d`) carry per-event push tracking in `item_events.pushedAt`, the parked-item
 columns, the batched item push through `POST /items/batch`, and their docs.
 
-Everything in How to verify is green. Two things are unverified rather than passing:
+Everything in How to verify is green, and the full Electron gate's failing set is
+inside `apps/desktop/tests/gate-baseline.md` across three consecutive runs.
 
-- **The full Electron gate fails `hybrid-overlay.spec.ts` "draft note: an empty blur
-  creates nothing, a typed blur creates exactly one item"**, which is absent from
-  `apps/desktop/tests/gate-baseline.md` and passed in both of the baseline's recorded runs.
-  It reproduces only under the full desktop project — a single-file run of that spec on a
-  freshly built package passes 47/48. Cause not yet identified.
-- **The server changes are not deployed.** `POST /items/batch` and the `limit`/
-  `cursor` parameters exist only in this branch. That is safe in both directions —
-  the client probes the batch route once per run and falls back on a 404, and a
-  server that ignores `limit` returns one unpaged page with no cursor, which ends the
-  client's loop after one round trip — so the desktop can ship first, but neither
-  change does anything until the server goes up.
+The gate did catch one regression, fixed in `e22c0c16`: the notes pane restored an
+interrupted editor's focus and caret in a `requestAnimationFrame`, a frame after the
+rebuild, so a second rebuild landing in that window read the not-yet-applied caret
+through `_captureOpenEditor()` and stored it as the user's own — a caret mid-note came
+back at the end of it. Focus and caret are now applied synchronously at the end of
+`_render()`. **It reproduced only under the full desktop project**, never in a
+single-spec run or `test:grep`, and it was intermittent there — four failures across
+the three runs before the fix, none in the three after.
+
+**The server is deployed** and the new routes are verified live: `/items/since/0?limit=2`
+returns two rows with a `nextCursor`, a bad `limit` is a 400, and `POST /items/batch`
+answers rather than 404s. Both changes are backward-safe in either direction — the
+client probes the batch route once per run and falls back on a 404, and a server that
+ignores `limit` returns one unpaged page with no cursor, ending the client's loop after
+one round trip.
 
 ### Next steps
 
-**Steps 1 through 4 are questions, not work.** Ask all four at the start of the
-session and wait for the answers before starting anything, including the steps
-below them: step 5 needs the same production authorization, and steps 6 and 7 are
-follow-on work that should not begin while the branch is unproven by the gate and
-undeployed.
-
-1. **Find the cause of the draft-note gate failure and fix it.** It is the one thing
-   blocking this branch from landing. What is known: it reproduces only under the full
-   desktop project, not in a single-file run or via `test:grep`; the item does reach the
-   datastore (the test's count assertions pass) and what is empty is the rendered pane, so
-   this is a render/reload problem rather than a lost write. `page-notes.js` `_render()`
-   guards a rebuild with `_rebuilding`, and both blur handlers branch on it — the draft's
-   handler is `async` and reads it again after an `await`, which is the prime suspect.
-   `overlay.js` and the spec currently carry a temporary diagnostic (`window.__notesPaneDiag`
-   plus a state dump on the failing assertion) — **remove both before committing.**
-
-2. **Deploy the server so the batched push and the paged pull take effect.**
-   `railway up ./apps/server --path-as-root --service peek-node --detach -m "<what
-   changed>"` from the repo root. Ships `POST /items/batch`, `db.js saveItems()`, and
-   `limit`/`cursor` on the three `since` routes.
-   **blocked on: authorization to deploy to production.**
-
-3. **Ship a mobile build.** The phone is locked out of `/items` entirely until a
+1. **Ship a mobile build.** The phone is locked out of `/items` entirely until a
    version-3 build ships: the shipped iOS build sends
    `X-Peek-Datastore-Version: 1` and `checkVersionHeaders()` in
    `apps/server/index.js` 409s it. Profile registration is not behind that check,
    which is why the device still shows a recent last-seen. Mobile source already
-   declares version 3 in `apps/mobile/peek-core/src/types.rs`, review-verified only.
+   declares version 3 — `apps/mobile/peek-core/src/types.rs` `DATASTORE_VERSION`, with
+   `apps/mobile/src-tauri/src/lib.rs` sending it on both the pull and push paths — so
+   this is a stale shipped binary, not a source gap. The App Store path is
+   `apps/mobile` `npm run archive` (`build-archive.sh`), which needs Xcode's
+   Distribute step by hand; `yarn mobile:ios:xcodebuild:device:full` only side-loads a
+   connected device. Verify with `scripts/verify-ios-build.sh` — a green build does not
+   prove the binary on the device is yours.
 
-   Expect churn on the first pull: 747 tombstones arrive at once, and
-   `merge_server_item()` in `apps/mobile/peek-core/src/sync.rs` matches them by server
-   row id against the local `sync_id`. Where it matches, it soft-deletes the local row
-   — invisible in the app, with no in-app undo — and then re-imports the surviving twin
-   as a new local item with a fresh local id, orphaning visit/frecency history and
-   offline blobs keyed to the old id. Take a server backup first and record the
-   phone's pending count before and after.
-   **blocked on: the Mac, which holds the iOS build environment and Xcode.**
+   The first pull will be slow but not destructive. `pull_from_server()` uses plain
+   `GET /items?includeDeleted=true` on a first sync — no `limit`/`cursor`, no chunking,
+   and the paging added on this track covers only the `since` routes — so the whole set
+   arrives in one response, measured around 10 MB and growing. Tombstones are safe:
+   `merge_server_item()` in `apps/mobile/peek-core/src/sync.rs` handles a matched
+   tombstone with an in-place `UPDATE items SET deleted_at = ... WHERE id = <local id>`,
+   keeping the row id, so the `ON DELETE CASCADE` on `blobs` and `item_visits` never
+   fires and visit/frecency history and offline blobs stay attached. The delete-and-
+   reimport branch runs only when no local row matches at all. Record the pending count
+   before and after from `get_sync_status()` (Settings shows it), and take a server
+   backup first regardless.
+   **needs the Mac, which holds Xcode.**
 
-4. **Bootstrap the dispatch loop.** Needs Peek's MCP wired into this repo, which
-   needs an MCP grant minted via `POST /admin/mcp-grants` (a production write
-   creating a credential; the admin token is set and the route exists). No Peek
-   datastore exists on this machine, so it must ride on the remote backend.
-   `.claude/skills/dispatch/operating.md` covers the loop wiring and the autonomy
-   ladder. **blocked on: authorization to mint an MCP grant, plus the scope tag it
-   should be limited to and whether it is read-only.**
+2. **Finish the dispatch loop wiring.** The grant exists — minted against production,
+   scope tag `mcp-test`, read-write, profile `4c1b5b4d-d613-42eb-a570-7775e6f938bd` —
+   and `GET /mcp/whoami` confirms it resolves with that scope. What is missing is the
+   MCP client config pointing at the remote backend: `peek-mcp-init` assumes a local
+   `Peek.app` that does not exist on a Linux machine, so the three files it would write
+   have to be produced against the server's `/mcp/*` routes instead. See
+   `handoff-mcp.md` for the remote-backend design. Note `GET /mcp/tags` returns empty,
+   because nothing carries the `mcp-test` tag — the loop will see no work until
+   something is tagged.
 
-Once those are answered, the work that remains on this track, in order:
-
-5. **Give the restore path a production rehearsal.** Backups are proven readable and
+3. **Give the restore path a production rehearsal.** Backups are proven readable and
    the download route works against real data, but nothing has ever restored one.
    Until an archive is put back and verified, a backup is proven as an archive and
    unproven as recovery. Backups also still live on the same Railway volume as the
@@ -125,10 +116,9 @@ Once those are answered, the work that remains on this track, in order:
    the download route is the first half of fixing that; nothing pulls them off-box on
    a schedule. `docs/server-backup-and-deploy.md` → the "Restoring an archive"
    section has the route, its body, dry run, ordering, WAL handling and retention.
-   **blocked on: authorization to write to production, since a rehearsal restores
-   into the live server.**
+   A rehearsal restores into the live server, so take a fresh backup first.
 
-6. **Close the gaps the coverage audit names**, listed in
+4. **Close the gaps the coverage audit names**, listed in
    `docs/sync-coverage-gaps.md` → the "The gaps this leaves" subsection of section 8:
    no suite exercises the tag or event stages over a real socket, none exercises real
    authentication end to end (the end-to-end suite spawns the server with
@@ -137,7 +127,7 @@ Once those are answered, the work that remains on this track, in order:
    `sync-version-compat.test.js` asserts version-bump behaviour against a copy of
    `datastore.ts checkAndWriteDatastoreVersion()` rather than the real one.
 
-7. **Sync `rules` — still deferred until something can write a user rule.** There are
+5. **Sync `rules` — still deferred until something can write a user rule.** There are
    zero `source='user'` rows and no code path that creates one; `tile:rules:register`
    hardcodes `source: 'runtime'` and there is no rule editor. All existing rules are
    `source='manifest'` and regenerate, so they must not sync. Two constraints the rule
