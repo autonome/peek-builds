@@ -167,12 +167,32 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     assert.strictEqual(target.kind === 'window' ? target.record.id : null, quickView, 'ESC targets key, not main');
   });
 
-  it('disagreement — a landing on a window that no longer holds key is dropped as stale', () => {
+  it('disagreement — a landing on a window whose holder is always-closeable redirects to the holder', () => {
     // The keystroke went to the workspace host; by dispatch time the palette
-    // holds key. Acting on the palette would close a window the user never
-    // pressed Escape in.
+    // holds key. `paletteOverHost`'s holder role (`palette`) is in
+    // `ESC_CLOSE_ROLES`, so this is the `ebb10894` shape: the keystroke landed
+    // on a window that has since lost focus to an always-closeable transient
+    // (a quick-view/palette/utility that opened over it). Acting on the LANDED
+    // window would leave the transient — the thing the user is actually
+    // looking at — stuck open; redirecting to the holder closes it instead.
     const state = paletteOverHost();
-    assert.strictEqual(resolveEscapeTarget(press({ landedId: workspaceHost }), state).kind, 'stale');
+    const target = resolveEscapeTarget(press({ landedId: workspaceHost }), state);
+    assert.strictEqual(target.kind, 'window');
+    assert.strictEqual(target.kind === 'window' ? target.record.id : null, palette);
+    const outcome = interpretEscape(press({ landedId: workspaceHost }), state);
+    assert.strictEqual(outcome.kind, 'close-window');
+    assert.strictEqual(outcome.command?.id, palette);
+  });
+
+  it('disagreement — a landing on a window whose holder is NOT always-closeable is dropped as stale', () => {
+    // Same disagreement shape, but the holder is an ordinary content host
+    // rather than a quick-view/palette/utility — nothing about its role says
+    // Escape should force it closed, so the keystroke is dropped rather than
+    // redirected. This is what keeps the rule from becoming "always redirect".
+    const state = fold([regHost(secondHost), show(secondHost), focus(secondHost)], loneHost());
+    assert.strictEqual(state.order.find((w) => w.id === secondHost)?.role, 'content');
+    const target = resolveEscapeTarget(press({ landedId: workspaceHost }), state);
+    assert.strictEqual(target.kind, 'stale');
     assert.deepStrictEqual(interpretEscape(press({ landedId: workspaceHost }), state), {
       kind: 'nothing',
       reason: 'stale-landing',

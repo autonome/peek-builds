@@ -311,15 +311,29 @@ export type EscapeTarget =
  *      window). The keystroke was aimed at a window that has since lost focus.
  *      Acting on the CURRENT key window would apply a keystroke meant for A to
  *      B — closing a window the user never pressed Escape in. So the keystroke is
- *      dropped (`stale`), and the user's next press decides against a settled
- *      world. This is the structural replacement for the `escSeq` epoch check,
- *      which existed for exactly this hazard ("Esc reopens the switcher 500ms
- *      after closing it") and needed a round trip to express it.
+ *      dropped (`stale`)... UNLESS the holder's role is one Escape closes
+ *      outright (`ESC_CLOSE_ROLES`), in which case the redirect is safe: an
+ *      always-closeable window (quick-view/palette/utility) is exactly the kind
+ *      of transient that opens over whatever the user was looking at and steals
+ *      key while the old landing is still settling, and its own role already
+ *      says "Escape closes me, whichever window that keystroke happened to
+ *      land on." This is the `ebb10894` shape — a peek/slide opens over a
+ *      content host that is still first responder for a beat, Escape lands on
+ *      the host, and without the redirect it is dropped as stale while the
+ *      transient the user is actually looking at stays open. Dropping stays
+ *      the answer for every OTHER disagreement: the user's next press decides
+ *      against a settled world. This is the structural replacement for the
+ *      `escSeq` epoch check, which existed for exactly this hazard ("Esc
+ *      reopens the switcher 500ms after closing it") and needed a round trip
+ *      to express it.
  *
  * Dropping is the conservative half of a genuine choice: the alternative —
  * retarget to the key window and act anyway — never loses a keystroke but can
  * act on the wrong window, and a lost Escape costs one more press while a wrong
- * close costs the user's work.
+ * close costs the user's work. The always-closeable carve-out is not a second
+ * choice on top of that one; it is the same holder fact (`keyWindow(state)`
+ * already in hand) read one field further, so the carve-out cannot itself
+ * disagree with what the rest of this function already decided.
  */
 export function resolveEscapeTarget(key: EscapeKeyPress, state: State): EscapeTarget {
   const holder = keyWindow(state);
@@ -331,6 +345,7 @@ export function resolveEscapeTarget(key: EscapeKeyPress, state: State): EscapeTa
   }
   if (key.landedId === 'global') return { kind: 'window', record: holder };
   if (key.landedId === holder.id) return { kind: 'window', record: holder };
+  if (roleIn(ESC_CLOSE_ROLES, holder.role)) return { kind: 'window', record: holder };
   return { kind: 'stale' };
 }
 
