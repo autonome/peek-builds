@@ -512,23 +512,47 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * as harmless as before — the requeued `app.quit()` fires `before-quit`
    * again before anything relies on the flag being false.
    *
-   * WHAT THIS STILL MISSES: Electron has no event for "a window's own
-   * `beforeunload` handler cancelled the quit" — `app.quit()`'s own docs say
-   * a window can cancel the quit this way, but neither `will-quit` nor `quit`
-   * fires when it does, and the cancelling window's `'close'` never fires
-   * either (the cancellation happens inside `win.close()`, before the native
-   * event). So a quit that gets THIS FAR — past `before-quit`, into actually
-   * closing windows — and is then cancelled by one window's beforeunload
-   * prompt leaves this flag stuck true with no further edge to clear it,
-   * exactly the failure this rework otherwise closes. Fixing that
-   * exhaustively needs a per-webContents `will-prevent-unload` hook (outside
-   * this file's app-level listeners, and outside this port's remit — see
-   * `entry.ts`'s headless-guard use of it), not a comment. What clearing on
-   * `will-quit`/`quit` DOES cover is the overwhelmingly common case: any quit
-   * that actually completes, plus self-correction if some future handler
-   * ever vetoes `will-quit` itself.
+   * ALSO CLEARED on a quit cancelled at a `beforeunload` prompt, via
+   * `quitPromptPending` — see that field. Electron fires no app-level event
+   * for that outcome, so without it this flag latched true for the rest of
+   * the session and every later native close bypassed the kernel.
    */
   private quitting = false;
+
+  /**
+   * Windows whose content is showing a `beforeunload` prompt raised by a quit
+   * that is already under way (`quitting === true`).
+   *
+   * The gap this closes: a window can cancel `app.quit()` from its own
+   * `beforeunload` handler, and Electron reports that outcome with NO event.
+   * `will-quit` and `quit` never fire, and the cancelling window's `'close'`
+   * does not either — the cancellation happens inside `win.close()`, ahead of
+   * the native event. So a quit that got past `before-quit` and into actually
+   * closing windows, then died at one prompt, stranded `quitting` true with no
+   * remaining edge to clear it.
+   *
+   * `will-prevent-unload` IS the edge that exists (`entry.ts`'s headless guard
+   * uses the same hook for the opposite purpose — suppressing the prompt
+   * outright). It fires before the prompt is shown, which is one step too
+   * early to know the answer, so this records the question and the answer is
+   * read off the two native edges that distinguish the outcomes:
+   *
+   *   - the window CLOSES (`'closed'`) — the user chose to leave, the quit is
+   *     proceeding, and the latch must stay exactly as it is. Just drop the
+   *     record.
+   *   - the window takes FOCUS (`'focus'`) while still recorded — the prompt
+   *     was dismissed and key status went back to the window rather than the
+   *     window going away, which is the cancel. Drop the record AND clear the
+   *     latch, so the next native close reaches the kernel again.
+   *
+   * Deliberately never calls `preventDefault()`: the prompt belongs to the
+   * page and the answer to the user. This only watches.
+   *
+   * UNVERIFIED — needs a real prompt, a display and a person to answer it.
+   * The close arm is the ordinary path; the focus arm rests on macOS
+   * returning key status to the window when the sheet dismisses.
+   */
+  private readonly quitPromptPending = new Set<WindowId>();
 
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
@@ -583,6 +607,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // story, including what a beforeunload-cancelled quit still misses).
     (app as unknown as { on(e: string, l: () => void): void }).on('before-quit', () => {
       this.quitting = true;
+      // A fresh attempt: no prompt of this one is outstanding yet, and a
+      // record left over from a previous attempt would answer for it.
+      this.quitPromptPending.clear();
     });
     // `will-quit` fires only once every window this attempt was closing is
     // already gone — see `quitting`'s doc for why that makes clearing here
@@ -590,9 +617,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // for the same reason, in case something one day vetoes `will-quit`.
     (app as unknown as { on(e: string, l: () => void): void }).on('will-quit', () => {
       this.quitting = false;
+      this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('quit', () => {
       this.quitting = false;
+      this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       // Feeds the kernel (window-kernel-dispatch.ts), which drives the real
@@ -841,6 +870,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Unconditional: focus landed in-app, so the app did not resign — that is
       // true however the focus got here.
       this.cancelBlurSettle();
+      // The cancel arm of the beforeunload-prompt outcome (see
+      // `quitPromptPending`): this window was asked to unload as part of a
+      // quit and has taken focus instead of closing, so the prompt was
+      // answered "stay" and the quit is dead. Unlatch, or every later native
+      // close on any window skips the kernel for the rest of the session.
+      if (this.quitPromptPending.delete(id)) this.quitting = false;
       const stackingProvoked = this.pendingStackingFocus.delete(id);
       // A stacking batch arms every window it reorders, but the platform
       // provokes at most ONE focus for the batch — so this focus, suppressed or
@@ -975,6 +1010,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
+      // The proceed arm of the beforeunload-prompt outcome (see
+      // `quitPromptPending`): the window went away, so the prompt was answered
+      // "leave" and the quit is still running. Drop the record and leave
+      // `quitting` alone — `will-quit` clears it when the attempt finishes.
+      this.quitPromptPending.delete(id);
       this.pendingSelfCausedFocus.delete(id);
       this.pendingStackingFocus.delete(id);
       this.pendingShowOpSeq.delete(id);
@@ -1026,6 +1066,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('resize', emitBounds);
     win.on('move', emitBounds);
     win.on('moved', emitBounds);
+    // Records a beforeunload prompt raised by an in-flight quit, so the
+    // `'focus'` and `'closed'` listeners above can tell a cancelled quit from
+    // one that is proceeding — see `quitPromptPending`. Every kind of window,
+    // not only page-hosts: any renderer can register a beforeunload handler,
+    // and one cancel is enough to strand the latch. Never `preventDefault()`s
+    // — the prompt is the page's and the answer is the user's; this watches.
+    // A prompt raised outside a quit is irrelevant here and goes unrecorded.
+    if (rendererWC) {
+      rendererWC.on('will-prevent-unload', () => {
+        if (this.quitting) this.quitPromptPending.add(id);
+      });
+    }
     // Page-host: clicking directly into the page focuses the content WC even when
     // the host BaseWindow's own `focus` is missed (belt-and-suspenders, mirrors
     // the registry's content-WC focus fallback).
