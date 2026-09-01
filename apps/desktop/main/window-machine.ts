@@ -18,7 +18,6 @@ import { ElectronWindowBackend, type RegisterWindowSpec } from './electron-windo
 import { getKernelExecutor as buildKernelExecutor } from './window-kernel-singleton.js';
 import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { EscapeSession } from './window-escape.js';
 import type { EscapeMode } from './window-backend.js';
 import type { Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecord } from './window-kernel.js';
 import { isWebPageRole, type WindowClass } from './izui-roles.js';
@@ -142,15 +141,12 @@ function seedSessionMirror(): void {
   });
 }
 
-/**
- * Clamp the coordinator's four-state (idle/transient/active/overlay) to the
- * Escape decider's tri-state. `overlay` is a transient-over-active state, and
- * `decideEscape` step 1 intercepts the overlay-open ESC before step 6 ever
- * reads the session — so mirroring it as `active` is behavior-neutral.
- */
-function clampSession(state: string): EscapeSession {
-  return state === 'overlay' ? 'active' : (state as EscapeSession);
-}
+// (`clampSession` is gone with the read it served. It folded the coordinator's
+// four session states into the Escape decider's three, which was the hint that
+// the decider wanted a narrower fact than the coordinator carried: both of its
+// policy tables compared only against `transient`. That fact is the kernel's
+// now — `window-kernel.ts State.openedInBackground` — and `interpretEscape`
+// reads it off the state it is already given, so no session travels from here.)
 
 /**
  * Register a window (both kinds) with the kernel + attach its native
@@ -248,8 +244,7 @@ export function getNativeWindowFor(id: WindowId): BaseWindow | BrowserWindow | n
  * that read, against the same clamped session `seedSessionMirror` keeps live.
  */
 export function dispatchEscapePress(landedId: WindowId | 'global', site: string): void {
-  const session = clampSession(getIzuiCoordinator().getState());
-  wmLog('esc-dispatch', { site, landedId, session });
+  wmLog('esc-dispatch', { site, landedId });
   const deps: EscapeRuntimeDeps = {
     getState: () => getKernelExecutor().getState(),
     execute: (command) => {
@@ -259,7 +254,7 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
     ask: (id) => getWindowBackend().askRendererHandledEscape(id),
     track: (pending) => getKernelExecutorForApp().trackExternalAsyncEffect(pending),
   };
-  handleEscapePress({ landedId, session }, deps);
+  handleEscapePress({ landedId }, deps);
 }
 
 /**

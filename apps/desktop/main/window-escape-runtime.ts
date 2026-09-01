@@ -33,7 +33,6 @@ import {
   resolveEscapeTarget,
   type EscapeKeyPress,
   type EscapeOutcome,
-  type EscapeSession,
 } from './window-escape.js';
 import { wmLog } from './window-diag.js';
 import type { Command, State, WindowId } from './window-kernel.js';
@@ -45,7 +44,6 @@ import type { Command, State, WindowId } from './window-kernel.js';
 /** One Escape keystroke, as a dispatch site reports it — `EscapeKeyPress` minus the mirrored renderer fact, which this module supplies itself across the two passes. */
 export interface EscapePress {
   readonly landedId: WindowId | 'global';
-  readonly session: EscapeSession;
 }
 
 /**
@@ -201,8 +199,8 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
  * if this module tried.
  */
 export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): void {
-  const key: EscapeKeyPress = { landedId: press.landedId, session: press.session };
-  wmLog('esc-press', { landedId: press.landedId, session: press.session });
+  const key: EscapeKeyPress = { landedId: press.landedId };
+  wmLog('esc-press', { landedId: press.landedId });
 
   const stateA = deps.getState();
   const outcomeA = interpretEscape(key, stateA);

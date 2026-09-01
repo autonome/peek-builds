@@ -45,7 +45,6 @@ import {
   escapeClosePolicy,
   escapeFallbackPolicy,
   type EscapeKeyPress,
-  type EscapeSession,
 } from './window-escape.js';
 
 // ── Builders ────────────────────────────────────────────────────────────────
@@ -103,7 +102,6 @@ const focus = (id: WindowId): Event => ({ type: 'OsFocusGained', id });
 
 const press = (over: Partial<EscapeKeyPress> = {}): EscapeKeyPress => ({
   landedId: 'global',
-  session: 'active',
   ...over,
 });
 
@@ -111,6 +109,21 @@ const press = (over: Partial<EscapeKeyPress> = {}): EscapeKeyPress => ({
 function loneHost(): State {
   return fold([
     { type: 'AppActivated' },
+    regHost(workspaceHost),
+    show(workspaceHost),
+    focus(workspaceHost),
+  ]);
+}
+
+/**
+ * The same host, but it came up while the user was in another app — the shape
+ * a peek or a slide arrives in. `AppResigned` before the registration is what
+ * makes `openedInBackground` true (see `window-kernel.ts`), and it replaces
+ * the `session: 'transient'` the keypress used to carry.
+ */
+function loneHostFromBackground(): State {
+  return fold([
+    { type: 'AppResigned' },
     regHost(workspaceHost),
     show(workspaceHost),
     focus(workspaceHost),
@@ -410,80 +423,92 @@ describe('window-escape: escapeMode and fullscreen come before the policy table'
 // ── The policy table, every live arm ───────────────────────────────────────
 
 describe('window-escape: every live policy arm', () => {
-  const sessions: EscapeSession[] = ['idle', 'transient', 'active'];
+  // The old three-value session collapsed to this one bit — `idle` and
+  // `active` took the same branch in both tables, so the pair below covers
+  // exactly what the three values did.
+  const bothWays = [false, true];
 
-  it('the close phase: quick-view, palette and utility close in every session', () => {
-    for (const session of sessions) {
+  it('the close phase: quick-view, palette and utility close either way', () => {
+    for (const openedInBackground of bothWays) {
       for (const role of ['quick-view', 'palette', 'utility']) {
-        assert.strictEqual(escapeClosePolicy(session, role), 'close', `${session}/${role}`);
+        assert.strictEqual(escapeClosePolicy(openedInBackground, role), 'close', `${openedInBackground}/${role}`);
       }
     }
   });
 
-  it('the close phase: workspace never closes, even in a transient session', () => {
-    for (const session of sessions) {
-      assert.strictEqual(escapeClosePolicy(session, 'workspace'), 'nothing', session);
+  it('the close phase: workspace never closes, even when Peek came up in the background', () => {
+    for (const openedInBackground of bothWays) {
+      assert.strictEqual(escapeClosePolicy(openedInBackground, 'workspace'), 'nothing', String(openedInBackground));
     }
   });
 
-  it('the close phase: a transient session closes anything else, including a roleless window', () => {
-    assert.strictEqual(escapeClosePolicy('transient', 'content'), 'close');
-    assert.strictEqual(escapeClosePolicy('transient', 'child-content'), 'close');
-    assert.strictEqual(escapeClosePolicy('transient', undefined), 'close');
-    assert.strictEqual(escapeClosePolicy('active', 'content'), 'nothing');
-    assert.strictEqual(escapeClosePolicy('idle', undefined), 'nothing');
+  it('the close phase: coming up in the background closes anything else, including a roleless window', () => {
+    assert.strictEqual(escapeClosePolicy(true, 'content'), 'close');
+    assert.strictEqual(escapeClosePolicy(true, 'child-content'), 'close');
+    assert.strictEqual(escapeClosePolicy(true, undefined), 'close');
+    assert.strictEqual(escapeClosePolicy(false, 'content'), 'nothing');
+    assert.strictEqual(escapeClosePolicy(false, undefined), 'nothing');
   });
 
-  it('the fallback phase: content roles open the switcher outside a transient session', () => {
+  it('the fallback phase: content roles open the switcher unless Peek came up in the background', () => {
     for (const role of ['workspace', 'content', 'child-content']) {
-      assert.strictEqual(escapeFallbackPolicy('active', role), 'open-switcher', role);
-      assert.strictEqual(escapeFallbackPolicy('idle', role), 'open-switcher', role);
-      assert.strictEqual(escapeFallbackPolicy('transient', role), 'nothing', role);
+      assert.strictEqual(escapeFallbackPolicy(false, role), 'open-switcher', role);
+      assert.strictEqual(escapeFallbackPolicy(true, role), 'nothing', role);
     }
   });
 
   it('the fallback phase: everything else does nothing', () => {
-    for (const session of sessions) {
+    for (const openedInBackground of bothWays) {
       for (const role of ['palette', 'quick-view', 'utility', 'overlay', undefined]) {
-        assert.strictEqual(escapeFallbackPolicy(session, role), 'nothing', `${session}/${role}`);
+        assert.strictEqual(escapeFallbackPolicy(openedInBackground, role), 'nothing', `${openedInBackground}/${role}`);
       }
     }
   });
 
-  it('a content host in an active session falls through to the switcher', () => {
+  it('a content host the user opened in Peek falls through to the switcher', () => {
     const state = loneHost();
-    assert.deepStrictEqual(interpretEscape(press({ landedId: workspaceHost, session: 'active' }), state), {
+    assert.strictEqual(state.openedInBackground, false, 'the app was active when it opened');
+    assert.deepStrictEqual(interpretEscape(press({ landedId: workspaceHost }), state), {
       kind: 'open-switcher',
       command: null,
     });
   });
 
-  it('a content host in a transient session closes instead', () => {
-    const state = loneHost();
-    const outcome = interpretEscape(press({ landedId: workspaceHost, session: 'transient' }), state);
+  it('a content host that came up over another app closes instead', () => {
+    const state = loneHostFromBackground();
+    assert.strictEqual(state.openedInBackground, true, 'the app was not active when it opened');
+    const outcome = interpretEscape(press({ landedId: workspaceHost }), state);
     assert.strictEqual(outcome.kind, 'close-window');
     assert.strictEqual(outcome.command?.id, workspaceHost);
   });
 
-  it('a quick-view closes in every session', () => {
-    for (const session of sessions) {
-      const state = fold([regQuickView(quickView), show(quickView), focus(quickView)], loneHost());
-      const outcome = interpretEscape(press({ landedId: quickView, session }), state);
-      assert.strictEqual(outcome.kind, 'close-window', session);
+  it('the user arriving in Peek turns that close back into the switcher', () => {
+    // The ratchet, end to end: same window, same keystroke, and the only
+    // difference is that Peek became the app the user is in.
+    const arrived = fold([{ type: 'AppActivated' }], loneHostFromBackground());
+    assert.strictEqual(arrived.openedInBackground, false);
+    assert.strictEqual(interpretEscape(press({ landedId: workspaceHost }), arrived).kind, 'open-switcher');
+  });
+
+  it('a quick-view closes either way', () => {
+    for (const base of [loneHost(), loneHostFromBackground()]) {
+      const state = fold([regQuickView(quickView), show(quickView), focus(quickView)], base);
+      const outcome = interpretEscape(press({ landedId: quickView }), state);
+      assert.strictEqual(outcome.kind, 'close-window', String(base.openedInBackground));
       assert.strictEqual(outcome.command?.id, quickView);
     }
   });
 
-  it('a workspace-roled window in a transient session produces nothing at all', () => {
+  it('a workspace-roled window that came up in the background produces nothing at all', () => {
     const state = fold(
       [
         { type: 'WindowRegistered', id: secondHost, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
         show(secondHost),
         focus(secondHost),
       ],
-      loneHost(),
+      loneHostFromBackground(),
     );
-    assert.deepStrictEqual(interpretEscape(press({ landedId: secondHost, session: 'transient' }), state), {
+    assert.deepStrictEqual(interpretEscape(press({ landedId: secondHost }), state), {
       kind: 'nothing',
       reason: 'policy-nothing',
       command: null,

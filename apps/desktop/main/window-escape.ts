@@ -64,10 +64,15 @@
  *     `{ kind: 'close-window' }`. The policy here returns `'close'` for both
  *     situations, so the distinction disappears rather than being carried as a
  *     value nothing branches on.
- *  3. `escUnhandledPolicy`'s `'overlay'` SESSION arm. `window-machine.ts
- *     clampSession` maps the coordinator's `'overlay'` to `'active'` before
- *     dispatch, so it was already dead. `EscapeSession` below is the clamped
- *     vocabulary, which makes it unrepresentable rather than merely unreached.
+ *  3. `escUnhandledPolicy`'s SESSION vocabulary, all four values of it. The
+ *     `'overlay'` arm was already dead — the switcher-open Escape is decided
+ *     by `switcherWindow` long before the policy table. The remaining three
+ *     were then only ever compared against `'transient'`, with `'idle'` and
+ *     `'active'` taking the same branch in both tables. So both policies take
+ *     the single boolean they always read, and it comes from the kernel
+ *     (`window-kernel.ts State.openedInBackground`) rather than from a second
+ *     state machine — which is what makes the other three values
+ *     unrepresentable rather than merely unreached.
  *  4. `EscapeMode`'s `'close'` / `'navigate'` / `'auto'`. The kernel record
  *     carries `escapeMode?: 'ignore'` and nothing else — see
  *     `WindowRecord.escapeMode`, which documents why the other three were never
@@ -125,16 +130,12 @@ import {
 // Inputs
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * The app's session mode. Mirrors `window-state.ts IzuiSession` — deliberately
- * re-declared rather than imported, because it is the CLAMPED vocabulary
- * (`window-machine.ts clampSession` folds the coordinator's `'overlay'`
- * into `'active'`), and because this file's only import is the kernel.
- *
- * It stays an interpreter-side input rather than becoming a kernel field: it is
- * an app mode, not a window fact, and the kernel models window facts only.
- */
-export type EscapeSession = 'idle' | 'transient' | 'active';
+// (The three-value `EscapeSession` is gone. It was the clamped form of a
+// four-value session another state machine carried, and both policy tables
+// below only ever asked it one question — is this `transient` — with `idle`
+// and `active` taking the same branch in each. That one question is now a
+// kernel fact, `window-kernel.ts State.openedInBackground`, and the two
+// policies take it as the boolean it always was.)
 
 /** One Escape keystroke, as the dispatch sites already describe it. */
 export interface EscapeKeyPress {
@@ -145,8 +146,10 @@ export interface EscapeKeyPress {
    * sites already degrade an unregistered window to `'global'`.
    */
   readonly landedId: WindowId | 'global';
-  /** App session mode at keypress time. */
-  readonly session: EscapeSession;
+  // (The session mode is no longer a keypress input. `interpretEscape` reads
+  // `window-kernel.ts State.openedInBackground` off the state it is already
+  // given, so no dispatch site can hand the decider a session fact that
+  // disagrees with the kernel's.)
   /**
    * The mirrored "the renderer already consumed this Escape" fact, read
    * synchronously at keypress time — the replacement for the `ASK_RENDERER`
@@ -348,28 +351,35 @@ export const ESC_CLOSE_ROLES: ReadonlySet<string> = new Set(['quick-view', 'pale
 export const ESC_FALLBACK_ROLES: ReadonlySet<string> = new Set(['workspace', 'content', 'child-content']);
 
 /**
- * Phase one: given the session mode and the target's role, does Escape close the
- * window? Ported from `window-state.ts escPolicy`, minus the two dead outcomes
- * (items 1 and 2 of the file docblock): the `'overlay'` arm is gone, and
- * `'close-and-restore'` collapses into `'close'`.
+ * Phase one: given whether Peek's windows came up over another app, and the
+ * target's role, does Escape close the window? Ported from `window-state.ts
+ * escPolicy`, minus the two dead outcomes (items 1 and 2 of the file
+ * docblock): the `'overlay'` arm is gone, and `'close-and-restore'` collapses
+ * into `'close'`.
+ *
+ * The old three-value session argument is now the one boolean it was ever
+ * compared against — `idle` and `active` took this same final branch.
  */
-export function escapeClosePolicy(session: EscapeSession, role: string | undefined): 'close' | 'nothing' {
+export function escapeClosePolicy(openedInBackground: boolean, role: string | undefined): 'close' | 'nothing' {
   if (roleIn(ESC_CLOSE_ROLES, role)) return 'close';
   if (role === 'workspace') return 'nothing';
-  if (session === 'transient') return 'close';
+  if (openedInBackground) return 'close';
   return 'nothing';
 }
 
 /**
  * Phase two: Escape had nowhere to navigate — does it fall back to the switcher?
  * Ported from `window-state.ts escUnhandledPolicy`, minus its `'overlay'` session
- * arm (item 3 of the file docblock: `EscapeSession` cannot hold that value).
+ * arm (item 3 of the file docblock: that value was never reachable here).
+ *
+ * Same narrowing as `escapeClosePolicy` above, and the same reason: `idle` and
+ * `active` both fell through to the role test.
  */
 export function escapeFallbackPolicy(
-  session: EscapeSession,
+  openedInBackground: boolean,
   role: string | undefined,
 ): 'open-switcher' | 'nothing' {
-  if (session === 'transient') return 'nothing';
+  if (openedInBackground) return 'nothing';
   if (roleIn(ESC_FALLBACK_ROLES, role)) return 'open-switcher';
   return 'nothing';
 }
@@ -430,13 +440,18 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
     return { kind: 'nothing', reason: 'renderer-handled', command: null };
   }
 
-  if (escapeClosePolicy(key.session, record.role) === 'close') {
+  // Read off the kernel, not off the keypress. The session fact used to ride
+  // in on `EscapeKeyPress` because it lived in another state machine and only
+  // the dispatch site could reach it; now that the kernel holds it, taking it
+  // from `state` here is what makes it impossible for a caller to supply a
+  // different answer than the one the kernel has.
+  if (escapeClosePolicy(state.openedInBackground, record.role) === 'close') {
     return {
       kind: 'close-window',
       command: { type: 'CloseOrHideWindow', id: record.id, expectedVersion: state.version },
     };
   }
-  if (escapeFallbackPolicy(key.session, record.role) === 'open-switcher') {
+  if (escapeFallbackPolicy(state.openedInBackground, record.role) === 'open-switcher') {
     return { kind: 'open-switcher', command: null };
   }
   return { kind: 'nothing', reason: 'policy-nothing', command: null };

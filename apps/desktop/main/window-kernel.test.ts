@@ -6917,3 +6917,115 @@ describe('window-kernel: the switcher selection restores focus on the switcher c
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `State.openedInBackground` — the one session fact the Escape decider needs.
+//
+// Transliterated from `izui-state.ts evaluateOnShow` + `notifyAppActiveGained`
+// + `popWindow`'s end-of-session. The coordinator's four states remain for
+// display; this is the bit anything DECIDES on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: whether Peek came up while the user was in another app', () => {
+  const contentWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  it('starts false — no windows yet means no session to describe', () => {
+    assert.strictEqual(initialState().openedInBackground, false);
+  });
+
+  it('a first window opening while the user is elsewhere sets it', () => {
+    const state = fold([{ type: 'AppResigned' }, contentWindow(wid(1))]);
+    assert.strictEqual(state.openedInBackground, true);
+  });
+
+  it('a first window opening while the user is in Peek does not', () => {
+    const state = fold([{ type: 'AppActivated' }, contentWindow(wid(1))]);
+    assert.strictEqual(state.openedInBackground, false);
+  });
+
+  it('the user arriving in Peek clears it — the one-way ratchet', () => {
+    const background = fold([{ type: 'AppResigned' }, contentWindow(wid(1))]);
+    assert.strictEqual(background.openedInBackground, true);
+    const arrived = fold([{ type: 'AppActivated' }], background);
+    assert.strictEqual(arrived.openedInBackground, false);
+  });
+
+  it('leaving Peek again does NOT set it back — the ratchet only turns one way', () => {
+    // The session became the user's when they arrived; going away to another
+    // app does not make it incidental again. `izui-state.ts evaluateOnShow`
+    // states the same rule: "active -> transient is not allowed".
+    const arrived = fold(
+      [{ type: 'AppResigned' }, contentWindow(wid(1)), { type: 'AppActivated' }],
+    );
+    const left = fold([{ type: 'AppResigned' }], arrived);
+    assert.strictEqual(left.openedInBackground, false);
+  });
+
+  it('a later window opening while the user is in Peek clears it too', () => {
+    // The coordinator ratchets on a window open as well as on app focus, so
+    // both edges are here.
+    const background = fold([{ type: 'AppResigned' }, contentWindow(wid(1))]);
+    const foreground = fold([{ type: 'AppActivated' }, contentWindow(wid(2))], background);
+    assert.strictEqual(foreground.openedInBackground, false);
+  });
+
+  it('a later window opening while the user is still elsewhere leaves it alone', () => {
+    const state = fold(
+      [{ type: 'AppResigned' }, contentWindow(wid(1)), contentWindow(wid(2))],
+    );
+    assert.strictEqual(state.openedInBackground, true);
+  });
+
+  it('a later window cannot re-set it once the user has arrived', () => {
+    const arrived = fold(
+      [{ type: 'AppResigned' }, contentWindow(wid(1)), { type: 'AppActivated' }],
+    );
+    const afterLeaving = fold([{ type: 'AppResigned' }, contentWindow(wid(2))], arrived);
+    assert.strictEqual(afterLeaving.openedInBackground, false, 'still the session the user arrived in');
+  });
+
+  it('the last window closing resets it — that session is over', () => {
+    const background = fold([{ type: 'AppResigned' }, contentWindow(wid(1))]);
+    assert.strictEqual(background.openedInBackground, true);
+    const empty = fold([{ type: 'WindowClosed', id: wid(1) }], background);
+    assert.strictEqual(empty.order.length, 0);
+    assert.strictEqual(empty.openedInBackground, false);
+  });
+
+  it('closing a window that is not the last leaves it alone', () => {
+    const state = fold(
+      [{ type: 'AppResigned' }, contentWindow(wid(1)), contentWindow(wid(2))],
+    );
+    const after = fold([{ type: 'WindowClosed', id: wid(2) }], state);
+    assert.strictEqual(after.order.length, 1);
+    assert.strictEqual(after.openedInBackground, true);
+  });
+
+  it('a fresh session after an empty gap gets its own answer', () => {
+    // The reset is what makes this work: the second session is described by
+    // its own first window, not by whatever the first session ended on.
+    const first = fold(
+      [{ type: 'AppResigned' }, contentWindow(wid(1)), { type: 'WindowClosed', id: wid(1) }],
+    );
+    assert.strictEqual(first.openedInBackground, false, 'reset by the empty order');
+    const second = fold([contentWindow(wid(2))], first);
+    assert.strictEqual(second.openedInBackground, true, 'the app is still not active, so this one is background again');
+  });
+
+  it('re-registering an existing window never touches it', () => {
+    // A re-registration is a merge, not an open — `ipc.ts` does it routinely.
+    const state = fold([{ type: 'AppActivated' }, contentWindow(wid(1)), { type: 'AppResigned' }]);
+    assert.strictEqual(state.openedInBackground, false);
+    const again = fold([contentWindow(wid(1))], state);
+    assert.strictEqual(again.openedInBackground, false, 'a merge is not a window opening');
+  });
+});

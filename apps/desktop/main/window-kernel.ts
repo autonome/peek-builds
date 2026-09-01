@@ -717,6 +717,44 @@ export interface State {
    * from `order`.
    */
   readonly pendingSelectionFocus: SelectionFocus | null;
+  /**
+   * PEEK'S WINDOWS CAME UP WHILE THE USER WAS IN ANOTHER APP, and the user has
+   * not come to Peek since. The one fact the Escape decider needs about the
+   * app's session (`window-escape.ts escapeClosePolicy` /
+   * `escapeFallbackPolicy`).
+   *
+   * WHAT IT CHANGES. A window that appeared over whatever the user was already
+   * doing — a peek, a slide — is something Escape should just dismiss, handing
+   * them straight back. A window they opened while working in Peek is
+   * somewhere they meant to be, so Escape navigates within Peek instead, and
+   * falls back to the switcher rather than closing.
+   *
+   * WHY THIS AND NOT THE COORDINATOR'S FOUR STATES. `izui-state.ts` carries a
+   * four-value session (idle/transient/active/overlay) that co-decided
+   * dismissal from outside the kernel. The Escape decider never needed four:
+   * its dispatch already folded `overlay` into `active`, and both of its
+   * policy tables then compare against `transient` alone — `idle` and `active`
+   * take the same branch in each. So the fact the decider actually reads is
+   * this single bit, and modelling the bit is what lets the kernel own the
+   * decision without importing a second state machine's vocabulary. The
+   * coordinator's four states remain, for display; nothing decides on them.
+   *
+   * THE RULE, transliterated from `izui-state.ts evaluateOnShow` +
+   * `notifyAppActiveGained`:
+   *   - The FIRST window to join an empty `order` sets it: `true` when the app
+   *     is not active at that moment, `false` when it is.
+   *   - Any later window opening while the app IS active clears it, and so
+   *     does `AppActivated`. Both are the coordinator's one-way ratchet: the
+   *     user has arrived in Peek, so this is somewhere they meant to be. There
+   *     is no path back to `true` without the session ending first.
+   *   - Emptying `order` resets it to `false`, which is that session ending.
+   *     The coordinator ends its session when its window stack empties, and an
+   *     empty `order` is that same fact.
+   *
+   * Drives no effect. It is an input to the Escape interpreter, which reads
+   * state and issues commands; `react` never diffs it.
+   */
+  readonly openedInBackground: boolean;
 }
 
 /**
@@ -1507,6 +1545,8 @@ export function initialState(): State {
     lastAttention: null,
     pendingColdStartFocus: null,
     pendingSelectionFocus: null,
+    // No windows yet, so no session — the first registration decides this.
+    openedInBackground: false,
   };
 }
 
@@ -1905,9 +1945,28 @@ export function evolve(state: State, ev: Event): State {
       // case where the dangling id is THIS registration's own.
       const keyIdx = state.key === null ? -1 : state.order.findIndex((w) => w.id === state.key);
       const insertAt = keyIdx === -1 ? state.order.length : keyIdx;
+      // Whether Peek's windows came up while the user was in another app (see
+      // `State.openedInBackground`) — transliterated from `izui-state.ts
+      // evaluateOnShow`, which the app calls on exactly this edge: a window
+      // opening. Registration is the kernel's own version of that edge, and a
+      // window joining an EMPTY `order` is the coordinator's "no session yet".
+      //
+      // Two of the coordinator's three arms are here. The first window decides
+      // the answer from `appActive`. A later window opening while the app is
+      // active clears it — the ratchet, "the user has arrived in Peek". A later
+      // window opening while the app is NOT active changes nothing, which is
+      // the ratchet's one-way half: a session that became the user's does not
+      // become incidental again. (`AppActivated` carries the same ratchet on
+      // its own edge; emptying `order` is the reset.)
+      const openedInBackground = state.order.length === 0
+        ? !state.appActive
+        : state.appActive
+          ? false
+          : state.openedInBackground;
       return {
         ...state,
         order: [...state.order.slice(0, insertAt), record, ...state.order.slice(insertAt)],
+        openedInBackground,
         version: state.version + 1,
         openSeqCounter: state.openSeqCounter + 1,
       };
@@ -2129,6 +2188,12 @@ export function evolve(state: State, ev: Event): State {
               lastFocusAssert: { id: spentSelection.target, seq: nextFocusAssertSeq(state) },
             }
           : {}),
+        // The session ending (see `State.openedInBackground`): the coordinator
+        // ends its session when its window stack empties, and an empty `order`
+        // is that same fact. Resetting here rather than leaving the last value
+        // to be read by the next session is the point — the next session gets
+        // its answer from its own first window.
+        ...(order.length === 0 ? { openedInBackground: false } : {}),
         version: state.version + 1,
       };
     }
@@ -2345,6 +2410,13 @@ export function evolve(state: State, ev: Event): State {
         }),
         opSeqCounter: opSeq,
         pendingColdStartFocus: null,
+        // The other half of the ratchet (see `State.openedInBackground`, and
+        // the `WindowRegistered` arm that carries the first half): the user has
+        // come to Peek, so whatever is on screen is somewhere they are now,
+        // not something that appeared over what they were doing. Ported from
+        // `izui-state.ts notifyAppActiveGained`, which promotes on this same
+        // edge. Unconditional and one-way — nothing here can set it back.
+        openedInBackground: false,
         // Untouched when no latch was held — an activation that was not asked
         // to re-raise anything must not bump the assert `seq`, or every app
         // activation would project to a spurious raise.
