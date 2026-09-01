@@ -934,7 +934,33 @@ describe('window-kernel: CloseOrHideWindow', () => {
     const effects = react(state, ev, next);
     assert.deepStrictEqual(
       effects.filter((e) => e.type === 'CloseWindow'),
-      [{ type: 'CloseWindow', id: wid(1) }],
+      [{ type: 'CloseWindow', id: wid(1), maximized: false, preMaxBounds: null }],
+    );
+  });
+
+  it('closing a maximized window carries its presentation facts on the CloseWindow effect', () => {
+    // The record retires from `state.order` in the SAME transition that
+    // reacts this effect (RULE 1, `evolve`'s `WindowClosed` arm) — a
+    // consumer asking `state.order` for the closed id after this point finds
+    // nothing, so the closing record's maximized/preMaxBounds facts have to
+    // ride on the effect itself rather than be looked up later.
+    const preMaxBounds: Rectangle = { x: 10, y: 10, width: 800, height: 600 };
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'Maximized', id: wid(1), preMaxBounds },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'CloseWindow'),
+      [{ type: 'CloseWindow', id: wid(1), maximized: true, preMaxBounds }],
     );
   });
 

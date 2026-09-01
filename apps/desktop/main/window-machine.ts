@@ -416,6 +416,19 @@ export function getMachineWindowRecord(id: WindowId): KernelWindowRecord | undef
   return windowById(getKernelExecutor().getState(), id) ?? undefined;
 }
 
+/**
+ * `maximized`/`preMaxBounds` for a window this executor has already retired
+ * (closed) — undefined for a window still live in `order`, or one this
+ * executor never closed. A closed window's own `CloseWindow` effect carries
+ * these facts forward (`window-kernel.ts` `Effect`'s `CloseWindow` doc); this
+ * is the read side, for a close-time consumer that would otherwise ask
+ * `getMachineWindowRecord` for a record RULE 1 already removed in the same
+ * synchronous transition (`window-presenter.ts getHybridPresentation`).
+ */
+export function getRetiredWindowPresentation(id: WindowId): { maximized: boolean; preMaxBounds: Rectangle | null } | undefined {
+  return getKernelExecutor().getRetiredPresentation(id);
+}
+
 /** All live kernel records — `State.order` itself (bottom -> top, not copied — read-only by contract). */
 export function listMachineWindowRecords(): readonly KernelWindowRecord[] {
   return getKernelExecutor().getState().order;

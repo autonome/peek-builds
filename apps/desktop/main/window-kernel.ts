@@ -1424,8 +1424,23 @@ export type Effect =
   | { type: 'SetStacking'; id: WindowId; layer: number }
   | { type: 'ShowWindow'; id: WindowId; opSeq: number }
   | { type: 'HideWindow'; id: WindowId; opSeq: number }
-  /** Drive the OS to close the window (dismiss the non-keepLive branch of `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no `opSeq`. */
-  | { type: 'CloseWindow'; id: WindowId }
+  /**
+   * Drive the OS to close the window (dismiss the non-keepLive branch of
+   * `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no
+   * `opSeq`.
+   *
+   * Carries the retiring record's `maximized`/`preMaxBounds` (read off
+   * `prev`, the record as it stood the instant before this same transition's
+   * `evolve` removed it from `order`) because the native close this effect
+   * drives fires its OS-level close report SYNCHRONOUSLY and before the
+   * executor's dispatch returns — a consumer of that report (the hybrid
+   * page-host's close capture) that asked `state.order` for this id at that
+   * point would find nothing, RULE 1 having already retired the record one
+   * step earlier in the same synchronous chain. Same idiom `State.lastTeardown`
+   * already uses for naming a window gone from `order`: the fact travels on
+   * the effect instead of being re-derived from state that no longer holds it.
+   */
+  | { type: 'CloseWindow'; id: WindowId; maximized: boolean; preMaxBounds: Rectangle | null }
   /**
    * Dismiss a transient sibling the transient-autoclose sweep named
    * (`selectTransientAutoclose`, emitted by `react` off two structural diffs
@@ -3075,7 +3090,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // rather than a field on a still-present record).
   for (const prevRecord of prev.order) {
     if (!next.order.some((w) => w.id === prevRecord.id)) {
-      effects.push({ type: 'CloseWindow', id: prevRecord.id });
+      effects.push({ type: 'CloseWindow', id: prevRecord.id, maximized: prevRecord.maximized, preMaxBounds: prevRecord.preMaxBounds });
     }
   }
 

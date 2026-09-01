@@ -45,6 +45,7 @@ import {
   type Command,
   type Effect,
   type Event,
+  type Rectangle,
   type Rejection,
   type State,
   type WindowId,
@@ -261,6 +262,27 @@ export class WindowKernelExecutor {
   getState(): State {
     return this.state;
   }
+
+  /**
+   * The presentation-relevant facts a `CloseWindow` effect carried for a
+   * window this executor has retired — `maximized`/`preMaxBounds` as they
+   * stood the instant before `evolve`'s `WindowClosed` arm dropped the
+   * record from `state.order` (see the `Effect` union's `CloseWindow` doc).
+   *
+   * Populated in `performEffect`'s `CloseWindow` case, before the backend's
+   * native close is issued — that call fires the OS's close report
+   * SYNCHRONOUSLY, so a consumer of that report (the hybrid page-host close
+   * capture, `ipc.ts captureHybridClose`) needs these facts available the
+   * instant the native call starts, not after it returns. Read-only by the
+   * same contract as `getState`'s records; entries are never removed
+   * (a `WindowId` is never reused, so a stale entry cannot be misread as a
+   * different, later window's facts).
+   */
+  getRetiredPresentation(id: WindowId): { maximized: boolean; preMaxBounds: Rectangle | null } | undefined {
+    return this.retiredPresentation.get(id);
+  }
+
+  private readonly retiredPresentation = new Map<WindowId, { maximized: boolean; preMaxBounds: Rectangle | null }>();
 
   /**
    * Whether this restore should put the window that was focused at save time
@@ -880,6 +902,7 @@ export class WindowKernelExecutor {
         // DIFFERENT `DismissWindow` below, which deliberately DOES go through
         // `closeOrHide` — see that case.
         wmLog('effect-close', { effect: effect.type, id: effect.id });
+        this.retiredPresentation.set(effect.id, { maximized: effect.maximized, preMaxBounds: effect.preMaxBounds });
         this.trackAsyncEffect(this.backend.closeWindow(effect.id));
         return;
       }

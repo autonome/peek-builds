@@ -23,7 +23,7 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
-import { getWindowIdFor, getMachineWindowRecord } from './window-machine.js';
+import { getWindowIdFor, getMachineWindowRecord, getRetiredWindowPresentation } from './window-machine.js';
 import { restorableBoundsFromRecord } from './session-projection.js';
 import { getKernelExecutor } from './window-kernel-dispatch.js';
 import type { WindowId } from './window-kernel.js';
@@ -138,13 +138,17 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
  * step 7B — window-kernel.ts WindowRecord), written only by the kernel's
  * maximize transitions, driven by the page:maximize/page:unmaximize
  * dispatches in ipc.ts and by reopen/session-restore's MAXIMIZE_RESTORED
- * seed for a window that was maximized when it was closed or saved. Unlike
- * the old canvas path — where bounds had to be reconstructed from
- * FSM-published webview-rect params because the visible content area was
- * smaller than the outer window — a hybrid window's outer BaseWindow bounds
- * ARE the visible content rect (no surrounding chrome lives in this
- * window), so `bounds` below is the machine's bounds mirror (falling back
- * to the live baseWin.getBounds() read), maximized or not.
+ * seed for a window that was maximized when it was closed or saved. When
+ * this is called mid-close (`ipc.ts captureHybridClose`, off the native
+ * close report the kernel's own `CloseWindow` effect provokes), the record
+ * is already gone from the kernel's `order` — `getRetiredWindowPresentation`
+ * supplies the same two facts from that effect instead. Unlike the old
+ * canvas path — where bounds had to be reconstructed from FSM-published
+ * webview-rect params because the visible content area was smaller than the
+ * outer window — a hybrid window's outer BaseWindow bounds ARE the visible
+ * content rect (no surrounding chrome lives in this window), so `bounds`
+ * below is the machine's bounds mirror (falling back to the live
+ * baseWin.getBounds() read), maximized or not.
  */
 function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   const address = entry.url();
@@ -165,6 +169,15 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   // WindowId-keyed — convert through the sanctioned mapping.
   const machineId = getWindowIdFor(entry.windowId);
   const machineRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
+  // Close-time fallback: called from `ipc.ts captureHybridClose`, which runs
+  // SYNCHRONOUSLY off the native close report the kernel's own `CloseWindow`
+  // effect provokes — by then RULE 1 has already retired `machineRec` from
+  // `state.order` in the same transition. `getRetiredWindowPresentation`
+  // reads the facts that effect carried forward instead of a vanished
+  // record; undefined for a window that is not mid-close, so the live
+  // `machineRec` read above still wins whenever it exists.
+  const retiredPresentation = machineRec === undefined && machineId != null ? getRetiredWindowPresentation(machineId) : undefined;
+  const presentationFacts = machineRec ?? retiredPresentation;
 
   // Machine-owned geometry (§5 steps 7B+7D): the ONE restorable-geometry rule
   // (fullscreen → fsMode.preBounds; else the machine's bounds mirror — see
@@ -213,8 +226,8 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
     favicon,
     thumbnail,
     bounds,
-    maximized: machineRec?.maximized === true,
-    preMaxBounds: machineRec?.maximized === true ? machineRec.preMaxBounds : null,
+    maximized: presentationFacts?.maximized === true,
+    preMaxBounds: presentationFacts?.maximized === true ? presentationFacts.preMaxBounds : null,
     visible,
     focused,
   };
