@@ -4356,9 +4356,7 @@ mode `apps/desktop/CLAUDE.md` records for this bug class, where a green headless
 confidence twice on a focus bug and only a live trace found the cause.
 
 What the live run established about A's real mechanism is recorded under "Defect A: the peek is
-destroyed inside its own `loadURL`" below. Notably, it is not yet established that the KERNEL
-decides that dismissal at all: `window-state.ts` is still live alongside it, and every close path
-in the build is DEBUG-gated, so no log names the deciding arm.
+destroyed inside its own `loadURL`" below.
 
 **Mechanism.** `window-kernel.ts` `selectTransientAutoclose` spares a transient whose `openSeq` is
 newer than the focuser's, so a raise cannot dismiss a window opened after the op that provoked it.
@@ -4424,15 +4422,11 @@ page host and the doomed peek, against 9 divergence lines across a working press
 **Ruled out by the same trace:** key reuse and the `pendingWindowKeys` race guard in
 `windowOpenHandler` — every open minted a fresh id, none returned `reused:true` or `id:null`.
 
-**Not yet established: which machine decides the dismissal.** `window-state.ts` runs alongside the
-kernel, and both have a transient-dismissal path — the reducer's `pushCloseOrHide` (fed by
-`selectTransientAutoclose` or by the `APP_RESIGN_SETTLED` arm's `selectAppResignTransients`) and
-`window-kernel.ts` `react`'s `DismissWindow`. Every close-path log in the build is DEBUG-gated and
-`DEBUG` is off, so no log names the arm, and `DEBUG=1` cannot be used here because it fans detached
-devtools across internal windows and poisons focus observation. Settling it needs unconditional
-logging at `pushCloseOrHide`, the executor's `DismissWindow`, the app-activation dispatches in
-`electron-window-backend.ts attachAppListeners`, `windows.ts closeOrHideWindow`, and either side of
-the `loadURL` await.
+**Which machine decides the dismissal is established.** `window-state.ts` is deleted, so
+`window-kernel.ts` `selectTransientAutoclose`, reached through the transient law, is the only
+transient-dismissal path left. Full mechanism, and the narrower question still open — why the page
+host reclaims first responder ~7ms after losing it — are recorded under "Open kernel defects" > A
+near the top of this document.
 
 **A separate defect the same trace surfaced:** opening one peek minted TWO kernel windows, and the
 extra one never leaves the kernel's membership for the rest of the process. The same shape appears
