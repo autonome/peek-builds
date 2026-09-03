@@ -293,6 +293,56 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     }
   });
 
+  // Forward main-process `[wm]` window-diagnostics lines to the test
+  // runner's own stdout, tagged with the launching test's worker index +
+  // title, so parallel workers' output can be attributed to the test that
+  // produced it. `_electron.launch` pipes the child's stdio rather than
+  // inheriting it, so window-diag.ts's console.log lines otherwise never
+  // reach the terminal or the gate log. Only `[wm]`-prefixed lines are
+  // forwarded — wmLog is deliberately always-on (not env-gated) and the
+  // desktop project alone runs 380+ specs, so mirroring all child stdout
+  // would bloat the gate log without adding signal.
+  //
+  // Read via `base.info()` rather than threaded through `options` — most
+  // specs launch through `createPerDescribeApp`/`getSharedApp` (a `beforeAll`
+  // or module-level call, not the `desktopApp` fixture), so a tag has to
+  // work from any call site. Taken once at attach time: a shared app spans
+  // multiple tests, so the tag names whichever test/hook triggered THIS
+  // launch, not necessarily every test later using the same app instance.
+  let wmTag: string | null = null;
+  try {
+    const info = base.info();
+    wmTag = `w${info.workerIndex} ${info.title}`;
+  } catch {
+    // Not inside a running test (e.g. a script launching Electron directly)
+    // — nothing to tag lines with, so skip forwarding.
+  }
+  if (wmTag) {
+    const tag = wmTag;
+    // Chunk boundaries can split a line mid-way; buffer partial lines until
+    // a newline completes them rather than emitting fragments.
+    const forwardWmLines = (state: { partial: string }) => (chunk: Buffer | string) => {
+      state.partial += chunk.toString();
+      const lines = state.partial.split('\n');
+      state.partial = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.includes('[wm]')) continue;
+        try {
+          process.stdout.write(`[${tag}] ${line}\n`);
+        } catch { /* runner stdout gone mid-teardown — drop the line */ }
+      }
+    };
+    try {
+      const child = electronApp.process();
+      // Tolerate the stream dying mid-teardown (close() has a SIGTERM/
+      // SIGKILL path) rather than throwing on an unhandled stream error.
+      child.stdout?.on('data', forwardWmLines({ partial: '' }));
+      child.stdout?.on('error', () => {});
+      child.stderr?.on('data', forwardWmLines({ partial: '' }));
+      child.stderr?.on('error', () => {});
+    } catch { /* process/stdio unavailable — nothing to forward */ }
+  }
+
   // Wait for background window to be ready (API loaded).
   //
   // The privileged test-fixture renderer (peek://test/index.html) is the
