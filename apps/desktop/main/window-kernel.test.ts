@@ -4325,13 +4325,21 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
-  it('a REPEATED non-stale machine echo of the same op needs no kernel change — a page-host has two native focus producers that can both report it', () => {
+  it('a repeated non-stale MACHINE echo spares a newer transient via newer-than-focuser; a WORLD-caused focus on the same holder dismisses it', () => {
     // electron-window-backend.ts attachNativeListeners: a page-host's host
     // BaseWindow 'focus' and its content WebContentsView 'focus' both call
-    // takeFocusCause(id) for the same window id, and a single machine-issued
-    // focus operation legitimately provokes both as echoes of the one op — so
-    // the kernel must see two OsFocusGained reports carrying the SAME opSeq
-    // and must not treat the second one specially.
+    // takeFocusCause(id) for the same window id, so a single machine-issued
+    // focus operation can provoke two OsFocusGained reports carrying the SAME
+    // opSeq. selectTransientAutoclose's newer-than-focuser exemption spares a
+    // newer transient from both reports — it re-derives the ordering test
+    // fresh from cause.kind and focuser.openSeq on every call. The live
+    // defect (docs/design/window-manager.md "Open kernel defects", Defect A)
+    // is that the SAME holder can instead take its second focus with a WORLD
+    // cause: no ordering floor, the exemption does not fire, and the
+    // transient is dismissed. This test documents that mechanism at the
+    // kernel boundary — the reducer's behavior is correct for both causes it
+    // is given; nothing here decides which cause a real second focus gets
+    // labelled.
     const hostA = wid(1);
     const peek2 = wid(2);
     const registered = fold([reg(1, undefined, 'page-host'), reg(2, 'quick-view'), show(1), show(2)], initialState());
@@ -4355,19 +4363,17 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(
       selectTransientAutoclose(secondEcho, hostA, cause),
       [],
-      'peek2 survives the REPEATED echo too — selectTransientAutoclose re-derives the ordering test fresh from cause.kind and focuser.openSeq on every call, so a second machine-labelled report of the same op needs no kernel change',
+      'peek2 survives the REPEATED machine echo too — newer-than-focuser is re-derived fresh, not consumed by the first report',
     );
 
-    // Fails first, proving this is a real assertion and not a vacuous one:
-    // label the SECOND echo `world` instead — exactly what the pre-fix
-    // `takeFocusCause` produced, by deleting `pendingSelfCausedFocus` on its
-    // first read and returning `{ kind: 'world' }` to the second native
-    // producer — and peek2 IS dismissed. The defect lived in the executor
-    // (electron-window-backend.ts takeFocusCause), not here.
+    // The same second report, relabelled `world` instead of `machine`, is the
+    // shape the live defect actually takes: a world cause yields no ordering
+    // floor for newer-than-focuser to compare against, so it does not fire
+    // and the transient is swept.
     assert.deepStrictEqual(
       selectTransientAutoclose(secondEcho, hostA, { kind: 'world' }),
       [peek2],
-      'a world-labelled second echo sweeps peek2 — this is the live defect the backend fix prevents',
+      'a world-labelled second echo on the same holder sweeps peek2',
     );
   });
 
