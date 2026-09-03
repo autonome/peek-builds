@@ -60,8 +60,9 @@ existing window and does not navigate it.
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
 `docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
 branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
-B was re-traced on 2026-08-21 and reproduces on `main`; A's mechanism is not yet attributed to
-either machine, so its provenance is unknown rather than established. **All three are open.**
+B was re-traced on 2026-08-21 and reproduces on `main`; A's proximate mechanism is established
+(see below), but its ultimate cause — why the page host reclaims focus moments after losing it —
+is not yet known. **All three are open.**
 
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
@@ -76,15 +77,43 @@ either machine, so its provenance is unknown rather than established. **All thre
   the other page host's `OsFocusGained` carries `cause: 'machine'` (ordering floor set,
   `newer-than-focuser` fires, peek spared) or `cause: 'world'` (floor `null`, exemption disarmed,
   peek dismissed). `window-diag.ts wmLog`'s `focus-cause-taken` record captures exactly that bit.
-  Two candidates remain, both OS-level and both in `electron-window-backend.ts`:
+  Two candidates were named here, both OS-level and both in `electron-window-backend.ts`:
   `pendingHideProvokedFocus`, a process-wide boolean armed in `hideWindow` and cleared only by the
   next focus on any window (armed on one press, spent on the next), and `pendingSelfCausedFocus`, a
-  per-window one-shot that a `focus()` on an already-first-responder window never echoes. Two other
-  candidates are REFUTED by test: the `state.key` carry across `WindowClosed` does not change the
-  verdict (`transientAutocloseExemption`'s only ordering input is `openSeq`, assigned at
+  per-window one-shot that a `focus()` on an already-first-responder window never echoes. A live
+  macOS run on 2026-09-01 **refuted both.**
+
+  - `pendingSelfCausedFocus` is refuted: `electron-window-backend.ts takeFocusCause` was changed to
+    read the arming without deleting it, so a second native focus echo for one operation stays
+    labelled `machine` instead of falling back to `world`. The failure rate was unchanged — 4 of 7
+    presses failed before the change, 4 of 8 after — so the change was reverted, and
+    `pendingSelfCausedFocus` is back to being consumed (deleted) on read.
+  - `pendingHideProvokedFocus` is refuted: `os-focus-suppressed`, the log record its suppression
+    path emits, does not appear anywhere in the run's log. It never fires on this path.
+
+  Two other candidates are REFUTED by test: the `state.key` carry across `WindowClosed` does not
+  change the verdict (`transientAutocloseExemption`'s only ordering input is `openSeq`, assigned at
   registration and never derived from position in `order`), and `ipc.ts`'s `pendingWindowKeys` race
   guard is not the alternation source (the hybrid branch's `catch` deletes the key on the throw
   path). The `loadURL` latency race is refuted too — load latency is near-constant at 64-65ms.
+
+  **What the 2026-09-01 run established instead**, sharper than "cause unproven". On a failing
+  press: the peek is created (`open-registry-set`); the peek TAKES focus, machine-caused
+  (`focus-cause-taken id=<peek> kind=machine opSeq=22`, then again at `opSeq=25`); ~7ms later the
+  page host RECLAIMS focus with nothing armed (`focus-cause-taken id=<host> kind=world`); the world
+  cause yields a null ordering floor, so `transientAutocloseExemption`'s `newer-than-focuser` clause
+  does not fire; `selectTransientAutoclose` dismisses the newborn peek (`transient-dismiss
+  id=<peek> holder=<host> cause=world`); and the kernel's `CloseWindow` lands while the peek is
+  still inside `loadURL`, surfacing to the extension as `{"success":false,"error":"Object has been
+  destroyed"}`. Everything downstream of the reclaim follows correctly from it, and the `world`
+  label is an honest report, not a misreport: the host's own arming was cleared by its own `blur`
+  when the peek took focus. **The open question is therefore why the page host takes first
+  responder back ~7ms after losing it** — that is the whole of Defect A now, and it is not a
+  focus-provenance bug.
+
+  **Next probe:** a `wmLog` record at the point the host's native focus arrives, capturing whether
+  any machine-issued operation was in flight for ANY window at that instant. The existing records
+  cannot distinguish "no op in flight" from "op in flight but for another window".
 
   A live macOS run on 2026-08-29 did NOT reproduce the defect, and that is **not evidence it is
   fixed**: the run carried `E2E_TEST=true`, which disabled the since-deleted `ipc.ts`
