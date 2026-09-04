@@ -12,7 +12,8 @@
  *
  * Usage:
  *   PEEK_PROFILE=<profile> node scripts/peek-open-cycle.mjs [--cycles <n>]
- *     [--open-timeout <ms>] [--settle-ms <ms>] [--cycle-wait <ms>]
+ *     [--open-timeout <ms>] [--verdict-timeout <ms>] [--settle-ms <ms>]
+ *     [--cycle-wait <ms>]
  *
  * Preconditions (see apps/desktop/CLAUDE.md — get any of these wrong and
  * the defect will not reproduce):
@@ -36,6 +37,14 @@
  *      a failing cycle the content may still be mid-`loadURL` with no
  *      committed URL yet, so an id-diff against the prior snapshot is the
  *      only reliable way to find it.
+ *   2b. Wait for this cycle's `Peek window opened` verdict in renderer.log,
+ *      written once the open handler has returned — i.e. once `loadURL` has
+ *      resolved. An Escape that lands while the peek is still loading destroys
+ *      it inside the handler and is tallied as a failed open, so without this
+ *      wait page-load latency alone (60ms one hour, 1s the next, for the same
+ *      URL) turns the harness's own dismissal into false failures.
+ *      `--verdict-timeout <ms>` bounds the wait; a timeout is counted and the
+ *      cycle proceeds.
  *   3. Dismiss it via `debug-escape`, which dispatches
  *      `window-machine.ts dispatchEscapePress('global', 'cli')` — the same
  *      seam all four real Escape entry points funnel through
@@ -161,6 +170,28 @@ const waitForNewHybridWindow = async (socketPath, beforeIds, { timeoutMs, interv
   }
 };
 
+/**
+ * Poll renderer.log from `offset` until a `Peek window opened` verdict lands,
+ * which the peeks background writes once the main-process open handler has
+ * returned — i.e. once the peek's `loadURL` has resolved. Returns the parsed
+ * verdict, or null on timeout.
+ *
+ * The signal is the verdict line itself, a lifecycle transition the app already
+ * records. The poll exists only because this script is a separate process with
+ * no subscription onto the app's log queue: the append is asynchronous on the
+ * app side, so the file is read repeatedly at the same cadence
+ * `waitForNewHybridWindow` already uses against `debug-list-windows`.
+ */
+const waitForOpenVerdict = async (rendererLogPath, offset, { timeoutMs, intervalMs = 15 } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const results = parseRendererResults(readFrom(rendererLogPath, offset));
+    if (results.length > 0) return results[0];
+    if (Date.now() > deadline) return null;
+    await sleep(intervalMs);
+  }
+};
+
 /** Close a hybrid host by id via the core background renderer's trustedBuiltin grant. */
 const closeHybridWindow = async (socketPath, bgTarget, windowId) => {
   await debugEval(socketPath, bgTarget, `window.app.window.close(${windowId})`);
@@ -245,23 +276,26 @@ const parseWmCorrelation = (text) => {
 const parseArgs = (argv) => {
   let cycles = 10;
   let openTimeoutMs = 800;
+  let verdictTimeoutMs = 5000;
   let settleMs = 150;
   let cycleWaitMs = 100;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--cycles') cycles = Number(argv[++i]);
     else if (argv[i] === '--open-timeout') openTimeoutMs = Number(argv[++i]);
+    else if (argv[i] === '--verdict-timeout') verdictTimeoutMs = Number(argv[++i]);
     else if (argv[i] === '--settle-ms') settleMs = Number(argv[++i]);
     else if (argv[i] === '--cycle-wait') cycleWaitMs = Number(argv[++i]);
   }
   if (!Number.isFinite(cycles) || cycles <= 0) die('invalid --cycles value');
   if (!Number.isFinite(openTimeoutMs) || openTimeoutMs <= 0) die('invalid --open-timeout value');
+  if (!Number.isFinite(verdictTimeoutMs) || verdictTimeoutMs <= 0) die('invalid --verdict-timeout value');
   if (!Number.isFinite(settleMs) || settleMs < 0) die('invalid --settle-ms value');
   if (!Number.isFinite(cycleWaitMs) || cycleWaitMs < 0) die('invalid --cycle-wait value');
-  return { cycles, openTimeoutMs, settleMs, cycleWaitMs };
+  return { cycles, openTimeoutMs, verdictTimeoutMs, settleMs, cycleWaitMs };
 };
 
 const main = async () => {
-  const { cycles, openTimeoutMs, settleMs, cycleWaitMs } = parseArgs(process.argv.slice(2));
+  const { cycles, openTimeoutMs, verdictTimeoutMs, settleMs, cycleWaitMs } = parseArgs(process.argv.slice(2));
 
   const profile = process.env.PEEK_PROFILE;
   if (!profile) die('set $PEEK_PROFILE to the running instance\'s profile name');
@@ -302,10 +336,12 @@ const main = async () => {
   process.stdout.write(`Marked log offsets — renderer.log:${rendererOffset} main.log:${mainOffset}\n\n`);
 
   let notFoundCount = 0;
+  let verdictTimeoutCount = 0;
   for (let cycle = 1; cycle <= cycles; cycle++) {
     const before = await debugListWindows(socketPath);
     const beforeIds = new Set(before.map(w => w.windowId));
 
+    const cycleRendererOffset = fileSize(rendererLogPath);
     await peekOpen(socketPath, 0);
 
     const opened = await waitForNewHybridWindow(socketPath, beforeIds, { timeoutMs: openTimeoutMs });
@@ -313,9 +349,21 @@ const main = async () => {
       notFoundCount++;
       process.stdout.write(`cycle ${cycle}: no new peek window observed within ${openTimeoutMs}ms (already dismissed, or never opened)\n`);
     } else {
+      // The open handler returns only after the peek's `loadURL` resolves, and
+      // the renderer's `Peek window opened` verdict is written when it does.
+      // The Escape below must not land before that: a peek closed while still
+      // inside `loadURL` throws `Object has been destroyed` on the handler's
+      // tail and is tallied as a failed open, so a fixed settle after the window
+      // APPEARS turns page-load latency into false failures. Wait for this
+      // cycle's verdict, then settle, then dismiss.
+      const verdict = await waitForOpenVerdict(rendererLogPath, cycleRendererOffset, { timeoutMs: verdictTimeoutMs });
+      if (verdict === null) verdictTimeoutCount++;
       await sleep(settleMs);
       await dismissEscape(socketPath);
-      process.stdout.write(`cycle ${cycle}: opened id=${opened.windowId}, dismissed via Escape\n`);
+      const verdictNote = verdict === null
+        ? `no open verdict within ${verdictTimeoutMs}ms`
+        : (verdict.success ? 'open verdict ok' : `open verdict FAILED before Escape: ${verdict.error}`);
+      process.stdout.write(`cycle ${cycle}: opened id=${opened.windowId}, ${verdictNote}, dismissed via Escape\n`);
     }
 
     await sleep(cycleWaitMs);
@@ -337,6 +385,7 @@ const main = async () => {
   process.stdout.write('\n=== Tally ===\n');
   process.stdout.write(`cycles run:                  ${cycles}\n`);
   process.stdout.write(`no window observed to close: ${notFoundCount}\n`);
+  process.stdout.write(`no open verdict before Escape: ${verdictTimeoutCount}\n`);
   process.stdout.write(`renderer.log — opened:       ${opened}\n`);
   process.stdout.write(`renderer.log — failed (destroyed): ${failedDestroyed}\n`);
   process.stdout.write(`main.log — transient-dismiss cause=world within ${DISMISS_WINDOW_MS}ms of open-registry-set: ${correlated.length}\n`);
