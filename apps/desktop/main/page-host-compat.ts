@@ -80,21 +80,44 @@ export interface RuntimeExternalWebPrefs {
  *   2. else http(s) URL matching ISOLATED content scripts of a loaded
  *      extension → runtime-external preload + `--peek-runtime-external-ext-id`
  *      keyed on the first matching content-script extension.
- *   3. else → null.
+ *   3. else http(s) URL → runtime-external preload with no ext-id (focus
+ *      tracking + first-frame report only; messaging bridge dormant).
+ *   4. else non-http(s) → null for a `<webview>`, the same ext-id-less preload
+ *      for a hybrid page host (see the body for why).
  *
- * Honors `PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL=1` (returns null).
+ * Honors `PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL=1` (no ext-id argument).
  *
- * `logChannel` only affects the diagnostic log prefix so the two call sites
- * ('webview' vs 'hybrid') are distinguishable in the console.
+ * `logChannel` selects the non-http(s) behaviour above and the diagnostic log
+ * prefix so the two call sites ('webview' vs 'hybrid') are distinguishable.
  */
 export function getRuntimeExternalWebPrefsForUrl(
   url: string,
   logChannel: 'webview' | 'hybrid' = 'webview'
 ): RuntimeExternalWebPrefs | null {
-  if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) {
-    // Non-http(s) (peek:// tiles, about:blank, etc.) get no preload — they run
-    // their own tile-preload and never need the editable-focus signal.
+  const isHttp = !!url && (url.startsWith('http://') || url.startsWith('https://'));
+  if (!isHttp && logChannel === 'webview') {
+    // A non-http(s) `<webview>` (peek:// tiles, about:blank, etc.) gets no
+    // preload — it runs its own tile-preload and never needs the editable-focus
+    // signal.
     return null;
+  }
+  if (!isHttp) {
+    // A hybrid page host gets the preload on EVERY scheme. Its content view has
+    // no other preload, and the preload's `hybrid:first-frame` report is the
+    // only production writer of the kernel's `orderable` fact (`session.ts
+    // installFirstFrameOrderableProducer`). Without it a `data:`, `about:blank`
+    // or `peek://` page host never becomes orderable: it is never a
+    // transient-dismissal candidate (`window-kernel.ts
+    // isTransientAutocloseCandidate`) and never has its stacking band
+    // replayed, so it closes only by Escape or an explicit close. The
+    // extension matchers below are http-only; a non-http host loads the
+    // focus-tracking and first-frame half with the messaging bridge dormant.
+    return {
+      preload: getRuntimeExternalPreloadPath(),
+      additionalArguments: [],
+      sandbox: true,
+      contextIsolation: true,
+    };
   }
 
   // UNIVERSAL preload (peek 51798bae): every http(s) page-host content WC loads

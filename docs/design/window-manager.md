@@ -82,6 +82,20 @@ no ordering floor, so `newer-than-focuser` does not fire and the peek is swept. 
 involved in any of them. **The remainder is the focus-cause mislabelling, not candidacy**, and the
 one bit named below is still the whole of it.
 
+**The settled-candidacy filter was vacuous for every non-http page host (found by the first full
+gate run at `f7a35e57`, fixed).** `orderable` has one production writer, `session.ts
+installFirstFrameOrderableProducer`, fed by the `hybrid:first-frame` IPC that only
+`runtime-external-preload.cjs` sends — and `page-host-compat.ts getRuntimeExternalWebPrefsForUrl`
+attached that preload to `http://` and `https://` content only. A `data:`, `about:blank` or
+`peek://` page host therefore never became orderable: never a transient-dismissal candidate, never
+had its stacking band replayed, and closed only by Escape or an explicit close. The three
+`hybrid-transient-on-blur.spec.ts` failures in that gate run were this (the spec's quick-view
+loads a `data:` URL), and they pre-date the session that found them. The selector now returns the
+ext-id-less preload for a hybrid page host on every scheme; a `<webview>` keeps the http-only rule
+because a non-http webview runs the tile preload instead. The candidacy clause itself is unchanged
+— it was measured to remove the pre-paint kills above — and the property suite's restatement of
+candidacy did not need to widen, since candidacy did not change; only who produces the fact did.
+
 **A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
 `dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
 Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed
