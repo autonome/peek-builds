@@ -3294,11 +3294,19 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //     kernel has one route, and a structural diff cannot tell a report from
   //     a command — the two states are identical.
   //
-  //  2. The feedback loop the invariant guarded against cannot run: this
-  //     emission is its own fixed point. The raise makes its target the window
-  //     in use, so the focus the OS echoes back names the window `key` ALREADY
-  //     holds — the diff is empty and the echo emits nothing. One correcting
-  //     write, then silence. (Provenance —
+  //  2. The feedback loop the invariant guarded against does not always close
+  //     in one step. When the raise's target ALREADY holds `key`, the focus
+  //     the OS echoes back names the window `key` already holds — the diff is
+  //     empty and the echo emits nothing. One correcting write, then silence.
+  //     But `key` is written ONLY by the `OsFocusGained` evolve arm above, so
+  //     when the target was NOT already key, `prev.key` going into THAT SAME
+  //     transition still names the old holder — the diff fires again, on the
+  //     raise's own first echo, minting another token and emitting another
+  //     `RaiseWindow` for the same target. That second raise's own echo lands
+  //     with `prev.key` already equal to the target and the loop finally
+  //     closes — so one raise becomes several before the fixed point is
+  //     reached, not a single correcting write, whenever the target was not
+  //     already key. (Provenance —
   //     `FocusCause` / `lastOpSeq` / `isStaleSelfEcho` — is NOT what closes
   //     this loop and cannot be: `react` reads no event payload. It solves a
   //     different problem at a different site — a LATE self-echo, arriving

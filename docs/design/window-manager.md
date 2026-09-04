@@ -60,9 +60,9 @@ existing window and does not navigate it.
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
 `docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
 branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
-B was re-traced on 2026-08-21 and reproduces on `main`; A's proximate mechanism is established
-(see below), but its ultimate cause — why the page host reclaims focus moments after losing it —
-is not yet known. **All three are open.**
+B was re-traced on 2026-08-21 and reproduces on `main`; **A's mechanism is now fully established**
+(see below) — a structural interaction between per-op focus arming and per-producer focus echoes,
+compounded by a self-amplifying raise rule — but no fix has landed. **All three are open.**
 
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
@@ -97,7 +97,7 @@ is not yet known. **All three are open.**
   guard is not the alternation source (the hybrid branch's `catch` deletes the key on the throw
   path). The `loadURL` latency race is refuted too — load latency is near-constant at 64-65ms.
 
-  **What the 2026-09-01 run established instead**, sharper than "cause unproven". On a failing
+  **What the 2026-09-01 run established**, sharper than "cause unproven". On a failing
   press: the peek is created (`open-registry-set`); the peek TAKES focus, machine-caused
   (`focus-cause-taken id=<peek> kind=machine opSeq=22`, then again at `opSeq=25`); ~7ms later the
   page host RECLAIMS focus with nothing armed (`focus-cause-taken id=<host> kind=world`); the world
@@ -107,13 +107,90 @@ is not yet known. **All three are open.**
   still inside `loadURL`, surfacing to the extension as `{"success":false,"error":"Object has been
   destroyed"}`. Everything downstream of the reclaim follows correctly from it, and the `world`
   label is an honest report, not a misreport: the host's own arming was cleared by its own `blur`
-  when the peek took focus. **The open question is therefore why the page host takes first
-  responder back ~7ms after losing it** — that is the whole of Defect A now, and it is not a
-  focus-provenance bug.
+  when the peek took focus.
 
-  **Next probe:** a `wmLog` record at the point the host's native focus arrives, capturing whether
-  any machine-issued operation was in flight for ANY window at that instant. The existing records
-  cannot distinguish "no op in flight" from "op in flight but for another window".
+  **Why the page host reclaims focus is now established: arming is per-op, echoes are
+  per-producer.** `electron-window-backend.ts pendingSelfCausedFocus` is a `Map<WindowId, number>`
+  — one slot per window. `armSelfCausedFocus` overwrites it; `takeFocusCause` consumes it on first
+  read and reports `{kind:'world'}` when nothing is armed. A page host has TWO native focus
+  producers feeding that one slot, both installed by `attachNativeListeners`: `win.on('focus')`
+  (the host `BaseWindow` became the OS key window) and `rendererWC.on('focus')` (the content
+  `WebContentsView` became macOS first responder). One `wc.focus()` on a non-key host routinely
+  fires both. Worse, one raise issues several focus-causing native calls sharing that one slot:
+  `raiseWindow`'s page-host branch, when the window is not already visible, calls `performOsShow`
+  (which arms, then calls `win.show()`) and THEN arms again and calls `rendererWC.focus()` — two
+  arms into one slot, two focus-taking calls, and a following `FocusContent` effect makes a third.
+  N armings and N+ echoes share one slot, so N-1 or more echoes are labelled `world`. There is no
+  stray unarmed `.focus()` call anywhere — the three literal `.focus()` calls in the whole main
+  process (`raiseWindow`'s two branches, `focusContent`, all in `electron-window-backend.ts`) all
+  arm before calling. The mislabelling is structural, not a missing arm.
+
+  **A second, distinct mechanism compounds it: the key-diff raise rule amplifies itself.**
+  `window-kernel.ts react` emits `RaiseWindow` for `next.key` whenever `nextKey !== null && nextKey
+  !== prev.key`, minting a fresh `opSeq` (see that rule's docblock for the full argument).
+  `State.key` is written only by the `OsFocusGained` evolve arm — i.e. it moves only when a raise's
+  echo LANDS — so a raise issued at a window that was not already key satisfies `nextKey !==
+  prev.key` on its own first echo and emits ANOTHER raise with another token. One raise becomes
+  several. The docblock previously called this rule "its own fixed point — one correcting write,
+  then silence"; that holds only when the target already held key, and has been corrected in
+  `window-kernel.ts` to record the amplifying case. This is a separate defect from the provenance
+  mislabelling above, and is not fixed by changing how arming is counted.
+
+  **Ruled out: a `lastFocusAssert`-driven raise.** An earlier hypothesis held that a
+  `lastFocusAssert` → `RaiseWindow` + `FocusContent` rule raised the page host because a peek was
+  opening. There is no such rule. `window-kernel-dispatch.ts kernelAssertFocus`'s only production
+  callers are the two devtools-opened/devtools-closed handlers in `main.ts`, and
+  `FocusAssertRequested` has zero non-test producers. The raises come instead from structural rules
+  in `react` that know nothing about a peek opening: the key-diff raise above, a parent-refocus
+  raise (ported verbatim from the deleted `main.ts parentWin.focus()`, firing whenever an eligible
+  parent's child closes), and a successor raise on hide.
+
+  **This is a regression against the pre-kernel path.** The pre-kernel dismissal path
+  (`apps/desktop/main/ipc.ts windowOpenHandler` as of commit `c2a4cc2e^`, with `izui-roles.ts
+  selectTransientSiblingsToClose`) could not produce this failure, for three reasons the cutover
+  removed: the blur-closer was installed inside a 100ms `setTimeout`, so the current failure —
+  destroying the peek ~90ms after construction — lands before that listener would have existed; a
+  200ms show-settle clause RE-FOCUSED the window instead of closing it, treating a blur-storm right
+  after show as noise (`__lastShowTime` has no successor in the current tree); and only ONE focus
+  producer per host was wired (`baseWin.on('focus')`) — the content focus the code issued itself
+  fed nothing back.
+
+  **Latent, unaudited: native calls that can move key status without arming.** `setFullscreen`
+  (macOS fullscreen makes the window key on its new Space), `pinAlwaysOnTop` (its sibling
+  `setStacking` arms the identical primitive), `closeWindow`/`destroyWindow` (killing the key
+  window hands key to a sibling, with no equivalent of `hideWindow`'s `pendingHideProvokedFocus`),
+  `openDevTools({mode:'detach'})` at several sites lacking `activate:false`, and `ipc.ts`'s
+  `BrowserWindow` constructor with `show:true`, which activates before backend registration so no
+  arm is possible. None is currently implicated in this defect; recorded here for a separate audit.
+
+  **Proposed direction — not a decision.** Make settled-ness a CANDIDACY filter in
+  `window-kernel.ts isTransientAutocloseCandidate` rather than a fifth exemption in
+  `transientAutocloseExemption` — an unsettled window would not be in the consideration set at all
+  — then delete the `newer-than-focuser` exemption and the ordering floor, and demote `FocusCause`
+  to a diagnostic rather than a decision input. Cost: one stored fact plus a settle ceiling for
+  windows that never load (a timer in the executor, where `armFullscreenSettle` already lives).
+  Risk: a transient the user clicks away from survives until settled. **Unverified, and gated on
+  one check**: peeks that open successfully vanish 0.9-1.3s later anyway (see "Defect A: the peek
+  is destroyed inside its own `loadURL`" below). If that still reproduces at branch tip, the
+  settled gate converts a hard failure into a delayed one and the proposal changes. That
+  observation predates several fixes and has not been re-verified.
+
+  **The defect now reproduces without a human.** `scripts/peek-open-cycle.mjs` drives peek
+  open/dismiss cycles over the CLI socket and tallies results, distinguishing the real defect (a
+  cycle whose `Object has been destroyed` is accompanied by `transient-dismiss ... cause=world`
+  within 100ms of `open-registry-set`) from a harness artifact (destroyed with no such dismiss). It
+  dismisses via the `debug-escape` CLI verb in `cli-router.ts`, which calls `window-machine.ts
+  dispatchEscapePress('global', 'cli')` — the seam all four real Escape entry points funnel
+  through. Closing via an ordinary `window.app.window.close(id)` instead does NOT reproduce; the
+  escape path is required. Timing is not the variable — four different settle/wait settings were
+  tried and none produced a world-caused dismiss. To run it:
+
+      PROFILE=cycle-harness yarn start                                  (backgrounded; do NOT set E2E_TEST=true)
+      PEEK_PROFILE=cycle-harness node scripts/signoff-stage.mjs         (backgrounded; never exits by design)
+      PEEK_PROFILE=cycle-harness node scripts/peek-open-cycle.mjs --cycles 12
+
+  Observed on 2026-09-04 at commit `b0aca035`: 12 cycles, 5 opened, 7 destroyed, 4 with a
+  correlated world-caused dismiss.
 
   A live macOS run on 2026-08-29 did NOT reproduce the defect, and that is **not evidence it is
   fixed**: the run carried `E2E_TEST=true`, which disabled the since-deleted `ipc.ts`
@@ -4424,8 +4501,8 @@ page host and the doomed peek, against 9 divergence lines across a working press
 
 **Which machine decides the dismissal is established.** `window-state.ts` is deleted, so
 `window-kernel.ts` `selectTransientAutoclose`, reached through the transient law, is the only
-transient-dismissal path left. Full mechanism, and the narrower question still open — why the page
-host reclaims first responder ~7ms after losing it — are recorded under "Open kernel defects" > A
+transient-dismissal path left. Full mechanism — including why the page host reclaims first
+responder ~7ms after losing it, now established — is recorded under "Open kernel defects" > A
 near the top of this document.
 
 **A separate defect the same trace surfaced:** opening one peek minted TWO kernel windows, and the
