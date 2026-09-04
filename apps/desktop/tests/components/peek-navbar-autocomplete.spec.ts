@@ -133,6 +133,12 @@ test.describe('peek-navbar URL autocomplete @components', () => {
       nb._typedAnchor = '';
       nb.inputElement.focus();
     });
+    // `_onUrlFocus` schedules a select-all on the next animation frame. A
+    // keystroke landing before that frame is selected by it and replaced by the
+    // next one ("git" arrives as "it"), so let the frame pass before typing.
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
     await page.keyboard.type(text);
     // Debounce (150ms) + async provider resolution; wait for the state to settle.
     await page.waitForFunction(
