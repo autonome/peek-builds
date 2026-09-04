@@ -316,6 +316,28 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
   found nothing armed, read `world`, and dismissed the palette. The devtools trigger is
   dev-only; the one-slot-per-window arming under two producers is not, and this is the first
   direct observation of it killing a transient.
+  **Fixed at `95abc3b3`, measured 2026-09-04.** `electron-window-backend.ts takeFocusCause` no
+  longer consumes the arming on its first read; the window's own `blur`, its `closed`, and the
+  next `armSelfCausedFocus` remain its only clearing edges, so both of a page host's producers
+  read the same op. The same check under `DEBUG=1` now records the devtools focus assert's
+  host echo as `focus-cause-taken id=<host> kind=machine opSeq=9` followed by
+  `transient-spare id=<palette> holder=<host> exemption=newer-than-focuser`, and the palette is
+  still listed 1.5s after `cmd-open`; without `DEBUG=1` no sweep names the palette at all. The
+  peek cycle harness passes 50 of 50 twice on the same tip. This is the change `6da9ad53` landed
+  and `4133bdc9` reverted on a seven-and-eight-press sample; at 50 cycles it costs nothing, and
+  the earlier revert measured a different killer (the stale Escape, above).
+
+  **The cycle harness itself was confounded by page-load latency (found and fixed the same day).**
+  Three consecutive 50-cycle runs on 2026-09-04 destroyed 12, 10 and 9 peeks — on the tip, on
+  the tip without the arming change, and on a build equal to `f7a35e57`, which had passed 50 of
+  50 twice that morning. Every destroyed peek died on the Escape path (`esc-ask-skipped
+  reason=no-responder` then `esc-action action=close-window`), none by a sweep, and what had
+  changed was `example.com`'s load time: 60-90ms in the morning, 600-1500ms by afternoon. The
+  harness pressed Escape a fixed 150ms after the window appeared, so with the slower loads its
+  own Escape landed inside `loadURL` and the handler's tail threw `Object has been destroyed`.
+  `scripts/peek-open-cycle.mjs` now waits for the cycle's `Peek window opened` verdict before
+  dismissing. A destroyed count from a run before that change is only evidence if the run's
+  load times are known to have been short.
   **NOT branch-introduced — it reproduces on `main`**, where `window-state.ts` `decideEscape` and
   `izui-roles.ts` `isSatelliteRegistration` are byte-identical. It is a pre-existing defect in the
   OLD machine's escape decider, and so does not block landing this branch.
