@@ -25,15 +25,29 @@ Tiles have two independent runtime properties:
 
 Only residency belongs in the manifest. Visibility is a runtime choice.
 
-A **resident** tile is loaded at boot and stays live for the app session. Its
-renderer process is always running. This is what `type: "background"` tiles were —
-they just had the additional quirk of forced 0×0 dimensions, which is gone.
+`resident: true` is still a supported manifest value — a resident tile is loaded at
+boot and stays live for the app session, its renderer process always running. This
+is what `type: "background"` tiles were, minus the forced 0×0 dimensions. But no
+shipped feature manifest sets it: `isLazyTileManifest` in `apps/desktop/main/tile-arm.ts`
+treats the absence of a resident entry (plus commands or `lazyEvents`) as the signal
+to arm the tile lazily via `armLazyTile`, and the whole built-in fleet is lazy in
+practice. `resident: true` survives only in tests and fixtures.
 
 A **lazy** tile is loaded on first use. The lazy stub/replay system handles command
 registration until the tile is ready.
 
-Every tile — resident or lazy — starts **hidden**. If a tile should be visible on
-launch, session restore logic shows it. That is outside the manifest.
+Neither axis is how a tile stays warm after its window closes — that's `keepLive`.
+A tile entry with `keepLive: true` is hidden rather than destroyed on close
+(`_registerWindow` in `apps/desktop/main/tile-launcher.ts` reads the flag), so the
+renderer and its in-memory state survive and `showSelf()` reveals the same window
+again instead of reloading it. Residency controls when a tile's renderer starts;
+`keepLive` controls what closing its window does to that renderer — independent
+axes, same as residency and visibility.
+
+Every tile — resident or lazy — starts **hidden**. A tile becomes visible by calling
+`showSelf()` itself (from a command, a lazy wake, or session-restore logic), or, for
+a feature with no background tile at all, by a manifest command's declarative
+`action: { type: "window" }`, which the launcher opens directly.
 
 ---
 
@@ -49,7 +63,7 @@ launch, session restore logic shows it. That is outside the manifest.
     "url": "home.html",
     "width": 700,
     "height": 500,
-    "resident": true
+    "keepLive": true
   }],
   "capabilities": { ... }
 }
@@ -61,7 +75,8 @@ launch, session restore logic shows it. That is outside the manifest.
 |-------|------|---------|-------|
 | `id` | string | — | required, unique within manifest |
 | `url` | string | — | required, HTML file relative to tile dir |
-| `resident` | boolean | false | load at startup; false = lazy |
+| `resident` | boolean | false | load at startup; false = lazy. Supported, but no shipped feature manifest sets it — see "Two axes" above |
+| `keepLive` | boolean | false | hide instead of destroy on close; renderer and state survive, `showSelf()` reveals the same window again |
 | `width` | number | 800 | window width |
 | `height` | number | 600 | window height |
 | `minWidth` | number | — | |
@@ -152,7 +167,7 @@ home.html        ← the actual UI (opened by commands)
 ```
 manifest.json
   tiles:
-    - id: home, url: home.html, width: 700, height: 500, resident: true
+    - id: home, url: home.html, width: 700, height: 500
 
 home.html  ← api.initialize(), register commands, showSelf() on invocation
 ```
@@ -165,11 +180,15 @@ window instantly — no startup cost on invocation.
 
 ## Lazy loading interaction
 
-A `resident: true` tile is loaded at startup (hidden). `api.initialize()` runs
-immediately; commands are registered before any user action. No lazy stub/replay
-needed.
+Every built-in tile is lazy in practice: loaded on first use via the load-on-dispatch
+hook in `main/tile-lazy.ts`, armed at boot by `armLazyTile` (`main/tile-arm.ts`). See
+"Lazy feature activation" in `docs/architecture.md` for the full mechanics.
 
-Lazy tiles (default) are loaded on first use via the load-on-dispatch hook in `main/tile-lazy.ts`. See "Lazy feature activation" in `docs/architecture.md` for the full mechanics.
+A `resident: true` tile is loaded at startup (hidden) instead — `api.initialize()`
+runs immediately, commands are registered before any user action, no lazy
+stub/replay needed — but the path is unused: no shipped feature manifest sets
+`resident: true`, and `isLazyTileManifest` (`main/tile-arm.ts`) arms anything without
+a resident entry lazily by default.
 
 ---
 
@@ -224,36 +243,63 @@ Lazy tiles (default) are loaded on first use via the load-on-dispatch hook in `m
 
 ---
 
+## Other tiles already meeting the model
+
+No separate background tile, and no `background.*` files on disk.
+
+| Tile | Shape | Notes |
+|------|-------|-------|
+| `groups` | `home.html` only | |
+| `websearch` | `home.html` only, lazy (`lazyEvents: ["page:search-engine-discovered"]`) | |
+| `lists` | `home.html` only, `keepLive: true` | stays warm across close instead of reloading |
+| `lex` | `home.html` + `chain-form.html` (panel) | two UI tiles, neither is a background tile |
+| `dropzone` | `tiles: []` | window opens via the `dropzone` command's declarative `action: { type: "window" }` |
+| `sync` | `tiles: []` | `sync:manual-trigger` is handled in core, `apps/desktop/main/ipc.ts`, not by a feature tile |
+
+---
+
+## Single-tile headless features (background.html stub, no UI page)
+
+Already one renderer process — no separate UI tile to fold in — but the renderer is
+still `background.html` importing `background.js` rather than the inlined
+`mcp-server` shape (`background.html` with its script inline).
+
+| Tile | Notes |
+|------|-------|
+| `peeks` | wakes on `cli:peek-open` / `peeks:settings-changed` |
+| `slides` | wakes on `cli:slide-open` / `slides:settings-changed` |
+| `files` | file/format commands (CSV, save, open) |
+| `pagewidgets-sample` | page-widget registration API demo |
+| `debug` | wakes on the `peek debug` / `peek devtools` commands |
+
+---
+
 ## Tiles not yet migrated
 
-These tiles have genuine reasons to keep their current structure. Conversion is
-deferred — not blocked.
+These tiles have genuine reasons to keep their current structure: a background tile
+plus one or more UI tiles. Conversion is deferred — not blocked.
 
 | Tile | Why deferred |
 |------|-------------|
-| `helpdocs` | Persistent overlay tracking `app:focus-changed`, manages separate overlay window |
 | `timers` | `setInterval` tick loop must survive UI close |
 | `feeds` | Background polling + `refresh feeds` command |
 | `editor` | Multi-window orchestration, complex lazy event handling |
 | `tags` | Complex background with pubsub + datastore interactions |
-| `groups` | Context/mode management |
-| `spaces` | Context/mode management |
-| `peeks` | Complex multi-window |
+| `spaces` | Context/mode management, plus a transparent always-on-top border tile |
 | `scripts` | Executes user scripts — needs persistent context |
 | `search` | Background indexing |
 | `wonderwall` | OAuth + streaming |
 | `sheets` | Multi-pane |
-| `slides` | Multi-pane |
-| `sync` | Background sync polling |
-| `lists` | TBD |
-| `dropzone` | File drop handling |
 | `pagestream` | Streaming |
-| `pagewidgets-sample` | Sample, low priority |
 | `tag-actions` | Could be converted |
-| `theme-*` | Theme-only, no window |
-| `files` | Dialog-heavy |
-| `features-manager` | Privileged management tile |
+| `features-manager` | Privileged management tile, three UI tiles (manage/browse/publish) |
 | `entities` | Reactive extraction |
 | `windows` | Window management tile |
-| `websearch` | Reactive |
-| `lex` | Complex OAuth + AT Protocol flows |
+| `composer` | Background wakes on `composer:open`, opens a separate compose window |
+| `example` | Sample background + gallery window pattern |
+| `pubsub-repro` | Deliberately separate background + window tiles — that's what it reproduces |
+
+`todo` ships disabled (`manifest.json.disabled`) and isn't loaded — not tracked here
+as pending work. `theme-basic`, `theme-peek`, and `theme-shichijuni` are pure theme
+manifests (no `tiles` key, no `manifestVersion`) — not tiles, so they don't belong in
+a migration table at all.

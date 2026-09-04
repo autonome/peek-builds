@@ -2963,7 +2963,7 @@ export function registerTileIpcHandlers(): void {
   // Return shape: `{ exists, success, data, error? }` — aligns with both
   // caller styles across features:
   //   - `exists.exists`                     (spaces, groups, slides)
-  //   - `exists.success && exists.data`     (pagestream, helpdocs, windows feature)
+  //   - `exists.success && exists.data`     (pagestream, windows feature)
   // Keeping both keys lets us migrate callers without a renaming pass.
   registerTileIpc('tile:window:exists', { mode: 'handle' }, async (event, args: {
     token: string;

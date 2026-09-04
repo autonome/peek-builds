@@ -654,6 +654,9 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
     // One-time dedup migration: remove duplicate items
     run_dedup_cleanup(conn);
 
+    // One-time cleanup: unpark image rows parked by the pre-fix push bug
+    run_image_sync_error_cleanup(conn);
+
     // Write schema version to settings table for compatibility tracking.
     let _ = conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', ?1)",
@@ -862,6 +865,45 @@ fn run_dedup_cleanup(conn: &Connection) {
     }
 }
 
+/// One-time cleanup: clear `sync_error` on already-parked `image` rows so they
+/// re-enter the push set. The join fix in `get_items_to_push` (blobs left-join
+/// carrying the base64 payload, mime and filename) only helps images that fail
+/// AFTER it ships; rows a device already parked under the old query would
+/// otherwise never retry, since `sync_error` only clears on a later successful
+/// push or an edit. Scoped to `type = 'image'` — rows of other types are parked
+/// for their own reasons and must stay that way.
+fn run_image_sync_error_cleanup(conn: &Connection) {
+    let cleanup_done: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = 'image_sync_error_cleanup_v1'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if cleanup_done {
+        return;
+    }
+
+    let cleared = conn
+        .execute(
+            "UPDATE items SET sync_error = NULL WHERE type = 'image' AND sync_error IS NOT NULL",
+            [],
+        )
+        .unwrap_or(0);
+
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_sync_error_cleanup_v1', '1')",
+        [],
+    );
+
+    if cleared > 0 {
+        println!("[peek-core] Image sync-error cleanup: unparked {} image item(s)", cleared);
+    } else {
+        println!("[peek-core] Image sync-error cleanup: no parked image items found");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,5 +993,104 @@ mod tests {
             )
             .unwrap();
         assert_eq!(flag, 1);
+    }
+
+    /// A parked image row predates the cleanup (its `sync_error` was set by the old,
+    /// blob-less push query). Once the cleanup runs, the row loses its `sync_error`
+    /// and re-enters the pending set for its bucket.
+    #[test]
+    fn test_image_sync_error_cleanup_unparks_image_row() {
+        use crate::sync::get_pending_sync_count;
+
+        let conn = open_memory_db();
+        ensure_database_initialized(&conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO items (id, type, content, sync_error, created_at, updated_at) \
+             VALUES ('img-1', 'image', 'ocr text', 'permanent: 400 bad request', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+
+        // Simulate an install that parked the row before this cleanup existed:
+        // the flag isn't set yet.
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'image_sync_error_cleanup_v1'",
+            [],
+        ).unwrap();
+
+        ensure_database_initialized(&conn).unwrap();
+
+        let sync_error: Option<String> = conn
+            .query_row(
+                "SELECT sync_error FROM items WHERE id = 'img-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sync_error, None);
+
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 1);
+    }
+
+    /// A parked non-image row is left alone — it may be parked for a reason
+    /// unrelated to the image push bug, and the cleanup is scoped to images only.
+    #[test]
+    fn test_image_sync_error_cleanup_leaves_other_types_parked() {
+        let conn = open_memory_db();
+        ensure_database_initialized(&conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO items (id, type, content, sync_error, created_at, updated_at) \
+             VALUES ('txt-1', 'text', 'hello', 'permanent: 400 bad request', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'image_sync_error_cleanup_v1'",
+            [],
+        ).unwrap();
+
+        ensure_database_initialized(&conn).unwrap();
+
+        let sync_error: Option<String> = conn
+            .query_row(
+                "SELECT sync_error FROM items WHERE id = 'txt-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sync_error.as_deref(), Some("permanent: 400 bad request"));
+    }
+
+    /// The cleanup is gated by its settings flag, not by whether any row still
+    /// qualifies: an image parked AFTER the cleanup has already run must stay
+    /// parked through a second `ensure_database_initialized`, same as a real
+    /// app restart would see.
+    #[test]
+    fn test_image_sync_error_cleanup_runs_once() {
+        let conn = open_memory_db();
+        ensure_database_initialized(&conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO items (id, type, content, sync_error, created_at, updated_at) \
+             VALUES ('img-2', 'image', 'ocr text', 'permanent: 400 bad request', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+
+        // Cleanup flag is already set from the first init above, so this second
+        // init must not touch the newly-parked row.
+        ensure_database_initialized(&conn).unwrap();
+
+        let sync_error: Option<String> = conn
+            .query_row(
+                "SELECT sync_error FROM items WHERE id = 'img-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sync_error.as_deref(), Some("permanent: 400 bad request"));
     }
 }

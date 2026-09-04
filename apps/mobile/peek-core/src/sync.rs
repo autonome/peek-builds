@@ -23,6 +23,11 @@ pub struct PushItem {
     pub domain: String,
     pub favicon: String,
     pub frecency_score: i64,
+    /// Raw image bytes from the `blobs` table (image rows only; the local `content`
+    /// column holds OCR text for images, not the payload — see `get_items_to_push`).
+    pub image_data: Option<Vec<u8>>,
+    /// The blob's mime type (image rows only).
+    pub image_mime: Option<String>,
 }
 
 /// Helper to convert ISO string to chrono DateTime<Utc>.
@@ -145,13 +150,20 @@ pub fn get_pending_sync_count(conn: &Connection, target_profile_id: &str) -> Res
 
 /// Get items that need to be pushed to `target_profile_id` (syncable types only; never
 /// synced, locally modified after their last sync, or last synced to a different bucket).
+///
+/// Left-joins `blobs` so image rows carry their raw bytes + mime type: an image's local
+/// `content` column holds OCR text (set later by vision processing), not the payload —
+/// the actual bytes live in `blobs.data`, keyed by `item_id`. Non-image rows have no
+/// blob and get `image_data`/`image_mime` of `None`.
 pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<Vec<PushItem>, String> {
     let synced_types = get_synced_types(conn);
     let (where_clause, bind) = pending_for_bucket(&synced_types, target_profile_id);
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at, \
-             COALESCE(title, ''), COALESCE(domain, ''), COALESCE(favicon, ''), COALESCE(frecency_score, 0) FROM items
+            "SELECT items.id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at, \
+             COALESCE(title, ''), COALESCE(domain, ''), COALESCE(favicon, ''), COALESCE(frecency_score, 0), \
+             blobs.data, blobs.mime_type \
+             FROM items LEFT JOIN blobs ON blobs.item_id = items.id
              WHERE {}",
             where_clause
         ))
@@ -172,6 +184,8 @@ pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<V
                 domain: row.get(9)?,
                 favicon: row.get(10)?,
                 frecency_score: row.get(11)?,
+                image_data: row.get(12)?,
+                image_mime: row.get(13)?,
             })
         })
         .map_err(|e| format!("Failed to query items: {}", e))?
@@ -712,6 +726,38 @@ mod tests {
 
         let count = get_pending_sync_count(&conn, "bucket-a").unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// The push payload for an image row must carry the blob's raw bytes + mime type
+    /// (fetched via the `blobs` join), not the local `content` column — that holds
+    /// OCR text, which is a different field entirely and must not leak into it.
+    /// Non-image rows must come back exactly as before, with no blob attached.
+    #[test]
+    fn test_items_to_push_carries_blob_for_image_rows() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let image_bytes = b"fake jpeg bytes".to_vec();
+        let image_id = store
+            .save_image(&image_bytes, "image/jpeg", &[], None, None, Some(100), Some(200))
+            .unwrap();
+        store.update_item_content(&image_id, "OCR text from the image").unwrap();
+        let url_result = store.save_url("https://example.com", &[], None).unwrap();
+
+        let conn = store.conn.lock().unwrap();
+        let mut items = get_items_to_push(&conn, "bucket-a").unwrap();
+        assert_eq!(items.len(), 2);
+        items.sort_by(|a, b| a.item_type.cmp(&b.item_type));
+
+        let image_item = &items[0];
+        assert_eq!(image_item.item_type, "image");
+        assert_eq!(image_item.content.as_deref(), Some("OCR text from the image"));
+        assert_eq!(image_item.image_data, Some(image_bytes));
+        assert_eq!(image_item.image_mime.as_deref(), Some("image/jpeg"));
+
+        let url_item = &items[1];
+        assert_eq!(url_item.item_type, "url");
+        assert_eq!(url_item.id, url_result.item_id);
+        assert_eq!(url_item.image_data, None);
+        assert_eq!(url_item.image_mime, None);
     }
 
     #[test]
