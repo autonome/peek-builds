@@ -369,3 +369,29 @@ Two `desktop` failures:
   `window-kernel.ts evolve`'s `WindowContentOrderable` arm only flips the flag — nothing re-applies
   the transient law when a candidate becomes orderable under a focuser that already holds key. A
   kernel rule waiting to be written; tracked in this branch's `handoff.md`.
+
+### Sixth macOS gate run — 2026-09-04, night
+
+Run at commit `561e15ca`, which adds the orderable-flip sweep to `window-kernel.ts react`.
+Immediately before it, the 50-cycle peek harness (`scripts/peek-open-cycle.mjs`, visible
+instance, `DEBUG=1`, no `E2E_TEST`) passed 50 of 50 with 0 destroyed peeks and 0 `world`-cause
+dismissals within 100ms of open, so the new rule spares a slow-painting peek as intended.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3209 | 0 | — |
+| node unit | 743 | 0 | — |
+| desktop | 435 | 0 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 63 | 1 | — |
+| editor | 91 | 0 | — |
+
+`desktop` is clean for the first time on this branch: `hybrid-transient-on-blur.spec.ts:139` and
+`:153`, the two packaged-only failures of the fifth run, pass under the new rule, and the
+`hybrid-overlay.spec.ts:1879` flake did not recur.
+
+One `components` failure, `peek-navbar-autocomplete.spec.ts:148` (inline ghost fills the input and
+natively selects the completion suffix), received `"it"` where `"github.com"` was expected — the
+typed prefix arrived truncated. The file passes 7 of 7 in 1.8s on an immediate isolated re-run of
+the same tree, and per the qualification above the `components` runner never launches Electron, so
+no main-process change can reach it. Harness flake, not a regression.
