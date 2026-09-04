@@ -1172,6 +1172,11 @@ function checkTransientHideIsNotDismiss(step: Step): string[] {
   for (const rec of step.next.order) {
     if (rec.hiddenByAppBlur !== true) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    // Candidacy clause: a record that has never reported a composited frame is
+    // not governed by the dismissal law at all (`window-kernel.ts
+    // isTransientAutocloseCandidate`), so an ordinary reversible hide is the
+    // correct outcome for it rather than a dismissal standing in for one.
+    if (!rec.orderable) continue;
     // Exemption 1: the focuser names this record as parent or overlay.
     if (focuser !== undefined && (focuser.parentId === rec.id || focuser.overlayFor === rec.id)) continue;
     // Exemption 2: an overlay is attached to this record.

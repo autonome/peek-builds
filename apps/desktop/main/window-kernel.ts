@@ -4513,8 +4513,26 @@ export function isNonParentRole(role: string | undefined): boolean {
  * `transientAutocloseExemption` itself is shared rather than copied: a
  * restated candidacy test is exactly how one of the three came to omit a
  * clause silently.
+ *
+ * SETTLED-NESS IS PART OF CANDIDACY, NOT A FIFTH EXEMPTION. A window that has
+ * not yet shown anything cannot meaningfully have "lost" a focus it never
+ * visibly held, so it is not in the consideration set at all — this is what
+ * stops a sweep provoked by the PREVIOUS transient's dismissal from landing on
+ * a brand-new one still inside its own `loadURL` (`docs/design/window-manager.md`
+ * "Defect A"). `orderable` is that fact and is not a new one: it is `false`
+ * from birth for a `page-host` and flipped only by `WindowContentOrderable`,
+ * the first-composited-frame report, so a not-yet-painted page host answers
+ * `false` here precisely while it is vulnerable. `kind: 'browser'` records are
+ * `orderable` from birth, so this narrows nothing for them.
+ *
+ * Deliberately NOT expressed in `transientAutocloseExemption`: its four
+ * clauses are one statement about records the law GOVERNS, and a fifth clause
+ * there would both restate the law and spare more windows than intended,
+ * silently — `window-kernel-properties.test.ts` over-approximates exemptions
+ * and would not catch it.
  */
 export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
+  if (!rec.orderable) return false;
   return roleIn(TRANSIENT_ROLES, rec.role) || rec.selfClosesOnBlur === true;
 }
 

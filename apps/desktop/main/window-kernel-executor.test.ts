@@ -695,6 +695,10 @@ describe('effect performance', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
     exec.dispatch(register(wid(2), { kind: 'page-host', role: 'quick-view' }));
+    // A page host is not a dismissal candidate until it reports its first
+    // composited frame (`window-kernel.ts isTransientAutocloseCandidate`), and
+    // a real one does so within a frame or two of being shown.
+    exec.dispatch({ type: 'WindowContentOrderable', id: wid(2) });
     exec.dispatch({ type: 'WindowShown', id: wid(1) });
     exec.dispatch({ type: 'WindowShown', id: wid(2) });
     backend.calls.length = 0;

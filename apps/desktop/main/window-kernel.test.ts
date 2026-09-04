@@ -3956,6 +3956,15 @@ describe('window-kernel: transient autoclose', () => {
     ...(role !== undefined ? { role } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
+  /**
+   * First-composited-frame report. A `page-host` is registered
+   * `orderable: false` and is NOT a transient-autoclose candidate until this
+   * lands (`isTransientAutocloseCandidate`), so a scene that means to exercise
+   * the dismissal law on a page host has to supply the fact production always
+   * supplies — a real host paints its own chrome within a frame or two of
+   * being shown, whether or not its page ever loads.
+   */
+  const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
 
   /**
    * wid(1) workspace, wid(2) palette, wid(3) quick-view, wid(4) overlay,
@@ -3972,6 +3981,13 @@ describe('window-kernel: transient autoclose', () => {
         reg(5, 'utility'),
         reg(6, undefined),
         reg(7, 'palette'),
+        orderable(1),
+        orderable(2),
+        orderable(3),
+        orderable(4),
+        orderable(5),
+        orderable(6),
+        orderable(7),
         show(1),
         show(2),
         show(3),
@@ -4024,7 +4040,7 @@ describe('window-kernel: transient autoclose', () => {
 
   it('INVARIANT: a machine-caused focus ARMS an openSeq ordering test — it does not skip the sweep', () => {
     // A slide opens first, a palette after it. Both visible, both transient.
-    const state = fold([reg(1, 'quick-view'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const state = fold([reg(1, 'quick-view'), reg(2, 'palette'), orderable(1), orderable(2), show(1), show(2)], initialState());
     const slide = wid(1);
     const palette = wid(2);
     const machine: FocusCause = { kind: 'machine', opSeq: 0 };
@@ -4072,7 +4088,7 @@ describe('window-kernel: transient autoclose', () => {
   it('the ordering test spares only what is strictly newer than the focuser', () => {
     // Three transients in a known open order; the machine focuses the middle one.
     const state = fold(
-      [reg(1, 'quick-view'), reg(2, 'palette'), reg(3, 'palette'), show(1), show(2), show(3)],
+      [reg(1, 'quick-view'), reg(2, 'palette'), reg(3, 'palette'), orderable(1), orderable(2), orderable(3), show(1), show(2), show(3)],
       initialState(),
     );
     assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'machine', opSeq: 0 }), [wid(1)]);
@@ -4160,7 +4176,10 @@ describe('window-kernel: transient autoclose', () => {
     const pageHost = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        // `browser`, as `renderer/cmd/background.js openPanelWindow` registers
+        // it — a palette is never a page host, so it is `orderable` from birth
+        // and a dismissal candidate the moment it is shown.
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
         { type: 'WindowRegistered', id: pageHost, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: pageHost },
@@ -4186,8 +4205,12 @@ describe('window-kernel: transient autoclose', () => {
     const state = fold(
       [
         { type: 'WindowRegistered', id: workspace, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
-        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
-        { type: 'WindowRegistered', id: switcher, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+        // Both `browser`, as their real open sites register them
+        // (`renderer/cmd/background.js openPanelWindow`,
+        // `features/windows/background.js openWindowsView`) — neither is a page
+        // host, so both are `orderable` from birth.
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
         { type: 'WindowShown', id: workspace },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: switcher },
@@ -4207,8 +4230,8 @@ describe('window-kernel: transient autoclose', () => {
     const utilityWindow = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
-        { type: 'WindowRegistered', id: utilityWindow, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: utilityWindow, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: utilityWindow },
       ],
@@ -4226,7 +4249,7 @@ describe('window-kernel: transient autoclose', () => {
     const oauthWindow = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
         { type: 'WindowRegistered', id: oauthWindow, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: oauthWindow },
@@ -4342,7 +4365,11 @@ describe('window-kernel: transient autoclose', () => {
     // labelled.
     const hostA = wid(1);
     const peek2 = wid(2);
-    const registered = fold([reg(1, undefined, 'page-host'), reg(2, 'quick-view'), show(1), show(2)], initialState());
+    // Both painted: a peek that has NOT yet reported its first frame is not a
+    // candidate at all (`isTransientAutocloseCandidate`), which is a different
+    // failure from the one this test is about. The live defect this documents
+    // is a peek that HAS painted being swept a millisecond later.
+    const registered = fold([reg(1, undefined, 'page-host'), reg(2, 'quick-view'), orderable(1), orderable(2), show(1), show(2)], initialState());
     // hostA already holds key from a prior op (opSeq 28) — the state a
     // page-host sits in the instant its SECOND native focus producer echoes
     // in, having already reported via its first.
@@ -4475,7 +4502,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     // floor does not spare the two transients — they are OLDER than the
     // focuser, which is the case the floor still sweeps (see
     // `selectTransientAutoclose`'s own doc).
-    const base = fold([reg(2, 'palette'), reg(3, 'quick-view'), reg(1, 'workspace'), show(1), show(2), show(3)], initialState());
+    const base = fold([reg(2, 'palette'), reg(3, 'quick-view'), reg(1, 'workspace'), orderable(1), orderable(2), orderable(3), show(1), show(2), show(3)], initialState());
     const focused = evolve(base, { type: 'OsFocusGained', id: wid(1) });
     const echo: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: focused.opSeqCounter } };
     const next = evolve(focused, echo);
@@ -4549,7 +4576,7 @@ describe('window-kernel: react applies transient autoclose', () => {
   });
 
   it('an unattached utility focuser now DRIVES a dismissal through react — the role exemption is gone', () => {
-    const state = fold([reg(1, 'utility'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const state = fold([reg(1, 'utility'), reg(2, 'palette'), orderable(1), orderable(2), show(1), show(2)], initialState());
     const ev: Event = { type: 'OsFocusGained', id: wid(1) };
     const next = evolve(state, ev);
     assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), [{ type: 'DismissWindow', id: wid(2) }]);
@@ -4560,7 +4587,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     // old `next.key !== null` guard would have blocked this outright. The
     // dismissal comes from react's own `pendingAppResignSweep`/`appActive`
     // diff — `AppResignSettled` no longer writes `lastAttention` at all.
-    const state = fold([reg(1, 'workspace'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const state = fold([reg(1, 'workspace'), reg(2, 'palette'), orderable(1), orderable(2), show(1), show(2)], initialState());
     const resigned = evolve(state, { type: 'AppResigned' });
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
