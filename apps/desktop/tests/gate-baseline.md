@@ -309,3 +309,32 @@ as flake.
 
 **Not re-run after the `workspaces` fix.** That change was verified against the main-process unit
 runner (3385/0/0) and a clean typecheck, not against a full gate.
+
+### Fourth macOS gate run — 2026-09-04
+
+Run at commit `f7a35e57` on `wip/window-kernel-executor`, the first full gate on that branch.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3208 | 0 | — |
+| desktop | 429 | 6 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Six `desktop` failures, all attributed:
+
+- **Three deterministic and pre-existing**, fixed in the commit that follows this run:
+  `hybrid-transient-on-blur.spec.ts:139`, `:153` and `:201`. One cause — the page-host compat
+  preload was attached to http(s) content only, so a `data:` quick-view never reported its first
+  frame, never became `orderable`, and was never a dismissal candidate. Confirmed by A/B against the
+  `dcf05a91` versions of the changed files, so the failures predate the session that found them.
+  Write-up: `docs/design/window-manager.md`, "Open kernel defects".
+- **Three flakes**, each of which passed on a source-mode re-run in isolation and again in a
+  packaged-build run (`PACKAGED=1`, the same `out/mac-arm64/Peek.app` this gate produced, all 58
+  tests of the three files passing): `hybrid-content-window-gesture.spec.ts:153` (double-click on
+  dead content maximizes the host window), `hybrid-overlay.spec.ts:2168` (hold-to-drag: navbar
+  background HOLD then move), and `izui-escape.spec.ts:311` (a page opened FROM a palette-role
+  opener is classified content — failed in setup, `window.open` of a palette-role window returned
+  `success:false`). None reproduces outside the parallel gate, so flake and load-only interaction
+  are not separated for them, as for `hybrid-maximize-state-sync.spec.ts:89` above.
