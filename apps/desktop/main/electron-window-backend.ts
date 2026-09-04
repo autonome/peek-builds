@@ -93,6 +93,8 @@ import {
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
+// The executor does not import this backend, so this is not a cycle.
+import { planRaiseRealization } from './window-kernel-executor.js';
 import {
   getKernelExecutor,
   kernelOsFocusGained,
@@ -191,6 +193,11 @@ export interface NativeWindow {
   show(): void;
   /** Show without activating (focus-preserving). */
   showInactive(): void;
+  /**
+   * Take key on an already-shown window without re-showing it —
+   * `makeKeyAndOrderFront:` on macOS. On both kinds in Electron 40.
+   */
+  focus(): void;
   /** Window opacity — the headless opacity-0-before-show trick (`performOsShow`). */
   setOpacity(opacity: number): void;
   setAlwaysOnTop(flag: boolean, level?: 'normal' | 'floating'): void;
@@ -1263,14 +1270,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * which is exactly the ping-pong `docs/design/window-manager.md` §4.3 item
    * 3 measures (a raise re-granting the focus it was only supposed to
    * reflect). So: **when this backend's own `isVisible()` ground truth says
-   * the target is already on screen, realize the raise as a pure reorder —
-   * `moveTop()`, never a show.** A target that genuinely is not visible
+   * the target is already on screen AND ALREADY KEY, realize the raise as a
+   * pure reorder — `moveTop()`, never a show.** `isVisible()` alone is not
+   * enough: a sibling `ShowWindow` effect (two kernel commands can land in
+   * one keepLive re-show — see `planRaiseRealization`) can make a window
+   * visible without ever taking key, and that window must still take key
+   * here even though no show is owed. A target that genuinely is not visible
    * still needs the real show; nothing else will map it. This is not
    * platform-scoped: a raise consequent on a focus report should not
-   * re-grant focus anywhere, and a window already on screen needs no show
-   * anywhere — the platform divergence (`STACKING_TAKES_FOCUS`) is only in
-   * how `moveTop()` itself behaves, reusing the SAME arming `setStacking`
-   * already carries for that primitive.
+   * re-grant focus anywhere, and a window already on screen and key needs no
+   * show anywhere — the platform divergence (`STACKING_TAKES_FOCUS`) is only
+   * in how `moveTop()` itself behaves, reusing the SAME arming `setStacking`
+   * already carries for that primitive. The three-way split itself is
+   * `window-kernel-executor.ts planRaiseRealization`.
    *
    * Two rules this derives from: (1) a platform's workaround shape belongs
    * in the backend, and the machine emits ONE effect for ONE intention —
@@ -1286,25 +1298,47 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
     if (win.isDestroyed()) return;
-    const alreadyVisible = this.isVisibleSafe(win);
+    const visible = this.isVisibleSafe(win);
+    const focused = this.isFocused(win);
+    const plan = planRaiseRealization(visible, focused);
+    // Always-on: the decision to realize a raise as a bare reorder (no show,
+    // no focus call) is a decision-to-do-nothing about key, and this app's
+    // rule is that one becomes an event rather than a silence.
+    wmLog('raise-realized', { id, kind, visible, focused, plan });
     if (kind === 'page-host') {
       // Non-headless, not yet on screen: activating show + content first
       // responder (the `hybridShowIntent` invariant — the R4/R5/R7
       // dead-focus cluster). Headless: opacity-0 + showInactive, never
-      // activate/focus. Already on screen: reorder only — see docblock above.
-      if (alreadyVisible) {
-        // Arm the z-raise half too. `reorderToTop` arms only
-        // `pendingStackingFocus`, and only where `STACKING_TAKES_FOCUS` — which
-        // is false on darwin — so on macOS this native call was the one part of
-        // a raise that armed nothing at all. It does provoke the host window's
-        // `'focus'`, and that echo, arriving before the content-focus half
-        // below arms, was reported as the world's: a world cause arms no
-        // ordering floor, so the sweep it drives dismisses a peek that opened a
-        // millisecond earlier. A raise is a focus-family command in every one of
-        // its native calls, not just its last one.
-        this.armSelfCausedFocus(id, opSeq);
-        this.reorderToTop(id, win);
-      } else this.performOsShow(id, win, !isHeadless(), opSeq);
+      // activate/focus. Already on screen and key: reorder only. Already on
+      // screen but not key: reorder + take key without re-showing — see
+      // docblock above and `planRaiseRealization`.
+      switch (plan) {
+        case 'reorder':
+        case 'take-key':
+          // Arm the z-raise half too. `reorderToTop` arms only
+          // `pendingStackingFocus`, and only where `STACKING_TAKES_FOCUS` —
+          // which is false on darwin — so on macOS this native call was the
+          // one part of a raise that armed nothing at all. It does provoke
+          // the host window's `'focus'`, and that echo, arriving before the
+          // content-focus half below arms, was reported as the world's: a
+          // world cause arms no ordering floor, so the sweep it drives
+          // dismisses a peek that opened a millisecond earlier. A raise is a
+          // focus-family command in every one of its native calls, not just
+          // its last one.
+          this.armSelfCausedFocus(id, opSeq);
+          this.reorderToTop(id, win);
+          if (plan === 'take-key' && !isHeadless()) {
+            try {
+              win.focus();
+            } catch {
+              /* window gone mid-raise */
+            }
+          }
+          break;
+        case 'show-and-take-key':
+          this.performOsShow(id, win, !isHeadless(), opSeq);
+          break;
+      }
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           // The raise's content-focus half provokes `rendererWC 'focus'` — the
@@ -1319,25 +1353,36 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
-    // activate + focus only when not headless — unless already on screen, in
-    // which case a reorder is all the raise means (see docblock above), and
-    // neither the show nor the trailing explicit focus below run.
-    if (alreadyVisible) {
-      // Armed for the same reason as the page-host branch above: the z-raise is
-      // one of a raise's native calls, and `reorderToTop` arms only
-      // `pendingStackingFocus`, only off darwin.
-      this.armSelfCausedFocus(id, opSeq);
-      this.reorderToTop(id, win);
-    } else {
-      this.performOsShow(id, win, !isHeadless(), opSeq);
-      if (!isHeadless()) {
-        try {
-          this.armSelfCausedFocus(id, opSeq);
-          (win as unknown as BrowserWindow).focus();
-        } catch {
-          /* window gone mid-raise */
+    // activate + focus only when not headless — unless already on screen and
+    // key, in which case a reorder is all the raise means (see docblock
+    // above), and neither the show nor the trailing explicit focus below run.
+    switch (plan) {
+      case 'reorder':
+      case 'take-key':
+        // Armed for the same reason as the page-host branch above: the
+        // z-raise is one of a raise's native calls, and `reorderToTop` arms
+        // only `pendingStackingFocus`, only off darwin.
+        this.armSelfCausedFocus(id, opSeq);
+        this.reorderToTop(id, win);
+        if (plan === 'take-key' && !isHeadless()) {
+          try {
+            win.focus();
+          } catch {
+            /* window gone mid-raise */
+          }
         }
-      }
+        break;
+      case 'show-and-take-key':
+        this.performOsShow(id, win, !isHeadless(), opSeq);
+        if (!isHeadless()) {
+          try {
+            this.armSelfCausedFocus(id, opSeq);
+            win.focus();
+          } catch {
+            /* window gone mid-raise */
+          }
+        }
+        break;
     }
     kernelWindowShown(id, true, opSeq);
   }

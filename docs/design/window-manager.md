@@ -111,6 +111,24 @@ ordering floor is restated. `window-kernel-properties.test.ts checkAutocloseWiri
 mirror; `window-kernel.test.ts` pins the hand-built case (host focused with a `world` cause, then
 the quick-view's `WindowContentOrderable` arrives — exactly one `DismissWindow`).
 
+**A raise that reorders instead of taking key, closed (2026-09-04).** Re-showing a hidden keepLive
+window (the command palette) put it on screen but never gave it key focus: typing went to the
+previous window until the user clicked the palette. The keepLive reuse path (`ipc.ts` ->
+`windows.ts showWindowHeadlessSafe`) dispatches `ShowWindow` then `RaiseWindow` as two separate
+kernel batches; the `ShowWindow` effect's `win.showInactive()` already makes
+`electron-window-backend.ts isVisibleSafe(win)` read true by the time the raise runs, so
+`raiseWindow`'s already-visible branch realized the raise as a pure `moveTop()` reorder — the
+ping-pong guard `aa4357a6` added ("a raise on a window already on screen reorders, never shows") —
+and neither `win.show()` nor `win.focus()` ever ran. That guard's justification (a raise consequent
+on an OS focus report finds the OS has ALREADY moved key onto the target) only holds when the
+target is already key; `isVisible()` alone cannot tell that apart from "just mapped inactive by the
+sibling `ShowWindow` effect a moment ago". Fix: `window-kernel-executor.ts planRaiseRealization`
+takes a second input, whether the target is already key, and narrows the reorder case to
+visible-AND-key; a visible-but-not-key target now takes key (`win.focus()`) without re-showing.
+Wired into both branches of `electron-window-backend.ts raiseWindow`, which is not unit-reachable
+(the backend value-imports Electron) — the always-on `raise-realized` log record (`id`, `kind`,
+`visible`, `focused`, `plan`) is the live evidence.
+
 **A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
 `dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
 Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed

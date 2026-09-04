@@ -184,6 +184,47 @@ export function planRaise(record: WindowRecord | undefined, headless: boolean, a
 }
 
 /**
+ * How `electron-window-backend.ts raiseWindow` realizes an `'activating-raise'`
+ * once it is down to native calls — refining the backend's own ground-truth
+ * check (`isVisible()` alone) that `raiseWindow`'s docblock used to treat as
+ * sufficient.
+ *
+ *   - `'show-and-take-key'`   the target is not visible at all: the real
+ *                             activating show. Nothing else can put it on
+ *                             screen, so `alreadyKey` is irrelevant here — a
+ *                             window that isn't showing cannot be key either.
+ *   - `'reorder'`             visible AND already key: the ping-pong guard
+ *                             `aa4357a6` added ("a raise on a window already
+ *                             on screen reorders, never shows"). Its case is a
+ *                             raise consequent on an OS focus report — the OS
+ *                             has ALREADY moved key onto the target, so
+ *                             re-showing would only manufacture the focus
+ *                             ping-pong `docs/design/window-manager.md` §4.3
+ *                             item 3 measures. A pure `moveTop()` catches
+ *                             z-order up with a fact that already holds.
+ *   - `'take-key'`            visible but NOT key: `aa4357a6`'s justification
+ *                             does not hold here — `isVisible()` cannot tell
+ *                             "on screen and key" apart from "just mapped
+ *                             inactive by the sibling `ShowWindow` effect a
+ *                             moment ago", and `alreadyKey` is exactly the
+ *                             second input that draws that line. Measured
+ *                             case: re-showing a hidden keepLive command
+ *                             palette dispatches `ShowWindow` then
+ *                             `RaiseWindow` as two separate kernel batches —
+ *                             the `ShowWindow` effect's `win.showInactive()`
+ *                             already made `isVisible()` true by the time the
+ *                             raise runs, so a bare reorder never takes key
+ *                             and the palette sits on screen accepting no
+ *                             input until the user clicks it.
+ */
+export type RaiseRealization = 'reorder' | 'take-key' | 'show-and-take-key';
+export function planRaiseRealization(alreadyVisible: boolean, alreadyKey: boolean): RaiseRealization {
+  if (!alreadyVisible) return 'show-and-take-key';
+  if (alreadyKey) return 'reorder';
+  return 'take-key';
+}
+
+/**
  * Whether restoring a session should put the window that was focused at save
  * time back in front — the rule `izui-roles.ts shouldActivateFocusedOnRestore`
  * held, moved here beside `planRaise` because this is the layer that has both

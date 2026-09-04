@@ -16,6 +16,7 @@ import { setDebug, __resetDebugFlagsForTest } from './debug-flag.js';
 import {
   WindowKernelExecutor,
   planRaise,
+  planRaiseRealization,
   planRestoreFocus,
   stackingLevelForLayer,
   type FsSettleOutcome,
@@ -566,6 +567,25 @@ describe('planRaise — the masks a raise owes because it is an activating show'
 
   it('resolves the ordinary window the way it did before once the app is active again', () => {
     assert.strictEqual(planRaise(record(), false, true), 'activating-raise');
+  });
+});
+
+// The wiring in `electron-window-backend.ts raiseWindow` that calls this
+// predicate is not unit-reachable here (the backend value-imports Electron),
+// so only the pure decision is covered — the wiring is verified live through
+// the always-on `raise-realized` log record `raiseWindow` emits.
+describe('planRaiseRealization — refining an activating raise once isVisible() alone is not enough', () => {
+  it('not visible takes the real show, regardless of focused', () => {
+    assert.strictEqual(planRaiseRealization(false, false), 'show-and-take-key');
+    assert.strictEqual(planRaiseRealization(false, true), 'show-and-take-key');
+  });
+
+  it('visible and already key realizes as a pure reorder — the aa4357a6 ping-pong guard', () => {
+    assert.strictEqual(planRaiseRealization(true, true), 'reorder');
+  });
+
+  it('visible but not key takes key without re-showing — the keepLive command palette reuse', () => {
+    assert.strictEqual(planRaiseRealization(true, false), 'take-key');
   });
 });
 
