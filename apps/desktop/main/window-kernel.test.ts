@@ -4611,6 +4611,34 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.strictEqual(settled.pendingAppResignSweep, false, 'the settle disarms the sweep');
     assert.deepStrictEqual(dismissed(react(resigned, settleEv, settled)), [], 'attached, so spared even though nothing excludes it by focuser');
   });
+
+  it('a quick-view that becomes orderable AFTER focus has already moved on is still swept (Next Step 1)', () => {
+    // The regression this pins: a hybrid quick-view's first-composited-frame
+    // report (`WindowContentOrderable`) can land in a LATER transition than
+    // the host's `OsFocusGained` — rule (a) only re-derives the sweep off a
+    // fresh `lastAttention.seq`, so a candidate that was not yet orderable
+    // when that report ran is skipped and never revisited. Neither window is
+    // made `orderable` at registration — the quick-view starts a candidate of
+    // NEITHER report until its own `WindowContentOrderable` arrives.
+    const state = fold([reg(1, undefined), reg(2, 'quick-view'), show(1), show(2)], initialState());
+
+    const focusEv: Event = { type: 'OsFocusGained', id: wid(1) };
+    const focused = evolve(state, focusEv);
+    assert.strictEqual(focused.lastAttention?.cause.kind, 'world', 'the host takes focus with a world cause');
+    assert.deepStrictEqual(
+      dismissed(react(state, focusEv, focused)),
+      [],
+      'the quick-view is not yet orderable, so the focus-report sweep (a) has no candidate to name',
+    );
+
+    const orderableEv: Event = { type: 'WindowContentOrderable', id: wid(2) };
+    const next = evolve(focused, orderableEv);
+    assert.deepStrictEqual(
+      react(focused, orderableEv, next).filter((e) => e.type === 'DismissWindow'),
+      [{ type: 'DismissWindow', id: wid(2) }],
+      'becoming orderable re-checks the law against the holder focus already settled on, with exactly one victim',
+    );
+  });
 });
 
 // ── escapeMode: one live value, absent is meaningful ────────────────────────

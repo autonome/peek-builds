@@ -96,6 +96,21 @@ because a non-http webview runs the tile preload instead. The candidacy clause i
 — it was measured to remove the pre-paint kills above — and the property suite's restatement of
 candidacy did not need to widen, since candidacy did not change; only who produces the fact did.
 
+**A third candidacy gap, closed: a record that becomes orderable AFTER focus has already moved on
+(2026-09-04).** Rule (a) in `window-kernel.ts react` (the FOCUS-REPORT SWEEP) only re-derives the
+sweep off a fresh `State.lastAttention.seq` — a record whose `orderable` flag flips false -> true
+in a LATER transition, with no focus report of its own in between, was never revisited. A hybrid
+quick-view whose first-composited-frame report lands after its focuser's `OsFocusGained` has
+already run stayed on screen forever; `hybrid-transient-on-blur.spec.ts:139` and `:153` caught
+exactly this, but only against the packaged build, where the first-frame report is slow enough to
+land after the focus report instead of before it. `react` now carries a third rule, keyed on the
+`orderable` diff itself rather than on `ev.type`: any record whose flag flips this transition is
+checked against the CURRENT `State.lastAttention` — the holder focus already settled on, not a
+fresh report — using `selectTransientAutoclose` unchanged, so none of the four exemptions or the
+ordering floor is restated. `window-kernel-properties.test.ts checkAutocloseWiring` carries the
+mirror; `window-kernel.test.ts` pins the hand-built case (host focused with a `world` cause, then
+the quick-view's `WindowContentOrderable` arrives — exactly one `DismissWindow`).
+
 **A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
 `dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
 Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed

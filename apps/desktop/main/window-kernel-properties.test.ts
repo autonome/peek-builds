@@ -1118,6 +1118,18 @@ function checkAutocloseWiring(step: Step): string[] {
 
   const resignSwept = prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive;
 
+  // ORDERABLE-FLIP SWEEP — mirrors react's rule (c): a record present in both
+  // `prev`/`next` whose `orderable` flag flipped false -> true this
+  // transition is re-checked against the CURRENT `next.lastAttention`, not a
+  // fresh report of its own. A `WindowContentOrderable` event never also
+  // advances `lastAttention` or the resign-sweep fields, so this branch never
+  // competes with (a)/(b) above for the same step.
+  const orderableFlipped = next.order.filter((r) => {
+    const p = prev.order.find((w) => w.id === r.id);
+    return p !== undefined && !p.orderable && r.orderable;
+  });
+  const flipHolderLive = attention !== null && next.order.some((w) => w.id === attention.holder);
+
   if (advanced && !indeterminate && attention !== null) {
     const expected = new Set(selectTransientAutoclose(next, holder, attention.cause));
     if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
@@ -1130,6 +1142,16 @@ function checkAutocloseWiring(step: Step): string[] {
     if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
       violations.push(
         `react's resign-sweep DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
+      );
+    }
+  } else if (orderableFlipped.length > 0 && flipHolderLive && attention !== null) {
+    const flippedIds = new Set(orderableFlipped.map((r) => r.id));
+    const expected = new Set(
+      selectTransientAutoclose(next, attention.holder, attention.cause).filter((id) => flippedIds.has(id)),
+    );
+    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
+      violations.push(
+        `react's orderable-flip DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
       );
     }
   } else if (dismissed.size > 0) {

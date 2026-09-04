@@ -3400,6 +3400,45 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // (c) ORDERABLE-FLIP SWEEP — the same law asked a second time for a record
+  // `evolve`'s `WindowContentOrderable` arm just admitted to candidacy
+  // (`isTransientAutocloseCandidate`'s `orderable` clause). Rule (a) above
+  // only re-derives the sweep off a FRESH `lastAttention.seq`; a record that
+  // becomes orderable in a LATER transition, with no focus report of its own
+  // in between, is never revisited by it — a hybrid quick-view whose
+  // first-composited-frame report lands after its focuser's `OsFocusGained`
+  // has already run stays on screen forever otherwise.
+  //
+  // A structural diff of `orderable` itself, never a branch on `ev.type`: any
+  // record present in both `prev`/`next` whose flag reads false -> true is
+  // checked against whatever `next.lastAttention` ALREADY names — not a
+  // fresh report, the standing one — with that holder and its `cause` as
+  // `selectTransientAutoclose`'s inputs, exactly rule (a)'s own arguments.
+  // The law itself is untouched: `selectTransientAutoclose` already excludes
+  // the holder as its own victim and applies all four exemptions unchanged;
+  // this only widens WHEN the law gets asked about a record that just became
+  // eligible to be asked about.
+  //
+  // An INDETERMINATE holder — no attention yet, or one absent from
+  // `next.order` — declines exactly like rule (a) does, silently.
+  const standingAttention = next.lastAttention;
+  if (standingAttention !== null && next.order.some((w) => w.id === standingAttention.holder)) {
+    const flippedToOrderable = new Set<WindowId>();
+    for (const nextRecord of next.order) {
+      const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+      if (prevRecord !== undefined && !prevRecord.orderable && nextRecord.orderable) {
+        flippedToOrderable.add(nextRecord.id);
+      }
+    }
+    if (flippedToOrderable.size > 0) {
+      for (const id of selectTransientAutoclose(next, standingAttention.holder, standingAttention.cause)) {
+        if (flippedToOrderable.has(id)) {
+          effects.push({ type: 'DismissWindow', id });
+        }
+      }
+    }
+  }
+
   // SetStacking (§0.1.6): a MINIMAL replay, not a re-assert of everything
   // eligible. The native primitive is move-to-top, so a window whose index in
   // its band did not change can still end up in the wrong place once a
