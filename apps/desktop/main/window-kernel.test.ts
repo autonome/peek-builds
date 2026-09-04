@@ -4394,9 +4394,13 @@ describe('window-kernel: transient autoclose', () => {
     );
 
     // The same second report, relabelled `world` instead of `machine`, is the
-    // shape the live defect actually takes: a world cause yields no ordering
-    // floor for newer-than-focuser to compare against, so it does not fire
-    // and the transient is swept.
+    // shape the live defect took while the backend consumed the arming on its
+    // first read: a world cause yields no ordering floor for newer-than-focuser
+    // to compare against, so it does not fire and the transient is swept. The
+    // backend now keeps the arming until the window's own blur, so a second
+    // producer's echo of the same op reads `machine`; this assertion pins what
+    // the kernel does with a genuine world focus on the holder, which is still
+    // a sweep.
     assert.deepStrictEqual(
       selectTransientAutoclose(secondEcho, hostA, { kind: 'world' }),
       [peek2],

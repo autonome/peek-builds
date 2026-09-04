@@ -348,7 +348,23 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     op on the same window overwrites the token — the latest op is the one
    *     whose echo is in flight, and an older token surviving would label that
    *     echo stale.
-   *   - CONSUMED (one shot) by `takeFocusCause` in the `'focus'` listeners.
+   *   - READ, NOT CONSUMED, by `takeFocusCause` in the `'focus'` listeners. A
+   *     page-host has TWO independent native focus producers for the same
+   *     window id — the host `BaseWindow`'s own `'focus'` and its content
+   *     `WebContentsView`'s `'focus'` — and one machine-issued focus operation
+   *     provokes both. Consuming the arming on the first read left the second
+   *     echo unarmed and labelled `world`, which disarms `window-kernel.ts
+   *     selectTransientAutoclose`'s `newer-than-focuser` exemption and sweeps
+   *     any newer transient. Observed live: the command palette opened while
+   *     the app was inactive, `main.ts`'s `devtools-opened` handler asserted
+   *     focus on the topmost content host, the host's content echo spent the
+   *     one arming as `machine`, and the host-window echo that app activation
+   *     provoked 19ms later read `world` and swept the palette. A user cannot
+   *     focus a window that already holds focus, so an arming that outlives
+   *     its first echo cannot relabel a real click; the `blur` edge below
+   *     voids it before the next genuine focus can arrive. Accepted caveat:
+   *     content that lost first responder to devtools while its window stayed
+   *     focused carries the machine's label on the next click into it.
    *   - DROPPED on the window's own `blur` and `closed`: focus went somewhere
    *     else, so whatever arrives next is a NEW event and not our echo. Without
    *     this a never-echoed arming (a `focus()` on a window that already held
@@ -1097,7 +1113,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // record above for the doc this mirrors.
         wmLog('native-focus-arrived', { id, producer: 'content-webcontents', ...this.describeInFlightOps() });
         this.cancelBlurSettle();
-        // One shot (`takeFocusCause`), read once and fed to the kernel below.
+        // Reads the same arming the host-window producer reads; the arming
+        // outlives both echoes and is voided by `blur` (`takeFocusCause`).
         const cause = this.takeFocusCause(id);
         // Feeds the kernel — see the `win.on('focus')` listener above.
         kernelOsFocusGained(id, cause);
@@ -1139,11 +1156,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * Consume the arming for `id` and report the provenance of the focus that just
-   * arrived: `machine` (with the op token) when this backend was expecting it,
-   * `world` otherwise. One shot — a second focus with nothing armed is `world`,
-   * which is what makes a self-caused echo unable to spend a window's "first real
-   * focus".
+   * Report the provenance of the focus that just arrived: `machine` (with the
+   * op token) when this backend is expecting it, `world` otherwise. READS the
+   * arming without deleting it — a page-host's two native focus producers each
+   * call this for one machine-issued op, and consuming on the first read
+   * mislabelled the second echo `world` (see `pendingSelfCausedFocus`). The
+   * arming is cleared only by that field's other edges: the window's own
+   * `blur`, its `closed`, and supersession by the next `armSelfCausedFocus`.
    *
    * INFERRING THE MACHINE FROM THE WIDER IN-FLIGHT SNAPSHOT WAS TRIED AND
    * REMOVED. Falling back to `pendingShowOpSeq` when no arming is present looks
@@ -1163,7 +1182,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       wmLog('focus-cause-taken', { id, kind: 'world' });
       return { kind: 'world' };
     }
-    this.pendingSelfCausedFocus.delete(id);
     wmLog('focus-cause-taken', { id, kind: 'machine', opSeq });
     return { kind: 'machine', opSeq };
   }
