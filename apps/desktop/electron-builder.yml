@@ -27,6 +27,14 @@ files:
   # Exclude agent workspaces (CRITICAL - these are full project copies)
   - "!tmp"
   - "!tmp/**"
+  # `.tmp/` is the per-checkout scratch directory (gitignored; `tracks.json`
+  # points TMPDIR at it). It carried 24MB of harness logs into the asar once,
+  # and worse: a scratch file that changes size between electron-builder's
+  # header pass and its data pass shifts every later archive entry, which
+  # left the packed root package.json as a garbled fragment and made the
+  # packaged app exit 1 before running any JS.
+  - "!.tmp"
+  - "!.tmp/**"
   # Git worktrees live at .worktrees/<task-name> by project convention, and each
   # is a full checkout. Packaging globbed into them and failed outright on a
   # half-built one (ENOENT on another worktree's dist/*.d.ts.map), so a build
