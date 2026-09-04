@@ -188,11 +188,13 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
  *
  * PASS B re-reads state AFTER the ask resolves and re-runs `interpretEscape`
  * with the answer folded in, against that fresh snapshot — never against
- * `stateA`. No epoch or sequence number rides along: `resolveEscapeTarget`
- * re-resolves `landedId` against the fresh `state.key` on its own, and
- * returns `stale` if focus moved during the wait (`window-escape.ts`'s own
- * docblock names this as the structural replacement for the old
- * `escAsk`/`escSeq` pair). Pass A's `Command`, if any, is never performed —
+ * `stateA`. No epoch or sequence number rides along; what does ride along is
+ * the id of the window pass A asked, and pass B performs only when it
+ * resolves that same window. `resolveEscapeTarget` alone is not enough: it
+ * returns `stale` only for a delivery record that disagrees with `key`, and a
+ * `'global'` landing has no delivery record, so it re-resolves to whoever
+ * holds key now — the window that opened during the ask, not the one the
+ * user pressed Escape in. Pass A's `Command`, if any, is never performed —
  * only pass B's outcome is, and each command already carries the
  * `expectedVersion` of the snapshot it was decided against, so a pass-A
  * command executed after the pass-B re-read would be rejected as stale even
@@ -222,6 +224,34 @@ export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): 
       deps.ask(targetId).then((rendererHandled) => {
         wmLog('esc-ask-answer', { targetId, rendererHandled });
         const stateB = deps.getState();
+        // THE PRESS IS ABOUT THE WINDOW PASS A ASKED, AND NO OTHER. The ask
+        // is a round trip of up to 500ms (`windows.ts
+        // askWebContentsToHandleEscape` times out at that), and the world
+        // moves while it is outstanding. `resolveEscapeTarget` re-resolves
+        // against the fresh snapshot, but for a `'global'` landing (the OS
+        // grab and the CLI) it names whichever window holds key NOW — it
+        // cannot come back `stale`, so on its own it would let a keystroke
+        // pressed against A act on B. Measured live: an Escape pressed with a
+        // page host key, whose ask timed out, closed the peek that had opened
+        // during the wait; and an Escape pressed on a peek that was dismissed
+        // during the wait opened the switcher over the host instead. Both are
+        // `resolveEscapeTarget`'s own rule 4 ("a keystroke meant for A applied
+        // to B"), reached through the delay rather than the delivery record.
+        // So pass B performs only when it resolves the SAME window pass A
+        // asked; anything else is a press against a world that no longer
+        // exists, and the user's next press decides against the settled one.
+        const targetB = resolveEscapeTarget(key, stateB);
+        if (targetB.kind !== 'window' || targetB.record.id !== targetId) {
+          wmLog('esc-pass-b', {
+            outcome: 'nothing',
+            reason: 'target-changed',
+            askedId: targetId,
+            nowTarget: targetB.kind,
+            nowTargetId: targetB.kind === 'window' ? targetB.record.id : undefined,
+          });
+          performEscapeOutcome({ kind: 'nothing', reason: 'target-changed', command: null }, deps);
+          return;
+        }
         const outcomeB = interpretEscape({ ...key, rendererHandled }, stateB);
         wmLog('esc-pass-b', {
           outcome: outcomeB.kind,

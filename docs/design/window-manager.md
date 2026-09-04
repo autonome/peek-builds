@@ -77,6 +77,24 @@ no ordering floor, so `newer-than-focuser` does not fire and the peek is swept. 
 involved in any of them. **The remainder is the focus-cause mislabelling, not candidacy**, and the
 one bit named below is still the whole of it.
 
+**A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
+`dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
+Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed
+while a page host held key (no peek open — the previous one had already gone), pass A resolved
+`open-switcher` and asked that host's renderer, the ask ran to its 500ms timeout
+(`windows.ts askWebContentsToHandleEscape`; a page host that never registered an Escape handler
+never answers), and by the time the answer landed a fresh peek had opened and taken key. Pass B
+re-read state, `resolveEscapeTarget` named the new key holder — for a `'global'` landing it always
+does, since there is no delivery record to disagree with `key`, so its `stale` arm is unreachable
+on that path — and `interpretEscape` closed the peek: `esc-ask targetId=<host>` … 499-1037ms …
+`esc-action action=close-window id=<peek>`. The same shape run the other way is defect B's
+symptom: an Escape pressed ON a peek whose ask outlived the peek retargets to the host and opens
+the switcher over it. Pass B now performs only when it resolves the same window pass A asked, and
+drops the press as `target-changed` otherwise; `window-escape-runtime.test.ts` pins both
+directions, failing-first. The harness's `transient-dismiss cause=world within 100ms` counter is
+blind to this mechanism — it reported 0 for a run with three destroyed peeks — so a destroyed
+count is judged from `renderer.log`'s verdicts, never from that counter alone.
+
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
   `ipc.ts windowOpenHandler`'s `await ...loadURL(url)`, so reading `baseWin.id` just after throws

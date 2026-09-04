@@ -174,7 +174,14 @@ export type EscapeNothingReason =
   /** The mirrored renderer fact says the page consumed it. */
   | 'renderer-handled'
   /** Both policy phases said "nothing". */
-  | 'policy-nothing';
+  | 'policy-nothing'
+  /**
+   * The window the renderer ask went to is not the window the answer
+   * resolves to (`window-escape-runtime.ts handleEscapePress`): the press
+   * predates the current target, so it is dropped rather than applied to a
+   * window the user never pressed Escape in.
+   */
+  | 'target-changed';
 
 /**
  * WHY FOUR OF THESE CARRY `command: null`.
