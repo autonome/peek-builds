@@ -1142,6 +1142,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * `world` otherwise. One shot — a second focus with nothing armed is `world`,
    * which is what makes a self-caused echo unable to spend a window's "first real
    * focus".
+   *
+   * INFERRING THE MACHINE FROM THE WIDER IN-FLIGHT SNAPSHOT WAS TRIED AND
+   * REMOVED. Falling back to `pendingShowOpSeq` when no arming is present looks
+   * right — one machine operation provokes several focus echoes at one window
+   * while `armSelfCausedFocus` sets one slot — but it is unsound twice over. It
+   * is only as honest as that map, and while `showInactive`'s token leaked (see
+   * `performOsShow`) the map was never empty, so EVERY focus reported as the
+   * machine's and the world cause vanished from a whole run's logs. Once that
+   * leak was fixed the fallback fired zero times across two 12-cycle runs: an
+   * unarmed echo and a genuine in-flight show do not actually coincide. The
+   * mislabelling it was meant to catch is fixed at the arming instead —
+   * `raiseWindow` now arms its z-raise half, which on darwin armed nothing.
    */
   private takeFocusCause(id: WindowId): FocusCause {
     const opSeq = this.pendingSelfCausedFocus.get(id);
@@ -1260,8 +1272,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // responder (the `hybridShowIntent` invariant — the R4/R5/R7
       // dead-focus cluster). Headless: opacity-0 + showInactive, never
       // activate/focus. Already on screen: reorder only — see docblock above.
-      if (alreadyVisible) this.reorderToTop(id, win);
-      else this.performOsShow(id, win, !isHeadless(), opSeq);
+      if (alreadyVisible) {
+        // Arm the z-raise half too. `reorderToTop` arms only
+        // `pendingStackingFocus`, and only where `STACKING_TAKES_FOCUS` — which
+        // is false on darwin — so on macOS this native call was the one part of
+        // a raise that armed nothing at all. It does provoke the host window's
+        // `'focus'`, and that echo, arriving before the content-focus half
+        // below arms, was reported as the world's: a world cause arms no
+        // ordering floor, so the sweep it drives dismisses a peek that opened a
+        // millisecond earlier. A raise is a focus-family command in every one of
+        // its native calls, not just its last one.
+        this.armSelfCausedFocus(id, opSeq);
+        this.reorderToTop(id, win);
+      } else this.performOsShow(id, win, !isHeadless(), opSeq);
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           // The raise's content-focus half provokes `rendererWC 'focus'` — the
@@ -1280,6 +1303,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // which case a reorder is all the raise means (see docblock above), and
     // neither the show nor the trailing explicit focus below run.
     if (alreadyVisible) {
+      // Armed for the same reason as the page-host branch above: the z-raise is
+      // one of a raise's native calls, and `reorderToTop` arms only
+      // `pendingStackingFocus`, only off darwin.
+      this.armSelfCausedFocus(id, opSeq);
       this.reorderToTop(id, win);
     } else {
       this.performOsShow(id, win, !isHeadless(), opSeq);
@@ -1669,6 +1696,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       } catch {
         /* showInactive unsupported in some envs */
       }
+      // `showInactive()` emits NO native `'show'` event (see `showWindow`'s
+      // doc), and the `'show'` listener is the only thing that retires this
+      // token — so a token left armed here is never spent, and the window sits
+      // in `describeInFlightOps`'s `showOpFor` for the life of the process.
+      // The page overlay, shown non-activating once at startup, made that
+      // snapshot read "a show is in flight" permanently. Retire it here: the
+      // synthetic echo `showWindow` emits below already carries the same
+      // `opSeq`, so nothing downstream loses the token.
+      this.pendingShowOpSeq.delete(id);
     }
   }
 
