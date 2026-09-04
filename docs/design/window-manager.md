@@ -169,11 +169,26 @@ compounded by a self-amplifying raise rule — but no fix has landed. **All thre
   — then delete the `newer-than-focuser` exemption and the ordering floor, and demote `FocusCause`
   to a diagnostic rather than a decision input. Cost: one stored fact plus a settle ceiling for
   windows that never load (a timer in the executor, where `armFullscreenSettle` already lives).
-  Risk: a transient the user clicks away from survives until settled. **Unverified, and gated on
-  one check**: peeks that open successfully vanish 0.9-1.3s later anyway (see "Defect A: the peek
-  is destroyed inside its own `loadURL`" below). If that still reproduces at branch tip, the
-  settled gate converts a hard failure into a delayed one and the proposal changes. That
-  observation predates several fixes and has not been re-verified.
+  Risk: a transient the user clicks away from survives until settled.
+
+  **The gating check has been run, and the delayed vanish does NOT reproduce at branch tip
+  (`1fbe4754`, 2026-09-04).** The earlier observation — peeks that open successfully vanish
+  0.9-1.3s later anyway (see "Defect A: the peek is destroyed inside its own `loadURL`" below) —
+  predated several fixes and no longer holds. Five peeks were opened over the CLI socket and left
+  undismissed for 6s each: all appeared at ~60ms and four were still alive at +6000ms. The one that
+  closed went at +5945ms, preceded in `main.log` by `esc-grab-reconcile appActive=true` followed by
+  `appActive=false` and then `transient-dismiss id=<peek> holder=null cause=world` — the app losing
+  activation while the peek was up, which is the ordinary app-deactivation sweep and not a
+  spontaneous close. Nothing closed anywhere near the 0.9-1.3s window. The settled gate therefore
+  fixes the failure outright rather than converting it into a delayed one, and the proposal stands
+  as written.
+
+  The observation used a throwaway harness rather than `peek-open-cycle.mjs`, which dismisses each
+  peek after `--settle-ms` and so cannot see a later self-close. Reproducing it means opening a
+  peek and polling `debug-list-windows` for several seconds without dismissing. **Activate the dev
+  instance as `"Electron"`, never as `"Peek"`** — the latter cold-launches the production app from
+  `/Applications`, which takes activation away from the instance under test and invalidates the
+  run; `peek-open-cycle.mjs activateApp` already targets `"Electron"` for this reason.
 
   **The defect now reproduces without a human.** `scripts/peek-open-cycle.mjs` drives peek
   open/dismiss cycles over the CLI socket and tallies results, distinguishing the real defect (a
@@ -4484,7 +4499,9 @@ on `http://` URLs and Peek frontmost. The peek hotkey was pressed repeatedly; ea
 **Every peek opened in the run was dismissed.** The presses that "work" and the presses that "fail"
 differ only in WHEN:
 
-- working press — the peek is shown, then vanishes ~0.9-1.3s later;
+- working press — the peek is shown, then vanishes ~0.9-1.3s later (**this half is stale**: as of
+  `1fbe4754`, 2026-09-04, peeks that open stay up indefinitely — see the re-verification recorded
+  under the settled-candidacy proposal above);
 - failing press — the peek is destroyed ~90ms after construction, *while `ipc.ts`
   `windowOpenHandler` is still awaiting `view.webContents.loadURL(url)`*. The `publish(...,
   'window:opened', { id: baseWin.id, ... })` immediately after that await then throws `Object has
