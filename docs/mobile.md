@@ -137,6 +137,27 @@ The app supports syncing all item types to an external webhook endpoint:
 }
 ```
 
+### The first sync pulls everything in one response
+
+`pull_from_server()` in `apps/mobile/src-tauri/src/lib.rs` issues a plain
+`GET /items?includeDeleted=true` on a first sync — no `limit`, no `cursor`, no chunking. The
+paging that landed on the server covers only the three `since` routes, so a first sync fetches
+the entire item set in a single response: around 10 MB against the production store as of
+2026-09, and growing with it. It completes, but slowly, and every device syncing from scratch
+pays it again.
+
+Tombstones are safe across that pull. `merge_server_item()` in
+`apps/mobile/peek-core/src/sync.rs` handles a matched tombstone with an in-place
+`UPDATE items SET deleted_at = …` that keeps the local row id, so the `ON DELETE CASCADE` on
+`blobs` and `item_visits` declared in `apps/mobile/peek-core/src/schema.rs` never fires and
+visit history, frecency and offline blobs stay attached. The delete-and-reimport branch runs
+only when no local row matches at all.
+
+The client is also gated on datastore version: `checkVersionHeaders()` in `apps/server/index.js`
+409s any client not sending `X-Peek-Datastore-Version: 3` across `/items` and `/items/*`.
+Profile registration sits outside that check, so a version-mismatched build still shows a recent
+last-seen while syncing nothing — a stale binary looks alive rather than broken.
+
 ### Profiles
 
 Mobile profiles provide dev/production data isolation. See `docs/profiles.md` for full details.
