@@ -14,7 +14,7 @@
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
 import { getAllHybridWindows } from './hybrid-page-host-registry.js';
-import { getWindowModeName, getWindowIdFor } from './window-machine.js';
+import { getWindowModeName, getWindowIdFor, dispatchEscapePress } from './window-machine.js';
 import { collectProcessMetrics, probeVisibilityState } from './process-metrics.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';
@@ -51,6 +51,9 @@ export async function dispatch(msg: CliMessage): Promise<CliResult> {
   }
   if (msg.verb === 'debug-app-metrics') {
     return debugAppMetrics(args);
+  }
+  if (msg.verb === 'debug-escape') {
+    return debugEscape();
   }
 
   // === Pubsub verbs (fire-and-forget) ===
@@ -217,6 +220,16 @@ async function debugAppMetrics(args: unknown[]): Promise<CliResult> {
 }
 
 /**
+ * Dispatch an Escape press as if it had arrived through any of the four real
+ * entry points (`window-machine.ts dispatchEscapePress`). Useful from the
+ * CLI to script an Escape dismissal without a synthetic keystroke.
+ */
+function debugEscape(): CliResult {
+  dispatchEscapePress('global', 'cli');
+  return { ok: true };
+}
+
+/**
  * The set of verbs this build advertises. Adding a verb here doesn't
  * register it — the corresponding feature background still has to
  * subscribe to `cli:<verb>` — but it's the canonical list the settings
@@ -230,4 +243,5 @@ export const KNOWN_VERBS: ReadonlyArray<{ verb: string; argHint?: string; descri
   { verb: 'debug-list-windows', description: 'List BrowserWindows + their webContents id/title/url' },
   { verb: 'debug-eval', argHint: '<target> <expr>', description: 'Eval JS in a webContents (target = id|title|url substring)' },
   { verb: 'debug-app-metrics', argHint: '[minCpu] [visible]', description: 'Per-process CPU/mem joined to tile/window (sorted by CPU)' },
+  { verb: 'debug-escape', description: 'Dispatch an Escape press (same path as a real keystroke)' },
 ];
