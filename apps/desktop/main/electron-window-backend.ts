@@ -91,7 +91,7 @@ import {
   type TeardownGuest,
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
-import { wmLog } from './window-diag.js';
+import { wmLog, type WmLogFields } from './window-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
 import {
   getKernelExecutor,
@@ -867,6 +867,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     rendererWC: NativeWebContents | null,
   ): void {
     win.on('focus', () => {
+      // The native focus event itself, before any of the suppression/cause
+      // logic below runs — records which producer fired (this is the host
+      // `BaseWindow`, not the content `WebContentsView`, see the `rendererWC`
+      // listener below for the other producer a page-host has) and whether a
+      // machine op was in flight for ANY window, not just this one. See
+      // `describeInFlightOps`'s doc for why that distinction needs its own
+      // record rather than living inside `focus-cause-taken`.
+      wmLog('native-focus-arrived', { id, producer: 'host-window', ...this.describeInFlightOps() });
       // Unconditional: focus landed in-app, so the app did not resign — that is
       // true however the focus got here.
       this.cancelBlurSettle();
@@ -1083,6 +1091,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // the registry's content-WC focus fallback).
     if (kind === 'page-host' && rendererWC) {
       rendererWC.on('focus', () => {
+        // The other producer a page-host has — see the `win.on('focus')`
+        // record above for the doc this mirrors.
+        wmLog('native-focus-arrived', { id, producer: 'content-webcontents', ...this.describeInFlightOps() });
         this.cancelBlurSettle();
         // One shot (`takeFocusCause`), read once and fed to the kernel below.
         const cause = this.takeFocusCause(id);
@@ -1141,6 +1152,31 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     this.pendingSelfCausedFocus.delete(id);
     wmLog('focus-cause-taken', { id, kind: 'machine', opSeq });
     return { kind: 'machine', opSeq };
+  }
+
+  /**
+   * Snapshot every window with a machine-issued op outstanding at this
+   * instant, across ALL windows — not just the one about to take focus.
+   * `focus-cause-taken`'s `kind:'world'` only says nothing was armed for the
+   * focusing window; it cannot distinguish "no op in flight anywhere" from
+   * "an op is in flight, but for some other window" — the two look identical
+   * from inside `takeFocusCause`, and only this wider snapshot tells them
+   * apart. One field per pending map/set, `none` when empty, a comma-joined
+   * id list otherwise (an op can be outstanding for more than one window at
+   * once).
+   */
+  private describeInFlightOps(): WmLogFields {
+    const listIds = (ids: Iterable<WindowId>): string => {
+      const joined = Array.from(ids, String).join(',');
+      return joined.length > 0 ? joined : 'none';
+    };
+    return {
+      selfCausedFocusFor: listIds(this.pendingSelfCausedFocus.keys()),
+      showOpFor: listIds(this.pendingShowOpSeq.keys()),
+      hideOpFor: listIds(this.pendingHideOpSeq.keys()),
+      stackingFor: listIds(this.pendingStackingFocus.keys()),
+      machineCloseFor: listIds(this.pendingMachineClose.keys()),
+    };
   }
 
   /**
