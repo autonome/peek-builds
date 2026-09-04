@@ -291,6 +291,17 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
   machine focus reported it as the world's" below, and the note there about why it was written up as
   resolved before anything was reproduced.
 - **B: ESC on the command palette opens the switcher** instead of closing the palette.
+  **Not reproducing at `d2c8a7c8`, checked live 2026-09-04**: with the app active and a page host
+  key, `cmd-open` then `debug-escape` closed the palette (`esc-pass-a outcome=close-window
+  targetId=<palette>`, the palette's own renderer answered at once) and no switcher window
+  appeared. The same check run with the app INACTIVE found a different, real defect: the palette
+  was swept ~250ms after opening, before any Escape. Under `DEBUG=1` devtools auto-opens for the
+  palette, `main.ts`'s `devtools-opened` handler asserts focus on the topmost content host, the
+  host's content echo consumed the one armed slot as `machine` (palette spared by
+  `newer-than-focuser`), and the host-window echo that the app activation provoked 19ms later
+  found nothing armed, read `world`, and dismissed the palette. The devtools trigger is
+  dev-only; the one-slot-per-window arming under two producers is not, and this is the first
+  direct observation of it killing a transient.
   **NOT branch-introduced — it reproduces on `main`**, where `window-state.ts` `decideEscape` and
   `izui-roles.ts` `isSatelliteRegistration` are byte-identical. It is a pre-existing defect in the
   OLD machine's escape decider, and so does not block landing this branch.
@@ -323,6 +334,14 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
   runaway loop, not a deadlock: two page hosts trade the top of the stack forever with `front`
   flipping between them. Possibly the same root cause as A, so it is re-checked against the A fix
   before being investigated on its own.
+  **Not reproducing at `d2c8a7c8`, checked live 2026-09-04.** B no longer leaves its state, so
+  the precondition was built directly: switcher open (Escape with a host key), palette opened
+  over it, then `window.app.window.fullscreen(<ALPHA>)` from the windows background tile. ALPHA
+  entered fullscreen, the palette and then the switcher were dismissed by the focus moves the
+  transition provokes, the log grew 38, 29 and 4 lines over three consecutive 3-second windows
+  and then went quiet, the CLI socket answered throughout, and no `divergence` line appeared. The
+  two-host ping-pong the 2026-08-21 run recorded matches the churn measured on 2026-09-04 (see "A
+  second, unrelated killer"), which the stale-Escape fix removed.
 
 The earlier entries below are the defects closed before this sign-off, and remain closed. The one open defect — the restore-time maximize seed reaching the old machine but not the
 kernel — was closed on 2026-08-18 by the kernel's `SeedMaximized` command and its
