@@ -299,9 +299,11 @@ interface BackendWindow {
    */
   windowClass: WindowClass;
   /**
-   * The renderer WebContents that answers the `escape-pressed` IPC and is the
-   * macOS first responder: the content `WebContentsView`'s WC for a page-host,
-   * the root WC for a browser window. `null` if the caller supplied none.
+   * The renderer WebContents that is the macOS first responder and, for a
+   * browser window, answers the `escape-pressed` IPC: the content
+   * `WebContentsView`'s WC for a page-host, the root WC for a browser window.
+   * `null` if the caller supplied none. A page-host's content WC carries no
+   * preload that listens for the ask — see `askRendererHandledEscape`.
    */
   rendererWC: NativeWebContents | null;
 }
@@ -1382,11 +1384,29 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * own `handled` verdict — the caller (`window-escape-runtime.ts
    * handleEscapePress`) re-reads state and re-runs `interpretEscape` with
    * the answer; this method never touches the reducer.
+   *
+   * ONLY A RENDERER THAT CAN ANSWER IS ASKED. The one listener for
+   * `escape-pressed` in the whole renderer surface is `tile-preload.cts`
+   * `api.escape.onEscape`, and only `browser` windows carry that preload. A
+   * `page-host`'s content view loads an arbitrary web page with no preload of
+   * Peek's (or, for extension-connectable URLs, `runtime-external-preload.cjs`,
+   * which does not listen either), so the ask can never be answered and
+   * `askWebContentsToHandleEscape` runs to its 500ms timeout every time.
+   * Measured: 23 of 23 asks in a 50-cycle open/Escape/reopen run timed out,
+   * so every Escape on a peek or a page host closed it half a second late —
+   * long enough for the next open to find it still up and reuse it. A
+   * `page-host` therefore answers `false` here, synchronously, and the log
+   * says so.
    */
   askRendererHandledEscape(id: WindowId): Promise<boolean> {
-    const wc = this.windows.get(id)?.rendererWC;
+    const entry = this.windows.get(id);
+    const wc = entry?.rendererWC;
     if (!wc || wc.isDestroyed()) {
       // No renderer to ask → unhandled, so ESC still resolves.
+      return Promise.resolve(false);
+    }
+    if (entry.kind === 'page-host') {
+      wmLog('esc-ask-skipped', { id, reason: 'no-responder', kind: entry.kind });
       return Promise.resolve(false);
     }
     // `askWebContentsToHandleEscape` (windows.ts) still speaks Electron ids;

@@ -95,6 +95,17 @@ directions, failing-first. The harness's `transient-dismiss cause=world within 1
 blind to this mechanism — it reported 0 for a run with three destroyed peeks — so a destroyed
 count is judged from `renderer.log`'s verdicts, never from that counter alone.
 
+With the stale press dropped, a 50-cycle run at `fb04afbf` opened 50 of 50 and destroyed none,
+and the ALPHA/BRAVO focus churn that had run at a ~10ms period for the whole of every ask (6060
+host focus reports in the run before, 1 in the run after) went with it: the churn was downstream of
+the stale press opening the switcher over the hosts, not a rule of its own. What that run exposed
+instead is that **every ask on a peek runs to the 500ms timeout**, because the ask can only be
+answered by `tile-preload.cts api.escape.onEscape`, and a page-host's content view never carries
+that preload — 23 of 23 asks in the earlier run and 25 of 50 Escapes in this one timed out, the
+latter slowly enough that the harness's next open found the peek still up and reused it. The
+backend's `askRendererHandledEscape` now answers `false` synchronously for a `page-host` (logged
+`esc-ask-skipped reason=no-responder`) and asks only a `browser` window's renderer.
+
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
   `ipc.ts windowOpenHandler`'s `await ...loadURL(url)`, so reading `baseWin.id` just after throws
