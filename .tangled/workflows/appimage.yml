@@ -26,6 +26,10 @@
 when:
   - event: ["push"]
     tag: ["v*"]
+  # Temporary: exercises the packaging path before a tag exists. Remove once a
+  # run has proven the Electron download and AppImage build inside nixery.
+  - event: ["push"]
+    branch: ["spindles-review"]
   - event: ["manual"]
 
 engine: "nixery"
