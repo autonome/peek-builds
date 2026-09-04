@@ -62,7 +62,20 @@ existing window and does not navigate it.
 branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
 B was re-traced on 2026-08-21 and reproduces on `main`; **A's mechanism is now fully established**
 (see below) — a structural interaction between per-op focus arming and per-producer focus echoes,
-compounded by a self-amplifying raise rule — but no fix has landed. **All three are open.**
+compounded by a self-amplifying raise rule. **A partial fix has landed for A and it is still open.**
+**All three are open.**
+
+**What the settled-candidacy filter actually bought (2026-09-04, measured).** Making settled-ness a
+candidacy filter — `isTransientAutocloseCandidate` returning false for a record that is not yet
+`orderable` — closes the PRE-PAINT half of A and nothing more. Across 12 scripted open/dismiss
+cycles, dismissals landing within 100ms of the peek's `open-registry-set` went from 3 to 0, but
+kernel-decided dismissals of fresh peeks went only from 6 to 5: the remainder now land at 106-147ms,
+once the peek HAS painted. Their shape is identical every time — the peek takes its own
+`content-webcontents` focus with a machine cause, then within 1-2ms the page host that held focus
+before it reclaims host focus with `selfCausedFocusFor=none` and therefore `cause=world`, which arms
+no ordering floor, so `newer-than-focuser` does not fire and the peek is swept. No Escape is
+involved in any of them. **The remainder is the focus-cause mislabelling, not candidacy**, and the
+one bit named below is still the whole of it.
 
 - **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
@@ -171,6 +184,31 @@ compounded by a self-amplifying raise rule — but no fix has landed. **All thre
   windows that never load (a timer in the executor, where `armFullscreenSettle` already lives).
   Risk: a transient the user clicks away from survives until settled.
 
+  **LANDED IN PART, AND THE REST OF THE PROPOSAL IS WITHDRAWN (`9645849c`, 2026-09-04).** The
+  candidacy half landed; the three deletions it was supposed to enable did not, and should not.
+
+  - The stored fact was not needed: `WindowRecord.orderable` already IS settled-ness. It is false
+    from birth for a `page-host` and flipped only by `WindowContentOrderable`, the
+    first-composited-frame report, so a peek inside its own `loadURL` answers false precisely while
+    it is vulnerable.
+  - The settle ceiling was not needed either. `hybrid:first-frame`
+    (`chrome-api-polyfills/runtime-external-preload.cjs`, consumed by `session.ts
+    installFirstFrameOrderableProducer`) fires on the first composited frame of whatever document
+    the content view holds, NOT on the intended navigation succeeding, and `ipc.ts` treats a
+    rejected `loadURL` as non-fatal and paints a load-error overlay instead. A hung network, a 404
+    and a deferred load all still paint, so no production quick-view stays permanently
+    un-sweepable and no timer is required.
+  - The risk did not materialise in the form it was written down. Because settling is a painted
+    frame rather than a finished page load, a transient survives an unwanted sweep for a frame or
+    two, not for the length of a slow remote fetch.
+  - **Deleting `newer-than-focuser` and the ordering floor is WRONG and was not done.** That
+    exemption covers two recorded live failures — the slow-open race and the handoff-raise echo —
+    and in both the victim is a palette. A palette is registered `kind: 'browser'`
+    (`renderer/cmd/background.js openPanelWindow`) and so is orderable from birth, which means
+    settled-ness never spares it and deleting the exemption would put both failures back. The two
+    mechanisms are not rivals: candidacy governs windows that have shown nothing yet, the ordering
+    floor governs windows opened after the focuser. `FocusCause` therefore stays a decision input.
+
   **The gating check has been run, and the delayed vanish does NOT reproduce at branch tip
   (`1fbe4754`, 2026-09-04).** The earlier observation — peeks that open successfully vanish
   0.9-1.3s later anyway (see "Defect A: the peek is destroyed inside its own `loadURL`" below) —
@@ -180,8 +218,9 @@ compounded by a self-amplifying raise rule — but no fix has landed. **All thre
   `appActive=false` and then `transient-dismiss id=<peek> holder=null cause=world` — the app losing
   activation while the peek was up, which is the ordinary app-deactivation sweep and not a
   spontaneous close. Nothing closed anywhere near the 0.9-1.3s window. The settled gate therefore
-  fixes the failure outright rather than converting it into a delayed one, and the proposal stands
-  as written.
+  does not convert a hard failure into a delayed one — but it does not fix the failure outright
+  either, for the reason recorded under "Open kernel defects" above: it closes the pre-paint half
+  only.
 
   The observation used a throwaway harness rather than `peek-open-cycle.mjs`, which dismisses each
   peek after `--settle-ms` and so cannot see a later self-close. Reproducing it means opening a
