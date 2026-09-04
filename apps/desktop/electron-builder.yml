@@ -4,6 +4,17 @@ copyright: Copyright © 2024 Dietrich Ayala
 
 electronVersion: "43.0.0" # pin version
 
+# AppImage toolset. The default ("0.0.0") ships its tools as a .7z, so
+# unpacking needs electron-builder's own downloaded 7za; that binary is
+# dynamically linked against a loader at /lib64, which a Nix-based CI image
+# does not have, and the exec fails with ENOENT. The 1.0.3 bundle is a plain
+# .tar.gz that node extracts directly, removing the 7za dependency entirely.
+# The tools inside it are still dynamically linked, so CI substitutes
+# nix-provided mksquashfs and desktop-file-validate via APPIMAGE_TOOLS_PATH —
+# see .tangled/workflows/appimage.yml.
+toolsets:
+  appimage: "1.0.3"
+
 # Directories
 directories:
   output: out

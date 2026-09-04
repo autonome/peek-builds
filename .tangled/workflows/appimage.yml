@@ -34,8 +34,23 @@ when:
 
 engine: "nixery"
 
+# squashfstools and desktop-file-utils replace two binaries electron-builder
+# would otherwise run from its downloaded AppImage bundle. Those are linked
+# against a loader at /lib64, which this image does not have, so exec fails
+# with ENOENT even though the file is present. curl and gnutar fetch the
+# bundle so its data files (runtimes/, lib/) can be reused as shipped.
 dependencies:
-  nixpkgs: [nodejs_24, yarn-berry, git]
+  nixpkgs:
+    [
+      nodejs_24,
+      yarn-berry,
+      git,
+      squashfstools,
+      desktop-file-utils,
+      curl,
+      gnutar,
+      gzip,
+    ]
 
 steps:
   - name: install
@@ -51,4 +66,27 @@ steps:
     # electron-builder finds its config: the root package.json "build" key
     # extends apps/desktop/electron-builder.yml. Invoking electron-builder
     # from inside apps/desktop instead makes it read the wrong package.json.
-    command: yarn workspace @peek/desktop run build:electron:dist
+    #
+    # The AppImage toolset is assembled here rather than left to
+    # electron-builder: its mksquashfs and desktop-file-validate cannot run in
+    # this image (see the dependency note above), so both are swapped for the
+    # nix builds. Everything else in the bundle — runtimes/ and lib/ — is data
+    # concatenated into the AppImage rather than executed, so it is used as
+    # shipped. APPIMAGE_TOOLS_PATH must be exported in this same command;
+    # a workflow has no way to set an environment variable across steps.
+    command: |
+      set -e
+      TOOLS="$PWD/.appimage-tools"
+      rm -rf "$TOOLS" && mkdir -p "$TOOLS"
+      curl -fsSL -o /tmp/appimage-tools.tar.gz \
+        https://github.com/electron-userland/electron-builder-binaries/releases/download/appimage%401.0.3/appimage-tools-runtime-20251108.tar.gz
+      tar -xzf /tmp/appimage-tools.tar.gz -C "$TOOLS"
+      # Both names are symlinks to a shared appimage-tool binary, and cp
+      # follows a symlink to write its target — so copying onto them in place
+      # makes the second copy overwrite the first, leaving one tool running the
+      # other. Remove the links before writing real files in their place.
+      rm -f "$TOOLS/mksquashfs" "$TOOLS/desktop-file-validate"
+      cp "$(command -v mksquashfs)" "$TOOLS/mksquashfs"
+      cp "$(command -v desktop-file-validate)" "$TOOLS/desktop-file-validate"
+      export APPIMAGE_TOOLS_PATH="$TOOLS"
+      yarn workspace @peek/desktop run build:electron:dist
