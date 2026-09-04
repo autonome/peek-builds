@@ -338,3 +338,34 @@ Six `desktop` failures, all attributed:
   opener is classified content — failed in setup, `window.open` of a palette-role window returned
   `success:false`). None reproduces outside the parallel gate, so flake and load-only interaction
   are not separated for them, as for `hybrid-maximize-state-sync.spec.ts:89` above.
+
+### Fifth macOS gate run — 2026-09-04, evening
+
+Run at commit `b625b2b3`, which makes `electron-builder.yml` exclude `.tmp/`. A first attempt
+at the commit before it failed 130 desktop and 11 serial specs with
+`electron.launch: Process failed to launch!` on every spec: the packed root `package.json` was a
+1370-byte fragment because a `.tmp/` scratch file changed size while electron-builder streamed
+the archive. Not a test result; the exclusion fixed it and the run below is the real one.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3208 | 0 | — |
+| node unit | 743 | 0 | — |
+| desktop | 433 | 2 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Two `desktop` failures:
+
+- `hybrid-overlay.spec.ts:1879` (top-border reveal also works in the GUTTERED case) — passes in a
+  packaged isolation re-run, so flake.
+- `hybrid-transient-on-blur.spec.ts:153` (opening a second hybrid quick-view closes the first) —
+  **real, packaged-only.** In a packaged isolation re-run of the file, `:139` fails too and `:201`
+  passes; in source mode all five pass. Both failing tests open a quick-view and then focus
+  another window within milliseconds; `:201` waits for an app resign. The quick-view's
+  first-frame report (`hybrid:first-frame` → `WindowContentOrderable`) lands later in the packaged
+  app, after the focuser's `OsFocusGained` has already run the transient sweep, and
+  `window-kernel.ts evolve`'s `WindowContentOrderable` arm only flips the flag — nothing re-applies
+  the transient law when a candidate becomes orderable under a focuser that already holds key. A
+  kernel rule waiting to be written; tracked in this branch's `handoff.md`.
