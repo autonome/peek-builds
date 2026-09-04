@@ -62,8 +62,13 @@ existing window and does not navigate it.
 branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
 B was re-traced on 2026-08-21 and reproduces on `main`; **A's mechanism is now fully established**
 (see below) — a structural interaction between per-op focus arming and per-producer focus echoes,
-compounded by a self-amplifying raise rule. **A partial fix has landed for A and it is still open.**
-**All three are open.**
+compounded by a self-amplifying raise rule. **A no longer reproduces as of `d2c8a7c8`**: two
+consecutive 50-cycle scripted runs opened 100 of 100 peeks and destroyed none, after the stale
+Escape press and the unanswerable renderer ask were fixed (both under "A second, unrelated killer"
+below). The focus-cause mislabelling described under A is real but, on this evidence, was never
+the killer on its own — it needed the churn the stale press set off. B's mechanism is the same
+stale press run the other way and is covered by the same fix, unverified by hand. **C is open**
+and reachable only from the state B leaves.
 
 **What the settled-candidacy filter actually bought (2026-09-04, measured).** Making settled-ness a
 candidacy filter — `isTransientAutocloseCandidate` returning false for a record that is not yet
@@ -106,7 +111,7 @@ latter slowly enough that the harness's next open found the peek still up and re
 backend's `askRendererHandledEscape` now answers `false` synchronously for a `page-host` (logged
 `esc-ask-skipped reason=no-responder`) and asks only a `browser` window's renderer.
 
-- **A (open): opening a peek works only every other press.** The peek is dismissed on EVERY press;
+- **A (not reproducing since `d2c8a7c8`; history follows): opening a peek works only every other press.** The peek is dismissed on EVERY press;
   the alternation is that dismissal racing page-load latency. On a failing press it lands inside
   `ipc.ts windowOpenHandler`'s `await ...loadURL(url)`, so reading `baseWin.id` just after throws
   `Object has been destroyed` and no window ever appears. Write-up: "Defect A: the peek is destroyed
