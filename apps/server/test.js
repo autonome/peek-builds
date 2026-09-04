@@ -3763,6 +3763,8 @@ describe("MCP Item Routes Tests", () => {
       const res = await app.request(`/mcp/items/${id}?events=20`, { headers: scopedHeaders() });
       const json = await res.json();
       assert.strictEqual(json.item.events.length, 1);
+      // The embedded window keeps the `content as type` alias for its existing
+      // callers; the paged GET /mcp/items/:id/events route drops it.
       assert.strictEqual(json.item.events[0].type, "started");
     });
 
@@ -4000,13 +4002,43 @@ describe("MCP Item Write Routes Tests", () => {
         await app.request(`/mcp/items/${id}/events`, {
           method: "POST",
           headers: scopedHeaders(),
-          body: JSON.stringify({ type: `evt-${i}` }),
+          // Explicit occurredAt: three writes in the same millisecond leave the
+          // descending order — and so the page boundary — undefined.
+          body: JSON.stringify({ type: `evt-${i}`, occurredAt: 1735689600000 + i }),
         });
       }
       const res = await app.request(`/mcp/items/${id}/events?limit=2&offset=1`, { headers: scopedHeaders() });
       assert.strictEqual(res.status, 200);
       const json = await res.json();
       assert.strictEqual(json.events.length, 2);
+      // Descending by occurredAt, offset 1 skips evt-2: evt-1 then evt-0. The
+      // content column comes back under its own name, not aliased to `type`.
+      assert.deepStrictEqual(json.events.map((e) => e.content), ["evt-1", "evt-0"]);
+      assert.strictEqual(json.events[0].type, undefined);
+    });
+
+    it("GET /mcp/items/:id/events returns a supplied content unaliased, so the type label is not overwritten by it", async () => {
+      const id = makeItem(["work"]);
+      await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({
+          type: "feed-entry",
+          value: 0,
+          content: "https://example.invalid/entry-1",
+          occurredAt: 1735689600000,
+          metadata: { guid: "g1", kind: "feed-entry" },
+        }),
+      });
+      const res = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      const [event] = (await res.json()).events;
+      assert.strictEqual(event.content, "https://example.invalid/entry-1");
+      assert.strictEqual(event.occurredAt, 1735689600000);
+      // There is no type column on item_events, so a caller that needs its
+      // events distinguishable by kind carries the label in metadata; what it
+      // must never get is its own content string back in a field named `type`.
+      assert.strictEqual(event.type, undefined);
+      assert.strictEqual(JSON.parse(event.metadata).kind, "feed-entry");
     });
 
     it("DELETE /mcp/items/:id/events/:eventId removes one event", async () => {

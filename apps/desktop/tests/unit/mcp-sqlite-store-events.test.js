@@ -192,8 +192,23 @@ describe('mcp sqlite-store.js: recordEventSync()/listEventsSync()/deleteEventSyn
     const page = await store.listEvents(ITEM_ID, { limit: 2, offset: 1 });
     assert.equal(page.length, 2);
     // Descending: index 0 -> evt-4 (1004), skip it (offset 1) -> evt-3, evt-2.
-    assert.equal(page[0].type, 'evt-3');
-    assert.equal(page[1].type, 'evt-2');
+    assert.equal(page[0].content, 'evt-3');
+    assert.equal(page[1].content, 'evt-2');
+  });
+
+  it('listEvents returns a supplied content unaliased, leaving the type label out of it', async () => {
+    await store.recordEvent(ITEM_ID, 'feed-entry', 0, {
+      content: 'https://example.invalid/entry-1',
+      occurredAt: 1735689600000,
+      metadata: { guid: 'g1', kind: 'feed-entry' },
+    });
+    const [event] = await store.listEvents(ITEM_ID);
+    assert.equal(event.content, 'https://example.invalid/entry-1');
+    assert.equal(event.occurredAt, 1735689600000);
+    // item_events has no type column: the alias would hand back the caller's
+    // own content under a field named `type`, which is what this pins against.
+    assert.equal(event.type, undefined);
+    assert.equal(JSON.parse(event.metadata).kind, 'feed-entry');
   });
 
   it('deleteEvent removes one event and reports success', async () => {

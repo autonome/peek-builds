@@ -102,9 +102,11 @@
  *
  * @typedef {Object} EventView
  * @property {string} id
- * @property {string} type - the `content` column, aliased (matches
- *   getTaskContextSync()'s embedded event window and fetchEvents() server-
- *   side)
+ * @property {string} content - the `content` column under its own name. The
+ *   embedded event window on ItemView (getTaskContextSync() locally,
+ *   fetchEvents() server-side) still aliases the same column to `type`; the
+ *   paged read does not, because item_events has no separate type column and
+ *   the alias misnames whatever a caller supplied as content
  * @property {number} value
  * @property {number} occurredAt
  * @property {Object|string} metadata - a raw JSON string on both store

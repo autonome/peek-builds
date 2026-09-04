@@ -309,30 +309,40 @@ MCP remains the right answer for the *other* direction — an agent calling *int
   `getTable` — the generic table access `docs/api.md` documents and several features use — has
   no `/mcp/*` equivalent, so a feature that keeps state in a custom table cannot be a worker
   without one being added.
-- **Item events are the sharpest edge of that subset, and `feeds` falls off it.** Measured by
-  `tools/feeds-worker-spike/run.mjs`. The tile API has `addItemEvent`, `getItemEvent`,
-  `queryItemEvents`, `deleteItemEvent` and `deleteItemEvents`; `/mcp/*` has one write route and no
-  read route. `POST /mcp/items/:id/events` reaches `recordEvent()` in `apps/server/mcp-items.js`,
-  which puts the event's type name in the row's `content` column, hardcodes `value` to 0 and
-  stamps `occurredAt` with the server's clock — so a feed entry's link, publication time and
-  metadata have to travel as one JSON string in `metadata.notes`, and the row's own `occurredAt`
-  is the write time rather than the publication time. Reading them back is only possible by
-  fetching the parent item with `?events=N`, one request per item, and `fetchEvents()` caps the
-  result at 20 however many are asked for. `pollFeed()` in `apps/desktop/features/feeds/background.js`
-  deduplicates by reading its last 100 entries and skipping guids it already has; against this API
-  it sees 20. Confirmed against the deployed server with a 25-entry feed: the first poll writes
-  25, and **every poll after it writes the 5 it cannot see, indefinitely**.
+- **Item events were the sharpest edge of that subset, and `feeds` fell off it. It has the routes
+  now.** Measured by `tools/feeds-worker-spike/run.mjs`. The tile API has seven event methods —
+  `addItemEvent`, `getItemEvent`, `queryItemEvents`, `getLatestItemEvent`, `countItemEvents`,
+  `deleteItemEvent` and `deleteItemEvents`; `/mcp/*` covers four of them, where it used to cover
+  one write and no read at all.
 
-  Cleanup is worse than absent. There is no route that deletes an item event, so
-  `unsubscribeFeed()` throws before it reaches the feed item — and `deleteItem()` in
-  `apps/server/db.js` is a soft delete that sets `deletedAt` on the item and never touches
-  `item_events`, so the rows survive the item that owned them with no way to reach them again
-  through this API. A worker polling on a schedule therefore grows the table without bound and
-  cannot clean up after itself.
+  What the write used to do: `POST /mcp/items/:id/events` reached `recordEvent()` in
+  `apps/server/mcp-items.js`, which put the event's type name in the row's `content` column,
+  hardcoded `value` to 0 and stamped `occurredAt` with the server's clock — so a feed entry's
+  link, publication time and metadata had to travel as one JSON string in `metadata.notes`.
+  `content`, `occurredAt` and `metadata` are now optional body fields that store into the columns
+  of those names directly, and a `{type, value}` body still writes the row it always did.
 
-  **A worker that touches item events needs `/mcp/*` routes that do not exist yet** — at minimum a
-  paged event read, a create that preserves `content` and `occurredAt`, and a delete. Unlike the
-  generic-table gap, this one is hit by a bundled feature that already ships.
+  What the read used to be: fetching the parent item with `?events=N`, one request per item, with
+  `fetchEvents()` capping the result at 20 however many were asked for. `pollFeed()` in
+  `apps/desktop/features/feeds/background.js` deduplicates by reading its last 100 entries and
+  skipping guids it already has, and against that API it saw 20 — so with a 25-entry feed the
+  first poll wrote 25 and every poll after it wrote the 5 it could not see, indefinitely.
+  `GET /mcp/items/:id/events` is a paged read with a ceiling of 200, and the same run against the
+  same feed on the deployed server now writes **25 once, then 0 on every poll after**.
+
+  Cleanup works, with one ordering rule. `DELETE /mcp/items/:id/events` clears an item's events
+  and `DELETE /mcp/items/:id/events/:eventId` removes one, so `unsubscribeFeed()` reaches the feed
+  item and a scheduled worker can clean up after itself. `deleteItem()` in `apps/server/db.js` is
+  still a soft delete that sets `deletedAt` and never touches `item_events` — deliberately, since
+  `item_events` has no tombstone column — so a caller deletes the events first. Deleting the item
+  first strands them, and only an id captured beforehand reaches them again.
+
+  Three gaps remain, none of which stops a feed worker. `getItemEvent`, `getLatestItemEvent` and
+  `countItemEvents` have no routes. The paged read's `since`/`until`/`order` have no query
+  parameters, so a caller applies them to the rows it read rather than in SQL. And `item_events`
+  has one column for what the API calls an event's `content` and what it calls its `type`, so a
+  write that supplies `content` keeps it and drops the type label — a caller that needs its events
+  distinguishable by kind carries the label in `metadata`.
 - **`api.network` and `api.datastore` diverge in where they are enforced.** On the desktop both
   are checked by `tile-ipc-gate.ts` against the manifest grant. For a worker, datastore scope
   and the readonly bit are properties of the *credential*, enforced server-side — that is the
@@ -856,21 +866,30 @@ is the intended shape, not a transitional one.
    from source, with a live resolver; a bundle can only be faster.
 
    The poll is where the budget goes, and it does not sit flat. Measured against the deployed
-   `apps/server` over a 25-entry feed with 5 new entries to write: **process launch to first
-   completed poll is 955–1208ms over four runs**, of which the poll itself is 522–599ms. A single
-   `/mcp/*` request costs ~50–60ms from this box, and the `describe()` at open costs ~200ms.
+   `apps/server` over a 25-entry feed already in the store, so the poll writes nothing: **process
+   launch to first completed poll is 775–879ms over four runs**, of which the poll itself is
+   365–399ms — and a second poll in the same process is 179–195ms, the difference being the first
+   connection to the feed's own host. A single `/mcp/*` request costs ~50–60ms from this box, and
+   the `describe()` at open costs ~200ms.
 
    That per-request figure is the whole story, because `pollFeed()` issues one `GET /mcp/items`,
-   one `GET /mcp/items/:id?events=N`, one `PATCH /mcp/items/:id`, and **one
-   `POST /mcp/items/:id/events` per new entry**, serially, in a `for` loop. Five new entries cost
-   eight requests. Thirty would cost thirty-three, roughly 1.8 seconds of pure round trip, and the
-   count grows with entries and again with the number of feeds subscribed.
+   one `GET /mcp/items/:id/events`, one `PATCH /mcp/items/:id`, and **one
+   `POST /mcp/items/:id/events` per new entry**, serially, in a `for` loop. A poll that finds
+   nothing new costs three requests flat. A poll with thirty new entries costs thirty-three,
+   roughly 1.8 seconds of pure round trip, and that count grows with entries and again with the
+   number of feeds subscribed.
 
-   Two consequences for §8. A worker whose work is one write fits inside a tool call comfortably.
-   A worker whose work is a fan-out of writes does not, and no amount of runtime tuning changes
-   that, because the cost is in the API shape rather than the boot. Either `/mcp/*` grows a batch
-   write, or `call_worker` is fire-and-read-back for anything that writes per item — which is most
-   of what a scheduled worker does.
+   What changed with the paged read is which of those a worker pays repeatedly. The per-entry
+   write is now paid once per entry, on the poll that first sees it; before the read could page,
+   every poll re-wrote the entries it could not see, so a feed's steady state was five writes
+   forever rather than none.
+
+   Two consequences for §8. A worker whose work is one write, or a poll of a feed with nothing
+   new, fits inside a tool call comfortably. A worker whose work is a fan-out of writes does not,
+   and no amount of runtime tuning changes that, because the cost is in the API shape rather than
+   the boot. Either `/mcp/*` grows a batch write, or `call_worker` is fire-and-read-back for
+   anything that writes per item — which is what a scheduled worker does on the polls where a feed
+   has actually moved.
 
    These are one box against one deployment; the shape is the finding, not the milliseconds.
 

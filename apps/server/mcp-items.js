@@ -800,7 +800,11 @@ function untagItem(userId, profileId, scopeTag, id, tagName) {
 // into the content column when `content` itself is omitted) — a caller with
 // a real content string, a backdated occurredAt or a structured metadata
 // object passes one or more of the three alongside a `type` label of its own
-// choosing, e.g. "feed_entry". Supplying `metadata` explicitly also switches
+// choosing, e.g. "feed_entry". That label is not itself stored when `content`
+// is supplied — item_events has one column for the two of them — so a caller
+// that needs its events distinguishable by kind later carries the label in
+// `metadata`; listEvents() below returns the content column unaliased so the
+// two are never confused. Supplying `metadata` explicitly also switches
 // `value` from notes-wrapped text to a real number stored in the value
 // column, since an explicit metadata object means the caller isn't relying
 // on the old notes-wrapping behavior for it — which means `value` has to
@@ -880,11 +884,26 @@ function recordEvent(userId, profileId, scopeTag, id, body = {}) {
 // comment on fetchEvents() capping the result regardless of what's asked
 // for. EVENTS_PAGE_LIMIT (200) is the ceiling, well above 20.
 //
-// Same content-as-type aliasing and raw (unparsed) metadata string
-// fetchEvents() returns — that asymmetry with shapeItemRow() (which parses
-// an item's own metadata) is preserved deliberately here rather than fixed
-// by accident, so every event-shaped response on this API looks the same
-// regardless of which route produced it.
+// Returns the `content` column under its own name, NOT aliased to `type` the
+// way fetchEvents() and getTaskContextSync()'s embedded window still do. There
+// is no `type` column on item_events (db.js's DDL, packages/schema/v1.json):
+// the content column holds whatever recordEvent() resolved out of
+// `content ?? type`, so the alias only told the truth while `content` was not
+// a field a caller could supply. It is one now, and under the alias a caller
+// that supplies content reads its own string back from a field named `type`
+// while the type label it sent is absent from the row entirely — events become
+// impossible to tell apart by kind on the one route built for a caller that
+// has to. Naming the column honestly is the fix available without adding a
+// column to a synced table; a caller that needs a kind label puts it in
+// `metadata`, which is caller-owned and round-trips verbatim.
+//
+// The embedded `?events=N` path keeps the alias: it is a compatibility surface
+// with a fixed 20-row window and its own callers, and changing its shape is a
+// separate argument from this one.
+//
+// `metadata` stays a raw (unparsed) JSON string, matching fetchEvents() — that
+// asymmetry with shapeItemRow() (which parses an item's own metadata) is
+// preserved deliberately rather than fixed by accident.
 const EVENTS_PAGE_LIMIT = 200;
 
 function listEvents(userId, profileId, scopeTag, id, { limit = 50, offset = 0 } = {}) {
@@ -899,7 +918,7 @@ function listEvents(userId, profileId, scopeTag, id, { limit = 50, offset = 0 } 
   const boundedOffset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? Math.floor(parsedOffset) : 0;
 
   const events = conn.all(
-    `SELECT id, content as type, value, occurredAt, metadata
+    `SELECT id, content, value, occurredAt, metadata
      FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT ? OFFSET ?`,
     [id, boundedLimit, boundedOffset]
   );

@@ -273,6 +273,12 @@ console.log('\n--- poll');
 
 let feedId = null;
 
+// Counting starts before the subscription, because `subscribeFeed()` polls the
+// feed it just created — on a fresh run every entry is written there, and a
+// counter opened afterwards would attribute a correct 0 to the first poll while
+// saying nothing about where the entries came from.
+const beforeSubscribe = callCount('datastore.addItemEvent');
+
 await phase('find or create the feed subscription', async () => {
   const feeds = await mod.getFeeds();
   const existing = feeds.find((f) => f.url === FEED_URL);
@@ -288,10 +294,13 @@ await phase('find or create the feed subscription', async () => {
 
 // Two polls back to back, counting the writes each one makes. The second should
 // write nothing: `pollFeed()` reads back the existing entries and skips any guid
-// it already has. It can only do that for the entries it can see, and
-// `fetchEvents()` in `apps/server/mcp-items.js` hands back at most 20 whatever
-// the caller asks for — so a feed longer than 20 entries re-adds the invisible
-// tail on every poll, forever. The number below is that leak, measured.
+// it already has, which it can only do for the entries it can see. Reading them
+// through `GET /mcp/items/:id?events=N` capped that at 20 whatever the caller
+// asked for, so a feed longer than 20 entries re-added the invisible tail on
+// every poll, forever. `queryItemEvents()` in worker-api.mjs now reads through
+// `GET /mcp/items/:id/events`, which pages to 200. The number below is what is
+// left of that leak, measured.
+const writtenOnSubscribe = callCount('datastore.addItemEvent') - beforeSubscribe;
 const before1 = callCount('datastore.addItemEvent');
 await phase('pollAllFeeds() — first', () => mod.pollAllFeeds());
 mark('first poll complete');
@@ -301,7 +310,8 @@ await phase('pollAllFeeds() — second, should write nothing', () => mod.pollAll
 mark('second poll complete');
 const written2 = callCount('datastore.addItemEvent') - before1 - written1;
 
-console.log(`  entries written by the first poll: ${written1}`);
+console.log(`  entries written while subscribing: ${writtenOnSubscribe}`);
+console.log(`  entries written by the first poll: ${written1}  ${written1 === 0 ? '(deduplicated)' : '(RE-ADDED — the dedup read cannot see them)'}`);
 console.log(`  entries written by the second poll: ${written2}  ${written2 === 0 ? '(deduplicated)' : '(RE-ADDED — the dedup read cannot see them)'}`);
 
 await phase('read the entries back', async () => {
@@ -356,10 +366,15 @@ for (const p of phases) {
 
 console.log('\n=== deduplication across polls');
 console.log(`  feed: ${FEED_URL}`);
-console.log(`  first poll wrote ${written1} entries; second poll wrote ${written2}`);
-if (written2 > 0) {
-  console.log(`  Every poll re-adds ${written2} entries. The dedup read sees 20 events at most;`);
-  console.log('  the rest of the feed is invisible to it and gets written again indefinitely.');
+console.log(
+  `  subscribing wrote ${writtenOnSubscribe} entries; the first poll wrote ${written1}; the second wrote ${written2}`
+);
+const reAdded = written1 + written2;
+if (reAdded > 0) {
+  console.log(`  Entries already in the store are being written again — ${reAdded} across two polls.`);
+  console.log('  A dedup read that cannot see every entry re-adds the rest on every poll, indefinitely.');
+} else {
+  console.log('  Every entry was written once. Neither poll re-added anything it already had.');
 }
 
 const failed = phases.filter((p) => !p.ok).length;

@@ -94,6 +94,121 @@ Authorization: Bearer <api_key>
 
 API keys are hashed with SHA-256 and stored in the system database.
 
+## MCP Item-Event Routes
+
+Four routes under `/mcp/*` record and read the event history attached to one item (the
+`item_events` table backing `series`/`feed` items — see `docs/feeds-api.md`). They authenticate
+with a grant credential, not the API key above: `Authorization: Bearer <grant token>` (minted by
+`peek-mcp-init`, see `docs/mcp-remote-backend-design.md` §6). A grant confines every `/mcp/*`
+route to one scope tag and can be marked read-only; a read-only grant gets `403` from all three
+writes below (`POST .../events`, `DELETE .../events/:eventId`, `DELETE .../events`). Business
+logic lives in `apps/server/mcp-items.js` (`recordEvent()`, `listEvents()`, `deleteEvent()`,
+`deleteEvents()`); routes are registered in `apps/server/index.js`.
+
+### `POST /mcp/items/:id/events` — record an event
+
+```bash
+curl -X POST "$PEEK_URL/mcp/items/$ITEM_ID/events" \
+  -H "Authorization: Bearer $PEEK_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "started", "value": "kicked off"}'
+# 200 {"success":true,"id":"<eventId>","itemId":"<id>","type":"started"}
+```
+
+`type` is required on every call, even when `content` is also supplied — a call with only
+`content`/`occurredAt`/`metadata` and no `type` gets `400`.
+
+There is no `type` column on `item_events`. The row has one column, `content`, storing
+`content ?? type` — a call that supplies `content` keeps it and the `type` value is not stored
+anywhere; it exists only to satisfy the required field and to echo back in this response's
+`type`. A caller that needs its events distinguishable by kind later must carry that label
+inside `metadata` instead (`mcp-items.js recordEvent()`).
+
+**Legacy shape — `{type, value}` only.** Supplying nothing else writes exactly the old row:
+`content = type`, `value = 0`, `metadata = {"notes": value}` (or `{}` when `value` is empty).
+`apps/server/test.js` pins this byte-for-byte.
+
+**New shape — add `content`, `occurredAt`, and/or `metadata`.** Each stores directly into the
+column of the same name, unwrapped:
+
+```bash
+curl -X POST "$PEEK_URL/mcp/items/$ITEM_ID/events" \
+  -H "Authorization: Bearer $PEEK_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "feed_entry",
+    "content": "https://example.com/article",
+    "occurredAt": 1700000000000,
+    "metadata": {"guid": "abc123", "title": "An article"}
+  }'
+```
+
+Supplying `metadata` also switches what `value` means: instead of being wrapped into
+`metadata.notes` as free text, it is stored as a real number in the `value` column. A numeric
+string (`"42"`) is coerced; an empty or absent `value` defaults to `0`; anything else non-numeric
+(e.g. `"kicked off"`) is refused with `400` and no row is written — it is not silently coerced to
+`0`, since that failure mode would otherwise hide real text on exactly the request shape a caller
+migrating off `{type, value}` would plausibly send.
+
+Status codes: `200` on success, `404` if the item doesn't exist (or is out of the grant's scope),
+`400` for a missing `type` or a non-numeric `value` alongside `metadata`, `403` for a read-only
+grant.
+
+### `GET /mcp/items/:id/events?limit=&offset=` — paged read of an item's history
+
+```bash
+curl "$PEEK_URL/mcp/items/$ITEM_ID/events?limit=50&offset=0" \
+  -H "Authorization: Bearer $PEEK_MCP_TOKEN"
+# 200 {"events":[{"id":"...","content":"...","value":0,"occurredAt":1700000000000,"metadata":"{\"guid\":\"abc123\"}"}, ...]}
+```
+
+Rows come back ordered `occurredAt DESC`. `limit` defaults to `50`, capped at `200`; `offset`
+pages through the rest. There is no `since`/`until`/`order` parameter — apply those to the rows
+you read back client-side.
+
+`metadata` comes back as a raw JSON string, not parsed — `JSON.parse()` it yourself. (An item's
+own `metadata` field, by contrast, comes back already parsed; events do not.)
+
+**The shape trap.** This is the one route that returns the `content` column under its own name.
+The *other* read of an item's events — `GET /mcp/items/:idOrPrefix?events=N` (the `events` window
+embedded in a `get_item` response) — still returns the same column aliased to `type`, a holdover
+from before `content` was a field callers could set, and it is hard-capped at 20 rows no matter
+what `N` asks for (`mcp-items.js fetchEvents()`). Two different reads of the same column under
+two different names: use this route, not the embedded one, when you need more than 20 rows or
+need the real `content` value rather than whatever ends up under `type`.
+
+Status codes: `200` always, unless the item doesn't exist or is out of scope (`404`).
+
+### `DELETE /mcp/items/:id/events/:eventId` — remove one event
+
+```bash
+curl -X DELETE "$PEEK_URL/mcp/items/$ITEM_ID/events/$EVENT_ID" \
+  -H "Authorization: Bearer $PEEK_MCP_TOKEN"
+# 200 {"success":true,"id":"<eventId>","itemId":"<id>"}
+```
+
+A hard delete — `item_events` has no `deletedAt` column to soft-delete into. An `eventId` that
+doesn't exist under this item is **not** a `404`: it comes back `200 {"success":false,"error":"Event
+not found"}`, the same way a missing tag does on `untag_item`. Only a missing/out-of-scope *item*
+gets `404`.
+
+### `DELETE /mcp/items/:id/events` — remove every event under an item
+
+```bash
+curl -X DELETE "$PEEK_URL/mcp/items/$ITEM_ID/events" \
+  -H "Authorization: Bearer $PEEK_MCP_TOKEN"
+# 200 {"success":true,"itemId":"<id>","deleted":3}
+```
+
+Also a hard delete, reporting the count removed.
+
+**Deleting an item does not delete its events.** `DELETE /mcp/items/:id` is a *soft* delete and
+deliberately does not touch `item_events` (`mcp-items.js deleteItem()`). A soft-deleted item is
+still reachable by its exact id — `fetchItemRowById()` does not filter `deletedAt` — so these
+routes still reach its events afterwards. What it stops appearing in is `list_items` and
+`search_items`, which do filter it, so an id not captured beforehand cannot be recovered and the
+events become unreachable. Clear the events first, or keep the id.
+
 ## Deployment
 
 Configured for Railway (`railway.json`) using Nixpacks builder with npm. **Do not add `yarn.lock`** to this directory — Nixpacks will switch to yarn and fail.
