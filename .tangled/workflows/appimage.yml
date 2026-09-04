@@ -26,10 +26,6 @@
 when:
   - event: ["push"]
     tag: ["v*"]
-  # Temporary: exercises the packaging path before a tag exists. Remove once a
-  # run has proven the Electron download and AppImage build inside nixery.
-  - event: ["push"]
-    branch: ["spindles-review"]
   - event: ["manual"]
 
 engine: "nixery"
@@ -72,8 +68,9 @@ steps:
     # this image (see the dependency note above), so both are swapped for the
     # nix builds. Everything else in the bundle — runtimes/ and lib/ — is data
     # concatenated into the AppImage rather than executed, so it is used as
-    # shipped. APPIMAGE_TOOLS_PATH must be exported in this same command;
-    # a workflow has no way to set an environment variable across steps.
+    # shipped. APPIMAGE_TOOLS_PATH is exported here rather than in a workflow
+    # `environment:` block (which does exist) because the path is derived from
+    # $PWD; naming it up front would hard-code the runner's workspace path.
     command: |
       set -e
       TOOLS="$PWD/.appimage-tools"
