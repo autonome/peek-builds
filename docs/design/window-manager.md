@@ -627,7 +627,7 @@ request naming the same record. The app-resign arms needed one more clause each:
 and `AppResignSettled`'s backstop now also refuse a record already marked, or the reversible hide
 would have resurrected a window already dismissed. `window-kernel.test.ts` "S3: two back-to-back
 world-caused OsFocusGained events…" and "…selectable again…" pin both the fixed duplicate and the
-after-hide recovery, failing-first; `window-kernel-properties.test.ts checkAutocloseWiring` now also
+after-hide recovery; `window-kernel-properties.test.ts checkAutocloseWiring` now also
 asserts no duplicate id among one `react()` call's `DismissWindow` effects and that every
 `DismissWindow` names a record whose `pendingHidden` reads true in `next`.
 
