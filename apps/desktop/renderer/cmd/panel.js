@@ -2482,7 +2482,14 @@ function actionHandlers() {
       openUrlResultByRow(payload.index);
     },
 
-    shutdown() {
+    shutdown(payload) {
+      // On the kernel-asked escape path (state-machine.js handleEscape()) the
+      // main process closes the window itself, so the renderer must not queue
+      // a second close request. The 100ms timer below was background-throttled
+      // while the window sat hidden and fired ~760ms later, landing on the
+      // palette after the user had already reopened it and setting off a
+      // show/dismiss loop.
+      if (payload?.kernelCloses === true) return;
       setTimeout(shutdown, 100);
     },
 

@@ -1083,6 +1083,33 @@ describe('Escape layering', () => {
     assert.equal(r3.handled, false);
     assert.equal(machine.getState(), States.CLOSING);
   });
+
+  it('handleEscape tells the shutdown action the kernel will close the window', () => {
+    const shutdownCalls = [];
+    const machine = makeMachine({
+      shutdown(payload) { shutdownCalls.push(payload); },
+    });
+    machine.setState(States.IDLE);
+
+    const result = machine.handleEscape();
+    assert.equal(result.handled, false);
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.equal(shutdownCalls.length, 1);
+    assert.equal(shutdownCalls[0]?.kernelCloses, true);
+  });
+
+  it('a direct ESCAPE dispatch (the keydown path) does not claim the kernel will close', () => {
+    const shutdownCalls = [];
+    const machine = makeMachine({
+      shutdown(payload) { shutdownCalls.push(payload); },
+    });
+    machine.setState(States.IDLE);
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.equal(shutdownCalls.length, 1);
+    assert.equal(shutdownCalls[0]?.kernelCloses, undefined);
+  });
 });
 
 // ===== Invariant Enforcement =====

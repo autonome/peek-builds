@@ -1075,7 +1075,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
      * Delegates to dispatch(ESCAPE) and returns { handled } for the IZUI flow.
      */
     handleEscape() {
-      const result = dispatch(Events.ESCAPE);
+      const result = dispatch(Events.ESCAPE, { kernelCloses: true });
       // If we transitioned to CLOSING, the backend should close the window
       if (currentState === States.CLOSING) {
         return { handled: false };
