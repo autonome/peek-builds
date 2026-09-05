@@ -743,6 +743,37 @@ describe('window-kernel: the raise a focus report drives', () => {
     );
   });
 
+  it('a RaiseWindow COMMAND the user asked for carries its intent through the cause onto the effect', () => {
+    // The hotkey path (window-rules.md F6): `kernelShowRequested` sends the
+    // command with `intent: 'user'`; the executor's app-inactive mask reads
+    // it off the effect, so it has to survive decide -> evolve -> react.
+    const state = twoWindows(wid(1), wid(2));
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(2), expectedVersion: state.version, intent: 'user' });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    assert.deepStrictEqual(
+      ev,
+      { type: 'OsFocusGained', id: wid(2), cause: { kind: 'machine', opSeq: state.opSeqCounter + 1, intent: 'user' } },
+      'the cause is the only thing decide emits, so the intent rides it',
+    );
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(
+      raises(react(state, ev, next)),
+      [{ type: 'RaiseWindow', id: wid(2), opSeq: next.opSeqCounter, intent: 'user' }],
+      'the effect says the raise was asked for',
+    );
+  });
+
+  it('a RaiseWindow COMMAND without intent yields an effect without one — absent means derived', () => {
+    const state = twoWindows(wid(1), wid(2));
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(2), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(state, ev);
+    const [raise] = raises(react(state, ev, next));
+    assert.ok(raise !== undefined && !('intent' in raise), 'no intent key at all, not intent: undefined');
+  });
+
   it('INVARIANT: the raise is its own fixed point — the focus report it provokes emits NOTHING', () => {
     // The convergence obligation, met structurally instead of by refusing to
     // emit: a raise is realized as an activating show, whose native focus
@@ -1565,6 +1596,7 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     const raise = effects.find((e) => e.type === 'RaiseWindow');
     assert.strictEqual(raise?.opSeq, next.opSeqCounter, 'the token is what makes the OS echo of this raise recognisable as machine-caused');
     assert.strictEqual(next.order.find((w) => w.id === B)?.lastOpSeq, next.opSeqCounter, "evolve's stamp equals react's effect token");
+    assert.ok(raise !== undefined && !('intent' in raise), 'a derived raise carries no user intent — the app-inactive mask applies to it');
   });
 
   it('the confirmation of the successor raise raises nothing more — one hide, one raise', () => {

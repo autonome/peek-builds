@@ -88,11 +88,14 @@ export function getPrefs(): Record<string, unknown> {
  * @param win    The BrowserWindow to show.
  * @param opts   { active: true } to activate (the backend calls win.show(),
  *               which steals focus); default is focus-preserving
- *               (showInactive()).
+ *               (showInactive()). { activation: 'user' } marks an activating
+ *               show a user gesture asked for (hotkey, CLI verb), which the
+ *               kernel raises even while another app is frontmost — see
+ *               `window-kernel-dispatch.ts kernelShowRequested`.
  */
 export function showWindowHeadlessSafe(
   win: BrowserWindow,
-  opts?: { active?: boolean },
+  opts?: { active?: boolean; activation?: 'user' },
 ): void {
   const id = getWindowIdFor(win);
   if (id == null) {
@@ -103,7 +106,7 @@ export function showWindowHeadlessSafe(
     DEBUG && console.log('[windows] showWindowHeadlessSafe: window not machine-registered — show dropped');
     return;
   }
-  kernelShowRequested(id, opts?.active === true);
+  kernelShowRequested(id, opts?.active === true, opts?.activation === 'user' ? { activation: 'user' } : undefined);
 }
 
 /**

@@ -133,6 +133,21 @@ Wired into both branches of `electron-window-backend.ts raiseWindow`, which is n
 (the backend value-imports Electron) — the always-on `raise-realized` log record (`id`, `kind`,
 `visible`, `focused`, `plan`) is the live evidence.
 
+**The palette summoned from another app was on screen but dead, closed (2026-09-05).** Opt+Space
+with another app frontmost put the palette up but typing and Escape went to the other app:
+`window-kernel-executor.ts planRaise` returned `'suppressed'` for every raise while `!appActive`,
+so the keepLive palette's sibling `ShowWindow` effect mapped it inactive and its raise was dropped.
+The mask is right for raises the machine derives (successor, parent refocus, focus assert) and
+wrong for one the user asked for (`window-rules.md` F6). Fix: the `RaiseWindow` command gains
+`intent: 'user'`, carried on the `machine` `FocusCause` through `decide` -> `evolve` -> `react`
+onto the effect; `planRaise` masks only `!appActive && intent !== 'user'`;
+`electron-window-backend.ts raiseWindow` brings the app forward on a user-intended raise (darwin)
+before taking key, because `win.focus()` alone does not activate an app another app has displaced.
+The one producer is the palette's `api.window.open(..., { activation: 'user' })`
+(`renderer/cmd/background.js openPanelWindow`, which the hotkeys and `peek-cli cmd-open` share),
+threaded through `ipc.ts` keyed reuse -> `windows.ts showWindowHeadlessSafe` ->
+`window-kernel-dispatch.ts kernelShowRequested`. The live gesture is not yet re-checked by hand.
+
 **A focus report on a hidden window became a raise, closed (2026-09-05).** The `take-key` arm
 above made a path reachable that had been dead while the reopen took no focus: the command
 palette, hidden by Escape, re-shown by Opt+Space within a second, flashed open and closed

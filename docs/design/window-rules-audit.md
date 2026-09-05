@@ -10,9 +10,9 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | F1 one-key | contradicted | `window-kernel.ts evolve OsFocusGained`, `decide RaiseWindow` | Two writer arms, so "at most one" holds. But `decide`'s raise arm manufactures an `OsFocusGained` and writes `key` synchronously with no gate, so with Peek inactive the model believes the palette is key while the OS has it dead. |
 | F2 machine-labelled | scattered | `electron-window-backend.ts armSelfCausedFocus`, `takeFocusCause`, `raiseWindow`, `performOsShow`, `focusContent`, `win.on('focus'/'blur')` | Every native call that moves focus arms a token, seven sites. Provenance is right only while all seven agree. |
 | F3 confirmation-drives-nothing | contradicted | `window-kernel.ts evolve OsFocusGained`, `react` sweep (a) | The raise half holds via `isOpConfirmation`. The dismissal half does not: the arm writes a fresh `lastAttention.seq` unconditionally, so a raise's own confirmation still runs the autoclose sweep. |
-| F4 raise-means-key | scattered | `window-kernel-executor.ts planRaise`, `planRaiseRealization`, `electron-window-backend.ts raiseWindow` | `planRaiseRealization` is exact. The `suppressed` and `show-and-focus-content` masks above it produce a visible window that accepts no input. No site ever activates the app. |
+| F4 raise-means-key | scattered | `window-kernel-executor.ts planRaise`, `planRaiseRealization`, `electron-window-backend.ts raiseWindow` | `planRaiseRealization` is exact. The `suppressed` mask above it now applies to machine raises only (`Effect.RaiseWindow.intent` exempts a user-intended one); `show-and-focus-content` still produces a visible window that accepts no input. `raiseWindow` activates the app on a user-intended raise (darwin, `take-key` and `show-and-take-key`); no other site does. |
 | F5 raise-needs-a-surface | scattered | `window-kernel.ts admitsFocusAssert` and its ~8 callers, `decide RaiseWindow`, `planRaise` | One predicate, consulted independently at ~8 sites; two paths bypass it (`decide`'s raise arm, `planRaise`). |
-| F6 hotkey-is-intent | contradicted | `planRaise`, `window-kernel-dispatch.ts kernelShowRequested`, `shortcuts.ts registerGlobalShortcut`, `renderer/cmd/background.js openPanelWindow` | `if (!appActive) return 'suppressed'` masks every raise whatever its cause. No hotkey-intent channel exists: the shortcut reaches the kernel as a plain show plus raise, and nothing in `main/` ever activates the app. |
+| F6 hotkey-is-intent | holds | `renderer/cmd/background.js openPanelWindow` (`activation: 'user'`), `ipc.ts` keyed reuse -> `windows.ts showWindowHeadlessSafe` -> `window-kernel-dispatch.ts kernelShowRequested` (`intent: 'user'` on the `RaiseWindow` command), `window-kernel.ts decide` / `FocusCause.intent` / `react` (onto the effect), `window-kernel-executor.ts planRaise` (`!appActive && intent !== 'user'`), `electron-window-backend.ts raiseWindow` (app activation) | One channel, one word: a raise the user asked for carries `intent: 'user'` end to end and is exempt from the app-inactive mask; every `react`-derived raise carries nothing and stays masked. The kernel never learns which gesture it was. Live gesture (Opt+Space from another app, packaged build) not yet re-checked by hand. |
 | F7 hide-returns-key | contradicted | `window-kernel.ts react` successor loop, `evolve WindowHidden` | No record of the prior key holder exists; the raise goes to the topmost content window unconditionally. A null successor emits nothing rather than yielding to the other app. The non-key clause holds. |
 | F8 land-somewhere | unimplemented | `react` successor loop, `holdsAppOnScreen` | Only the successor loop restores key, and only when the dismissed window was key and a content window survives. Dismissing a key palette with no content window up leaves `key` dangling. |
 | V1 paint-before-dismiss | holds | `window-kernel.ts isTransientAutocloseCandidate`, ordering floor in `selectTransientAutoclose` | `if (!rec.orderable) return false` gates every reader. |
@@ -40,9 +40,9 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 9 | V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path) |
+| holds | 10 | F6 V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 9 | F1 F3 F6 F7 S3 D2 D5 D9, V6 (sweeps) |
+| contradicted | 8 | F1 F3 F7 S3 D2 D5 D9, V6 (sweeps) |
 | unimplemented | 2 | F8 D7 |
 
 Three structural facts recur under most of the contradicted and scattered rows:

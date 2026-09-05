@@ -1293,7 +1293,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * header) — a raise that re-grants focus manufactures exactly such
    * evidence.
    */
-  raiseWindow(id: WindowId, opSeq: number): void {
+  raiseWindow(id: WindowId, opSeq: number, intent?: 'user'): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
@@ -1304,7 +1304,25 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // Always-on: the decision to realize a raise as a bare reorder (no show,
     // no focus call) is a decision-to-do-nothing about key, and this app's
     // rule is that one becomes an event rather than a silence.
-    wmLog('raise-realized', { id, kind, visible, focused, plan });
+    wmLog('raise-realized', { id, kind, visible, focused, plan, ...(intent === 'user' ? { intent } : {}) });
+    // A raise the user asked for while another app is frontmost has to bring
+    // THIS app forward, and on macOS the key-taking calls below do not
+    // reliably do that on their own: `win.focus()` (the `take-key` arm — the
+    // keepLive palette re-shown inactive by its sibling `ShowWindow` effect)
+    // asks for activation only if no other app holds it, which is exactly the
+    // case a hotkey from another app is in. The app-level activation is the
+    // one call that ignores the other app, so it runs first and only on a
+    // user-intended raise — a machine raise never brings the app forward
+    // (`window-kernel-executor.ts planRaise`). darwin-only: elsewhere focusing
+    // a window IS bringing the app forward, and this call would instead pick
+    // an arbitrary window of the app's.
+    if (intent === 'user' && plan !== 'reorder' && !isHeadless() && process.platform === 'darwin') {
+      try {
+        app.focus({ steal: true });
+      } catch {
+        /* activation refused by the OS — the window calls below still run */
+      }
+    }
     if (kind === 'page-host') {
       // Non-headless, not yet on screen: activating show + content first
       // responder (the `hybridShowIntent` invariant — the R4/R5/R7

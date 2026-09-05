@@ -2749,7 +2749,16 @@ export function registerWindowHandlers(): void {
         // Focus rides the same dispatch since §5 step 8e: the backend's
         // activating show IS the raise (an activating show+focus), so the old
         // headless-gated imperative focus() is gone.
-        showWindowHeadlessSafe(existingWindow.window, { active: reuseActivate });
+        // `activation: 'user'` is the one open option that says a user
+        // gesture (the palette hotkey, `peek-cli cmd-open`) asked for this
+        // show: the kernel then raises even while another app is frontmost
+        // (`window-kernel-executor.ts planRaise`, rule F6). Only the reuse
+        // path threads it — a fresh open's constructor show already brings
+        // the app forward natively.
+        showWindowHeadlessSafe(existingWindow.window, {
+          active: reuseActivate,
+          ...(options.activation === 'user' ? { activation: 'user' as const } : {}),
+        });
         // Signal keepLive-reuse to the renderer BEFORE returning so the
         // renderer's `api.onVisible` handler dispatches its FSM reset
         // ahead of any user input that might arrive on the next turn.

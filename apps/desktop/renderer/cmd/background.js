@@ -385,6 +385,14 @@ const openPanelWindow = (prefs) => {
     // Keep resident in the background
     keepLive: true,
 
+    // Every caller of this function is a user gesture — the global hotkey,
+    // the local shortcuts, `peek-cli cmd-open` — so the show is one the user
+    // asked for: the window manager raises it even while another app is
+    // frontmost, instead of masking the raise the way it masks its own
+    // (docs/design/window-rules.md F6). Without this the re-shown palette
+    // is on screen but dead: typing and Escape go to the other app.
+    activation: 'user',
+
     // Completely remove window frame and decorations
     frame: false,
     transparent: true,

@@ -70,8 +70,11 @@ class RecordingBackend implements WindowBackend {
   attachAppListeners(): void {
     this.record('attachAppListeners');
   }
-  raiseWindow(id: BackendWindowId, opSeq: number): void {
-    this.record('raiseWindow', id, opSeq);
+  raiseWindow(id: BackendWindowId, opSeq: number, intent?: 'user'): void {
+    // The intent is recorded only when present so the pre-existing
+    // `args[0]`/`args[1]` assertions keep their shape.
+    if (intent === undefined) this.record('raiseWindow', id, opSeq);
+    else this.record('raiseWindow', id, opSeq, intent);
   }
   focusContent(id: BackendWindowId, opSeq: number): void {
     this.record('focusContent', id, opSeq);
@@ -573,6 +576,33 @@ describe('planRaise — the masks a raise owes because it is an activating show'
   it('resolves the ordinary window the way it did before once the app is active again', () => {
     assert.strictEqual(planRaise(record(), false, true), 'activating-raise');
   });
+
+  // ── the mask is for machine raises only (window-rules.md F6) ──────────────
+
+  it('a raise the user asked for is not masked while the app is backgrounded', () => {
+    // The hotkey from another app: the palette's sibling `ShowWindow` puts it
+    // on screen, and without this exemption its raise is dropped — visible
+    // and dead, typing going to the other app.
+    assert.strictEqual(planRaise(record(), false, false, 'user'), 'activating-raise');
+    assert.strictEqual(planRaise(undefined, false, false, 'user'), 'activating-raise');
+  });
+
+  it('the same raise without intent is still suppressed — intent is the only thing that changed', () => {
+    assert.strictEqual(planRaise(record(), false, false), 'suppressed');
+    assert.strictEqual(planRaise(record(), false, false, undefined), 'suppressed');
+  });
+
+  it('headless still wins over user intent — no focus ever, whatever was asked', () => {
+    assert.strictEqual(planRaise(record(), true, false, 'user'), 'inactive-show');
+    assert.strictEqual(planRaise(record(), true, true, 'user'), 'inactive-show');
+  });
+
+  it('user intent lifts the app-inactive mask, not the quick-view never-activate rule (524f7aba)', () => {
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, false, 'user'),
+      'show-and-focus-content',
+    );
+  });
 });
 
 // The wiring in `electron-window-backend.ts raiseWindow` that calls this
@@ -678,6 +708,60 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual(backend.of('focusContent'), [], 'no first-responder handoff while the app is backgrounded');
     const shows = backend.of('showWindow');
     assert.strictEqual(shows.length, 0, 'not shown either — the raise is suppressed outright');
+  });
+
+  // ── a raise the user asked for, while backgrounded (window-rules.md F6) ────
+
+  /**
+   * Two windows shown, wid(1) key, app backgrounded; then a `RaiseWindow`
+   * COMMAND for wid(2) — the shape `kernelShowRequested(id, true, …)` sends
+   * for the palette hotkey. Returns the backend after the command.
+   */
+  function commandRaiseWhileBackgrounded(intent?: 'user') {
+    const { exec, backend } = makeExecutor({ appActive: false });
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    backend.calls.length = 0;
+    const outcome = exec.execute({
+      type: 'RaiseWindow',
+      id: wid(2),
+      expectedVersion: exec.getState().version,
+      ...(intent === 'user' ? { intent } : {}),
+    });
+    assert.ok('applied' in outcome, 'the command is accepted');
+    return backend;
+  }
+
+  it('a RaiseWindow command with user intent reaches the port raise while backgrounded, carrying the intent', () => {
+    const backend = commandRaiseWhileBackgrounded('user');
+    const raises = backend.of('raiseWindow');
+    assert.strictEqual(raises.length, 1, 'the user-intended raise is performed, not suppressed');
+    assert.strictEqual(raises[0].args[0], wid(2));
+    assert.strictEqual(raises[0].args[2], 'user', 'the backend learns the raise was asked for');
+  });
+
+  it('the same command without intent is suppressed while backgrounded — the mask still holds for machine raises', () => {
+    const backend = commandRaiseWhileBackgrounded();
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(backend.of('focusContent'), []);
+  });
+
+  it('a raise with user intent while the app is active passes the intent through unchanged', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    backend.calls.length = 0;
+    exec.execute({ type: 'RaiseWindow', id: wid(2), expectedVersion: exec.getState().version, intent: 'user' });
+    assert.deepStrictEqual(
+      backend.of('raiseWindow').map((c) => [c.args[0], c.args[2]]),
+      [[wid(2), 'user']],
+    );
   });
 });
 

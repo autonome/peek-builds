@@ -166,17 +166,38 @@ export type RaisePlan = 'suppressed' | 'inactive-show' | 'show-and-focus-content
  * never called at all. This matches the old machine's outright drop rather
  * than degrading to a non-activating show.
  *
+ * MACHINE RAISES ONLY (`window-rules.md` F6). The mask exists so a raise the
+ * machine DERIVES — a successor raise on hide, a parent refocus, a focus
+ * assert — never paints a Peek window over the app the user switched to. A
+ * raise the user ASKED FOR is the opposite fact: the hotkey or CLI verb was
+ * pressed precisely while another app was frontmost, and the whole point of
+ * the gesture is to bring Peek forward. Such a raise carries
+ * `intent: 'user'` (`Effect.RaiseWindow.intent`, threaded from the
+ * `RaiseWindow` COMMAND through `FocusCause`) and is NOT masked here; it
+ * resolves the way it would with the app active. Without the exemption the
+ * palette summoned from another app is shown by its sibling `ShowWindow`
+ * effect but its raise is dropped: on screen, and dead — typing and Escape
+ * go to the other app (the 2026-09-05 dead-palette failure).
+ *
  * ORDERING AGAINST THE HEADLESS MASK: checked immediately after headless, and
  * — unlike the quick-view arm below — it wins outright rather than narrowing
  * one arm. Headless is checked first only because it is unconditional
- * (no-focus-ever, `appActive` notwithstanding); once past it, an inactive app
- * forces `'suppressed'` even for a quick-view panel, overriding what would
- * otherwise be `'show-and-focus-content'` — a backgrounded app gets no
- * first-responder handoff either, because it gets nothing at all.
+ * (no-focus-ever, `appActive` and `intent` notwithstanding); once past it, an
+ * inactive app forces `'suppressed'` on a machine raise even for a quick-view
+ * panel, overriding what would otherwise be `'show-and-focus-content'` — a
+ * backgrounded app gets no first-responder handoff either, because it gets
+ * nothing at all. A user-intended raise of a quick-view panel still takes the
+ * quick-view arm: the exemption lifts the app-inactive mask, not the panel's
+ * own never-activate rule (regression `524f7aba`).
  */
-export function planRaise(record: WindowRecord | undefined, headless: boolean, appActive: boolean): RaisePlan {
+export function planRaise(
+  record: WindowRecord | undefined,
+  headless: boolean,
+  appActive: boolean,
+  intent?: 'user',
+): RaisePlan {
   if (headless) return 'inactive-show';
-  if (!appActive) return 'suppressed';
+  if (!appActive && intent !== 'user') return 'suppressed';
   if (record !== undefined && record.kind === 'page-host' && record.role === 'quick-view') {
     return 'show-and-focus-content';
   }
@@ -972,7 +993,7 @@ export class WindowKernelExecutor {
       }
       case 'RaiseWindow': {
         const record = this.state.order.find((w) => w.id === effect.id);
-        switch (planRaise(record, this.headless, this.state.appActive)) {
+        switch (planRaise(record, this.headless, this.state.appActive, effect.intent)) {
           case 'suppressed':
             wmLog('raise-suppressed', { id: effect.id, appActive: this.state.appActive, headless: this.headless });
             return;
@@ -984,7 +1005,10 @@ export class WindowKernelExecutor {
             this.backend.focusContent(effect.id, effect.opSeq);
             return;
           case 'activating-raise':
-            this.backend.raiseWindow(effect.id, effect.opSeq);
+            // The intent travels to the backend: a raise asked for while
+            // another app is frontmost has to bring the app forward, which
+            // is a platform matter the port leaves to the backend.
+            this.backend.raiseWindow(effect.id, effect.opSeq, effect.intent);
             return;
         }
         return;

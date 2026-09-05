@@ -505,8 +505,17 @@ export interface WindowRecord {
  *                identifiable too.
  *   - `world`    a real user gesture, another app, Mission Control, a page
  *                click — everything else.
+ *
+ * `intent: 'user'` on a `machine` cause marks a raise the machine issues ON
+ * THE USER'S BEHALF — a `RaiseWindow` COMMAND that a user gesture (a hotkey,
+ * a CLI verb) dispatched. It rides the cause because that is the only thing
+ * `decide`'s raise arm emits: the command becomes an `OsFocusGained`, `evolve`
+ * records the cause in `State.lastAttention`, and `react` reads it back when
+ * it diffs `key` into the `RaiseWindow` EFFECT. The kernel never learns which
+ * gesture it was, only that the raise was asked for rather than derived.
+ * Absent means derived — a successor raise, a parent refocus, a focus assert.
  */
-export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
+export type FocusCause = { kind: 'machine'; opSeq: number; intent?: 'user' } | { kind: 'world' };
 
 /**
  * RULE 1 (§0.1.4): `order` holds EVERY registered window, bottom -> top, as
@@ -1123,7 +1132,13 @@ export type Event =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Command =
-  | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number }
+  /**
+   * `intent: 'user'` marks a raise a user gesture asked for (hotkey, CLI
+   * verb). It rides the `machine` `FocusCause` `decide` manufactures and
+   * surfaces again on the `RaiseWindow` EFFECT, where the executor's
+   * app-inactive mask exempts it — see `FocusCause`.
+   */
+  | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
   | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
   /** The keepLive branch point (§0.1): hide if keepLive, else close. Decided in `decide`, never `evolve`. */
@@ -1459,7 +1474,13 @@ export type Effect =
    * the keepLive/fullscreen resolution stays downstream of it, not here.
    */
   | { type: 'DismissWindow'; id: WindowId }
-  | { type: 'RaiseWindow'; id: WindowId; opSeq: number }
+  /**
+   * `intent: 'user'` is present only when the raise was a `RaiseWindow`
+   * COMMAND carrying it (`FocusCause.intent`); every raise `react` derives on
+   * its own (successor, parent refocus, focus assert) omits it. The executor's
+   * app-inactive mask applies to the derived raises only.
+   */
+  | { type: 'RaiseWindow'; id: WindowId; opSeq: number; intent?: 'user' }
   /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
   | { type: 'SetFullscreen'; id: WindowId }
   /** Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`. */
@@ -3364,7 +3385,19 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     admitsFocusAssert(raiseTarget, raiseTarget.visible) &&
     !keyMoveConfirmsIssuedOp
   ) {
-    effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
+    // A raise the user asked for (a `RaiseWindow` COMMAND with `intent`)
+    // says so on the effect, read back off the attention fact `evolve` wrote
+    // for THIS transition — the `seq` check is what makes it a read of this
+    // transition's cause and not of a standing one. Every other emitter of
+    // `RaiseWindow` in this function derives its raise and carries nothing.
+    const attention = next.lastAttention;
+    const userIntended =
+      attention !== null &&
+      attention.seq !== prev.lastAttention?.seq &&
+      attention.holder === nextKey &&
+      attention.cause.kind === 'machine' &&
+      attention.cause.intent === 'user';
+    effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter, ...(userIntended ? { intent: 'user' } : {}) });
   }
 
   // Transient autoclose (§0: "the machine applies the rule; no caller does" —
@@ -3862,7 +3895,19 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       // a cause the event reads as the WORLD taking key, which disarms
       // `selectTransientAutoclose`'s ordering floor and lets a machine raise
       // sweep a transient opened after the raise was issued.
-      return { events: [{ type: 'OsFocusGained', id: cmd.id, cause: { kind: 'machine', opSeq: state.opSeqCounter + 1 } }] };
+      //
+      // `intent` rides the cause (see `FocusCause`): the command is the only
+      // producer that can say a raise was asked for, and the cause is the
+      // only thing this arm emits.
+      return {
+        events: [
+          {
+            type: 'OsFocusGained',
+            id: cmd.id,
+            cause: { kind: 'machine', opSeq: state.opSeqCounter + 1, ...(cmd.intent === 'user' ? { intent: 'user' } : {}) },
+          },
+        ],
+      };
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':

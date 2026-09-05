@@ -158,8 +158,14 @@ export interface WindowBackend {
    * native call, so the focus it provokes comes back as `OS_FOCUS_GAINED
    * { cause: { kind: 'machine', opSeq: N } }` instead of masquerading as a user
    * gesture. See `FocusCause`.
+   *
+   * `intent === 'user'` says the raise was asked for by a user gesture while
+   * the app may not be the active one (`Effect.RaiseWindow.intent`). A
+   * backend on a platform where making a window key does not by itself bring
+   * the application forward owes that step here; a platform without the
+   * concept ignores the argument.
    */
-  raiseWindow(id: WindowId, opSeq: number): void;
+  raiseWindow(id: WindowId, opSeq: number, intent?: 'user'): void;
 
   /**
    * Make a page-host's content surface the OS first responder (the

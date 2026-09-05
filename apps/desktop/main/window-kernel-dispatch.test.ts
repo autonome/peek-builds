@@ -573,6 +573,37 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
     assert.doesNotThrow(() => kernelShowRequested(danglingId, true));
     assert.strictEqual(getKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
+
+  it("`activation: 'user'` puts user intent on the raise's cause — the hotkey channel (window-rules.md F6)", () => {
+    // The palette hotkey and `peek-cli cmd-open` reach the kernel through
+    // this option; the raise's cause is what `react` reads the intent back
+    // from, and what the executor's app-inactive mask then exempts.
+    const [a, b] = [wid(123), wid(124)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+
+    kernelShowRequested(a, true, { activation: 'user' });
+
+    const attention = getKernelExecutor().getState().lastAttention;
+    assert.ok(attention !== null && attention.holder === a, 'the raise took key for a');
+    assert.deepStrictEqual(
+      attention.cause,
+      { kind: 'machine', opSeq: getKernelExecutor().getState().opSeqCounter, intent: 'user' },
+    );
+  });
+
+  it('an activating show without the option stays a machine raise — no intent on the cause', () => {
+    const [a, b] = [wid(125), wid(126)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+
+    kernelShowRequested(a, true);
+
+    const attention = getKernelExecutor().getState().lastAttention;
+    assert.ok(attention !== null && attention.holder === a);
+    assert.strictEqual(attention.cause.kind, 'machine');
+    assert.ok(!('intent' in attention.cause), 'absent means derived');
+  });
 });
 
 describe('window-kernel-dispatch: activating show feed (peek 7fffa286)', () => {

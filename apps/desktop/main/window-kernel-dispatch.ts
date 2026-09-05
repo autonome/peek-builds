@@ -1097,11 +1097,23 @@ export function kernelSetAcceptsInput(id: WindowId, acceptsInput: boolean): void
  * `OsFocusGained` — never writes `visible` (`window-kernel.ts`'s evolve arm):
  * visibility and key are separate stored facts, each written only by its own
  * event, so neither command alone reproduces an activating show.
+ *
+ * `opts.activation === 'user'` marks the raise as one the user asked for (a
+ * hotkey, a CLI verb): the `RaiseWindow` command carries `intent: 'user'`,
+ * which exempts it from the executor's app-inactive mask
+ * (`window-kernel-executor.ts planRaise`, rule F6). Only a show that a user
+ * gesture dispatched passes it; every other caller's raise stays a machine
+ * raise and is masked while another app is frontmost.
  */
-export function kernelShowRequested(id: WindowId, activate: boolean): void {
+export function kernelShowRequested(id: WindowId, activate: boolean, opts?: { activation?: 'user' }): void {
   kernelExecute({ type: 'ShowWindow', id, expectedVersion: getKernelExecutor().getState().version });
   if (activate) {
-    kernelExecute({ type: 'RaiseWindow', id, expectedVersion: getKernelExecutor().getState().version });
+    kernelExecute({
+      type: 'RaiseWindow',
+      id,
+      expectedVersion: getKernelExecutor().getState().version,
+      ...(opts?.activation === 'user' ? { intent: 'user' } : {}),
+    });
   }
 }
 
