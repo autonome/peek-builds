@@ -1769,9 +1769,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // below still reports the caller's UNMASKED intent — that is what keeps
     // `front` moving under headless.
     const record = windowById(getKernelExecutor().getState(), id);
-    const osActivate =
-      (kind === 'page-host' ? opts.activate && record?.nonActivating !== true : opts.activate) &&
-      !isHeadless();
+    // The panel mask applies to BOTH kinds: a `browser`-kind panel (the
+    // command window, the windows view) is as much an NSPanel as a page-host
+    // one, and G1 says no panel activates the app on show.
+    const osActivate = opts.activate && record?.nonActivating !== true && !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);
   }
