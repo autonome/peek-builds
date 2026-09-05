@@ -8,6 +8,10 @@ is forbidden on the way there.
 
 ## Where we are
 
+The rules the kernel is checked against live in `window-rules.md` (2026-09-05): one named rule
+per line, and a table mapping every entry under "Open kernel defects" to the rule that forbids
+it. That file is normative; this one is the record.
+
 Read this table first. §4 and §5 below are the detailed record; this block is the fast,
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
