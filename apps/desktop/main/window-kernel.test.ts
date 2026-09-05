@@ -1566,7 +1566,13 @@ describe('window-kernel: successor raise on WindowHidden', () => {
 
   const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
 
-  /** `key` (A) and a shown successor (B), app active, A on top. */
+  /**
+   * `key` (A), a shown successor (B), app active, A on top — and A's
+   * `priorKey` genuinely names B, because B took key first and A took it
+   * from B (F7 hide-returns-key reads that field, not "whatever else is on
+   * screen", so a fixture that never gives A a prior key holder would prove
+   * nothing about it).
+   */
   const keyAndSuccessor = (): State => {
     const A = wid(1);
     const B = wid(2);
@@ -1575,18 +1581,20 @@ describe('window-kernel: successor raise on WindowHidden', () => {
       registerContent(B),
       { type: 'WindowShown', id: A },
       { type: 'WindowShown', id: B },
+      { type: 'OsFocusGained', id: B },
       { type: 'OsFocusGained', id: A },
       { type: 'AppActivated' },
     ]);
   };
 
-  it('the key window hides and the topmost remaining content window is raised, carrying the transition token, which is stamped on the successor', () => {
+  it('the key window hides and the window that was key before it (still visible) is raised, carrying the transition token, which is stamped on the successor', () => {
     const A = wid(1);
     const B = wid(2);
     const state = keyAndSuccessor();
     assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
     assert.strictEqual(state.appActive, true, 'precondition: app is active');
     assert.strictEqual(state.order.find((w) => w.id === B)?.visible, true, 'precondition: B is genuinely shown');
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, B, 'precondition: B held key before A took it');
 
     const ev: Event = { type: 'WindowHidden', id: A };
     const next = evolve(state, ev);
@@ -1597,6 +1605,95 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     assert.strictEqual(raise?.opSeq, next.opSeqCounter, 'the token is what makes the OS echo of this raise recognisable as machine-caused');
     assert.strictEqual(next.order.find((w) => w.id === B)?.lastOpSeq, next.opSeqCounter, "evolve's stamp equals react's effect token");
     assert.ok(raise !== undefined && !('intent' in raise), 'a derived raise carries no user intent — the app-inactive mask applies to it');
+  });
+
+  it('the window taking key had no prior key holder (key was null before it) — hiding raises nothing, even with another content window visible', () => {
+    // This is the live failure this rule exists to close: a palette opened
+    // by hotkey while another app was frontmost takes key directly from
+    // `null` — nothing in Peek was in use before it — and Escape dismissing
+    // it must not raise a Peek window (here, B) the user never touched, no
+    // matter how eligible B looks to the old unconditional `topmost` query.
+    const A = wid(1);
+    const B = wid(2);
+    const state = fold([
+      registerContent(A),
+      registerContent(B),
+      { type: 'WindowShown', id: A },
+      { type: 'WindowShown', id: B },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, null, 'precondition: nothing held key before A');
+    assert.strictEqual(state.order.find((w) => w.id === B)?.visible, true, 'precondition: B is genuinely shown and would have been the old unconditional successor');
+    const bLastOpSeqBeforeHide = state.order.find((w) => w.id === B)?.lastOpSeq;
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), [], 'nothing in Peek was in use before A took key, so nothing is raised');
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no op minted — no raise means no token');
+    assert.strictEqual(next.order.find((w) => w.id === B)?.lastOpSeq, bLastOpSeqBeforeHide, 'B is not restamped by this hide — whatever it carried from its own WindowShown is untouched');
+  });
+
+  it('the prior key window closed before the hide — raises the topmost remaining content window', () => {
+    const B = wid(1);
+    const D = wid(2);
+    const A = wid(3);
+    const state = fold([
+      registerContent(B),
+      registerContent(D),
+      registerContent(A),
+      { type: 'WindowShown', id: B },
+      { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: D },
+      { type: 'WindowClosed', id: D },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, D, 'precondition: A took key from D');
+    assert.strictEqual(state.order.some((w) => w.id === D), false, 'precondition: D has since closed');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(
+      raises(effects),
+      [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }],
+      'D is gone, so the topmost remaining content window is raised instead',
+    );
+  });
+
+  it('the prior key window has since gone pendingHidden (a teardown already decided) — falls back to the topmost content window', () => {
+    const B = wid(1);
+    const D = wid(2);
+    const A = wid(3);
+    const state = fold([
+      registerContent(B),
+      registerContent(D),
+      registerContent(A),
+      { type: 'WindowShown', id: B },
+      { type: 'WindowShown', id: D },
+      { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: D },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+      { type: 'WindowDestroyRequested', id: D },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, D, 'precondition: A took key from D');
+    assert.strictEqual(state.order.find((w) => w.id === D)?.pendingHidden, true, 'precondition: D is doomed');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(
+      raises(effects),
+      [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }],
+      'D no longer admits a focus assert, so the topmost remaining content window is raised instead',
+    );
   });
 
   it('the confirmation of the successor raise raises nothing more — one hide, one raise', () => {
@@ -1692,24 +1789,32 @@ describe('window-kernel: successor raise on WindowHidden', () => {
 
   it('a successor that is not a content window is skipped in favour of one that is', () => {
     // B (content) sits below U (a utility popup — visible, focusable, but not
-    // in CONTENT_ROLES) which sits below A (key). Hiding A leaves U topmost by
-    // position, but `isContentWindow` excludes it, so the successor is B.
+    // in CONTENT_ROLES) which sits below A (key). A's prior key holder, D,
+    // closes before the hide, so this exercises `successorOnHide`'s fallback
+    // branch: it lands on `topmost`, which leaves U topmost by position, but
+    // `isContentWindow` excludes it, so the successor is B.
     const B = wid(1);
     const U = wid(2);
     const A = wid(3);
+    const D = wid(4);
     const state = fold([
       registerContent(B),
       registerContent(U, { class: 'popup', role: 'utility' }),
+      registerContent(D),
       registerContent(A),
       { type: 'WindowShown', id: B },
       { type: 'WindowShown', id: U },
       { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: D },
+      { type: 'WindowClosed', id: D },
       { type: 'OsFocusGained', id: A },
       { type: 'AppActivated' },
     ]);
     assert.deepStrictEqual(state.order.map((w) => w.id), [B, U, A], 'precondition: U sits above B, A on top');
     assert.strictEqual(isContentWindow(state.order.find((w) => w.id === U)!), false, 'precondition: U is not a content window');
     assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, D, 'precondition: A took key from D');
+    assert.strictEqual(state.order.some((w) => w.id === D), false, 'precondition: D has since closed, forcing the fallback branch');
 
     const ev: Event = { type: 'WindowHidden', id: A };
     const next = evolve(state, ev);
@@ -1721,26 +1826,37 @@ describe('window-kernel: successor raise on WindowHidden', () => {
   it('a successor already marked pendingHidden (a teardown already decided) is skipped in favour of one that is not', () => {
     // C (content, eligible) sits below B (content, but doomed — a teardown
     // was decided for it, and the OS has not confirmed anything yet) which
-    // sits below A (key). Hiding A leaves B topmost by position, but a
-    // doomed window is not a legitimate raise target — raising it would be
-    // an activating show onto a window already committed to teardown.
+    // sits below D (also doomed) which sits below A (key). A's prior key
+    // holder is D, and D has since gone pendingHidden too, so this exercises
+    // `successorOnHide`'s fallback branch: it lands on `topmost`, which
+    // walks down from A past D and B (both doomed, both excluded) to C — a
+    // doomed window is never a legitimate raise target, whatever its
+    // position, because raising one would be an activating show onto a
+    // window already committed to teardown.
     const C = wid(1);
     const B = wid(2);
     const A = wid(3);
+    const D = wid(4);
     const state = fold([
       registerContent(C),
       registerContent(B),
+      registerContent(D),
       registerContent(A),
       { type: 'WindowShown', id: C },
       { type: 'WindowShown', id: B },
+      { type: 'WindowShown', id: D },
       { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: D },
       { type: 'OsFocusGained', id: A },
       { type: 'AppActivated' },
       { type: 'WindowDestroyRequested', id: B },
+      { type: 'WindowDestroyRequested', id: D },
     ]);
-    assert.deepStrictEqual(state.order.map((w) => w.id), [C, B, A], 'precondition: B sits above C, A on top');
+    assert.deepStrictEqual(state.order.map((w) => w.id), [C, B, D, A], 'precondition: B sits above C, D above B, A on top');
     assert.strictEqual(state.order.find((w) => w.id === B)?.pendingHidden, true, 'precondition: B is doomed');
     assert.strictEqual(isContentWindow(state.order.find((w) => w.id === B)!), false, 'precondition: pendingHidden excludes B from isContentWindow');
+    assert.strictEqual(state.order.find((w) => w.id === A)?.priorKey, D, 'precondition: A took key from D');
+    assert.strictEqual(state.order.find((w) => w.id === D)?.pendingHidden, true, 'precondition: D is doomed too, forcing the fallback branch');
 
     const ev: Event = { type: 'WindowHidden', id: A };
     const next = evolve(state, ev);

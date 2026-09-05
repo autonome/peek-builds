@@ -13,7 +13,7 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | F4 raise-means-key | scattered | `window-kernel-executor.ts planRaise`, `planRaiseRealization`, `electron-window-backend.ts raiseWindow` | `planRaiseRealization` is exact. The `suppressed` mask above it now applies to machine raises only (`Effect.RaiseWindow.intent` exempts a user-intended one); `show-and-focus-content` still produces a visible window that accepts no input. `raiseWindow` activates the app on a user-intended raise (darwin, `take-key` and `show-and-take-key`); no other site does. |
 | F5 raise-needs-a-surface | scattered | `window-kernel.ts admitsFocusAssert` and its ~8 callers, `decide RaiseWindow`, `planRaise` | One predicate, consulted independently at ~8 sites; two paths bypass it (`decide`'s raise arm, `planRaise`). |
 | F6 hotkey-is-intent | holds | `renderer/cmd/background.js openPanelWindow` (`activation: 'user'`), `ipc.ts` keyed reuse -> `windows.ts showWindowHeadlessSafe` -> `window-kernel-dispatch.ts kernelShowRequested` (`intent: 'user'` on the `RaiseWindow` command), `window-kernel.ts decide` / `FocusCause.intent` / `react` (onto the effect), `window-kernel-executor.ts planRaise` (`!appActive && intent !== 'user'`), `electron-window-backend.ts raiseWindow` (app activation) | One channel, one word: a raise the user asked for carries `intent: 'user'` end to end and is exempt from the app-inactive mask; every `react`-derived raise carries nothing and stays masked. The kernel never learns which gesture it was. Live gesture (Opt+Space from another app, packaged build) not yet re-checked by hand. |
-| F7 hide-returns-key | contradicted | `window-kernel.ts react` successor loop, `evolve WindowHidden` | No record of the prior key holder exists; the raise goes to the topmost content window unconditionally. A null successor emits nothing rather than yielding to the other app. The non-key clause holds. |
+| F7 hide-returns-key | holds | `window-kernel.ts successorOnHide`, consulted by `react`'s successor loop and `evolve WindowHidden` | `WindowRecord.priorKey` records who held key immediately before the hiding window took it, written by `OsFocusGained` and cleared by `WindowClosed`. `successorOnHide` reads it: a live, admitting prior key holder gets key back; a missing/hidden/doomed one falls back to the topmost content window; `null` (nothing in Peek was key before) raises nothing, rather than the topmost content window unconditionally. |
 | F8 land-somewhere | unimplemented | `react` successor loop, `holdsAppOnScreen` | Only the successor loop restores key, and only when the dismissed window was key and a content window survives. Dismissing a key palette with no content window up leaves `key` dangling. |
 | V1 paint-before-dismiss | holds | `window-kernel.ts isTransientAutocloseCandidate`, ordering floor in `selectTransientAutoclose` | `if (!rec.orderable) return false` gates every reader. |
 | V2 show-is-explicit | scattered | `evolve WindowShown`, `window-kernel-executor.ts isStaleWindowEcho`, `electron-window-backend.ts win.on('show')` | The kernel arm is unconditional; both guards live outside it. A producer emitting `WindowShown` without an `opSeq` bypasses the executor guard. |
@@ -40,16 +40,16 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 10 | F6 V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path) |
+| holds | 11 | F6 F7 V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 8 | F1 F3 F7 S3 D2 D5 D9, V6 (sweeps) |
+| contradicted | 7 | F1 F3 S3 D2 D5 D9, V6 (sweeps) |
 | unimplemented | 2 | F8 D7 |
 
 Three structural facts recur under most of the contradicted and scattered rows:
 
 - **A raise command writes `key` and lands attention by itself** (`decide RaiseWindow`, `kernelWindowShown`), so the model can believe a window is key that the OS never focused, and every raise or confirmation runs a dismissal sweep (F1, F3, F5, S5).
 - **Focus cause is a per-window arming slot fed by seven producers, two of them for one page host** (`electron-window-backend.ts`), so one physical focus can arrive twice with two causes (F2, S3, D7).
-- **No state names the prior key holder or the window a transient was opened over**, so hide-return, self-dismissal and origin stacking have nothing to consult (F7, F8, D7, S4).
+- **No state names the window a transient was opened over**, so self-dismissal and origin stacking have nothing to consult (F8, D7, S4). Hide-return no longer shares this gap: `WindowRecord.priorKey` now names the prior key holder (F7).
 
 ## Two rule-text corrections made by this audit
 

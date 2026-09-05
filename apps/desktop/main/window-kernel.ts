@@ -338,6 +338,25 @@ export interface WindowRecord {
   lastOpSeq?: number;
 
   /**
+   * The window that held `key` immediately before THIS one took it — what
+   * `successorOnHide` (F7 hide-returns-key) consults when this window hides
+   * while holding key, so the raise goes back to whatever was actually in
+   * use rather than to the topmost content window unconditionally.
+   * `null` means nothing held key before this window took it (the palette
+   * opened over another app, or this is the first window a session ever
+   * focuses) — the correct answer there is that nothing comes forward, not a
+   * fallback raise onto a Peek window the user never touched. Written only by
+   * `OsFocusGained` (record-exists branch), alongside `key` itself (RULE 2's
+   * neighbor, same write site) — never by a raise, since a raise's own
+   * confirmation is what will eventually write it for real. Seeded `null` on
+   * a fresh `WindowRegistered` record and preserved as a lived fact across a
+   * re-registration merge, same shape as `lastOpSeq` above. Cleared to `null`
+   * by `WindowClosed` on any record that names the closed id, so a stale
+   * reference to a window that no longer exists is never consulted.
+   */
+  priorKey: WindowId | null;
+
+  /**
    * Set while this window went off screen BECAUSE the app stopped being active
    * (ported from `window-state.ts WindowRecord.hiddenByAppBlur`) — the
    * structural replacement for a native-window expando. `AppActivated` re-shows
@@ -1822,6 +1841,10 @@ export function evolve(state: State, ev: Event): State {
           // A lived fact (focus provenance), same reasoning — re-registration
           // must not erase the newest op issued for this window.
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
+          // A lived fact (§ WindowRecord.priorKey's doc) — a re-registration
+          // names no focus history at all, so it must not overwrite whatever
+          // this window's own `OsFocusGained` already recorded.
+          priorKey: existing.priorKey,
           // A lived fact (app-resign sweep memory), same reasoning — a
           // re-registration mid-sweep must not lose the mark AppActivated
           // needs to know which windows to re-show.
@@ -1956,6 +1979,9 @@ export function evolve(state: State, ev: Event): State {
         // exactly the moment nobody has asked yet (see the field's doc),
         // same reasoning as `contentFocused` below.
         pendingProjectedBounds: null,
+        // § WindowRecord.priorKey's doc — registration is exactly the moment
+        // nothing has taken key yet, so nothing held it before.
+        priorKey: null,
         ...(ev.role !== undefined ? { role: ev.role } : {}),
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
@@ -2076,8 +2102,14 @@ export function evolve(state: State, ev: Event): State {
       // keeps "key window is topmost" untouched (unlike the `WindowClosed`
       // parent-refocus arm, which removes a record and so has to reorder to
       // preserve that invariant) — and `isContentWindow` short-circuits on
-      // `!visible`, so the successor query below already skips the record
-      // being hidden without an explicit exclusion.
+      // `!visible`, so a `successorOnHide` fallback to the topmost content
+      // window already skips the record being hidden without an explicit
+      // exclusion.
+      //
+      // `successorOnHide` (F7 hide-returns-key) is what actually picks the
+      // target, off the hiding record's own `priorKey` — see that helper's
+      // doc. The topmost-content-window answer is now only its fallback, not
+      // the rule.
       //
       // GENUINE-HIDE ONLY: a duplicate hide (the backend echo plus the lagged
       // native event, see the "duplicate WindowHidden" test) must stay inert.
@@ -2096,7 +2128,7 @@ export function evolve(state: State, ev: Event): State {
       );
       const successor =
         hidesGenuinely && state.key === ev.id && state.appActive === true
-          ? topmost({ ...state, order }, isContentWindow)
+          ? successorOnHide({ ...state, order }, target!)
           : null;
       const opSeq = successor !== null ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
@@ -2124,19 +2156,26 @@ export function evolve(state: State, ev: Event): State {
       // HOST is), so a stale mark left on it would exclude the shared chrome
       // overlay from `isBaseLayerPageHost`/`topmostBaseLayerPageHost` forever
       // — the original overlay-attach defect, inverted onto this field.
+      //
+      // A record whose `priorKey` names the closed id is nulled in the SAME
+      // pass, for the same class of reason: § WindowRecord.priorKey's doc —
+      // `successorOnHide` must never consult a prior key holder that no
+      // longer exists, and this is the one place membership shrinks (RULE 1).
       const closedRec = state.order.find((w) => w.id === ev.id);
       const filtered = state.order
         .filter((w) => w.id !== ev.id)
-        .map((w) =>
-          w.overlayFor === ev.id
-            ? {
-                ...w,
-                overlayFor: undefined,
-                ...(w.visible ? { visible: false } : {}),
-                ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
-              }
-            : w,
-        );
+        .map((w) => {
+          const detached =
+            w.overlayFor === ev.id
+              ? {
+                  ...w,
+                  overlayFor: undefined,
+                  ...(w.visible ? { visible: false } : {}),
+                  ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
+                }
+              : w;
+          return w.priorKey === ev.id ? { ...detached, priorKey: null } : detached;
+        });
       // Parent refocus (ported from `window-state.ts`'s `WINDOW_CLOSED` arm —
       // the deleted `main.ts browser-window-created -> 'closed' ->
       // parentWin.focus()` block): a closing window whose parent is still
@@ -2297,7 +2336,16 @@ export function evolve(state: State, ev: Event): State {
       // raise the same window a second time.
       const issuesRaise = state.key !== ev.id && admitsFocusAssert(record, record.visible) && !isOpConfirmation(record, ev.cause);
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
-      const movedRecord = issuesRaise ? { ...record, lastOpSeq: opSeq } : record;
+      // § WindowRecord.priorKey's doc — written alongside `key` itself
+      // (RULE 2's neighbor), only when this report genuinely hands key to a
+      // DIFFERENT window than whoever held it: a report re-confirming the
+      // window that already holds key names nothing new to remember.
+      const takesKey = state.key !== ev.id;
+      const movedRecord = {
+        ...record,
+        ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
+        ...(takesKey ? { priorKey: state.key } : {}),
+      };
       return {
         ...state,
         order: [...withoutRecord, movedRecord],
@@ -3172,10 +3220,13 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // SAME visibility diff the `ShowWindow`/`HideWindow` loop at the top of
   // this function computes, rather than the membership diff those two loops
   // read). A record that went `visible: true` -> `false` and held `prev.key`
-  // hands the raise to whatever content window is left, exactly mirroring
-  // `evolve`'s `WindowHidden` arm — which stamps `lastOpSeq` on that same
-  // successor under this identical condition — so this reads as a pure
-  // structural diff and never re-derives the guard from `ev`.
+  // hands the raise to `successorOnHide`'s answer (F7 hide-returns-key — the
+  // window that was key before THIS one took it, if that window is still a
+  // legitimate raise target, else the topmost content window, else nothing),
+  // exactly mirroring `evolve`'s `WindowHidden` arm — which stamps
+  // `lastOpSeq` on that same successor under this identical condition — so
+  // this reads as a pure structural diff and never re-derives the guard from
+  // `ev`.
   //
   // WHY THE `appActive` TEST IS LOAD-BEARING HERE, AND WHAT HOLDS IT UP. This
   // rule cannot tell which event flipped the visibility — that is the whole
@@ -3202,7 +3253,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     if (!prevRecord.visible || nextRecord.visible) continue;
     if (prevRecord.id !== prev.key) continue;
     if (next.appActive !== true) continue;
-    const successor = topmost(next, isContentWindow);
+    const successor = successorOnHide(next, nextRecord);
     if (successor !== null) {
       effects.push({ type: 'RaiseWindow', id: successor.id, opSeq: next.opSeqCounter });
     }
@@ -5031,4 +5082,30 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
  */
 export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {
   return visible && !record.pendingHidden;
+}
+
+/**
+ * F7 hide-returns-key: the successor to raise when `hiddenRecord` — the
+ * window that just hid while holding key — goes off screen. Shared by
+ * `evolve`'s `WindowHidden` arm (which stamps `lastOpSeq` on the result) and
+ * `react`'s successor-raise loop (which turns it into a `RaiseWindow` effect)
+ * so the two cannot drift apart, the same reason `admitsFocusAssert` itself
+ * is one function rather than two hand-restated copies.
+ *
+ * `hiddenRecord.priorKey` names whatever held key immediately before
+ * `hiddenRecord` took it (§ WindowRecord.priorKey's doc). `null` means
+ * nothing in Peek was in use before this window took key — a palette opened
+ * over another app, say — so nothing comes forward; raising the topmost
+ * content window there would surface a Peek window the user never touched.
+ * A named prior key holder that is still a legitimate raise target
+ * (`admitsFocusAssert`) gets key back. Anything else naming that id —
+ * missing from `order` (closed), hidden, or `pendingHidden` — falls back to
+ * the topmost visible content window, exactly as if there had been no prior
+ * key holder to consult at all.
+ */
+function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
+  if (hiddenRecord.priorKey === null) return null;
+  const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
+  if (prior !== undefined && admitsFocusAssert(prior, prior.visible)) return prior;
+  return topmost(state, isContentWindow);
 }

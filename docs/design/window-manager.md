@@ -593,6 +593,18 @@ Still-open size reductions, none acted on: `State.pendingColdStartFocus` (armed 
 `WindowRecord.escapeMode` was ON that list and has been REMOVED from it — see its docblock in
 `window-kernel.ts`: deleting it is a live regression, not a cleanup.
 
+**Closing a palette opened over another app raised the settings window, closed (2026-09-05).**
+A palette opened by hotkey while another app was frontmost, then dismissed with Escape, raised
+the settings window — a window the user never touched. `react`'s successor-raise loop and
+`evolve`'s `WindowHidden` arm both picked the topmost visible content window unconditionally
+whenever the key holder hid, with nothing recording what (if anything) held key before it. Fix:
+`WindowRecord.priorKey` names whoever held key immediately before a window took it, written
+alongside `key` itself by `OsFocusGained` and cleared by `WindowClosed`; the shared
+`successorOnHide` helper reads it — a live prior key holder gets key back, a since-closed/hidden/
+doomed one falls back to the topmost content window, and `null` (nothing in Peek was in use
+before) raises nothing at all. `window-kernel.test.ts` "successor raise on WindowHidden" pins all
+four shapes, failing-first.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

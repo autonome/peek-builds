@@ -35,7 +35,7 @@ is final; a *reversible hide* (app resign) is not.
 - **F4 raise-means-key.** A window brought to the front ends up key and accepting input; only a window that is already key is merely reordered.
 - **F5 raise-needs-a-surface.** A raise lands only on a window that is visible and not pending hidden; on any other record it drives nothing.
 - **F6 hotkey-is-intent.** A global hotkey activates Peek and gives its target key regardless of the frontmost app; the app-inactive mask applies only to machine-initiated raises.
-- **F7 hide-returns-key.** When the key window hides or closes, key goes to the window that was key before it (if visible), else the topmost visible content window, else the other app; hiding a non-key window moves nothing.
+- **F7 hide-returns-key.** When the key window hides or closes, key goes to the window that was key before it took key, if that window is still visible; if that window is gone, to the topmost visible content window; if nothing in Peek was key before it, nothing is raised.
 - **F8 land-somewhere.** After any dismissal something visible is key and accepts typing without a click.
 
 ## Visibility and lifecycle
@@ -95,4 +95,4 @@ is final; a *reversible hide* (app resign) is not.
 | Restored window comes back un-maximized | G13 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
-Open against these rules at `dc3febab`: G1/F6 (raise masked while Peek inactive, `window-kernel-executor.ts planRaise`), G3/F7 (successor raise on hide is unconditional, `window-kernel.ts react`), D7 (post-paint sweep, open), the doubled `DismissWindow` per sweep (S3). Everything else in the table is fixed or not reproducing; G8, G11, G12 and F8 have not been checked by hand since 2026-08-21. The kernel read against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
+Open against these rules at `dc3febab`: D7 (post-paint sweep, open), the doubled `DismissWindow` per sweep (S3). G1/F6 (raise masked while Peek inactive, `window-kernel-executor.ts planRaise`) is closed at `88da1749`; G3/F7 (successor raise on hide is unconditional, `window-kernel.ts react`) is closed by this commit. Everything else in the table is fixed or not reproducing; G8, G11, G12 and F8 have not been checked by hand since 2026-08-21. The kernel read against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.

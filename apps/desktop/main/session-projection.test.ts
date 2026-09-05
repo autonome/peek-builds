@@ -115,6 +115,7 @@ function makeRecord(id: string, over: Partial<WindowRecord> = {}): WindowRecord 
     // Runtime registration order; deliberately NOT projected into any
     // descriptor (see `WindowRecord.openSeq`), so the value is arbitrary here.
     openSeq: 0,
+    priorKey: null,
     ...over,
   };
 }
