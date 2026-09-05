@@ -185,10 +185,20 @@ export interface WindowRecord {
    * `WindowContentCloseRequested`, `WindowDirectCloseRequested`) — see
    * `evolve`'s TEARDOWN section for why `GuestTeardownRequested` does NOT set
    * it: that teardown names no window, and inferring which records own
-   * guests is not something the kernel can know. NOT set for a
-   * transient-autoclose dismissal victim either (`selectTransientAutoclose`)
-   * — that selector is a pure query `react` runs off `next`, and marking a
-   * victim here would make the sweep consume its own output.
+   * guests is not something the kernel can know. ALSO SET by each of
+   * `evolve`'s three transient-autoclose sweep triggers (`OsFocusGained`,
+   * `AppResignSettled`, `WindowContentOrderable`) on the victims
+   * `selectTransientAutoclose` chooses, in the SAME transition that chooses
+   * them (S3, fixed 2026-09-05 — see `docs/design/window-manager.md` → "Open
+   * kernel defects"). Marking there does not make the sweep consume its own
+   * output, because `react` no longer re-runs `selectTransientAutoclose` at
+   * all: it diffs `pendingHidden` itself (not-true in `prev` -> `true` in
+   * `next`, unless the flip is explained by a teardown request naming the
+   * same record), so a victim marked this transition is only OBSERVED by
+   * this transition's own diff, never re-selected by it. What keeps a marked
+   * record out of every LATER sweep is `isTransientAutocloseCandidate`'s own
+   * `pendingHidden` clause, until `WindowHidden`/`WindowShown` clears the
+   * mark below.
    *
    * CLEARED by `WindowShown` (mirrors the `hiddenByAppBlur` clear on that
    * same arm) and by `WindowHidden` (the confirming echo — the fact has done
@@ -2346,9 +2356,18 @@ export function evolve(state: State, ev: Event): State {
         ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
         ...(takesKey ? { priorKey: state.key } : {}),
       };
+      const order = [...withoutRecord, movedRecord];
+      // Mark this transition's own sweep victims `pendingHidden` (S3, fixed
+      // 2026-09-05 — see `WindowRecord.pendingHidden`'s doc): the choice is
+      // made HERE, off the state this same write is about to produce, so
+      // `react`'s dismissal diff only ever OBSERVES it, never re-derives it —
+      // which is what stops a second `OsFocusGained` queued behind the
+      // first's own `DismissWindow`/`WindowHidden` pair from re-selecting a
+      // window this transition already chose.
+      const sweepVictims = new Set(selectTransientAutoclose({ ...state, order }, ev.id, attention.cause));
       return {
         ...state,
-        order: [...withoutRecord, movedRecord],
+        order: sweepVictims.size > 0 ? order.map((w) => (sweepVictims.has(w.id) ? { ...w, pendingHidden: true } : w)) : order,
         key: ev.id,
         opSeqCounter: opSeq,
         lastAttention: attention,
@@ -2410,9 +2429,19 @@ export function evolve(state: State, ev: Event): State {
       // function's doc). A transient this raw edge hid would read `!visible`
       // to `selectTransientAutoclose` at the settle and survive it; excluding
       // it here instead leaves it visible for the settle to dismiss.
+      //
+      // `!w.pendingHidden` catches the other half, now that the mark
+      // persists (S3, fixed 2026-09-05): a transient some EARLIER sweep
+      // already chose is `pendingHidden` but no longer a `dismissVictims`
+      // member — `isTransientAutocloseCandidate` excludes a marked record
+      // from the law's own consideration set, so a fresh call here cannot
+      // re-name it. Without this clause a window awaiting its `WindowHidden`
+      // confirmation would fall through to `isAppResignSweepEligible` and
+      // get the reversible treatment instead, resurrecting on the next
+      // activation a window the machine already decided to dismiss.
       const dismissVictims = new Set(selectTransientAutoclose(state, null));
       const hidesImmediately = (w: WindowRecord): boolean =>
-        !dismissVictims.has(w.id) && w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
+        !w.pendingHidden && !dismissVictims.has(w.id) && w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
       const hidesSomething = state.order.some(hidesImmediately);
       return {
         ...state,
@@ -2575,15 +2604,24 @@ export function evolve(state: State, ev: Event): State {
       // resign-sweep rule will actually fire (`attentionLost`): a settle that
       // does not dismiss runs the backstop hide unfiltered, exactly as it does
       // today.
+      // Marked `pendingHidden` here in the same map, not just excluded from
+      // the reversible hide below (S3, fixed 2026-09-05 — see
+      // `WindowRecord.pendingHidden`'s doc): the choice is made off `state`
+      // now, so `react`'s dismissal diff only observes it. `!w.pendingHidden`
+      // guards the reversible branch too, for a record ALREADY marked by an
+      // earlier sweep and still awaiting its `WindowHidden` confirmation —
+      // such a record is no longer a `dismissVictims` member (the mark took
+      // it out of the law's own consideration set), so without this clause
+      // it would fall through to `isAppResignSweepEligible` and be resurrected
+      // by the next activation instead of staying dismissed.
       const dismissVictims = attentionLost ? new Set(selectTransientAutoclose(state, null)) : null;
       return {
         ...state,
         pendingAppResignSweep: false,
-        order: state.order.map((w) =>
-          isAppResignSweepEligible(w) && !(dismissVictims?.has(w.id) ?? false)
-            ? { ...w, visible: false, hiddenByAppBlur: true }
-            : w,
-        ),
+        order: state.order.map((w) => {
+          if (dismissVictims?.has(w.id)) return { ...w, pendingHidden: true };
+          return !w.pendingHidden && isAppResignSweepEligible(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w;
+        }),
         version: state.version + 1,
       };
     }
@@ -2591,9 +2629,27 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowContentOrderable': {
       // Never resets to false — a miss (unregistered id) or a window already
       // orderable is a harmless no-op, not a repair.
+      const record = state.order.find((w) => w.id === ev.id);
+      const flipsToOrderable = record !== undefined && !record.orderable;
+      const order = state.order.map((w) => (w.id === ev.id ? { ...w, orderable: true } : w));
+      // The paint-flip sweep (S3, fixed 2026-09-05 — see
+      // `WindowRecord.pendingHidden`'s doc and `react`'s dismissal diff): this
+      // arm is what admits a just-painted record to candidacy
+      // (`isTransientAutocloseCandidate`'s `orderable` clause), so it is also
+      // where the law gets to ask about it, against whatever `lastAttention`
+      // already stands — not a fresh report, the standing one, exactly
+      // `selectTransientAutoclose`'s arguments in the `OsFocusGained` arm
+      // above. An event names at most one record, so at most one id can flip
+      // here; the mark lands only if THAT id is the law's answer.
+      const attention = state.lastAttention;
+      const isVictim =
+        flipsToOrderable &&
+        attention !== null &&
+        order.some((w) => w.id === attention.holder) &&
+        selectTransientAutoclose({ ...state, order }, attention.holder, attention.cause).includes(ev.id);
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, orderable: true } : w)),
+        order: isVictim ? order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)) : order,
         version: state.version + 1,
       };
     }
@@ -3451,115 +3507,49 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter, ...(userIntended ? { intent: 'user' } : {}) });
   }
 
-  // Transient autoclose (§0: "the machine applies the rule; no caller does" —
-  // `selectTransientAutoclose` stays a pure QUERY, and `react` is what turns
-  // its answer into effects, so rule application is non-optional). Dismissal
-  // used to be ONE condition; it is now TWO structural diffs, kept at this
-  // same slot — immediately after the `RaiseWindow` rule and before
-  // `SetStacking` — so emitted effect ordering is unchanged: the old
-  // machine's fixed effect order was `[autoclose…, FOCUS_CONTENT]`, sweep
-  // before the trailing focus re-assert, and both halves below still ride
-  // right after the raise they are triggered alongside.
+  // Transient autoclose (§0: "the machine applies the rule; no caller does").
+  // Dismissal is now ONE structural diff, kept at this same slot —
+  // immediately after the `RaiseWindow` rule and before `SetStacking` — so
+  // emitted effect ordering is unchanged: the old machine's fixed effect
+  // order was `[autoclose…, FOCUS_CONTENT]`, sweep before the trailing focus
+  // re-assert, and this still rides right after the raise it is triggered
+  // alongside.
   //
-  // (a) FOCUS-REPORT SWEEP — a structural diff of `State.lastAttention`, the
-  // same shape as the teardown/focus-assert rules below it in this function:
-  // the `seq` comparison is what makes it a diff rather than a read, so a
-  // transition that did not write a fresh attention fact leaves the field
-  // alone and emits nothing, and two reports for the same holder — even an
-  // echo re-confirming the window that already holds key — carry different
-  // `seq` values and are each swept independently, mirroring the old
-  // machine's `OS_FOCUS_GAINED` arm running `selectTransientAutoclose` on
-  // every report, not just the ones that moved `front`.
+  // `selectTransientAutoclose` stays a pure QUERY, but `react` no longer
+  // calls it (S3, fixed 2026-09-05 — the doubled-`DismissWindow` defect:
+  // `window-rules.md` failure "Switcher's focus sweeps the palette twice for
+  // one window"). The choice of WHICH record to dismiss is now made in
+  // `evolve`, by the three sweep triggers themselves (`OsFocusGained`'s
+  // focus-report sweep, `AppResignSettled`'s resign sweep,
+  // `WindowContentOrderable`'s paint-flip sweep) — each calls
+  // `selectTransientAutoclose` off the state it is about to produce and
+  // marks its own victims `pendingHidden: true` in that SAME transition
+  // (`WindowRecord.pendingHidden`'s doc). `react` only has to notice the mark
+  // landing, as a structural diff like every other rule here: a record whose
+  // `pendingHidden` reads not-true in `prev` and `true` in `next` yields one
+  // `DismissWindow` — UNLESS that flip is explained by a teardown request
+  // naming the same record instead of a sweep choosing it (the three
+  // window-naming teardown arms mark the same field, but drive their own
+  // effect through the Teardown rule below, not this one). "Explained by a
+  // teardown" is the Teardown rule's own freshness test — `next.lastTeardown`
+  // changing THIS transition — restated here to read the target it names;
+  // `destroy-all-guests` names no window, so it can never explain a mark.
   //
-  // decide's `RaiseWindow` COMMAND is translated into an `OsFocusGained`
-  // event, so a machine-issued raise sweeps where the old machine's
-  // `RAISE_WINDOW_REQUESTED` did not. That is intended, not a gap: a raise
-  // that genuinely takes key IS "some other window takes key", and the
-  // machine-cause ordering floor `selectTransientAutoclose` holds (spare
-  // anything opened after the op that caused the focus) is what keeps a
-  // machine-driven raise from sweeping something opened after it was issued.
-  // That floor arms ONLY on a `machine` cause, so every producer of a
-  // machine-issued focus report owes one: `decide`'s `RaiseWindow` arm above,
-  // `window-kernel-dispatch.ts`'s `kernelOsFocusGained` (threading the
-  // backend's `takeFocusCause`) and `kernelWindowShown`'s companion
-  // focus. A producer that omits it reads as the world, the floor disarms, and
-  // a raise sweeps the window whose own opening provoked it.
-  const attention = next.lastAttention;
-  if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
-    const holder = attention.holder;
-    // An INDETERMINATE holder — absent from `order` — declines rather than
-    // guesses: the machine holds no record for it, so it cannot evaluate the
-    // ownership relation (`parentId`/`overlayFor`) `selectTransientAutoclose`
-    // needs — the same guard the `RaiseWindow` rule above holds for a
-    // dangling `key`, since `evolve` writes `holder` (and `key`) even for a
-    // focuser absent from `order`. `holder` is always a real `WindowId` here
-    // (`Attention.holder`'s type, narrowed once the app-resign write below
-    // stopped sharing this field) — attention landing on nothing of Peek's
-    // is rule (b) below, not a `null` holder here.
-    if (next.order.some((w) => w.id === holder)) {
-      for (const id of selectTransientAutoclose(next, holder, attention.cause)) {
-        effects.push({ type: 'DismissWindow', id });
-      }
-    }
-  }
-
-  // (b) RESIGN SWEEP — a structural diff of `pendingAppResignSweep`/
-  // `appActive`, replacing the `holder: null` write `AppResignSettled` used
-  // to stamp onto `State.lastAttention` as a one-shot message. The diff is
-  // that arm's own `attentionLost` test (`!state.appActive`) restated so
-  // `react` can read it without branching on `ev.type`: the arm never
-  // touches `appActive`, so `next.appActive === state.appActive` there, and
-  // `!next.appActive` IS `attentionLost`. `AppActivated` also disarms
-  // `pendingAppResignSweep`, but sets `appActive: true` in the same
-  // transition, so `!next.appActive` is exactly what separates a real settle
-  // from the dance cancel; an inert settle (the early return on
-  // `!state.pendingAppResignSweep`) never even satisfies
-  // `prev.pendingAppResignSweep`. `focusedId: null` — attention on nothing of
-  // Peek's — is a DETERMINATE fact, so unlike (a) this rule needs no
-  // indeterminate guard.
-  if (prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive) {
-    for (const id of selectTransientAutoclose(next, null)) {
-      effects.push({ type: 'DismissWindow', id });
-    }
-  }
-
-  // (c) ORDERABLE-FLIP SWEEP — the same law asked a second time for a record
-  // `evolve`'s `WindowContentOrderable` arm just admitted to candidacy
-  // (`isTransientAutocloseCandidate`'s `orderable` clause). Rule (a) above
-  // only re-derives the sweep off a FRESH `lastAttention.seq`; a record that
-  // becomes orderable in a LATER transition, with no focus report of its own
-  // in between, is never revisited by it — a hybrid quick-view whose
-  // first-composited-frame report lands after its focuser's `OsFocusGained`
-  // has already run stays on screen forever otherwise.
-  //
-  // A structural diff of `orderable` itself, never a branch on `ev.type`: any
-  // record present in both `prev`/`next` whose flag reads false -> true is
-  // checked against whatever `next.lastAttention` ALREADY names — not a
-  // fresh report, the standing one — with that holder and its `cause` as
-  // `selectTransientAutoclose`'s inputs, exactly rule (a)'s own arguments.
-  // The law itself is untouched: `selectTransientAutoclose` already excludes
-  // the holder as its own victim and applies all four exemptions unchanged;
-  // this only widens WHEN the law gets asked about a record that just became
-  // eligible to be asked about.
-  //
-  // An INDETERMINATE holder — no attention yet, or one absent from
-  // `next.order` — declines exactly like rule (a) does, silently.
-  const standingAttention = next.lastAttention;
-  if (standingAttention !== null && next.order.some((w) => w.id === standingAttention.holder)) {
-    const flippedToOrderable = new Set<WindowId>();
-    for (const nextRecord of next.order) {
-      const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
-      if (prevRecord !== undefined && !prevRecord.orderable && nextRecord.orderable) {
-        flippedToOrderable.add(nextRecord.id);
-      }
-    }
-    if (flippedToOrderable.size > 0) {
-      for (const id of selectTransientAutoclose(next, standingAttention.holder, standingAttention.cause)) {
-        if (flippedToOrderable.has(id)) {
-          effects.push({ type: 'DismissWindow', id });
-        }
-      }
-    }
+  // Because the mark can only ever flip once per transition per record (it
+  // is a boolean, and nothing un-marks it before `WindowHidden`/`WindowShown`
+  // clears it), a record already marked in `prev` diffs to nothing here even
+  // if some rule tried to mark it again — which is exactly what closes S3:
+  // `isTransientAutocloseCandidate`'s `pendingHidden` clause keeps a marked
+  // record out of `selectTransientAutoclose`'s own consideration set, so
+  // there is no second choice for this diff to even observe.
+  const freshTeardown = next.lastTeardown !== null && next.lastTeardown.seq !== prev.lastTeardown?.seq ? next.lastTeardown : null;
+  const teardownTargetId = freshTeardown !== null && freshTeardown.kind !== 'destroy-all-guests' ? freshTeardown.id : undefined;
+  for (const nextRecord of next.order) {
+    if (nextRecord.pendingHidden !== true) continue;
+    if (nextRecord.id === teardownTargetId) continue;
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord?.pendingHidden === true) continue;
+    effects.push({ type: 'DismissWindow', id: nextRecord.id });
   }
 
   // SetStacking (§0.1.6): a MINIMAL replay, not a re-assert of everything
@@ -4722,9 +4712,21 @@ export function isNonParentRole(role: string | undefined): boolean {
  * there would both restate the law and spare more windows than intended,
  * silently — `window-kernel-properties.test.ts` over-approximates exemptions
  * and would not catch it.
+ *
+ * `pendingHidden` IS THE OTHER HALF OF CANDIDACY, for the same reason
+ * `orderable` is (S3, fixed 2026-09-05): a record `evolve` has already marked
+ * for dismissal — whether by a teardown request or by an earlier sweep in
+ * this same transition or a prior one — is not a window still THERE to lose
+ * focus to something else; asking the law about it again is what let the two
+ * native focus producers on one page host (`electron-window-backend.ts`
+ * `win.on('focus')` and `rendererWC.on('focus')`) queue two `OsFocusGained`
+ * events for one physical focus and get two `DismissWindow` effects for the
+ * same window out of them. `WindowHidden`/`WindowShown` clear the mark, so a
+ * window returns to candidacy once the OS confirms the hide, never before.
  */
 export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
   if (!rec.orderable) return false;
+  if (rec.pendingHidden === true) return false;
   return roleIn(TRANSIENT_ROLES, rec.role) || rec.selfClosesOnBlur === true;
 }
 

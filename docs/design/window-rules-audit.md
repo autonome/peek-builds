@@ -23,7 +23,7 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | V6 one-close-per-input | holds (Escape), contradicted (sweeps) | `window-escape-runtime.ts handleEscapePress` pass B, `renderer/cmd/panel.js shutdown` | Escape path is exact. Blur sweeps double up, see S3. |
 | S1 order-is-total | holds | `evolve RegisterWindow`, `WindowClosed`, `OsFocusGained` | The only `filter` that drops a member is in `WindowClosed`. |
 | S2 fixed-point | scattered | `window-kernel-executor.ts pump`, `isStaleSelfEcho`, `isStaleWindowEcho`, `isOpConfirmation`, `planRaiseRealization` | `pump` is an unbounded FIFO with no depth limit; termination is the conjunction of four guards at four sites. |
-| S3 one-raise-per-cause | contradicted | `evolve WindowClosed`, `react` parent-refocus and focus-assert rules, `selectTransientAutoclose`, `isTransientAutocloseCandidate` | One `WindowClosed` can emit two raises sharing one token. The rule's dismissal half (select a window for dismissal at most once until its hide is confirmed) is contradicted: `isTransientAutocloseCandidate` reads `orderable` and `visible` but never `pendingHidden`, so an already-dismissed window is selected again by the next sweep. A page host has two native focus producers (`win.on('focus')` and `rendererWC.on('focus')`), so one physical focus yields two attention seqs and two sweeps; `raiseWindow` arms between them, which is why the pair logs as `cause=world` then `cause=machine`. |
+| S3 one-raise-per-cause | contradicted (raise half), holds (dismissal half, fixed 2026-09-05) | `evolve WindowClosed`, `react` parent-refocus and focus-assert rules, `evolve OsFocusGained`/`AppResignSettled`/`WindowContentOrderable`, `selectTransientAutoclose`, `isTransientAutocloseCandidate` | The raise half is unchanged: one `WindowClosed` can emit two raises sharing one token. The dismissal half (select a window for dismissal at most once until its hide is confirmed) now holds: the three `react` rules that used to re-query `selectTransientAutoclose` off `next` were collapsed into `evolve` marking its own chosen victims `pendingHidden` in the SAME transition that selects them, and `isTransientAutocloseCandidate` now excludes a marked record from the law's own consideration set, so a later sweep cannot choose it again before `WindowHidden`/`WindowShown` clears the mark. `react` no longer calls the selector at all — it diffs the mark landing into one `DismissWindow`. The two-native-focus-producer shape (`win.on('focus')` and `rendererWC.on('focus')`, one physical focus yielding two attention seqs and two sweeps queued behind one FIFO pump) still occurs, but the second report now selects nothing new instead of re-dismissing the same window. |
 | S4 transient-above-origin | scattered, origin half unimplemented | `stackingLevelForLayer`, `overlayFollowPatch`, `evolve RegisterWindow` | The overlay half is single-sited and holds. Nothing relates a transient to its origin for stacking; registration inserts a transient below the key window. |
 | S5 key-raise-reorders | scattered | `planRaiseRealization`, `raiseWindow`, `kernelWindowShown` | Native half holds. `raiseWindow` ends both branches with `kernelWindowShown(id, true, opSeq)`, so a pure reorder still lands a companion focus and a fresh attention seq. |
 | D1 one-escape-rule | scattered, partial | `window-escape.ts resolveEscapeTarget`, `ESC_CLOSE_ROLES`, `escapeClosePolicy` | One role set standing in for the "Escape closes this window" declaration, one policy, no per-kind arm. "Topmost visible Escape-closable" is implemented only in the no-key branch; with a content window key and an Escape-closable transient visible, Escape opens the fallback window. |
@@ -40,10 +40,13 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 11 | F6 F7 V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path) |
+| holds | 12 | F6 F7 V1 V3 V4 V5 S1 D3 D6 D8, V6 (Escape path), S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
 | contradicted | 7 | F1 F3 S3 D2 D5 D9, V6 (sweeps) |
 | unimplemented | 2 | F8 D7 |
+
+S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the
+contradicted row above names only the raise half (one `WindowClosed` can still emit two raises).
 
 Three structural facts recur under most of the contradicted and scattered rows:
 

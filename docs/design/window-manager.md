@@ -605,6 +605,32 @@ doomed one falls back to the topmost content window, and `null` (nothing in Peek
 before) raises nothing at all. `window-kernel.test.ts` "successor raise on WindowHidden" pins all
 four shapes, failing-first.
 
+**Switcher's focus sweeps swept the same window twice, closed (2026-09-05).** A page host has two
+native focus producers (`electron-window-backend.ts` `win.on('focus')` and `rendererWC.on('focus')`),
+both echoing one physical focus synchronously, so two `OsFocusGained` events for the same target
+land back-to-back. The executor's `pump` QUEUES a nested dispatch behind whatever is already
+draining, so the first report's own `DismissWindow` → `CloseOrHideWindow` → `WindowHidden` chain was
+still in the queue — the victim still read `visible: true` — when the second report's sweep ran
+`selectTransientAutoclose` again and named it a second time, logging as `cause=world` then
+`cause=machine` for one physical raise. Fix: a window chosen for dismissal is marked
+`pendingHidden: true` in the SAME transition that chooses it — `evolve`'s three sweep triggers
+(`OsFocusGained`'s focus-report sweep, `AppResignSettled`'s resign sweep,
+`WindowContentOrderable`'s paint-flip sweep) each call `selectTransientAutoclose` off the state they
+are about to produce and mark their own victims, instead of leaving the choice to `react` querying
+`next` fresh every time. `isTransientAutocloseCandidate` gained a `pendingHidden` clause, so a
+marked record is never selected again until `WindowHidden`/`WindowShown` clears the mark (both arms
+already did). `react` no longer calls `selectTransientAutoclose` at all: it diffs `pendingHidden`
+itself (not-true in `prev` → `true` in `next`), skipping a flip already explained by a teardown
+request naming the same record. The app-resign arms needed one more clause each: a record already
+`pendingHidden` from an earlier sweep is no longer a fresh `selectTransientAutoclose` answer either
+(the mark excludes it from the law's own consideration set), so both `AppResigned`'s raw-edge hide
+and `AppResignSettled`'s backstop now also refuse a record already marked, or the reversible hide
+would have resurrected a window already dismissed. `window-kernel.test.ts` "S3: two back-to-back
+world-caused OsFocusGained events…" and "…selectable again…" pin both the fixed duplicate and the
+after-hide recovery, failing-first; `window-kernel-properties.test.ts checkAutocloseWiring` now also
+asserts no duplicate id among one `react()` call's `DismissWindow` effects and that every
+`DismissWindow` names a record whose `pendingHidden` reads true in `next`.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

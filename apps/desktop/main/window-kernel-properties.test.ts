@@ -1081,26 +1081,36 @@ function checkAutocloseInvariants(state: State): string[] {
 }
 
 /**
- * Extra invariant proving `react` actually APPLIES `selectTransientAutoclose`
- * for the transition it just ran, rather than a lookalike rule that matches
- * nothing in practice (this repo's documented failure mode for predicates).
- * `checkAutocloseInvariants` above only checks the selector's own soundness in
- * isolation, against every possible focuser — it says nothing about whether
- * `react`'s emitted `DismissWindow` effects are actually its output for the
- * ONE real transition that just happened.
+ * Extra invariant proving `react` actually PROJECTS `evolve`'s own dismissal
+ * choice for the transition it just ran, rather than a lookalike rule that
+ * matches nothing in practice (this repo's documented failure mode for
+ * predicates). `checkAutocloseInvariants` above only checks the selector's own
+ * soundness in isolation, against every possible focuser — it says nothing
+ * about whether `react`'s emitted `DismissWindow` effects are actually its
+ * output for the ONE real transition that just happened.
  *
- * TWO structural diffs feed `DismissWindow` now, and this check derives an
- * expected set from whichever one advanced:
+ * ONE structural diff feeds `DismissWindow` now (S3, fixed 2026-09-05): the
+ * choice of WHICH record to dismiss is made in `evolve`, by whichever of its
+ * three sweep triggers (`OsFocusGained`, `AppResignSettled`,
+ * `WindowContentOrderable`) ran this transition, and each marks its own
+ * victims `pendingHidden` in that SAME transition (`WindowRecord.pendingHidden`'s
+ * doc). `react` only diffs the mark: a record whose `pendingHidden` reads
+ * not-true in `prev` and `true` in `next` is expected on a `DismissWindow`,
+ * UNLESS the flip is explained by a teardown request naming the same record
+ * (the Teardown rule's own effect, not this one) — `next.lastTeardown`
+ * changing this transition, restated here exactly as `react` restates it.
  *
- *   - `next.lastAttention`'s `seq` diff (a focus report) — the same fact
- *     `react`'s rule (a) diffs, so this reads no event payload either. A
- *     `holder` absent from `next.order` is INDETERMINATE and expects no
- *     dismissal, mirroring `react`'s own guard; `Attention.holder` is always
- *     a real `WindowId` here, never `null`.
- *   - the `pendingAppResignSweep`/`appActive` diff (an app-resign settle) —
- *     the same diff `react`'s rule (b) reads, restating that arm's own
- *     `attentionLost` test. `focusedId: null` is always determinate, so this
- *     branch never has an indeterminate case to guard.
+ * TWO further properties this same check pins, named directly in `react`'s
+ * own doc for the diff rule:
+ *
+ *   - NO DUPLICATE ID among one `react()` call's `DismissWindow` effects —
+ *     `pendingHidden` is a boolean, so a record can flip at most once per
+ *     transition, and `isTransientAutocloseCandidate`'s own `pendingHidden`
+ *     clause is what keeps `evolve`'s sweep from ever choosing an
+ *     already-marked record again.
+ *   - EVERY `DismissWindow` NAMES A RECORD WHOSE `pendingHidden` READS TRUE
+ *     IN `next` — the mark and the effect are written by the same choice, so
+ *     the two can never disagree.
  *
  * Kept per-EVENT (`Step`, same unit `checkOpSeqInvariants` uses above), not
  * per-log-item: a command can fold into several events, and aggregating their
@@ -1109,54 +1119,31 @@ function checkAutocloseInvariants(state: State): string[] {
 function checkAutocloseWiring(step: Step): string[] {
   const { prev, next, effects } = step;
   const violations: string[] = [];
-  const dismissed = new Set(effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id));
+  const dismissedList = effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id);
+  const dismissed = new Set(dismissedList);
 
-  const attention = next.lastAttention;
-  const advanced = attention !== null && attention.seq !== prev.lastAttention?.seq;
-  const holder = attention?.holder ?? null;
-  const indeterminate = holder !== null && !next.order.some((w) => w.id === holder);
+  if (dismissedList.length !== dismissed.size) {
+    violations.push(`duplicate id among one react() call's DismissWindow effects: ${JSON.stringify(dismissedList)}`);
+  }
 
-  const resignSwept = prev.pendingAppResignSweep && !next.pendingAppResignSweep && !next.appActive;
-
-  // ORDERABLE-FLIP SWEEP — mirrors react's rule (c): a record present in both
-  // `prev`/`next` whose `orderable` flag flipped false -> true this
-  // transition is re-checked against the CURRENT `next.lastAttention`, not a
-  // fresh report of its own. A `WindowContentOrderable` event never also
-  // advances `lastAttention` or the resign-sweep fields, so this branch never
-  // competes with (a)/(b) above for the same step.
-  const orderableFlipped = next.order.filter((r) => {
-    const p = prev.order.find((w) => w.id === r.id);
-    return p !== undefined && !p.orderable && r.orderable;
-  });
-  const flipHolderLive = attention !== null && next.order.some((w) => w.id === attention.holder);
-
-  if (advanced && !indeterminate && attention !== null) {
-    const expected = new Set(selectTransientAutoclose(next, holder, attention.cause));
-    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
-      violations.push(
-        `react's DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
-      );
+  for (const id of dismissed) {
+    if (next.order.find((w) => w.id === id)?.pendingHidden !== true) {
+      violations.push(`DismissWindow named ${id}, but its pendingHidden does not read true in next`);
     }
-  } else if (resignSwept) {
-    const expected = new Set(selectTransientAutoclose(next, null));
-    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
-      violations.push(
-        `react's resign-sweep DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
-      );
-    }
-  } else if (orderableFlipped.length > 0 && flipHolderLive && attention !== null) {
-    const flippedIds = new Set(orderableFlipped.map((r) => r.id));
-    const expected = new Set(
-      selectTransientAutoclose(next, attention.holder, attention.cause).filter((id) => flippedIds.has(id)),
-    );
-    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
-      violations.push(
-        `react's orderable-flip DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
-      );
-    }
-  } else if (dismissed.size > 0) {
+  }
+
+  const freshTeardown =
+    next.lastTeardown !== null && next.lastTeardown.seq !== prev.lastTeardown?.seq ? next.lastTeardown : null;
+  const teardownTargetId = freshTeardown !== null && freshTeardown.kind !== 'destroy-all-guests' ? freshTeardown.id : undefined;
+  const expected = new Set(
+    next.order
+      .filter((r) => r.pendingHidden === true && r.id !== teardownTargetId)
+      .filter((r) => prev.order.find((w) => w.id === r.id)?.pendingHidden !== true)
+      .map((r) => r.id),
+  );
+  if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
     violations.push(
-      `DismissWindow effect(s) emitted with no attention advance to a determinate holder: ${JSON.stringify([...dismissed])}`,
+      `react's DismissWindow effects diverged from the pendingHidden diff: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
     );
   }
 

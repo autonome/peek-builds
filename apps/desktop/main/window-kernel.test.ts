@@ -3801,14 +3801,24 @@ describe('window-kernel: which windows a real app resign hides', () => {
       { type: 'WindowRegistered', id: quickView, kind: 'page-host', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'quick-view', role: 'quick-view', selfClosesOnBlur: true },
       { type: 'WindowRegistered', id: alreadyHiddenHud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
       { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher' },
+      // `workspace` takes key BEFORE any of the floaters/transients below are
+      // shown (S3, fixed 2026-09-05): `evolve`'s `OsFocusGained` arm now marks
+      // its own sweep victims `pendingHidden` in the same transition (see
+      // `WindowRecord.pendingHidden`'s doc), and a switcher shown before this
+      // report would already be a visible, unexempted transient losing focus
+      // to `workspace` — dismissed by this setup event before the resign
+      // scenario below ever gets to exercise it. Ordering the report first
+      // means nothing eligible for the law is visible yet, so it sweeps
+      // nothing, and `key` still ends on `workspace` for every test in this
+      // block that wants it.
       { type: 'WindowShown', id: workspace },
+      { type: 'OsFocusGained', id: workspace },
       { type: 'WindowShown', id: hud },
       { type: 'WindowShown', id: spaceBorder },
       { type: 'WindowShown', id: testFixture },
       { type: 'WindowShown', id: cmdPanel },
       { type: 'WindowShown', id: quickView },
       { type: 'WindowShown', id: switcher },
-      { type: 'OsFocusGained', id: workspace },
     ]);
 
   const sweptBy = (state: State): WindowId[] =>
@@ -4655,11 +4665,17 @@ describe('window-kernel: isNonParentRole', () => {
 /**
  * `selectTransientAutoclose` (above) is a pure QUERY — proven sound in
  * isolation, against every focuser. This block proves the OTHER half of §0's
- * rule: `react` actually CALLS it and turns the answer into effects for the
- * transition that just happened, off the `State.lastAttention` diff.
- * Before this file's change, no non-test caller ran the selector at all — a
- * predicate can be "correct in form but match nothing in practice", so these
- * assert the emission, not just the selector.
+ * rule: the choice it makes actually reaches an effect for the transition
+ * that just happened. As of S3 (fixed 2026-09-05) that is a two-step
+ * pipeline rather than one function calling the other directly: `evolve`
+ * calls the selector off the state it is about to produce and marks its
+ * victims `pendingHidden` in that SAME transition, and `react` turns the mark
+ * landing into a `DismissWindow` — a pure structural diff of `pendingHidden`
+ * that never re-runs the selector itself (see `WindowRecord.pendingHidden`'s
+ * doc for why re-running it would double-dismiss). Before this file's change,
+ * no non-test caller ran the selector at all — a predicate can be "correct in
+ * form but match nothing in practice", so these assert the emission, not just
+ * the selector.
  */
 describe('window-kernel: react applies transient autoclose', () => {
   const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
@@ -4684,14 +4700,14 @@ describe('window-kernel: react applies transient autoclose', () => {
 
   const dismissed = (effects: Effect[]): WindowId[] => effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id);
 
-  it('a world-caused focus report emits DismissWindow for exactly what the selector names', () => {
+  it('a world-caused focus report emits DismissWindow for exactly what the selector named BEFORE evolve marked it (S3)', () => {
     const state = scene();
     const ev: Event = { type: 'OsFocusGained', id: wid(1) };
     const next = evolve(state, ev);
     assert.deepStrictEqual(
       dismissed(react(state, ev, next)),
-      selectTransientAutoclose(next, wid(1), { kind: 'world' }),
-      'react must not compute its own answer — it applies the selector verbatim',
+      selectTransientAutoclose(state, wid(1), { kind: 'world' }),
+      "react must not compute its own answer — it diffs evolve's own pendingHidden marks",
     );
     assert.deepStrictEqual(dismissed(react(state, ev, next)), [wid(2), wid(3)]);
   });
@@ -4727,18 +4743,74 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.deepStrictEqual(react(state, ev, next), [], 'no dismissal for a focuser that is not really there');
   });
 
-  it('a self-echo (already key) still re-runs the sweep — the old machine ran it on EVERY report', () => {
+  it('a self-echo (already key) mints a fresh attention seq but selects no dismissal a second time (S3)', () => {
     // wid(1) registers LAST (highest openSeq) so the machine-cause ordering
     // floor does not spare the two transients — they are OLDER than the
     // focuser, which is the case the floor still sweeps (see
     // `selectTransientAutoclose`'s own doc).
     const base = fold([reg(2, 'palette'), reg(3, 'quick-view'), reg(1, 'workspace'), orderable(1), orderable(2), orderable(3), show(1), show(2), show(3)], initialState());
     const focused = evolve(base, { type: 'OsFocusGained', id: wid(1) });
+    assert.deepStrictEqual(dismissed(react(base, { type: 'OsFocusGained', id: wid(1) }, focused)), [wid(2), wid(3)], 'the FIRST report marks and dismisses both');
     const echo: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: focused.opSeqCounter } };
     const next = evolve(focused, echo);
     assert.strictEqual(next.key, focused.key, 'key does not move — this is a re-confirmation');
-    assert.notStrictEqual(next.lastAttention?.seq, focused.lastAttention?.seq, 'but the attention seq still advances');
-    assert.deepStrictEqual(dismissed(react(focused, echo, next)), [wid(2), wid(3)], 'and the sweep still runs — no dedup on the echo');
+    assert.notStrictEqual(next.lastAttention?.seq, focused.lastAttention?.seq, 'the attention seq still advances even though nothing new is dismissed');
+    // The old machine re-ran the sweep on EVERY report, including this one —
+    // exactly the S3 defect (fixed 2026-09-05): the two transients are
+    // already `pendingHidden` from the first report, `isTransientAutocloseCandidate`
+    // excludes a marked record from the law's own consideration set, so this
+    // second report — still queued behind the first's own `DismissWindow`
+    // pair at a real executor — selects neither of them again.
+    assert.deepStrictEqual(dismissed(react(focused, echo, next)), [], 'no re-selection on the echo — the mark from the first report still stands');
+  });
+
+  it('S3: two back-to-back world-caused OsFocusGained events on another window yield exactly one DismissWindow for a still-visible transient across both react calls', () => {
+    // The live shape this fixes: a page host has two native focus producers
+    // (`electron-window-backend.ts` `win.on('focus')` and `rendererWC.on('focus')`),
+    // both echoing one physical focus synchronously, so two `OsFocusGained`
+    // events for the SAME target land back-to-back — the first's own
+    // `DismissWindow`/`WindowHidden` pair is still queued behind the pump
+    // when the second report arrives, so the palette (wid(2)) reads
+    // `visible: true` for both.
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+
+    const afterFirst = evolve(state, ev);
+    const firstEffects = react(state, ev, afterFirst);
+    assert.deepStrictEqual(dismissed(firstEffects), [wid(2), wid(3)], 'the first native focus producer sweeps both transients');
+    assert.strictEqual(afterFirst.order.find((w) => w.id === wid(2))?.visible, true, 'still visible — the executor has not confirmed the hide yet');
+    assert.strictEqual(afterFirst.order.find((w) => w.id === wid(2))?.pendingHidden, true);
+
+    const afterSecond = evolve(afterFirst, ev);
+    const secondEffects = react(afterFirst, ev, afterSecond);
+    assert.deepStrictEqual(dismissed(secondEffects), [], 'the second producer selects nothing new — both marks already stand');
+
+    assert.deepStrictEqual(
+      [...dismissed(firstEffects), ...dismissed(secondEffects)],
+      [wid(2), wid(3)],
+      'exactly one DismissWindow per window across both react() calls, not two for the same window',
+    );
+  });
+
+  it('S3: a window swept by dismissal is selectable again once WindowHidden then WindowShown clear the mark', () => {
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const afterFocus = evolve(state, ev);
+    assert.strictEqual(afterFocus.order.find((w) => w.id === wid(2))?.pendingHidden, true, 'the sweep marks the palette');
+
+    // The confirming hide the DismissWindow effect eventually produces.
+    const hidden = evolve(afterFocus, { type: 'WindowHidden', id: wid(2) });
+    assert.strictEqual(hidden.order.find((w) => w.id === wid(2))?.visible, false);
+    assert.strictEqual(hidden.order.find((w) => w.id === wid(2))?.pendingHidden, false, 'the confirming hide clears the mark');
+
+    // Reopened, and the workspace's key is re-asserted (a fresh attention
+    // seq, even though `key` itself does not move) — a fresh sweep gets to
+    // ask about it again.
+    const shown = evolve(hidden, { type: 'WindowShown', id: wid(2) });
+    const refocusEv: Event = { type: 'OsFocusGained', id: wid(1) };
+    const refocused = evolve(shown, refocusEv);
+    assert.strictEqual(refocused.order.find((w) => w.id === wid(2))?.pendingHidden, true, 'selectable again — the mark cleared, so candidacy is restored');
+    assert.deepStrictEqual(dismissed(react(shown, refocusEv, refocused)), [wid(2)], 'and react projects a fresh DismissWindow for it');
   });
 
   it('a RaiseWindow COMMAND reaches the sweep rule, but carries the machine cause that arms the floor', () => {
@@ -5057,7 +5129,15 @@ describe('window-kernel: which window the user is working in', () => {
       { type: 'WindowRegistered', id: slide, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', keepLive: true },
       { type: 'WindowRegistered', id: devtools, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'devtools', role: 'utility' },
       { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
+      // `pageHost` takes key BEFORE `cmdPanel`/`slide` (both transient-law
+      // candidates: `selfClosesOnBlur`/`role:'quick-view'`) are shown (S3,
+      // fixed 2026-09-05): `evolve`'s `OsFocusGained` arm now marks its own
+      // sweep victims `pendingHidden` in the same transition, and either
+      // would already be a visible, unexempted candidate losing focus to
+      // `pageHost` if shown first — dismissed by this setup event before a
+      // test below gets to exercise the law fresh against them.
       { type: 'WindowShown', id: pageHost },
+      { type: 'OsFocusGained', id: pageHost },
       { type: 'WindowShown', id: childPage },
       { type: 'WindowShown', id: settings },
       { type: 'WindowShown', id: extensionPopup },
@@ -5066,7 +5146,6 @@ describe('window-kernel: which window the user is working in', () => {
       { type: 'WindowShown', id: cmdPanel },
       { type: 'WindowShown', id: slide },
       { type: 'WindowShown', id: devtools },
-      { type: 'OsFocusGained', id: pageHost },
     ]);
 
   const contentIds = (state: State): WindowId[] => state.order.filter(isContentWindow).map((w) => w.id);
@@ -5664,13 +5743,23 @@ describe('window-kernel: what the key/main split overturns', () => {
       { type: 'WindowContentOrderable', id: pageHost },
       { type: 'WindowShown', id: otherHost },
       { type: 'WindowContentOrderable', id: otherHost },
+      // `pageHost` takes key BEFORE `cmdPanel` (a bare, unattached transient
+      // candidate: `role:'palette'`) is shown (S3, fixed 2026-09-05): the
+      // `OsFocusGained` arm now marks its own sweep victims `pendingHidden`
+      // in the same transition, and a `cmdPanel` shown first would already
+      // be a visible, unexempted candidate losing focus to `pageHost` —
+      // dismissed (and so refused a raise by `admitsFocusAssert`'s own
+      // `pendingHidden` clause) before the tests below get to focus it fresh.
+      // The chrome overlay is unaffected by the reorder either way: it is
+      // exempted the moment `OverlayAttached` sets `overlayFor`, well before
+      // any later focus report could ever reach it.
+      { type: 'OsFocusGained', id: pageHost },
       { type: 'WindowShown', id: chromeOverlay },
       { type: 'WindowShown', id: cmdPanel },
       { type: 'WindowShown', id: devtools },
       { type: 'WindowShown', id: hud },
       { type: 'AppActivated' },
       { type: 'OverlayAttached', overlayId: chromeOverlay, hostId: pageHost },
-      { type: 'OsFocusGained', id: pageHost },
     ]);
 
   const focusFamilyIds = (effects: Effect[]): WindowId[] =>
