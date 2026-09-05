@@ -30,7 +30,7 @@ is final; a *reversible hide* (app resign) is not.
 ## Focus
 
 - **F1 one-key.** At most one window is key, and `key` is written only by an OS focus report, never by a raise, import or arming.
-- **F2 machine-labelled.** Every focus change Peek causes is reported machine-caused; a machine-caused focus never counts as the user looking away.
+- **F2 machine-labelled.** Every focus change Peek causes is reported machine-caused; a machine-caused focus may dismiss only transients opened before the op that caused it, never anything newer.
 - **F3 confirmation-drives-nothing.** The focus report that confirms a raise causes no further raise and no dismissal.
 - **F4 raise-means-key.** A window brought to the front ends up key and accepting input; only a window that is already key is merely reordered.
 - **F5 raise-needs-a-surface.** A raise lands only on a window that is visible and not pending hidden; on any other record it drives nothing.
@@ -62,7 +62,7 @@ is final; a *reversible hide* (app resign) is not.
 - **D3 escape-never-waits.** A window with no Escape responder answers immediately; no press stalls on it.
 - **D4 close-before-open.** The switcher opens on Escape only when no visible closable transient exists and the key window has nothing to close.
 - **D5 escape-order.** Close the switcher, then pass through (`escapeMode: ignore`), then exit fullscreen, then defer to a renderer that consumed it, then close or hide the target, then open the switcher.
-- **D6 blur-dismissal.** A painted transient (or a self-closing modal) that is not key is dismissed when a world-caused focus lands elsewhere, unless the focuser belongs to it, it is newer than the machine op that caused the focus, it is click-through, or it is an attached overlay.
+- **D6 blur-dismissal.** A painted transient (or a self-closing modal) that is not key is dismissed when focus lands elsewhere, unless the focuser belongs to it, the focus was machine-caused and the transient is newer than the op that caused it, it is click-through, or it is an attached overlay.
 - **D7 no-self-dismissal.** A window that just took key is never dismissed by the window it took key from reclaiming focus by machine cause.
 - **D8 resign-sweep-after-resign.** No visible surface is dismissed while Peek is front; the resign sweep runs only after Peek has resigned and settled.
 - **D9 content-ignores-escape.** Workspace, content and child-content windows do not close on Escape.
@@ -95,4 +95,4 @@ is final; a *reversible hide* (app resign) is not.
 | Restored window comes back un-maximized | G13 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
-Open against these rules at `dc3febab`: G1/F6 (raise masked while Peek inactive, `window-kernel-executor.ts planRaise`), G3/F7 (successor raise on hide is unconditional, `window-kernel.ts react`), D7 (post-paint sweep, open), the doubled `DismissWindow` per sweep (S3). Everything else in the table is fixed or not reproducing; G8, G11, G12 and F8 have not been checked by hand since 2026-08-21.
+Open against these rules at `dc3febab`: G1/F6 (raise masked while Peek inactive, `window-kernel-executor.ts planRaise`), G3/F7 (successor raise on hide is unconditional, `window-kernel.ts react`), D7 (post-paint sweep, open), the doubled `DismissWindow` per sweep (S3). Everything else in the table is fixed or not reproducing; G8, G11, G12 and F8 have not been checked by hand since 2026-08-21. The kernel read against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
