@@ -119,6 +119,7 @@ import {
   keyWindow,
   topmost,
   isContentWindow,
+  isTransientAutocloseCandidate,
   roleIn,
   type Command,
   type State,
@@ -348,7 +349,17 @@ export function resolveEscapeTarget(key: EscapeKeyPress, state: State): EscapeTa
     key.landedId === 'global' ? null : (state.order.find((w) => w.id === key.landedId) ?? null);
 
   if (holder === null) {
-    return landed === null ? { kind: 'none' } : { kind: 'window', record: landed };
+    if (landed !== null) return { kind: 'window', record: landed };
+    // Nobody holds key AND there is no delivery record (a `'global'` landing
+    // with the key gone, e.g. the user switched to another app). A visible
+    // transient that Escape closes outright (`ESC_CLOSE_ROLES`) is still on
+    // screen and is what this Escape acts on; the switcher is only for a
+    // press that names nothing at all to act on.
+    const transient = topmost(
+      state,
+      (r) => r.visible && isTransientAutocloseCandidate(r) && roleIn(ESC_CLOSE_ROLES, r.role),
+    );
+    return transient === null ? { kind: 'none' } : { kind: 'window', record: transient };
   }
   if (key.landedId === 'global') return { kind: 'window', record: holder };
   if (key.landedId === holder.id) return { kind: 'window', record: holder };

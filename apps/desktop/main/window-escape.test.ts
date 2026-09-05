@@ -235,6 +235,37 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     // the delivery record is all there is — and it resolves to nothing either.
     assert.strictEqual(resolveEscapeTarget(press({ landedId: palette }), state).kind, 'none');
   });
+
+  it('a visible palette with nobody holding key is the target of a global landing — Escape closes it, never opens the switcher', () => {
+    // The user switched to another app: the palette is still on screen, but
+    // `OsFocusLost` for it nulls `key`, and the OS grab delivers no landing
+    // (`'global'`). Neither reconciliation fact names a window, but a visible
+    // palette is exactly the kind of transient Escape closes outright — so it
+    // is the target, not `none`.
+    const state = fold([{ type: 'OsFocusLost', id: palette }], paletteOverHost());
+    assert.strictEqual(state.key, null);
+    const target = resolveEscapeTarget(press({ landedId: 'global' }), state);
+    assert.strictEqual(target.kind, 'window');
+    assert.strictEqual(target.kind === 'window' ? target.record.id : null, palette);
+    const outcome = interpretEscape(press({ landedId: 'global' }), state);
+    assert.strictEqual(outcome.kind, 'close-window');
+    assert.strictEqual(outcome.command?.id, palette);
+  });
+
+  it('a HIDDEN palette with nobody holding key is not a target — the press still opens the switcher', () => {
+    // Same fixture, but the palette is also hidden — no visible transient is
+    // left to act on, so this reverts to the ordinary nobody-to-name case.
+    const state = fold(
+      [{ type: 'OsFocusLost', id: palette }, { type: 'WindowHidden', id: palette }],
+      paletteOverHost(),
+    );
+    assert.strictEqual(state.key, null);
+    assert.strictEqual(resolveEscapeTarget(press({ landedId: 'global' }), state).kind, 'none');
+    assert.deepStrictEqual(interpretEscape(press({ landedId: 'global' }), state), {
+      kind: 'open-switcher',
+      command: null,
+    });
+  });
 });
 
 // ── The bug itself, and the regression guard ────────────────────────────────
