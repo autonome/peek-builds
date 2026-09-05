@@ -27,7 +27,7 @@ Each term is followed by the name the code uses for it.
 - **Painted** — the window's first frame has composited, so the native window can be stacked (`orderable`).
 - **Transient** — a window that closes itself when another window takes focus (`selfClosesOnBlur`, or today one of the roles in `TRANSIENT_ROLES`).
 - **Application window** — a window the user works in (today one of the roles in `CONTENT_ROLES`). A window may be neither transient nor an application window.
-- **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`type: 'panel'` at open; not yet stored on the record).
+- **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`type: 'panel'` at open, `WindowRecord.nonActivating`).
 - **Pinned** — kept above the normal stack of windows (`layer` above `BASE_LAYER`, from `alwaysOnTop`).
 - **Prior window** — the window that had focus when this one took it (`priorKey`).
 - **Opener** — the window that opened this one (`parentId`).
@@ -128,10 +128,9 @@ Each term is followed by the name the code uses for it.
 | Restored window comes back un-maximized | G12 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
-Open against these rules: G1/F6 — `88da1749` made the command window take key from another app by
-activating the app (`electron-window-backend.ts raiseWindow`, `app.focus({ steal: true })`), which
-G1 forbids; the panel declaration is not on the record and the show path keys "never activates" to
-the quick-view class instead (`showWindow`). D7 (post-paint sweep) is open. S3's dismissal half
+Open against these rules: G1/F6 — closed at this commit, not yet verified by hand (the hand check
+is the packaged build, another app frontmost, the global hotkey: the command window must take
+typing while the menubar still shows the other app). D7 (post-paint sweep) is open. S3's dismissal half
 closed at `b7e685e6`; G3/F7 (successor focus on hide was unconditional, `window-kernel.ts react`)
 closed at `a86b030c`, not yet verified by hand. Everything else in the table is fixed or not
 reproducing; G7, G10, G11 and F8 have not been checked by hand since 2026-08-21. The kernel read

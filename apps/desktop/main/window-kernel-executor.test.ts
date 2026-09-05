@@ -529,14 +529,17 @@ describe('planRaise — the masks a raise owes because it is an activating show'
 
   it('never activates under headless, appActive notwithstanding', () => {
     assert.strictEqual(planRaise(record(), true, true), 'inactive-show');
-    assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'quick-view' }), true, true), 'inactive-show');
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'quick-view', nonActivating: true }), true, true),
+      'inactive-show',
+    );
     assert.strictEqual(planRaise(undefined, true, true), 'inactive-show');
     assert.strictEqual(planRaise(record(), true, false), 'inactive-show', 'both masks apply — still inactive-show');
   });
 
-  it('never activates the app for a quick-view page-host (regression 524f7aba)', () => {
+  it('never activates the app for a panel page-host (regression 524f7aba)', () => {
     assert.strictEqual(
-      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, true),
+      planRaise(record({ kind: 'page-host', role: 'quick-view', nonActivating: true }), false, true),
       'show-and-focus-content',
     );
   });
@@ -546,11 +549,36 @@ describe('planRaise — the masks a raise owes because it is an activating show'
     assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'content' }), false, true), 'activating-raise');
   });
 
-  it('keys on the declared role, not on class — class is lookup-only (§0.1.4)', () => {
-    // A window whose CLASS shorthand says quick-view but whose declared role
-    // does not still activates: nothing may branch on `class`.
+  it('keys on the declared nonActivating attribute, not on role or class (§0.1.4, window-rules-audit.md F6)', () => {
+    // A window whose CLASS shorthand says quick-view, or whose ROLE says
+    // quick-view, but which does not declare `nonActivating` still activates:
+    // neither `class` (lookup-only) nor `role` (the old stand-in the F6 audit
+    // named) may drive this decision any more — only the attribute itself.
     assert.strictEqual(
       planRaise(record({ kind: 'page-host', class: 'quick-view', role: 'content' }), false, true),
+      'activating-raise',
+    );
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, true),
+      'activating-raise',
+      'role alone, with nonActivating absent, no longer takes the panel arm',
+    );
+  });
+
+  it('a page-host declaring nonActivating takes the panel arm even off an unrelated role', () => {
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'content', nonActivating: true }), false, true),
+      'show-and-focus-content',
+    );
+  });
+
+  it('a browser panel (the command palette) does not take the page-host-only panel arm', () => {
+    // `kind === 'page-host'` stays a structural guard: `'show-and-focus-
+    // content'` focuses a content WebContents a browser window doesn't have.
+    // A browser-kind panel still activates here — its own never-activate rule
+    // is enforced by `electron-window-backend.ts raiseWindow`, not this arm.
+    assert.strictEqual(
+      planRaise(record({ kind: 'browser', nonActivating: true }), false, true),
       'activating-raise',
     );
   });
@@ -562,13 +590,13 @@ describe('planRaise — the masks a raise owes because it is an activating show'
     assert.strictEqual(planRaise(undefined, false, false), 'suppressed');
   });
 
-  it('the app-active gate overrides the quick-view mask too — no content focus while backgrounded', () => {
-    // Deliberately stronger than "just don't activate the app": a quick-view
-    // panel's own mask (`'show-and-focus-content'`) never activates the app
-    // either, but the gate still narrows it to `'suppressed'` while
-    // backgrounded, withholding the show and the content-focus half as well.
+  it('the app-active gate overrides the panel mask too — no content focus while backgrounded', () => {
+    // Deliberately stronger than "just don't activate the app": a panel's own
+    // mask (`'show-and-focus-content'`) never activates the app either, but
+    // the gate still narrows it to `'suppressed'` while backgrounded,
+    // withholding the show and the content-focus half as well.
     assert.strictEqual(
-      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, false),
+      planRaise(record({ kind: 'page-host', role: 'quick-view', nonActivating: true }), false, false),
       'suppressed',
     );
   });
@@ -597,10 +625,29 @@ describe('planRaise — the masks a raise owes because it is an activating show'
     assert.strictEqual(planRaise(record(), true, true, 'user'), 'inactive-show');
   });
 
-  it('user intent lifts the app-inactive mask, not the quick-view never-activate rule (524f7aba)', () => {
+  it('user intent lifts the app-inactive mask, not the panel never-activate rule (524f7aba)', () => {
     assert.strictEqual(
-      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, false, 'user'),
+      planRaise(record({ kind: 'page-host', role: 'quick-view', nonActivating: true }), false, false, 'user'),
       'show-and-focus-content',
+    );
+  });
+
+  // ── a panel takes key without activating; a non-panel activates (G1) ──────
+
+  it('a user-intended raise while the app is inactive: a panel takes key without activating, a non-panel activates', () => {
+    // Same inputs (backgrounded, user intent) — the ONLY thing that differs
+    // is `nonActivating`, and that alone must decide activation (G1: "a panel
+    // focused with user intent while another app is frontmost ... takes
+    // typing while the app stays in the background").
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'quick-view', nonActivating: true }), false, false, 'user'),
+      'show-and-focus-content',
+      'a panel takes key (content focus) without an activating raise',
+    );
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'content' }), false, false, 'user'),
+      'activating-raise',
+      'a non-panel with the same inputs still brings the app forward',
     );
   });
 });
@@ -647,7 +694,7 @@ describe('performing a RaiseWindow effect', () => {
   }
 
   it('a background quick-view takes key input without bringing the app forward', () => {
-    const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view' }, false);
+    const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view', nonActivating: true }, false);
     assert.deepStrictEqual(backend.of('raiseWindow'), [], 'an activating raise would steal the app');
     const shows = backend.of('showWindow');
     assert.strictEqual(shows.length, 1);
@@ -703,7 +750,7 @@ describe('performing a RaiseWindow effect', () => {
   });
 
   it('a backgrounded quick-view gets no content focus either — the gate suppresses that mask too', () => {
-    const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view' }, false, false);
+    const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view', nonActivating: true }, false, false);
     assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(backend.of('focusContent'), [], 'no first-responder handoff while the app is backgrounded');
     const shows = backend.of('showWindow');

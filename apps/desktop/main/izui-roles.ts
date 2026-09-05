@@ -143,6 +143,27 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
   return options.modal === true;
 }
 
+/**
+ * Whether a window opened with these options is a Panel — declared to never
+ * activate the app: it shows, and takes keystrokes, while the app stays in
+ * the background (`window-rules.md` Vocabulary "Panel", rules G1/F6). The
+ * open-time declaration is `type: 'panel'` (`renderer/cmd/background.js
+ * openPanelWindow`, `features/peeks/background.js`,
+ * `features/slides/background.js`, `features/windows/background.js`) — the
+ * same `options.type` the hybrid-page-host branch (`ipc.ts`) already threads
+ * to `createHybridHostBaseWindow` for the native NSPanel construction option.
+ * This is the OTHER consumer of that one open-time fact: it becomes
+ * `WindowRecord.nonActivating`, read by `electron-window-backend.ts
+ * showWindow`/`raiseWindow` and `window-kernel-executor.ts planRaise` in
+ * place of the `windowClass !== 'quick-view'` / `role === 'quick-view'`
+ * masks those sites used to key on (`docs/design/window-rules-audit.md` F6).
+ *
+ * Pure for the same reason `windowSelfClosesOnBlur` is.
+ */
+export function windowNonActivating(options: { type?: string }): boolean {
+  return options.type === 'panel';
+}
+
 // ESC-target resolution, native-fullscreen-exit precedence, the global-Esc-grab
 // predicate, and the first-responder-on-host-focus predicate
 // (`ALWAYS_CLOSEABLE_ESC_ROLES`, `resolveHybridEscapeTarget`,

@@ -473,6 +473,25 @@ export interface WindowRecord {
   selfClosesOnBlur?: boolean;
 
   /**
+   * Whether this window never activates the app — a Panel (`window-rules.md`
+   * Vocabulary "Panel": "a window declared to never activate the app: it
+   * shows, and takes keystrokes, while the app stays in the background"), the
+   * `type: 'panel'` open-time declaration (`izui-roles.ts
+   * windowNonActivating`). A DECLARED fact, same shape as `selfClosesOnBlur`
+   * above: written at registration from the caller's open-time options,
+   * never revisited, and OVERWRITTEN rather than preserved by the
+   * re-registration merge.
+   *
+   * Read by `electron-window-backend.ts showWindow` (replaces the
+   * `windowClass !== 'quick-view'` mask G1/F6 named as the contradiction —
+   * `docs/design/window-rules-audit.md` F6) and `raiseWindow` (a panel's
+   * key-taking raise must never activate the app, G1), and by
+   * `window-kernel-executor.ts planRaise` (the `'show-and-focus-content'`
+   * arm, keyed on this attribute rather than on `role === 'quick-view'`).
+   */
+  nonActivating?: boolean;
+
+  /**
    * Declared at registration, same shape as `selfClosesOnBlur`/
    * `tracksBaseLayerTop` above: this window's lifetime is the app's own, not
    * an ordinary user-closable surface. `decide`'s `CloseOrHideWindow` branch
@@ -876,6 +895,8 @@ export type Event =
       tracksBaseLayerTop?: boolean;
       /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
       selfClosesOnBlur?: boolean;
+      /** See `WindowRecord.nonActivating`'s doc — declared here. */
+      nonActivating?: boolean;
       /** See `WindowRecord.appLifetime`'s doc — declared here. */
       appLifetime?: boolean;
     }
@@ -1200,6 +1221,8 @@ export type Command =
       tracksBaseLayerTop?: boolean;
       /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
       selfClosesOnBlur?: boolean;
+      /** See `WindowRecord.nonActivating`'s doc — declared here. */
+      nonActivating?: boolean;
       /** See `WindowRecord.appLifetime`'s doc — declared here. */
       appLifetime?: boolean;
       expectedVersion: number;
@@ -1918,9 +1941,19 @@ export function evolve(state: State, ev: Event): State {
               : {}),
           // Intrinsic, same shape as `role`/`keepLive`/`escapeMode`/
           // `tracksBaseLayerTop`/`selfClosesOnBlur` above — see
-          // `WindowRecord.appLifetime`'s doc: a DECLARED fact, so an event
+          // `WindowRecord.nonActivating`'s doc: a DECLARED fact, so an event
           // that names it overwrites, and an event that omits it keeps the
           // existing value rather than erasing it.
+          ...(ev.nonActivating !== undefined
+            ? { nonActivating: ev.nonActivating }
+            : existing.nonActivating !== undefined
+              ? { nonActivating: existing.nonActivating }
+              : {}),
+          // Intrinsic, same shape as `role`/`keepLive`/`escapeMode`/
+          // `tracksBaseLayerTop`/`selfClosesOnBlur`/`nonActivating` above —
+          // see `WindowRecord.appLifetime`'s doc: a DECLARED fact, so an
+          // event that names it overwrites, and an event that omits it keeps
+          // the existing value rather than erasing it.
           ...(ev.appLifetime !== undefined
             ? { appLifetime: ev.appLifetime }
             : existing.appLifetime !== undefined
@@ -1998,6 +2031,7 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
         ...(ev.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: ev.tracksBaseLayerTop } : {}),
         ...(ev.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: ev.selfClosesOnBlur } : {}),
+        ...(ev.nonActivating !== undefined ? { nonActivating: ev.nonActivating } : {}),
         ...(ev.appLifetime !== undefined ? { appLifetime: ev.appLifetime } : {}),
         // `contentFocused` is deliberately NOT seeded: registration is
         // exactly the moment nothing has been reported, and absent is the
@@ -3822,6 +3856,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
           ...(cmd.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: cmd.tracksBaseLayerTop } : {}),
           ...(cmd.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: cmd.selfClosesOnBlur } : {}),
+          ...(cmd.nonActivating !== undefined ? { nonActivating: cmd.nonActivating } : {}),
           ...(cmd.appLifetime !== undefined ? { appLifetime: cmd.appLifetime } : {}),
         },
       ],

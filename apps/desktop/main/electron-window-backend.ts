@@ -92,7 +92,7 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
-import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
+import { FULLSCREEN_SETTLE_TIMEOUT_MS, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization } from './window-kernel-executor.js';
 import {
@@ -300,9 +300,12 @@ interface BackendWindow {
   win: NativeWindow;
   kind: WindowKind;
   /**
-   * The window's declared class (§4.3 dim 8b), retained for the show policy:
-   * a `quick-view`-class page-host is a `type:'panel'` NSPanel that must
-   * NEVER activate the app on show (regression 524f7aba) — see `showWindow`.
+   * The window's declared class (§4.3 dim 8b) — a lookup shorthand nothing
+   * branches on (`window-kernel.ts WindowRecord.class`'s doc), retained here
+   * for the same reason: logging/lookup only. `showWindow`'s never-activate
+   * mask used to key on this (`windowClass !== 'quick-view'`, regression
+   * 524f7aba); it now reads the kernel record's `nonActivating` declaration
+   * instead (`docs/design/window-rules-audit.md` F6).
    */
   windowClass: WindowClass;
   /**
@@ -1301,22 +1304,31 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const visible = this.isVisibleSafe(win);
     const focused = this.isFocused(win);
     const plan = planRaiseRealization(visible, focused);
+    const record = windowById(getKernelExecutor().getState(), id);
     // Always-on: the decision to realize a raise as a bare reorder (no show,
     // no focus call) is a decision-to-do-nothing about key, and this app's
     // rule is that one becomes an event rather than a silence.
     wmLog('raise-realized', { id, kind, visible, focused, plan, ...(intent === 'user' ? { intent } : {}) });
     // A raise the user asked for while another app is frontmost has to bring
-    // THIS app forward, and on macOS the key-taking calls below do not
-    // reliably do that on their own: `win.focus()` (the `take-key` arm — the
-    // keepLive palette re-shown inactive by its sibling `ShowWindow` effect)
-    // asks for activation only if no other app holds it, which is exactly the
-    // case a hotkey from another app is in. The app-level activation is the
-    // one call that ignores the other app, so it runs first and only on a
-    // user-intended raise — a machine raise never brings the app forward
-    // (`window-kernel-executor.ts planRaise`). darwin-only: elsewhere focusing
-    // a window IS bringing the app forward, and this call would instead pick
-    // an arbitrary window of the app's.
-    if (intent === 'user' && plan !== 'reorder' && !isHeadless() && process.platform === 'darwin') {
+    // THIS app forward — UNLESS the target is a Panel (`WindowRecord
+    // .nonActivating`): `window-rules.md` G1 says a panel takes key WITHOUT
+    // activating the app, whatever asked for the raise, so this call must
+    // never run for one. The two cases differ because they reach "key" by
+    // different native means: a Panel is a `type:'panel'` NSPanel
+    // (`izui-roles.ts windowNonActivating`), and AppKit lets an NSPanel become
+    // key without its owning app becoming active — the key-taking calls below
+    // are enough on their own. An ordinary NSWindow has no such allowance:
+    // `win.focus()` (the `take-key` arm — the keepLive palette re-shown
+    // inactive by its sibling `ShowWindow` effect) asks for activation only if
+    // no other app holds it, which is exactly the case a hotkey from another
+    // app is in. The app-level activation is the one call that ignores the
+    // other app, so it runs first and only for a user-intended, non-panel
+    // raise — a machine raise never brings the app forward
+    // (`window-kernel-executor.ts planRaise`), and a panel's raise never does
+    // either, whatever intent it carries. darwin-only: elsewhere focusing a
+    // window IS bringing the app forward, and this call would instead pick an
+    // arbitrary window of the app's.
+    if (intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin') {
       try {
         app.focus({ steal: true });
       } catch {
@@ -1722,11 +1734,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *   - `activate` → `show()` (activates the app + key window), else
    *     `showInactive()`;
    *   - page-host OS masks: never activate under headless (focus-free runs),
-   *     and a `quick-view`-class host (a `type:'panel'` NSPanel) NEVER
-   *     activates the app (regression 524f7aba) — its key input rides the
-   *     content-focus half, which stays with the windows.ts caller until the
-   *     focus-rivals step (§5 step 8). A browser window ALSO masks activate
-   *     under headless — matching the `raiseWindow` browser branch. `opacity(0)`
+   *     and a Panel (`WindowRecord.nonActivating`, the `type:'panel'` NSPanel
+   *     declaration — `window-rules.md` G1/F6) NEVER activates the app
+   *     (regression 524f7aba) — its key input rides the content-focus half,
+   *     which stays with the windows.ts caller until the focus-rivals step
+   *     (§5 step 8). A browser window ALSO masks activate under headless —
+   *     matching the `raiseWindow` browser branch. `opacity(0)`
    *     hides pixels but does NOT stop an activating `win.show()` from doing
    *     `makeKeyAndOrderFront:` and stealing the macOS key window; only
    *     `showInactive()` avoids the grab. (Prior comment wrongly claimed
@@ -1743,7 +1756,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   showWindow(id: WindowId, opts: { activate: boolean; opSeq: number }): void {
     const entry = this.windows.get(id);
     if (!entry) return;
-    const { win, kind, windowClass } = entry;
+    const { win, kind } = entry;
     try {
       if (win.isDestroyed()) return;
     } catch {
@@ -1751,12 +1764,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     // Two masks on the caller's activation intent, both narrowing what the OS
     // is asked for: headless never activates (focus-free runs, peek 2b55f3af),
-    // and a quick-view page-host (a `type:'panel'` NSPanel) never activates the
-    // app on ANY display (regression 524f7aba). The echo below still reports the
-    // caller's UNMASKED intent — that is what keeps `front` moving under
-    // headless.
+    // and a Panel (`WindowRecord.nonActivating`, a `type:'panel'` NSPanel)
+    // never activates the app on ANY display (regression 524f7aba). The echo
+    // below still reports the caller's UNMASKED intent — that is what keeps
+    // `front` moving under headless.
+    const record = windowById(getKernelExecutor().getState(), id);
     const osActivate =
-      (kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate) &&
+      (kind === 'page-host' ? opts.activate && record?.nonActivating !== true : opts.activate) &&
       !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);

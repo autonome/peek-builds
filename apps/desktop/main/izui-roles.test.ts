@@ -20,6 +20,7 @@ import {
   runDeferredQuitCleanup,
   type QuitCleanupPhase,
   windowSelfClosesOnBlur,
+  windowNonActivating,
   hybridResizeDirAt,
   downloadCloseTarget,
   RESIZE_EDGE_PX,
@@ -196,6 +197,17 @@ describe('windowSelfClosesOnBlur (the misnamed `modal` close-on-blur — peek 5b
       windowSelfClosesOnBlur({ modal: true, role: 'utility' } as { modal?: boolean }),
       true,
     );
+  });
+});
+
+describe('windowNonActivating (the Panel open-time declaration — window-rules.md G1/F6)', () => {
+  it("type:'panel' is a Panel — never activates the app", () => {
+    assert.strictEqual(windowNonActivating({ type: 'panel' }), true);
+  });
+
+  it('no type, or any other type, does not declare a panel', () => {
+    assert.strictEqual(windowNonActivating({}), false);
+    assert.strictEqual(windowNonActivating({ type: 'normal' }), false);
   });
 });
 

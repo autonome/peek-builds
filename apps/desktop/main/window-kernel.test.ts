@@ -476,6 +476,36 @@ describe('window-kernel: re-registration merges in place', () => {
       'a named selfClosesOnBlur overwrites',
     );
   });
+
+  // The two cases below cover the re-registration MERGE's handling of
+  // `nonActivating` — same shape as the `selfClosesOnBlur` pair above,
+  // because it is a DECLARED fact for the same reason (see
+  // `WindowRecord.nonActivating`'s doc): written at registration, never
+  // revisited, and overwritten rather than preserved by a re-registration
+  // that names a value.
+  it('a re-registration that omits nonActivating KEEPS a previously-set nonActivating: true', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 1, canBecomeKey: true, acceptsInput: true, class: 'palette', nonActivating: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 1, canBecomeKey: true, acceptsInput: true, class: 'palette' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.nonActivating,
+      true,
+      'a re-registration naming no nonActivating must not strip the one already declared',
+    );
+  });
+
+  it('a re-registration that names nonActivating: false overwrites it — an explicit value always wins', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 1, canBecomeKey: true, acceptsInput: true, class: 'palette', nonActivating: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 1, canBecomeKey: true, acceptsInput: true, class: 'palette', nonActivating: false },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.nonActivating,
+      false,
+      'a named nonActivating overwrites',
+    );
+  });
 });
 
 // ── raise vs. show ───────────────────────────────────────────────────────────

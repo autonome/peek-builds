@@ -120,11 +120,13 @@ export function stackingLevelForLayer(layer: number): StackingLevel {
  *                               raise outright.
  *   - `'inactive-show'`         headless. Never activate, never focus, but the
  *                               window still shows.
- *   - `'show-and-focus-content'` a `quick-view` page-host — a `type:'panel'`
- *                               NSWindow. It must NEVER activate the app
- *                               (regression `524f7aba`: focusing a background
- *                               quick-view brought the whole app forward), but
- *                               it still has to take key input, which rides the
+ *   - `'show-and-focus-content'` a Panel page-host (`WindowRecord
+ *                               .nonActivating`, a `type:'panel'` NSPanel —
+ *                               `window-rules.md` Vocabulary "Panel", G1/F6).
+ *                               It must NEVER activate the app (regression
+ *                               `524f7aba`: focusing a background peek/slide
+ *                               brought the whole app forward), but it still
+ *                               has to take key input, which rides the
  *                               content-focus half. So: non-activating show +
  *                               first responder, exactly the split
  *                               `electron-window-backend.ts showWindow` already
@@ -132,14 +134,21 @@ export function stackingLevelForLayer(layer: number): StackingLevel {
  *   - `'activating-raise'`      everything else: the port's `raiseWindow`,
  *                               which is an activating show plus content focus.
  *
- * The quick-view arm keys on `role`, not on `class`: §0.1.4 makes `class` a
- * lookup-only shorthand nothing may branch on, while `role` is the declared
- * policy fact ("this window is a peek/slide panel") the same decision is made
- * from elsewhere in the kernel.
+ * The panel arm keys on `WindowRecord.nonActivating`, the DECLARED "never
+ * activate the app" fact (`izui-roles.ts windowNonActivating`, the
+ * `type: 'panel'` open-time declaration) — not on `role` or `class`: §0.1.4
+ * makes `class` a lookup-only shorthand nothing may branch on, and `role`
+ * (`quick-view`) was only ever standing in for this declaration
+ * (`docs/design/window-rules-audit.md` F6). `kind === 'page-host'` stays a
+ * structural guard, not a stand-in: `'show-and-focus-content'` is a page-host-
+ * specific realization (it focuses the content WebContents), so a panel that
+ * is a `browser` window (the command palette) takes the ordinary
+ * `'activating-raise'` arm instead — see `electron-window-backend.ts
+ * raiseWindow` for how THAT backend call avoids activating the app for one.
  *
- * An unregistered id (no record) cannot be a quick-view panel — there is no
- * declared role to read — so it takes the ordinary arm, still masked by
- * headless and `appActive` below.
+ * An unregistered id (no record) cannot be a panel — there is no declared
+ * attribute to read — so it takes the ordinary arm, still masked by headless
+ * and `appActive` below.
  */
 export type RaisePlan = 'suppressed' | 'inactive-show' | 'show-and-focus-content' | 'activating-raise';
 
@@ -180,15 +189,15 @@ export type RaisePlan = 'suppressed' | 'inactive-show' | 'show-and-focus-content
  * go to the other app (the 2026-09-05 dead-palette failure).
  *
  * ORDERING AGAINST THE HEADLESS MASK: checked immediately after headless, and
- * — unlike the quick-view arm below — it wins outright rather than narrowing
- * one arm. Headless is checked first only because it is unconditional
+ * — unlike the panel arm below — it wins outright rather than narrowing one
+ * arm. Headless is checked first only because it is unconditional
  * (no-focus-ever, `appActive` and `intent` notwithstanding); once past it, an
- * inactive app forces `'suppressed'` on a machine raise even for a quick-view
- * panel, overriding what would otherwise be `'show-and-focus-content'` — a
+ * inactive app forces `'suppressed'` on a machine raise even for a panel,
+ * overriding what would otherwise be `'show-and-focus-content'` — a
  * backgrounded app gets no first-responder handoff either, because it gets
- * nothing at all. A user-intended raise of a quick-view panel still takes the
- * quick-view arm: the exemption lifts the app-inactive mask, not the panel's
- * own never-activate rule (regression `524f7aba`).
+ * nothing at all. A user-intended raise of a panel still takes the panel arm:
+ * the exemption lifts the app-inactive mask, not the panel's own
+ * never-activate rule (regression `524f7aba`).
  */
 export function planRaise(
   record: WindowRecord | undefined,
@@ -198,7 +207,7 @@ export function planRaise(
 ): RaisePlan {
   if (headless) return 'inactive-show';
   if (!appActive && intent !== 'user') return 'suppressed';
-  if (record !== undefined && record.kind === 'page-host' && record.role === 'quick-view') {
+  if (record !== undefined && record.kind === 'page-host' && record.nonActivating === true) {
     return 'show-and-focus-content';
   }
   return 'activating-raise';

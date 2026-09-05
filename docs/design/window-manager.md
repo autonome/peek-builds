@@ -631,6 +631,27 @@ after-hide recovery; `window-kernel-properties.test.ts checkAutocloseWiring` now
 asserts no duplicate id among one `react()` call's `DismissWindow` effects and that every
 `DismissWindow` names a record whose `pendingHidden` reads true in `next`.
 
+**A panel never activated the app, closed (2026-09-05).** Four transients open with `type: 'panel'`
+(`renderer/cmd/background.js openPanelWindow`, `features/peeks/background.js`,
+`features/slides/background.js`, `features/windows/background.js`) — the open-time declaration
+`window-rules.md` names Panel: a window that shows and takes keystrokes while the app stays in the
+background (G1). The declaration was never stored on the record. `electron-window-backend.ts
+showWindow` keyed "never activates the app" to `windowClass !== 'quick-view'` instead, so peeks and
+slides got the panel behavior by feature class while the command window (class `palette`, kind
+`browser`) activated the app on every show; and `raiseWindow` called `app.focus({ steal: true })`
+on darwin for every user-intended, non-reorder raise, bringing the app forward even for a window
+the quick-view mask would otherwise have spared. Fix: `WindowRecord.nonActivating`, written at
+registration from `izui-roles.ts windowNonActivating` (the `type: 'panel'` open option) — the same
+DECLARED-at-registration shape as `selfClosesOnBlur` — threaded from `ipc.ts`'s window-open handler
+through `window-machine.ts registerWindowWithMachine` and `window-kernel-dispatch.ts
+kernelRegisterWindow`. `showWindow`'s page-host mask and `window-kernel-executor.ts planRaise`'s
+page-host arm now read `record.nonActivating` in place of the class/role checks; `raiseWindow`'s
+`app.focus({ steal: true })` call now runs only when the target is not a panel, so a panel's raise
+takes key through the ordinary NSPanel key-without-activate calls alone. `window-kernel.test.ts` "a
+re-registration that omits nonActivating KEEPS a previously-set nonActivating: true" pins the
+registration merge; `window-kernel-executor.test.ts` "a user-intended raise while the app is
+inactive: a panel takes key without activating, a non-panel activates" pins the raise-plan half.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

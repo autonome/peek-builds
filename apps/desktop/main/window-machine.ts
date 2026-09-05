@@ -54,6 +54,8 @@ export interface MachineWindowSpec {
   tracksBaseLayerTop?: boolean;
   /** See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc — declared here. Old machine does not carry this fact; it rides straight through to the kernel. */
   selfClosesOnBlur?: boolean;
+  /** See `window-kernel.ts WindowRecord.nonActivating`'s doc — declared here. */
+  nonActivating?: boolean;
   /** See `window-kernel.ts WindowRecord.appLifetime`'s doc — declared here. */
   appLifetime?: boolean;
   /** BaseWindow (page-host) or BrowserWindow (browser). */
@@ -192,6 +194,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(initialBounds !== null ? { bounds: initialBounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
+    ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
   });
   // `decision.pumpShownEvent` IS the ctor-shown fact (`izui-roles.ts

@@ -115,6 +115,7 @@ import {
   desktopMembershipForRole,
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
+  windowNonActivating,
   deriveWindowSurface,
   isSatelliteRegistration,
   classifyWindowRegistration,
@@ -1035,6 +1036,11 @@ function assembleHybridPageHost(
     // FIRST-CLASS — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause (not
     // the closeOrHideWindow caller) is what branches hide-vs-close on it.
     keepLive: options.keepLive === true,
+    // See `window-kernel.ts WindowRecord.nonActivating`'s doc — peeks/slides
+    // open with `type: 'panel'` through this hybrid page-host branch, the
+    // same `options.type` already threaded to `createHybridHostBaseWindow`
+    // above for the native NSPanel construction option.
+    nonActivating: windowNonActivating(options),
   });
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
   // (session.ts restoreSessionSnapshot) both thread a maximized window's
@@ -3503,6 +3509,11 @@ export function registerWindowHandlers(): void {
         // down on blur) and by `isTransientAutocloseCandidate` (admit it to
         // the transient-dismissal sweep regardless of role).
         selfClosesOnBlur: windowSelfClosesOnBlur(options),
+        // See `window-kernel.ts WindowRecord.nonActivating`'s doc — the
+        // `type: 'panel'` open-time declaration, stored so `showWindow`/
+        // `raiseWindow` and `planRaise` can read it instead of branching on
+        // `windowClass`/`role`.
+        nonActivating: windowNonActivating(options),
       });
 
       // macOS Spaces intent by role (§5 step 10 — machine-owned):
