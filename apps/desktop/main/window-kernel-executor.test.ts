@@ -1018,6 +1018,10 @@ describe('state ownership and entry points', () => {
     const { exec } = makeExecutor();
     exec.dispatch(register(wid(1)));
     exec.dispatch(register(wid(2)));
+    // Shown, because a focus report on a hidden record mints no token to be
+    // stale against.
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
     exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
     exec.dispatch({ type: 'OsFocusGained', id: wid(2) });
     const stamped = exec.getState().order.find((w) => w.id === wid(1))!.lastOpSeq as number;

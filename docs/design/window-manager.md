@@ -129,6 +129,27 @@ Wired into both branches of `electron-window-backend.ts raiseWindow`, which is n
 (the backend value-imports Electron) — the always-on `raise-realized` log record (`id`, `kind`,
 `visible`, `focused`, `plan`) is the live evidence.
 
+**A focus report on a hidden window became a raise, closed (2026-09-05).** The `take-key` arm
+above made a path reachable that had been dead while the reopen took no focus: the command
+palette, hidden by Escape, re-shown by Opt+Space within a second, flashed open and closed
+indefinitely (~7ms per cycle, 634 `raise-realized` records in one run). The loop body: the
+palette's OS focus echo lands AFTER its keepLive hide (`native-focus-arrived id=<palette>
+hideOpFor=<palette>`), with its kernel record already `visible:false` and the settings window
+holding key. `window-kernel.ts react`'s key-diff raise rule tested only that the new key holder was
+present in `order`, so the echo produced a `RaiseWindow`; `planRaiseRealization` saw a hidden
+target and performed `'show-and-take-key'`, re-showing the palette; macOS then handed key back to
+the settings window with a `world` cause (the arming was cleared by the hide's blur), whose sweep
+dismissed the palette, whose hide echoed, and around. The rule now gates on `admitsFocusAssert`
+— the same helper the focus-assert rule and `FocusAssertRequested` already used, whose doc says
+exactly why an off-screen `RaiseWindow` must never be emitted — and `evolve`'s `OsFocusGained`
+arm mirrors the gate in its `issuesRaise`, so the op-counter biconditional holds. `key` is still
+written (RULE 2); only the activating effect is withheld. `isStaleSelfEcho` cannot catch this
+case: the echo carries the palette's own current token, so it is not older than `lastOpSeq`. The
+keepLive reuse (`ShowWindow` then `RaiseWindow` on a hidden window) is unaffected because
+`ShowWindow`'s `WindowShown` flips the record visible before the raise's report is evolved;
+`window-kernel.test.ts` pins both cases, failing-first. What made the second Opt+Space land on a
+palette that was still hiding is a separate defect in the palette renderer, recorded next.
+
 **A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
 `dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
 Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed

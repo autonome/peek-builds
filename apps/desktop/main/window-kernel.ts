@@ -2260,7 +2260,14 @@ export function evolve(state: State, ev: Event): State {
       // `issuesRaise` are. A report re-confirming the window that already
       // holds key (the echo of the machine's own raise) asserts nothing,
       // stamps nothing, and issues no op, so the counter stays put.
-      const issuesRaise = state.key !== ev.id;
+      //
+      // Gated on `admitsFocusAssert` exactly as `react`'s rule is: a report
+      // naming a window whose record is hidden (or doomed) is recorded as
+      // `key` — RULE 2 — but drives no raise, because a raise is an
+      // activating show and would put that window back on screen. The
+      // report is stale evidence of a raise that preceded the hide, not a
+      // fact about what is on screen now.
+      const issuesRaise = state.key !== ev.id && admitsFocusAssert(record, record.visible);
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       const movedRecord = issuesRaise ? { ...record, lastOpSeq: opSeq } : record;
       return {
@@ -3323,8 +3330,20 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // Executor obligation: `RaiseWindow` is an ACTIVATING show, so whatever
   // performs it owes the same activation masks a show owes (never activate
   // under headless; a quick-view NSPanel never activates the app).
+  //
+  // GATED ON `admitsFocusAssert`, like the focus-assert rule below and
+  // `FocusAssertRequested`: the target must be visible and not doomed. A
+  // focus report can name a window whose record already reads hidden — a
+  // hide is asynchronous at the OS, and the echo of the raise that preceded
+  // a keepLive hide lands after it, once somebody else holds key. `key` is
+  // still written (RULE 2), but an activating raise realized against a hidden
+  // window re-shows it, the world focus that follows sweeps it, the sweep's
+  // hide echoes, and around — the command-palette show/dismiss loop of
+  // 2026-09-04. `evolve`'s `OsFocusGained` arm mirrors this gate in its
+  // `issuesRaise`, which is what keeps the op-counter biconditional true.
   const nextKey = next.key;
-  if (nextKey !== null && nextKey !== prev.key && next.order.some((w) => w.id === nextKey)) {
+  const raiseTarget = nextKey === null ? undefined : next.order.find((w) => w.id === nextKey);
+  if (nextKey !== null && nextKey !== prev.key && raiseTarget !== undefined && admitsFocusAssert(raiseTarget, raiseTarget.visible)) {
     effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
   }
 

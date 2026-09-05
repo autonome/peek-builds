@@ -825,6 +825,41 @@ describe('window-kernel: the raise a focus report drives', () => {
     assert.deepStrictEqual(next.order.map((w) => w.id), state.order.map((w) => w.id), 'the stack does not move');
     assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: wid(1), opSeq: next.opSeqCounter }]);
   });
+
+  it('a focus report on a HIDDEN window raises nothing — stale evidence, not a raise to drive', () => {
+    // A hide is asynchronous at the OS, so the focus echo of the raise that
+    // preceded a keepLive hide can land after the record already reads
+    // `visible:false` and somebody else holds key. Recording the report as
+    // `key` is RULE 2 and still happens; driving the OS with it is not. A
+    // `RaiseWindow` is an ACTIVATING show — realized against a hidden window
+    // it puts the window back on screen (`planRaiseRealization` ->
+    // 'show-and-take-key'), the world focus that follows sweeps it, the sweep's
+    // hide echoes, and around: the 2026-09-04 command-palette loop, ~7ms per
+    // cycle. Same gate as `FocusAssertRequested` and the focus-assert rule:
+    // `admitsFocusAssert`, the one place the condition lives.
+    const hidden = fold([{ type: 'WindowHidden', id: wid(1) }, { type: 'OsFocusGained', id: wid(2) }], twoWindows(wid(1), wid(2)));
+    assert.strictEqual(hidden.order.find((w) => w.id === wid(1))?.visible, false, 'precondition: hidden');
+    assert.strictEqual(hidden.key, wid(2), 'precondition: somebody else holds key');
+
+    const echo: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(hidden, echo);
+    assert.strictEqual(next.key, wid(1), 'RULE 2: the report is still recorded as fact');
+    assert.deepStrictEqual(raises(react(hidden, echo, next)), [], 'but nothing drives the OS to re-show it');
+    assert.strictEqual(next.opSeqCounter, hidden.opSeqCounter, 'no effect, no token');
+  });
+
+  it('a keepLive reuse — ShowWindow then RaiseWindow on a hidden window — still raises', () => {
+    // The path the gate above must not break: re-showing a hidden palette is
+    // TWO commands, and `ShowWindow`'s `WindowShown` flips the record visible
+    // before the raise's focus report is evolved, so the raise is admitted.
+    const hidden = fold([{ type: 'WindowHidden', id: wid(1) }, { type: 'OsFocusGained', id: wid(2) }], twoWindows(wid(1), wid(2)));
+    const shown = fold([{ type: 'WindowShown', id: wid(1) }], hidden);
+    const decision = decide(shown, { type: 'RaiseWindow', id: wid(1), expectedVersion: shown.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(shown, ev);
+    assert.deepStrictEqual(raises(react(shown, ev, next)), [{ type: 'RaiseWindow', id: wid(1), opSeq: next.opSeqCounter }]);
+  });
 });
 
 // ── CloseOrHideWindow — the keepLive branch point ───────────────────────────
@@ -3128,9 +3163,14 @@ describe('window-kernel: react emits AttachOverlayTo off a diff of the attach ta
 // ── Focus provenance: cause, and isStaleSelfEcho ────────────────────────────
 
 describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
+  // Both windows are SHOWN: a focus report on a hidden record writes `key`
+  // but issues no raise and mints no token (see "a focus report on a HIDDEN
+  // window raises nothing"), and every test here is about the token.
   const registerTwo = (): Event[] => [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowShown', id: wid(1) },
     { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowShown', id: wid(2) },
   ];
 
   it('an OsFocusGained with no cause behaves exactly as one with { kind: "world" }', () => {
@@ -3189,14 +3229,15 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
     assert.ok(raiseEffects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)));
     assert.strictEqual(afterRaise.order.find((w) => w.id === wid(1))?.lastOpSeq, afterRaise.opSeqCounter);
 
-    // Showing an already-hidden-then-shown window: WindowShown on a window
-    // that is not yet visible genuinely flips it and stamps lastOpSeq; a
-    // second WindowShown on the now-visible window is a no-op for the effect
-    // and must not re-stamp (though the value is unchanged either way here,
-    // this proves the guard runs on both edges of the same field).
+    // Showing a hidden-then-shown window: WindowShown on a window that is
+    // not visible genuinely flips it and stamps lastOpSeq; a second
+    // WindowShown on the now-visible window is a no-op for the effect and
+    // must not re-stamp (though the value is unchanged either way here, this
+    // proves the guard runs on both edges of the same field).
+    const hiddenAgain = evolve(afterRaise, { type: 'WindowHidden', id: wid(1) });
     const shownOnceEv: Event = { type: 'WindowShown', id: wid(1) };
-    const shownOnce = evolve(afterRaise, shownOnceEv);
-    const shownOnceEffects = react(afterRaise, shownOnceEv, shownOnce);
+    const shownOnce = evolve(hiddenAgain, shownOnceEv);
+    const shownOnceEffects = react(hiddenAgain, shownOnceEv, shownOnce);
     assert.ok(shownOnceEffects.some((e) => e.type === 'ShowWindow' && e.id === wid(1)));
     assert.strictEqual(shownOnce.order.find((w) => w.id === wid(1))?.lastOpSeq, shownOnce.opSeqCounter);
 
