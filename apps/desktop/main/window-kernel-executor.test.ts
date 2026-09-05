@@ -368,12 +368,17 @@ describe('the stale self-echo guard at the dispatch site', () => {
     const { exec, backend } = twoWindowsWithAnIssuedOp();
     const stamped = exec.getState().order.find((w) => w.id === wid(1))!.lastOpSeq as number;
     exec.dispatch({ type: 'OsFocusGained', id: wid(2) });
+    const versionBefore = exec.getState().version;
     backend.calls.length = 0;
 
     exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: stamped } });
 
-    assert.strictEqual(exec.getState().key, wid(1));
-    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(1)]);
+    assert.strictEqual(exec.getState().key, wid(1), 'the report reaches evolve and is written as fact');
+    assert.notStrictEqual(exec.getState().version, versionBefore, 'not dropped');
+    // It carries the token of the newest op issued to wid(1), so it is that
+    // op's confirmation: the OS already did what the raise asked, and the
+    // kernel drives nothing further (`isOpConfirmation`).
+    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [], 'a confirmation is not re-issued as a raise');
   });
 
   it('never drops a world-caused focus report', () => {

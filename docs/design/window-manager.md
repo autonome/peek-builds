@@ -150,6 +150,43 @@ keepLive reuse (`ShowWindow` then `RaiseWindow` on a hidden window) is unaffecte
 `window-kernel.test.ts` pins both cases, failing-first. What made the second Opt+Space land on a
 palette that was still hiding is a separate defect in the palette renderer, recorded next.
 
+**Two closes for one Escape, closed (2026-09-05).** The palette renderer's state machine
+(`renderer/cmd/state-machine.js handleEscape`) answered the kernel's ask with "not handled"
+(so the kernel dispatched `CloseOrHideWindow`) AND ran its ESCAPE transition's `shutdown` action,
+whose `setTimeout(shutdown, 100)` in `panel.js` calls `api.window.close()` — a second close for
+the same press. Hidden windows are background-throttled, so that timer fired ~760ms later, on a
+palette the next Opt+Space had already re-shown; that late hide is what the raise loop above spun
+on. `handleEscape` now dispatches ESCAPE with `{ kernelCloses: true }` and the `shutdown` action
+declines on that payload; the direct keydown path (no kernel ask, used when the before-input-event
+did not preventDefault) still shuts down itself. `tests/unit/cmd-state-machine.test.js` pins both
+paths, failing-first.
+
+**A keepLive hide of the key holder raised the successor twice (2026-09-05).** Pre-existing:
+every Escape on the palette logged two `raise-realized` records for the settings window 1ms
+apart, with two tokens. The mechanism is the self-amplification the key-diff rule's own comment
+had recorded as a known cost: the successor raise on `WindowHidden` mints token N on the
+successor, `key` still names the hidden palette (RULE 2), and the raise's confirmation — the
+backend's machine-caused `OsFocusGained` carrying token N — moves `key`, so the key diff fired
+again and issued a second raise. A report carrying the token of the newest op issued to its
+window is now a confirmation (`window-kernel.ts isOpConfirmation`): `evolve` writes `key` and
+mints nothing, `react` emits nothing. A `RaiseWindow` COMMAND stays distinguishable because
+`decide` stamps it with the token `evolve` is about to mint (`opSeqCounter + 1`), which no record
+can carry yet; the keepLive reuse (`ShowWindow` then `RaiseWindow`, where the show already
+stamped the palette with the current counter) is the case that forced that choice. A late
+self-echo with the CURRENT token after the world moved key elsewhere is now written as `key` and
+not re-raised either — the OS granted it, so a raise would be idempotent noise.
+`window-kernel.test.ts` "successor raise on WindowHidden" pins the confirmation and the command,
+failing-first.
+
+**Escape over a visible palette with nobody holding key opened the switcher (2026-09-05).**
+`window-escape.ts resolveEscapeTarget` read only the key holder for a `global` landing, so with
+`State.key` null (the app had lost focus to another app while the palette stayed up) the press
+resolved to no target and `interpretEscape` opened the window switcher, whose focus then swept
+the palette as a transient. With no key holder and no landed window, the topmost visible
+transient-autoclose candidate whose role Escape closes (`ESC_CLOSE_ROLES`) is now the target, so
+the outcome is `close-window` for the palette. A live key holder still outranks any visible
+transient (RULE 2). A hidden palette is not a target. `window-escape.test.ts` pins both.
+
 **A second, unrelated killer: the stale Escape (2026-09-04, measured over 50 cycles, fixed).** At
 `dcf05a91` a 50-cycle run destroyed three peeks, and none of the three was a transient sweep.
 Every one was `window-escape-runtime.ts handleEscapePress`'s pass B: the Escape had been pressed

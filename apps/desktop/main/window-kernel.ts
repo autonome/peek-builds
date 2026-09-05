@@ -2267,7 +2267,14 @@ export function evolve(state: State, ev: Event): State {
       // activating show and would put that window back on screen. The
       // report is stale evidence of a raise that preceded the hide, not a
       // fact about what is on screen now.
-      const issuesRaise = state.key !== ev.id && admitsFocusAssert(record, record.visible);
+      //
+      // And not on a CONFIRMATION (`isOpConfirmation`): the echo of the
+      // newest op issued to this window writes `key` and drives nothing —
+      // `key` is written only here, so a raise issued by another transition
+      // (a successor raise on hide, a parent refocus, a focus assert) is
+      // still pending in `key` when its echo lands, and a plain diff would
+      // raise the same window a second time.
+      const issuesRaise = state.key !== ev.id && admitsFocusAssert(record, record.visible) && !isOpConfirmation(record, ev.cause);
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       const movedRecord = issuesRaise ? { ...record, lastOpSeq: opSeq } : record;
       return {
@@ -3301,24 +3308,23 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //     kernel has one route, and a structural diff cannot tell a report from
   //     a command — the two states are identical.
   //
-  //  2. The feedback loop the invariant guarded against does not always close
-  //     in one step. When the raise's target ALREADY holds `key`, the focus
-  //     the OS echoes back names the window `key` already holds — the diff is
-  //     empty and the echo emits nothing. One correcting write, then silence.
-  //     But `key` is written ONLY by the `OsFocusGained` evolve arm above, so
-  //     when the target was NOT already key, `prev.key` going into THAT SAME
-  //     transition still names the old holder — the diff fires again, on the
-  //     raise's own first echo, minting another token and emitting another
-  //     `RaiseWindow` for the same target. That second raise's own echo lands
-  //     with `prev.key` already equal to the target and the loop finally
-  //     closes — so one raise becomes several before the fixed point is
-  //     reached, not a single correcting write, whenever the target was not
-  //     already key. (Provenance —
-  //     `FocusCause` / `lastOpSeq` / `isStaleSelfEcho` — is NOT what closes
-  //     this loop and cannot be: `react` reads no event payload. It solves a
-  //     different problem at a different site — a LATE self-echo, arriving
-  //     after some other window took key, is a genuine raise by this rule and
-  //     must be dropped BEFORE it reaches `evolve`.)
+  //  2. The feedback loop the invariant guarded against closes in one step
+  //     because a CONFIRMATION is not a diff. `key` is written ONLY by the
+  //     `OsFocusGained` evolve arm above, so when a raise was issued by some
+  //     other transition (a successor raise on hide, a parent refocus, a
+  //     focus assert) `prev.key` still names the old holder when the raise's
+  //     own echo lands — and a plain key diff fired again on that echo,
+  //     minting another token and emitting another `RaiseWindow` for the same
+  //     target (measured: two `raise-realized` records 1ms apart on every
+  //     keepLive hide of the palette). The rule therefore reads the
+  //     provenance `evolve` recorded in `next.lastAttention`: an echo carrying
+  //     the token of the newest op issued to its window (`isOpConfirmation`)
+  //     is that op's confirmation, written as `key` and driving nothing. A
+  //     `RaiseWindow` COMMAND is manufactured with the token about to be
+  //     minted, so it never reads as a confirmation — see `decide`. (A LATE
+  //     self-echo with an OLDER token is a different case handled at a
+  //     different site: `isStaleSelfEcho` drops it BEFORE it reaches
+  //     `evolve`.)
   //
   //  3. §0.1.6 asks for exactly this. The OS stack is a write-only projection
   //     and a reconciliation path is required, not just a write path: when the
@@ -3343,7 +3349,21 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // `issuesRaise`, which is what keeps the op-counter biconditional true.
   const nextKey = next.key;
   const raiseTarget = nextKey === null ? undefined : next.order.find((w) => w.id === nextKey);
-  if (nextKey !== null && nextKey !== prev.key && raiseTarget !== undefined && admitsFocusAssert(raiseTarget, raiseTarget.visible)) {
+  // The confirmation test reads the PRE-transition record: a command's own
+  // token is stamped on the record during this transition, so `next` would
+  // make every command look like its own confirmation.
+  const keyMoveConfirmsIssuedOp =
+    nextKey !== null &&
+    next.lastAttention !== null &&
+    next.lastAttention.holder === nextKey &&
+    isOpConfirmation(prev.order.find((w) => w.id === nextKey), next.lastAttention.cause);
+  if (
+    nextKey !== null &&
+    nextKey !== prev.key &&
+    raiseTarget !== undefined &&
+    admitsFocusAssert(raiseTarget, raiseTarget.visible) &&
+    !keyMoveConfirmsIssuedOp
+  ) {
     effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
   }
 
@@ -3833,15 +3853,16 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       //
       // `machine` provenance, because the machine is literally the one asking:
       // this event is manufactured from a COMMAND, not reported by the OS. The
-      // token is the counter as it stands now — `evolve` mints the NEXT one for
-      // this transition, so the record's `lastOpSeq` can only be <= this value
-      // when the event is applied to the state `decide` saw, and the
-      // stale-self-echo guard drops it only if a newer op for the same window
-      // was applied while it sat in the pump's queue. Without a cause the event
-      // reads as the WORLD taking key, which disarms
+      // token is the one `evolve` is ABOUT to mint for this transition
+      // (`opSeqCounter + 1`), which no record carries yet — so the command can
+      // never read as the confirmation of an op already issued
+      // (`isOpConfirmation`), while the stale-self-echo guard still drops it
+      // only if a newer op for the same window was applied while it sat in
+      // the pump's queue (`lastOpSeq` would then exceed this value). Without
+      // a cause the event reads as the WORLD taking key, which disarms
       // `selectTransientAutoclose`'s ordering floor and lets a machine raise
       // sweep a transient opened after the raise was issued.
-      return { events: [{ type: 'OsFocusGained', id: cmd.id, cause: { kind: 'machine', opSeq: state.opSeqCounter } }] };
+      return { events: [{ type: 'OsFocusGained', id: cmd.id, cause: { kind: 'machine', opSeq: state.opSeqCounter + 1 } }] };
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':
@@ -4042,6 +4063,23 @@ export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): 
   if (cause.kind !== 'machine') return false;
   const record = state.order.find((w) => w.id === id);
   return record?.lastOpSeq !== undefined && cause.opSeq < record.lastOpSeq;
+}
+
+/**
+ * True when `cause` is the `machine` echo of the NEWEST op issued for
+ * `record` — its `opSeq` equals `WindowRecord.lastOpSeq`. That report is the
+ * confirmation of a raise (or activating show) this machine already drove,
+ * and is written as `key` (RULE 2) without driving anything further: a
+ * confirmation re-issued as a raise is the self-amplification that turned
+ * one successor raise on a keepLive hide into two, 1ms apart.
+ *
+ * A `RaiseWindow` COMMAND stays distinguishable because `decide` stamps it
+ * with the token `evolve` is ABOUT to mint (`opSeqCounter + 1`), which no
+ * record can carry yet — see that arm. `world` confirms nothing, and a
+ * record with no op yet has nothing to be confirmed.
+ */
+export function isOpConfirmation(record: WindowRecord | undefined, cause: FocusCause | undefined): boolean {
+  return cause?.kind === 'machine' && record?.lastOpSeq !== undefined && cause.opSeq === record.lastOpSeq;
 }
 
 /**

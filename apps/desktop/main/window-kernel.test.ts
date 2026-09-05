@@ -1567,6 +1567,43 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     assert.strictEqual(next.order.find((w) => w.id === B)?.lastOpSeq, next.opSeqCounter, "evolve's stamp equals react's effect token");
   });
 
+  it('the confirmation of the successor raise raises nothing more — one hide, one raise', () => {
+    // The backend answers the raise with a machine-caused focus report that
+    // carries the raise's own token. `key` still names the hidden window at
+    // that point (RULE 2 reserved the write for this report), so a plain key
+    // diff would fire a second time and issue a second raise for the same
+    // window — measured live as two `raise-realized` records 1ms apart on
+    // every keepLive hide of the palette. A report carrying the token of the
+    // last op issued to its window is that op's confirmation, not news.
+    const A = wid(1);
+    const B = wid(2);
+    const state = keyAndSuccessor();
+    const hidden = evolve(state, { type: 'WindowHidden', id: A });
+    const raiseToken = hidden.opSeqCounter;
+    assert.strictEqual(hidden.order.find((w) => w.id === B)?.lastOpSeq, raiseToken, 'precondition: B carries the raise token');
+    assert.strictEqual(hidden.key, A, 'precondition: key still names the hidden window');
+
+    const confirmation: Event = { type: 'OsFocusGained', id: B, cause: { kind: 'machine', opSeq: raiseToken } };
+    const next = evolve(hidden, confirmation);
+    assert.strictEqual(next.key, B, 'the report is recorded as fact');
+    assert.deepStrictEqual(raises(react(hidden, confirmation, next)), [], 'and drives nothing');
+    assert.strictEqual(next.opSeqCounter, raiseToken, 'no effect, no token');
+  });
+
+  it('a RaiseWindow COMMAND on the successor after the hide still raises — a command is not a confirmation', () => {
+    // The command's manufactured report must stay distinguishable from the
+    // confirmation above: B carries the hide's raise token, and a command
+    // issued next must not read as the echo of that raise.
+    const A = wid(1);
+    const B = wid(2);
+    const hidden = evolve(keyAndSuccessor(), { type: 'WindowHidden', id: A });
+    const decision = decide(hidden, { type: 'RaiseWindow', id: B, expectedVersion: hidden.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(hidden, ev);
+    assert.deepStrictEqual(raises(react(hidden, ev, next)), [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }]);
+  });
+
   it('key is not written by the transition, and order is not reordered', () => {
     const A = wid(1);
     const state = keyAndSuccessor();
@@ -4576,8 +4613,8 @@ describe('window-kernel: react applies transient autoclose', () => {
     const ev = decision.events[0];
     assert.deepStrictEqual(
       (ev as { cause?: unknown }).cause,
-      { kind: 'machine', opSeq: state.opSeqCounter },
-      'the raise names itself as the machine, carrying the counter decide saw',
+      { kind: 'machine', opSeq: state.opSeqCounter + 1 },
+      'the raise names itself as the machine, carrying the token evolve is about to mint — no record holds it yet, so the command never reads as a confirmation',
     );
     const next = evolve(state, ev);
     assert.deepStrictEqual(
