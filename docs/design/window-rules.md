@@ -128,10 +128,11 @@ Each term is followed by the name the code uses for it.
 | Restored window comes back un-maximized | G12 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
-Open against these rules: G1/F6 — closed at this commit, not yet verified by hand (the hand check
-is the packaged build, another app frontmost, the global hotkey: the command window must take
-typing while the menubar still shows the other app). D7 (post-paint sweep) is open. S3's dismissal half
-closed at `b7e685e6`; G3/F7 (successor focus on hide was unconditional, `window-kernel.ts react`)
-closed at `a86b030c`, not yet verified by hand. Everything else in the table is fixed or not
-reproducing; G7, G10, G11 and F8 have not been checked by hand since 2026-08-21. The kernel read
+Open against these rules: D7 (post-paint sweep). G1/F6 closed at `7e2eab6c` and G3/F7 at
+`a86b030c`, both verified by hand on the packaged build on 2026-09-12: with another app frontmost,
+the global hotkey put the command window up with `plan=take-key intent=user`, typing landed in it,
+the menubar stayed on the other app, and the second Escape hid it with no other window focused
+and focus back in the other app. S3's dismissal half closed at `b7e685e6`. Everything else in the
+table is fixed or not reproducing; G7, G10, G11 and F8 have not been checked by hand since
+2026-08-21. The kernel read
 against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
