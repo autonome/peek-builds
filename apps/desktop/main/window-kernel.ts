@@ -554,16 +554,14 @@ export interface WindowRecord {
  *   - `world`    a real user gesture, another app, Mission Control, a page
  *                click — everything else.
  *
- * `intent: 'user'` on a `machine` cause marks a raise the machine issues ON
- * THE USER'S BEHALF — a `RaiseWindow` COMMAND that a user gesture (a hotkey,
- * a CLI verb) dispatched. It rides the cause because that is the only thing
- * `decide`'s raise arm emits: the command becomes an `OsFocusGained`, `evolve`
- * records the cause in `State.lastAttention`, and `react` reads it back when
- * it diffs `key` into the `RaiseWindow` EFFECT. The kernel never learns which
- * gesture it was, only that the raise was asked for rather than derived.
- * Absent means derived — a successor raise, a parent refocus, a focus assert.
+ * Carries no `intent`: a `RaiseWindow` COMMAND's own "the user asked for this"
+ * fact rides `State.lastRaiseRequest` instead (see `FocusRaiseRequest`) — that
+ * request never becomes an `OsFocusGained` itself (RULE 2 reserves writing
+ * `key` for the OS's own report), so there is no `cause` for it to ride on by
+ * the time the real echo arrives. The echo's own `cause` is always a bare
+ * `{ kind: 'machine', opSeq }`, minted fresh by whatever produced it.
  */
-export type FocusCause = { kind: 'machine'; opSeq: number; intent?: 'user' } | { kind: 'world' };
+export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
 
 /**
  * RULE 1 (§0.1.4): `order` holds EVERY registered window, bottom -> top, as
@@ -678,6 +676,42 @@ export interface State {
    * pending".
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
+  /**
+   * A `RaiseWindow` COMMAND the kernel was asked to perform, or `null` before
+   * any — the fact `react` diffs to emit the effect, the same shape
+   * `lastFocusAssert` has and for the same reason (§0.1.1: `react` may not
+   * branch on `ev.type`, so the request has to become something it can diff).
+   *
+   * WHY A SEPARATE FIELD FROM `lastFocusAssert`, even though the two arms are
+   * near-identical: a `RaiseWindow` command is a NO-OP when its target already
+   * holds `key` (`evolve`'s arm gates `lastOpSeq` on `state.key !== ev.id`, the
+   * same silent-no-op shape `key`'s own diff has) — a re-assert onto a window
+   * already front is exactly what `FocusAssertRequested` exists to override
+   * (see that field's doc, and the `7c61e917` regression it fixes), so folding
+   * the two into one field would make an ordinary raise command re-derive the
+   * gate `AssertFocus` deliberately does not have.
+   *
+   * WHY WRITTEN INSTEAD OF AN `OsFocusGained` EVENT (RULE 2's boundary): a
+   * raise the machine issues on the user's behalf is still a REQUEST, not a
+   * report — the OS has not focused anything yet. Manufacturing an
+   * `OsFocusGained` here would write `key`/`order`/`lastAttention` before that
+   * happens, so the model would claim a window is key that the OS never
+   * focused (measured with the app backgrounded: `RaiseWindow` suppressed by
+   * `window-kernel-executor.ts planRaise`, yet `key` had already moved). `key`
+   * moves only when the backend's own `OsFocusGained` echo arrives, carrying
+   * the `opSeq` this request's `evolve` arm stamped on the record.
+   *
+   * `intent: 'user'` marks a raise a user gesture asked for (hotkey, CLI
+   * verb) — the one thing this field carries that `FocusAssertRequest` does
+   * not, since only a `RaiseWindow` COMMAND (never an `AssertFocus`) can name
+   * one. It survives onto the `RaiseWindow` EFFECT, where the executor's
+   * app-inactive mask (`planRaise`) exempts it.
+   *
+   * Nothing clears the field, same reason as `lastFocusAssert`: a later
+   * transition that writes neither's event leaves it untouched, which diffs
+   * to nothing.
+   */
+  readonly lastRaiseRequest: FocusRaiseRequest | null;
   /**
    * THE MOST RECENT FOCUS REPORT, or `null` before any — the fact that lets
    * `react` apply transient autoclose (§0: "no dispatch site can silently
@@ -841,6 +875,19 @@ export interface SelectionFocus {
 export interface FocusAssertRequest {
   id: WindowId;
   seq: number;
+}
+
+/**
+ * A `RaiseWindow` COMMAND the kernel was asked to perform — see
+ * `State.lastRaiseRequest` for why this is a field of its own rather than a
+ * reuse of `FocusAssertRequest`. `intent` mirrors the `RaiseWindow` command's
+ * own field (§ `Command`), present only when a user gesture asked for the
+ * raise.
+ */
+export interface FocusRaiseRequest {
+  id: WindowId;
+  seq: number;
+  intent?: 'user';
 }
 
 /**
@@ -1147,6 +1194,16 @@ export type Event =
    */
   | { type: 'FocusAssertRequested'; id: WindowId }
   /**
+   * `decide`'s translation of an accepted `RaiseWindow` command — a request
+   * to make this window key, not yet a report that it is (see
+   * `State.lastRaiseRequest`). Records the request on that field; the only
+   * other write is the focus-op stamp the raise it drives carries (gated the
+   * same way the stamp is, on the target not already holding `key`) — `key`
+   * itself, `order`, and `lastAttention` are all untouched, RULE 2 leaving
+   * `key` to `OsFocusGained`/`OsFocusLost` alone.
+   */
+  | { type: 'FocusRaiseRequested'; id: WindowId; intent?: 'user' }
+  /**
    * The cold-start focus latch was armed (ported from `window-state.ts
    * COLD_START_FOCUS_ARMED`) — `decide`'s translation of `ArmColdStartFocus`.
    * Writes `State.pendingColdStartFocus` and NOTHING else: not `key` (RULE 2 —
@@ -1184,9 +1241,9 @@ export type Event =
 export type Command =
   /**
    * `intent: 'user'` marks a raise a user gesture asked for (hotkey, CLI
-   * verb). It rides the `machine` `FocusCause` `decide` manufactures and
-   * surfaces again on the `RaiseWindow` EFFECT, where the executor's
-   * app-inactive mask exempts it — see `FocusCause`.
+   * verb). It rides `decide`'s `FocusRaiseRequested` translation onto
+   * `State.lastRaiseRequest` and surfaces again on the `RaiseWindow` EFFECT,
+   * where the executor's app-inactive mask exempts it — see that field.
    */
   | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
@@ -1528,9 +1585,9 @@ export type Effect =
   | { type: 'DismissWindow'; id: WindowId }
   /**
    * `intent: 'user'` is present only when the raise was a `RaiseWindow`
-   * COMMAND carrying it (`FocusCause.intent`); every raise `react` derives on
-   * its own (successor, parent refocus, focus assert) omits it. The executor's
-   * app-inactive mask applies to the derived raises only.
+   * COMMAND carrying it (`State.lastRaiseRequest.intent`); every raise `react`
+   * derives on its own (successor, parent refocus, focus assert) omits it.
+   * The executor's app-inactive mask applies to the derived raises only.
    */
   | { type: 'RaiseWindow'; id: WindowId; opSeq: number; intent?: 'user' }
   /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
@@ -1646,6 +1703,7 @@ export function initialState(): State {
     pendingAppResignSweep: false,
     lastTeardown: null,
     lastFocusAssert: null,
+    lastRaiseRequest: null,
     lastAttention: null,
     pendingColdStartFocus: null,
     pendingSelectionFocus: null,
@@ -1678,6 +1736,16 @@ function nextAttentionSeq(state: State): number {
  */
 function nextFocusAssertSeq(state: State): number {
   return (state.lastFocusAssert?.seq ?? 0) + 1;
+}
+
+/**
+ * The next `FocusRaiseRequest.seq` — one per `RaiseWindow` command, monotone,
+ * never reused. Same derivation as `nextFocusAssertSeq` above and for the same
+ * reason: a module counter would make `evolve` read something other than its
+ * two arguments and would break replay determinism.
+ */
+function nextRaiseRequestSeq(state: State): number {
+  return (state.lastRaiseRequest?.seq ?? 0) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3125,6 +3193,43 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'FocusRaiseRequested': {
+      // The sibling of `FocusAssertRequested` above, and the same shape:
+      // record the request on the fact `react` diffs (`lastRaiseRequest`) and
+      // touch nothing about the window model beyond the one record's focus-op
+      // stamp. `key`, `order`, `lastAttention` untouched — RULE 2 leaves `key`
+      // to `OsFocusGained`/`OsFocusLost` alone, so a raise the machine has only
+      // ASKED for is not yet a fact about who is key.
+      //
+      // GATED ON `state.key !== ev.id` TOO, unlike `FocusAssertRequested`'s
+      // arm — the one real difference between the two. A `RaiseWindow` command
+      // on the window that already holds key is the silent no-op `AssertFocus`
+      // exists to override (`window-kernel.test.ts` "a plain RaiseWindow
+      // command on the same window drives NOTHING"); folding the two commands
+      // onto one field would erase that distinction. Mirrors the read
+      // `OsFocusGained`'s own `issuesRaise` makes of `state.key`, for the same
+      // reason: this is a request that stands in for a focus report before the
+      // OS has confirmed one.
+      //
+      // The stamp mirrors `react`'s own emission exactly (registered, not
+      // already key, `admitsFocusAssert`) for the same one-token-per-op reason
+      // `FocusAssertRequested` documents.
+      //
+      // Total and guard-free like every arm here: an id absent from `order`
+      // still records the request and simply matches no record to stamp.
+      const targetRecord = state.order.find((w) => w.id === ev.id);
+      const issuesRaiseRequest =
+        state.key !== ev.id && targetRecord !== undefined && admitsFocusAssert(targetRecord, targetRecord.visible);
+      const requestOpSeq = issuesRaiseRequest ? state.opSeqCounter + 1 : state.opSeqCounter;
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, lastOpSeq: requestOpSeq } : w)),
+        opSeqCounter: requestOpSeq,
+        lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent === 'user' ? { intent: 'user' as const } : {}) },
+        version: state.version + 1,
+      };
+    }
+
     case 'ColdStartFocusArmed': {
       // Latch only: `State.pendingColdStartFocus` and nothing else. `key` is
       // untouched (RULE 2 — arming is a note about a future activation, not a
@@ -3421,13 +3526,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // so it reads `prev`/`next` only and never asks which event caused the move.
   //
   // WHY `key` AND NOT THE TOP OF `order`. A raise asserts which window is the
-  // one in use, and `key` IS that fact: `OsFocusGained` is its only writer,
-  // and `decide` turns a `RaiseWindow` COMMAND into exactly that event, so the
-  // raise path is preserved verbatim by diffing the field the command's own
-  // event writes. Diffing the top of `order` instead answered the question
-  // only indirectly, and needed a length-equality trick to do it — `order`
-  // moves for reasons that are not a focus change, so the rule had to exclude
-  // every membership change to keep registration and close from raising.
+  // one in use, and `key` IS that fact: `OsFocusGained` is its only writer.
+  // A `RaiseWindow` COMMAND no longer becomes one directly (`decide` turns it
+  // into `FocusRaiseRequested` instead — see `State.lastRaiseRequest` and the
+  // react rule that diffs it, right after this one) — but its eventual
+  // confirmation, the backend's real `OsFocusGained` echo, still lands here
+  // like any other focus report, so this rule still carries the command raise
+  // through to `key` once the OS actually grants it. Diffing the top of
+  // `order` instead answered the question only indirectly, and needed a
+  // length-equality trick to do it — `order` moves for reasons that are not a
+  // focus change, so the rule had to exclude every membership change to keep
+  // registration and close from raising.
   //
   // The two halves that separates, which a top-of-stack diff cannot express:
   //
@@ -3458,35 +3567,31 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // pump's convergence obligation"), which is superseded here rather than
   // violated:
   //
-  //  1. It is the ONLY route to key. §0.1.10 makes use-order and z-order one
-  //     order, so `decide` turns a `RaiseWindow` COMMAND into an
-  //     `OsFocusGained` event — the same event an OS report produces. Drop
-  //     this emission and a raise command reaches the OS as nothing but the
-  //     `SetStacking` re-assert below, which is relative z-order with no
-  //     activation and no first-responder semantics: the machine would move
-  //     the window in its own model and never make it the window in use.
-  //     The old reducer could hold the invariant because its raise had a
-  //     SEPARATE effect route (`window-state.ts applyRaiseRequest`); this
-  //     kernel has one route, and a structural diff cannot tell a report from
-  //     a command — the two states are identical.
+  //  1. It is the confirmation route every raise eventually needs. §0.1.10
+  //     makes use-order and z-order one order, and `OsFocusGained` is `key`'s
+  //     only writer, so whatever asked for the raise — a successor raise on
+  //     hide, a parent refocus, a focus assert, or the backend's own echo of a
+  //     `RaiseWindow` COMMAND (via `FocusRaiseRequested` — see
+  //     `State.lastRaiseRequest`) — has no OTHER route to actually taking key.
+  //     Drop this emission and the OS's grant of a raise would move `key` in
+  //     the model and never re-assert the fact at the OS that caused it in the
+  //     first place, on the rare disagreement (§0.1.6) that calls for it.
   //
-  //  2. The feedback loop the invariant guarded against closes in one step
-  //     because a CONFIRMATION is not a diff. `key` is written ONLY by the
-  //     `OsFocusGained` evolve arm above, so when a raise was issued by some
-  //     other transition (a successor raise on hide, a parent refocus, a
-  //     focus assert) `prev.key` still names the old holder when the raise's
-  //     own echo lands — and a plain key diff fired again on that echo,
-  //     minting another token and emitting another `RaiseWindow` for the same
-  //     target (measured: two `raise-realized` records 1ms apart on every
-  //     keepLive hide of the palette). The rule therefore reads the
-  //     provenance `evolve` recorded in `next.lastAttention`: an echo carrying
-  //     the token of the newest op issued to its window (`isOpConfirmation`)
-  //     is that op's confirmation, written as `key` and driving nothing. A
-  //     `RaiseWindow` COMMAND is manufactured with the token about to be
-  //     minted, so it never reads as a confirmation — see `decide`. (A LATE
-  //     self-echo with an OLDER token is a different case handled at a
-  //     different site: `isStaleSelfEcho` drops it BEFORE it reaches
-  //     `evolve`.)
+  //  2. The feedback loop a naive version of this rule invites closes in one
+  //     step because a CONFIRMATION is not a diff. `key` is written ONLY by
+  //     the `OsFocusGained` evolve arm above, so when a raise was issued by
+  //     some other transition (a successor raise on hide, a parent refocus, a
+  //     focus assert, a `RaiseWindow` command's `FocusRaiseRequested`)
+  //     `prev.key` still names the old holder when the raise's own echo
+  //     lands — and a plain key diff fired again on that echo, minting
+  //     another token and emitting another `RaiseWindow` for the same target
+  //     (measured: two `raise-realized` records 1ms apart on every keepLive
+  //     hide of the palette). The rule therefore reads the provenance `evolve`
+  //     recorded in `next.lastAttention`: an echo carrying the token of the
+  //     newest op issued to its window (`isOpConfirmation`) is that op's
+  //     confirmation, written as `key` and driving nothing. (A LATE self-echo
+  //     with an OLDER token is a different case handled at a different site:
+  //     `isStaleSelfEcho` drops it BEFORE it reaches `evolve`.)
   //
   //  3. §0.1.6 asks for exactly this. The OS stack is a write-only projection
   //     and a reconciliation path is required, not just a write path: when the
@@ -3526,19 +3631,12 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     admitsFocusAssert(raiseTarget, raiseTarget.visible) &&
     !keyMoveConfirmsIssuedOp
   ) {
-    // A raise the user asked for (a `RaiseWindow` COMMAND with `intent`)
-    // says so on the effect, read back off the attention fact `evolve` wrote
-    // for THIS transition — the `seq` check is what makes it a read of this
-    // transition's cause and not of a standing one. Every other emitter of
-    // `RaiseWindow` in this function derives its raise and carries nothing.
-    const attention = next.lastAttention;
-    const userIntended =
-      attention !== null &&
-      attention.seq !== prev.lastAttention?.seq &&
-      attention.holder === nextKey &&
-      attention.cause.kind === 'machine' &&
-      attention.cause.intent === 'user';
-    effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter, ...(userIntended ? { intent: 'user' } : {}) });
+    // No `intent` here: a `RaiseWindow` COMMAND's own "the user asked for
+    // this" fact is read off `State.lastRaiseRequest` by the react rule that
+    // diffs it, not off this one — this rule only ever fires for a raise the
+    // machine DERIVED (a successor, a parent refocus, a focus assert) or for
+    // the OS's own reconciling report (§0.1.6), and neither carries intent.
+    effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
   }
 
   // Transient autoclose (§0: "the machine applies the rule; no caller does").
@@ -3768,6 +3866,35 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Raise request: a structural diff of `State.lastRaiseRequest`, the sibling
+  // of the focus-assert rule just above and `decide`'s translation of an
+  // accepted `RaiseWindow` COMMAND (§0.1.10: use-order and z-order are one
+  // order, so this — not the key-diff rule above — is the machine's route
+  // from a raise ASK to the effect that realizes it; `key` itself moves only
+  // later, off the backend's own confirming `OsFocusGained`, which the
+  // key-diff rule above already carries through).
+  //
+  // GATED ON `next.key !== raiseRequest.id` IN ADDITION TO `admitsFocusAssert`
+  // — the one place this rule diverges from the focus-assert rule's shape.
+  // A `RaiseWindow` command on the window that already holds key is the
+  // silent no-op `AssertFocus`/`FocusAssertRequested` exists to override (see
+  // `window-kernel.test.ts` "a plain RaiseWindow command on the same window
+  // drives NOTHING"); mirrors `evolve`'s own `issuesRaiseRequest` exactly, the
+  // same one-token-per-op reason `admitsFocusAssert`'s doc gives for the other
+  // three sites sharing it.
+  const raiseRequest = next.lastRaiseRequest;
+  if (raiseRequest !== null && raiseRequest.seq !== prev.lastRaiseRequest?.seq) {
+    const record = next.order.find((w) => w.id === raiseRequest.id);
+    if (record !== undefined && next.key !== raiseRequest.id && admitsFocusAssert(record, record.visible)) {
+      effects.push({
+        type: 'RaiseWindow',
+        id: raiseRequest.id,
+        opSeq: next.opSeqCounter,
+        ...(raiseRequest.intent === 'user' ? { intent: 'user' as const } : {}),
+      });
+    }
+  }
+
   return effects;
 }
 
@@ -3957,32 +4084,29 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
 
   switch (cmd.type) {
     case 'RaiseWindow':
-      // A raise is a focus request (§0.1.10: use-order and z-order are one
-      // order, so raising a window is what makes it key).
+      // A raise is a focus REQUEST (§0.1.10: use-order and z-order are one
+      // order, so raising a window is what will make it key) — not yet a
+      // report that it is. `key` is a fact RULE 2 reserves for `OsFocusGained`
+      // alone, so this arm must not manufacture one: doing so wrote `key`
+      // (and reordered `order`, and stamped a fresh `lastAttention`) before
+      // the OS had focused anything, which is how a backgrounded app — its
+      // raise suppressed outright by `window-kernel-executor.ts planRaise` —
+      // ended up with a model that believed a window was key the OS never
+      // touched.
       //
-      // `machine` provenance, because the machine is literally the one asking:
-      // this event is manufactured from a COMMAND, not reported by the OS. The
-      // token is the one `evolve` is ABOUT to mint for this transition
-      // (`opSeqCounter + 1`), which no record carries yet — so the command can
-      // never read as the confirmation of an op already issued
-      // (`isOpConfirmation`), while the stale-self-echo guard still drops it
-      // only if a newer op for the same window was applied while it sat in
-      // the pump's queue (`lastOpSeq` would then exceed this value). Without
-      // a cause the event reads as the WORLD taking key, which disarms
-      // `selectTransientAutoclose`'s ordering floor and lets a machine raise
-      // sweep a transient opened after the raise was issued.
+      // So `decide` translates the command onto `FocusRaiseRequested`
+      // instead: `evolve`'s arm for it stamps the target's `lastOpSeq` (the
+      // same op-token machinery `FocusAssertRequested` uses) and records the
+      // ask on `State.lastRaiseRequest`, and `react` diffs THAT fact into the
+      // `RaiseWindow` effect — see both for the rest of the mechanism. `key`
+      // moves only later, when the backend's own `OsFocusGained` echo arrives
+      // carrying the stamped `opSeq` as its `cause`.
       //
-      // `intent` rides the cause (see `FocusCause`): the command is the only
-      // producer that can say a raise was asked for, and the cause is the
-      // only thing this arm emits.
+      // `intent` rides the event straight from the command (see
+      // `State.lastRaiseRequest`): this arm is the only producer that can say
+      // a raise was asked for.
       return {
-        events: [
-          {
-            type: 'OsFocusGained',
-            id: cmd.id,
-            cause: { kind: 'machine', opSeq: state.opSeqCounter + 1, ...(cmd.intent === 'user' ? { intent: 'user' } : {}) },
-          },
-        ],
+        events: [{ type: 'FocusRaiseRequested', id: cmd.id, ...(cmd.intent === 'user' ? { intent: 'user' } : {}) }],
       };
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
@@ -4194,10 +4318,13 @@ export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): 
  * confirmation re-issued as a raise is the self-amplification that turned
  * one successor raise on a keepLive hide into two, 1ms apart.
  *
- * A `RaiseWindow` COMMAND stays distinguishable because `decide` stamps it
- * with the token `evolve` is ABOUT to mint (`opSeqCounter + 1`), which no
- * record can carry yet — see that arm. `world` confirms nothing, and a
- * record with no op yet has nothing to be confirmed.
+ * A `RaiseWindow` COMMAND never reads as its own confirmation, because it
+ * never carries a `cause` at all — it becomes a `FocusRaiseRequested` event
+ * (see `State.lastRaiseRequest`), not an `OsFocusGained` one, so there is no
+ * `cause` here for `isOpConfirmation` to compare. Only the backend's own
+ * later echo does, stamped with the `opSeq` that request's `evolve` arm
+ * minted. `world` confirms nothing, and a record with no op yet has nothing
+ * to be confirmed.
  */
 export function isOpConfirmation(record: WindowRecord | undefined, cause: FocusCause | undefined): boolean {
   return cause?.kind === 'machine' && record?.lastOpSeq !== undefined && cause.opSeq === record.lastOpSeq;
@@ -5093,20 +5220,22 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
 
 /**
  * Whether a focus-family raise may legitimately land on this record — the
- * ONE condition `evolve`'s `AppActivated` and `FocusAssertRequested` arms
- * each stamp `lastOpSeq` on, and `react`'s focus-assert rule gates its
- * `RaiseWindow` on. All three used to restate this by hand;
- * `window-kernel-properties.test.ts checkOpSeqInvariants` requires
- * `opSeqCounter` to advance by exactly 1 iff the transition emits at least
- * one focus-family effect, which is what makes a drift between the three
- * copies a real bug rather than a style nit — this helper is the one place
- * that can no longer drift, because there is only one place.
+ * ONE condition `evolve`'s `AppActivated`, `FocusAssertRequested`, and
+ * `FocusRaiseRequested` arms each stamp `lastOpSeq` on, and `react`'s
+ * focus-assert and raise-request rules each gate their `RaiseWindow` on. All
+ * four used to restate this by hand; `window-kernel-properties.test.ts
+ * checkOpSeqInvariants` requires `opSeqCounter` to advance by exactly 1 iff
+ * the transition emits at least one focus-family effect, which is what makes
+ * a drift between the four copies a real bug rather than a style nit — this
+ * helper is the one place that can no longer drift, because there is only one
+ * place.
  *
  * `visible` is supplied by the caller rather than read off `record`, because
  * `AppActivated` tests POST-RE-SHOW visibility (`record.visible === true ||
  * appBlurRevealAdmits(state, record)`, not `record`'s own pre-transition
- * value — see that arm's own doc), while `FocusAssertRequested` and
- * `react`'s rule both test the record's own current value directly.
+ * value — see that arm's own doc), while `FocusAssertRequested`,
+ * `FocusRaiseRequested`, and `react`'s two rules all test the record's own
+ * current value directly.
  *
  * `pendingHidden` is read off `record` directly in every case: a window the
  * machine has already decided to tear down is never a legitimate raise

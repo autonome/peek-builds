@@ -526,19 +526,77 @@ describe('window-kernel: raise vs. show', () => {
     assert.strictEqual(topmost(shown, () => true)?.id, wid(2));
   });
 
-  it('a RaiseWindow command (accepted, and realized as OsFocusGained) does move the target to the top', () => {
+  it('a RaiseWindow command leaves key and order untouched — it is a request, not yet a report (F1)', () => {
+    // RULE 2: `key` is written ONLY by `OsFocusGained`. A `RaiseWindow`
+    // command asks for a raise; it does not manufacture the OS's own report
+    // of one. `decide` translates it onto `FocusRaiseRequested` instead (see
+    // `State.lastRaiseRequest`), which `evolve` folds without moving `key` or
+    // `order` — the backend has not focused anything yet.
     const state = fold(
       [
         { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
         { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(keyWindow(state), null, 'precondition: nobody holds key yet');
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const { state: requested, effects } = foldWithEffects(decision.events, state);
+
+    assert.strictEqual(keyWindow(requested), null, 'the request alone does not write key');
+    assert.strictEqual(topmost(requested, () => true)?.id, wid(2), 'and does not reorder either');
+    assert.deepStrictEqual(effects, [{ type: 'RaiseWindow', id: wid(1), opSeq: requested.opSeqCounter }], 'exactly one RaiseWindow effect drives the OS');
+  });
+
+  it('the backend confirmation carrying the raise\'s opSeq is what actually writes key (F3: no second sweep, no second raise)', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
       ],
       initialState(),
     );
     const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
     assert.ok('events' in decision);
-    const raised = fold(decision.events, state);
-    assert.strictEqual(topmost(raised, () => true)?.id, wid(1));
-    assert.strictEqual(keyWindow(raised)?.id, wid(1));
+    const { state: requested } = foldWithEffects(decision.events, state);
+
+    // The backend's own echo of the `RaiseWindow` effect, carrying the SAME
+    // opSeq that effect was stamped with.
+    const confirm: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: requested.opSeqCounter } };
+    const next = evolve(requested, confirm);
+    const effects = react(requested, confirm, next);
+
+    assert.strictEqual(keyWindow(next)?.id, wid(1), 'NOW key moves — on the OS confirmation, not the request');
+    assert.strictEqual(topmost(next, () => true)?.id, wid(1));
+    assert.deepStrictEqual(effects, [], 'a confirmation drives nothing further — no second sweep, no second raise');
+  });
+
+  it('a RaiseWindow command on a record that fails admitsFocusAssert emits nothing and leaves the window model untouched (F5)', () => {
+    // `evolve`'s `FocusRaiseRequested` arm gates its stamp on `admitsFocusAssert`
+    // exactly as `FocusAssertRequested` and `AppActivated` do; `react`'s
+    // raise-request rule mirrors the same gate. A hidden (never-shown) target
+    // fails it, so the command is admitted by `decide` (it names a real
+    // window) but drives nothing.
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' }],
+      initialState(),
+    );
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.visible, false, 'precondition: registered, never shown');
+
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const { state: next, effects } = foldWithEffects(decision.events, state);
+
+    assert.deepStrictEqual(effects, [], 'no RaiseWindow effect for a target that cannot legitimately take it');
+    assert.strictEqual(next.key, state.key, 'key untouched');
+    assert.deepStrictEqual(next.order.map((w) => w.id), state.order.map((w) => w.id), 'order untouched');
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no fresh token minted — nothing to confirm later');
+    assert.strictEqual(next.order[0].lastOpSeq, state.opSeqCounter, 'the record is not stamped with a NEW op — same value the counter already held');
   });
 
   it('showing a hidden window does NOT change its position in order', () => {
@@ -773,20 +831,23 @@ describe('window-kernel: the raise a focus report drives', () => {
     );
   });
 
-  it('a RaiseWindow COMMAND the user asked for carries its intent through the cause onto the effect', () => {
+  it('a RaiseWindow COMMAND the user asked for carries its intent through lastRaiseRequest onto the effect', () => {
     // The hotkey path (window-rules.md F6): `kernelShowRequested` sends the
     // command with `intent: 'user'`; the executor's app-inactive mask reads
-    // it off the effect, so it has to survive decide -> evolve -> react.
+    // it off the effect, so it has to survive decide -> evolve -> react. It no
+    // longer rides a `FocusCause` (there is no `OsFocusGained` here at all) —
+    // it rides `State.lastRaiseRequest` instead.
     const state = twoWindows(wid(1), wid(2));
     const decision = decide(state, { type: 'RaiseWindow', id: wid(2), expectedVersion: state.version, intent: 'user' });
     assert.ok('events' in decision);
     const ev = decision.events[0];
     assert.deepStrictEqual(
       ev,
-      { type: 'OsFocusGained', id: wid(2), cause: { kind: 'machine', opSeq: state.opSeqCounter + 1, intent: 'user' } },
-      'the cause is the only thing decide emits, so the intent rides it',
+      { type: 'FocusRaiseRequested', id: wid(2), intent: 'user' },
+      'the event carries the intent directly — there is no cause to ride',
     );
     const next = evolve(state, ev);
+    assert.strictEqual(next.lastRaiseRequest?.intent, 'user', 'and the fact react diffs records it');
     assert.deepStrictEqual(
       raises(react(state, ev, next)),
       [{ type: 'RaiseWindow', id: wid(2), opSeq: next.opSeqCounter, intent: 'user' }],
@@ -4327,27 +4388,33 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
-  it('a RaiseWindow COMMAND for an older window does not sweep a peek opened after it — decide has to stamp the machine cause itself', () => {
+  it('a RaiseWindow COMMAND for an older window does not sweep a peek opened after it — the eventual confirmation carries the machine cause', () => {
     // The live shape: W is a base content window opened first; P is a
     // quick-view peek opened LATER and currently key, exactly the "successor
     // RaiseWindow for the surviving content window" `react` manufactures off
-    // a `WindowClosed`. This drives the COMMAND through `decide` — the arm
-    // whose `OsFocusGained` used to carry no `cause` — rather than calling
-    // `selectTransientAutoclose` directly, so a regression there (dropping
-    // the `cause` field decide's `RaiseWindow` arm stamps) fails here even
-    // though the bare-selector INVARIANT test above still passes.
+    // a `WindowClosed`. This drives the COMMAND through `decide`, which stamps
+    // W's `lastOpSeq` via `FocusRaiseRequested` (no sweep runs yet — nothing
+    // about `key` has changed) and then through the backend's confirming
+    // `OsFocusGained`, whose `cause` carries that same opSeq — so a regression
+    // dropping that stamp, or reporting the confirmation as the world's,
+    // fails here even though the bare-selector INVARIANT test above still
+    // passes.
     const W = wid(1);
     const P = wid(2);
     const state = fold([reg(1, 'workspace'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: P }], initialState());
 
     const decision = decide(state, { type: 'RaiseWindow', id: W, expectedVersion: state.version });
     assert.ok('events' in decision, `RaiseWindow was rejected: ${JSON.stringify(decision)}`);
-    const { effects } = foldWithEffects(decision.events, state);
+    const { state: requested } = foldWithEffects(decision.events, state);
+
+    const confirm: Event = { type: 'OsFocusGained', id: W, cause: { kind: 'machine', opSeq: requested.opSeqCounter } };
+    const next = evolve(requested, confirm);
+    const effects = react(requested, confirm, next);
 
     assert.deepStrictEqual(
       effects.filter((e) => e.type === 'DismissWindow'),
       [],
-      'P outlives the raise on the older W — a causeless OsFocusGained would have swept it as a world focus',
+      'P outlives the raise on the older W — a causeless confirmation would have swept it as a world focus',
     );
   });
 
@@ -4843,32 +4910,28 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.deepStrictEqual(dismissed(react(shown, refocusEv, refocused)), [wid(2)], 'and react projects a fresh DismissWindow for it');
   });
 
-  it('a RaiseWindow COMMAND reaches the sweep rule, but carries the machine cause that arms the floor', () => {
-    // §0.1.10: `decide` turns `RaiseWindow` into `OsFocusGained`, so a
-    // machine-issued raise reaches `react`'s sweep rule exactly like a real
-    // user focus does. The old reducer's `RAISE_WINDOW_REQUESTED` never ran
-    // the sweep at all — that is a deliberate consequence of collapsing to one
-    // focus route, not a gap.
-    //
-    // What makes it SAFE is the provenance: `decide` is the machine asking, so
-    // the event says `machine`, and `selectTransientAutoclose`'s ordering floor
-    // arms and spares everything opened after the raise. Reporting it as the
-    // world's is what let a successor raise sweep a peek that was still
-    // loading — the every-other-press defect
-    // (`docs/design/window-manager.md`, "Resolved: three producers of a
-    // machine focus reported it as the world's").
+  it('a RaiseWindow COMMAND\'s eventual OS confirmation reaches the sweep rule, carrying the machine cause that arms the floor', () => {
+    // `decide` turns `RaiseWindow` into `FocusRaiseRequested`, which stamps
+    // the target's `lastOpSeq` — the sweep itself does not run yet (no
+    // `OsFocusGained` for the machine to have gotten wrong the way the old
+    // reducer's `RAISE_WINDOW_REQUESTED` did). It runs when the backend's real
+    // confirmation arrives, and that echo's `cause` is `machine` with the
+    // SAME opSeq the request stamped — that is what arms
+    // `selectTransientAutoclose`'s ordering floor and spares everything
+    // opened after the raise. Reporting it as the world's is what let a
+    // successor raise sweep a peek that was still loading — the every-other-
+    // press defect (`docs/design/window-manager.md`, "Resolved: three
+    // producers of a machine focus reported it as the world's").
     const state = scene();
     const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
     assert.ok('events' in decision);
-    const ev = decision.events[0];
+    const { state: requested } = foldWithEffects(decision.events, state);
+    assert.strictEqual(requested.key, state.key, 'the request alone did not move key yet');
+
+    const confirm: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: requested.opSeqCounter } };
+    const next = evolve(requested, confirm);
     assert.deepStrictEqual(
-      (ev as { cause?: unknown }).cause,
-      { kind: 'machine', opSeq: state.opSeqCounter + 1 },
-      'the raise names itself as the machine, carrying the token evolve is about to mint — no record holds it yet, so the command never reads as a confirmation',
-    );
-    const next = evolve(state, ev);
-    assert.deepStrictEqual(
-      dismissed(react(state, ev, next)),
+      dismissed(react(requested, confirm, next)),
       [],
       'the palette and quick-view were both opened after the workspace, so the floor spares them',
     );

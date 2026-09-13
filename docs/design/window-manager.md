@@ -666,6 +666,29 @@ the keystroke never touched. `window-escape.test.ts` "D5 — no key holder, no c
 visible fullscreen window: nothing, not open-switcher" and "D5 — same scene with no fullscreen
 window still opens the switcher" pin both branches, failing-first on the former.
 
+**A `RaiseWindow` command wrote `key` before the OS had focused anything, closed (2026-09-13).**
+`decide`'s raise arm manufactured its own `OsFocusGained` event, carrying a machine cause stamped
+with the token `evolve` was about to mint, and `evolve` wrote `key`, reordered `order`, and landed a
+fresh `lastAttention` off that manufactured event — before the executor had even decided whether to
+ask the OS for the raise at all. With the app backgrounded and no user intent, `planRaise` suppresses
+the raise outright (no backend call, ever), so the model ended up believing a window was key that
+the OS never focused (F1); the transient-autoclose sweep ran once on the manufactured report and
+again on the OS's real confirmation (F3); and the arm bypassed `admitsFocusAssert` entirely, raising
+a target the OS would refuse to legitimately give key to (F5). Fix: `decide` now translates the
+command onto a `FocusRaiseRequested` event instead. `evolve`'s arm for it stamps the target's
+`lastOpSeq` (gated on `admitsFocusAssert` and on the target not already holding `key` — the same
+no-op `AssertFocus` exists to override) and records the ask on `State.lastRaiseRequest`, touching
+`key`, `order`, and `lastAttention` not at all; `react` diffs that fact into the `RaiseWindow` effect,
+carrying `intent: 'user'` straight from the request rather than from a `FocusCause`. `key` moves only
+when the backend's own `OsFocusGained` echo arrives carrying the stamped `opSeq`, at which point the
+existing key-diff rule's `isOpConfirmation` check (unchanged) recognizes it as the confirmation of an
+already-realized effect and drives nothing further. `window-kernel.test.ts` pins all three: a
+`RaiseWindow` command leaves `key` and `order` untouched and emits exactly one `RaiseWindow` effect;
+the following `OsFocusGained` carrying the request's `opSeq` writes `key` and emits nothing; a target
+failing `admitsFocusAssert` emits nothing and leaves the window model untouched.
+`window-kernel-executor.test.ts` pins the app-inactive case directly: a suppressed raise (no backend
+call) leaves `key` on the window that already held it.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

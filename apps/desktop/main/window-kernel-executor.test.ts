@@ -762,7 +762,8 @@ describe('performing a RaiseWindow effect', () => {
   /**
    * Two windows shown, wid(1) key, app backgrounded; then a `RaiseWindow`
    * COMMAND for wid(2) — the shape `kernelShowRequested(id, true, …)` sends
-   * for the palette hotkey. Returns the backend after the command.
+   * for the palette hotkey. Returns the executor and backend after the
+   * command.
    */
   function commandRaiseWhileBackgrounded(intent?: 'user') {
     const { exec, backend } = makeExecutor({ appActive: false });
@@ -779,11 +780,11 @@ describe('performing a RaiseWindow effect', () => {
       ...(intent === 'user' ? { intent } : {}),
     });
     assert.ok('applied' in outcome, 'the command is accepted');
-    return backend;
+    return { exec, backend };
   }
 
   it('a RaiseWindow command with user intent reaches the port raise while backgrounded, carrying the intent', () => {
-    const backend = commandRaiseWhileBackgrounded('user');
+    const { backend } = commandRaiseWhileBackgrounded('user');
     const raises = backend.of('raiseWindow');
     assert.strictEqual(raises.length, 1, 'the user-intended raise is performed, not suppressed');
     assert.strictEqual(raises[0].args[0], wid(2));
@@ -791,9 +792,21 @@ describe('performing a RaiseWindow effect', () => {
   });
 
   it('the same command without intent is suppressed while backgrounded — the mask still holds for machine raises', () => {
-    const backend = commandRaiseWhileBackgrounded();
+    const { backend } = commandRaiseWhileBackgrounded();
     assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(backend.of('focusContent'), []);
+  });
+
+  it('a suppressed raise never moves key — no backend call means no OsFocusGained ever arrives (F1)', () => {
+    // The gap this closes: `decide`/`evolve` used to write `key` synchronously
+    // off a manufactured `OsFocusGained` regardless of whether the executor
+    // would ever actually ask the OS for one. Now `key` moves only off the
+    // backend's own report, so a raise the app-inactive mask drops outright
+    // (no `intent: 'user'`, no backend call at all — see the test above)
+    // leaves the model's `key` exactly where it was.
+    const { exec, backend } = commandRaiseWhileBackgrounded();
+    assert.deepStrictEqual(backend.of('raiseWindow'), [], 'precondition: the backend was never asked to raise it');
+    assert.strictEqual(exec.getState().key, wid(1), 'key stays with the window that already held it');
   });
 
   it('a raise with user intent while the app is active passes the intent through unchanged', () => {

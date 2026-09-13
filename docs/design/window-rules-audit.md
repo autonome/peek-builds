@@ -7,11 +7,11 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Rule | Verdict | Sites | Finding |
 |---|---|---|---|
-| F1 one-key | contradicted | `window-kernel.ts evolve OsFocusGained`, `decide RaiseWindow` | Two writer arms, so "at most one" holds. But `decide`'s raise arm manufactures an `OsFocusGained` and writes `key` synchronously with no gate, so with Peek inactive the model believes the palette is key while the OS has it dead. |
+| F1 one-key | holds (fixed 2026-09-13) | `window-kernel.ts evolve OsFocusGained`, `evolve FocusRaiseRequested`, `decide RaiseWindow` | `key` now has exactly one writer arm. `decide`'s raise arm no longer manufactures an `OsFocusGained` — it translates onto `FocusRaiseRequested` (`State.lastRaiseRequest`), which stamps the target's `lastOpSeq` and drives `react`'s `RaiseWindow` effect without touching `key`. The model no longer believes a window is key until the backend's own `OsFocusGained` echo, carrying that stamped opSeq, actually arrives — an app-inactive raise the executor suppresses (`planRaise`) never gets one. |
 | F2 machine-labelled | scattered | `electron-window-backend.ts armSelfCausedFocus`, `takeFocusCause`, `raiseWindow`, `performOsShow`, `focusContent`, `win.on('focus'/'blur')` | Every native call that moves focus arms a token, seven sites. Provenance is right only while all seven agree. |
-| F3 confirmation-drives-nothing | contradicted | `window-kernel.ts evolve OsFocusGained`, `react` sweep (a) | The raise half holds via `isOpConfirmation`. The dismissal half does not: the arm writes a fresh `lastAttention.seq` unconditionally, so a raise's own confirmation still runs the autoclose sweep. |
+| F3 confirmation-drives-nothing | contradicted (narrowed 2026-09-13) | `window-kernel.ts evolve OsFocusGained`, `react` sweep (a) | The raise half holds via `isOpConfirmation`. The dismissal half does not: the arm writes a fresh `lastAttention.seq` unconditionally, so a raise's own confirmation still runs the autoclose sweep. What's closed: a `RaiseWindow` COMMAND no longer manufactures its own `OsFocusGained`, so it no longer runs the sweep TWICE (once on the manufactured report, again on the real OS confirmation) — there is only the one real report now. What stands: that one confirmation, for every raise source (command, successor, parent refocus, focus assert), still runs the sweep once, unconditionally. |
 | F4 raise-means-key | scattered | `window-kernel-executor.ts planRaise`, `planRaiseRealization`, `electron-window-backend.ts raiseWindow` | `planRaiseRealization` is exact. The `suppressed` mask above it now applies to machine raises only (`Effect.RaiseWindow.intent` exempts a user-intended one); `show-and-focus-content` still produces a visible window that accepts no input. `raiseWindow` activates the app on a user-intended raise (darwin, `take-key` and `show-and-take-key`); no other site does. |
-| F5 raise-needs-a-surface | scattered | `window-kernel.ts admitsFocusAssert` and its ~8 callers, `decide RaiseWindow`, `planRaise` | One predicate, consulted independently at ~8 sites; two paths bypass it (`decide`'s raise arm, `planRaise`). |
+| F5 raise-needs-a-surface | scattered (one bypass closed 2026-09-13) | `window-kernel.ts admitsFocusAssert` and its ~8 callers, `evolve FocusRaiseRequested`, `react` raise-request rule, `planRaise` | One predicate, consulted independently at ~8 sites. `decide`'s raise arm no longer bypasses it: `evolve`'s `FocusRaiseRequested` arm and `react`'s raise-request rule both gate on `admitsFocusAssert`, and since `key` no longer moves until the backend's confirmation lands, a target that fails it is never asked for at all — the OS is never even told to raise it. `planRaise` remains a separate bypass, so the rule still does not hold everywhere. |
 | F6 intent-beats-inactive | holds (fixed 2026-09-05) | `renderer/cmd/background.js openPanelWindow`, `features/peeks/background.js`, `features/slides/background.js`, `features/windows/background.js` (`type: 'panel'` at open), `izui-roles.ts windowNonActivating`, `ipc.ts` window-open handler (both the hybrid page-host branch and the browser branch) -> `window-machine.ts registerWindowWithMachine` -> `window-kernel-dispatch.ts kernelRegisterWindow` -> `window-kernel.ts WindowRecord.nonActivating`, `window-kernel-executor.ts planRaise` (the panel arm, keyed on `nonActivating`), `electron-window-backend.ts showWindow`/`raiseWindow` | The `type: 'panel'` open-time declaration is now stored on the record (`WindowRecord.nonActivating`, the same DECLARED-at-registration shape as `selfClosesOnBlur`) instead of being read back off `windowClass`/`role`. `showWindow`'s page-host mask reads `record.nonActivating` in place of `windowClass !== 'quick-view'`; `raiseWindow` no longer calls `app.focus({ steal: true })` for a panel's user-intended raise — only for a non-panel's, where AppKit's ordinary `win.focus()` does not activate the app on its own. `planRaise`'s page-host arm reads `record.nonActivating` in place of `role === 'quick-view'`. One channel, one word, for BOTH halves of the rule now: `intent: 'user'` still exempts a user-asked-for raise from the app-inactive mask, and `nonActivating` decides whether that raise is allowed to bring the app forward at all. |
 | F7 hide-returns-key | holds | `window-kernel.ts successorOnHide`, consulted by `react`'s successor loop and `evolve WindowHidden` | `WindowRecord.priorKey` records who held key immediately before the hiding window took it, written by `OsFocusGained` and cleared by `WindowClosed`. `successorOnHide` reads it: a live, admitting prior key holder gets key back; a missing/hidden/doomed one falls back to the topmost content window; `null` (nothing in Peek was key before) raises nothing, rather than the topmost content window unconditionally. |
 | F8 land-somewhere | unimplemented | `react` successor loop, `holdsAppOnScreen` | Only the successor loop restores key, and only when the dismissed window was key and a content window survives. Dismissing a key palette with no content window up leaves `key` dangling. |
@@ -40,17 +40,24 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 15 | F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8 D9, S3 (dismissal half) |
+| holds | 16 | F1 F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8 D9, S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 5 | F1 F3 D2, S3 (raise half) |
+| contradicted | 4 | F3 D2, S3 (raise half) |
 | unimplemented | 2 | F8 D7 |
 
 S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the
 contradicted row above names only the raise half (one `WindowClosed` can still emit two raises).
 
-Three structural facts recur under most of the contradicted and scattered rows:
+Three structural facts recurred under most of the contradicted and scattered rows; the first is now
+closed:
 
-- **A raise command writes `key` and lands attention by itself** (`decide RaiseWindow`, `kernelWindowShown`), so the model can believe a window is key that the OS never focused, and every raise or confirmation runs a dismissal sweep (F1, F3, F5, S5).
+- **CLOSED (2026-09-13): a raise command used to write `key` and land attention by itself**
+  (`decide RaiseWindow`), so the model could believe a window was key that the OS never focused,
+  and every command-driven raise or its confirmation ran a dismissal sweep (F1, F3, F5, S5). `decide`
+  now translates the command onto `FocusRaiseRequested` (`State.lastRaiseRequest`) instead of
+  manufacturing an `OsFocusGained`; `key` moves only off the backend's own confirming report.
+  `kernelWindowShown` is unaffected by this fix — it is a companion-focus feed for a native show
+  event, not a raise command.
 - **Focus cause is a per-window arming slot fed by seven producers, two of them for one page host** (`electron-window-backend.ts`), so one physical focus can arrive twice with two causes (F2, S3, D7).
 - **No state names the window a transient was opened over**, so self-dismissal and origin stacking have nothing to consult (F8, D7, S4). Hide-return no longer shares this gap: `WindowRecord.priorKey` now names the prior key holder (F7), and is the natural origin for D7 and S4 to read too.
 
