@@ -652,6 +652,20 @@ re-registration that omits nonActivating KEEPS a previously-set nonActivating: t
 registration merge; `window-kernel-executor.test.ts` "a user-intended raise while the app is
 inactive: a panel takes key without activating, a non-panel activates" pins the raise-plan half.
 
+**Escape with no key holder opened the switcher over a fullscreen window, closed (2026-09-13).**
+`window-escape.ts interpretEscape` returned `open-switcher` for a `none` target — no key holder and
+no visible Escape-closable transient — before its fullscreen check, which only ever ran against a
+resolved target record. So a `none` target skipped the check entirely: the switcher could open on
+top of a fullscreen window, violating G10 and contradicting the file's own docblock claim that the
+switcher opening over a fullscreen window "stays structurally impossible." Fix: the `none` branch
+now scans for a visible window whose `fsMode.name !== 'normal'` before falling back to
+`open-switcher`; finding one answers `{ kind: 'nothing', reason: 'fullscreen-no-target' }` instead.
+Exiting fullscreen on that window was rejected — with no key holder, Escape was not pressed on it
+(D2), so the fix withholds the switcher rather than manufacturing an `exit-fullscreen` for a window
+the keystroke never touched. `window-escape.test.ts` "D5 — no key holder, no closable transient, one
+visible fullscreen window: nothing, not open-switcher" and "D5 — same scene with no fullscreen
+window still opens the switcher" pin both branches, failing-first on the former.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

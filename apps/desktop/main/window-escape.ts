@@ -174,6 +174,13 @@ export type EscapeNothingReason =
   | 'stale-landing'
   /** The mirrored renderer fact says the page consumed it. */
   | 'renderer-handled'
+  /**
+   * No target at all (`resolveEscapeTarget` returned `none`), and a visible
+   * window is fullscreen. Opening the switcher over it would violate G10; there
+   * is no key holder to exit fullscreen on, so this is a no-op rather than an
+   * `exit-fullscreen` (see `interpretEscape` step 2, D5).
+   */
+  | 'fullscreen-no-target'
   /** Both policy phases said "nothing". */
   | 'policy-nothing'
   /**
@@ -430,17 +437,25 @@ export function escapeFallbackPolicy(
  *
  *   0. reconcile landed vs key                      -> `stale` ends here
  *   1. the switcher is open                         -> close-switcher
- *   2. no target                                    -> open-switcher
+ *   2. no target                                    -> nothing if any visible
+ *                                                       window is fullscreen,
+ *                                                       else open-switcher
  *   3. target declared `escapeMode: 'ignore'`       -> pass-through
  *   4. target is not `fsMode: 'normal'`             -> exit-fullscreen
  *   5. the renderer consumed it (mirrored fact)     -> nothing
  *   6. the role x session policy table              -> close / open-switcher / nothing
  *
- * Step 4 sits ahead of every switcher-OPENING outcome on every entry path — the
+ * Step 2's fullscreen check exists because a `none` target has no record for
+ * step 4 to run against: with no key holder, Escape is not being pressed ON
+ * the fullscreen window, so exiting fullscreen there would act on a window the
+ * keystroke never touched (D2). The rule (G10) still has to hold — the
+ * switcher must never open over a fullscreen window — so the no-target branch
+ * answers `nothing` instead. Step 4 sits ahead of every switcher-OPENING
+ * outcome that DOES have a resolved target, on every entry path — the
  * `before-input-event` sites and the OS grab produce the same keypress — so
  * "the switcher opened on top of a fullscreen window" stays structurally
- * impossible. Step 1 stays ahead of step 4 because dismissing an open switcher
- * is what Escape means while it is up, fullscreen or not.
+ * impossible there too. Step 1 stays ahead of step 4 because dismissing an
+ * open switcher is what Escape means while it is up, fullscreen or not.
  */
 export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcome {
   const target = resolveEscapeTarget(key, state);
@@ -457,7 +472,18 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
     };
   }
 
-  if (target.kind === 'none') return { kind: 'open-switcher', command: null };
+  if (target.kind === 'none') {
+    // G10/D5: with no target there is no record for the fullscreen check below
+    // to run against, so it has to run here instead — otherwise the switcher
+    // opens over a fullscreen window whenever nobody holds key and no visible
+    // transient is closable. Not exiting fullscreen: with no key holder,
+    // Escape was not pressed on that window (D2).
+    const fullscreenWindow = topmost(state, (r) => r.visible && r.fsMode.name !== 'normal');
+    if (fullscreenWindow !== null) {
+      return { kind: 'nothing', reason: 'fullscreen-no-target', command: null };
+    }
+    return { kind: 'open-switcher', command: null };
+  }
 
   const record = target.record;
   if (record.escapeMode === 'ignore') return { kind: 'pass-through', id: record.id, command: null };

@@ -30,7 +30,7 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | D2 escape-hits-its-window | contradicted | `resolveEscapeTarget` rule 4 | On a landed/key disagreement the press is redirected to the current key holder when its role is closable. The docblock states this as intent. |
 | D3 escape-never-waits | holds | `electron-window-backend.ts askRendererHandledEscape` | Page hosts answer synchronously; browser windows still have the 500ms ask but carry a responder. |
 | D4 close-before-open | scattered | `resolveEscapeTarget` no-key branch, `escapeFallbackPolicy`, `interpretEscape` | The switcher opens from three places; only the no-key branch scans for a visible closable transient first. Same gap as D1. |
-| D5 escape-order | contradicted, one inversion | `interpretEscape` | `target none → open-switcher` sits ahead of the fullscreen check, so with no key holder and no closable transient the switcher can open over a fullscreen window. |
+| D5 escape-order | holds | `interpretEscape` | The no-target branch now scans for a visible fullscreen window before falling back to `open-switcher`; with none it opens the switcher as before, with one it answers `nothing` (`fullscreen-no-target`) instead of exiting fullscreen on a window Escape was never pressed on. |
 | D6 blur-dismissal | holds | `transientAutocloseExemption`, `selectTransientAutoclose`, `isTransientAutocloseCandidate` | The four exemptions map one-to-one onto the record's own facts (`overlayFor` set, `acceptsInput` false, the focuser's `parentId`/`overlayFor` naming the victim, `openSeq` above the ordering floor) and all three readers call the single function. |
 | D7 no-self-dismissal | unimplemented | `transientAutocloseExemption` `focuser-relation`, `react` rule (c), `takeFocusCause` | Nothing expresses "the window I just took key from". `focuser-relation` is one-hop and points the other way (peek's `parentId` names the host). The host's reclaim is unarmed, reads `world`, disarms the floor, and rule (c) dismisses the peek on paint. |
 | D8 resign-sweep-after-resign | holds | `evolve AppResigned`, `AppResignSettled`, `react` rule (b) | Victims only when `!state.appActive` at the settle. |
@@ -40,9 +40,9 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 13 | F6 F7 V1 V3 V4 V5 V6 S1 D3 D6 D8, S3 (dismissal half) |
+| holds | 14 | F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8, S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 7 | F1 F3 D2 D5 D9, S3 (raise half) |
+| contradicted | 6 | F1 F3 D2 D9, S3 (raise half) |
 | unimplemented | 2 | F8 D7 |
 
 S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the

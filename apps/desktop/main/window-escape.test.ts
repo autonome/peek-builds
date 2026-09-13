@@ -471,6 +471,38 @@ describe('window-escape: escapeMode and fullscreen come before the policy table'
   });
 });
 
+// ── D5: no target must not open the switcher over a fullscreen window ──────
+
+describe('window-escape: D5 — no target defers to a fullscreen window instead of opening the switcher', () => {
+  it('D5 — no key holder, no closable transient, one visible fullscreen window: nothing, not open-switcher', () => {
+    const state = fold(
+      [
+        { type: 'FullscreenTransitionStarted', id: workspaceHost, entering: true, preBounds: null },
+        { type: 'OsFocusLost', id: workspaceHost },
+      ],
+      loneHost(),
+    );
+    assert.strictEqual(state.key, null);
+    assert.notStrictEqual(state.order.find((w) => w.id === workspaceHost)?.fsMode.name, 'normal');
+    assert.strictEqual(resolveEscapeTarget(press({ landedId: 'global' }), state).kind, 'none');
+    assert.deepStrictEqual(interpretEscape(press({ landedId: 'global' }), state), {
+      kind: 'nothing',
+      reason: 'fullscreen-no-target',
+      command: null,
+    });
+  });
+
+  it('D5 — same scene with no fullscreen window still opens the switcher', () => {
+    const state = fold([{ type: 'OsFocusLost', id: workspaceHost }], loneHost());
+    assert.strictEqual(state.key, null);
+    assert.strictEqual(resolveEscapeTarget(press({ landedId: 'global' }), state).kind, 'none');
+    assert.deepStrictEqual(interpretEscape(press({ landedId: 'global' }), state), {
+      kind: 'open-switcher',
+      command: null,
+    });
+  });
+});
+
 // ── The policy table, every live arm ───────────────────────────────────────
 
 describe('window-escape: every live policy arm', () => {
