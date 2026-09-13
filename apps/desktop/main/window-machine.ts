@@ -1,18 +1,7 @@
-/**
- * window-machine.ts — the ONE live `ElectronWindowBackend` for the
- * desktop app, plus the thin read/dispatch surface the seam consumers use.
- *
- * Blueprint: `docs/design/window-manager.md`. The kernel triple
- * (`window-kernel.ts` + `window-kernel-executor.ts`, fed via
- * `window-kernel-dispatch.ts`) is the only window machine now; THIS module holds
- * the single backend instance and exposes it to the rest of main (ipc.ts /
- * tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts / tile-launcher.ts).
- *
- * The backend is constructed lazily on first access and made live (native app
- * listeners attached + session mirror seeded) once from `main.ts` at boot via
- * `initWindowStateMachine()`.
- */
-
+// The ONE live ElectronWindowBackend for the desktop app, plus the thin read/dispatch surface
+// ipc.ts / tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts / tile-launcher.ts use. The
+// backend is constructed lazily on first access and made live (native app listeners attached,
+// session mirror seeded) once from main.ts at boot, via initWindowStateMachine(). Design: docs/design/window-manager.md.
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { ElectronWindowBackend, type RegisterWindowSpec } from './electron-window-backend.js';
 import { getKernelExecutor as buildKernelExecutor } from './window-kernel-singleton.js';
@@ -33,104 +22,66 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
 import { setWindowOpenPayload } from './window-open-registry.js';
 
-/** Register-spec that accepts real Electron window handles (both kinds satisfy the backend's structural `NativeWindow`). */
+// Register-spec that accepts real Electron window handles (both kinds satisfy the backend's
+// structural NativeWindow).
 export interface MachineWindowSpec {
   kind: WindowKind;
   role: string;
-  /** Window class (§4.3 dim 8b) — required; ordinary opens use `classifyWindowRegistration`, the infrastructure classes declare theirs. */
+  // Required; ordinary opens use classifyWindowRegistration, infrastructure classes declare theirs.
   class: WindowClass;
   satellite: boolean;
   escapeMode?: EscapeMode;
-  /** Parent linkage (open params `parentWindowId` → WindowId). Drives the parent-refocus transition on WINDOW_CLOSED. */
+  // Drives the parent-refocus transition on WINDOW_CLOSED.
   parentId?: WindowId | null;
-  /** The old `main.ts windowRegistry` payload — opening source + open params (opaque, held by reference on the reducer record). */
+  // Opening source + open params, opaque and held by reference on the reducer record.
   source?: string;
   params?: Record<string, unknown>;
-  /** Declared always-on-top intent — registration emits SET_ALWAYS_ON_TOP. */
   alwaysOnTop?: boolean;
-  /** keepLive policy declared at open time — drives the reducer's `WINDOW_CLOSE_OR_HIDE_REQUESTED` hide-vs-close decision (see `WindowRecord.keepLive`). */
   keepLive?: boolean;
-  /** See `window-kernel.ts WindowRecord.tracksBaseLayerTop`'s doc — declared here, nothing reads it yet. Old machine does not carry this fact; it rides straight through to the kernel. */
   tracksBaseLayerTop?: boolean;
-  /** See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc — declared here. Old machine does not carry this fact; it rides straight through to the kernel. */
   selfClosesOnBlur?: boolean;
-  /** See `window-kernel.ts WindowRecord.nonActivating`'s doc — declared here. */
   nonActivating?: boolean;
-  /** See `window-kernel.ts WindowRecord.appLifetime`'s doc — declared here. */
   appLifetime?: boolean;
-  /** BaseWindow (page-host) or BrowserWindow (browser). */
+  // BaseWindow (page-host) or BrowserWindow (browser).
   win: BaseWindow | BrowserWindow;
-  /** Content view WC for a page-host, root WC for a browser. */
+  // Content view WC for a page-host, root WC for a browser.
   contentWC?: WebContents | null;
-  /**
-   * Opt OUT of the backend-owned `before-input-event` Esc interceptor (browser
-   * windows only, default on). See `RegisterWindowSpec.attachEscHandler` — the
-   * shared chrome overlay is the one caller that passes false.
-   */
+  // Opt out of the backend-owned before-input-event Esc interceptor (browser windows only,
+  // default on) — the shared chrome overlay is the one caller that passes false.
   attachEscHandler?: boolean;
-  /**
-   * The kernel's three orthogonal per-window fields (`izui-roles.ts
-   * WindowSurfaceProperties`, `deriveWindowSurface`). Required so every
-   * registration site declares them explicitly.
-   */
+  // The kernel's three orthogonal per-window fields (izui-roles.ts WindowSurfaceProperties) —
+  // required so every registration site declares them explicitly.
   layer: number;
-  /** See `layer` above. */
   canBecomeKey: boolean;
-  /** See `layer` above. */
   acceptsInput: boolean;
 }
 
 let backend: ElectronWindowBackend | null = null;
 let sessionSeeded = false;
 
-/** The single OS-boundary backend. Constructed on first use. */
 function getWindowBackend(): ElectronWindowBackend {
   if (!backend) backend = new ElectronWindowBackend();
   return backend;
 }
 
-/**
- * The single production `WindowKernelExecutor`, built over the single backend
- * above — every window operation goes through this one backend instance, so
- * kernel ids and the ids `getWindowIdFor`/`getNativeWindowFor` resolve are the
- * same ids.
- */
+// Every window operation goes through this one backend instance, so kernel ids and the ids
+// getWindowIdFor/getNativeWindowFor resolve are the same ids.
 export function getKernelExecutorForApp(): WindowKernelExecutor {
   return buildKernelExecutor(getWindowBackend());
 }
 
-/**
- * Boot wiring (call ONCE from main.ts after the coordinator exists): install
- * the kernel executor provider, attach the backend's app-level
- * `did-become/resign-active` listeners, and seed the session mirror.
- * Idempotent.
- */
+// Call ONCE from main.ts after the coordinator exists. Idempotent.
 export function initWindowStateMachine(): void {
-  // INJECTION, NOT IMPORT: the provider is a lazy thunk because
-  // `window-kernel-dispatch.ts` must not value-import this module — see
-  // `docs/design/window-manager.md` for the import-cycle and
-  // `ELECTRON_RUN_AS_NODE=1` reasons.
+  // The provider is a lazy thunk because window-kernel-dispatch.ts must not value-import this
+  // module — see docs/design/window-manager.md for the import-cycle and ELECTRON_RUN_AS_NODE=1 reasons.
   setKernelExecutorProvider(() => getKernelExecutorForApp());
   getWindowBackend().attachAppListeners();
   seedSessionMirror();
 }
 
-/**
- * Front-id provider for the coordinator's switcher focus-restore seed
- * (`enterOverlay` → `preOverlayFocusTarget`), plus the coordinator's app-active
- * fact provider and gained-focus edge — the last three seams the old session
- * mirror needs.
- *
- * NOTHING DECIDES ON THE COORDINATOR'S SESSION ANY MORE. The Escape decider was
- * the last reader, and the one fact it wanted is a kernel field now
- * (`window-kernel.ts State.openedInBackground`, read by `interpretEscape` off
- * the state it is already given). What remains here keeps the coordinator's own
- * four states accurate for DISPLAY — the mode indicator and the tile-facing
- * `tile:izui:*` handlers.
- *
- * Its app-focus mirror (`appFocused`/`setAppFocused`/`isAppFocused`) is gone in
- * favor of reading the kernel's `getAppActive()` directly.
- */
+// Keeps the izui coordinator's own display-facing state (mode indicator, tile:izui:* handlers)
+// accurate: front-id provider for switcher focus-restore, the app-active fact, and its
+// gained-focus edge. Nothing decides on the coordinator's session anymore.
 function seedSessionMirror(): void {
   if (sessionSeeded) return;
   sessionSeeded = true;
@@ -142,41 +93,21 @@ function seedSessionMirror(): void {
     return native ? native.id : null;
   });
   coord.setAppActiveProvider(() => getAppActive());
-  // Gained-focus edge only (see `notifyAppActiveGained`'s doc) — losing focus
-  // has no session-side effect of its own.
+  // Gained-focus edge only — losing focus has no session-side effect of its own.
   subscribeAppActive((active) => {
     if (active) coord.notifyAppActiveGained();
   });
 }
 
-// (`clampSession` is gone with the read it served. It folded the coordinator's
-// four session states into the Escape decider's three, which was the hint that
-// the decider wanted a narrower fact than the coordinator carried: both of its
-// policy tables compared only against `transient`. That fact is the kernel's
-// now — `window-kernel.ts State.openedInBackground` — and `interpretEscape`
-// reads it off the state it is already given, so no session travels from here.)
-
-/**
- * Register a window (both kinds) with the kernel + attach its native
- * listeners. Returns the WM-minted `WindowId` for this window (stable across
- * duplicate registrations of the same native window).
- */
 export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
-  // Both BaseWindow and BrowserWindow satisfy the backend's structural
-  // `NativeWindow`; the electron typed-overload `on` isn't assignable to the
-  // loose `on` shape, so bridge with a single cast here (not at every call site).
+  // Both BaseWindow and BrowserWindow satisfy the backend's structural NativeWindow; the electron
+  // typed-overload `on` isn't assignable to the loose `on` shape, so bridge with a single cast here.
   const { id, decision, initialBounds } = getWindowBackend().registerWindow(spec as unknown as RegisterWindowSpec);
-  // The registry payload rides the registration spec when the caller has it
-  // (ipc.ts's window-open handler, for both hybrid and browser opens) — see
-  // `window-open-registry.ts` for why this lives outside the machine record.
+  // The registry payload rides the registration spec when the caller has it (ipc.ts's window-open
+  // handler) — see window-open-registry.ts for why this lives outside the machine record.
   if (spec.source !== undefined && spec.params !== undefined) {
     setWindowOpenPayload(id, spec.source, spec.params);
   }
-  // The backend's own registration decision (`izui-roles.ts
-  // decideWindowRegistration`) says whether THIS registration attaches the
-  // per-window Esc interceptor — the backend performs the merge/listener
-  // half, this is the dispatch/port-command half, same split the old adapter
-  // kept.
   if (decision.attachEscHandler) {
     getWindowBackend().attachEscHandler(id);
   }
@@ -197,61 +128,29 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
   });
-  // `decision.pumpShownEvent` IS the ctor-shown fact (`izui-roles.ts
-  // WindowRegistrationDecision.pumpShownEvent`'s doc): the native window was
-  // already visible at registration time, which never fires a native 'show'
-  // transition — this import is the only report the kernel ever gets of it.
+  // pumpShownEvent: the native window was already visible at registration time, which never
+  // fires a native 'show' transition — this is the only report the kernel ever gets of it.
   if (decision.pumpShownEvent) {
     kernelWindowShown(id, true);
   }
   return id;
 }
 
-/**
- * The WM `WindowId` for a native window handle — or for a numeric ELECTRON
- * window id a legacy Electron-keyed registry (hybrid registry,
- * renderer-facing tile IPC) still holds. `null` when never registered / gone.
- *
- * This is the ONE sanctioned WM↔platform id conversion surface (with
- * `getNativeWindowFor` below); it delegates to the backend's private maps. No
- * other module may keep its own WindowId↔Electron-id mapping.
- */
+// The WM WindowId for a native window handle, or for a numeric Electron window id a legacy
+// Electron-keyed registry still holds. This is the ONE sanctioned WM<->platform id conversion
+// surface (with getNativeWindowFor below); no other module may keep its own id mapping.
 export function getWindowIdFor(win: BaseWindow | BrowserWindow | number): WindowId | null {
-  // Same structural-`NativeWindow` bridge cast as `registerWindowWithMachine`.
   return getWindowBackend().getWindowIdFor(win as unknown as RegisterWindowSpec['win'] | number);
 }
 
-/**
- * The live native window handle for a WM `WindowId`, or `null` when
- * unregistered/destroyed. Legacy consumers use this to join a machine id back
- * onto the Electron-keyed registries they still run on (a later migration step
- * re-keys those registries and deletes the need).
- */
 export function getNativeWindowFor(id: WindowId): BaseWindow | BrowserWindow | null {
   return getWindowBackend().getNativeWindowFor(id) as unknown as BaseWindow | BrowserWindow | null;
 }
 
-/**
- * THE live Escape decider entry point. `window-escape-runtime.ts
- * handleEscapePress` takes every dependency injected (so it unit-tests
- * without `electron`); this binds those deps onto the production kernel,
- * backend and pubsub and calls it. Every site that used to dispatch
- * `window-state.ts`'s `ESC_PRESSED` — `windows.ts addEscHandler`, `ipc.ts
- * wireHybridContentEvents`, `electron-window-backend.ts`'s OS-level grab, and
- * `hybrid-overlay.ts`'s `runHybridEscape` test bridge — calls this ONE
- * function instead. One wrapper, not one arm per window kind: the two prior
- * attempts at this machine both failed by growing a rule per window kind, and
- * this is the seam that stays a single decision regardless of which of the
- * four sites the keystroke arrived through.
- *
- * `site` names the calling dispatch site for `window-diag.ts` — the four
- * entry points are otherwise indistinguishable in the log once the keystroke
- * reaches `handleEscapePress`.
- *
- * `session` is read here, not carried by the caller: `decideEscape` reads
- * `state.session` directly — so this wrapper is the direct replacement for
- * that read, against the same clamped session `seedSessionMirror` keeps live.
- */
+// THE live Escape decider entry point: every dispatch site (windows.ts addEscHandler, ipc.ts
+// wireHybridContentEvents, electron-window-backend.ts's OS-level grab, hybrid-overlay.ts's
+// runHybridEscape test bridge) binds deps onto the production kernel/backend/pubsub through
+// window-escape-runtime.ts handleEscapePress and calls this one function.
 export function dispatchEscapePress(landedId: WindowId | 'global', site: string): void {
   wmLog('esc-dispatch', { site, landedId });
   const deps: EscapeRuntimeDeps = {
@@ -266,46 +165,16 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
   handleEscapePress({ landedId }, deps);
 }
 
-/**
- * The topmost content window: visible, able to take keystrokes, and carrying
- * a content role (`window-kernel.ts topmost(state, isContentWindow)`). THE
- * target window id for command / close / Esc / session-save focused
- * descriptor reads.
- *
- * `keyWindow` (`window-kernel.ts`) is NOT the replacement for the retired
- * `front` field this function used to return — key is nulled the moment the
- * app loses OS focus, and a satellite such as the shared chrome overlay can
- * hold it, so a naive `key` read silently answers with the wrong window.
- */
+// THE target window id for command / close / Esc / session-save focused descriptor reads.
+// `keyWindow` is NOT a substitute: key is nulled the moment the app loses OS focus, and a
+// satellite such as the shared chrome overlay can hold it, silently naming the wrong window.
 export function getTopmostContentWindowId(): WindowId | null {
   return topmost(getKernelExecutor().getState(), isContentWindow)?.id ?? null;
 }
 
-/**
- * The topmost window showing a real web page: `getTopmostContentWindowId`'s
- * narrower sibling, and the replacement for the deleted `window-state.ts
- * getDevtoolsTargetId`. THE target window for a developer surface that only
- * means something over an http/https page — devtools.
- *
- * COMPOSED OVER `isContentWindow`, not re-derived from `WindowRecord` fields,
- * so the `visible` / `!pendingHidden` / `canBecomeKey` gates stay in one
- * place and the added role clause only NARROWS within the band those gates
- * already admit — which keeps `topmost`'s single-layer requirement satisfied
- * for free.
- *
- * WHERE THE RECENCY COMES FROM. The old selector ranked candidates by
- * `focusSeq` over a stored `lastHttpUrl`. Neither fact exists any more, and
- * neither is needed: `evolve`'s `OsFocusGained` arm splices the focused
- * record out of `order` and re-pushes it at the end, and `topmost` scans from
- * the end — so topmost-among-matching IS most-recently-focused-among-matching.
- * The http fact is supplied by `izui-roles.ts isWebPageRole` (see its doc for
- * why role is a sound proxy, and for the open-time staleness both the old
- * field and this predicate share).
- *
- * Null when nothing on screen is a page — a session of `peek://` surfaces
- * only. Callers that must still resolve something fall back to
- * `getTopmostContentWindowId`.
- */
+// THE target window for a developer surface that only means something over an http/https page
+// (devtools). Composed over isContentWindow rather than re-derived, so its gates stay in one
+// place. Null when nothing on screen is a page; callers fall back to getTopmostContentWindowId.
 export function getTopmostWebPageWindowId(): WindowId | null {
   return (
     topmost(
@@ -315,27 +184,10 @@ export function getTopmostWebPageWindowId(): WindowId | null {
   );
 }
 
-/**
- * Subscribe to changes in the overlay's read-back attachment relation
- * (`window-kernel.ts WindowRecord.overlayFor`, read here via the record
- * carrying `tracksBaseLayerTop`) — NOT the ordering query
- * (`topmostBaseLayerPageHost`) that used to drive `subscribeFrontChange`.
- * Which host the chrome frames is now a window decision made inside the
- * kernel (`react`'s `AttachOverlayTo` diff loop, realized through the port);
- * this subscription issues no command and decides nothing about windows — it
- * only paints (`hybrid-overlay.ts sendActiveHandoff`), so it is not a second
- * decider the way the deleted `retarget()` driver was.
- *
- * Finds the overlay by the declared `tracksBaseLayerTop` fact rather than by
- * a stored id because the overlay singleton can be re-minted
- * (`hybrid-overlay.ts ensureOverlay()`'s `'closed'` handler nulls the ids) —
- * a freshly-minted record carries the same declared fact, so this
- * subscription stays correct across a re-mint, where a captured id would go
- * stale.
- *
- * Fires with the new host id (or null) only when the relation actually
- * changes. Returns an unsubscribe function.
- */
+// Reads the overlay's attachment relation off the record carrying `tracksBaseLayerTop`, rather
+// than a stored overlay id, because the overlay singleton can be re-minted and a captured id
+// would go stale. Issues no command and decides nothing about windows; it only paints. Fires
+// with the new host id (or null) only when the relation actually changes.
 export function subscribeOverlayAttachment(cb: (hostId: WindowId | null) => void): () => void {
   const read = (): WindowId | null => {
     const state = getKernelExecutor().getState();
@@ -351,34 +203,15 @@ export function subscribeOverlayAttachment(cb: (hostId: WindowId | null) => void
   });
 }
 
-/**
- * Whether Peek is the active (frontmost) application, per the kernel —
- * `State.appActive`, fed by `electron-window-backend.ts attachAppListeners`
- * (`APP_ACTIVATED` / `APP_RESIGNED`). This is THE copy; no module may keep
- * its own `did-resign-active` mirror.
- */
+// THE copy of app-active; no module may keep its own did-resign-active mirror.
 export function getAppActive(): boolean {
   return getKernelExecutor().getState().appActive;
 }
 
-/**
- * Subscribe to app-active TRANSITIONS (the edge `hybrid-overlay.ts` used to get
- * from its own `app.on('did-resign-active'/'did-become-active')` pair). Same
- * shape as `subscribeOverlayAttachment` above: layered over the kernel's own
- * `subscribe`, edge-deduped so the callback fires only when the boolean
- * actually flips, not on every dispatch. Returns an unsubscribe function.
- *
- * ORDERING: like `subscribeOverlayAttachment`, this binds to whichever
- * executor `getKernelExecutor()` answers with AT CALL TIME, and
- * `initWindowStateMachine()` above is what points that accessor at
- * `getKernelExecutorForApp()`. Calling this first would bind the callback to
- * the pre-cutover noop-backed fallback, which nothing production ever drives
- * again. That is not a silent hazard: `window-kernel-dispatch.ts
- * setKernelExecutorProvider` throws when it finds a listener already on the
- * fallback, so the wrong order fails at startup. Boot satisfies it because
- * `entry.ts` awaits `main.ts initialize()` (→ `initWindowStateMachine()`)
- * before calling `initHybridOverlay()`, the only caller.
- */
+// Edge-deduped: fires only when the boolean actually flips, not on every dispatch. Binds to
+// whichever executor getKernelExecutor() answers with at call time, so a caller registered
+// before initWindowStateMachine() runs would bind to the fallback — setKernelExecutorProvider
+// throws in that case, so the wrong order fails loudly at startup rather than going stale.
 export function subscribeAppActive(cb: (appActive: boolean) => void): () => void {
   let last = getAppActive();
   return getKernelExecutor().subscribe((state) => {
@@ -390,60 +223,29 @@ export function subscribeAppActive(cb: (appActive: boolean) => void): () => void
   });
 }
 
-/**
- * The kernel record's current fullscreen mode name for `id`
- * (`window-kernel.ts WindowRecord.fsMode.name`), or null when `id` names no
- * live kernel record. NOTE the kernel's mid-transition names are
- * `'entering'`/`'leaving'`, not the old machine's
- * `'entering-fullscreen'`/`'leaving-fullscreen'`; a caller matching on the old
- * strings needs updating, not just re-pointing.
- *
- * The old machine's settle-await sibling (`waitForMode`) has no wrapper here
- * — callers that need to await a settle call `window-kernel-executor.ts
- * WindowKernelExecutor.waitForSettledFsMode` directly (via
- * `getKernelExecutorForApp()`), since its bounded, three-outcome return needs
- * handling at the call site rather than behind a same-shape passthrough.
- */
+// Null when `id` names no live kernel record. Mid-transition names are 'entering'/'leaving'.
+// Callers that need to await a settle call WindowKernelExecutor.waitForSettledFsMode directly.
 export function getWindowModeName(id: WindowId): 'normal' | 'entering' | 'fullscreen' | 'leaving' | null {
   return getKernelExecutor().getState().order.find((w) => w.id === id)?.fsMode.name ?? null;
 }
 
-/**
- * The live kernel record for one window — READ-ONLY by contract (no copy).
- * `main.ts`'s numeric-id registry seam (`getWindowInfo` / `findWindowByKey` /
- * `getAllWindows` …) no longer reads `source`/`params` off this record — that
- * pair moved to `window-open-registry.ts` — but existence checks (e.g.
- * `removeWindow`) still read this.
- */
+// READ-ONLY by contract (no copy).
 export function getMachineWindowRecord(id: WindowId): KernelWindowRecord | undefined {
   return windowById(getKernelExecutor().getState(), id) ?? undefined;
 }
 
-/**
- * `maximized`/`preMaxBounds` for a window this executor has already retired
- * (closed) — undefined for a window still live in `order`, or one this
- * executor never closed. A closed window's own `CloseWindow` effect carries
- * these facts forward (`window-kernel.ts` `Effect`'s `CloseWindow` doc); this
- * is the read side, for a close-time consumer that would otherwise ask
- * `getMachineWindowRecord` for a record RULE 1 already removed in the same
- * synchronous transition (`window-presenter.ts getHybridPresentation`).
- */
+// undefined for a window still live in `order`, or one this executor never closed — a closed
+// window's own CloseWindow effect carries these two facts forward for a close-time consumer that
+// would otherwise ask getMachineWindowRecord for a record already removed in the same transition.
 export function getRetiredWindowPresentation(id: WindowId): { maximized: boolean; preMaxBounds: Rectangle | null } | undefined {
   return getKernelExecutor().getRetiredPresentation(id);
 }
 
-/** All live kernel records — `State.order` itself (bottom -> top, not copied — read-only by contract). */
+// State.order itself (bottom -> top), not copied — read-only by contract.
 export function listMachineWindowRecords(): readonly KernelWindowRecord[] {
   return getKernelExecutor().getState().order;
 }
 
-/**
- * The first LIVE native window of a class (§4.3 dim 8b) — the lookup that
- * replaced the per-module window singletons (`core-glue.ts
- * coreBackgroundWindow` → class 'background', `test-fixture-glue.ts
- * testFixtureWindow` → class 'test-fixture', …). Null when none is
- * registered or the native window is gone.
- */
 export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWindow | null {
   for (const rec of getKernelExecutor().getState().order) {
     if (rec.class !== cls) continue;
@@ -453,29 +255,19 @@ export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWi
   return null;
 }
 
-/**
- * Test-bridge support (E2E only): resolve once the kernel executor's in-flight
- * async effects — the `escape-pressed` renderer ask and any delegated
- * `closeOrHideWindow` — have settled. Lets `hybrid-overlay.ts runHybridEscape`
- * await the ESC round trip deterministically instead of polling on a deadline
- * re-derived from the ask timeout. Nothing in the app may gate behavior on it.
- */
+// Test-bridge support (E2E only): resolves once in-flight async effects (the escape-pressed
+// renderer ask and any delegated closeOrHideWindow) have settled. Nothing in the app may gate
+// behavior on it.
 export async function waitForPendingWindowEffects(): Promise<void> {
   await getKernelExecutorForApp().waitForPendingAsyncEffects();
 }
 
-/**
- * Resolve once the guest teardown requested by the last
- * `GUEST_TEARDOWN_REQUESTED` has settled. Unlike
- * `waitForPendingWindowEffects` above this IS production sequencing: the
- * before-quit handler awaits it so Electron's quit cannot close host windows
- * over guests that are still alive. Bounded inside the backend.
- */
+// Unlike waitForPendingWindowEffects above, this IS production sequencing: the before-quit
+// handler awaits it so Electron's quit cannot close host windows over guests still alive.
 export function waitForGuestTeardown(): Promise<void> {
   return getKernelExecutorForApp().waitForGuestTeardown();
 }
 
-/** Test-only: reset the singleton (drops the backend + its state). */
 export function _resetWindowStateSingletonForTests(): void {
   backend = null;
   sessionSeeded = false;

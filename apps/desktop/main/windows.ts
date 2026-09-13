@@ -1,9 +1,5 @@
-/**
- * Window Management Helpers
- *
- * Helper functions for managing BrowserWindow instances.
- */
-
+// Window management helpers: show/hide/close dispatch, Esc handling, dock preference.
+// Design: docs/design/window-manager.md.
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import {
@@ -49,10 +45,6 @@ import {
   clearRendererHandledEscapeForWc,
 } from './window-escape-renderer-handled.js';
 
-/**
- * Get the appropriate background color based on system theme
- * This helps prevent the "white flash" when opening windows in dark mode
- */
 export function getSystemThemeBackgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND;
 }
@@ -60,77 +52,36 @@ export function getSystemThemeBackgroundColor(): string {
 // Preferences getter - set by index.js during initialization
 let _getPrefs: () => Record<string, unknown> = () => ({});
 
-/**
- * Set the preferences getter function
- */
 export function setPrefsGetter(getter: () => Record<string, unknown>): void {
   _getPrefs = getter;
 }
 
-/**
- * Get current preferences
- */
 export function getPrefs(): Record<string, unknown> {
   return _getPrefs();
 }
 
-/**
- * Show a BrowserWindow, headless-safe — THIN SEAM (§5 step 6A-2): this
- * function performs NO OS work. It resolves the machine id and dispatches
- * `WINDOW_SHOW_REQUESTED`; the `SHOW_WINDOW` effect routes to the backend
- * (`electron-window-backend.ts showWindow`), which owns the whole show
- * policy — the headless opacity-0-before-show trick (isVisible() stays true
- * for tests, nothing paints on the real display), show() vs showInactive(),
- * and the `WINDOW_SHOWN` echo that keeps the machine's visibility/front in
- * step even when no native `'show'` event fires (`showInactive` emits none,
- * and headless runs are focus-free by design).
- *
- * @param win    The BrowserWindow to show.
- * @param opts   { active: true } to activate (the backend calls win.show(),
- *               which steals focus); default is focus-preserving
- *               (showInactive()). { activation: 'user' } marks an activating
- *               show a user gesture asked for (hotkey, CLI verb), which the
- *               kernel raises even while another app is frontmost — see
- *               `window-kernel-dispatch.ts kernelShowRequested`.
- */
+// THIN SEAM (§5 step 6A-2): performs NO OS work. Resolves the machine id and dispatches
+// WINDOW_SHOW_REQUESTED; the backend owns the whole show policy (headless opacity-0 trick,
+// show() vs showInactive()). `opts.activation: 'user'` marks an activating show a user gesture
+// asked for (hotkey, CLI verb), which the kernel raises even while another app is frontmost.
 export function showWindowHeadlessSafe(
   win: BrowserWindow,
   opts?: { active?: boolean; activation?: 'user' },
 ): void {
   const id = getWindowIdFor(win);
   if (id == null) {
-    // Every live window registers with the machine (§5 step 4); an
-    // unregistered handle here is a bug in the open path, not a case to
-    // paper over — there is deliberately no direct-OS fallback (R2: only
-    // the backend performs window ops).
+    // Every live window registers with the machine; an unregistered handle here is a bug in the
+    // open path, not a case to paper over — no direct-OS fallback (R2: only the backend acts).
     DEBUG && console.log('[windows] showWindowHeadlessSafe: window not machine-registered — show dropped');
     return;
   }
   kernelShowRequested(id, opts?.active === true, opts?.activation === 'user' ? { activation: 'user' } : undefined);
 }
 
-/**
- * The hybrid page-host SHOW decision, as a pure function of headless-ness.
- *
- * A freshly-opened hybrid page-host is an opaque content-sized `BaseWindow` +
- * `WebContentsView`. The canvas path it replaced showed its `BrowserWindow`
- * with `show()` (constructor `show:true` → activates the app + makes the window
- * key) and `focus()`, so the page's webContents became the macOS FIRST
- * RESPONDER. The hybrid path must reproduce that or it enters a dead-focus
- * state (peek items 1b6eaf0b / 363e7cff / 8f7010a8):
- *   - no first responder  → cmd+L key equivalents hit AppKit with no target → NSBeep
- *   - app never activated  → windows show but Peek isn't frontmost / no menubar
- *   - host never focused   → the active-hybrid id stays null → overlay never reveals
- *
- * Under HEADLESS (agent/CI) we must NOT activate or focus — that would steal the
- * user's OS focus (peek task 2b55f3af; activation policy is 'accessory' there).
- * So:
- *   - non-headless → activate (show) + focus the content WC (first responder)
- *   - headless     → showInactive only, never focus (focus-free)
- *
- * Pure + deterministic so the regression is testable focus-free for BOTH modes
- * (real OS focus is unobservable in a macOS-headless test).
- */
+// Pure function of headless-ness (see apps/desktop/CLAUDE.md's hybrid-focus invariants for why
+// a fresh hybrid host needs show()+contentWC.focus() or it enters a dead-focus state, and why
+// headless must never activate or focus). `inactive` wins over `nonActivating`: a restored
+// peek/slide must stay focus-free until the restore loop picks the one to re-raise.
 export function hybridShowIntent(
   headless: boolean,
   opts: { inactive?: boolean; nonActivating?: boolean } = {},
@@ -157,43 +108,20 @@ export function hybridShowIntent(
   if (headless) {
     return { activated: false, contentFocused: false, showInactive: true };
   }
-  // `nonActivating` is the quick-view (peek/slide) intent: the host is a
-  // `type:'panel'` NSPanel (see createHybridHostBaseWindow), so it can hold the
-  // macOS FIRST RESPONDER — take key input (ESC, address-bar typing) — WITHOUT
-  // activating the app. This restores the pre-`4a543d7f` behavior: peeks/slides
-  // were `type:'panel'` BrowserWindows (non-activating NSPanels) until the
-  // page-host cutover routed them through the activating web-tab show seam and
-  // they began stealing the frontmost app's OS focus (regression 524f7aba). So:
-  // showInactive (never activate the app) BUT still focus the content WC (a
-  // non-activating panel can be key while its app is inactive; a regular window
-  // cannot — hence this branch is ONLY valid for the panel host).
+  // Valid only because a quick-view host is a type:'panel' NSPanel, which can hold macOS first
+  // responder (take key input) without activating the app — a regular window cannot.
   if (nonActivating) {
     return { activated: false, contentFocused: true, showInactive: true };
   }
   return { activated: true, contentFocused: true, showInactive: false };
 }
 
-/**
- * Show a freshly-opened hybrid page-host: apply the `hybridShowIntent` decision
- * for the current run mode. Non-headless activates the app + makes the content
- * `WebContentsView` the first responder (cmd+L works, no NSBeep, overlay reveals);
- * headless stays inactive + opacity-0 (focus-free). Returns the applied intent so
- * callers/tests can assert what was done without relying on real OS focus.
- *
- * `opts.inactive` (session restore / any `show:false` open) forces the
- * non-activating, focus-free branch in BOTH run modes — the host becomes visible
- * but never activates the app or steals first responder. Restore opens many
- * hybrid windows in sequence; if each one activated, the last to show (or the
- * race winner) would end up frontmost instead of the page the user left focused.
- * The restore loop re-activates ONLY the focused descriptor afterwards via an
- * ordinary (non-inactive) `showHybridHost` call — the single activation seam.
- *
- * `opts.nonActivating` (quick-view peeks/slides) shows the host WITHOUT
- * activating the app but STILL makes its content the first responder — valid
- * only because a quick-view host is a `type:'panel'` NSPanel (see
- * createHybridHostBaseWindow). This is what stops a hotkey-opened peek/slide
- * from stealing the frontmost app's OS focus (regression 524f7aba).
- */
+// Applies the hybridShowIntent decision for the current run mode. Returns the applied intent so
+// callers/tests can assert what was done without relying on real OS focus. `opts.inactive`
+// (session restore) forces the non-activating branch in both run modes: restore opens many
+// hybrid windows in sequence, and only the restore loop's own follow-up (an ordinary, non-inactive
+// call) may activate the one focused descriptor — otherwise the last to show, or the race winner,
+// would end up frontmost instead of the page the user left focused.
 export function showHybridHost(
   baseWin: import('electron').BaseWindow,
   opts?: { inactive?: boolean; nonActivating?: boolean },
@@ -202,24 +130,11 @@ export function showHybridHost(
     inactive: opts?.inactive === true,
     nonActivating: opts?.nonActivating === true,
   });
-  // THIN SEAM (§5 step 6A-2): the OS half (opacity-0 / show vs showInactive)
-  // lives behind the port — dispatch the show and let the `SHOW_WINDOW`
-  // effect drive the backend. `activate` carries the CALLER's focus intent,
-  // judged BEFORE the headless/panel masks (every show except an explicitly
-  // `inactive` one — session restore's `show:false` — targets the window).
-  // The backend masks it into the OS variant (headless, and a
-  // `quick-view`-class panel host, show inactive — same decisions
-  // `hybridShowIntent` encodes) and echoes `WINDOW_SHOWN` with the UNMASKED
-  // intent — which is how the machine's `front` tracks quick-views and
-  // headless shows, where no OS focus event will ever fire.
-  //
-  // The CONTENT-focus half rides the same dispatch as of §5 step 8: the
-  // reducer's `WINDOW_SHOW_REQUESTED` arm pushes `FOCUS_CONTENT` after
-  // `SHOW_WINDOW` for an activating show of a page-host, so first responder
-  // lands on an already-shown host exactly as the old imperative
-  // `contentWC.focus()` did — but through the executor, per R2. `intent` is
-  // now purely the RETURNED description of what was asked for; nothing here
-  // touches Electron.
+  // THIN SEAM (§5 step 6A-2): the OS half lives behind the port. `activate` carries the caller's
+  // focus intent judged BEFORE the headless/panel masks; the backend masks it into the OS
+  // variant and echoes WINDOW_SHOWN with the unmasked intent, which is how `front` tracks
+  // quick-views and headless shows where no OS focus event will ever fire. `intent` here is
+  // purely the returned description of what was asked for — nothing here touches Electron.
   const id = getWindowIdFor(baseWin);
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
@@ -229,17 +144,11 @@ export function showHybridHost(
   return intent;
 }
 
-/**
- * Modify window state (close, hide, show)
- */
 export function modWindow(bw: BrowserWindow, params: { action: string }): void {
   if (params.action === 'close') {
     closeHostWindow(bw.id, bw);
   }
   if (params.action === 'hide') {
-    // THIN SEAM (§5 step 6A-4): dispatch the hide intent — the HIDE_WINDOW
-    // effect routes to the backend, whose native 'hide' event is the only
-    // WINDOW_HIDDEN source. Mirrors the 'show' action's seam below.
     const id = getWindowIdFor(bw);
     if (id == null) {
       DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
@@ -252,31 +161,18 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
   }
 }
 
-/**
- * Ask renderer to handle escape key.
- *
- * Protocol:
- *   { handled: true }                - Renderer navigated internally, no action needed
- *   { handled: false, close: true }  - Renderer at root, explicitly requesting close
- *   { handled: false }               - Renderer didn't handle (or timeout/error)
- *
- * For 'navigate' mode, backend only closes on explicit { close: true }.
- * For 'auto' mode, { handled: false } is sufficient (active mode won't close anyway).
- */
+// { handled: true } — renderer navigated internally, no action needed. { handled: false,
+// close: true } — renderer at root, explicitly requesting close. { handled: false } — renderer
+// didn't handle, or timed out. 'navigate' mode only closes on explicit close:true; 'auto' mode
+// treats plain handled:false as sufficient.
 export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean; close?: boolean; timeout?: boolean }> {
   return askWebContentsToHandleEscape(bw.id, bw.webContents);
 }
 
-/**
- * Lower-level form of `askRendererToHandleEscape` that targets an explicit
- * WebContents + id rather than a BrowserWindow. A hybrid page-host is a
- * `BaseWindow` with no root webContents — the renderer that owns the `onEscape`
- * callback is its content `WebContentsView`. This lets the hybrid ESC path ask
- * the SAME `escape-pressed` IPC question the BrowserWindow path asks, so the
- * renderer-handled-first contract (dialog close, internal nav) is identical for
- * both kinds. A page-host content WC that never registered an `onEscape` handler
- * simply times out → `{ handled: false }`, falling through to policy below.
- */
+// Targets an explicit WebContents + id rather than a BrowserWindow: a hybrid page-host is a
+// BaseWindow with no root webContents, and the renderer owning `onEscape` is its content
+// WebContentsView. A content WC that never registered an onEscape handler times out to
+// { handled: false }, falling through to policy below.
 export function askWebContentsToHandleEscape(
   winId: number,
   askWC: Electron.WebContents,
@@ -306,108 +202,51 @@ export function askWebContentsToHandleEscape(
   });
 }
 
-/**
- * ESC decision lives in `window-escape.ts interpretEscape`, reached through
- * `dispatchEscapePress` (`window-machine.ts`). The `before-input-event`
- * attach + editable guard + 200ms debounce + webview-guest routing stay here
- * (input hygiene, `addEscHandler` below); only the DECISION lives elsewhere.
- * `handleHybridEscape`/`handleEscapeForWindow`/`handleEscapeForWindowId`
- * (and their `resolveHybridEscapeTarget`/`escExitsHybridFullscreen`/
- * `escPolicy`/`escUnhandledPolicy` reads) are DELETED — each is now an
- * `interpretEscape` clause.
- */
-
-/**
- * Add escape key handler to a window
- * Supports escapeMode: 'auto' (default), 'close', 'navigate', 'ignore'
- *
- * - 'auto' (default): Transient windows (opened without app focus) close on ESC;
- *   active windows (opened while app focused) behave like 'navigate'
- * - 'close': ESC always closes the window
- * - 'navigate': ESC only triggers internal navigation, never closes
- *   (renderer handles ESC via IZUI - parent focus, internal nav, etc.)
- * - 'ignore': ESC is completely ignored (for overlays that shouldn't respond)
- *
- * Also handles ESC pressed inside <webview> guests. The BrowserWindow's
- * before-input-event does NOT fire for keystrokes in a webview — those go to the
- * guest's own WebContents. We listen for did-attach-webview to add ESC
- * interception on guest WebContents, delegating back to the host window's
- * escape handling (which sends escape-pressed IPC to the host renderer
- * where the preload's onEscape callback lives).
- */
+// The ESC decision itself lives in window-escape.ts interpretEscape, reached through
+// dispatchEscapePress; the before-input-event attach + editable guard + debounce + webview-guest
+// routing here is only input hygiene. Also handles ESC pressed inside <webview> guests: a
+// BrowserWindow's before-input-event does not fire for guest keystrokes, so did-attach-webview
+// adds the same interception to each guest's own WebContents.
 export function addEscHandler(bw: BrowserWindow): void {
   DEBUG && console.log('adding esc handler to window:', bw.id);
   let lastEscTime = 0;
 
-  // Producer for `window-escape.ts EscapeKeyPress.rendererHandled` (peek
-  // 7fffa286 companion): register the `tile:escape:handled` receiver once
-  // (idempotent) so this window's tile-preload reports land in the cache.
+  // Idempotent: registers the tile:escape:handled receiver once so this window's tile-preload
+  // reports land in the cache.
   initRendererHandledEscapeTracking(ipcMain);
 
-  // Helper: attach ESC interception to a WebContents (host or guest)
   const attachEscListener = (wc: Electron.WebContents, source: 'host' | 'webview') => {
     wc.once('destroyed', () => clearRendererHandledEscapeForWc(wc.id));
     wc.on('before-input-event', async (e, i) => {
       if (i.key === 'Escape' && i.type === 'keyDown') {
-        // Intercept ESC on keyDown (not keyUp) so the IPC fires BEFORE DOM keydown handlers.
-        // This prevents a race condition where peek-dialog closes on DOM keydown,
-        // then the IPC callback (on keyUp) sees no open dialog and returns { handled: false },
-        // causing the backend to close the entire window.
-        // With keyDown interception + e.preventDefault(), the DOM keydown never reaches
-        // peek-dialog, and the preload's escape handler sees the dialog still open.
-
-        // Debounce: ignore ESC events within 200ms of each other
-        // Prevents double-fires from key propagation or OS focus changes
+        // keyDown, not keyUp, so the IPC fires before DOM keydown handlers — otherwise a dialog
+        // that closes on DOM keydown leaves the keyUp-timed IPC seeing no open dialog.
         const now = Date.now();
+        // Debounced within 200ms to absorb double-fires from key propagation or OS focus changes.
         if (now - lastEscTime < 200) {
           DEBUG && console.log(`[esc] Debounced ESC keyDown on window ${bw.id} source:${source} (${now - lastEscTime}ms since last)`);
           return;
         }
         lastEscTime = now;
-
-        // Prevent ESC from propagating to the page (blocks DOM keydown dispatch)
         e.preventDefault();
 
-        // The mirrored "renderer already consumed this Escape" fact (this
-        // window's tile-preload's last reported `onEscape` answer), read
-        // synchronously — see window-escape-renderer-handled.ts. Not yet
-        // threaded into the `dispatchEscapePress` call below as
-        // `EscapeKeyPress.rendererHandled` (`window-escape.ts`) — this call
-        // site has no producer for it yet.
         const rendererHandled = rendererHandledEscapeForWc(wc.id);
         DEBUG && console.log(`[esc] window ${bw.id} source:${source} rendererHandled=${rendererHandled}`);
 
-        // Decision lives in `window-escape.ts interpretEscape`, reached
-        // through `dispatchEscapePress` (`window-machine.ts`). The
-        // attach/debounce/webview routing above stays here as input hygiene.
-        // The landed id is resolved to the WM's WindowId at keypress time
-        // (registration has long happened); an unregistered window degrades
-        // to 'global' — same decision either way. Shared by both attach
-        // points (`attachEscListener` below wires the host WC and every
-        // webview guest into this SAME closure), so there is exactly one
-        // call site here for the two entry points.
         dispatchEscapePress(getWindowIdFor(bw) ?? 'global', 'windows.addEscHandler');
       }
     });
   };
 
-  // Listen for ESC on the window's own WebContents (host page)
   attachEscListener(bw.webContents, 'host');
 
-  // Listen for webview guests attaching to this window.
-  // When a <webview> tag creates its guest WebContents, keystrokes inside the
-  // webview go to the guest — not the host BrowserWindow's webContents.
-  // We add an ESC listener on each guest so that ESC in web content (e.g. slides
-  // showing youtube.com) is intercepted and routed through the host window's
-  // escape handling (which talks to the host renderer's preload onEscape callback).
+  // A <webview> guest's keystrokes go to its own WebContents, not the host's — attach the same
+  // ESC interception to each guest as it attaches.
   bw.webContents.on('did-attach-webview', (_event, guestWebContents) => {
     DEBUG && console.log(`[esc] Webview guest attached to window ${bw.id}, adding ESC listener`);
     attachEscListener(guestWebContents, 'webview');
-    // Track the guest→host relationship so the permission handler (and any
-    // other main-process code that gets a guest WebContents from Electron)
-    // can find which page-host window to surface UI in. The registry carries
-    // WM WindowIds; by attach time the host has long been registered with the
-    // machine, so the mapping is available.
+    // Lets the permission handler (and other Electron-guest-facing code) find which page-host
+    // window to surface UI in.
     const hostWmId = getWindowIdFor(bw);
     if (hostWmId != null) {
       registerGuest(guestWebContents, hostWmId);
@@ -417,20 +256,16 @@ export function addEscHandler(bw: BrowserWindow): void {
   });
 }
 
-/**
- * Configure devtools for a window based on its parameters
- */
 export function winDevtoolsConfig(bw: BrowserWindow): void {
   const windowData = getWindowInfo(bw.id);
   const params = windowData ? windowData.params : {};
 
   DEBUG && console.log('winDevtoolsConfig:', bw.id, 'openDevTools:', params.openDevTools, 'address:', params.address);
 
-  // Check if devTools should be opened (never in test profiles or headless mode)
+  // Never in test profiles or headless mode.
   if (params.openDevTools === true && !isTestProfile() && !isHeadless()) {
     const isDetached = params.detachedDevTools === true;
-    // Determine if detached mode should be used
-    // activate: false prevents devtools from stealing focus (only works with detach/undocked)
+    // activate: false prevents devtools from stealing focus (only works with detach/undocked).
     const devToolsOptions: Electron.OpenDevToolsOptions = {
       mode: isDetached ? 'detach' : 'right',
       activate: false
@@ -438,49 +273,31 @@ export function winDevtoolsConfig(bw: BrowserWindow): void {
 
     DEBUG && console.log(`Opening DevTools for window ${bw.id} with options:`, devToolsOptions);
 
-    // Open DevTools after a slight delay to let the main window settle.
-    // Re-focus after open is owned by the machine now: `main.ts`'s
-    // `web-contents-created` → `devtools-opened` listener dispatches
-    // `DEVTOOLS_OPENED`, whose reducer arm re-raises `state.front` (§5 step
-    // 9/10) — no separate re-focus call or timer here.
+    // Re-focus after open is owned by the machine: main.ts's devtools-opened listener dispatches
+    // DEVTOOLS_OPENED, whose reducer arm re-raises state.front — no separate re-focus call here.
     setTimeout(() => {
       bw.webContents.openDevTools(devToolsOptions);
     }, 50);
   }
 }
 
-/** Minimal close surface shared by BrowserWindow and (hybrid) BaseWindow. */
+// Minimal close surface shared by BrowserWindow and (hybrid) BaseWindow.
 interface ClosableWindow {
   isDestroyed(): boolean;
 }
 
-/**
- * Close a host window through the window-state machine
- * (WINDOW_CLOSE_REQUESTED → CLOSE_WINDOW_DIRECT → the backend's guest-safe
- * `closeWindow`, which destroys registered page-host guests FIRST and then
- * closes the host — the d1cf0b9a use-after-free guard, whose physical ops
- * moved behind the port in §5 step 4; guestless windows still close
- * synchronously inside the dispatch).
- *
- * Callers still speak Electron window ids here; the conversion happens at
- * this boundary. Every window registers with the machine (design §7), so a
- * null resolution means the window is already retired — nothing to close.
- */
+// Callers still speak Electron window ids here; the conversion happens at this boundary. Every
+// window registers with the machine, so a null resolution means the window is already retired.
 export function closeHostWindow(hostId: number, _win: ClosableWindow): void {
   const hostWmId = getWindowIdFor(hostId);
   if (hostWmId == null) {
     DEBUG && console.log('closeHostWindow: window', hostId, 'is not machine-registered — nothing to close');
     return;
   }
-  // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
-  // window manager.
   kernelCloseWindowDirect(hostWmId);
 }
 
-/**
- * Close a window and its children
- * This will actually close the window regardless of "keep alive" opener params
- */
+// Closes the window regardless of "keep alive" opener params.
 export function closeWindow(params: { id?: number }, callback?: (success: boolean) => void): void {
   DEBUG && console.log('closeWindow', params, callback != null);
 
@@ -511,39 +328,19 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
   }
 }
 
-// TRANSIENT_ROLES is defined in ./izui-roles.ts (pure module, Electron-free).
-// Re-exported here so existing imports `from './windows.js'` keep working
-// (ipc.ts). The set covers palette/quick-view/overlay — windows that ride
-// above the workspace and on macOS follow the user across Spaces. Used for
-// the focus-driven auto-hide path (a non-transient window gaining focus
-// dismisses any transient sibling via closeOrHideWindow, restoring the
-// blur-on-focus-change behavior that NSPanels swallow). The app-hide count
-// below filters by machine window CLASS now, not by this role set.
+// Defined in izui-roles.ts (pure module, Electron-free); re-exported so existing
+// `from './windows.js'` imports keep working. Covers palette/quick-view/overlay — windows that
+// ride above the workspace and, on macOS, follow the user across Spaces.
 export { TRANSIENT_ROLES } from './izui-roles.js';
 
-// (The app-hide census moved into the kernel. `APP_HIDE_EXCLUDED_CLASSES` and
-// `getVisibleWindowCount` are now `window-kernel.ts holdsAppOnScreen`, and the
-// decision they fed is a `react` rule that diffs the count across a transition
-// — "this transition took the app-holding windows from some to none" — which
-// is also why the census no longer needs an `excludeId`: the closing window is
-// already out of `next.order`, rather than being a window whose native hide
-// had not echoed yet.)
-
-/**
- * Apply dock visibility based on user preference.
- * Call at startup and when the showInDockAndSwitcher preference changes.
- * Test profiles and headless runs always hide the dock. Manual sandboxes should use
- * `PROFILE=tmp-*` (which bypasses the single-instance lock without
- * inheriting test-only behaviors — see `isEphemeralProfile`).
- */
+// Call at startup and when the showInDockAndSwitcher preference changes. Test profiles and
+// headless runs always hide the dock; use PROFILE=tmp-* for a manual sandbox instead (bypasses
+// the single-instance lock without inheriting test-only behaviors).
 export function applyDockPreference(): void {
   if (process.platform !== 'darwin' || !app.dock) return;
 
-  // One decision, one show/hide pair: test profiles and headless runs always
-  // hide the dock; otherwise the preference decides. app.dock.show/hide is an
-  // APP-level operation (Dock tile), not a window operation — out of the
-  // window-backend port's scope, so the calls live here at the app surface
-  // (§5 step 6B).
+  // app.dock.show/hide is an APP-level operation (Dock tile), not a window operation — out of
+  // the window-backend port's scope, so the calls live here at the app surface.
   const prefs = _getPrefs();
   const showDock = !isTestProfile() && !isHeadless() && prefs?.showInDockAndSwitcher === true;
 
@@ -556,79 +353,43 @@ export function applyDockPreference(): void {
   }
 }
 
-// (`maybeHideApp` is gone. Handing the user back to the app they came from,
-// once nothing of Peek's is left holding the screen, is a kernel rule now —
-// `window-kernel.ts react`'s app-hide diff, performed through the window
-// port's `hideApp`. It used to be called from the two `closeOrHideWindow`
-// tails, which meant a close reaching the kernel by any other route did not
-// get it. The macOS-only guard went to the backend, where the platform
-// vocabulary belongs.)
-
-/**
- * Resolve the native window for `id` (BrowserWindow or hybrid page-host
- * BaseWindow) and dispatch it into the kernel's `CloseOrHideWindow` command.
- * Whether that closes, hides, refuses, or cascades onto other windows is
- * decided entirely by `window-kernel.ts decide` — this function no longer
- * holds any of that policy itself; a fullscreen-exit preamble for the hybrid
- * branch and the app-hide followup are the only things left here (see their
- * own comments below for why they stay).
- */
+// Resolves the native window for `id` (BrowserWindow or hybrid page-host BaseWindow) and
+// dispatches it into the kernel's CloseOrHideWindow command. Whether that closes, hides,
+// refuses, or cascades onto other windows is decided entirely by window-kernel.ts decide; a
+// fullscreen-exit preamble for the hybrid branch is the only policy left here.
 export async function closeOrHideWindow(id: number): Promise<void> {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
 
   try {
     const win = getLiveWindow(id);
     if (!win) {
-      // Hybrid page-host (BaseWindow) — invisible to getLiveWindow /
-      // BrowserWindow.fromId. cmd+W (R1, peek ca4ee5e6) and any other
-      // close-by-id path must still close it. No-op (null) only if the
-      // registry has no entry for this id — hybrid is the only page-host path
-      // now, not a flag-gated one.
+      // Hybrid page-host (BaseWindow) — invisible to getLiveWindow/BrowserWindow.fromId, but
+      // cmd+W and any other close-by-id path must still close it.
       const hybrid = getHybridWindow(id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
-        // Black-window fix: exit native fullscreen FIRST, awaited through the
-        // window-state machine (the single `setFullScreen` owner), before the
-        // terminal hide/close. A fullscreen host closed or hidden mid-state
-        // strands a black macOS Space; dropping fullscreen first (and awaiting
-        // the settled exit via `waitForSettledFsMode`) avoids it. No-op when
-        // the host isn't fullscreen. The host may be torn down while we
-        // await — re-checked below, and a `'vanished'` outcome from the wait
-        // itself means the same thing: nothing left to strand.
+        // Exit native fullscreen first, awaited through the machine, before the terminal
+        // hide/close — closing or hiding a fullscreen host mid-state strands a black macOS
+        // Space. No-op when the host isn't fullscreen; the host may be torn down while we await,
+        // re-checked below.
         const machineId = getWindowIdFor(id);
         const fsMode = machineId != null ? getWindowModeName(machineId) : null;
         if (machineId != null && fsMode != null && fsMode !== 'normal') {
-          // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
-          // the window manager.
           kernelSetFullscreen(machineId, false);
           const outcome = await getKernelExecutorForApp().waitForSettledFsMode(machineId, 'normal');
           if (outcome !== 'settled') {
-            // Timed out or vanished: proceed into the destroyed re-check and
-            // the hide/close below exactly as before this wait was bounded —
+            // Timed out or vanished: proceed into the destroyed re-check and hide/close below,
             // logged so a stranded black Space is diagnosable from a live run.
             wmLog('fs-settle-wait-non-settled', { site: 'closeOrHideWindow', id: machineId, outcome });
           }
         }
         if (hybrid.baseWin.isDestroyed()) return;
-        // Close, hide, or refuse is a KERNEL decision now (`window-kernel.ts`
-        // `decide`'s `CloseOrHideWindow` case): `keepLive` hides rather than
-        // closes (so a slide's WebContentsView keeps running in the
-        // background — a hide does not emit 'close', so the close-finalize
-        // tail that destroys the content wc + unregisters never runs on
-        // hide, exactly the keep-alive semantics required, see the
-        // runHybridFinalize comment in ipc.ts), an `appLifetime` record
-        // refuses outright, and a cascade over the record's own `parentId`
-        // edges closes everything it opened. This seam only resolves the
-        // machine id and dispatches into it — see `WindowRecord.keepLive`/
-        // `appLifetime`'s docs for the branch this now runs.
         if (machineId != null) {
           wmLog('close-or-hide-dispatch', { id, machineId });
           kernelCloseOrHideRequested(machineId);
         } else {
-          // Not machine-registered — nothing for the kernel to decide about.
-          // Route through closeHostWindow so the content WebContents
-          // (registered as a guest of baseWin.id) is destroyed BEFORE the
-          // BaseWindow closes — same page-host close UAF guard as the
-          // canvas/tile-ipc paths.
+          // Not machine-registered: route through closeHostWindow so the content WebContents
+          // (registered as a guest of baseWin.id) is destroyed before the BaseWindow closes —
+          // the page-host close use-after-free guard.
           DEBUG && console.log(`hybrid page-host BaseWindow ${id} is not machine-registered — closing directly`);
           wmLog('close-or-hide-hybrid-unregistered', { id });
           closeHostWindow(id, hybrid.baseWin);
@@ -653,31 +414,18 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     const params = entry.params;
     DEBUG && console.log('Window parameters - modal:', params.modal, 'keepLive:', params.keepLive);
 
-    // Close, hide, or refuse is a KERNEL decision now (`window-kernel.ts`
-    // `decide`'s `CloseOrHideWindow` case): `keepLive` hides rather than
-    // closes, an `appLifetime` record (the background window) refuses
-    // outright, and a cascade over the record's own `parentId` edges closes
-    // everything this window opened — replacing the address-keyed checks
-    // and the `closeChildWindows` address-string walk this function used to
-    // run itself. This seam only resolves the machine id and dispatches
-    // into it.
+    // Close, hide, or refuse (keepLive hides rather than closes; appLifetime refuses outright;
+    // a parentId cascade closes everything this window opened) is decided entirely by
+    // window-kernel.ts decide — this seam only resolves the machine id and dispatches into it.
     const wmId = getWindowIdFor(id);
     if (wmId != null) {
       wmLog('close-or-hide-dispatch', { id, wmId });
       kernelCloseOrHideRequested(wmId);
     } else {
-      // Not machine-registered — nothing for the kernel to decide about.
       DEBUG && console.log('Window entry has no machine id, closing directly');
       wmLog('close-or-hide-no-machine-id', { id });
       closeHostWindow(id, win);
     }
-
-    // (The app-hide followup is gone from here. Returning the user to the app
-    // they came from, once nothing of Peek's is left holding the screen, is a
-    // kernel rule now — see the note where `maybeHideApp` used to live. The
-    // switcher exemption that used to sit here went with it: the switcher's
-    // class never held the app open, so its close cannot be what empties the
-    // screen, and there is no case left to write.)
 
     DEBUG && console.log('closeOrHideWindow completed');
   } catch (error) {
@@ -685,86 +433,35 @@ export async function closeOrHideWindow(id: number): Promise<void> {
   }
 }
 
-/**
- * Resolve the window id that a "close the current window" command (cmd+W menu
- * item / Close Window) should target.
- *
- * Destructive if wrong (four callers), so this is a COMPOSITION of two kernel
- * queries, not the mechanical `topmost(state, isFrontEligibleWindow)` mapping
- * every other reader wants: the key window when the key window is ITSELF
- * front-eligible, otherwise the topmost front-eligible window.
- *
- * `isFrontEligibleWindow`, not `isContentWindow` — deliberately. The kernel's
- * own content predicate excludes `role: 'quick-view'` (peeks and slides) the
- * same way it excludes the cmd palette, because neither should become AppKit's
- * main window while it holds key. But Cmd+W is not "what is main", it is
- * "what should this close", and a focused peek is exactly the kind of window a
- * close command must reach — see `isFrontEligibleWindow`'s own doc for why it
- * admits `quick-view` where `isContentWindow` does not.
- *
- * Never widen past a focused front-eligible window to some OTHER window it
- * happens to be attached to (its opener, the page a popup floats over, the
- * page host a peek is floating above, …) — two disproofs pin this:
- *
- *   - a focused extension popup is itself front-eligible (`role: 'content'`),
- *     so Cmd+W there must close the popup itself, never reach past it (via its
- *     parent/attachment) to the page it popped up from.
- *   - a focused peek (`role: 'quick-view'`) is front-eligible too, so Cmd+W
- *     there must close the peek itself, never fall through to the page host
- *     sitting behind it — the defect this composition exists to avoid: with a
- *     bare `isContentWindow` mapping, the peek is excluded on both halves (it
- *     is neither `key`-and-content nor `topmost`-and-content), so the close
- *     reaches the page underneath, or — if the peek is the only visible
- *     window — resolves to nothing at all.
- *
- * That is why the composition checks key FIRST and only widens to `topmost`
- * when key is ITSELF not front-eligible — the shared chrome overlay case
- * (Cmd+L parks key on the overlay to type a URL; the overlay is a satellite
- * role, so the close target falls through to the topmost front-eligible
- * window, i.e. the page it frames).
- */
+// Destructive if wrong (four callers): the key window when it is ITSELF front-eligible, else
+// the topmost front-eligible window — never widened past a focused front-eligible window to
+// some OTHER window it happens to be attached to (its opener, the page a popup floats over).
+// isFrontEligibleWindow, not isContentWindow, deliberately: a focused peek (role: 'quick-view')
+// must close itself, not the page host behind it, and isContentWindow's role allow-list excludes it.
 export function resolveFocusedWindowIdForClose(): number | null {
   const state = getKernelExecutor().getState();
   const key = keyWindow(state);
   const target = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
   if (target == null) return null;
-  // The kernel speaks WM WindowId; the close path (`closeOrHideWindow` and the
-  // registries it consults) is still Electron-id-keyed, so resolve the
-  // target's native handle and hand back ITS id. A later migration step
-  // re-keys the close path itself.
+  // The kernel speaks WM WindowId; the close path is still Electron-id-keyed, so resolve the
+  // target's native handle and hand back its id.
   const win = getNativeWindowFor(target.id);
   return win ? win.id : null;
 }
 
-/**
- * Close the frontmost window for a cmd+W / "Close Window" command, resolving a
- * focused hybrid page-host (BaseWindow) the same as a focused BrowserWindow.
- * Routes through `closeOrHideWindow`, which now handles both window kinds
- * (BrowserWindow via the registry, hybrid BaseWindow via the registry fallback
- * added above). No-op when nothing resolves. Returns the id it acted on (or
- * null) so the menu/shortcut callers and tests can assert what was targeted.
- */
+// Resolves a focused hybrid page-host (BaseWindow) the same as a focused BrowserWindow.
 export function closeFocusedWindow(): number | null {
   const id = resolveFocusedWindowIdForClose();
   if (id == null) return null;
-  // Fire-and-forget: closeOrHideWindow is async (its hybrid branch awaits a
-  // fullscreen exit), but this stays sync so menu/shortcut callers and tests keep
-  // reading the id it acted on. The exit-then-close still runs in order inside.
+  // Fire-and-forget: closeOrHideWindow is async (its hybrid branch awaits a fullscreen exit),
+  // but this stays sync so menu/shortcut callers and tests keep reading the id it acted on.
   void closeOrHideWindow(id);
   return id;
 }
 
-/**
- * Close all child windows of a given address — an address-string walk over
- * the legacy registry's `source`/`params.address` linkage, a different graph
- * from the kernel's own `parentId` edges (it can name windows the kernel has
- * no closure edge for). `closeOrHideWindow` no longer calls this: its cascade
- * is now `window-kernel.ts decide`'s `CloseOrHideWindow` case
- * (`descendantsToCascadeClose`), walked over `parentId`. The sole remaining
- * caller is `closeWindow` above, the separate forceful close that ignores
- * `keepLive` — left on the legacy graph rather than migrated, since it has no
- * exercised production caller of its own to verify against.
- */
+// An address-string walk over the legacy registry's source/params.address linkage, a different
+// graph from the kernel's own parentId edges. closeOrHideWindow's cascade no longer calls this;
+// the sole remaining caller is closeWindow above, the separate forceful close that ignores keepLive.
 export function closeChildWindows(aAddress: string): void {
   DEBUG && console.log('closeChildWindows()', aAddress);
 
@@ -772,17 +469,14 @@ export function closeChildWindows(aAddress: string): void {
     return;
   }
 
-  // Get all child windows from the window manager
   const childWindows = getChildWindows(aAddress);
 
   for (const child of childWindows) {
     const address = child.data.params.address as string;
     DEBUG && console.log('closing child window', address, 'for', aAddress);
 
-    // recurseme
     closeChildWindows(address);
 
-    // close window
     const win = getLiveWindow(child.id);
     if (win) {
       closeHostWindow(child.id, win);
