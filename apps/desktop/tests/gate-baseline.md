@@ -466,3 +466,33 @@ report (`evolve WindowContentOrderable`) landed about 3.1 s after the window ope
 about 60 ms; reverting the one-line fix restored 60 ms. In the gate the same case passed in
 307 ms. The dismissal itself is correct either way; only its latency in a fresh, single-spec
 instance is open. No timer in the window-manager code accounts for 3 s.
+
+### Ninth macOS gate run — 2026-09-14
+
+Run at commit `1bbc7366`, with `tangled/main` merged in (40 commits: sync, MCP server, notes,
+none in the window manager) and the raise-echo fix `296cf83d`. Green.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3264 | 0 | — |
+| node unit | 759 | 0 | — |
+| desktop | 437 | 0 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Between the eighth run and this one, a run at `1bbc7366`'s parent tree (the merge without the
+fix) failed two `desktop` cases: `hybrid-content-window-gesture.spec.ts:227`, the overlay race
+in the intermittent table above, and `hybrid-transient-on-blur.spec.ts:139`. The eighth run's
+note on that case was wrong about the cause: the quick-view's first paint arrives on time
+(60–75 ms). What raced was the anchor's world focus against the paint. `react`'s key-change
+rule raises the window a world report just handed key to, and the backend echoes that raise as
+a machine-caused `OsFocusGained` about 1 ms later; `evolve` recorded the echo as fresh machine
+attention, so a transient that painted after the echo was spared by the ordering floor as
+`newer-than-focuser`, and one that painted before it was dismissed. `296cf83d` makes a raise
+echo for the window already holding key re-confirm the standing attention (fresh `seq`, same
+cause). Live shares the path through `raiseWindow`'s `kernelWindowShown(id, true, opSeq)`.
+
+Packaging note: `electron-builder --dir` failed twice in a row with `certificate has expired`
+from a network fetch inside electron-builder, then succeeded on the same command with no
+change. A gate that dies there has not run any test; rerun it.
