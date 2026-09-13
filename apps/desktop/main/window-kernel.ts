@@ -748,14 +748,8 @@ export function evolve(state: State, ev: Event): State {
         return { ...state, key: ev.id, lastAttention: attention, version: state.version + 1 };
       }
       const record = state.order[idx];
-      // The confirming echo of a raise issued for the window that already holds key
-      // re-confirms the attention already standing — it takes a fresh `seq` and keeps
-      // the standing cause. `react` raises the window a world report just handed key
-      // to (its key-change rule), and that raise's echo comes back machine-caused; were
-      // it recorded as fresh machine attention, the ordering floor it arms would spare
-      // every transient newer than the holder from the first-paint sweep
-      // (`WindowContentOrderable`), so whether a transient that paints a few ms after
-      // the world report is dismissed would turn on which of the two landed first.
+      // A raise echo for the window already holding key re-confirms the standing attention:
+      // fresh `seq`, same cause, so the echo never arms a machine floor over a world report.
       const reconfirmsStanding =
         state.key === ev.id && state.lastAttention !== null && state.lastAttention.holder === ev.id && isOpConfirmation(record, ev.cause);
       const attention: Attention =
