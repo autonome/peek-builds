@@ -1,7 +1,7 @@
 // window-escape.ts — the Escape interpreter: a pure `(keyEvent, snapshot) ->
 // EscapeOutcome` over an immutable kernel snapshot, emitting at most one
 // `Command` stamped with `expectedVersion`, never querying or writing the
-// kernel mid-decision. Design: `docs/design/window-manager.md` §0.1.3.
+// kernel mid-decision. Design: `docs/design/window-manager.md`.
 
 import {
   keyWindow,
@@ -92,8 +92,7 @@ export type EscapeTarget =
   | { readonly kind: 'stale' };
 
 // `landedId` (a delivery record) and `state.key` (the OS's own key-holder
-// answer, RULE 2) can legitimately disagree; neither is silently preferred —
-// see the branches below for which fact wins in each case.
+// answer) can legitimately disagree; neither is silently preferred.
 export function resolveEscapeTarget(key: EscapeKeyPress, state: State): EscapeTarget {
   const holder = keyWindow(state);
   const landed =
@@ -151,15 +150,10 @@ export function escapeFallbackPolicy(
 // The interpreter
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Step order: 0 reconcile landed vs key (stale ends here), 1 switcher open ->
-// close it, 2 no target -> nothing if any visible window is fullscreen (G10:
-// the switcher must never open over one), else open-switcher, 3 target
-// declared escapeMode:'ignore' -> pass-through, 4 target not fullscreen-
-// normal -> exit-fullscreen, 5 renderer already consumed it -> nothing, 6 the
-// policy table. Step 4 sits ahead of every switcher-opening outcome so
-// "switcher opened over a fullscreen window" stays structurally impossible;
-// step 1 stays ahead of step 4 because dismissing an open switcher is what
-// Escape means while it is up, fullscreen or not.
+// Order matters: dismissing an open switcher is checked first, since that is
+// what Escape means while one is showing, fullscreen or not; the fullscreen
+// exit check runs ahead of every outcome that could open the switcher, so a
+// switcher can never appear over a fullscreen window.
 export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcome {
   const target = resolveEscapeTarget(key, state);
   if (target.kind === 'stale') {
@@ -177,8 +171,8 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
 
   if (target.kind === 'none') {
     // No target means no record for the fullscreen check below to run
-    // against, so it runs here instead (G10/D5): otherwise the switcher opens
-    // over a fullscreen window whenever nobody holds key.
+    // against, so it runs here instead: otherwise the switcher opens over a
+    // fullscreen window whenever nobody holds key.
     const fullscreenWindow = topmost(state, (r) => r.visible && r.fsMode.name !== 'normal');
     if (fullscreenWindow !== null) {
       return { kind: 'nothing', reason: 'fullscreen-no-target', command: null };

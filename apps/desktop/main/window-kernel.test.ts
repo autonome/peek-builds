@@ -5480,10 +5480,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── A palette takes key ────────────────────────────────────────────────────
 
   it('a palette taking OS focus holds key, and the command target stays the page', () => {
-    // OVERTURNS: `(e) palette-issuer exclusion: a satellite palette focus never
-    // clobbers the front page`, and `a LIVE satellite palette is not evicted by
-    // the next transition`. The palette does clobber `key` — that is what
-    // taking keyboard focus MEANS — and the page survives as main.
     const state = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
 
     assert.strictEqual(keyWindow(state)?.id, cmdPanel, 'keystrokes go to the palette');
@@ -5496,10 +5492,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   });
 
   it('a focus report on a satellite REORDERS — the old order was only untouched because satellites were filtered out of it', () => {
-    // OVERTURNS: `OS_FOCUS_GAINED on a satellite drives no FOCUS_CONTENT and
-    // does not touch the ordered stack`. There is one order now and the palette
-    // is in it, so the palette tops it; main is unmoved because a palette is
-    // not a content window, NOT because it was filtered from the list.
     const before = scene();
     const ev: Event = { type: 'OsFocusGained', id: cmdPanel };
     const after = evolve(before, ev);
@@ -5519,13 +5511,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── The showcase: the chrome overlay ──────────────────────────────────────
 
   it('the chrome overlay holds key while its host is main — and the attachment names WHICH host', () => {
-    // OVERTURNS: `the overlay is never front (it is a satellite)`, `focus
-    // landing on the overlay (satellite) keeps the content window as front`,
-    // and `overlay (satellite) focus leaves the close/command target on the
-    // host (cmd+W redirect)`. The exclusion was faking a RELATION: it could
-    // say "not the overlay" but never "the host this overlay frames". Both
-    // stored facts say it directly.
-    //
     // The gesture: the user works in the second page (it takes key, so it is
     // raised and the overlay retargets onto it), then presses Cmd+L and clicks
     // the URL field — `hybrid-overlay.ts` keeps the overlay focusable exactly
@@ -5555,16 +5540,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── Devtools ──────────────────────────────────────────────────────────────
 
   it('devtools genuinely IS key — which is precisely why the Escape grab must not arm', () => {
-    // OVERTURNS: `OS focus landing on a registered devtools window yanks
-    // nothing back (Esc grab stays off)`. The old answer was right for the
-    // wrong reason — it kept `front` off devtools and concluded the grab was
-    // irrelevant. The kernel says devtools holds key, and the grab stays off
-    // BECAUSE it does: an OS-level grab would swallow Escape before the
-    // devtools UI ever saw it.
-    //
-    // `shouldArmEscapeGrab` lives in `window-escape.ts` (a pure read of this
-    // kernel's snapshot); the assertion is made against it rather than
-    // restated as prose, so the overturned behavior is actually pinned.
     const state = evolve(scene(), { type: 'OsFocusGained', id: devtools });
 
     assert.strictEqual(keyWindow(state)?.id, devtools);
@@ -5585,11 +5560,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── Closing a parentless palette that holds key ───────────────────────────
 
   it('closing a parentless palette that holds key leaves NOBODY holding key, and raises nothing', () => {
-    // OVERTURNS: `a satellite gaining OS focus leaves front alone, and closing
-    // that parentless palette raises NOTHING`. The raise half survives; the
-    // premise does not. `key` names the palette while it lives, the id dangles
-    // once it is gone, and the kernel reports "nobody holds key" instead of
-    // repairing to a successor (RULE 2).
     const withPalette = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
     assert.strictEqual(withPalette.order.find((w) => w.id === cmdPanel)?.parentId, undefined, 'no parent to hand back to');
 
@@ -5607,13 +5577,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── The most dangerous rename in the migration ────────────────────────────
 
   it('with no content window on screen, the focused window still holds key — the command target is what is null', () => {
-    // OVERTURNS, and it is the file's most dangerous test: `a background /
-    // non-focusable / overlay surface (satellite) does NOT become front`
-    // asserts a literal `front === null`, which survives a mechanical rename to
-    // `keyWindow(state) === null` and would be WRONG. The state it builds has
-    // no content window at all, so `null` was answering the command-target
-    // question, not the key question.
-    //
     // The real shape: boot. The core background renderer and the HUD are up,
     // the resident command panel exists, no page has been opened yet, and the
     // user presses the panel hotkey.
@@ -5657,11 +5620,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── Show is not focus ─────────────────────────────────────────────────────
 
   it('a show never writes key; only a focus report does — the two old tests that look identical differ here', () => {
-    // OVERTURNS: `a modal palette (satellite) is excluded as a target`, which
-    // dispatches only `WindowShown` and reads as an exclusion test. `key` is
-    // unwritten there for a completely different reason from the focus cases
-    // above: `WindowShown` does not write key at all.
-    //
     // The real pair: the command panel is `keepLive: true`, so closing it HIDES
     // it and the next hotkey re-shows the same window. A non-activating
     // re-show emits only `WindowShown`; an activating one is followed by the
@@ -5682,13 +5640,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   // ── A dangling key is representable ───────────────────────────────────────
 
   it('a key id naming no record is a LEGAL state — the old model called it unrepresentable', () => {
-    // OVERTURNS: `a dangling front (no matching WindowRecord) is NOT a
-    // representable StateSnapshot`, and the `front-invariant guard` pair that
-    // threw in dev/test and self-corrected in production — the forbidden
-    // repair (§0.1.5). Here the state is ordinary: `keyWindow` returns null,
-    // so the grab arms and Escape has a listener, which is the honest outcome
-    // when nothing can hear `before-input-event`.
-    //
     // The real shape: a detached devtools window registers LAZILY, on
     // `'devtools-opened'` (`main.ts`), so the OS can report focus for a window
     // the machine has not registered yet.

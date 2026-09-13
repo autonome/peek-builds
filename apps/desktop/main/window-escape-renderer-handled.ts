@@ -1,11 +1,7 @@
 // The producer for `window-escape.ts EscapeKeyPress.rendererHandled` —
 // "the renderer already consumed this Escape", mirrored into main and read
 // synchronously at keypress time. Real producer: `tile-preload.cts`'s
-// `api.escape.onEscape` surface sends the callback's answer to
-// `tile:escape:handled` right after answering the round trip's own channel.
-// `ipcMain` is injected rather than imported at module scope: `electron`
-// provides no `ipcMain` export under `ELECTRON_RUN_AS_NODE=1`, so a static
-// value import would fail this module at load time in the `main/*.test.ts` harness.
+// `api.escape.onEscape`, over the `tile:escape:handled` channel.
 
 import type { IpcMain, IpcMainEvent } from 'electron';
 
@@ -16,8 +12,10 @@ let registered = false;
 
 // The mirrored fact has exactly one writer — this receiver — and it fires
 // only because an ask was sent (`windows.ts askWebContentsToHandleEscape`).
-// Register the `tile:escape:handled` IPC receiver exactly once. Idempotent —
-// safe to call from every dispatch-site wiring function.
+// Idempotent — safe to call from every dispatch-site wiring function.
+// `ipcMain` arrives injected rather than imported: it has no export under
+// `ELECTRON_RUN_AS_NODE=1`, so a static import would fail this module at
+// test load time.
 export function initRendererHandledEscapeTracking(ipcMain: IpcMain): void {
   if (registered) return;
   registered = true;

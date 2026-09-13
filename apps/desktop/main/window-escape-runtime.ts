@@ -2,9 +2,8 @@
 // `window-escape.ts interpretEscape` is a pure `(keyEvent, snapshot) ->
 // EscapeOutcome`; this module drives the two-pass decision around it (asking
 // the renderer, then re-deciding) and performs whichever outcome the second
-// pass settles on. Every dependency is injected — `electron` provides
-// nothing under `ELECTRON_RUN_AS_NODE=1`, so a static import of a real
-// backend would fail this module's own unit tests at load time.
+// pass settles on. Every dependency is injected rather than imported, since
+// `electron` provides nothing under `ELECTRON_RUN_AS_NODE=1`.
 
 import {
   interpretEscape,
@@ -122,21 +121,15 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
 // The two-pass decision
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PASS A decides against the current snapshot with no renderer answer. When it
-// lands on an outcome the renderer's own handler could have already consumed
-// (`rendererCouldHavePreempted`) AND the keystroke resolves to an actual
-// window, this asks that window's renderer and defers the decision; every
-// other outcome performs immediately.
-//
-// PASS B re-reads state after the ask resolves and re-runs `interpretEscape`
-// against that fresh snapshot, never against `stateA`. What rides along is the
-// id of the window pass A asked, not an epoch/sequence number: pass B performs
-// only when it resolves that SAME window, because `resolveEscapeTarget` alone
-// can re-resolve a `'global'` landing to whoever holds key now — the window
-// that opened during the wait, not the one the user pressed Escape in. Pass
-// A's `Command`, if any, is never performed; each command already carries the
-// `expectedVersion` of the snapshot it was decided against, so a pass-A
-// command executed after the pass-B re-read would be rejected as stale.
+// If pass A's outcome is one the renderer's own handler could have pre-empted
+// (`rendererCouldHavePreempted`) and resolves to an actual window, that
+// window is asked and the decision deferred to pass B; every other outcome
+// performs immediately. Pass B re-reads state fresh and tracks the id of the
+// window pass A asked (not a version), performing its own outcome only when
+// it re-resolves that SAME window — `resolveEscapeTarget` can otherwise
+// re-resolve a `'global'` landing to whoever holds key now, not who held it
+// when the user pressed Escape. Pass A's `Command`, if any, is discarded
+// once an ask is issued — only pass B's outcome is ever performed.
 export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): void {
   const key: EscapeKeyPress = { landedId: press.landedId };
   wmLog('esc-press', { landedId: press.landedId });

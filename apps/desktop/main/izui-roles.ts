@@ -1,6 +1,6 @@
 // IZUI roles: maps `api.window.open` params (role, options) to the derived per-window role,
 // class, and the kernel's declared layer/canBecomeKey/acceptsInput attributes. Reasoning for
-// the derivations lives in docs/design/window-manager.md § "Window attribute derivation";
+// the derivations lives in docs/design/window-manager.md, "Window attribute derivation";
 // role-set-to-declaration mappings live in docs/design/window-rules-audit.md's role-sets table.
 // Pure and Electron-free so it stays unit-testable under ELECTRON_RUN_AS_NODE=1.
 
@@ -53,7 +53,7 @@ export function isWebPageRole(role: string | undefined): boolean {
 }
 
 // `modal: true` wires close-on-blur, not an OS-modal dialog — a window that must survive an
-// app-switch (any OAuth flow) must not be modal (peek 5b4fefdc).
+// app-switch (any OAuth flow) must not be modal.
 export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
   return options.modal === true;
 }
@@ -75,7 +75,7 @@ export function desktopMembershipForRole(role: string): 'follow' | 'anchor' {
 }
 
 // Check existence AND destroyed: at quit teardown the WC getter can already be undefined, and
-// calling isDestroyed() straight off that throws mid-finalize (peek 9a591551).
+// calling isDestroyed() straight off that throws mid-finalize.
 export function shouldCloseContentWCOnFinalize(
   contentWC: { isDestroyed(): boolean } | null | undefined,
 ): boolean {
@@ -108,7 +108,7 @@ export function planBeforeQuit(phase: QuitCleanupPhase): BeforeQuitDecision {
 }
 
 // The await is load-bearing: re-quitting before guest teardown resolves hands Electron host
-// windows to close over live content (peek d1cf0b9a sibling); requestQuit() runs in `finally`.
+// windows to close over live content; requestQuit() runs in `finally`.
 export async function runDeferredQuitCleanup(
   cleanup: () => void | Promise<void>,
   requestQuit: () => void,
@@ -163,7 +163,7 @@ export function hybridResizeDirAt(
 export type DownloadCloseTarget = 'hybrid-host' | 'browser-window' | 'none';
 
 // Hybrid-host must be checked before BrowserWindow — fromWebContents() resolves hybrid content
-// to its owning BaseWindow instead of null (docs/design/window-manager.md § Window attribute derivation).
+// to its owning BaseWindow instead of null.
 export function downloadCloseTarget(o: {
   isHybridContent: boolean;
   hybridPainted: boolean;
@@ -195,17 +195,17 @@ export interface WindowSurfaceProperties {
   acceptsInput: boolean;
 }
 
-// Keys on the declared alwaysOnTop, never on role or class (docs/design/window-manager.md § Window attribute derivation).
+// Keys on the declared alwaysOnTop, never on role or class.
 export function deriveWindowLayer(facts: Pick<WindowSurfaceFacts, 'alwaysOnTop'>): number {
   return facts.alwaysOnTop === true ? FLOATING_LAYER : BASE_LAYER;
 }
 
-// Keys on the declared focusable, never on role or class (docs/design/window-manager.md § Window attribute derivation).
+// Keys on the declared focusable, never on role or class.
 export function deriveCanBecomeKey(facts: Pick<WindowSurfaceFacts, 'focusable'>): boolean {
   return facts.focusable !== false;
 }
 
-// Keys on the declared clickThrough, never on role or class (docs/design/window-manager.md § Window attribute derivation).
+// Keys on the declared clickThrough, never on role or class.
 export function deriveAcceptsInput(facts: Pick<WindowSurfaceFacts, 'clickThrough'>): boolean {
   return facts.clickThrough !== true;
 }
@@ -243,7 +243,7 @@ const SATELLITE_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
 ]);
 
 // focusable === false must count as satellite: otherwise the derived Esc grab suppresses while
-// the window still can't receive before-input-event either, leaving Esc dead (ebb10894 / 7c61e917).
+// the window still can't receive before-input-event either, leaving Esc dead.
 export function isSatelliteRegistration(
   role: string,
   opts: { modal?: boolean; focusable?: boolean; windowClass?: WindowClass } = {},
@@ -271,7 +271,7 @@ export interface WindowRegistrationDecision {
   // False on a re-registration — attaching a second listener set would double every event.
   attachNativeListeners: boolean;
   // False on a re-registration, for a page-host, or on caller opt-out: a second Esc interceptor
-  // turns one physical Escape into two dispatches (7fffa286).
+  // turns one physical Escape into two dispatches.
   attachEscHandler: boolean;
   // Only overwritten on re-registration when the caller actually passed the field, so a later,
   // thinner spec can't blank out a WC the first registration established.

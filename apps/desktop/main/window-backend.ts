@@ -1,8 +1,8 @@
-// window-backend.ts — the WindowBackend port (design §3, rule R3): the
-// interface through which the kernel's effects (window-kernel-executor.ts)
-// become real OS operations. electron-window-backend.ts is the Electron
-// implementation, and the only window-manager module allowed to import
-// Electron. Contract, shape and constraints: docs/design/window-manager.md § 3.
+// window-backend.ts — the WindowBackend port: the interface through which
+// the kernel's effects (window-kernel-executor.ts) become real OS operations.
+// electron-window-backend.ts is the Electron implementation, and the only
+// window-manager module allowed to import Electron. Contract, shape and
+// constraints: docs/design/window-manager.md.
 
 import type { WindowId, WindowKind, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
@@ -14,7 +14,7 @@ export type { Rectangle as Rect } from './window-kernel.js';
 export interface WindowSpec {
   kind: WindowKind;
   role: string;
-  // REQUIRED — every registration site must declare a classification explicitly (§4.3 dim 8b).
+  // REQUIRED — every registration site must declare a classification explicitly.
   class: WindowClass;
   satellite: boolean;
   escapeMode?: EscapeMode;
@@ -70,10 +70,8 @@ export interface WindowBackend {
   // register, so a later call retries.
   setEscGrab(on: boolean): void;
 
-  // ── §5 step 4 commands (special window classes + registry unification) ────
-
   // Destroys any registered guest WebContents first, and waits for them to
-  // actually go away, before closing the host (the d1cf0b9a use-after-free guard).
+  // actually go away, before closing the host — a use-after-free guard.
   closeWindow(id: WindowId): Promise<void>;
 
   destroyWindow(id: WindowId): void;
@@ -97,31 +95,12 @@ export interface WindowBackend {
 
   hideApp(): void;
 
-  // ── §5 step 5 command (z-order / stacking) ────────────────────────────────
-
   // `level` rides the call rather than record state, so a pinned window (the
   // chrome overlay) realizes as a floating-level re-assert instead of a plain
   // relative raise.
   setStacking(id: WindowId, level: StackingLevel): void;
 
-  // ── §5 step 7 command (geometry / bounds / maximize) ─────────────────────
-
   setWindowBounds(id: WindowId, rect: Rect): void;
-
-  // ── §5 step 10 command (macOS Spaces) ────────────────────────────────────
-  //
-  // The raw path behind `window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
-  // / `SPACES_POLICY_REQUESTED` — was called only by `window-os-adapter.ts`
-  // driving that frozen reducer — used to live here as `setVisibleOnAllSpaces`.
-  // It predates the governing platform-neutral rule
-  // (`docs/design/window-manager.md` §0) and its signature carries Electron's
-  // own option names (`visibleOnFullScreen`/`skipTransformProcessType`), which
-  // this file — scanned by `scripts/check-platform-leak.mjs` — may not. It
-  // lived as `electron-window-backend.ts LegacySpacesShim`, a companion
-  // interface deliberately OUTSIDE this port, the same pattern
-  // `BackendMigrationShims` uses for the handle-speaking surface — deleted
-  // alongside `window-state.ts` and `window-os-adapter.ts`, the sole caller
-  // that typed its backend as the wider intersection.
 
   // Which of 'follow'/'anchor' a role wants is decided above the port; HOW a
   // backend satisfies either — or answers a platform with no such concept
