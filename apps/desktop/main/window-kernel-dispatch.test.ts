@@ -1280,7 +1280,7 @@ describe('window-kernel-dispatch: maximize / unmaximize feed', () => {
 });
 
 // `kernelSetDesktopMembership` is the one helper behind all THREE
-// production feed sites (`window-kernel-dispatch.ts`'s own doc names them):
+// production feed sites (see `docs/design/window-manager.md`):
 // `tile-ipc.ts`'s raw `tile:window:set-visible-on-all-workspaces` handler
 // (boolean translated to an intention before the call), and `ipc.ts`'s
 // `windowOpenHandler()` + its keepLive-reuse path (role-derived, already an

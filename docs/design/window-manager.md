@@ -3815,8 +3815,9 @@ is the claim that nulling breaks a caller.
 §0's rule is built and, since the cutover, wired: `window-kernel-executor.ts` performs the
 dismissals `react` emits over the production `WindowBackend`, the same backend
 `window-state.ts`/`window-os-adapter.ts` used to drive alone (see §0.1's "Built, and now wired for
-queries" and `window-kernel-dispatch.ts`'s header for how production reaches this executor). This
-records what the implementation froze so the rule can be checked against the running app, rather
+queries" and `window-kernel-dispatch.ts`'s `setKernelExecutorProvider`/`getKernelExecutor` for how
+production reaches this executor). This records what the implementation froze so the rule can be
+checked against the running app, rather
 than re-derived. The ownership relation itself — `overlayFor` and `parentId` — is now proven at
 runtime (see "The gap" below); what the rewrite below settles separately is a narrower question —
 that the app-resign half of the rule, previously not exercised at all, now is.

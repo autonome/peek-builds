@@ -107,8 +107,8 @@ export function getKernelExecutorForApp(): WindowKernelExecutor {
  */
 export function initWindowStateMachine(): void {
   // INJECTION, NOT IMPORT: the provider is a lazy thunk because
-  // `window-kernel-dispatch.ts` must not value-import this module — see that
-  // file's executor-provider banner for the cycle and the
+  // `window-kernel-dispatch.ts` must not value-import this module — see
+  // `docs/design/window-manager.md` for the import-cycle and
   // `ELECTRON_RUN_AS_NODE=1` reasons.
   setKernelExecutorProvider(() => getKernelExecutorForApp());
   getWindowBackend().attachAppListeners();
