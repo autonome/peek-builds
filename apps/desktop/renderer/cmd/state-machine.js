@@ -38,8 +38,11 @@ export function resultsListOpen(currentState, data) {
 /**
  * The command row (if any) that TYPING/IDLE auto-selects, plus WHY.
  * `reason` is 'committed' (the typed text already names the command) or
- * 'suggestion' (a genuine strict-prefix single-token completion, pref-gated).
- * A substring-only fuzzy match is NOT auto-selected — the user must ArrowDown.
+ * 'suggestion' (any other non-empty typed text, pref-gated). The row is
+ * always the ranked top of `data.matches` (or a Tab-cycled matchIndex) — the
+ * SAME row updateCommandUI (panel.js) draws the inline ghost from. Enter runs
+ * the row the ghost promises, so this is not restricted to a strict-prefix
+ * completion: a substring/fuzzy match at that row is selected too.
  * @returns {{row: number, reason: string}|null}
  */
 function commandRowAutoSelect(data) {
@@ -53,8 +56,7 @@ function commandRowAutoSelect(data) {
   const typed = (data.typed || '').trim().toLowerCase();
   const lower = name.toLowerCase();
   if (typed === lower || typed.startsWith(lower + ' ')) return { row, reason: 'committed' };
-  if (data.enterRunsInlineSuggestion && typed.length > 0 && !typed.includes(' ')
-      && lower.startsWith(typed) && lower !== typed) {
+  if (data.enterRunsInlineSuggestion && typed.length > 0) {
     return { row, reason: 'suggestion' };
   }
   return null;
@@ -255,9 +257,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
       return commandRowAutoSelect(data) !== null;
     },
-    // The auto-selected command came from a strict-prefix suggestion AND takes
-    // params → complete the name and enter param mode rather than executing with
-    // empty params (previously the panel faked this by dispatching a TAB).
+    // The auto-selected command came from a suggestion (not yet committed) AND
+    // takes params → complete the name and enter param mode rather than
+    // executing with empty params (previously the panel faked this by
+    // dispatching a TAB).
     suggestedCommandNeedsParams: () => {
       if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
       const hit = commandRowAutoSelect(data);

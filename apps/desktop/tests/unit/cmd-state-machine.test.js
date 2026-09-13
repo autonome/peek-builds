@@ -190,10 +190,24 @@ describe('selectedRow / autoSelectableRow', () => {
     assert.equal(autoSelectableRow(data), 0);
   });
 
-  it('does NOT select a substring-only command match', () => {
+  // Enter runs the row the ghost suggestion is drawn from — updateCommandUI
+  // (panel.js) draws the ghost from state.matches[state.matchIndex]
+  // unconditionally, not just for a strict-prefix completion. Was: "does NOT
+  // select a substring-only command match".
+  it('selects a substring-only command match at the top of the ranked list', () => {
     const data = makeData({ typed: 'ags', matches: ['tags', 'stags'] });
-    assert.equal(selectedRow(States.TYPING, data), null);
-    assert.equal(autoSelectableRow(data), null);
+    assert.equal(selectedRow(States.TYPING, data), 0);
+    assert.equal(autoSelectableRow(data), 0);
+  });
+
+  // Bug repro (peek fd640c7e): typing "ta" ranks the noun-generated "open tags"
+  // above the bare noun "tags" (findMatchingCommands' token-prefix tier), so the
+  // ghost draws "open [ta]gs" — the row at matchIndex, not a strict prefix of
+  // "ta". It must still be the auto-selected row.
+  it('selects a noun-generated multi-word command ranked above the bare noun', () => {
+    const data = makeData({ typed: 'ta', matches: ['open tags', 'tags'] });
+    assert.equal(selectedRow(States.TYPING, data), 0);
+    assert.equal(autoSelectableRow(data), 0);
   });
 
   it('selects a strict-prefix command match', () => {
@@ -520,14 +534,43 @@ describe('TYPING transitions', () => {
     assert.equal(machine.getState(), States.EXECUTING);
   });
 
-  // Substring-only (fuzzy) match is NOT selected → Enter must not run it.
-  it('TYPING + Enter on a substring-only match -> TYPING (no-op)', () => {
+  // Enter runs the row the ghost is drawn from — a substring-only (fuzzy) match
+  // at the top of the ranked list is auto-selected and Enter executes it. Was:
+  // "TYPING + Enter on a substring-only match -> TYPING (no-op)".
+  it('TYPING + Enter on a substring-only match -> EXECUTING', () => {
     machine.getMutableData().typed = 'ags';
     machine.getMutableData().matches = ['tags'];
     machine.getMutableData().commands = { tags: { name: 'tags' } };
     const result = machine.dispatch(Events.ENTER, { value: 'ags', isURL: false });
-    assert.equal(result.handled, false);
-    assert.equal(machine.getState(), States.TYPING);
+    assert.equal(result.handled, true);
+    assert.equal(machine.getState(), States.EXECUTING);
+  });
+
+  // Bug repro (peek fd640c7e): typed "ta" draws the ghost "open tags" (a
+  // noun-generated command ranked above the bare noun "tags" for this input,
+  // see findMatchingCommands' token-prefix tier). Enter must run the row the
+  // ghost is drawn from, not fail silently.
+  it('TYPING + Enter on a noun-generated multi-word suggestion -> EXECUTING "open tags"', () => {
+    // executeCommand (panel.js) reads state.matches[state.matchIndex] at the
+    // moment it runs, before clearInput resets it — mirror that here rather
+    // than reading data back afterward.
+    let executedName = null;
+    const localMachine = makeMachine({
+      executeCommand(payload, data) {
+        executedName = payload?.commandName || data.matches[data.matchIndex];
+      },
+    });
+    localMachine.setState(States.TYPING);
+    localMachine.getMutableData().typed = 'ta';
+    localMachine.getMutableData().matches = ['open tags', 'tags'];
+    localMachine.getMutableData().commands = {
+      'open tags': { name: 'open tags' },
+      tags: { name: 'tags' },
+    };
+    const result = localMachine.dispatch(Events.ENTER, { value: 'ta', isURL: false });
+    assert.equal(result.handled, true);
+    assert.equal(localMachine.getState(), States.EXECUTING);
+    assert.equal(executedName, 'open tags');
   });
 
   // Pref off ⇒ a strict-prefix suggestion is not auto-run.
