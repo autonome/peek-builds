@@ -439,3 +439,30 @@ The ten `desktop` failures, each re-run in isolation with `HEADLESS=1 PACKAGED=1
   caller's intent, so `kernelWindowShown(id, true, opSeq)` produces the confirming
   `OsFocusGained` with the raise's opSeq. Reproduced at the unit level against
   `dist/main/window-kernel.js` for both the dismissal and the Escape branch. Not yet applied.
+
+### Eighth macOS gate run — 2026-09-13, night
+
+Run at commit `fbdbf3e3`: the seventh run's headless fix applied — `performEffect`'s
+`RaiseWindow` `'inactive-show'` arm shows with `activate: true`, so `showWindow`'s echo lands the
+confirming `OsFocusGained` under headless. Green; the first green gate on this branch.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3249 | 0 | — |
+| node unit | 747 | 0 | — |
+| desktop | 435 | 0 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The six specs the seventh run attributed to the headless cause all pass, in isolation and in the
+gate. `command-chaining.spec.ts` passed in the gate this time; the focus shuffle it recorded is
+still gate-only and still possible. No flakes.
+
+One observation from the isolation runs before the gate, not reproduced in the gate:
+`hybrid-transient-on-blur.spec.ts:139` ("a focused workspace window closes a hybrid quick-view
+sibling") timed out three times in a row when run alone, because the quick-view's first-paint
+report (`evolve WindowContentOrderable`) landed about 3.1 s after the window opened instead of
+about 60 ms; reverting the one-line fix restored 60 ms. In the gate the same case passed in
+307 ms. The dismissal itself is correct either way; only its latency in a fresh, single-spec
+instance is open. No timer in the window-manager code accounts for 3 s.
