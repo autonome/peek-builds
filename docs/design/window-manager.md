@@ -4187,6 +4187,44 @@ grep-zero — it had no production producers. If pending windows return, they ge
 ordinary `WindowId` and a `pending` lifecycle phase on the reducer window record — same id
 space, never a separate synthetic range.
 
+#### Window attribute derivation
+
+`izui-roles.ts deriveWindowSurface` derives the kernel's `layer`, `canBecomeKey`, and
+`acceptsInput` fields from the facts a construction site declares at open time, never from role
+or class.
+
+`deriveWindowLayer` keys on the declared `alwaysOnTop` alone. A role- or class-based derivation
+looks equivalent today only because every role-`overlay`/`palette` site also declares
+`alwaysOnTop` — but peeks and slides (`role: 'quick-view'`) declare no `alwaysOnTop` and stay at
+`BASE_LAYER`; their visual lift is `type: 'panel'` AppKit behavior, not a band, and placing them
+above `BASE_LAYER` would land them in `isAppResignSweepEligible`'s `layer > BASE_LAYER` half,
+which its role clause exists to keep them out of.
+
+`deriveCanBecomeKey` keys on the declared `focusable !== false`. Neither role nor `alwaysOnTop`
+predicts it: the shared chrome overlay (`hybrid-overlay.ts ensureOverlay`) is `role: 'overlay'`,
+always-on-top, and deliberately focusable so Cmd+L can type into the navbar; the command panel
+floats and is typed into; and the privileged test fixture (`test-fixture-glue.ts`) is
+non-focusable and not always-on-top. The HUD (`renderer/hud/background.js openHud`) opens
+`focusable: false` under an undeclared, ordinary `workspace` role, so only the open-time fact
+tells it apart from every other `workspace` window.
+
+`deriveAcceptsInput` keys on a declared `clickThrough`, set only where a construction site calls
+`setIgnoreMouseEvents(true, …)` before registering. Role is not a proxy: the windows switcher
+(`role: 'switcher'`) and the space-border indicator (`role: 'overlay'`) are both always-on-top,
+and the switcher takes clicks while the border passes them through. The value is read once at
+registration; a window whose click-through changes afterward (the shared chrome overlay toggles
+it back on as the pointer crosses real chrome) needs a runtime event, not a re-derivation.
+
+`downloadCloseTarget` decides which window a non-webview download should close, and the
+hybrid-host branch must be checked before the BrowserWindow branch even when a BrowserWindow
+match also exists. `BrowserWindow.fromWebContents` returns the owning BaseWindow for hybrid
+content instead of `null`, so a BrowserWindow-first cascade matches every hybrid download and
+closes the page the user is browsing — the ordering bug behind the alt+click regression
+(`02e0a4fa`). Within the hybrid branch, only a host that has not yet painted is closed: a fresh
+`target=_blank` download popup never settles a load and never paints, while a host already
+showing a real page (a download link clicked while browsing, or an alt+click that Chromium turns
+into a download without ever opening a window) has painted and must be left alone (`a060a75f`).
+
 ### 4.2 Geometry
 
 **2. Geometry / bounds / maximize** — TO ABSORB. *(Top divergence risk #1.)*
