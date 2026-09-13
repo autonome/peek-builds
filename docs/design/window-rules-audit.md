@@ -27,7 +27,7 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | S4 transient-above-origin | scattered, origin half unimplemented | `stackingLevelForLayer`, `overlayFollowPatch`, `evolve RegisterWindow` | The overlay half is single-sited and holds. Nothing relates a transient to its origin for stacking; registration inserts a transient below the key window. |
 | S5 key-raise-reorders | scattered | `planRaiseRealization`, `raiseWindow`, `kernelWindowShown` | Native half holds. `raiseWindow` ends both branches with `kernelWindowShown(id, true, opSeq)`, so a pure reorder still lands a companion focus and a fresh attention seq. |
 | D1 one-escape-rule | scattered, partial | `window-escape.ts resolveEscapeTarget`, `ESC_CLOSE_ROLES`, `escapeClosePolicy` | One role set standing in for the "Escape closes this window" declaration, one policy, no per-kind arm. "Topmost visible Escape-closable" is implemented only in the no-key branch; with a content window key and an Escape-closable transient visible, Escape opens the fallback window. |
-| D2 escape-hits-its-window | contradicted | `resolveEscapeTarget` rule 4 | On a landed/key disagreement the press is redirected to the current key holder when its role is closable. The docblock states this as intent. |
+| D2 escape-hits-its-window | holds (fixed 2026-09-13) | `resolveEscapeTarget` rule 4 | On a landed/key disagreement the press is dropped (`stale`), whatever the current key holder's role. The redirect-to-holder branch the docblock used to state as intent is gone. |
 | D3 escape-never-waits | holds | `electron-window-backend.ts askRendererHandledEscape` | Page hosts answer synchronously; browser windows still have the 500ms ask but carry a responder. |
 | D4 close-before-open | scattered | `resolveEscapeTarget` no-key branch, `escapeFallbackPolicy`, `interpretEscape` | The switcher opens from three places; only the no-key branch scans for a visible closable transient first. Same gap as D1. |
 | D5 escape-order | holds | `interpretEscape` | The no-target branch now scans for a visible fullscreen window before falling back to `open-switcher`; with none it opens the switcher as before, with one it answers `nothing` (`fullscreen-no-target`) instead of exiting fullscreen on a window Escape was never pressed on. |
@@ -40,9 +40,9 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 16 | F1 F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8 D9, S3 (dismissal half) |
+| holds | 17 | F1 F6 F7 V1 V3 V4 V5 V6 S1 D2 D3 D5 D6 D8 D9, S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 4 | F3 D2, S3 (raise half) |
+| contradicted | 3 | F3, S3 (raise half) |
 | unimplemented | 2 | F8 D7 |
 
 S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the

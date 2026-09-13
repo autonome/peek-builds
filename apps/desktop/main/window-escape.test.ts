@@ -167,21 +167,19 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     assert.strictEqual(target.kind === 'window' ? target.record.id : null, quickView, 'ESC targets key, not main');
   });
 
-  it('disagreement — a landing on a window whose holder is always-closeable redirects to the holder', () => {
-    // The keystroke went to the workspace host; by dispatch time the palette
-    // holds key. `paletteOverHost`'s holder role (`palette`) is in
-    // `ESC_CLOSE_ROLES`, so this is the `ebb10894` shape: the keystroke landed
-    // on a window that has since lost focus to an always-closeable transient
-    // (a quick-view/palette/utility that opened over it). Acting on the LANDED
-    // window would leave the transient — the thing the user is actually
-    // looking at — stuck open; redirecting to the holder closes it instead.
+  it('D2: key was the host when pressed and is the palette by the time the press is resolved — dropped, never redirected to the palette', () => {
+    // The keystroke went to the workspace host — the window that was key when
+    // the press landed. By resolution time the palette holds key instead
+    // (`paletteOverHost`'s holder role, `palette`, is in `ESC_CLOSE_ROLES`, so
+    // this is exactly the case the old code redirected). D2
+    // (`docs/design/window-rules.md`) says the press is dropped rather than
+    // redirected to the newer holder: it is never applied to the palette,
+    // whatever the palette's role says about its own Escape.
     const state = paletteOverHost();
     const target = resolveEscapeTarget(press({ landedId: workspaceHost }), state);
-    assert.strictEqual(target.kind, 'window');
-    assert.strictEqual(target.kind === 'window' ? target.record.id : null, palette);
+    assert.strictEqual(target.kind, 'stale');
     const outcome = interpretEscape(press({ landedId: workspaceHost }), state);
-    assert.strictEqual(outcome.kind, 'close-window');
-    assert.strictEqual(outcome.command?.id, palette);
+    assert.deepStrictEqual(outcome, { kind: 'nothing', reason: 'stale-landing', command: null });
   });
 
   it('disagreement — a landing on a window whose holder is NOT always-closeable is dropped as stale', () => {

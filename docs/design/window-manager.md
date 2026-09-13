@@ -689,6 +689,16 @@ failing `admitsFocusAssert` emits nothing and leaves the window model untouched.
 `window-kernel-executor.test.ts` pins the app-inactive case directly: a suppressed raise (no backend
 call) leaves `key` on the window that already held it.
 
+**A stale Escape redirected to the new key holder instead of dropping, closed (2026-09-13).**
+`window-escape.ts resolveEscapeTarget`'s rule 4 (a live delivery record naming a window that is not
+the current key window) redirected the press to the current holder whenever that holder's role was
+one Escape closes outright (`ESC_CLOSE_ROLES`) — contradicting D2 (`docs/design/window-rules.md`),
+which says a press whose key holder moved before it was handled is dropped, never redirected to a
+newer window. Fix: the redirect branch is gone; every disagreement now returns `stale` regardless of
+the holder's role. `window-escape.test.ts` "D2: key was the host when pressed and is the palette by
+the time the press is resolved — dropped, never redirected to the palette" pins it, failing-first
+against the removed branch.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,
