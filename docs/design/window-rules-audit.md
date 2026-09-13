@@ -14,12 +14,12 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | F5 raise-needs-a-surface | scattered (one bypass closed 2026-09-13) | `window-kernel.ts admitsFocusAssert` and its ~8 callers, `evolve FocusRaiseRequested`, `react` raise-request rule, `planRaise` | One predicate, consulted independently at ~8 sites. `decide`'s raise arm no longer bypasses it: `evolve`'s `FocusRaiseRequested` arm and `react`'s raise-request rule both gate on `admitsFocusAssert`, and since `key` no longer moves until the backend's confirmation lands, a target that fails it is never asked for at all — the OS is never even told to raise it. `planRaise` remains a separate bypass, so the rule still does not hold everywhere. |
 | F6 intent-beats-inactive | holds (fixed 2026-09-05) | `renderer/cmd/background.js openPanelWindow`, `features/peeks/background.js`, `features/slides/background.js`, `features/windows/background.js` (`type: 'panel'` at open), `izui-roles.ts windowNonActivating`, `ipc.ts` window-open handler (both the hybrid page-host branch and the browser branch) -> `window-machine.ts registerWindowWithMachine` -> `window-kernel-dispatch.ts kernelRegisterWindow` -> `window-kernel.ts WindowRecord.nonActivating`, `window-kernel-executor.ts planRaise` (the panel arm, keyed on `nonActivating`), `electron-window-backend.ts showWindow`/`raiseWindow` | The `type: 'panel'` open-time declaration is now stored on the record (`WindowRecord.nonActivating`, the same DECLARED-at-registration shape as `selfClosesOnBlur`) instead of being read back off `windowClass`/`role`. `showWindow`'s page-host mask reads `record.nonActivating` in place of `windowClass !== 'quick-view'`; `raiseWindow` no longer calls `app.focus({ steal: true })` for a panel's user-intended raise — only for a non-panel's, where AppKit's ordinary `win.focus()` does not activate the app on its own. `planRaise`'s page-host arm reads `record.nonActivating` in place of `role === 'quick-view'`. One channel, one word, for BOTH halves of the rule now: `intent: 'user'` still exempts a user-asked-for raise from the app-inactive mask, and `nonActivating` decides whether that raise is allowed to bring the app forward at all. |
 | F7 hide-returns-key | holds | `window-kernel.ts successorOnHide`, consulted by `react`'s successor loop and `evolve WindowHidden` | `WindowRecord.priorKey` records who held key immediately before the hiding window took it, written by `OsFocusGained` and cleared by `WindowClosed`. `successorOnHide` reads it: a live, admitting prior key holder gets key back; a missing/hidden/doomed one falls back to the topmost content window; `null` (nothing in Peek was key before) raises nothing, rather than the topmost content window unconditionally. |
-| F8 land-somewhere | unimplemented | `react` successor loop, `holdsAppOnScreen` | Only the successor loop restores key, and only when the dismissed window was key and a content window survives. Dismissing a key palette with no content window up leaves `key` dangling. |
+| F8 dismissal-keeps-the-app | holds (rule rewritten 2026-09-13) | `react` successor loop, `holdsAppOnScreen` | The rule used to demand that something visible be key after every dismissal; the code never did that, and the code was right. Dismissing a key palette with no content window up leaves `key` empty while the app stays frontmost, which is what the rule now says. Nothing hands focus to another app. |
 | V1 paint-before-dismiss | holds | `window-kernel.ts isTransientAutocloseCandidate`, ordering floor in `selectTransientAutoclose` | `if (!rec.orderable) return false` gates every reader. |
 | V2 show-is-explicit | scattered | `evolve WindowShown`, `window-kernel-executor.ts isStaleWindowEcho`, `electron-window-backend.ts win.on('show')` | The kernel arm is unconditional; both guards live outside it. A producer emitting `WindowShown` without an `opSeq` bypasses the executor guard. |
 | V3 keeplive-hides | holds | `decide CloseOrHideWindow`, `runEffect DismissWindow` | One closure decides hide vs close for the target and every cascaded descendant. |
 | V4 reversible-is-not-final | holds | `evolve AppResigned`, `AppResignSettled`, `AppActivated`, `appBlurRevealAdmits` | Resign hides exclude every dismissal victim; activation refuses `pendingHidden`. |
-| V5 late-paint-still-obeys | holds | `react` rule (c) | The `orderable` flip re-asks the law against the standing attention. This is also the mechanism of the D7 defect. |
+| V5 late-paint-still-obeys | holds | `react` rule (c) | The `orderable` flip re-asks the law against the standing attention. |
 | V6 one-close-per-input | holds | `window-escape-runtime.ts handleEscapePress` pass B, `renderer/cmd/panel.js shutdown`, `isTransientAutocloseCandidate` | Escape path is exact. Blur sweeps no longer double up since `b7e685e6`, see S3. |
 | S1 order-is-total | holds | `evolve RegisterWindow`, `WindowClosed`, `OsFocusGained` | The only `filter` that drops a member is in `WindowClosed`. |
 | S2 fixed-point | scattered | `window-kernel-executor.ts pump`, `isStaleSelfEcho`, `isStaleWindowEcho`, `isOpConfirmation`, `planRaiseRealization` | `pump` is an unbounded FIFO with no depth limit; termination is the conjunction of four guards at four sites. |
@@ -32,7 +32,6 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | D4 close-before-open | scattered | `resolveEscapeTarget` no-key branch, `escapeFallbackPolicy`, `interpretEscape` | The switcher opens from three places; only the no-key branch scans for a visible closable transient first. Same gap as D1. |
 | D5 escape-order | holds | `interpretEscape` | The no-target branch now scans for a visible fullscreen window before falling back to `open-switcher`; with none it opens the switcher as before, with one it answers `nothing` (`fullscreen-no-target`) instead of exiting fullscreen on a window Escape was never pressed on. |
 | D6 blur-dismissal | holds | `transientAutocloseExemption`, `selectTransientAutoclose`, `isTransientAutocloseCandidate` | The four exemptions map one-to-one onto the record's own facts (`overlayFor` set, `acceptsInput` false, the focuser's `parentId`/`overlayFor` naming the victim, `openSeq` above the ordering floor) and all three readers call the single function. |
-| D7 no-self-dismissal | unimplemented | `transientAutocloseExemption` `focuser-relation`, `react` rule (c), `takeFocusCause` | Nothing expresses "the window I just took key from". `focuser-relation` is one-hop and points the other way (peek's `parentId` names the host). The host's reclaim is unarmed, reads `world`, disarms the floor, and rule (c) dismisses the peek on paint. |
 | D8 resign-sweep-after-resign | holds | `evolve AppResigned`, `AppResignSettled`, `react` rule (b) | Victims only when `!state.appActive` at the settle. |
 | D9 escape-closes-a-background-page | holds (rule corrected 2026-09-13) | `escapeClosePolicy`, `escapeFallbackPolicy` | The rule used to say an application window never closes on Escape; that was wrong, and the code was right: a page opened while another app was frontmost (`openedInBackground`) closes on Escape because the user is going back to that app, and any other application window falls through to the fallback window. `workspace` is spared in both sessions. |
 
@@ -40,10 +39,13 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 17 | F1 F6 F7 V1 V3 V4 V5 V6 S1 D2 D3 D5 D6 D8 D9, S3 (dismissal half) |
+| holds | 18 | F1 F6 F7 F8 V1 V3 V4 V5 V6 S1 D2 D3 D5 D6 D8 D9, S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
 | contradicted | 3 | F3, S3 (raise half) |
-| unimplemented | 2 | F8 D7 |
+| unimplemented | 0 | |
+
+D7 was deleted from the rules on 2026-09-13: a transient that loses focus is dismissed by D6 with
+no exemption for being new, and the one failure filed under it did not reproduce.
 
 S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the
 contradicted row above names only the raise half (one `WindowClosed` can still emit two raises).
@@ -58,8 +60,8 @@ closed:
   manufacturing an `OsFocusGained`; `key` moves only off the backend's own confirming report.
   `kernelWindowShown` is unaffected by this fix — it is a companion-focus feed for a native show
   event, not a raise command.
-- **Focus cause is a per-window arming slot fed by seven producers, two of them for one page host** (`electron-window-backend.ts`), so one physical focus can arrive twice with two causes (F2, S3, D7).
-- **No state names the window a transient was opened over**, so self-dismissal and origin stacking have nothing to consult (F8, D7, S4). Hide-return no longer shares this gap: `WindowRecord.priorKey` now names the prior key holder (F7), and is the natural origin for D7 and S4 to read too.
+- **Focus cause is a per-window arming slot fed by seven producers, two of them for one page host** (`electron-window-backend.ts`), so one physical focus can arrive twice with two causes (F2, S3).
+- **No state names the window a transient was opened over**, so origin stacking has nothing to consult (S4). Hide-return no longer shares this gap: `WindowRecord.priorKey` now names the prior key holder (F7), and is the natural origin for S4 to read too.
 
 ## Role sets are feature names standing in for declarations
 

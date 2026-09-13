@@ -49,7 +49,18 @@ machine. It is expected to shrink monotonically to zero; the check fails a PR th
 
 ### Open design decisions
 
-None. The last one — whether `order` includes never-shown and offscreen windows — was answered
+**Stacking: pinned, always-on-top and HUD windows (opened 2026-09-13).** The use cases and rules
+for a window that stays above others have not been worked through: what "pinned" means across
+virtual desktops, whether a HUD window can ever be key, what an always-on-top change does to
+focus, and how a pinned window interacts with the transient dismissal law. The behaviour must be
+the same on all three desktop platforms. Two claims in the code wait on this: `electron-window-backend.ts
+STACKING_TAKES_FOCUS` asserts that a stacking change steals focus everywhere except macOS, justified
+only by a comment and never checked on a Linux or Windows display, and `pinAlwaysOnTop` arms nothing
+while `setStacking`'s `'pinned'` branch arms `pendingStackingFocus` for the same primitive off macOS.
+Neither changes until the rules exist; the rules are written first, in `window-rules.md`'s stacking
+section, then the code is read against them.
+
+The previous open decision — whether `order` includes never-shown and offscreen windows — was answered
 on 2026-08-21: **it does**, every window always, with no registration-time membership test. The
 decision and what it commits to are in §0.1.10, "Answered: `order` includes never-shown and
 offscreen windows". The recurring boot-time
