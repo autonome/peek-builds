@@ -4808,6 +4808,42 @@ describe('window-kernel: react applies transient autoclose', () => {
       'becoming orderable re-checks the law against the holder focus already settled on, with exactly one victim',
     );
   });
+
+  it('the echo of the raise a world report provoked keeps the world cause, so a quick-view painting after it is still swept', () => {
+    // A world report handing key to the host makes `react` raise the host; the backend echoes
+    // that raise as a machine-caused report carrying the raise's own opSeq. The quick-view's
+    // first frame can land on either side of that echo, and the verdict must not depend on it.
+    const state = fold([reg(1, undefined), reg(2, 'quick-view'), show(1), show(2)], initialState());
+    const focusEv: Event = { type: 'OsFocusGained', id: wid(1) };
+    const focused = evolve(state, focusEv);
+    const raise = react(state, focusEv, focused).find((e) => e.type === 'RaiseWindow');
+    assert.ok(raise !== undefined && raise.type === 'RaiseWindow' && raise.id === wid(1), 'the world report provokes a raise of the new holder');
+
+    const echo: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: raise.opSeq } };
+    const echoed = evolve(focused, echo);
+    assert.strictEqual(echoed.key, wid(1), 'key stays where the world put it');
+    assert.strictEqual(echoed.lastAttention?.cause.kind, 'world', 'the echo re-confirms the standing attention rather than replacing its cause');
+    assert.ok((echoed.lastAttention?.seq ?? 0) > (focused.lastAttention?.seq ?? 0), 'the attention seq still advances on the echo');
+
+    const orderableEv: Event = { type: 'WindowContentOrderable', id: wid(2) };
+    const next = evolve(echoed, orderableEv);
+    assert.deepStrictEqual(
+      react(echoed, orderableEv, next).filter((e) => e.type === 'DismissWindow'),
+      [{ type: 'DismissWindow', id: wid(2) }],
+      'the first-paint sweep runs against the world cause: no ordering floor, the newer quick-view is dismissed',
+    );
+  });
+
+  it('a machine raise of a window that was not key still records its own machine cause', () => {
+    // Only a re-confirmation keeps the standing cause; a raise that actually moves key arms
+    // the ordering floor as before (the successor / parent-refocus / focus-assert cases).
+    const state = fold([reg(1, undefined), reg(2, 'quick-view'), show(1), show(2), orderable(2)], initialState());
+    const worldOnPeek = evolve(state, { type: 'OsFocusGained', id: wid(2) });
+    const raiseEcho: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: 99 } };
+    const next = evolve(worldOnPeek, raiseEcho);
+    assert.strictEqual(next.key, wid(1), 'key moves to the raised window');
+    assert.strictEqual(next.lastAttention?.cause.kind, 'machine', 'a key-moving machine report records its own cause');
+  });
 });
 
 // ── escapeMode: one live value, absent is meaningful ────────────────────────

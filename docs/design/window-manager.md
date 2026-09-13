@@ -759,6 +759,31 @@ call under headless directly (`activate: true`, carrying the raise request's own
 feeding the echo back by hand the way the real backend would, that `key` lands on the raised
 window; the tests that had pinned the old `activate: false` value are inverted to assert the new one.
 
+**The echo of a world-provoked raise spared a transient that painted a few ms later, closed
+(2026-09-14).** Measured live under headless on `hybrid-transient-on-blur.spec.ts` "a focused
+workspace window closes a hybrid quick-view sibling", which had failed 1 of 2 gate runs and 3 of 3
+isolated runs since the headless raise started confirming focus (the entry above). The suspected
+late first paint was not it: the quick-view's `hybrid:first-frame` report landed 60-75ms after its
+`open-registry-set` on every run, failing or passing. What differed was its order against the
+anchor's focus. When the anchor's world-caused `OsFocusGained` lands first, `react`'s key-change rule
+raises the anchor it just handed key to, and the backend echoes that raise as a machine-caused
+`OsFocusGained` carrying the raise's `opSeq` ~1ms later — under headless via the `'inactive-show'`
+show echo, live via `electron-window-backend.ts raiseWindow`'s unconditional `kernelWindowShown(id,
+true, opSeq)`. `evolve`'s `OsFocusGained` arm recorded that echo as fresh machine attention, so
+when the quick-view then flipped orderable, the `WindowContentOrderable` arm asked
+`selectTransientAutoclose` with a machine cause, whose ordering floor spared the quick-view as
+`newer-than-focuser` (it opened after the anchor). When the paint landed first, the sweep ran
+against the still-world cause and dismissed it — the verdict turned on a ~1ms race the kernel's
+own bookkeeping created. Fix: in `evolve`'s `OsFocusGained` arm, a report that `isOpConfirmation`
+accepts for the window already holding `key` (with `lastAttention` already naming it) re-confirms
+the standing attention — a fresh `seq`, the standing cause kept — instead of replacing the cause.
+A machine report that actually moves `key` (successor raise, parent refocus, focus assert on a
+non-key window) still records its own cause and arms the floor as before. `window-kernel.test.ts`
+pins both halves next to "a quick-view that becomes orderable AFTER focus has already moved on".
+Measured after the fix: the spec 5/5 three runs in a row, two of them with the raced ordering
+(`native-focus-arrived id=<anchor>` before `hybrid:first-frame`), the dismissal riding the
+`WindowContentOrderable` transition.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

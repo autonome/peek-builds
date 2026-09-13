@@ -742,12 +742,26 @@ export function evolve(state: State, ev: Event): State {
       // unconditionally — every report, including one that re-confirms the
       // window already holding key, needs a fresh distinct `seq` for `react`
       // to diff against.
-      const attention: Attention = { holder: ev.id, cause: ev.cause ?? { kind: 'world' }, seq: nextAttentionSeq(state) };
       const idx = state.order.findIndex((w) => w.id === ev.id);
       if (idx === -1) {
+        const attention: Attention = { holder: ev.id, cause: ev.cause ?? { kind: 'world' }, seq: nextAttentionSeq(state) };
         return { ...state, key: ev.id, lastAttention: attention, version: state.version + 1 };
       }
       const record = state.order[idx];
+      // The confirming echo of a raise issued for the window that already holds key
+      // re-confirms the attention already standing — it takes a fresh `seq` and keeps
+      // the standing cause. `react` raises the window a world report just handed key
+      // to (its key-change rule), and that raise's echo comes back machine-caused; were
+      // it recorded as fresh machine attention, the ordering floor it arms would spare
+      // every transient newer than the holder from the first-paint sweep
+      // (`WindowContentOrderable`), so whether a transient that paints a few ms after
+      // the world report is dismissed would turn on which of the two landed first.
+      const reconfirmsStanding =
+        state.key === ev.id && state.lastAttention !== null && state.lastAttention.holder === ev.id && isOpConfirmation(record, ev.cause);
+      const attention: Attention =
+        reconfirmsStanding && state.lastAttention !== null
+          ? { ...state.lastAttention, seq: nextAttentionSeq(state) }
+          : { holder: ev.id, cause: ev.cause ?? { kind: 'world' }, seq: nextAttentionSeq(state) };
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
       // `lastOpSeq` is stamped only when this genuinely takes key — same
       // condition `react` uses to emit `RaiseWindow`. Gated on
