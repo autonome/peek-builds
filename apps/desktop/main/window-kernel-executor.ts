@@ -436,11 +436,8 @@ export class WindowKernelExecutor {
             wmLog('raise-suppressed', { id: effect.id, appActive: this.state.appActive, headless: this.headless });
             return;
           case 'inactive-show':
-            // `activate: true` here is not an OS activation under headless —
-            // `showWindow`'s own headless gate masks that — but it is what
-            // makes the backend's echo (`kernelWindowShown`) carry an
-            // `OsFocusGained`, the only writer of `key`. Without it a headless
-            // raise never lands key on the raised window.
+            // `showWindow` masks the OS activation under headless; `activate: true` only makes
+            // its echo carry the `OsFocusGained` that lands key on the raised window.
             this.backend.showWindow(effect.id, { activate: true, opSeq: effect.opSeq });
             return;
           case 'show-and-focus-content':
