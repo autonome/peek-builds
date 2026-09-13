@@ -1,5 +1,5 @@
 // Example-based unit tests for the window-manager kernel (window-kernel.ts).
-// Design reasoning: docs/design/window-manager.md § 0.1.
+// Design reasoning: docs/design/window-manager.md, section 0.1.
 // react(prev, ev, next): Effect[] is a pure projection of the transition, separate from evolve.
 
 import { describe, it } from 'node:test';
@@ -79,8 +79,6 @@ function buildLog(): Event[] {
     { type: 'AppResigned' },
   ];
 }
-
-// ── Replay determinism (§0.1.8 item 2) ──────────────────────────────────────
 
 describe('window-kernel: replay determinism', () => {
   it('INVARIANT: replay determinism — same log yields identical state and effect list', () => {
@@ -289,11 +287,8 @@ describe('window-kernel: re-registration merges in place', () => {
     // Lived facts are preserved, not reset by the re-registration.
     assert.strictEqual(merged.visible, true);
     assert.strictEqual(merged.openSeq, openSeqBefore);
-    // `acceptsInput` is a LIVED fact (§ WindowRecord.acceptsInput's doc), not
-    // an intrinsic: the event's `acceptsInput: false` above must NOT
-    // overwrite the `true` the original registration lived with — a
-    // re-registration recomputing surface facts fresh from open params must
-    // not undo a click-through change `WindowAcceptsInputChanged` reported.
+    // `acceptsInput` is a lived fact, not an intrinsic — a re-registration must not let the event's
+    // `acceptsInput: false` overwrite a click-through change `WindowAcceptsInputChanged` already reported.
     assert.strictEqual(merged.acceptsInput, true);
   });
 
@@ -588,8 +583,6 @@ describe('window-kernel: raise vs. show', () => {
     assert.strictEqual(shown.order.find((w) => w.id === wid(1))?.visible, true);
   });
 });
-
-// ── one order: where a background open lands (§0.1.10) ──────────────────────
 
 // A registration inserts under the key window; a focus gain raises its target to the top — the
 // two complete, disjoint rules that move anything in order.
@@ -1499,11 +1492,9 @@ describe('window-kernel: parent refocus on WindowClosed', () => {
   });
 
   it('closing a background (non-key) child never puts its parent above the record that actually holds key', () => {
-    // §0.1.10's one-order rule (`window-kernel-properties.test.ts`
-    // `checkInvariants`): whenever `key` resolves to a record, that record
-    // is the topmost one in `order`. A closing child's parent-refocus raise
-    // must not violate that even when the closing child was never key
-    // itself — `other` here holds key throughout; `child` (parented to
+    // The one-order rule: whenever `key` resolves to a record, that record is the topmost one in
+    // `order`. A closing child's parent-refocus raise must not violate that even when the closing
+    // child was never key itself — `other` here holds key throughout; `child` (parented to
     // `sibling`) closes in the background.
     const other = wid(1);
     const sibling = wid(2);
@@ -1896,8 +1887,6 @@ describe('window-kernel: successor raise on WindowHidden', () => {
   });
 });
 
-// ── Fullscreen: an orthogonal region (§0.1.8) ───────────────────────────────
-
 describe('window-kernel: fullscreen is orthogonal to key and order', () => {
   const registerTwo = (): Event[] => [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -2082,17 +2071,12 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
   });
 
   it('(a) Space-switch settings clobber: a fullscreen transition keeps its fsMode when a Space-switch focus lands on another window mid-animation', () => {
-    // Historical bug (§5.2): the deleted reducer answered this with a
-    // "transition pin" that held `front` on the fullscreening host so a
-    // mid-animation focus landing on the settings window could not steal it.
-    // The kernel has no such pin, and does not need one: `key` and `order`
-    // are a report of who has OS focus (RULE 2), and a settings window with
-    // `role: 'workspace'` is genuinely `isContentWindow` (an admitted
-    // content role, `CONTENT_ROLES`), so a real focus landing on it really
-    // does move `key` and the topmost content window to it — see "fullscreen
-    // is orthogonal to key and order" above. What survives is narrower and
-    // still real: `fsMode` is untouched by that focus, and the transition
-    // that was already in flight settles to `fullscreen` on its own OS
+    // A fullscreen transition keeps its `fsMode` even if a Space-switch focus lands on another
+    // window mid-animation: `key` and `order` are a report of who has OS focus (RULE 2), and a
+    // settings window with `role: 'workspace'` is genuinely `isContentWindow` (an admitted content
+    // role, `CONTENT_ROLES`), so a real focus landing on it really does move `key` and the topmost
+    // content window to it. What survives is narrower and still real: `fsMode` is untouched by that
+    // focus, and the transition that was already in flight settles to `fullscreen` on its own OS
     // report regardless of who holds `key` by then.
     const state = fold(
       [
@@ -3611,12 +3595,10 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
   });
 
   it('a plain WindowShown (not AppActivated) on a swept window clears the stale hiddenByAppBlur mark', () => {
-    // Reduction of window-kernel-properties.test.ts seed 44 step 22/30: a
-    // non-key-holding, non-transient, above-base-layer window is swept on
-    // app resign, then re-shown by an ordinary WindowShown (not the
-    // AppActivated re-show path) — the sweep mark must not survive on a
-    // now-visible record (checkInvariants: "it can never be true on a
-    // window that is currently visible").
+    // A non-key-holding, non-transient, above-base-layer window is swept on app resign, then
+    // re-shown by an ordinary WindowShown (not the AppActivated re-show path) — the sweep mark
+    // must not survive on a now-visible record ("it can never be true on a window that is
+    // currently visible").
     const before = fold(
       [
         {
@@ -4506,8 +4488,6 @@ describe('window-kernel: isNonParentRole', () => {
     assert.strictEqual(isNonParentRole(undefined), false);
   });
 });
-
-// ── react applies transient autoclose (§0: rule application is non-optional) ─
 
 // selectTransientAutoclose is a pure query, proven sound in isolation elsewhere; this block
 // proves its choice actually reaches a DismissWindow effect for the transition that ran it.
@@ -5657,8 +5637,6 @@ describe('window-kernel: what the key/main split overturns', () => {
   });
 });
 
-// ── Teardown: commands in, effects out (§0.1.5) ──────────────────────────────
-
 describe('window-kernel: teardown commands and effects', () => {
   const register = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -6350,7 +6328,7 @@ describe('window-kernel: the stack-order import', () => {
     }
   });
 
-  // ── the key window is never demoted (§0.1.10) ──────────────────────────────
+  // The key window is never demoted by an import.
 
   const twoWindowsKeyOnTop = (): State =>
     fold(
