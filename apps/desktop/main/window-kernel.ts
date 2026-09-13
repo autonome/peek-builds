@@ -602,13 +602,15 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowHidden': {
       // Successor raise: when the window going off screen is the one holding
       // key, hiding it must not leave nothing focused. `key` and `order` are
-      // left untouched here — the OS's echo of the raise `react` emits will
-      // write `key`, and `isContentWindow` already excludes the hidden record
-      // from `successorOnHide`'s fallback without needing an explicit exclusion.
+      // left untouched here — the successor is asked for on `lastRaiseRequest`,
+      // the same fact a `RaiseWindow` command leaves, and the OS's echo of the
+      // raise `react` diffs from it writes `key`. `isContentWindow` already
+      // excludes the hidden record from `successorOnHide`'s fallback.
       //
       // A duplicate hide (the backend echo plus the lagged native event) must
       // stay inert — `hidesGenuinely` gates the whole rule on the record
-      // existing and currently `visible === true`.
+      // existing and currently `visible === true`. The `appActive` test
+      // excludes `AppResignSettled`'s reversible hide.
       const target = state.order.find((w) => w.id === ev.id);
       const hidesGenuinely = target !== undefined && target.visible === true;
       // The confirming echo clears a doomed mark, genuine or not — this is the report a teardown was waiting for.
@@ -624,6 +626,7 @@ export function evolve(state: State, ev: Event): State {
         ...state,
         order: successor !== null ? order.map((w) => (w.id === successor.id ? { ...w, lastOpSeq: opSeq } : w)) : order,
         opSeqCounter: opSeq,
+        ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
         version: state.version + 1,
       };
     }
@@ -681,10 +684,20 @@ export function evolve(state: State, ev: Event): State {
       const selectionTarget = spentSelection !== null
         ? filtered.find((w) => w.id === spentSelection.target && admitsFocusAssert(w, w.visible))
         : undefined;
+      // Successor raise: a closed key holder that neither hands off to a
+      // parent nor spends a selection asks for `successorOnHide`'s answer on
+      // `lastRaiseRequest`, exactly as the `WindowHidden` arm does — a
+      // parentless transient (the switcher) closes rather than hides, and its
+      // prior key holder gets key back the same way. Read off `filtered`, so a
+      // `priorKey` naming the closed record itself is already nulled.
+      const successor =
+        closedRec !== undefined && closedRec.id === state.key && state.appActive === true && !raisesParent && selectionTarget === undefined
+          ? successorOnHide({ ...state, order: filtered }, closedRec)
+          : null;
       // One token for the transition, not one per effect: this arm can issue
       // two focus-family ops (parent handoff, selection raise), and both get
       // stamped with the same `next.opSeqCounter`.
-      const opSeq = raisesParent || selectionTarget !== undefined
+      const opSeq = raisesParent || selectionTarget !== undefined || successor !== null
         ? state.opSeqCounter + 1
         : state.opSeqCounter;
       const stamped = raisesParent ? { ...parent, lastOpSeq: opSeq } : undefined;
@@ -700,7 +713,9 @@ export function evolve(state: State, ev: Event): State {
       // parent and the selection target is stamped once either way.
       const order = selectionTarget !== undefined
         ? withParent.map((w) => (w.id === selectionTarget.id ? { ...w, lastOpSeq: opSeq } : w))
-        : withParent;
+        : successor !== null
+          ? withParent.map((w) => (w.id === successor.id ? { ...w, lastOpSeq: opSeq } : w))
+          : withParent;
       return {
         ...state,
         order,
@@ -711,6 +726,7 @@ export function evolve(state: State, ev: Event): State {
               lastFocusAssert: { id: spentSelection.target, seq: nextFocusAssertSeq(state) },
             }
           : {}),
+        ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
         // The session ends when its window stack empties — reset here so the next session answers from its own first window.
         ...(order.length === 0 ? { openedInBackground: false } : {}),
         version: state.version + 1,
@@ -1392,21 +1408,9 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // Successor raise on hide: a record that went `visible: true` -> `false`
-  // and held `prev.key` hands the raise to `successorOnHide`'s answer.
-  // The `appActive` test excludes `AppResignSettled`'s reversible hide, which
-  // is safe only because `appActive: true` and `pendingAppResignSweep: true` never hold together.
-  for (const nextRecord of next.order) {
-    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
-    if (prevRecord === undefined) continue;
-    if (!prevRecord.visible || nextRecord.visible) continue;
-    if (prevRecord.id !== prev.key) continue;
-    if (next.appActive !== true) continue;
-    const successor = successorOnHide(next, nextRecord);
-    if (successor !== null) {
-      effects.push({ type: 'RaiseWindow', id: successor.id, opSeq: next.opSeqCounter });
-    }
-  }
+  // Successor raise on hide or close of the key holder: `evolve` records the
+  // successor on `lastRaiseRequest`, so the raise-request diff at the end of
+  // this function emits it — no separate loop here.
 
   // Fullscreen: a pure structural diff of `fsMode.name`, same pattern as the
   // visibility loop above. A record whose `fsMode.name` doesn't change emits nothing.
@@ -1615,7 +1619,8 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   }
 
   // Raise request: a structural diff of `State.lastRaiseRequest` — `decide`'s
-  // translation of an accepted `RaiseWindow` command; `key` itself moves only
+  // translation of an accepted `RaiseWindow` command, or the successor a
+  // hidden/closed key holder hands key back to; `key` itself moves only
   // later, off the backend's own confirming `OsFocusGained`.
   //
   // Gated on `next.key !== raiseRequest.id` in addition to `admitsFocusAssert`:
@@ -2081,7 +2086,7 @@ export function admitsFocusAssert(record: WindowRecord, visible: boolean): boole
   return visible && !record.pendingHidden;
 }
 
-// Reads `priorKey`; both `evolve`'s `WindowHidden` arm and `react`'s successor loop must call this one helper.
+// Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
   if (hiddenRecord.priorKey === null) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);

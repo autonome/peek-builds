@@ -710,6 +710,31 @@ the holder's role. `window-escape.test.ts` "D2: key was the host when pressed an
 the time the press is resolved — dropped, never redirected to the palette" pins it, failing-first
 against the removed branch.
 
+**Escape closing the switcher left key to the chrome overlay, closed (2026-09-13).** Hand-reproduced
+on the packaged build at `e52aaf2e`: a page host is key, Escape opens the switcher (which takes key
+from the host through the request/confirm two-step, so its `priorKey` names the host), Escape again
+closes it — and no `RaiseWindow` for the host follows. The OS picks the shared chrome overlay
+(spared from every sweep as `overlay-attached`) as key on its own; the overlay handles Escape in its
+own renderer and the Escape grab is off because a key holder exists, so Escape is dead until the
+page is clicked. Cause: F7 (`docs/design/window-rules.md`) says key returns to the prior holder when
+the key window hides *or closes*, but only the hide half was wired. `evolve`'s `WindowHidden` arm
+called `successorOnHide` and `react`'s successor loop diffed the visibility flip into the raise;
+`evolve`'s `WindowClosed` arm handed off to a parent (`parentId`) or a spent switcher selection and
+nothing else. The switcher is parentless and carries no `keepLive`, so `CloseOrHideWindow` disposes
+it as `WindowClosed`, and Escape (no selection) reaches neither handoff. Fix: both arms now record
+`successorOnHide`'s answer on `State.lastRaiseRequest` — the same fact `decide` leaves for a
+`RaiseWindow` command — stamping the successor's `lastOpSeq` with the transition's one token, and
+`react`'s raise-request diff is the single emitter of the effect; the separate successor loop in
+`react` is gone. The close arm asks only when neither a parent handoff nor a spent selection already
+claims the transition, so a switcher pick still lands on the picked window. `key` still moves only on
+the backend's confirming `OsFocusGained`, which `isOpConfirmation` recognizes and drives nothing
+further. Effect order relative to `SetStacking` is unchanged in practice: the executor pulls every
+`SetStacking` out of a batch and replays them last (`window-kernel-executor.ts reassertStacking`).
+`window-kernel.test.ts` "successor raise on WindowClosed" pins the switcher shape failing-first (one
+`RaiseWindow` naming the host, key written by the confirming report, no second raise) and the
+`priorKey: null` no-raise case; "closing a parentless palette that holds key" in the key/main-split
+block, which had pinned the pre-F7 no-raise outcome for a close, now asserts the raise.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

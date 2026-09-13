@@ -1887,6 +1887,74 @@ describe('window-kernel: successor raise on WindowHidden', () => {
   });
 });
 
+// ── Successor raise on WindowClosed ──────────────────────────────────────────
+
+describe('window-kernel: successor raise on WindowClosed', () => {
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+
+  // A page host takes key from the world; the switcher — parentless, no keepLive, so
+  // CloseOrHideWindow closes rather than hides it — takes key from the host through the
+  // request/confirm two-step a RaiseWindow command uses, which records the host as its priorKey.
+  const hostThenSwitcher = (): { state: State; P: WindowId; S: WindowId } => {
+    const P = wid(1);
+    const S = wid(2);
+    const base = fold([
+      { type: 'WindowRegistered', id: P, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: P },
+      { type: 'OsFocusGained', id: P, cause: { kind: 'world' } },
+      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+      { type: 'WindowShown', id: S },
+    ]);
+    const decision = decide(base, { type: 'RaiseWindow', id: S, expectedVersion: base.version });
+    assert.ok('events' in decision);
+    const { state: requested, effects } = foldWithEffects(decision.events, base);
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: S, opSeq: requested.opSeqCounter }], 'precondition: the switcher raise is requested');
+    const state = evolve(requested, { type: 'OsFocusGained', id: S, cause: { kind: 'machine', opSeq: requested.opSeqCounter } });
+    return { state, P, S };
+  };
+
+  it('closing the key switcher raises the page host that held key before it, and the confirming report hands key back', () => {
+    const { state, P, S } = hostThenSwitcher();
+    assert.strictEqual(keyWindow(state)?.id, S, 'precondition: the switcher holds key');
+    assert.strictEqual(state.order.find((w) => w.id === S)?.priorKey, P, 'precondition: the confirming report recorded the host as the prior key holder');
+    assert.strictEqual(state.order.find((w) => w.id === S)?.parentId, undefined, 'precondition: the switcher is parentless — no parent handoff applies');
+    assert.strictEqual(state.appActive, true, 'precondition: the app is active');
+
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: S, expectedVersion: state.version });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [{ type: 'WindowClosed', id: S }], 'precondition: no keepLive, so the switcher closes rather than hides');
+    const { state: closed, effects } = foldWithEffects(decision.events, state);
+
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: P, opSeq: closed.opSeqCounter }], 'exactly one raise, naming the prior key holder');
+    assert.strictEqual(closed.order.find((w) => w.id === P)?.lastOpSeq, closed.opSeqCounter, 'the successor carries the transition token');
+    assert.strictEqual(closed.key, S, 'key still names the closed switcher — only the OS report writes it');
+
+    const confirmation: Event = { type: 'OsFocusGained', id: P, cause: { kind: 'machine', opSeq: closed.opSeqCounter } };
+    const confirmed = evolve(closed, confirmation);
+    assert.strictEqual(keyWindow(confirmed)?.id, P, 'the confirming report hands key to the page host');
+    assert.deepStrictEqual(raises(react(closed, confirmation, confirmed)), [], 'and the confirmation drives no second raise');
+    assert.strictEqual(confirmed.opSeqCounter, closed.opSeqCounter, 'no token minted by the confirmation');
+  });
+
+  it('the closed key holder took key from nothing (priorKey null) — closing it raises nothing', () => {
+    const P = wid(1);
+    const S = wid(2);
+    const state = fold([
+      { type: 'WindowRegistered', id: P, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+      { type: 'WindowShown', id: P },
+      { type: 'WindowShown', id: S },
+      { type: 'OsFocusGained', id: S, cause: { kind: 'world' } },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === S)?.priorKey, null, 'precondition: nothing held key before the switcher');
+
+    const ev: Event = { type: 'WindowClosed', id: S };
+    const closed = evolve(state, ev);
+    assert.deepStrictEqual(raises(react(state, ev, closed)), [], 'nothing in Peek was in use before the switcher, so nothing is raised');
+    assert.strictEqual(closed.opSeqCounter, state.opSeqCounter, 'no raise means no token');
+  });
+});
+
 describe('window-kernel: fullscreen is orthogonal to key and order', () => {
   const registerTwo = (): Event[] => [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -5539,19 +5607,22 @@ describe('window-kernel: what the key/main split overturns', () => {
 
   // ── Closing a parentless palette that holds key ───────────────────────────
 
-  it('closing a parentless palette that holds key leaves NOBODY holding key, and raises nothing', () => {
+  it('closing a parentless palette that holds key leaves key dangling until the OS reports, and raises the page host it took key from', () => {
     const withPalette = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
     assert.strictEqual(withPalette.order.find((w) => w.id === cmdPanel)?.parentId, undefined, 'no parent to hand back to');
+    assert.strictEqual(withPalette.order.find((w) => w.id === cmdPanel)?.priorKey, pageHost, 'the palette took key from the page host');
 
     const ev: Event = { type: 'WindowClosed', id: cmdPanel };
     const closed = evolve(withPalette, ev);
     const effects = react(withPalette, ev, closed);
 
-    assert.strictEqual(closed.key, cmdPanel, 'the raw field still dangles — unrepaired');
-    assert.strictEqual(keyWindow(closed), null, 'and reads as: nobody holds key');
+    assert.strictEqual(closed.key, cmdPanel, 'the raw field still dangles — unrepaired; only the OS report writes key');
+    assert.strictEqual(keyWindow(closed), null, 'and reads as: nobody holds key yet');
     assert.strictEqual(topmost(closed, isContentWindow)?.id, pageHost, 'main is untouched by the close');
-    assert.deepStrictEqual(effects.filter((e) => e.type === 'RaiseWindow'), [], 'nothing is raised in its place');
-    assert.deepStrictEqual(focusFamilyIds(effects), [], 'and nothing is shown either — a raise SHOWS what it raises');
+    // Hide-returns-key applies to a close the same as to a hide: the prior key holder is raised,
+    // not whatever sits on top, and no parent is needed for that.
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'RaiseWindow'), [{ type: 'RaiseWindow', id: pageHost, opSeq: closed.opSeqCounter }], 'the prior key holder is raised in its place');
+    assert.deepStrictEqual(focusFamilyIds(effects), [pageHost], 'and nothing else is shown or raised');
   });
 
   // ── The most dangerous rename in the migration ────────────────────────────
