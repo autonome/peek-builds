@@ -10,10 +10,11 @@ import { waitForExtensionsReady, waitForPanelCommandsLoaded } from '../helpers/w
 // inline-suggested command when the typed text is a genuine PREFIX completion
 // of the selected command — even though the user only typed a prefix.
 //
-// SAFETY: this must NEVER fire for substring/fuzzy matches. findMatchingCommands
-// matches by substring (indexOf !== -1), so state.matches[0] may be a fuzzy
-// match the user never intended. The panel guard only auto-runs when
-// nameLower.startsWith(typedLower). These tests assert both halves.
+// Enter runs the row the ghost suggestion is drawn from. The ghost draws from
+// state.matches[state.matchIndex] — the top of the frecency-ranked list —
+// including substring/fuzzy matches, so a substring match at the top of the
+// list runs on Enter too (`state-machine.js commandRowAutoSelect`). The pref
+// gate is the only thing that stops a suggestion from running.
 //
 // Target command: `datastore` — a core, NO-PARAM command (registered in
 // renderer/index.js) that opens peek://app/datastore/viewer.html. Clean
@@ -164,26 +165,29 @@ test.describe('Cmd Enter runs inline suggestion @desktop', () => {
     await closePanel(panelId);
   });
 
-  test('Enter does NOT run a substring (non-prefix) fuzzy match (safety)', async () => {
+  test('Enter runs a substring (non-prefix) match when it is the row the ghost is drawn from', async () => {
     await armViewerWatch();
     const { cmdWindow, panelId } = await openPanel();
 
     // "atastore" is a SUBSTRING of "datastore" but NOT a prefix
     // ("datastore".includes("atastore") === true; startsWith === false).
-    // findMatchingCommands will surface datastore as a fuzzy match, but the
-    // guard must refuse to auto-run it.
+    // findMatchingCommands surfaces datastore as the top match, the ghost is
+    // drawn from that row (`panel.js updateCommandUI` reads
+    // state.matches[state.matchIndex] unconditionally), and Enter runs the row
+    // the ghost is drawn from — `state-machine.js commandRowAutoSelect` no
+    // longer requires a strict prefix.
     await cmdWindow.fill('input', 'atastore');
 
-    // Confirm the selected suggestion is indeed a substring-but-not-prefix
-    // match — i.e. exactly the dangerous case the guard protects against.
+    // Confirm the selected suggestion is `datastore` AND a
+    // substring-but-not-prefix match — the case the old strict-prefix guard
+    // refused, and the case this now pins as runnable.
     await cmdWindow.waitForFunction(
       () => {
         const s = (window as any)._cmdState;
         const sel = s?.matches?.[s.matchIndex];
-        if (!sel) return false;
-        const selLower = sel.toLowerCase();
+        if (sel !== 'datastore') return false;
         const typed = 'atastore';
-        return selLower.includes(typed) && !selLower.startsWith(typed);
+        return sel.includes(typed) && !sel.startsWith(typed);
       },
       undefined,
       { timeout: 10000 }
@@ -191,33 +195,16 @@ test.describe('Cmd Enter runs inline suggestion @desktop', () => {
 
     await cmdWindow.keyboard.press('Enter');
 
-    // Deterministic fence (no sleep): type a benign key after Enter. Key events
-    // process in order, so once 'x' is reflected in panel state the Enter has
-    // already been fully handled. If Enter had wrongly executed the command, the
-    // panel would have shut down and this wait would time out — failing loudly.
-    await cmdWindow.keyboard.type('x');
-    await cmdWindow.waitForFunction(
-      () => {
-        const s = (window as any)._cmdState;
-        return typeof s?.typed === 'string' && s.typed.endsWith('x');
-      },
+    // The datastore viewer window opens — Enter ran the ghost's row even though
+    // the typed text is not a prefix of it.
+    await bgWindow.waitForFunction(
+      () => (window as any).__datastoreViewerOpened !== null,
       undefined,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
-
-    const opened = await bgWindow.evaluate(() => (window as any).__datastoreViewerOpened);
-    expect(opened).toBeNull();
-
-    // Also assert no datastore viewer window exists in the window list.
-    const list = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.list();
-    });
-    const viewer = (list.windows || []).find(
-      (w: any) => w.url && w.url.includes(VIEWER_MATCH)
-    );
-    expect(viewer).toBeFalsy();
 
     await disarmViewerWatch();
+    await closeAnyViewerWindows();
     await closePanel(panelId);
   });
 

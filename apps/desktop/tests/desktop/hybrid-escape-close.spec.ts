@@ -129,20 +129,21 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
     expect(result.existsAfter).toBe(true);
   });
 
-  // WRONG-WINDOW / first-responder redirect (peek ebb10894) — the LIVE bug the
-  // headless escPolicy unit could not catch. Reproduces the exact intermittency:
+  // WRONG-WINDOW landing (peek ebb10894; rule D2 in docs/design/window-rules.md):
   // ESC lands on the PREVIOUS hybrid CONTENT host (still first responder for a
-  // beat after a peek/slide opens over it) instead of the just-opened quick-view.
-  // Pre-fix, handleHybridEscape resolved against the content host → escPolicy
-  // 'nothing' → escUnhandledPolicy → the Windows SWITCHER, and the quick-view
-  // survived. Post-fix, handleHybridEscape consults the registry's active-hybrid
-  // id (the focus source of truth, set on open) and, because the active window
-  // is an always-closeable quick-view, redirects the ESC to it → it CLOSES.
+  // beat after a peek/slide opens over it) while the just-opened quick-view
+  // holds key. D2 says Escape acts on the window that was key when pressed,
+  // and a press whose landed window is not the current key holder is DROPPED,
+  // never redirected to the newer window: `window-escape.ts
+  // resolveEscapeTarget` answers `stale` → `interpretEscape` → `nothing`
+  // (reason 'stale-landing'). So the quick-view stays open, the content page
+  // stays open, and the switcher does not open either (the content host was
+  // never the target, so its ESC→switcher fallback never runs).
   //
-  // This asserts the ACTUAL resolution path (which host id + role ESC resolves
-  // against, driven by the active-hybrid id), not just escPolicy(state, role) —
-  // so it covers the live path a green headless escPolicy spec missed.
-  test('ESC on the wrong (content) host closes the ACTIVE quick-view, not the switcher', async () => {
+  // This asserts the ACTUAL resolution path (landed id vs. kernel key holder),
+  // not just escPolicy(state, role) — the live path a headless escPolicy unit
+  // cannot see.
+  test('ESC on the wrong (content) host while a quick-view is key is dropped: nothing closes, no switcher', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
@@ -153,8 +154,8 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
       const contentId = await b.makeRoledHybrid('data:text/html,<title>Prev page</title>x', {
         role: 'content',
       });
-      // The just-opened peek/slide — a quick-view that is the ACTIVE hybrid
-      // window (its show() + content focus on open set the registry active id).
+      // The just-opened peek/slide — a quick-view that holds key (setActive
+      // dispatches a focused show, which is the kernel's OsFocusGained).
       const quickViewId = await b.makeRoledHybrid('data:text/html,<title>Peek</title>y', {
         role: 'quick-view',
         modal: true,
@@ -166,17 +167,21 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
       // happens when the content WC, not the quick-view, is first responder.
       await b.runHybridEscape(contentId);
 
-      const quickViewGone = !b.hybridWindowExists(quickViewId);
+      const quickViewSurvives = b.hybridWindowExists(quickViewId);
       const contentSurvives = b.hybridWindowExists(contentId);
-      return { quickViewId, contentId, quickViewExistedBefore, quickViewGone, contentSurvives };
+      return { quickViewId, contentId, quickViewExistedBefore, quickViewSurvives, contentSurvives };
     });
 
     expect(result.quickViewExistedBefore).toBe(true);
-    // The redirect closed the active quick-view — the regression is fixed.
-    expect(result.quickViewGone).toBe(true);
-    // ...and the content page the ESC literally landed on is untouched (it was
-    // never the target; no switcher, no spurious close).
+    // D2: the stale press is dropped — the key-holding quick-view is NOT closed
+    // by a press that never landed on it.
+    expect(result.quickViewSurvives).toBe(true);
+    // ...and the content page the ESC literally landed on is untouched too.
     expect(result.contentSurvives).toBe(true);
+    // ...and no switcher opened: a dropped press runs no fallback. getWindow's
+    // timeout is the observation window; resolving null is the pass.
+    const switcher = await app.getWindow('windows/windows.html', 1500).catch(() => null);
+    expect(switcher).toBeFalsy();
   });
 
   // Guard the redirect's boundary: when the ACTIVE hybrid window is itself a
