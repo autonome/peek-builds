@@ -1,55 +1,14 @@
-/**
- * window-kernel.ts — the rewritten window-manager kernel (draft).
- *
- * Blueprint: `docs/design/window-manager.md` §0.1 ("The rewritten kernel — state
- * shape and structure"). Follow that section; this file is a literal, minimal
- * implementation of it, not a redesign.
- *
- * SCOPE: no longer greenfield. A cutover moved production readers of the old
- * reducer's `front` field onto this file's queries (`isContentWindow`,
- * `isFrontEligibleWindow`, `topmost`, `keyWindow`) — `windows.ts`, `ipc.ts` and
- * `hybrid-overlay.ts` among them; `window-state.ts` has since been deleted,
- * and this file is now the sole authority those callers read. This file
- * carries the first two slices of the ~45-event surface
- * (§0.1.1's "~17 commands, ~20 events" split) — visibility + raise, 5
- * commands/8 events — plus fullscreen (§0.1.8: pulled forward out of the
- * geometry slice because it is orthogonal to `key`/`order` and needs no
- * bounds tracking to land): 6 commands, 13 events total. The REST of
- * geometry (bounds, maximize, display) is still a later slice.
- *
- * The two structural rules this file exists to prove out (§0.1.1, §0.1.8):
- *
- *   1. **Commands and events are separate unions.** `decide` may reject
- *      (`{ rejected: Rejection }`); `evolve` never can — it is TOTAL, has no
- *      guards, and cannot throw. All guards live in `decide`.
- *   2. **Replay determinism.** `evolve` may read nothing but its two arguments
- *      — no `Date.now()`, no `Math.random()`, no module-level mutable state,
- *      no iteration over a non-deterministically-ordered structure. This is
- *      enforced by a standing test (`window-kernel.test.ts`), not just a
- *      sentence here — see §0.1.8 item 2.
- *
- * ZERO value imports (mirrors the rule `window-state.ts` followed before it
- * was deleted): this
- * file must stay loadable under plain `node --test` / `ELECTRON_RUN_AS_NODE=1
- * electron --test` with no display and no window plumbing. Type-only imports
- * are fine; there are none needed yet.
- */
+// window-kernel.ts — the window-manager kernel: state shape, `decide`/`evolve`/`react`.
+// Zero value imports — must stay loadable under `node --test`/`electron --test` with no display.
+// Design and reasoning: `docs/design/window-manager.md`.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// State shape (§0.1.4)
-// ─────────────────────────────────────────────────────────────────────────────
+// State shape
 
-/**
- * The WM's own window identity — an opaque branded string, same pattern as
- * `window-state.ts WindowId`. Never an Electron window id, never a webContents
- * id — the adapter (a later slice) maps `WindowId <-> platform handle`
- * internally and never leaks the platform id.
- */
 export type WindowId = string & { readonly __brand: 'WindowId' };
 
 export type WindowKind = 'page-host' | 'browser';
 
-/** Minimal outer-bounds rectangle — enough to stash/restore a pre-fullscreen frame. */
+// Minimal outer-bounds rectangle — enough to stash/restore a pre-fullscreen frame.
 export interface Rectangle {
   x: number;
   y: number;
@@ -57,870 +16,126 @@ export interface Rectangle {
   height: number;
 }
 
-/**
- * Fullscreen as its own orthogonal region on the record (§0.1.8), not flags
- * spread across the machine: independent of `key` and of position in
- * `order`. `preBounds` (the pre-fullscreen rectangle to restore on exit)
- * lives INSIDE the non-normal variants — it CANNOT exist for a `normal`
- * window, and a non-normal window cannot lack the *concept*: `preBounds:
- * null` is the legitimate "OS/green-button entry where no stash was
- * possible" case, never "field missing". This is the `window-state.ts
- * FsMode` encoding (the `aa34cb50` fullscreen-lookalike trap), ported
- * verbatim because the encoding — not the reducer's code shape — is what's
- * load-bearing. `pendingDesire` coalesces a request that arrives mid-flight
- * (§0.1.8's async edge): it is applied when the in-flight transition
- * settles, never opens a second transition.
- *
- * `unverified` marks that the machine no longer trusts this belief — the
- * settle timeout expired with no native report, or the app just came back
- * active after a possible background transition — and is answered by
- * `react`'s fullscreen-reconcile rule (see its doc). It is unrepresentable on
- * `normal`/`fullscreen` by construction: only a transition still in flight can
- * be unverified. It self-clears for free rather than needing an explicit
- * clear step: `nextFsModeForOsEntered`/`nextFsModeForOsLeft` build a fresh
- * mode object on every settle, and a fresh object has no `unverified` key.
- */
 export type FsMode =
   | { name: 'normal' }
   | { name: 'entering'; preBounds: Rectangle | null; pendingDesire?: boolean; unverified?: true }
   | { name: 'fullscreen'; preBounds: Rectangle | null }
   | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean; unverified?: true };
 
-/**
- * Bounded wait for the native macOS fullscreen enter/leave animation to
- * settle (AppKit's own animation runs ~600ms; this leaves margin). Used by
- * both the boundary timer that emits `FULLSCREEN_SETTLE_TIMEOUT`
- * (`electron-window-backend.ts`) and the kernel executor's
- * `waitForSettledFsMode` default (`window-kernel-executor.ts`) — one value so
- * the two settle bounds cannot drift apart. Lives here rather than in
- * `electron-window-backend.ts` because that module is the only window-manager
- * module that imports `electron`, and a value import from it would pull
- * `electron` transitively into the executor.
- */
 export const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
 
-/**
- * Index 0 of §0.1.6's fixed ordered layer array — where every ordinary window
- * sits. A record at a HIGHER index floats above the whole regular stack; that
- * is what Electron's `alwaysOnTop` buys, expressed as a band rather than a
- * per-window boolean. The array itself belongs to the (not yet built) adapter,
- * so the kernel names only the floor its own predicates compare against.
- */
 export const BASE_LAYER = 0;
 
-/**
- * Which set of desktops a window belongs to, per-window and binary — the
- * platform-neutral intention (`docs/design/window-manager.md` §0, "the
- * governing rule set"): every window either FOLLOWS the user from desktop to
- * desktop, or BELONGS to the desktop it was opened on. Nothing above the
- * port may ask which OS concept realizes either one, how many native calls
- * that takes, or whether the current platform has a notion of "desktop" at
- * all — that is the backend's business (`window-backend.ts
- * setDesktopMembership`). This kernel and the port therefore never spell
- * Apple's name for the underlying mechanism.
- *
- *   - `follow`  rides along to whichever desktop the user is currently on.
- *   - `anchor`  stays on the desktop it was opened on.
- */
 export type DesktopMembership = 'follow' | 'anchor';
 
-/**
- * A registered window's record. §0.1.4: "orthogonal properties, no
- * pre-combined class" — `layer` / `canBecomeKey` / `acceptsInput` are each
- * looked up independently; nothing branches on `class` (a lookup-only field,
- * §0.1.4's "mechanical test").
- *
- * Starting field set only — the design lists geometry/etc. as "carry over
- * unchanged" for a later slice; this file adds none of that yet. Fullscreen
- * (`fsMode`) is pulled forward out of that later slice deliberately (§0.1.8):
- * it is orthogonal to everything else here, so it does not need geometry
- * tracking to land on the record first.
- */
 export interface WindowRecord {
   id: WindowId;
   kind: WindowKind;
 
-  /** Index into a fixed ordered layer array (§0.1.6). Higher = above. */
+  // Index into a fixed ordered layer array. Higher = above.
   layer: number;
-  /** Electron `focusable` (§0.1.4: "a HUD never holds key" needs no special case). */
+  // Electron `focusable` — lets a HUD never hold key with no special case.
   canBecomeKey: boolean;
-  /**
-   * false = click-through (`setIgnoreMouseEvents`). Set at registration; a
-   * window whose click-through changes afterward (e.g. the Space border's
-   * separate IPC round trip) is kept honest by `WindowAcceptsInputChanged`,
-   * the sole post-registration writer — see that event's doc.
-   */
   acceptsInput: boolean;
 
-  /** Creation-time shorthand for logs and singleton lookups. Nothing branches on it. */
+  // Creation-time shorthand for logs and singleton lookups. Nothing branches on it.
   class: string;
 
-  /**
-   * The IZUI role vocabulary the app already speaks (`palette` / `quick-view` /
-   * `overlay` / `workspace` / `content` / `child-content` / `utility`) — one of
-   * the fields §0.1.4 carries over unchanged from `window-state.ts
-   * WindowRecord.role`. Distinct from `class`: `class` is a lookup-only
-   * shorthand nothing branches on, while `role` is a declared policy fact that
-   * transient autoclose reads (see `selectTransientAutoclose`).
-   *
-   * Optional, and `undefined` is meaningful rather than a hole: a window
-   * registered without one is in no role set, so it is never a transient
-   * victim and never a focuser exemption — the same behavior the old selector
-   * gave an unregistered focuser whose role read `undefined`.
-   */
   role?: string;
 
   visible: boolean;
-  /**
-   * THE MACHINE'S OWN BELIEF that this window is going away, ahead of the
-   * OS's confirmation — distinct from `visible`, which keeps meaning strictly
-   * "what the OS last reported" and is written only by the backend's
-   * shown/hidden echo. That echo is queued behind whatever the executor's
-   * pump is already draining, so a rule reading `visible` alone can act on a
-   * window the machine has already decided to tear down: raise it as a
-   * successor, attach the shared chrome overlay to it, resurrect it on app
-   * activation. This field is the separate lived fact those rules need.
-   *
-   * SET by the three window-naming teardown arms (`WindowDestroyRequested`,
-   * `WindowContentCloseRequested`, `WindowDirectCloseRequested`) — see
-   * `evolve`'s TEARDOWN section for why `GuestTeardownRequested` does NOT set
-   * it: that teardown names no window, and inferring which records own
-   * guests is not something the kernel can know. ALSO SET by each of
-   * `evolve`'s three transient-autoclose sweep triggers (`OsFocusGained`,
-   * `AppResignSettled`, `WindowContentOrderable`) on the victims
-   * `selectTransientAutoclose` chooses, in the SAME transition that chooses
-   * them (S3, fixed 2026-09-05 — see `docs/design/window-manager.md` → "Open
-   * kernel defects"). Marking there does not make the sweep consume its own
-   * output, because `react` no longer re-runs `selectTransientAutoclose` at
-   * all: it diffs `pendingHidden` itself (not-true in `prev` -> `true` in
-   * `next`, unless the flip is explained by a teardown request naming the
-   * same record), so a victim marked this transition is only OBSERVED by
-   * this transition's own diff, never re-selected by it. What keeps a marked
-   * record out of every LATER sweep is `isTransientAutocloseCandidate`'s own
-   * `pendingHidden` clause, until `WindowHidden`/`WindowShown` clears the
-   * mark below.
-   *
-   * CLEARED by `WindowShown` (mirrors the `hiddenByAppBlur` clear on that
-   * same arm) and by `WindowHidden` (the confirming echo — the fact has done
-   * its job). `WindowClosed` needs no clear for the closed record itself (it
-   * leaves `order` entirely), but DOES clear it on any record it mechanically
-   * detaches (`overlayFor === ev.id`) — otherwise the shared chrome overlay
-   * would carry a stale mark forever and vanish from
-   * `isBaseLayerPageHost`/`topmostBaseLayerPageHost` for good, the original
-   * overlay-attach defect inverted.
-   *
-   * ACCEPTED RESIDUE: a destroy the backend never completes produces neither
-   * a `WindowClosed` nor a `WindowHidden`, so the mark can persist forever.
-   * There is deliberately no repair path — a repair would mean the machine
-   * inferring a teardown's outcome instead of being told it, which is exactly
-   * the belief-versus-reality discipline `visible` exists to keep honest.
-   */
   pendingHidden?: boolean;
-  /** Open order (not use order) — assigned once at registration, never re-derived. */
+  // Open order (not use order) — assigned once at registration, never re-derived.
   openSeq: number;
   parentId?: WindowId;
 
-  /**
-   * A window opened with `keepLive` is HIDDEN on `CloseOrHideWindow`, never
-   * closed, so its content keeps running (e.g. a slide playing music while
-   * backgrounded). The branch lives in `decide`, never in `evolve`.
-   */
   keepLive?: boolean;
 
-  /**
-   * Whether the window's native window can be z-ordered yet. `true` from
-   * birth for `kind: 'browser'`; a `'page-host'` starts `false` and flips to
-   * `true` on its first-composited-frame report (`WindowContentOrderable`).
-   * Never reset once true.
-   */
   orderable: boolean;
 
-  /** Fullscreen region (§0.1.8) — orthogonal to `key` and to `order`. See `FsMode`. */
+  // Fullscreen region — orthogonal to `key` and to `order`. See `FsMode`.
   fsMode: FsMode;
 
-  /**
-   * The window's last OS-reported outer bounds. Ported from `window-state.ts
-   * WindowRecord.bounds`: an honest mirror of native reality, never a live
-   * query at decision time. It also tracks the transient fullscreen rect —
-   * the restorable pre-fullscreen geometry lives in `fsMode.preBounds`, NOT
-   * here (the same aa34cb50 lookalike trap the old reducer names). `undefined`
-   * only when no rect has ever been reported. Written by `BoundsChanged` and,
-   * in this kernel's diff-based `react` (§0.1.1: effects are a pure diff of
-   * `prev`/`next`, never a read of `ev`'s payload), also by the accepted
-   * geometry commands below and by a `DisplayChanged` projection that lands
-   * unblocked — each writes the mirror eagerly so the transition is
-   * diffable, trusting the dispatch-is-synchronous contract the old reducer
-   * already documents (a later genuine OS echo just reconfirms the value).
-   */
   bounds?: Rectangle;
-  /**
-   * Machine-owned, ported from `window-state.ts WindowRecord.maximized`: set
-   * only by the `Maximize`/`Unmaximize` transitions, never an OS
-   * `isMaximized()` report (frameless macOS windows don't reliably flip it).
-   * "Maximize" is a work-area snap (a bounds write), not a platform
-   * `maximize()` call.
-   */
   maximized: boolean;
-  /**
-   * Non-null ONLY while `maximized` — the two transitions maintain the
-   * pairing. `null` while maximized legitimately means "no bounds had ever
-   * been reported, so no stash was possible" (same distinction as
-   * `FsMode.preBounds`).
-   */
   preMaxBounds: Rectangle | null;
-  /**
-   * Which desktops this window belongs to (see `DesktopMembership`) — the
-   * window's declared INTENTION, never an OS flag. `undefined` until the
-   * first `SetDesktopMembership` command: a window nobody has ever asked to
-   * follow or anchor is simply untouched, not "anchored" by default.
-   *
-   * Ported from `window-state.ts WindowRecord.visibleOnAllSpaces`, whose
-   * boolean encoding could not tell an anchored window (which explicitly
-   * settles on `false`) apart from one nobody had ever asked about — both
-   * read `false`. This field's optionality is what removes that conflation:
-   * "anchored" and "never touched" are now different values.
-   */
   desktopMembership?: DesktopMembership;
-  /**
-   * A `DisplayChanged` projection computed while this window was BLOCKED from
-   * receiving it — blocked meaning `fsMode.name !== 'normal'` or
-   * `visible === false`. Last projection wins while still blocked (overwrite,
-   * never queue). Flushed as a bounds write — and cleared — only once BOTH
-   * axes clear (`fsMode.name === 'normal'` AND `visible`); it stays held if
-   * only one axis unblocks. Cleared WITHOUT flushing by any explicit bounds
-   * write (`SetBounds`/`Maximize`/`Unmaximize`), so a stale projection can
-   * never snap a deliberately-moved window back. `null` when nothing is held.
-   */
   pendingProjectedBounds: Rectangle | null;
 
-  /**
-   * OVERLAY ATTACHMENT. Set on an OVERLAY record: the host window this
-   * overlay frames. Absent = detached — the overlay belongs to nothing and
-   * must not be on screen. Stored on the OVERLAY (one host per overlay),
-   * not as a host -> overlay map: the app has ONE shared chrome overlay, so
-   * "is this overlay attached, and to what?" is a record read, while the
-   * reverse ("does this host have an overlay?") stays a scan of a handful
-   * of records (`overlayForHost`). Attach / retarget / detach are the ONE
-   * transition (`AttachOverlay`, `hostId: null` = detach); the follow is
-   * driven by the host's `BoundsChanged` (`react`'s diff), never a live
-   * query at decision time — ported from `window-state.ts
-   * WindowRecord.overlayFor`.
-   */
   overlayFor?: WindowId;
 
-  /**
-   * ATTACHED-OVERLAY TARGET FRAME. Set on an OVERLAY record alongside
-   * `overlayFor`: the frame the overlay should currently occupy, taken
-   * verbatim from whichever call supplied one (`AttachOverlay.frame`,
-   * `BoundsChanged.overlayFrame`) — the kernel never computes this itself.
-   * `expandToOverlayFrame` (`overlay-frame.ts`) needs a work-area read
-   * (`screen.getDisplayNearestPoint`), which is platform data this
-   * zero-value-import file cannot ask for, so the frame rides on the
-   * command/event as data, computed at the dispatch site that already knows
-   * the work area — the same design `window-state.ts
-   * OVERLAY_ATTACH_REQUESTED.frame` / `BOUNDS_CHANGED.overlayFrame` used.
-   *
-   * DISTINCT FROM `bounds`, deliberately: `bounds` is a window's own
-   * OS-mirrored rect, written only by a genuine `BoundsChanged` naming THAT
-   * window. `overlayFrame` is a TARGET this window (the overlay) has not
-   * necessarily reached on screen yet — which is exactly what makes it a
-   * STORED FACT `react` can diff into a `SetBounds` effect (see `react`'s
-   * "Overlay follow — frame" rule) without reading `ev.type`: the fact
-   * exists so `react` never has to ask which event produced it, only
-   * whether it moved. `undefined` until the first frame is ever given, and
-   * untouched by a hide (a fullscreen-hidden overlay keeps its last frame,
-   * so re-revealing it needs no new `SetBounds`).
-   */
   overlayFrame?: Rectangle;
 
-  /**
-   * The newest `opSeq` stamped on a focus-family effect (`ShowWindow` /
-   * `RaiseWindow`) issued for this window — what `isStaleSelfEcho` compares
-   * an incoming `machine`-caused `OsFocusGained` against. Written in `evolve`
-   * exactly where those effects would be emitted (`WindowShown` genuinely
-   * clearing `visible`, `OsFocusGained` genuinely raising, `AppActivated`
-   * re-showing a window the resign sweep hid), mirroring `react`'s own diff so
-   * it never drifts from what was actually stamped. The value written is the
-   * token of THAT op — the same `opSeqCounter` `react` stamps on the effect
-   * (see `State.opSeqCounter`), never the pre-transition counter.
-   * `undefined` until the first such effect for this window.
-   */
   lastOpSeq?: number;
 
-  /**
-   * The window that held `key` immediately before THIS one took it — what
-   * `successorOnHide` (F7 hide-returns-key) consults when this window hides
-   * while holding key, so the raise goes back to whatever was actually in
-   * use rather than to the topmost content window unconditionally.
-   * `null` means nothing held key before this window took it (the palette
-   * opened over another app, or this is the first window a session ever
-   * focuses) — the correct answer there is that nothing comes forward, not a
-   * fallback raise onto a Peek window the user never touched. Written only by
-   * `OsFocusGained` (record-exists branch), alongside `key` itself (RULE 2's
-   * neighbor, same write site) — never by a raise, since a raise's own
-   * confirmation is what will eventually write it for real. Seeded `null` on
-   * a fresh `WindowRegistered` record and preserved as a lived fact across a
-   * re-registration merge, same shape as `lastOpSeq` above. Cleared to `null`
-   * by `WindowClosed` on any record that names the closed id, so a stale
-   * reference to a window that no longer exists is never consulted.
-   */
   priorKey: WindowId | null;
 
-  /**
-   * Set while this window went off screen BECAUSE the app stopped being active
-   * (ported from `window-state.ts WindowRecord.hiddenByAppBlur`) — the
-   * structural replacement for a native-window expando. `AppActivated` re-shows
-   * exactly the windows carrying this flag and clears it; a window hidden for
-   * any other reason (a plain `WindowHidden`, an overlay detach) must not be
-   * re-shown by that re-activation.
-   *
-   * SET ON THE RAW `AppResigned` EDGE, not the settle, for both attached
-   * overlays and `isAppResignSweepEligible` floaters (the two share
-   * `layer > BASE_LAYER` — floating above the regular stack means floating
-   * above OTHER applications' windows too). `AppResignSettled` re-runs the
-   * same sweep only as a backstop for a window that became eligible in the
-   * gap between the two events. Both are reversible visibility, so both are
-   * undone by the same re-show. What waits for the settle is DISMISSAL (the
-   * `pendingAppResignSweep`/`appActive` diff `react` sweeps off, not this
-   * flag), because dismissal is destructive — a dismissed palette does not
-   * come back, so the activation dance must not trigger it. A hide
-   * that `AppActivated` will undo carries no such risk, and a floating window
-   * cannot afford the delay: 500ms of it is 500ms of Peek's chrome or HUD
-   * hanging over the app the user just switched to.
-   */
   hiddenByAppBlur?: boolean;
 
-  /**
-   * ESCAPE OVERRIDE, declared at registration. `'ignore'` means "Escape is
-   * this window's own business — hand it to the page and decide nothing".
-   * ABSENT means the window takes part in the ordinary Escape path; that is
-   * the meaningful default, not a hole, and it is what every window without
-   * an explicit override gets.
-   *
-   * ONE value, matching `window-backend.ts EscapeMode` — narrowed to
-   * `'ignore'` because that is the only value any code ever branched on:
-   * the old reducer read it once (`decideEscape` step 3 -> pass-through),
-   * the current one reads it the same way (`window-escape.ts
-   * interpretEscape` step 3). `'close'` and `'auto'` never reached a branch
-   * at all; `'navigate'` had one reader, `izui-roles.ts inferIzuiRole`,
-   * which mapped it to `role: 'workspace'` — but no production caller ever
-   * passed it, so the arm was deleted along with the type's other two dead
-   * values with no behaviour change.
-   *
-   * Live producers of `'ignore'`: `renderer/hud/background.js` (the HUD) and
-   * `chrome-extensions.ts` (extension popup/options pages, whose own DOM
-   * handles Escape).
-   *
-   * The kernel stores this and nothing more. WHAT Escape does is interpreted
-   * outside the machine (§0: "input interpretation lives OUTSIDE the window
-   * manager") — the kernel never learns that a key called Escape exists.
-   *
-   * DO NOT DELETE THIS FIELD as unread. No rule in this file branches on it,
-   * which makes it look like dead weight to a size-reduction pass; its reader
-   * is `window-escape.ts interpretEscape`, which is outside the kernel by
-   * design. Nothing in that function's role x session table means "pass
-   * Escape through", so removing the field sends the HUD (role `workspace`)
-   * and extension pages (role `content`) to `escapeFallbackPolicy`, and
-   * Escape opens the switcher instead of reaching their own DOM handlers.
-   */
+  // DO NOT DELETE as unread: no rule here branches on it, but `window-escape.ts interpretEscape` reads it outside the kernel.
   escapeMode?: 'ignore';
 
-  /**
-   * Whether this window is the shared chrome overlay singleton — the one
-   * window whose job is to frame whichever base-layer page host is topmost
-   * (`topmostBaseLayerPageHost`). A DECLARED fact in the sense of §0 stored
-   * fact 3 ("each window's own lifecycle state, plus its intrinsic
-   * properties as created"): written at registration, never revisited, and
-   * — like every other declared fact on this record — OVERWRITTEN rather
-   * than preserved by the re-registration merge.
-   *
-   * NOT `role === 'overlay'`, deliberately. Keying the behavior on role
-   * would silently capture any future overlay-role window that is not the
-   * shared chrome — this file's repeated correction (`overlayFor`,
-   * `parentId`, and now this field) is that these relations are structural
-   * facts, never role lookups. It exists because the rule that will consume
-   * it must be able to name the overlay record when the overlay is
-   * DETACHED — at which point `overlayFor` is absent and there is no
-   * attachment edge left to find it by.
-   *
-   * Inert today: nothing reads this field yet. A later change adds the
-   * effect that does.
-   */
   tracksBaseLayerTop?: boolean;
 
-  /**
-   * Whether this window tears itself down the moment it loses focus — the
-   * `modal` open option (`izui-roles.ts windowSelfClosesOnBlur`). A DECLARED
-   * fact, same shape as `tracksBaseLayerTop` above: written at registration
-   * from the caller's open-time options, never revisited, and OVERWRITTEN
-   * rather than preserved by the re-registration merge.
-   *
-   * There is no dedicated blur handler anywhere in the backend — a `modal`
-   * window closes through the same route as everything else: a blur feeds
-   * the ordinary focus/app-resign flow (`electron-window-backend.ts`'s
-   * deferred blur settle), and `isTransientAutocloseCandidate` admits a
-   * record with this field set as a candidate for the transient-dismissal law
-   * (`selectTransientAutoclose`) alongside every `TRANSIENT_ROLES` window,
-   * roleless or not — so it is dismissed by `react`'s ordinary sweep, not a
-   * call site of its own.
-   *
-   * The other thing `isAppResignSweepEligible` reads it for: a window that
-   * already closes itself on blur already owns its own app-resign policy, so
-   * the raw-edge sweep hiding it too would be redundant — and worse, would
-   * stamp `hiddenByAppBlur` on a record that is about to be torn down anyway,
-   * for `AppActivated` to find nothing left to re-show.
-   */
   selfClosesOnBlur?: boolean;
 
-  /**
-   * Whether this window never activates the app — a Panel (`window-rules.md`
-   * Vocabulary "Panel": "a window declared to never activate the app: it
-   * shows, and takes keystrokes, while the app stays in the background"), the
-   * `type: 'panel'` open-time declaration (`izui-roles.ts
-   * windowNonActivating`). A DECLARED fact, same shape as `selfClosesOnBlur`
-   * above: written at registration from the caller's open-time options,
-   * never revisited, and OVERWRITTEN rather than preserved by the
-   * re-registration merge.
-   *
-   * Read by `electron-window-backend.ts showWindow` (replaces the
-   * `windowClass !== 'quick-view'` mask G1/F6 named as the contradiction —
-   * `docs/design/window-rules-audit.md` F6) and `raiseWindow` (a panel's
-   * key-taking raise must never activate the app, G1), and by
-   * `window-kernel-executor.ts planRaise` (the `'show-and-focus-content'`
-   * arm, keyed on this attribute rather than on `role === 'quick-view'`).
-   */
+  // The `type: 'panel'` open declaration; takes key without activating the app.
   nonActivating?: boolean;
 
-  /**
-   * Declared at registration, same shape as `selfClosesOnBlur`/
-   * `tracksBaseLayerTop` above: this window's lifetime is the app's own, not
-   * an ordinary user-closable surface. `decide`'s `CloseOrHideWindow` branch
-   * REJECTS a command naming a record with this set — neither hiding nor
-   * closing it — and the cascade that branch runs for a closing window's
-   * descendants (`descendantsToCascadeClose`) skips a record carrying this
-   * flag, and its whole subtree, rather than sweeping it. The one live
-   * producer is the hidden core background window (`core-glue.ts`, the
-   * `WEB_CORE_ADDRESS` document) — its teardown is a quit concern
-   * (`GuestTeardownRequested`/`WindowDestroyRequested`), never an ordinary
-   * close request, so an ordinary close request must never reach it. Absent
-   * is the meaningful default: every other window is an ordinary closable
-   * surface.
-   */
   appLifetime?: boolean;
 
-  /**
-   * Whether this window's CONTENT web contents currently holds macOS
-   * first-responder status — the mirror of the native `rendererWC
-   * 'focus'`/`'blur'` pair, written solely by
-   * `ContentFirstResponderChanged`, never a live `wc.isFocused()` question at
-   * a decision site. Ported from `window-state.ts
-   * WindowRecord.contentFocused`.
-   *
-   * THREE-VALUED ON PURPOSE — `undefined` is NOT `false`, and collapsing the
-   * two is a bug, not a simplification. `undefined` means "nothing has been
-   * reported yet"; `false` means "an observed loss of first responder". The
-   * consumer this exists for (`window-escape.ts shouldArmEscapeGrab`, the
-   * replacement for `window-state.ts deriveEscGrabRegistered`) tests
-   * `=== false` explicitly, because the two absent cases must NOT behave like an observed loss:
-   *
-   *   - a `kind: 'browser'` window never gets a report at all (its root web
-   *     contents IS first responder whenever the window is key, so there is
-   *     nothing independent to track). Reading absent as unfocused would arm
-   *     the OS-level Escape grab permanently for every browser window —
-   *     where Escape already works through `before-input-event`.
-   *   - a page-host in the micro-gap between a just-driven content focus and
-   *     the async native `'focus'` event it produces. Reading absent as
-   *     unfocused would flap the grab on after every fresh show/raise.
-   *
-   * Also why a plain `boolean` defaulting to `false` at registration would be
-   * wrong: registration is exactly the moment nothing has been reported.
-   */
   contentFocused?: boolean;
 }
 
-/**
- * WHO caused an `OsFocusGained` report (ported from `window-state.ts
- * FocusCause`): without it, an OS focus report means both "the user switched
- * windows" and "the OS is echoing an operation this machine just requested"
- * — indistinguishable, which is the defect that let a machine-issued raise
- * sweep a palette the user had just opened.
- *
- *   - `machine`  the echo of a focus-family effect (`RaiseWindow`/
- *                `ShowWindow`) this machine emitted — `opSeq` is that
- *                effect's token. Because the token is a stamp rather than a
- *                boolean, a STALE self-echo (an `opSeq` older than the latest
- *                one issued for that window — see `isStaleSelfEcho`) is
- *                identifiable too.
- *   - `world`    a real user gesture, another app, Mission Control, a page
- *                click — everything else.
- *
- * Carries no `intent`: a `RaiseWindow` COMMAND's own "the user asked for this"
- * fact rides `State.lastRaiseRequest` instead (see `FocusRaiseRequest`) — that
- * request never becomes an `OsFocusGained` itself (RULE 2 reserves writing
- * `key` for the OS's own report), so there is no `cause` for it to ride on by
- * the time the real echo arrives. The echo's own `cause` is always a bare
- * `{ kind: 'machine', opSeq }`, minted fresh by whatever produced it.
- */
 export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
 
-/**
- * RULE 1 (§0.1.4): `order` holds EVERY registered window, bottom -> top, as
- * ONE structure — not a Map plus a parallel id array, so membership and order
- * cannot disagree. `WindowRegistered` appends; `WindowClosed` removes.
- * Nothing else changes membership. There is no visibility filter and no
- * eligibility filter — `order` is the total set, always.
- *
- * RULE 2 (§0.1.4): `key` is written ONLY by `OsFocusGained` / `OsFocusLost`.
- * It is never inferred, never repaired, never successor-guessed. `null` is a
- * legal steady state. A dangling key id (the window it names has since
- * closed) is made unobservable by `keyWindow` rather than guarded against
- * here — see that function. Losing app-active status does not mean some
- * other window gained key: `AppResigned`/`AppActivated` (below) never touch
- * this field.
- */
 export interface State {
   readonly order: readonly WindowRecord[];
   readonly key: WindowId | null;
-  /** RULE 4 + stale-intent rejection (§0.1.2). Bumped by every accepted event. */
+  // Stale-intent rejection compares against this; bumped by every accepted event.
   readonly version: number;
-  /**
-   * The `OpToken` counter — the ordering the stale-echo guard reads
-   * (`isStaleSelfEcho`). ONE TOKEN PER TRANSITION THAT ISSUES AT LEAST ONE
-   * FOCUS-FAMILY OP: `evolve` bumps it by exactly 1 in each arm whose diff
-   * `react` turns into a `ShowWindow`/`RaiseWindow` (a `WindowShown` that
-   * genuinely flips `visible`, an `OsFocusGained` that genuinely raises, an
-   * `AppActivated` that re-shows what the resign sweep hid), and leaves it
-   * untouched in every other transition. That is what makes the token
-   * meaningful: two ops issued at different moments carry different numbers,
-   * so an echo of the older one is recognisable as stale.
-   *
-   * The bump is a PER-TRANSITION scalar, not per-effect, because `react`
-   * stamps every focus-family effect it emits with `next.opSeqCounter` — one
-   * `AppActivated` re-showing three windows issues one op with one token
-   * against three windows, and each of those records is stamped
-   * `lastOpSeq` = that same value. `evolve`'s stamp and `react`'s token are
-   * therefore the same number by construction; the property suite asserts the
-   * equality rather than trusting the two sites to stay in step.
-   */
   readonly opSeqCounter: number;
   readonly appActive: boolean;
   readonly openSeqCounter: number;
-  /**
-   * ARMED app-resign sweep — the dance guard (§0.1.9, ported from
-   * `window-state.ts AppWindowState.pendingAppResignSweep`). macOS produces a
-   * resign→activate cycle as ordinary activation churn (entering/leaving an
-   * overlay does it), so a resign must not act immediately: `AppResigned`
-   * only ARMS this flag; `AppActivated` DISARMS it — that disarm IS the dance
-   * cancel. Only `AppResignSettled` arriving while still armed means the
-   * resign was real, and it is the one that hides the sweep-eligible windows.
-   * The settle DELAY itself is not modelled here — it lives in the (not yet
-   * built) executor; this flag models only the arm/disarm/settle ordering.
-   */
   readonly pendingAppResignSweep: boolean;
-  /**
-   * The most recent teardown request, or `null` before any (§0.1.5 "window
-   * teardown enters the kernel as commands and leaves as effects").
-   *
-   * WHY IT IS STATE AT ALL. Teardown changes nothing else the kernel stores:
-   * the record retires on the native `WindowClosed` report the teardown
-   * causes, never on the request itself (the same acceptance the old machine's
-   * `WINDOW_DESTROY_REQUESTED` / `WINDOW_CONTENT_CLOSE_REQUESTED` /
-   * `GUEST_TEARDOWN_REQUESTED` arms record). A transition with no state diff
-   * has no effect either, because `react` is a pure structural projection and
-   * may not branch on `ev.type`. So the request has to become a FACT `react`
-   * can diff, and this field is that fact.
-   *
-   * `seq` is what makes repetition visible: two identical destroy requests for
-   * the same window are two teardowns, and comparing payloads would collapse
-   * them into one. It counts teardowns only — it is not `opSeqCounter`, which
-   * orders focus ops and is read by the stale-echo guard.
-   *
-   * Nothing clears the field. A later non-teardown transition leaves it
-   * untouched, which diffs to nothing, so "stale" here is unobservable: the
-   * value means "the last teardown requested was this one", not "a teardown is
-   * pending".
-   */
   readonly lastTeardown: TeardownRequest | null;
-  /**
-   * The most recent FOCUS ASSERT request, or `null` before any — "re-assert
-   * the raise on this window, which is already where the machine wants it".
-   *
-   * WHY IT IS STATE AT ALL, and it is the same reason `lastTeardown` above is:
-   * the request changes nothing else the kernel stores. Its target is already
-   * topmost, already visible, already key — so `prev` and `next` are identical
-   * everywhere else, and a transition with no state diff has no effect either,
-   * because `react` is a pure structural projection that may not branch on
-   * `ev.type`. The request therefore has to become a FACT `react` can diff,
-   * and this field is that fact.
-   *
-   * WHY THE APP NEEDS ONE. Devtools opens with `activate: false` and takes
-   * macOS first responder off the content `WebContentsView` of whatever window
-   * is in front. Nothing about the window model changed — the same window is
-   * still front, still visible, still key — but its content no longer hears
-   * keystrokes, which is the `7c61e917` shape ("dead until you click the
-   * page": no `before-input-event`, so Escape has no handler at all). The old
-   * machine handled it by re-running its raise on the current front
-   * (`window-state.ts`'s shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm ->
-   * `applyRaiseRequest`), which is exactly what this fact reproduces.
-   *
-   * `seq` is what makes repetition visible, for the same reason it is on
-   * `TeardownRequest`: two asserts for the same window are two asserts, and
-   * comparing payloads would collapse them into one — which for this family is
-   * the whole point, since the payload is IDENTICAL every time (open devtools,
-   * close devtools, open again). It counts asserts only; it is not
-   * `opSeqCounter`, which orders focus ops and is read by the stale-echo guard.
-   *
-   * Nothing clears the field. A later unrelated transition leaves it
-   * untouched, which diffs to nothing, so "stale" here is unobservable: the
-   * value means "the last assert requested was this one", not "an assert is
-   * pending".
-   */
   readonly lastFocusAssert: FocusAssertRequest | null;
-  /**
-   * A `RaiseWindow` COMMAND the kernel was asked to perform, or `null` before
-   * any — the fact `react` diffs to emit the effect, the same shape
-   * `lastFocusAssert` has and for the same reason (§0.1.1: `react` may not
-   * branch on `ev.type`, so the request has to become something it can diff).
-   *
-   * WHY A SEPARATE FIELD FROM `lastFocusAssert`, even though the two arms are
-   * near-identical: a `RaiseWindow` command is a NO-OP when its target already
-   * holds `key` (`evolve`'s arm gates `lastOpSeq` on `state.key !== ev.id`, the
-   * same silent-no-op shape `key`'s own diff has) — a re-assert onto a window
-   * already front is exactly what `FocusAssertRequested` exists to override
-   * (see that field's doc, and the `7c61e917` regression it fixes), so folding
-   * the two into one field would make an ordinary raise command re-derive the
-   * gate `AssertFocus` deliberately does not have.
-   *
-   * WHY WRITTEN INSTEAD OF AN `OsFocusGained` EVENT (RULE 2's boundary): a
-   * raise the machine issues on the user's behalf is still a REQUEST, not a
-   * report — the OS has not focused anything yet. Manufacturing an
-   * `OsFocusGained` here would write `key`/`order`/`lastAttention` before that
-   * happens, so the model would claim a window is key that the OS never
-   * focused (measured with the app backgrounded: `RaiseWindow` suppressed by
-   * `window-kernel-executor.ts planRaise`, yet `key` had already moved). `key`
-   * moves only when the backend's own `OsFocusGained` echo arrives, carrying
-   * the `opSeq` this request's `evolve` arm stamped on the record.
-   *
-   * `intent: 'user'` marks a raise a user gesture asked for (hotkey, CLI
-   * verb) — the one thing this field carries that `FocusAssertRequest` does
-   * not, since only a `RaiseWindow` COMMAND (never an `AssertFocus`) can name
-   * one. It survives onto the `RaiseWindow` EFFECT, where the executor's
-   * app-inactive mask (`planRaise`) exempts it.
-   *
-   * Nothing clears the field, same reason as `lastFocusAssert`: a later
-   * transition that writes neither's event leaves it untouched, which diffs
-   * to nothing.
-   */
   readonly lastRaiseRequest: FocusRaiseRequest | null;
-  /**
-   * THE MOST RECENT FOCUS REPORT, or `null` before any — the fact that lets
-   * `react` apply transient autoclose (§0: "no dispatch site can silently
-   * skip running it") as a pure structural diff instead of a branch on
-   * `ev.type`. `OsFocusGained` is its only writer. The app-resign half of
-   * dismissal (attention leaving Peek entirely) is a SEPARATE structural diff
-   * now, over `pendingAppResignSweep`/`appActive` — see `react`'s resign-sweep
-   * rule — because that half needed no payload of its own beyond a flag a
-   * prior transition already had to store for the dance guard.
-   *
-   * `holder` is the window attention is on — EXPLICIT, not derived at diff
-   * time from `key`, even though `OsFocusGained`'s two branches always write
-   * it the same `ev.id` that lands on `key` in the same transition: `react`
-   * reads this field alone, so the sweep never has to reach past it into a
-   * differently-shaped field.
-   *
-   * WHY IT IS STATE AT ALL, and the shape mirrors `lastTeardown` /
-   * `lastFocusAssert` exactly: `react(prev, ev, next)` may not read `ev`
-   * (§0.1.1), so `selectTransientAutoclose`'s `cause` argument — which would
-   * otherwise ride on the triggering event's own payload — has to become a
-   * FACT `react` can diff before the sweep can be driven off `next` alone.
-   *
-   * `seq` is what makes repetition visible, for the same reason it is on
-   * `TeardownRequest`/`FocusAssertRequest`: the old machine ran the sweep on
-   * EVERY `OS_FOCUS_GAINED` report, including one that re-confirms the window
-   * already holding key (an echo), so a repeated or reset seq would collapse
-   * two reports — and two sweeps — into one.
-   *
-   * Nothing clears the field, for the same reason nothing clears the other
-   * two: a later transition that writes neither writer's event leaves it
-   * untouched, which diffs to nothing.
-   */
   readonly lastAttention: Attention | null;
-  /**
-   * THE ARMED COLD-START FOCUS LATCH — the window a later app activation is to
-   * put back in front, or `null` for "nothing armed" (ported from
-   * `window-state.ts AppWindowState.pendingColdStartFocus`).
-   *
-   * WHY IT EXISTS. Session restore raises and activates the saved-focused
-   * descriptor, but the macOS startup activation dance can fire a FINAL resign
-   * AFTER that, re-stranding the app behind the previous one — its menubar, its
-   * key window. The next activation is the moment to put the saved-focused
-   * window back in front, and this field is what remembers which window that
-   * is. There is no timer: arming is the restore's decision (cold start,
-   * non-headless, the window is actually there) and firing is the machine's.
-   *
-   * `null` IS A PAYLOAD, NOT A HOLE. `session.ts restoreSessionSnapshot` arms
-   * `null` as its first statement — clearing a latch a previous restore pass
-   * armed and never spent — and arms a real id later in the same pass. Both are
-   * ordinary traffic, and "clear" has no separate event.
-   *
-   * Armed by `ColdStartFocusArmed` and spent by `AppActivated`, which clears it
-   * to `null` and records the re-raise on `lastFocusAssert` — see that arm for
-   * why the spend goes through the assert fact rather than through `order`. The
-   * latch is one-shot: an activation with nothing armed changes neither field,
-   * and only a fresh arm refills it.
-   *
-   * The id is stored AS GIVEN, including one naming no member of `order`:
-   * arming happens before the named window is guaranteed live, and a window
-   * that has gone by the time the latch is spent makes the spend a no-op —
-   * `react`'s assert rule emits nothing for a target absent from `order`.
-   */
   readonly pendingColdStartFocus: WindowId | null;
-  /**
-   * THE ARMED SWITCHER SELECTION — the window to put in front when the
-   * switcher that armed it goes away, or `null` for "nothing armed".
-   *
-   * WHY IT EXISTS. Picking a window in the switcher and dismissing the
-   * switcher with Escape are the same closing window from the outside, and
-   * only the first restores focus: a plain dismiss deliberately leaves the
-   * user's current desktop alone, because raising the previously-focused
-   * window can drag them to a desktop it happens to be anchored to. The
-   * difference between the two is the SELECTION, and it is knowable only
-   * while the switcher is still open — so it is recorded then, not
-   * reconstructed at close time.
-   *
-   * WHY IT IS A PAIR. `armer` is the switcher; `target` is what the user
-   * picked. The spend is keyed on the armer's own removal rather than on any
-   * close, so an unrelated window closing while a selection is armed leaves
-   * it armed — a selection outlives everything except the switcher it was
-   * made in.
-   *
-   * WHY A `WindowId` AND NOT A PLATFORM ID. The decision used to live in
-   * `main.ts`'s native `'closed'` handler, matching the closing window's
-   * numeric Electron id against a parallel session object, and it had to live
-   * there because the backend has already dropped its id map by the time the
-   * kernel hears about the close. Recording the intent as a `WindowId` at
-   * SELECTION time — while the window is alive and resolvable — removes the
-   * need for a platform id at close time entirely, so the rule can be a
-   * kernel rule (`apps/desktop/CLAUDE.md`, "Electron is ONE backend, not the
-   * design").
-   *
-   * Armed by `SelectionFocusArmed` and spent by `WindowClosed` naming the
-   * armer, which clears it to `null` and records the raise on
-   * `lastFocusAssert` — the same one-shot shape `pendingColdStartFocus` has,
-   * and the same reason for going through the assert fact: the transition
-   * changes nothing else `react` could diff.
-   *
-   * The target is stored AS GIVEN, including one naming no member of `order`:
-   * a window that has gone by the time the latch is spent makes the spend a
-   * no-op, because `react`'s assert rule emits nothing for a target absent
-   * from `order`.
-   */
   readonly pendingSelectionFocus: SelectionFocus | null;
-  /**
-   * PEEK'S WINDOWS CAME UP WHILE THE USER WAS IN ANOTHER APP, and the user has
-   * not come to Peek since. The one fact the Escape decider needs about the
-   * app's session (`window-escape.ts escapeClosePolicy` /
-   * `escapeFallbackPolicy`).
-   *
-   * WHAT IT CHANGES. A window that appeared over whatever the user was already
-   * doing — a peek, a slide — is something Escape should just dismiss, handing
-   * them straight back. A window they opened while working in Peek is
-   * somewhere they meant to be, so Escape navigates within Peek instead, and
-   * falls back to the switcher rather than closing.
-   *
-   * WHY THIS AND NOT THE COORDINATOR'S FOUR STATES. `izui-state.ts` carries a
-   * four-value session (idle/transient/active/overlay) that co-decided
-   * dismissal from outside the kernel. The Escape decider never needed four:
-   * its dispatch already folded `overlay` into `active`, and both of its
-   * policy tables then compare against `transient` alone — `idle` and `active`
-   * take the same branch in each. So the fact the decider actually reads is
-   * this single bit, and modelling the bit is what lets the kernel own the
-   * decision without importing a second state machine's vocabulary. The
-   * coordinator's four states remain, for display; nothing decides on them.
-   *
-   * THE RULE, transliterated from `izui-state.ts evaluateOnShow` +
-   * `notifyAppActiveGained`:
-   *   - The FIRST window to join an empty `order` sets it: `true` when the app
-   *     is not active at that moment, `false` when it is.
-   *   - Any later window opening while the app IS active clears it, and so
-   *     does `AppActivated`. Both are the coordinator's one-way ratchet: the
-   *     user has arrived in Peek, so this is somewhere they meant to be. There
-   *     is no path back to `true` without the session ending first.
-   *   - Emptying `order` resets it to `false`, which is that session ending.
-   *     The coordinator ends its session when its window stack empties, and an
-   *     empty `order` is that same fact.
-   *
-   * Drives no effect. It is an input to the Escape interpreter, which reads
-   * state and issues commands; `react` never diffs it.
-   */
   readonly openedInBackground: boolean;
 }
 
-/**
- * An armed switcher selection — see `State.pendingSelectionFocus`. Always a
- * pair: the rule is "when THIS window goes, raise THAT one", and neither half
- * is derivable from the other.
- */
 export interface SelectionFocus {
   armer: WindowId;
   target: WindowId;
 }
 
-/**
- * A focus re-assert the kernel was asked to perform. Always names a window —
- * unlike `TeardownRequest`, there is no process-wide variant: "re-assert the
- * raise" is meaningless without a target, and the CALLER picks that target
- * (see the `AssertFocus` command for which conditions the caller owns).
- */
 export interface FocusAssertRequest {
   id: WindowId;
   seq: number;
 }
 
-/**
- * A `RaiseWindow` COMMAND the kernel was asked to perform — see
- * `State.lastRaiseRequest` for why this is a field of its own rather than a
- * reuse of `FocusAssertRequest`. `intent` mirrors the `RaiseWindow` command's
- * own field (§ `Command`), present only when a user gesture asked for the
- * raise.
- */
 export interface FocusRaiseRequest {
   id: WindowId;
   seq: number;
   intent?: 'user';
 }
 
-/**
- * The most recent focus report — see `State.lastAttention`. `holder` is
- * EXPLICIT rather than read off `key`: see that field's doc for why `key`
- * cannot stand in for it. `OsFocusGained` is the only writer, so `holder` is
- * always a real `WindowId` — the app-resign half of dismissal (attention
- * landing on nothing of Peek's) is a separate structural diff now, over
- * `pendingAppResignSweep`/`appActive`, and never comes through here.
- */
 export interface Attention {
   holder: WindowId;
   cause: FocusCause;
   seq: number;
 }
 
-/**
- * A teardown the kernel was asked to perform (§0.1.5). Three name a window;
- * `destroy-all-guests` names none — the event, the effect, and the port's
- * `destroyAllContentGuests` are all process-wide, iterating the guest map
- * directly. Fanning it out over `order` at any layer would MISS guests whose
- * host record has already retired, which is precisely the quit case it exists
- * for.
- */
 export type TeardownRequest =
   | { kind: 'destroy-window'; id: WindowId; seq: number }
   | { kind: 'close-content'; id: WindowId; seq: number }
   | { kind: 'close-window-direct'; id: WindowId; seq: number }
   | { kind: 'destroy-all-guests'; seq: number };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Events — past-tense facts. Already happened. `evolve` cannot reject them.
-// ─────────────────────────────────────────────────────────────────────────────
+// Events — past-tense facts already happened; `evolve` cannot reject them.
 
 export type Event =
   | {
@@ -934,323 +149,70 @@ export type Event =
       role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
-      /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
+      // See `WindowRecord.escapeMode` — one live value, absent is meaningful.
       escapeMode?: 'ignore';
-      /** See `RegisterWindow.bounds`'s doc — carried through unchanged by `decide`. */
+      // Carried through to `WindowRecord.bounds` unchanged by `decide`.
       bounds?: Rectangle;
-      /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
+      // See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet.
       tracksBaseLayerTop?: boolean;
-      /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
+      // See `WindowRecord.selfClosesOnBlur` — declared here.
       selfClosesOnBlur?: boolean;
-      /** See `WindowRecord.nonActivating`'s doc — declared here. */
+      // See `WindowRecord.nonActivating` — declared here.
       nonActivating?: boolean;
-      /** See `WindowRecord.appLifetime`'s doc — declared here. */
+      // See `WindowRecord.appLifetime` — declared here.
       appLifetime?: boolean;
     }
-  /**
-   * `opSeq` is present only when this event is the backend's own echo of a
-   * `ShowWindow`/`HideWindow`/`RaiseWindow` effect this executor just issued
-   * (`electron-window-backend.ts showWindow`/`hideWindow`/`raiseWindow`
-   * thread the effect's op token straight through) — the SAME provenance
-   * shape `OsFocusGained.cause` uses, one level down: a visibility echo
-   * carries the token of the op that provoked it, absent means a producer
-   * not yet taught to report one (a bare `ShowWindow`/`HideWindow` COMMAND,
-   * `decide` above). Consulted only by `isStaleWindowEcho` — `evolve` itself
-   * still reads none of this (see that function's doc for why the drop has
-   * to happen before `evolve`, not inside it).
-   */
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
   | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
   | { type: 'WindowClosed'; id: WindowId }
-  /**
-   * WHO caused it (see `FocusCause`). Absent means `world` — load-bearing:
-   * a producer not yet taught to report provenance keeps its exact current
-   * behavior. Provenance does not change what `key` becomes here; it only
-   * feeds later decisions (`isStaleSelfEcho`).
-   */
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
   | { type: 'OsFocusLost'; id: WindowId }
-  /**
-   * The app lost active status (ported from `window-state.ts APP_RESIGNED`).
-   * ARMS `pendingAppResignSweep` — see that field's doc. Does not itself hide
-   * anything: this may just be the resign half of the macOS activation dance,
-   * which an `AppActivated` before any settle would immediately cancel.
-   */
   | { type: 'AppResigned' }
-  /**
-   * The app became active (ported from `window-state.ts APP_ACTIVATED`).
-   * DISARMS `pendingAppResignSweep` — the dance cancel. Also re-shows every
-   * window carrying `hiddenByAppBlur` (exactly those the prior
-   * `AppResignSettled` sweep hid) and clears the mark; a window hidden for
-   * any other reason is untouched. Never writes `key`, never reorders `order`.
-   */
   | { type: 'AppActivated' }
-  /**
-   * The delayed confirmation that a resign was real (ported from
-   * `window-state.ts APP_RESIGN_SETTLED`) — the settle DELAY itself is not
-   * modelled here, only its ordering relative to arm/disarm. Inert unless
-   * `pendingAppResignSweep` is still armed (an `AppActivated` in between — the
-   * dance — already disarmed it); when armed, hides the sweep-eligible
-   * windows (`isAppResignSweepEligible` — every floater above the regular
-   * stack that does not already close itself on blur) and marks them
-   * `hiddenByAppBlur`. Never writes `key`, never reorders `order`.
-   */
   | { type: 'AppResignSettled' }
-  /** The first-composited-frame report — flips `orderable` to `true`. */
+  // The first-composited-frame report — flips `orderable` to `true`.
   | { type: 'WindowContentOrderable'; id: WindowId }
-  /**
-   * The backend's mirror of the native `rendererWC 'focus'`/`'blur'` pair
-   * (ported from `window-state.ts CONTENT_FIRST_RESPONDER_CHANGED`) — the
-   * sole writer of `WindowRecord.contentFocused`, and the producer that makes
-   * that field's three-valued distinction meaningful: before the first such
-   * report the field is absent, and absent is not `false` (see the field's
-   * doc). A report naming an unregistered window is a no-op, like every other
-   * dangling-id event here. Drives no effect: it is a report ABOUT the OS, not
-   * a request OF it.
-   */
   | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
-  /**
-   * A window's click-through state changed AFTER registration — the report
-   * that closes the gap `izui-roles.ts deriveAcceptsInput` names in its own
-   * doc: "A window whose click-through changes after registration needs an
-   * event, not a re-derivation." Drives no effect of its own: it is a report
-   * ABOUT the OS, not a request OF it, same as `ContentFirstResponderChanged`
-   * above. A report naming an unregistered window is a no-op, like every
-   * other dangling-id event here.
-   *
-   * NOW REACHED THROUGH THE `SetAcceptsInput` COMMAND for every production
-   * site: `tile-ipc.ts`'s `tile:window:set-ignore-mouse` handler (the Space
-   * border's, `features/spaces/background.js showBorder`, route to it) and
-   * `hybrid-overlay.ts`'s `wireClickCapture`/`wireAppActiveGate` used to
-   * dispatch this event directly, at the moment each made the native change
-   * — Electron has no getter for `setIgnoreMouseEvents` (the same reason
-   * `hybrid-overlay.ts` keeps its own `lastCaptureState` mirror rather than
-   * asking the OS), so there was no native echo to await. They now issue the
-   * command instead and let `decide` produce this same event, so today NO
-   * production site feeds it directly. The shape stays: a backend that COULD
-   * observe an externally-caused click-through change (one this machine never
-   * asked for) still has this event to report it through, unlike
-   * `WindowContentOrderable` above's genuinely-still-fed "no query exists"
-   * compromise.
-   */
   | { type: 'WindowAcceptsInputChanged'; id: WindowId; acceptsInput: boolean }
-  /**
-   * `decide`'s translation of a `SetFullscreen` command that starts a FRESH
-   * transition (the target was settled — `normal`/`fullscreen`) into a fact
-   * `evolve` can apply mechanically. The "is a transition already in
-   * flight" guard lives in `decide` (§0.1.8) — by the time this event
-   * exists, that guard has already run, so `evolve` just writes the given
-   * fields, no per-mode branching. `preBounds` is resolved by `decide` from
-   * the CURRENT record (its own read of `state`, same as any other guard).
-   */
   | { type: 'FullscreenTransitionStarted'; id: WindowId; entering: boolean; preBounds: Rectangle | null }
-  /**
-   * `decide`'s translation of a `SetFullscreen` command that arrived while a
-   * transition was already in flight (`entering`/`leaving`) — coalesces
-   * into `pendingDesire` rather than starting a second transition. Applied
-   * when that transition settles (`OsFullscreenEntered`/`OsFullscreenLeft`/
-   * `FullscreenSettleTimeout` below).
-   */
   | { type: 'FullscreenDesireRecorded'; id: WindowId; desired: boolean }
-  /** OS report: the window IS fullscreen now. Settles `entering`/`leaving`/`normal` (§0.1.8). */
+  // OS report: the window IS fullscreen now. Settles `entering`/`leaving`/`normal`.
   | { type: 'OsFullscreenEntered'; id: WindowId }
-  /** OS report: the window is NOT fullscreen now. Settles `leaving`/`entering`/`fullscreen`. */
+  // OS report: the window is NOT fullscreen now. Settles `leaving`/`entering`/`fullscreen`.
   | { type: 'OsFullscreenLeft'; id: WindowId }
-  /** The OS never reported a settle for this transition — force it out of `entering`/`leaving`. */
+  // The OS never reported a settle for this transition — force it out of `entering`/`leaving`.
   | { type: 'FullscreenSettleTimeout'; id: WindowId }
-  /**
-   * The backend's native resize/move report (ported from `window-state.ts
-   * BOUNDS_CHANGED`) — the OS report. The SOLE origin of a fact that writes
-   * `WindowRecord.bounds`; `decide`'s translations of `SetBounds` /
-   * `Maximize` / `Unmaximize` below reuse this same event shape rather than
-   * inventing a second bounds-writing fact, under the dispatch-is-synchronous
-   * contract described on the field.
-   *
-   * `overlayFrame` is the freshly expanded overlay frame for THIS window,
-   * when it is hosting the shared chrome overlay — ported from
-   * `window-state.ts BOUNDS_CHANGED.overlayFrame`. Computed at the dispatch
-   * site the same way `AttachOverlay.frame` is (see
-   * `WindowRecord.overlayFrame`'s doc for why): the backend already computes
-   * it for every page-host's bounds report and only needs to stop dropping
-   * it at the kernel's edge (`window-kernel-dispatch.ts
-   * kernelBoundsChanged`). Absent when this window has no overlay
-   * attached, or the dispatch site could not read a work area — `evolve`
-   * treats an absent frame as "nothing new to reframe to", same as
-   * `AttachOverlay` with no `frame`.
-   */
   | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle; overlayFrame?: Rectangle }
-  /**
-   * The display layout changed (ported from `window-state.ts
-   * DISPLAY_CHANGED`) — one already-computed target rect per affected
-   * window (this file keeps zero value imports and cannot ask `screen` for
-   * anything itself). A window that is blocked (non-`normal` `fsMode` or
-   * `visible: false`) has its entry held on `pendingProjectedBounds` instead
-   * of applied; an unblocked entry writes `bounds` directly.
-   */
   | { type: 'DisplayChanged'; projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }> }
-  /**
-   * A resize gesture invalidated maximize (ported from `window-state.ts
-   * MAXIMIZE_EXITED_BY_RESIZE`) — dispatched at the press of a resize on a
-   * maximized window, or by a native-resize reconciler. Clears `maximized` +
-   * `preMaxBounds`, drives nothing back at the OS: the gesture owns the
-   * window's bounds.
-   */
   | { type: 'MaximizeExitedByResize'; id: WindowId }
-  /**
-   * `decide`'s translation of an accepted `Maximize` command into a fact
-   * `evolve` can apply mechanically — `preMaxBounds` is resolved by `decide`
-   * from the record's CURRENT `bounds` mirror (never a live query), same
-   * pattern as `FullscreenTransitionStarted.preBounds`. Carries no bounds of
-   * its own: when the accepted command carried a `workArea`, `decide` pairs
-   * this with a `BoundsChanged` event carrying it — that is what actually
-   * snaps the window. Absent, nothing moves.
-   */
   | { type: 'Maximized'; id: WindowId; preMaxBounds: Rectangle | null }
-  /** `decide`'s translation of an accepted `Unmaximize` command — clears `maximized` + `preMaxBounds`. */
+  // `decide`'s translation of an accepted `Unmaximize` command — clears `maximized` + `preMaxBounds`.
   | { type: 'Unmaximized'; id: WindowId }
-  /**
-   * `decide`'s translation of every accepted `SetBounds`/`Maximize`/
-   * `Unmaximize` command: an explicit geometry decision supersedes any held
-   * `DisplayChanged` projection, discarding it WITHOUT flushing (a stale
-   * projection must never snap a deliberately-moved window back). Kept as
-   * its own event — rather than folded into `BoundsChanged`/`Maximized`/
-   * `Unmaximized` — so those stay single-purpose and this one fact covers
-   * all three origins identically.
-   */
   | { type: 'PendingProjectionDiscarded'; id: WindowId }
-  /** `decide`'s translation of an accepted `SetDesktopMembership` command. */
+  // `decide`'s translation of an accepted `SetDesktopMembership` command.
   | { type: 'DesktopMembershipSet'; id: WindowId; membership: DesktopMembership }
-  /**
-   * `decide`'s translation of an accepted `AttachOverlay` command — attach,
-   * retarget, and detach are all this ONE event (`hostId: null` = detach).
-   * As an event, it is a fact already decided elsewhere and can never be
-   * rejected here: `evolve` normalizes a `hostId` that isn't registered, or
-   * that names the overlay itself, into a detach rather than storing it —
-   * see `evolve`'s `OverlayAttached` case. The follow (reveal, hide, reframe)
-   * is decided IN `evolve`, from the host's CURRENT `fsMode` and
-   * `state.appActive` — never a live query at some later point, and never a
-   * branch `react` has to make: `evolve` writes the result onto the overlay's
-   * `visible`/`overlayFrame` fields, and `react` only diffs them.
-   *
-   * `frame` is the freshly expanded overlay frame for the NEW host, computed
-   * at the dispatch site the same way `BoundsChanged.overlayFrame` is (see
-   * `WindowRecord.overlayFrame`'s doc) — ported from `window-state.ts
-   * OVERLAY_ATTACH_REQUESTED.frame`. Absent on a detach, or when the
-   * dispatch site could not read the host's bounds between the retarget
-   * signal and this call.
-   */
   | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null; frame?: Rectangle }
-  /**
-   * A persisted bottom -> top stack order was imported (`decide`'s translation
-   * of `ImportStackOrder`; ported from `window-state.ts
-   * STACK_ORDER_IMPORTED`). A PERMUTATION of `order` and nothing else:
-   * membership cannot change, `key` is untouched (RULE 2), no record field
-   * moves.
-   *
-   * The payload is advisory, not authoritative. Ids it names that are not
-   * registered are ignored and duplicates collapse to their first occurrence —
-   * both are ordinary traffic, because `session.ts restoreSessionSnapshot`
-   * assembles the list through `getWindowIdFor` over windows that may have died
-   * mid-restore.
-   */
   | { type: 'StackOrderImported'; order: readonly WindowId[] }
-  /**
-   * TEARDOWN (§0.1.5) — the four facts below are `decide`'s translations of
-   * the teardown commands, and they share one shape: each records that a
-   * teardown was asked for (`State.lastTeardown`) and changes NOTHING else.
-   * Membership shrinks on `WindowClosed` alone (RULE 1), which arrives later
-   * as the native report the teardown causes; a teardown fact that also
-   * retired the record would make the kernel a second authority over `order`
-   * and would double-count the close.
-   *
-   * All four are legitimate for a window absent from `order`: see the
-   * commands' own doc for why (`ipc.ts runHybridFinalize` names a record
-   * retired microseconds earlier, in the same synchronous body).
-   *
-   * Forceful native destroy — the extension-bridge / UI-teardown path. Skips
-   * beforeunload and close events entirely, and has NO guest pass, so it is
-   * never the right teardown for a window that owns page-host guests (peek
-   * `d1cf0b9a`: a guest dereferenced inside `-[NSWindow __close]`).
-   */
   | { type: 'WindowDestroyRequested'; id: WindowId }
-  /**
-   * The window's CONTENT surface torn down (the hybrid finalize's
-   * `contentWC.close()`) — the bounded-timeout fallback, see the
-   * `CloseContent` command.
-   */
   | { type: 'WindowContentCloseRequested'; id: WindowId }
-  /** The guest-safe direct close — destroy registered guests, await them, then close the host. No keepLive policy. */
+  // The guest-safe direct close — destroy registered guests, await them, then close the host. No keepLive policy.
   | { type: 'WindowDirectCloseRequested'; id: WindowId }
-  /** Quit teardown: destroy every registered page-host guest WC, process-wide. Names no window. */
+  // Quit teardown: destroy every registered page-host guest WC, process-wide. Names no window.
   | { type: 'GuestTeardownRequested' }
-  /**
-   * `decide`'s translation of an accepted `AssertFocus` command: a request to
-   * re-drive the raise onto a window that is ALREADY where the machine wants
-   * it (see `State.lastFocusAssert`). Records the request on that field and
-   * changes nothing else about the window model — `key` is untouched (RULE 2
-   * leaves it to `OsFocusGained`/`OsFocusLost`), `order` is untouched (RULE 1),
-   * and no record field moves except the focus-op stamp the raise it drives
-   * carries.
-   */
   | { type: 'FocusAssertRequested'; id: WindowId }
-  /**
-   * `decide`'s translation of an accepted `RaiseWindow` command — a request
-   * to make this window key, not yet a report that it is (see
-   * `State.lastRaiseRequest`). Records the request on that field; the only
-   * other write is the focus-op stamp the raise it drives carries (gated the
-   * same way the stamp is, on the target not already holding `key`) — `key`
-   * itself, `order`, and `lastAttention` are all untouched, RULE 2 leaving
-   * `key` to `OsFocusGained`/`OsFocusLost` alone.
-   */
   | { type: 'FocusRaiseRequested'; id: WindowId; intent?: 'user' }
-  /**
-   * The cold-start focus latch was armed (ported from `window-state.ts
-   * COLD_START_FOCUS_ARMED`) — `decide`'s translation of `ArmColdStartFocus`.
-   * Writes `State.pendingColdStartFocus` and NOTHING else: not `key` (RULE 2 —
-   * arming is not a focus report), not `order` (RULE 1), no record field.
-   *
-   * `id: null` is a real payload — it CLEARS the latch — and not a missing one;
-   * see the field's own doc for the restore pass that arms both a `null` and a
-   * real id.
-   *
-   * Drives no effect, and no rule in `react` exists to make that so: `react` is
-   * a pure structural diff and nothing in it reads `pendingColdStartFocus`, so
-   * a transition that changes only this field projects to nothing.
-   */
   | { type: 'ColdStartFocusArmed'; id: WindowId | null }
-  /**
-   * A switcher selection was armed — or cleared — `decide`'s translation of
-   * `ArmSelectionFocus` (see `State.pendingSelectionFocus`). Writes that field
-   * and NOTHING else: not `key` (RULE 2 — arming is not a focus report), not
-   * `order` (RULE 1), no record field. `target: null` is a real payload, the
-   * clear.
-   *
-   * Drives no effect of its own, and no rule in `react` exists to make that
-   * so: `react` is a pure structural diff and nothing in it reads
-   * `pendingSelectionFocus`, so a transition changing only this field projects
-   * to nothing. The effect comes later, when `WindowClosed` spends the latch
-   * onto `lastFocusAssert`.
-   */
   | { type: 'SelectionFocusArmed'; armer: WindowId; target: WindowId | null };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
-// `expectedVersion`; `decide` rejects on mismatch with a typed `Rejection`.
-// ─────────────────────────────────────────────────────────────────────────────
+// Commands — rejectable requests; every variant carries `expectedVersion`, and `decide` rejects on a mismatch.
 
 export type Command =
-  /**
-   * `intent: 'user'` marks a raise a user gesture asked for (hotkey, CLI
-   * verb). It rides `decide`'s `FocusRaiseRequested` translation onto
-   * `State.lastRaiseRequest` and surfaces again on the `RaiseWindow` EFFECT,
-   * where the executor's app-inactive mask exempts it — see that field.
-   */
   | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
   | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
-  /** The keepLive branch point (§0.1): hide if keepLive, else close. Decided in `decide`, never `evolve`. */
+  // The keepLive branch point: hide if keepLive, else close. Decided in `decide`, never `evolve`.
   | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number }
-  /** Carries the intrinsic properties; `decide` produces a `WindowRegistered` event. */
+  // Carries the intrinsic properties; `decide` produces a `WindowRegistered` event.
   | {
       type: 'RegisterWindow';
       id: WindowId;
@@ -1262,425 +224,66 @@ export type Command =
       role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
-      /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
+      // See `WindowRecord.escapeMode` — one live value, absent is meaningful.
       escapeMode?: 'ignore';
-      /**
-       * The window's construction-time rect, computed at the dispatch site
-       * (this file keeps zero value imports) — seeds `WindowRecord.bounds`
-       * so a window maximized before its first native resize/move has
-       * something to restore to (see `WindowRecord.bounds`'s doc for why
-       * that mirror is otherwise empty until the first gesture). Optional
-       * for the same reason `AttachOverlay.frame` is: a caller with nothing
-       * to seed just registers without it.
-       */
       bounds?: Rectangle;
-      /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
+      // See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet.
       tracksBaseLayerTop?: boolean;
-      /** See `WindowRecord.selfClosesOnBlur`'s doc — declared here. */
+      // See `WindowRecord.selfClosesOnBlur` — declared here.
       selfClosesOnBlur?: boolean;
-      /** See `WindowRecord.nonActivating`'s doc — declared here. */
+      // See `WindowRecord.nonActivating` — declared here.
       nonActivating?: boolean;
-      /** See `WindowRecord.appLifetime`'s doc — declared here. */
+      // See `WindowRecord.appLifetime` — declared here.
       appLifetime?: boolean;
       expectedVersion: number;
     }
-  /**
-   * Fullscreen intent (§0.1.8) — orthogonal to `RaiseWindow`/`ShowWindow`:
-   * never writes `key`, never reorders `order`. The command only expresses
-   * intent; `OsFullscreenEntered`/`OsFullscreenLeft` are what actually settle
-   * the region.
-   */
   | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number }
-  /**
-   * App code wants this window at `bounds` (ported from `window-state.ts
-   * SET_BOUNDS_REQUESTED`) — the rect is computed at the dispatch site
-   * (this file keeps zero value imports). No-op while `fsMode` is non-normal:
-   * fullscreen owns the display (the aa34cb50 family).
-   */
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle; expectedVersion: number }
-  /**
-   * App code wants this window maximized (ported from `window-state.ts
-   * MAXIMIZE_REQUESTED`) — a work-area snap, not a platform `maximize()`
-   * call. `workArea` is the target rect: a `screen` work-area read is
-   * platform data this zero-value-import file cannot obtain itself, so it
-   * rides the command as data, computed at the dispatch site the same way
-   * `AttachOverlay.frame` is (see `WindowRecord.overlayFrame`'s doc for why
-   * — the `459ed219` shape). Optional for the same reason `AttachOverlay
-   * .frame` is: `decide` just skips the paired `BoundsChanged` when it is
-   * absent (a flag flip with nothing to snap to, rather than a rejection) —
-   * every production dispatch site (`ipc.ts page:maximize`, `tile-ipc.ts
-   * tile:window:maximize`) always supplies it. No-op while `fsMode` is
-   * non-normal (the aa34cb50 family) or while already maximized (nothing
-   * new to snap to).
-   */
   | { type: 'Maximize'; id: WindowId; workArea?: Rectangle; expectedVersion: number }
-  /**
-   * A window was CONSTRUCTED already maximized — reopen-last-closed and
-   * session restore build it at the saved maximized rect — and the record
-   * needs seeding to match (ported from `window-state.ts
-   * MAXIMIZE_RESTORED`). Distinct from `Maximize`, and the distinction is
-   * load-bearing rather than cosmetic: `Maximize` derives the stash from
-   * `rec.bounds`, but at construction time those bounds ALREADY ARE the
-   * maximized rect, so replaying `Maximize` here would stash the maximized
-   * rect as the thing to unmaximize back to. Hence the EXPLICIT
-   * `preMaxBounds`, carried from the saved session data by the caller — the
-   * same distinction `MAXIMIZE_RESTORED` drew from `MAXIMIZE_REQUESTED`.
-   *
-   * Seed only: no paired `BoundsChanged`, because the window is already at
-   * the rect a snap would write. `null` is a legitimate value — a window
-   * saved maximized with no restorable rect behind it. No-op while `fsMode`
-   * is non-normal (the aa34cb50 family, same guard as `Maximize`); NOT
-   * guarded on `rec.maximized`, since re-seeding an already-maximized record
-   * with an explicit stash is the point of the command rather than a
-   * redundant re-snap.
-   */
   | { type: 'SeedMaximized'; id: WindowId; preMaxBounds: Rectangle | null; expectedVersion: number }
-  /**
-   * App code wants this window restored from maximized (ported from
-   * `window-state.ts UNMAXIMIZE_REQUESTED`): clears `maximized`, restores
-   * `preMaxBounds` when a stash exists. No-op when not maximized.
-   */
   | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
-  /**
-   * App code wants this window to belong to a particular set of desktops
-   * (see `DesktopMembership`) — ported from `window-state.ts`'s pair of
-   * events over the same OS-level fact, `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
-   * (raw path) and `SPACES_POLICY_REQUESTED` (role-derived), collapsed into
-   * one command because the kernel only ever needs the resolved intention:
-   * WHICH of `'follow'`/`'anchor'` a given role wants, and WHETHER/HOW a
-   * given backend realizes either one, both stay outside the kernel — the
-   * former decided by the caller composing this command (the role-derivation
-   * the old `SPACES_POLICY_REQUESTED` did inline), the latter entirely the
-   * backend's business (`window-backend.ts setDesktopMembership`).
-   */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
-  /**
-   * App code wants this window's click-through state changed (see
-   * `WindowRecord.acceptsInput`) — the REQUEST counterpart to the report-only
-   * `WindowAcceptsInputChanged` event: this is the machine deciding to make
-   * the change happen, as opposed to a fact fed in from a site that already
-   * made it happen natively (the Space border's separate IPC round trip — see
-   * that event's doc for why that case has no command to go through).
-   * `decide`'s arm is unconditional, always emitting
-   * `WindowAcceptsInputChanged{acceptsInput: cmd.acceptsInput}` — the SAME
-   * event, reused rather than inventing a second acceptsInput-writing fact,
-   * the same reuse `SetBounds`/`Maximize`/`Unmaximize` make of `BoundsChanged`.
-   */
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean; expectedVersion: number }
-  /**
-   * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
-   * is detach. One transition, no separate detach command (see the doc on
-   * `WindowRecord.overlayFor`). `decide` rejects if either named window is
-   * absent from `order`.
-   *
-   * `frame` carries the newly expanded overlay frame for `hostId`, computed
-   * at the caller's dispatch site — see `WindowRecord.overlayFrame`'s doc for
-   * why the kernel takes this as data rather than computing it. Meaningless
-   * on a detach (`hostId: null`), and safely ignored there.
-   */
   | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; frame?: Rectangle; expectedVersion: number }
-  /**
-   * Restore a persisted bottom -> top stack order (ported from
-   * `window-state.ts STACK_ORDER_IMPORTED`) — the session-restore ordering
-   * pass. Carries no `id`, so `decide` answers it before the generic
-   * unknown-window guard, the same structural reason `RegisterWindow` and
-   * `AttachOverlay` are answered early.
-   *
-   * UNKNOWN IDS ARE NOT REJECTED, deliberately. `session.ts
-   * restoreSessionSnapshot` assembles this payload through `getWindowIdFor`
-   * over windows that may have died mid-restore, so an id naming nothing is
-   * expected traffic, not caller error; it is silently inert. Duplicates
-   * collapse to their first occurrence for the same reason.
-   *
-   * Never activates anything: the import writes `order` and `order` only, and
-   * `react`'s raise rule is based on `key`, which no permutation touches.
-   */
   | { type: 'ImportStackOrder'; order: readonly WindowId[]; expectedVersion: number }
-  /**
-   * TEARDOWN (§0.1.5) — the four commands below are the ONLY way a teardown
-   * enters the kernel, and they share one property that the rest of this union
-   * does not: **they are exempt from `decide`'s unknown-window rejection.**
-   *
-   * That exemption is required, not a convenience. `ipc.ts runHybridFinalize`
-   * dispatches a content-close naming a window that `finalizeWindowClose`
-   * retired microseconds earlier, in the same synchronous body — on every
-   * hybrid close; the opener-initiated path has the same shape, its
-   * `hostMachineId` being a captured constant that is never re-resolved. The
-   * old machine accepted this deliberately (`window-state.ts`, pinned by
-   * `window-state.test.ts` "even after the record retired"), and the port must
-   * too: rejecting would silently drop every hybrid content-WC teardown. The
-   * port resolves the native handle itself and no-ops when it is already gone,
-   * which is what makes accepting a dangling id safe.
-   *
-   * Forceful native destroy (extension bridge / UI teardown). NEVER for a
-   * window that owns page-host guests — it has no guest pass; `CloseWindowDirect`
-   * is the teardown that does (peek `d1cf0b9a`).
-   */
   | { type: 'DestroyWindow'; id: WindowId; expectedVersion: number }
-  /**
-   * Tear down the window's CONTENT surface (the hybrid finalize's
-   * `contentWC.close()`).
-   *
-   * A BOUNDED-TIMEOUT FALLBACK, not the ordinary quit path. Since
-   * `electron-window-backend.ts destroyAllContentGuests` awaits
-   * `guest-teardown.ts destroyGuestsAndWait` and `entry.ts runBeforeQuitCleanup`
-   * awaits that before the re-quit, no ordinary path reaches this with a live
-   * WebContents: both interactive closes no-op (the guest pass already
-   * destroyed the WC, and finalize is triggered BY that WC's `'destroyed'`
-   * event), and quit no-ops too — measured over six restored page hosts, zero
-   * real `wc.close()` calls. The one case that still delivers a live
-   * WebContents is a wedged guest outliving `QUIT_GUEST_TEARDOWN_BUDGET_MS`,
-   * where quit proceeds by design.
-   */
   | { type: 'CloseContent'; id: WindowId; expectedVersion: number }
-  /**
-   * The guest-safe direct close (the absorbed `windows.ts closeHostWindow`
-   * path): the port destroys and AWAITS the window's registered guests, then
-   * closes the host. No keepLive policy — the caller's intent is close.
-   *
-   * Distinct from `CloseOrHideWindow` in origin, not in realization: that one
-   * resolves keepLive and retires the record, and its `CloseWindow` effect is
-   * derived from the resulting membership diff. This one asserts nothing about
-   * membership; the record retires when the native close reports back.
-   */
   | { type: 'CloseWindowDirect'; id: WindowId; expectedVersion: number }
-  /**
-   * Quit teardown: destroy every registered page-host guest WebContents before
-   * native quit closes their hosts (peek `d1cf0b9a`).
-   *
-   * NAMES NO WINDOW, and must not be reshaped into one that does. The port's
-   * `destroyAllContentGuests` iterates the process-wide guest map; a caller-side
-   * fan-out over `order` would miss every guest whose host record has already
-   * retired — which at quit is the common case, not the corner one.
-   */
   | { type: 'DestroyAllGuests'; expectedVersion: number }
-  /**
-   * RE-ASSERT THE RAISE on a window that is already front — the port of the
-   * old machine's shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm (see
-   * `State.lastFocusAssert` for why the app needs it at all).
-   *
-   * NOT exempt from the unknown-window rejection, unlike the four teardown
-   * commands above. Their exemption exists for one measured race — `ipc.ts
-   * runHybridFinalize` naming a record retired microseconds earlier in the
-   * same synchronous body — and this command has no such producer: its caller
-   * picks the target by READING the current state (`topmost(state,
-   * isContentWindow)`), so a target absent from `order` means the caller asked
-   * about a window that does not exist, which is precisely what the guard is
-   * for.
-   *
-   * A target that is not `isContentWindow` is accepted and does nothing (no
-   * events) — the port of `applyRaiseRequest`'s `isEligibleFront(rec)` early
-   * return, and the reason it must not be a raise: driving an activating show
-   * onto a window the user is not working in steals key onto a background
-   * surface.
-   *
-   * TWO CONDITIONS THE CALLER OWNS, both of them guards the old
-   * `applyRaiseRequest` held itself:
-   *
-   *   - `state.appActive` — no focus theft while Peek is in the background.
-   *     The kernel HAS this fact, so the guard could live here; it does not,
-   *     because it belongs with the switcher condition below rather than being
-   *     split across two layers, and a caller that assembles the request
-   *     already knows whether the app is active.
-   *   - the switcher is not open — must not yank key out of the switcher
-   *     overlay. This one CANNOT live here: the switcher is homed outside the
-   *     kernel (§0: input interpretation and the surfaces built on it are not
-   *     the window manager's business), and inventing a kernel switcher
-   *     concept to hold one guard would put a second model of that surface in
-   *     the machine.
-   *
-   * So the composition at the call site is: app active, switcher closed, and a
-   * target of `topmost(state, isContentWindow)`.
-   */
   | { type: 'AssertFocus'; id: WindowId; expectedVersion: number }
-  /**
-   * Arm — or clear — the cold-start focus latch (see
-   * `State.pendingColdStartFocus`). `id: null` is the clear, and the restore
-   * pass issues both forms.
-   *
-   * Answered BEFORE the generic unknown-`cmd.id` guard, exactly as
-   * `ImportStackOrder` above is, and for the same structural reason: there is
-   * no window here to guard existence against. The stale-version guard is the
-   * only one it carries.
-   *
-   * That is not merely an unnecessary guard but a wrong one, on both payload
-   * shapes. `null` names nothing at all, so an existence check would reject
-   * every clear. And a non-null id is a NOTE to be read at some later
-   * activation rather than a window to act on now — whether it is still live is
-   * a question for the moment the latch is spent, not for this one, so arming
-   * before the named window is registered is legitimate traffic.
-   */
   | { type: 'ArmColdStartFocus'; id: WindowId | null; expectedVersion: number }
-  /**
-   * Arm — or clear — a switcher selection (see `State.pendingSelectionFocus`).
-   * `target: null` is the clear.
-   *
-   * Answered BEFORE the generic unknown-`cmd.id` guard, for the same
-   * structural reason `ArmColdStartFocus` is: this command carries no `id`
-   * field for that guard to read. It carries its own existence check instead,
-   * on the ARMER only — arming a rule about a switcher that is not registered
-   * would leave a latch nothing can ever spend, because only that window's
-   * `WindowClosed` spends it.
-   *
-   * The TARGET is deliberately unchecked. It is a note to be read when the
-   * switcher closes, and whether it is still live is a question for that
-   * moment, not this one — the same reasoning `ArmColdStartFocus` gives for
-   * its own id.
-   */
   | { type: 'ArmSelectionFocus'; armer: WindowId; target: WindowId | null; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window' | 'app-lifetime-window';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Effects — described by `decide`'s future effect-emitting counterpart (not
-// built in this slice), executed by an OS adapter. Focus-family effects
-// (`ShowWindow`, `RaiseWindow` — the two that can make the OS move focus, same
-// split as `window-state.ts`'s `OpToken`) carry `opSeq` for focus provenance;
-// `SetStacking` carries none (a reorder has no echo to disambiguate).
-// `HideWindow` carries `opSeq` too, but for a NARROWER reason than the
-// focus-family pair: it never moves focus, but its confirming `WindowHidden`
-// echo needs the same op token `ShowWindow`'s `WindowShown` echo carries, so
-// the executor can tell a hide's own stale echo apart from a show that has
-// since superseded it — see `isStaleWindowEcho`.
-// ─────────────────────────────────────────────────────────────────────────────
+// Effects — executed by an OS adapter; `ShowWindow`/`RaiseWindow`/`HideWindow` carry `opSeq` for echo provenance, `SetStacking` does not.
 
 export type Effect =
   | { type: 'SetStacking'; id: WindowId; layer: number }
   | { type: 'ShowWindow'; id: WindowId; opSeq: number }
   | { type: 'HideWindow'; id: WindowId; opSeq: number }
-  /**
-   * Drive the OS to close the window (dismiss the non-keepLive branch of
-   * `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no
-   * `opSeq`.
-   *
-   * Carries the retiring record's `maximized`/`preMaxBounds` (read off
-   * `prev`, the record as it stood the instant before this same transition's
-   * `evolve` removed it from `order`) because the native close this effect
-   * drives fires its OS-level close report SYNCHRONOUSLY and before the
-   * executor's dispatch returns — a consumer of that report (the hybrid
-   * page-host's close capture) that asked `state.order` for this id at that
-   * point would find nothing, RULE 1 having already retired the record one
-   * step earlier in the same synchronous chain. Same idiom `State.lastTeardown`
-   * already uses for naming a window gone from `order`: the fact travels on
-   * the effect instead of being re-derived from state that no longer holds it.
-   */
   | { type: 'CloseWindow'; id: WindowId; maximized: boolean; preMaxBounds: Rectangle | null }
-  /**
-   * Dismiss a transient sibling the transient-autoclose sweep named
-   * (`selectTransientAutoclose`, emitted by `react` off two structural diffs
-   * — `State.lastAttention`'s `seq` diff for a focus report, and the
-   * `pendingAppResignSweep`/`appActive` diff for an app-resign settle) —
-   * DISTINCT from `CloseWindow` above,
-   * and deliberately not reused as one. `CloseWindow` is realized as a hard
-   * `backend.closeWindow`, which has no keepLive branch and no
-   * exit-native-fullscreen preamble; the old machine's equivalent sweep
-   * (`window-state.ts pushCloseOrHide`) deliberately pushed an unconditional
-   * `CLOSE_WINDOW` that routed through `backend.closeOrHide` ->
-   * `windows.ts closeOrHideWindow`, so a dismissed `keepLive` slide is hidden
-   * rather than destroyed and a dismissed fullscreen victim exits fullscreen
-   * before it is hidden or closed — a raw close/hide would strand a black
-   * macOS Space. This effect is the port of that same unconditional call, and
-   * the keepLive/fullscreen resolution stays downstream of it, not here.
-   */
   | { type: 'DismissWindow'; id: WindowId }
-  /**
-   * `intent: 'user'` is present only when the raise was a `RaiseWindow`
-   * COMMAND carrying it (`State.lastRaiseRequest.intent`); every raise `react`
-   * derives on its own (successor, parent refocus, focus assert) omits it.
-   * The executor's app-inactive mask applies to the derived raises only.
-   */
   | { type: 'RaiseWindow'; id: WindowId; opSeq: number; intent?: 'user' }
-  /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
+  // Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`.
   | { type: 'SetFullscreen'; id: WindowId }
-  /** Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`. */
+  // Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`.
   | { type: 'ExitFullscreen'; id: WindowId }
-  /**
-   * Drive the port's one sanctioned native `isFullScreen()` read (§0.1.8: the
-   * machine no longer trusts its own `fsMode` for this window). Its answer
-   * comes back as an ordinary `OsFullscreenEntered`/`OsFullscreenLeft` event —
-   * command in, event out, same as every other OS truth — rather than being
-   * decided here.
-   */
   | { type: 'ReconcileFullscreen'; id: WindowId }
-  /** Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload. */
+  // Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload.
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
-  /**
-   * Realize the window's desktop membership (see `DesktopMembership`) —
-   * emitted by `react` as a structural diff of `desktopMembership`. How many
-   * native calls that takes on a given platform — including zero — is the
-   * backend's decision, never this kernel's.
-   */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership }
-  /**
-   * Realize the window's click-through state (see `WindowRecord.acceptsInput`)
-   * — emitted by `react` as a structural diff of `acceptsInput`, same pattern
-   * as `SetBounds`/`SetDesktopMembership` above. Fires regardless of whether
-   * the transition came from the `SetAcceptsInput` command or from a genuine
-   * externally-caused `WindowAcceptsInputChanged` report — same accepted echo
-   * the bounds family's `SetBounds` effect above already lives with.
-   */
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean }
-  /**
-   * TEARDOWN (§0.1.5) — the four below are emitted by `react` as a structural
-   * diff of `State.lastTeardown`, one per teardown transition, and each may
-   * name a window that is NOT in `order` (the commands' exemption; see them
-   * for why). The port resolves the handle and no-ops when it is gone.
-   *
-   * Forceful native destroy — no guest pass, no beforeunload.
-   */
   | { type: 'DestroyWindow'; id: WindowId }
-  /** Tear down the window's content surface — the wedged-guest fallback (see the `CloseContent` command). */
+  // Tear down the window's content surface — the wedged-guest fallback (see the `CloseContent` command).
   | { type: 'CloseContent'; id: WindowId }
-  /** Guest-safe direct close: destroy and await the window's guests, then close the host. */
+  // Guest-safe direct close: destroy and await the window's guests, then close the host.
   | { type: 'CloseWindowDirect'; id: WindowId }
-  /** Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window. */
+  // Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window.
   | { type: 'DestroyAllGuests' }
-  /**
-   * Put the app out of the way, handing the user back to whatever they were in
-   * before — issued when the last window that was keeping Peek on screen goes
-   * away (see `react`'s rule and `holdsAppOnScreen`). Names no window, like
-   * `DestroyAllGuests`, because it is about the app rather than any one
-   * window; the backend's `hideApp` performs it.
-   */
   | { type: 'HideApp' }
-  /**
-   * Make the window's CONTENT surface the OS first responder — the port of the
-   * old `FOCUS_CONTENT` effect, and the half of a raise that an already-front
-   * window still needs when something took first responder off it without
-   * changing anything else (devtools opening with `activate: false`).
-   *
-   * Carries no `opSeq`, unlike the focus-family pair above. It never moves the
-   * key window on its own, so there is no self-caused FOCUS report for a token
-   * to disambiguate; the assert that emits it emits a `RaiseWindow` in the same
-   * transition, and that one carries the token for both.
-   */
   | { type: 'FocusContent'; id: WindowId }
-  /**
-   * THE FIRST EFFECT THAT NAMES A RELATION, not a per-window operation — every
-   * other variant above says "do this to window `id`"; this one says "this
-   * overlay's host is now this window". Emitted by `react` as a diff of
-   * `topmostBaseLayerPageHost` across the transition (see that rule, placed
-   * first in `react`) — never a per-window state field on the overlay's own
-   * record.
-   *
-   * CARRIES NO FRAME. The frame needs a work-area read
-   * (`overlay-frame.ts expandToOverlayFrame` + the nearest display's work
-   * area), which this zero-value-import file cannot perform — the backend
-   * computes it and reports it back as an `OverlayAttached` event, the same
-   * one-hop-later shape every other OS-observed fact already takes here.
-   * `hostId: null` means detach.
-   *
-   * A REQUEST THE OUTSIDE MAY DECLINE, not an assertion the kernel enforces:
-   * `docs/design/window-manager.md` forbids a kernel invariant that makes
-   * attachment agree with stacking order, so this effect asks and the stored
-   * `overlayFor` relation is written only by the backend's report, one hop
-   * later, whatever it turns out to be.
-   */
   | { type: 'AttachOverlayTo'; overlayId: WindowId; hostId: WindowId | null };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// initialState
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function initialState(): State {
   return {
@@ -1712,51 +315,24 @@ export function initialState(): State {
   };
 }
 
-/** The next `TeardownRequest.seq` — one per teardown event, monotone, never reused. */
+// The next `TeardownRequest.seq` — one per teardown event, monotone, never reused.
 function nextTeardownSeq(state: State): number {
   return (state.lastTeardown?.seq ?? 0) + 1;
 }
 
-/**
- * The next `Attention.seq` — one per `OsFocusGained`, its only writer,
- * monotone, never reused. Derived from state rather than a module counter,
- * same as `nextTeardownSeq`/`nextFocusAssertSeq`: a module counter would make
- * `evolve` read something other than its two arguments and would break replay
- * determinism.
- */
 function nextAttentionSeq(state: State): number {
   return (state.lastAttention?.seq ?? 0) + 1;
 }
 
-/**
- * The next `FocusAssertRequest.seq` — one per focus-assert event, monotone,
- * never reused. Derived from state rather than from a module counter, same as
- * `nextTeardownSeq` above: a module counter would make `evolve` read something
- * other than its two arguments and would break replay determinism.
- */
 function nextFocusAssertSeq(state: State): number {
   return (state.lastFocusAssert?.seq ?? 0) + 1;
 }
 
-/**
- * The next `FocusRaiseRequest.seq` — one per `RaiseWindow` command, monotone,
- * never reused. Same derivation as `nextFocusAssertSeq` above and for the same
- * reason: a module counter would make `evolve` read something other than its
- * two arguments and would break replay determinism.
- */
 function nextRaiseRequestSeq(state: State): number {
   return (state.lastRaiseRequest?.seq ?? 0) + 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fullscreen transition table (§0.1.8) — pure `FsMode -> FsMode` helpers,
-// ported from `window-state.ts applyFullscreenRequest` /
-// `applyOsFullscreenEntered` / `applyOsFullscreenLeft`. Kept as free
-// functions (not inlined in `evolve`'s switch) because each is total over
-// `FsMode['name']` on its own, same reasoning as the old sub-reducer.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** `OsFullscreenEntered` settles `entering` -> `fullscreen` (or straight through to `leaving` on a coalesced cancel). */
+// `OsFullscreenEntered` settles `entering` -> `fullscreen` (or straight through to `leaving` on a coalesced cancel).
 function nextFsModeForOsEntered(mode: FsMode): FsMode {
   switch (mode.name) {
     case 'normal':
@@ -1776,7 +352,7 @@ function nextFsModeForOsEntered(mode: FsMode): FsMode {
   }
 }
 
-/** `OsFullscreenLeft` settles `leaving` -> `normal` (or straight through to `entering` on a coalesced re-enter). */
+// `OsFullscreenLeft` settles `leaving` -> `normal` (or straight through to `entering` on a coalesced re-enter).
 function nextFsModeForOsLeft(mode: FsMode): FsMode {
   switch (mode.name) {
     case 'fullscreen':
@@ -1794,61 +370,29 @@ function nextFsModeForOsLeft(mode: FsMode): FsMode {
   }
 }
 
-/**
- * Mark a still-in-flight mode `unverified` — the machine no longer trusts
- * this belief, see `FsMode`'s doc. A no-op (same reference back) on
- * `normal`/`fullscreen`, where the flag is unrepresentable, so a caller may
- * apply this unconditionally to every record without first testing `.name`.
- */
 function markFsModeUnverified(mode: FsMode): FsMode {
   if (mode.name !== 'entering' && mode.name !== 'leaving') return mode;
   return { ...mode, unverified: true };
 }
 
-/** Whether a mode is a still-in-flight transition the machine has flagged unverified. */
+// Whether a mode is a still-in-flight transition the machine has flagged unverified.
 function isFsModeUnverified(mode: FsMode): boolean {
   return (mode.name === 'entering' || mode.name === 'leaving') && mode.unverified === true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Geometry helpers (this slice) — pure, total, ported from `window-state.ts`
-// `flushPendingProjection` and its `bounds` field-equality reasoning.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Field-wise `Rectangle` equality — `bounds` diffs by value, never by reference. */
+// Field-wise `Rectangle` equality — `bounds` diffs by value, never by reference.
 function boundsEqual(a: Rectangle | undefined, b: Rectangle | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
-/**
- * Flush a held `DisplayChanged` projection into `bounds` once BOTH blocking
- * axes are clear — ported from `window-state.ts flushPendingProjection`.
- * Total and side-effect-free: called from every evolve case that can newly
- * clear an axis (`WindowShown`, and the two fsMode settle cases that can land
- * on `normal`); a record that is still blocked, or holds nothing, passes
- * through unchanged.
- */
 function withPendingProjectionFlushed(record: WindowRecord): WindowRecord {
   if (record.pendingProjectedBounds === null) return record;
   if (record.fsMode.name !== 'normal' || !record.visible) return record;
   return { ...record, bounds: record.pendingProjectedBounds, pendingProjectedBounds: null };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Overlay follow (§ WindowRecord.overlayFor/overlayFrame) — the decision half
-// of `window-state.ts applyOverlayFollow`, ported WITHOUT its effects: it
-// returns the record patch an evolve arm merges onto an attached overlay,
-// rather than pushing effects itself (effects are `react`'s job, from the
-// diff those patches leave behind). Shared by every evolve arm that can move
-// an attached overlay's visibility or frame (`OverlayAttached`,
-// `BoundsChanged`, `OsFullscreenEntered`, `OsFullscreenLeft`) so the rule —
-// a non-normal host always hides; a normal host takes the given frame and
-// reveals while the app is active — lives in exactly one place. Total and
-// reads only the values it is given, same as every other evolve helper.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** The record patch `overlayFollowPatch` can produce — see that function. */
+// The record patch `overlayFollowPatch` can produce — see that function.
 type OverlayFollowPatch = Partial<Pick<WindowRecord, 'overlayFrame' | 'visible' | 'hiddenByAppBlur'>>;
 
 function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActive: boolean, frame: Rectangle | undefined): OverlayFollowPatch {
@@ -1868,11 +412,6 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
   }
   return patch;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// evolve — TOTAL. No guards. Cannot throw. Reads nothing but its two
-// arguments. Every event bumps `version`.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function evolve(state: State, ev: Event): State {
   switch (ev.type) {
@@ -3194,29 +1733,7 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'FocusRaiseRequested': {
-      // The sibling of `FocusAssertRequested` above, and the same shape:
-      // record the request on the fact `react` diffs (`lastRaiseRequest`) and
-      // touch nothing about the window model beyond the one record's focus-op
-      // stamp. `key`, `order`, `lastAttention` untouched — RULE 2 leaves `key`
-      // to `OsFocusGained`/`OsFocusLost` alone, so a raise the machine has only
-      // ASKED for is not yet a fact about who is key.
-      //
-      // GATED ON `state.key !== ev.id` TOO, unlike `FocusAssertRequested`'s
-      // arm — the one real difference between the two. A `RaiseWindow` command
-      // on the window that already holds key is the silent no-op `AssertFocus`
-      // exists to override (`window-kernel.test.ts` "a plain RaiseWindow
-      // command on the same window drives NOTHING"); folding the two commands
-      // onto one field would erase that distinction. Mirrors the read
-      // `OsFocusGained`'s own `issuesRaise` makes of `state.key`, for the same
-      // reason: this is a request that stands in for a focus report before the
-      // OS has confirmed one.
-      //
-      // The stamp mirrors `react`'s own emission exactly (registered, not
-      // already key, `admitsFocusAssert`) for the same one-token-per-op reason
-      // `FocusAssertRequested` documents.
-      //
-      // Total and guard-free like every arm here: an id absent from `order`
-      // still records the request and simply matches no record to stamp.
+      // Stamps `lastOpSeq` without touching `key`, `order` or `lastAttention`; `key` moves only on the backend's confirming `OsFocusGained`.
       const targetRecord = state.order.find((w) => w.id === ev.id);
       const issuesRaiseRequest =
         state.key !== ev.id && targetRecord !== undefined && admitsFocusAssert(targetRecord, targetRecord.visible);
@@ -3280,15 +1797,7 @@ export function evolve(state: State, ev: Event): State {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// react — effects are a PURE PROJECTION of the transition (§0.1.1), not a
-// side-channel: reads nothing but `prev`/`ev`/`next`, no guards, cannot throw.
-// Effects are derived from the DIFFERENCE between `prev` and `next` — never
-// from `ev`'s payload where the two could disagree. Focus-family effects
-// (`ShowWindow`, `RaiseWindow`) carry `opSeq` taken from `next.opSeqCounter`,
-// never a counter of react's own.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// react(prev, ev, next) is a pure diff of `prev` against `next` and never branches on `ev.type`.
 export function react(prev: State, ev: Event, next: State): Effect[] {
   const effects: Effect[] = [];
 
@@ -3898,44 +2407,6 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   return effects;
 }
 
-/**
- * The ids `CloseOrHideWindow` must ALSO close when it closes `rootId` — every
- * window `rootId` opened, transitively, walked over the kernel's OWN
- * `parentId` edges rather than any address/string graph a caller might keep
- * (ported intent of the old `windows.ts closeChildWindows`, which walked a
- * legacy registry's `params.parentAddress` string instead — a different
- * graph, and one that could close windows this graph has no edge for; see
- * the migration note on `closeChildWindows`'s own call site).
- *
- * DEEPEST FIRST (post-order): a child's own descendants come before the
- * child itself, and `rootId`'s descendants all come before `rootId`'s own
- * event — `decide`'s caller appends that separately — mirroring the old
- * function's recurse-then-close shape, so a leaf's teardown always precedes
- * the ancestor that owned it.
- *
- * SKIPS an `appLifetime` record AND its whole subtree, never descending into
- * one — same boundary `closeChildWindows` drew for `WEB_CORE_ADDRESS`
- * (return immediately rather than recurse). A window whose lifetime is the
- * app's own is never swept as someone else's descendant.
- *
- * DISPOSITION IS NOT DECIDED HERE — this returns ids only, deepest first.
- * The `keepLive` hide-vs-close choice `decide`'s `CloseOrHideWindow` case
- * makes for `rootId` applies identically to every id returned here: the
- * caller runs each one through that same per-record rule rather than this
- * walk restating it, so a `keepLive` descendant is hidden, exactly as a
- * direct `CloseOrHideWindow` on that same window would hide it, and a
- * non-keepLive descendant closes. (`closeChildWindows`, the function this
- * cascade replaced, force-closed every child through an unconditional
- * `closeHostWindow` call that never consulted a child's own keepLive — a gap
- * this cascade no longer carries forward.)
- *
- * CYCLE-SAFE, by its own guard rather than by a caller's convention. Nothing
- * constrains `parentId` to point backwards in registration order, so these
- * edges are a general graph and not a forest; a cycle would otherwise recurse
- * until the stack overflows inside `decide`. `visited` caps the walk at one
- * visit per id, so a cycle yields each member once and terminates. On acyclic
- * input the result is byte-identical to the unguarded walk.
- */
 function descendantsToCascadeClose(
   state: State,
   rootId: WindowId,
@@ -3951,11 +2422,6 @@ function descendantsToCascadeClose(
   }
   return ids;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// decide — ALL guards live here. Rejects on a stale `expectedVersion` or a
-// command naming a window that isn't in `order`.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function decide(state: State, cmd: Command): { events: Event[] } | { rejected: Rejection } {
   if (cmd.expectedVersion !== state.version) {
@@ -4251,21 +2717,8 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Queries that replace `front` (§0.1.5)
-// ─────────────────────────────────────────────────────────────────────────────
+// Queries that replace `front`
 
-/**
- * Scans `order` from the top (the END of the array) and returns the first match, else null.
- *
- * TRUSTWORTHY ONLY WHEN `pred` ADMITS RECORDS FROM ONE `layer`. `order` is
- * insertion- and movement-ordered, never layer-sorted (§0.1.6), so array
- * position and visual stacking agree only within a single layer band. A
- * predicate whose admitted set spans bands can have this function return a
- * window that is not visually topmost, with no error path to catch it — the
- * winner is simply wrong. A predicate that spans bands must add a `layer`
- * clause narrowing it to one band, or be replaced with a band-aware query.
- */
 export function topmost(state: State, pred: (r: WindowRecord) => boolean): WindowRecord | null {
   for (let i = state.order.length - 1; i >= 0; i--) {
     if (pred(state.order[i])) {
@@ -4275,11 +2728,6 @@ export function topmost(state: State, pred: (r: WindowRecord) => boolean): Windo
   return null;
 }
 
-/**
- * Resolves `state.key` against `order`. Returns `null` on a miss, so a
- * dangling key id (its window has since closed) reads as "nobody holds key"
- * — the honest answer — rather than an illegal state (§0.1.4).
- */
 export function keyWindow(state: State): WindowRecord | null {
   if (state.key === null) {
     return null;
@@ -4287,85 +2735,27 @@ export function keyWindow(state: State): WindowRecord | null {
   return state.order.find((w) => w.id === state.key) ?? null;
 }
 
-/**
- * The registered record for `id`, or null when `id` names no member of
- * `order` — a plain-lookup sibling to `keyWindow`/`topmost`, so callers that
- * only need to resolve a known id do not each write their own `order.find`.
- */
 export function windowById(state: State, id: WindowId): WindowRecord | null {
   return state.order.find((w) => w.id === id) ?? null;
 }
 
-/**
- * True when `cause` is a `machine` echo whose `opSeq` is OLDER than the
- * newest op issued for `id` (`WindowRecord.lastOpSeq`) — a stale self-echo
- * that a later decision (the transient sweep, not built here) should
- * disregard rather than treat as fresh provenance. `world` is never stale
- * (there is no op to be stale against), and a window with no `lastOpSeq` yet
- * has nothing to compare against either.
- */
 export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): boolean {
   if (cause.kind !== 'machine') return false;
   const record = state.order.find((w) => w.id === id);
   return record?.lastOpSeq !== undefined && cause.opSeq < record.lastOpSeq;
 }
 
-/**
- * True when `cause` is the `machine` echo of the NEWEST op issued for
- * `record` — its `opSeq` equals `WindowRecord.lastOpSeq`. That report is the
- * confirmation of a raise (or activating show) this machine already drove,
- * and is written as `key` (RULE 2) without driving anything further: a
- * confirmation re-issued as a raise is the self-amplification that turned
- * one successor raise on a keepLive hide into two, 1ms apart.
- *
- * A `RaiseWindow` COMMAND never reads as its own confirmation, because it
- * never carries a `cause` at all — it becomes a `FocusRaiseRequested` event
- * (see `State.lastRaiseRequest`), not an `OsFocusGained` one, so there is no
- * `cause` here for `isOpConfirmation` to compare. Only the backend's own
- * later echo does, stamped with the `opSeq` that request's `evolve` arm
- * minted. `world` confirms nothing, and a record with no op yet has nothing
- * to be confirmed.
- */
+// isOpConfirmation compares `cause.opSeq === record.lastOpSeq`; `isStaleSelfEcho` compares `<`; the two are a pair.
 export function isOpConfirmation(record: WindowRecord | undefined, cause: FocusCause | undefined): boolean {
   return cause?.kind === 'machine' && record?.lastOpSeq !== undefined && cause.opSeq === record.lastOpSeq;
 }
 
-/**
- * True when a `WindowShown`/`WindowHidden` event's `opSeq` is OLDER than the
- * newest op issued for `id` (`WindowRecord.lastOpSeq`) — the same comparison
- * `isStaleSelfEcho` makes for a focus report, generalized to a bare token
- * instead of a `FocusCause` (a visibility echo carries no "who" to ask, only
- * "which op"). An event with no `opSeq` (a bare `ShowWindow`/`HideWindow`
- * COMMAND's event, or any producer not yet taught to report one) is never
- * stale — absent is not a token to compare, same reading `OsFocusGained`'s
- * missing `cause` gets.
- *
- * WHY THIS MATTERS: an `AttachOverlayTo` that re-targets the shared chrome
- * overlay onto a surviving page host and a `HideWindow` that detaches it from
- * a closing one can both be emitted for the SAME transition (`react`'s
- * attach-diff and visibility-diff are independent passes over the same
- * `prev`/`next`). Each performs a real native call and queues its own
- * confirming echo; the attach's `OverlayAttached` is applied before the
- * hide's queued `WindowHidden` (`react` pushes `AttachOverlayTo` ahead of
- * `HideWindow`, and effects run in that order), so by the time the hide's
- * echo is applied the overlay may already be visible again. Without this
- * check that stale echo reads as a genuine fresh hide, `react` re-emits
- * `HideWindow`, its own echo lands after the attach's `ShowWindow` re-fires
- * to correct it, and the two alternate forever — `pump`'s queue has no depth
- * limit and never runs out of events to drain. See
- * `hybrid-close-two-hosts-hang.spec.ts`.
- */
 export function isStaleWindowEcho(state: State, id: WindowId, opSeq: number | undefined): boolean {
   if (opSeq === undefined) return false;
   const record = state.order.find((w) => w.id === id);
   return record?.lastOpSeq !== undefined && opSeq < record.lastOpSeq;
 }
 
-/**
- * The overlay attached to `hostId`, or null — the reverse scan named on
- * `WindowRecord.overlayFor`'s doc comment. A scan rather than an index: the
- * app has one shared chrome overlay and the record set is small.
- */
 export function overlayForHost(state: State, hostId: WindowId): WindowRecord | null {
   for (const w of state.order) {
     if (w.overlayFor === hostId) return w;
@@ -4373,165 +2763,16 @@ export function overlayForHost(state: State, hostId: WindowId): WindowRecord | n
   return null;
 }
 
-/**
- * The host an overlay is currently attached to, or null when it is detached
- * (or is not a registered window at all). Reads the OVERLAY record's own
- * `overlayFor` field — the direction the relation is stored in.
- *
- * The OPPOSITE query from `overlayForHost` above, and not interchangeable
- * with it. This one answers "what am I currently framing?", which is what
- * every read-back caller in `hybrid-overlay.ts` asks: `ensureOverlay()`'s
- * `did-finish-load` handoff, `wireShowNavbarFocus()`'s windowId gate,
- * `wireExecuteScript()`, `initHybridOverlay()`'s load-error callback, and the
- * test bridge. `overlayForHost` takes the host id those callers are trying to
- * FIND, so it cannot serve them.
- *
- * Deliberately NOT an ordering query either. "The topmost page-host" is
- * non-null in states where the overlay frames nothing — the base window was
- * destroyed, or the overlay id is not minted yet — and answering a read-back
- * with it paints chrome over a window that has none attached.
- */
 export function hostForOverlay(state: State, overlayId: WindowId): WindowRecord | null {
   const overlay = state.order.find((w) => w.id === overlayId);
   if (overlay === undefined || overlay.overlayFor === undefined) return null;
   return state.order.find((w) => w.id === overlay.overlayFor) ?? null;
 }
 
-/**
- * The roles of a real, document-like window — the ones a user thinks of as
- * "what I am working in". Everything else is a panel, chrome, or
- * infrastructure. See `isContentWindow` for why the membership is what it is.
- */
 export const CONTENT_ROLES: ReadonlySet<string> = new Set(['content', 'child-content', 'workspace']);
 
-/**
- * The roles that hold key without being what the user thinks of as their
- * document — chrome, a launcher, a mode switcher. Ported from `ipc.ts`'s
- * registration predicate (`satellite: role === 'overlay' || role === 'palette'
- * || role === 'switcher'`), which is where the old reducer's per-window
- * `satellite` flag was actually decided. See `isFrontEligibleWindow` for the
- * query this set backs, and its doc for why the membership stops one role
- * short of `TRANSIENT_ROLES` below (`quick-view` is transient but NOT
- * satellite).
- */
 export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette', 'switcher']);
 
-/**
- * THE content predicate — `topmost(state, isContentWindow)` is AppKit's *main
- * window* (§0.1.5 "Key vs. main"): the standard window where the user is
- * currently working, and so the semantic target of menus and commands. It is
- * the replacement for the old `window-state.ts isEligibleFront` (`visible &&
- * !satellite && live`), and it is the correct mapping for every production
- * reader of the retired `front` field — `keyWindow(state)` is the mapping for
- * NONE of them. Old `front` was satellite-excluding and sticky across app
- * switches; kernel `key` is neither (`OsFocusLost` nulls it, and the shared
- * chrome overlay can hold it), so a naive `key` mapping silently changes
- * behaviour with no error path.
- *
- * `WindowRecord` carries no `satellite` field — that flag was an invention
- * (§0), so the exclusion is reconstructed from the genuine OS-level and
- * declared facts:
- *
- *   - `visible`        the surviving half of `isEligibleFront`. Nothing off
- *                      screen is what the user is working in.
- *   - `!pendingHidden` the machine's own belief that this window is going
- *                      away, ahead of the OS's confirming echo (see that
- *                      field's doc). This predicate drives the successor
- *                      raise, the parent-refocus handoff, and the
- *                      focus-assert gate (`admitsFocusAssert`) — every one of
- *                      those is an activating show, so admitting a doomed
- *                      window here would raise a window the machine has
- *                      already committed to tearing down.
- *   - `canBecomeKey`   the `focusable: false` half. The OS genuinely will
- *                      never give such a window key, so it can never be what
- *                      the user is working in. This clause alone excludes the
- *                      HUD (`renderer/hud/background.js`, `alwaysOnTop:true,
- *                      focusable:false`) — which is load-bearing, because the
- *                      HUD's INFERRED role is `'workspace'`, an admitted one.
- *                      It also excludes the space-border indicator
- *                      (`features/spaces/background.js`) and the privileged
- *                      test fixture (`test-fixture-glue.ts`).
- *   - a role in
- *     `CONTENT_ROLES`  an allow-list, not a deny-list: an unknown role, or no
- *                      role at all, is NOT content. A deny-list would admit
- *                      every future surface by default, which is the failure
- *                      mode `satellite` had.
- *
- * WHAT THE ROLE ALLOW-LIST EXCLUDES, and why:
- *
- *   - `'palette'` / `'quick-view'` — panel-like transients. AppKit's rule
- *     exactly: when key shifts from a standard window to a PANEL, main stays
- *     with the standard window. The command palette holds key while the page
- *     host is still what a command must act on.
- *
- *     `'quick-view'` (peeks and slides) is the deliberate change here. The
- *     old model kept quick-views front-eligible on purpose — there is an
- *     explicit `isSatelliteRegistration` test saying so — but only because
- *     `front` had to double as the ESCAPE target as well as the command
- *     target. That coupling is exactly what the key/main split dissolves:
- *     Escape now targets `key` (the window actually taking keystrokes), so
- *     nothing is lost by treating a peek as the panel it is. A focused slide
- *     still receives its own Escape, because it holds key.
- *
- *   - `'overlay'` — the shared chrome overlay and the space-border indicator.
- *     Chrome attached to a window, never the window itself. It is
- *     deliberately focusable (typing a URL in the navbar takes key), so the
- *     role clause, not `canBecomeKey`, is what excludes it.
- *
- *   - `'utility'` — chain popups, AND every infrastructure window: each of
- *     `background` (`core-glue.ts`), `bridge` (`chrome-extensions.ts`),
- *     `offscreen` (`chrome-api-polyfills/offscreen.js`), `test-fixture` and
- *     `devtools` (`main.ts`) registers with `role: 'utility'`. That is why
- *     this predicate needs no `class` test to exclude them — which also keeps
- *     it inside §0.1.4's rule that `class` may be read for an identity, never
- *     for a decision.
- *
- * WHAT IT ADMITS: `'content'` and `'child-content'` (ordinary page hosts, and
- * chrome-extension popup/options pages, which register `role: 'content'` and
- * were front-eligible before), and `'workspace'` (the settings window, and
- * any non-web-page surface `inferIzuiRole` defaults to that role).
- *
- * NO `layer` CLAUSE, deliberately. Every window that floats above the base
- * layer in production is already excluded by one of the three clauses above —
- * the HUD and space border by `canBecomeKey`, the cmd panel and peeks/slides
- * by role — so a `layer <= BASE_LAYER` clause would discriminate nothing
- * today, and tomorrow it would silently demote a content window someone pins
- * on top. `isAppResignSweepEligible` DOES test `layer` because there the
- * clause has live windows on both sides of it; here it does not.
- *
- * INTERACTION WITH `hiddenByAppBlur` AND THE `AppActivated` RE-SHOW — checked,
- * and it is a non-interaction BY CONSTRUCTION, not by coincidence.
- * `isAppResignSweepEligible` carries an explicit `!isContentWindow(record)`
- * clause naming this predicate directly, so no content window is ever hidden
- * by an app switch and no `visible` answer here flickers as the app resigns
- * and re-activates, whatever `layer` or `canBecomeKey` a future content
- * window registers with. (Earlier this rested on `isAppResignSweepEligible`
- * requiring `!canBecomeKey` while this predicate requires `canBecomeKey` —
- * true of every production window at the time, but not a constructional
- * guarantee, and the property suite's generator did produce a counterexample
- * once `isAppResignSweepEligible` stopped testing `canBecomeKey` at all; the
- * explicit clause closes that gap for good.) A property invariant asserts the
- * disjointness rather than leaving it to this comment. The resign sweep's
- * `selectTransientAutoclose(state, null)` call is also disjoint: it
- * takes only transient roles, none of which are in `CONTENT_ROLES`.
- *
- * ONE PREDICATE, NOT THE ONLY ONE. Two upcoming callers want a NARROWER set
- * and must not be served by widening this one: `tile-ipc.ts`
- * `tileResolveWebWindow` and `tile:window:devtools` want http/https content
- * only. That needs a URL fact this kernel does not carry yet (the old
- * `WindowRecord.lastHttpUrl`); until it does, those callers post-filter.
- *
- * A WIDER sibling exists too, and is the one to reach for instead of loosening
- * this predicate: `isFrontEligibleWindow`, below, admits `quick-view` (a peek
- * or a slide) where this predicate excludes it. The Cmd+W target
- * (`windows.ts resolveFocusedWindowIdForClose`) is a COMPOSITION over THAT
- * predicate, not over this one and not a fourth predicate of its own: the key
- * window when it is itself front-eligible, else `topmost(state,
- * isFrontEligibleWindow)`. A composition over `isContentWindow` here would
- * exclude a focused peek from being its own close target and fall through to
- * whatever page host sits behind it — see `isFrontEligibleWindow`'s doc for
- * why the two predicates diverge on that one role.
- */
 export function isContentWindow(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (record.pendingHidden) return false;
@@ -4539,20 +2780,6 @@ export function isContentWindow(record: WindowRecord): boolean {
   return roleIn(CONTENT_ROLES, record.role);
 }
 
-/**
- * The window CLASSES that never keep the app on screen. Ported verbatim from
- * `windows.ts APP_HIDE_EXCLUDED_CLASSES`, which carried this note about where
- * each entry came from:
- *   - 'background'                     was: the web-core address
- *   - 'quick-view'/'palette'/'overlay' was: the transient roles
- *   - 'hud'                            was: role 'utility' + not focusable
- *
- * A CLASS SET, not the record's `satellite` flag, and the reason is in the two
- * disagreements: a quick-view is `satellite: false` yet does not hold the app
- * open, while a detached devtools window (`satellite: true`) and the
- * extension-UI popups are real surfaces the user is looking at, and always
- * did keep it open.
- */
 const APP_HOLD_EXCLUDED_CLASSES: ReadonlySet<string> = new Set([
   'background',
   'quick-view',
@@ -4561,17 +2788,6 @@ const APP_HOLD_EXCLUDED_CLASSES: ReadonlySet<string> = new Set([
   'hud',
 ]);
 
-/**
- * THIS WINDOW IS A REASON FOR PEEK TO STAY ON SCREEN — a surface the user is
- * actually looking at, as opposed to chrome, a peek, or the invisible
- * background window.
- *
- * The one input to `react`'s app-hide rule, and it replaces `windows.ts
- * getVisibleWindowCount`, whose `excludeId` parameter has no counterpart here:
- * that argument existed because the closing window's native hide had not yet
- * echoed into the machine when the old caller counted, and asking `next.order`
- * inside the transition that removed or hid it does not have that problem.
- */
 export function holdsAppOnScreen(record: WindowRecord): boolean {
   // `visible` ALONE, deliberately — no `pendingHidden` clause, unlike
   // `isContentWindow` above. A window on its way out is still on the screen,
@@ -4583,96 +2799,12 @@ export function holdsAppOnScreen(record: WindowRecord): boolean {
   return !APP_HOLD_EXCLUDED_CLASSES.has(record.class);
 }
 
-/**
- * The old `window-state.ts isEligibleFront` rule (`visible && !satellite &&
- * live`) preserved as a rule of its own, not folded into `isContentWindow`
- * above and not a replacement for it. Names the set `isEligibleFront` named:
- * a window visible, able to take keystrokes, and not one of the
- * `SATELLITE_ROLES` — the set the user is directly working in, in the sense
- * of "the window a close/reload/print command should act on if nothing more
- * specific is focused", rather than in the sense of "the standard document
- * window" `isContentWindow` answers for the kernel's own ordering and focus
- * rules (the successor raise, the focus-assert gate, transient dismissal).
- * `order` membership already stands in for the old rule's `live` clause — a
- * closed window is never in `order` at all (RULE 1).
- *
- * DELIBERATELY ADMITS `quick-view` WHERE `isContentWindow` EXCLUDES IT. A peek
- * or a slide is not a document the kernel should treat as AppKit's main window
- * — `isContentWindow`'s own doc explains why key shifting to a panel must not
- * move main — but it IS a window the user opened and is directly acting on:
- * typing into it, scrolling it, closing it. `role: 'quick-view'` is in neither
- * `CONTENT_ROLES` nor `SATELLITE_ROLES`, so it was silently swept into
- * `isContentWindow`'s exclusion when the Cmd+W target was ported to compose
- * over that predicate — a peek is a panel for the kernel's OWN purposes, but
- * it was never a satellite for the old machine's, and Cmd+W inherited the
- * wrong one of the two exclusions. `isContentWindow`'s docblock justifies
- * excluding `quick-view` with "Escape now targets key, so nothing is lost by
- * treating a peek as the panel it is" — that reasoning is specifically about
- * ESCAPE (which already reads `key`, unaffected by either predicate) and does
- * not carry to a close command, which has no target at all once both `key`
- * and `topmost` skip past the focused peek to the page host behind it.
- */
 export function isFrontEligibleWindow(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (!record.canBecomeKey) return false;
   return !roleIn(SATELLITE_ROLES, record.role);
 }
 
-/**
- * A window record that counts as a base-layer page-host, with two clauses,
- * neither of which is optional:
- *
- *   - a role in `CONTENT_ROLES`,
- *     or `'quick-view'`             `kind: 'page-host'` alone is not enough to
- *                                   mean "a base-layer page" — `ipc.ts
- *                                   assembleHybridPageHost` registers EVERY
- *                                   hybrid page host with `kind: 'page-host'`,
- *                                   including peeks and slides, which
- *                                   register `role: 'quick-view'`.
- *
- *                                   `'quick-view'` is ADMITTED, not excluded.
- *                                   Peeks and slides are explicitly built to
- *                                   use the shared overlay's address bar —
- *                                   `features/peeks/background.js` and
- *                                   `features/slides/background.js` both open
- *                                   with `pageHost: true` under the comment
- *                                   "page-host shell with address bar (task
- *                                   ff3b18ba)", and neither ships a navbar of
- *                                   its own. Excluding the role left a
- *                                   frontmost peek framed by nothing: with
- *                                   another page underneath, the chrome
- *                                   painted around that page instead — the
- *                                   window the user is NOT working in — and
- *                                   with the peek alone on screen, there was
- *                                   no address bar at all. A frontmost peek IS
- *                                   the window the user is working in, so this
- *                                   predicate has to name it, not whatever
- *                                   ordinary page happens to sit behind it.
- *   - `layer === BASE_LAYER`       a page-host is not confined to the base
- *                                   layer — one can sit in a floating band
- *                                   behind the cmd panel, a peek, or a slide,
- *                                   alongside base-layer page-hosts. `order`
- *                                   is insertion- and movement-ordered, never
- *                                   layer-sorted, so without this clause array
- *                                   position and visual stacking diverge with
- *                                   no error path — the topmost `order` entry
- *                                   need not be the topmost on screen. Real
- *                                   peeks/slides land at `BASE_LAYER` too
- *                                   (`izui-roles.ts deriveWindowLayer`: they
- *                                   declare no `alwaysOnTop`), so this clause
- *                                   never excludes them on its own.
- *
- * `visible` and `orderable` are carried over from the same reasoning
- * `isContentWindow` and the `SetStacking` emission (`react`) already apply: a
- * hidden window is not on screen to frame, and a page-host the OS cannot yet
- * z-order (before its first composited frame) cannot be the overlay's target.
- *
- * `!pendingHidden` for the same reason `isContentWindow` carries it: the
- * machine's own belief that this window is going away, ahead of the OS's
- * confirming echo (see that field's doc). Attaching the shared chrome
- * overlay singleton to a doomed host is the original overlay-attach defect
- * family this predicate exists to close.
- */
 export function isBaseLayerPageHost(r: WindowRecord): boolean {
   return (
     r.kind === 'page-host' &&
@@ -4684,249 +2816,40 @@ export function isBaseLayerPageHost(r: WindowRecord): boolean {
   );
 }
 
-/**
- * `isFrontEligibleWindow`, clamped to `BASE_LAYER` and additionally excluding
- * a doomed window — the admitted set `topmostBaseLayerPageHost` below scans
- * `order` over. See that function's doc for why the clamp is needed at all,
- * `topmost`'s own doc for the one-layer contract the clamp holds, and the
- * "doomed vs. not-yet-ready" contrast on `topmostBaseLayerPageHost` for why
- * `!pendingHidden` belongs HERE — deliberately NOT on `isFrontEligibleWindow`
- * itself, whose other caller (the Cmd+W close target) must keep naming a
- * window the user is in the middle of closing.
- */
 function isBaseLayerFrontEligible(r: WindowRecord): boolean {
   return isFrontEligibleWindow(r) && !r.pendingHidden && r.layer === BASE_LAYER;
 }
 
-/**
- * THE OVERLAY ATTACH TARGET — a *main-window* question (§0.1.5, "Key vs.
- * main"), not a key-window one: which window the user could be working in,
- * answered as "the topmost such window, attached to only if it is a
- * base-layer page host, and `null` otherwise". `null` is a real answer, and
- * the whole point of this shape — it is what tells the caller to DETACH the
- * shared chrome overlay, rather than leave it painted around a page the user
- * has moved on from.
- *
- * TWO STEPS, NOT ONE `topmost(state, isBaseLayerPageHost)` CALL, and the
- * split is load-bearing:
- *
- *   1. `topmost(state, isBaseLayerFrontEligible)` finds the topmost window
- *      the user could plausibly be working in, clamped to `BASE_LAYER`
- *      before the predicate is even applied.
- *   2. Only THEN is that window tested against `isBaseLayerPageHost`.
- *
- * WHY BAND-CLAMPED RATHER THAN SCANNING EVERY LAYER AND TESTING THE WINNER.
- * `order` is insertion- and movement-ordered, never layer-sorted (§0.1.6) —
- * see `topmost`'s own doc for the general rule this predicate exists to
- * satisfy: a `topmost` predicate whose admitted set spans layer bands can
- * return a window that is not visually topmost, with no error path. A single
- * `topmost(state, isBaseLayerPageHost)` call happens to hold that contract
- * (`isBaseLayerPageHost` already clamps to `BASE_LAYER`), but the OLD
- * one-line shape this replaces asked only that question — it could never
- * answer `null` while any base-layer page host was visible anywhere in
- * `order`, so focusing an ordinary base-layer browser window while a page
- * host was still visible left the query naming the page host regardless.
- * The fix is not to widen the predicate's admitted set — that would
- * reintroduce the cross-band defect above — but to test topmost-overall
- * (within the band) against the narrower fact.
- *
- * WHY NOT CONDITIONED ON `key`. The shared chrome overlay legitimately holds
- * key on Cmd+L (typing a URL takes key), so a query gated on "is the
- * topmost-and-key window a page host" would drop the attachment — and
- * therefore the chrome — every time Cmd+L moved key onto the overlay itself,
- * making the chrome flicker and re-attach on every keystroke. Excluding
- * satellites (which `isFrontEligibleWindow` already does, via
- * `SATELLITE_ROLES`) answers the same "is the user working in an ordinary
- * window or a panel" question without that flicker, because the overlay
- * holding key never changes which window is topmost among front-eligible
- * ones.
- *
- * WHY `isFrontEligibleWindow` AND NOT `isContentWindow`. `isContentWindow`
- * excludes `role: 'quick-view'` (peeks and slides) — see that predicate's own
- * doc for why panels don't become AppKit's main window. But a frontmost peek
- * or slide is exactly the window the user is working in, and it opens with
- * `pageHost: true` specifically to use the shared address bar and ships no
- * navbar of its own. Composing over `isContentWindow` here would skip a
- * frontmost peek/slide entirely and let the chrome frame whatever ordinary
- * page happens to sit behind it — the window the user is NOT working in.
- *
- * DOOMED VS. NOT-YET-READY — the topmost candidate can fail to be the attach
- * target for two structurally different reasons, and this query treats them
- * differently on purpose:
- *
- *   - DOOMED (`pendingHidden`): the machine has already decided this window
- *     is going away (a teardown request already accepted — see that field's
- *     doc). It is not a window the user could be working in, so
- *     `isBaseLayerFrontEligible` excludes it outright and the scan continues
- *     to the live window underneath — the same `!pendingHidden` reasoning
- *     `isContentWindow` already carries. Answering `null` instead, and
- *     waiting for the close to finish, would still be correct eventually, but
- *     it is the wrong shape for an everyday gesture: closing the frontmost of
- *     two page hosts (Cmd+W) would detach the overlay on the doomed host and
- *     then immediately re-attach it to the one underneath once `WindowClosed`
- *     retires the doomed record — two stacking replays (§0.1.6) for one
- *     gesture, an `A -> null -> A` shape that is a known self-sustaining input
- *     to a show/hide feedback loop this predicate is actively trying to damp.
- *     Skipping straight to the live successor keeps it to the one retarget
- *     the gesture actually needs.
- *   - NOT YET READY (`!orderable`): nothing has decided this window is going
- *     away — the user genuinely IS working in it, it just cannot be z-ordered
- *     until its content reports a first composited frame. `isBaseLayerPageHost`
- *     carries `orderable`, but `isBaseLayerFrontEligible` deliberately does
- *     NOT — so this case is NOT skipped in the first step. The topmost
- *     front-eligible window IS this one, it fails `isBaseLayerPageHost`, and
- *     the query answers `null` rather than falling through to an older,
- *     already-orderable page host underneath it. Falling through here would
- *     frame the chrome around the wrong window — one the user has already
- *     moved past. `null` self-heals, because the same `WindowContentOrderable`
- *     transition that flips the host orderable changes this query's answer
- *     without any other input moving.
- */
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
   const front = topmost(state, isBaseLayerFrontEligible);
   return front !== null && isBaseLayerPageHost(front) ? front : null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Transient autoclose — the role set and the selector, ported from
-// `window-state.ts` (`TRANSIENT_ROLES`, `selectTransientAutoclose`). The
-// exemption itself is NOT ported: it is a relation over `overlayFor` and
-// `parentId`, not a role set — see §0 of `docs/design/window-manager.md`,
-// "Ownership, not role."
-//
-// It is a QUERY, not a transition: it answers "which windows should be
-// dismissed", and the caller turns each id into a `CloseOrHideWindow` command
-// — which is where the keepLive branch already lives (§0.1, `decide`). That
-// keeps `evolve` guard-free and keeps effects a structural diff, instead of
-// teaching an event arm to sweep.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The roles that are TRANSIENT — they open and close frequently and ride above
- * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (which
- * `window-state.ts` also carried a copy of before it was deleted); both
- * remaining copies must agree.
- */
 export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
-/** Default provenance for a focus report that carries none — see `FocusCause`. */
+// Default provenance for a focus report that carries none — see `FocusCause`.
 const WORLD_CAUSE: FocusCause = { kind: 'world' };
 
-/**
- * `role` is optional on a record; an absent role is in no set. Exported
- * alongside the role sets themselves so an out-of-file caller consuming them
- * gets that convention rather than re-deriving it — `set.has(rec.role)` does
- * not type-check against an optional role, and the tempting workarounds
- * (`rec.role ?? ''`, a non-null assertion) each quietly invent a membership
- * answer for a window that declared nothing.
- */
 export function roleIn(set: ReadonlySet<string>, role: string | undefined): boolean {
   return role !== undefined && set.has(role);
 }
 
-/**
- * Whether a window in `role` is eligible to be another window's real parent.
- * A transient (`TRANSIENT_ROLES`) rides above the workspace and is swept on
- * the first focus it loses — anything registered as ITS child inherits that
- * fate through `descendantsToCascadeClose` the moment the transient itself is
- * dismissed. A window the user just opened must outlive the launcher it came
- * from, so a transient can never be a real parent. This is the same fact
- * `isTransientAutocloseCandidate`'s role clause states, read from the other
- * side; `ipc.ts`'s window-open handler is the sole caller, deciding
- * `isRealParent` for a freshly opened window's opener.
- */
 export function isNonParentRole(role: string | undefined): boolean {
   return roleIn(TRANSIENT_ROLES, role);
 }
 
-/**
- * Candidacy for the transient-dismissal law — the gate every reader of
- * `transientAutocloseExemption` applies BEFORE asking it anything, so the law
- * is asked only about a record it actually governs. A record is a candidate
- * either by role (`TRANSIENT_ROLES`) or by declaring `selfClosesOnBlur` —
- * `izui-roles.ts windowSelfClosesOnBlur`'s `modal` open option, which opens a
- * window carrying no role at all (the cmd panel is `type:'panel'`, roleless).
- * A `selfClosesOnBlur` candidate runs through the same four exemptions as any
- * other: a modal window parented to its focuser, or one an overlay is
- * attached to, is spared exactly like any other candidate would be.
- *
- * ALL THREE readers of the law — `selectTransientAutoclose`,
- * `traceTransientAutoclose`, and `evolve`'s `WindowRegistered` merge arm's
- * `strandedByRoleChange` check — call this instead of restating
- * `roleIn(TRANSIENT_ROLES, rec.role)` by hand, for the same reason
- * `transientAutocloseExemption` itself is shared rather than copied: a
- * restated candidacy test is exactly how one of the three came to omit a
- * clause silently.
- *
- * SETTLED-NESS IS PART OF CANDIDACY, NOT A FIFTH EXEMPTION. A window that has
- * not yet shown anything cannot meaningfully have "lost" a focus it never
- * visibly held, so it is not in the consideration set at all — this is what
- * stops a sweep provoked by the PREVIOUS transient's dismissal from landing on
- * a brand-new one still inside its own `loadURL` (`docs/design/window-manager.md`
- * "Defect A"). `orderable` is that fact and is not a new one: it is `false`
- * from birth for a `page-host` and flipped only by `WindowContentOrderable`,
- * the first-composited-frame report, so a not-yet-painted page host answers
- * `false` here precisely while it is vulnerable. `kind: 'browser'` records are
- * `orderable` from birth, so this narrows nothing for them.
- *
- * Deliberately NOT expressed in `transientAutocloseExemption`: its four
- * clauses are one statement about records the law GOVERNS, and a fifth clause
- * there would both restate the law and spare more windows than intended,
- * silently — `window-kernel-properties.test.ts` over-approximates exemptions
- * and would not catch it.
- *
- * `pendingHidden` IS THE OTHER HALF OF CANDIDACY, for the same reason
- * `orderable` is (S3, fixed 2026-09-05): a record `evolve` has already marked
- * for dismissal — whether by a teardown request or by an earlier sweep in
- * this same transition or a prior one — is not a window still THERE to lose
- * focus to something else; asking the law about it again is what let the two
- * native focus producers on one page host (`electron-window-backend.ts`
- * `win.on('focus')` and `rendererWC.on('focus')`) queue two `OsFocusGained`
- * events for one physical focus and get two `DismissWindow` effects for the
- * same window out of them. `WindowHidden`/`WindowShown` clear the mark, so a
- * window returns to candidacy once the OS confirms the hide, never before.
- */
+// The `pendingHidden` clause keeps a chosen-for-dismissal window out of the next sweep until its hide confirms;
+// the `orderable` clause keeps an unpainted window out of every sweep.
 export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
   if (!rec.orderable) return false;
   if (rec.pendingHidden === true) return false;
   return roleIn(TRANSIENT_ROLES, rec.role) || rec.selfClosesOnBlur === true;
 }
 
-/** Which of the four exemption clauses in the transient-dismissal law spared a candidate. */
+// Which of the four exemption clauses in the transient-dismissal law spared a candidate.
 export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
 
-/**
- * THE EXEMPTIONS OF THE TRANSIENT-DISMISSAL LAW, AS ONE STATEMENT. A
- * transient closes when it loses focus, always — `docs/design/window-manager.md`
- * § 0 — and this function is the whole of what spares one. It answers for a
- * SINGLE record already known to be a candidate: the caller owns candidacy
- * (not the focuser, transient role, and — where it applies — visible) and
- * owns iteration and output shape; this owns only the exemptions, in order.
- * `null` means nothing spares the record.
- *
- * Every reader of the law calls this: `selectTransientAutoclose` (the
- * decision), `traceTransientAutoclose` (the diagnostic), and `evolve`'s
- * `WindowRegistered` merge arm (which asks the degenerate, focuser-less
- * question about a record that is not yet in `state.order`). Restating the
- * clauses instead was how a copy came to be missing one: the merge arm
- * omitted `focuser-relation` silently, and nothing said whether that was a
- * decision or an oversight.
- *
- * The parameters are the only facts the exemptions read beyond the record
- * itself, and each is passed rather than derived so a caller with no focuser
- * (`undefined`) or no ordering floor (`null`) STATES that degenerate case
- * instead of expressing it by omission. `orderingFloor` is the focuser's
- * `openSeq` when a machine-caused focus armed the ordering test, and `null`
- * when no test is armed.
- *
- * Deliberately NOT parameterised by anything else — in particular there is no
- * "ignore visible" switch. Making the law's answer depend on which caller
- * asked is the exact defect this consolidation removes.
- *
- * Why each clause spares what it spares — the Space border, the shared chrome
- * overlay, the two live ordering failures — is documented on
- * `selectTransientAutoclose` below, which remains the law's prose home.
- */
+// The one dismissal law; `selectTransientAutoclose`, `traceTransientAutoclose` and `evolve`'s merge arm all call it — its clauses are stated nowhere else.
 export function transientAutocloseExemption(
   rec: WindowRecord,
   focuser: WindowRecord | undefined,
@@ -4941,86 +2864,6 @@ export function transientAutocloseExemption(
   return null;
 }
 
-/**
- * Which transient siblings a newly-focused window dismisses. A transient is
- * dismissed when some other window, not belonging to it, genuinely takes key
- * (`docs/design/window-manager.md` §0). "Belonging to it" is a relation, not
- * a role:
- *
- *   - skip the focuser itself, any non-visible window, any non-transient role;
- *   - a victim with `overlayFor` set is exempt — an attached overlay manages
- *     its own show/hide through the attachment relation
- *     (`WindowRecord.overlayFor`), never through a close, so an autoclose must
- *     never touch it;
- *   - a victim the FOCUSER points at — `focuser.parentId === victim.id` or
- *     `focuser.overlayFor === victim.id` — is exempt too: the focuser belongs
- *     to it, so this is not "some other window" taking key. Directional and
- *     one-hop on purpose: a window the transient merely creates (e.g. a
- *     command palette opening a page host) is NOT exempt, because that
- *     relation points the other way;
- *   - an UNREGISTERED focuser (no record) has no `parentId`/`overlayFor` to
- *     point anywhere — so it sweeps every visible transient.
- *   - `focusedId: null` means attention is on nothing of Peek's (a real
- *     app-deactivation settle) — it resolves no `focuser` record either, so
- *     it behaves exactly like an unregistered focuser and sweeps every
- *     visible transient. `rec.id === focusedId` is vacuously false (no `id`
- *     is ever `null`), and both relation clauses are already optional-chained
- *     off `focuser`, so no clause needs a null-specific branch.
- *
- * Kind-agnostic on purpose: BOTH `browser` and `page-host` windows are
- * candidates (the close-on-blur regression, peek 8e5c3174, was hybrid page
- * hosts never being in the candidate set).
- *
- * ONE further clause on top of that: a focus the MACHINE caused may not
- * dismiss anything opened AFTER the op that caused it. Two live failures share
- * this shape. (i) The slow-open race: a hotkeyed page host takes time to load,
- * the user opens a palette meanwhile, the host finally takes OS focus and the
- * sweep dismissed the palette asked for afterwards. (ii) The handoff-raise
- * echo (peek 7fffa286): a slide hides, the machine hands the front off with a
- * raise, and the OS echo of that machine-issued raise swept a palette the user
- * had opened one transition earlier.
- *
- * In both, the missing fact was never "which relation" — the relations
- * involved are exactly the ones a legitimate switch must still sweep. The
- * missing fact was WHO asked for this focus and WHEN: `cause` states the
- * first (an executor report, never an inference) and `openSeq` supplies the
- * second.
- *
- * So `machine` ARMS AN ORDERING TEST — it never skips the sweep. A palette
- * that the machine legitimately raised over a slide is machine-caused too, and
- * it must still sweep that slide; what spares a window is being NEWER than the
- * focuser, not the cause on its own. `world` (the default) runs no ordering
- * test and sweeps every visible transient.
- *
- * `isStaleSelfEcho` is deliberately not consulted: a stale self-echo is still
- * a machine echo, and the ordering test it arms is already the conservative
- * answer for one (spare anything newer than the focuser). Reading staleness
- * here could only widen the sweep, which is the direction both live failures
- * came from.
- *
- * ONE MORE EXEMPTION, and it is POLICY, not a derivation: a victim that does
- * not accept input (`!rec.acceptsInput`) is spared. A window the pointer
- * passes through cannot be in the user's way, so nothing displaces it — that
- * is a decision about what dismissal is FOR, not a fact implied by the other
- * clauses. Today it spares exactly one window, the Space border
- * (`features/spaces/background.js showBorder`): a click-through, `role:
- * 'overlay'` ambient annotation meant to stay visible while the user works in
- * other applications, which every OTHER clause here admits as a victim (never
- * attached to a host, so `overlayFor` does not exempt it either). A FUTURE
- * click-through window that wants to be dismissed on an app blur would be
- * silently denied that by this clause — there is no carve-out for it, because
- * none is needed yet.
- *
- * The shared chrome overlay is click-through too, and is already exempt by
- * its attachment relation (`overlayFor !== undefined`, above) — but the two
- * exemptions are not redundant, because they cover DISJOINT parts of its
- * life. Before its first `AttachOverlay` lands, `overlayFor` is still absent,
- * so only the click-through clause protects it. Once attached, while the
- * pointer sits over real chrome and `wireClickCapture` has turned capture on
- * (`acceptsInput: true`), only the relation does — the click-through clause
- * has nothing left to exempt at that moment. Neither clause covers the whole
- * life on its own.
- */
 export function selectTransientAutoclose(
   state: State,
   focusedId: WindowId | null,
@@ -5042,37 +2885,11 @@ export function selectTransientAutoclose(
   return out;
 }
 
-/** One candidate's fate, as decided by `traceTransientAutoclose`. */
+// One candidate's fate, as decided by `traceTransientAutoclose`.
 export type TransientAutocloseTrace =
   | { id: WindowId; dismissed: true }
   | { id: WindowId; dismissed: false; exemption: TransientAutocloseExemption };
 
-/**
- * `selectTransientAutoclose`, restated as a per-candidate trace instead of a
- * bare victim list — the recurring bug shape in this subsystem is a rule that
- * matches nothing, and a list of dismissed ids cannot show that: it looks
- * identical whether nothing WAS a candidate or everything that was got
- * spared. This exists purely so `window-kernel-executor.ts` can log the
- * difference (§ diagnostics — this file keeps zero value imports and cannot
- * log anything itself).
- *
- * The EXEMPTIONS are not restated here: both this and
- * `selectTransientAutoclose` ask `transientAutocloseExemption`, so
- * `dismissed: true` is exactly that function's return set by construction
- * rather than by two copies being kept in lockstep. What stays separate is
- * everything the two do NOT share — the candidacy filters (not the focuser,
- * visible, transient role), the iteration, and the output shape — because the
- * two are read independently for different audiences, a decision function and
- * a diagnostic one, and neither should have to carry the other's shape. That
- * separation is sound; sharing the exemptions is not optional, because they
- * are the law and a law with two statements can disagree with itself.
- *
- * Non-candidates (the focuser itself, a hidden window, a non-transient role)
- * are OMITTED rather than traced with a reason: they were never in the
- * sweep's consideration set, so a caller logging "spared" for one of them
- * would manufacture a decision that was never made. Only genuine candidates
- * — visible, transient-role, not the focuser — appear here.
- */
 export function traceTransientAutoclose(
   state: State,
   focusedId: WindowId | null,
@@ -5091,115 +2908,6 @@ export function traceTransientAutoclose(
   return out;
 }
 
-/**
- * Which windows a REAL app switch hides for the duration — `evolve`'s
- * `AppResigned` arm applies exactly this on the raw resign edge (alongside the
- * attached-overlay hide), and `AppResignSettled` re-applies it only as a
- * backstop for a window that became eligible in the gap before the settle;
- * `AppActivated` undoes exactly what either marked.
- *
- *   - `layer > BASE_LAYER`    it floats above the whole regular stack — which
- *                             means it floats above OTHER applications'
- *                             windows too, not just Peek's own base-layer
- *                             content;
- *   - `acceptsInput`          a click-through window is an ambient annotation,
- *                             never something the user is blocked by — the
- *                             Space border (`features/spaces/background.js
- *                             showBorder`) is `role:'overlay'`, always-on-top,
- *                             and deliberately meant to stay visible while the
- *                             user works in OTHER applications
- *                             (`selectTransientAutoclose`'s own doc makes the
- *                             same call for the same window), so it must never
- *                             be admitted here regardless of layer;
- *   - `!selfClosesOnBlur`     the window already tears itself down the moment
- *                             it loses focus (`WindowRecord.selfClosesOnBlur`
- *                             — the `modal` open option, e.g. the cmd panel),
- *                             so hiding it here is redundant, and would stamp
- *                             `hiddenByAppBlur` on a record about to disappear
- *                             on its own;
- *   - `!isContentWindow(record)` a content window is never hidden by an app
- *                             switch — STATED here rather than left to the
- *                             coincidence that no production content window
- *                             floats above the base layer, which a pinned
- *                             window would silently defeat;
- *   - `visible`               nothing hidden for another reason may be
- *                             marked, or the re-show on activation would
- *                             resurrect it.
- *
- * NO ROLE CLAUSE and NO BARE `canBecomeKey` CLAUSE — this predicate used to
- * carry both, and each excluded a window it should have admitted. The rule it
- * derives from is `WindowRecord.hiddenByAppBlur`'s own doc: reversible
- * visibility leaves on the RAW resign edge; only DISMISSAL
- * (`selectTransientAutoclose`) waits for the settle, because dismissal is
- * destructive and the settle exists so the macOS activation dance cannot
- * trigger one. This predicate is for the OTHER case — a non-transient floater
- * above the base layer with no dismissal policy of its own, that must still
- * leave the screen on an app switch regardless of what role it declares or
- * whether it can hold key. The HUD (`renderer/hud/background.js` —
- * `role:'workspace'`, always-on-top, `canBecomeKey:false`) is the motivating
- * one; the chain popup (`renderer/cmd/panel.js openChainPopup`, `role:
- * 'utility'`, always-on-top, non-modal, `canBecomeKey: true`) is the one
- * `!canBecomeKey`, once carried here as a stand-in for "heads-up surface",
- * used to wrongly exclude.
- *
- * A TRANSIENT-role window (`role: 'switcher'`, `'palette'`, `'quick-view'`,
- * `'overlay'` — `TRANSIENT_ROLES`) can still pass every clause here: the
- * windows switcher floats, accepts input, and does not self-close, so this
- * predicate alone reads it as eligible. It never actually gets swept —
- * a transient window loses focus on ANY app resign under the uniform
- * dismissal law, so it is always a `selectTransientAutoclose` candidate too,
- * and `evolve`'s `dismissVictims` exclusion (see the `AppResigned` arm's own
- * doc) routes it to that dismissal instead of the reversible hide this
- * predicate would otherwise grant it. The two rules are kept from ever
- * double-claiming the same window at that CALL SITE, not by a role clause
- * here.
- *
- * `acceptsInput` is NOT a reintroduction of the role-clause mistake — it is
- * measured, not a role stand-in: the HUD registers `acceptsInput: true` for
- * its whole life (never calls `setIgnoreMouseEvents`) and keeps hiding with
- * the app exactly as before; the Space border calls
- * `setIgnoreMouseEvents(true, …)` in the same async open flow that creates it
- * (`tile-ipc.ts` feeds the resulting `WindowAcceptsInputChanged`), so by the
- * time any real app-resign reaches it `acceptsInput` already reads `false`
- * and this clause is what keeps it admitted-nowhere, matching its documented
- * purpose.
- *
- * NEITHER `layer > BASE_LAYER` NOR `!selfClosesOnBlur` is sufficient alone,
- * for the same reasons as before this clause list grew: the first would sweep
- * a window that already closes itself on blur (merely redundant, but would
- * still overwrite `hiddenByAppBlur` on a record about to be torn down
- * anyway), and the second would take every base-layer content window too —
- * `!isContentWindow` is what now makes that impossible BY CONSTRUCTION rather
- * than by production windows happening not to float.
- */
-/**
- * May an `AppActivated` put this record back on screen?
- *
- * `hiddenByAppBlur` records that a window went off screen BECAUSE the app
- * stopped being active, and the activation undoes exactly those hides. An
- * ATTACHED OVERLAY is the one case that gets to refuse, because its visibility
- * belongs to its attachment rather than to the app lifecycle: the host may have
- * entered fullscreen while Peek was in the background — macOS allows exactly
- * that, which is why `AppActivated` reconciles fullscreen at all — and chrome
- * revealed over a fullscreen host is the one thing overlay follow has never
- * done. A host that went off screen meanwhile refuses for the same reason.
- *
- * A refusal LEAVES THE MARK SET rather than clearing it, deliberately: the
- * record is still off screen for the reason the mark names, and nothing has
- * happened to make that untrue. Any genuine `WindowShown` clears the mark, so a
- * stale one self-heals the moment something legitimately shows the window, and
- * the next resign/activate cycle re-asks this question against the host's mode
- * at that time.
- *
- * A dangling `overlayFor` cannot reach here — `WindowClosed` mechanically
- * detaches every overlay naming the closed host.
- *
- * BOTH SIDES REFUSE A DOOMED WINDOW too (see `WindowRecord.pendingHidden`'s
- * doc): the record itself, because an app activation must not resurrect a
- * window the machine has already decided to tear down onto the screen; and
- * the overlay's host, because revealing chrome over a doomed host is the
- * same defect the fullscreen-host refusal above already guards against.
- */
 function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
   if (record.hiddenByAppBlur !== true) return false;
   if (record.pendingHidden) return false;
@@ -5208,6 +2916,7 @@ function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
   return host !== undefined && host.visible && !host.pendingHidden && host.fsMode.name === 'normal';
 }
 
+// Disjoint from `selectTransientAutoclose` by construction; asserted by a property test.
 export function isAppResignSweepEligible(record: WindowRecord): boolean {
   return (
     record.visible &&
@@ -5218,57 +2927,11 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
   );
 }
 
-/**
- * Whether a focus-family raise may legitimately land on this record — the
- * ONE condition `evolve`'s `AppActivated`, `FocusAssertRequested`, and
- * `FocusRaiseRequested` arms each stamp `lastOpSeq` on, and `react`'s
- * focus-assert and raise-request rules each gate their `RaiseWindow` on. All
- * four used to restate this by hand; `window-kernel-properties.test.ts
- * checkOpSeqInvariants` requires `opSeqCounter` to advance by exactly 1 iff
- * the transition emits at least one focus-family effect, which is what makes
- * a drift between the four copies a real bug rather than a style nit — this
- * helper is the one place that can no longer drift, because there is only one
- * place.
- *
- * `visible` is supplied by the caller rather than read off `record`, because
- * `AppActivated` tests POST-RE-SHOW visibility (`record.visible === true ||
- * appBlurRevealAdmits(state, record)`, not `record`'s own pre-transition
- * value — see that arm's own doc), while `FocusAssertRequested`,
- * `FocusRaiseRequested`, and `react`'s two rules all test the record's own
- * current value directly.
- *
- * `pendingHidden` is read off `record` directly in every case: a window the
- * machine has already decided to tear down is never a legitimate raise
- * target, however visible it currently reads — asserting focus onto it is an
- * activating show onto a window already gone (see that field's doc). The
- * property generator reaches a focus assert on a content window only 3 times
- * in 84 runs (`window-kernel-properties.test.ts`, measured), far too rarely
- * to catch a hand-restated copy drifting apart from the other two — this
- * helper, not the generator, is what protects the invariant here.
- */
 export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {
   return visible && !record.pendingHidden;
 }
 
-/**
- * F7 hide-returns-key: the successor to raise when `hiddenRecord` — the
- * window that just hid while holding key — goes off screen. Shared by
- * `evolve`'s `WindowHidden` arm (which stamps `lastOpSeq` on the result) and
- * `react`'s successor-raise loop (which turns it into a `RaiseWindow` effect)
- * so the two cannot drift apart, the same reason `admitsFocusAssert` itself
- * is one function rather than two hand-restated copies.
- *
- * `hiddenRecord.priorKey` names whatever held key immediately before
- * `hiddenRecord` took it (§ WindowRecord.priorKey's doc). `null` means
- * nothing in Peek was in use before this window took key — a palette opened
- * over another app, say — so nothing comes forward; raising the topmost
- * content window there would surface a Peek window the user never touched.
- * A named prior key holder that is still a legitimate raise target
- * (`admitsFocusAssert`) gets key back. Anything else naming that id —
- * missing from `order` (closed), hidden, or `pendingHidden` — falls back to
- * the topmost visible content window, exactly as if there had been no prior
- * key holder to consult at all.
- */
+// Reads `priorKey`; both `evolve`'s `WindowHidden` arm and `react`'s successor loop must call this one helper.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
   if (hiddenRecord.priorKey === null) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
