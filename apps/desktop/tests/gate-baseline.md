@@ -395,3 +395,47 @@ natively selects the completion suffix), received `"it"` where `"github.com"` wa
 typed prefix arrived truncated. The file passes 7 of 7 in 1.8s on an immediate isolated re-run of
 the same tree, and per the qualification above the `components` runner never launches Electron, so
 no main-process change can reach it. Harness flake, not a regression.
+
+### Seventh macOS gate run — 2026-09-13
+
+Run at commit `2ec459d4`: a raise command no longer writes `key` (`84a180b4`), a closed key
+window requests a successor raise (`8458ac93`), an Escape whose landed window is not the key
+holder is dropped (`e889af3a`), Enter runs the ghost suggestion's row (`c51cac09`), and twelve
+comment-only commits.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3248 | 0 | — |
+| node unit | 747 | 0 | — |
+| desktop | 425 | 10 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The ten `desktop` failures, each re-run in isolation with `HEADLESS=1 PACKAGED=1`:
+
+- `cmd-enter-runs-suggestion.spec.ts:167` and `hybrid-escape-close.spec.ts:145` pinned the
+  rules that `c51cac09` and `e889af3a` overturned. Repinned at `4a6a7636`; both files green.
+- `command-chaining.spec.ts:54` and `:127` (`ERR_FAILED loading peek://cmd/panel.html`) pass 9
+  of 9 in isolation. In the gate a cause-less world focus landed on the settings window while
+  the panel was loading and the sweep dismissed it: focus shuffling between parallel headless
+  instances. Gate-only.
+- The other six fail deterministically in isolation and share one cause. Under headless,
+  `window-kernel-executor.ts planRaise` answers `'inactive-show'`, whose effect is
+  `showWindow(id, { activate: false, opSeq })`; the backend echoes only `WindowShown`, never the
+  `OsFocusGained` that is now the sole writer of `key`. A raised window therefore never becomes
+  key in headless, `lastAttention` stays on the settings window's boot-time world focus, and:
+  - `slides-lazy-wake.spec.ts:190`, `slides-settings-race.spec.ts:110`,
+    `peeks-settings-race.spec.ts:95`, `hybrid-transient-on-blur.spec.ts:227`: the window opens
+    and is dismissed 60–80 ms later by the first-paint sweep (`evolve WindowContentOrderable`)
+    against that stale attention (`open-registry-set` then `effect-close effect=DismissWindow`,
+    no `transient-sweep` between).
+  - `hello-world-escape-switcher.spec.ts:43`: key is still the settings window, so the D2 rule
+    drops the press (`esc-pass-a outcome=nothing reason=stale-landing`).
+  - `izui-escape.spec.ts:311`: the page raised from the palette never gets `OsFocusGained`, so
+    no sweep runs and the palette survives. Deterministic now, not the earlier flake.
+  Smallest fix: the `'inactive-show'` arm of `performEffect`'s `RaiseWindow` case passes
+  `activate: true`; `showWindow` already masks OS activation under headless and echoes the
+  caller's intent, so `kernelWindowShown(id, true, opSeq)` produces the confirming
+  `OsFocusGained` with the raise's opSeq. Reproduced at the unit level against
+  `dist/main/window-kernel.js` for both the dismissal and the Escape branch. Not yet applied.
