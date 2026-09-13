@@ -357,6 +357,84 @@ const DEFAULT_FETCH_TIMEOUT_MS = 15000;
 // raising the default everywhere.
 const BULK_PULL_TIMEOUT_MS = 120000;
 
+// A batched item push carries hundreds of items' content in one body, so it is a
+// bulk request too — but one the server writes rather than reads, and one that
+// is retried harmlessly next run if it does time out, so it gets a smaller budget
+// than a bulk pull.
+const BATCH_PUSH_TIMEOUT_MS = 60000;
+
+// How many rows a single `since` pull asks for. The server caps a page at 1000
+// and hands back a cursor for the next one; these sizes keep each response
+// small enough to parse and merge without holding the whole profile in memory,
+// which was the point of paging the pull at all. Items carry content and so get
+// the smallest page; events and tags are narrow rows.
+const ITEMS_PAGE_SIZE = 500;
+const EVENTS_PAGE_SIZE = 1000;
+const TAGS_PAGE_SIZE = 1000;
+
+// A stop against a server that answers every page with the same cursor. Nothing
+// observed does this, but a pull loop that trusts a remote cursor unconditionally
+// is a loop a broken server can pin forever, and a sync run holds the datastore.
+const MAX_PULL_PAGES = 2000;
+
+/**
+ * Walk a `since` pull one page at a time, yielding each page's rows.
+ *
+ * Paging is opt-in on both sides: this asks for `limit` rows and follows the
+ * `nextCursor` the server hands back. A server too old to know either parameter
+ * ignores them, returns the whole set in one body, and sends no `nextCursor` —
+ * so the loop ends after one round trip and the caller sees exactly what it saw
+ * before paging existed. That is what lets a new client talk to the deployed
+ * server without a version bump.
+ *
+ * Rows are yielded per page rather than accumulated, so the caller can merge and
+ * discard each page: a profile that no longer fits in one response does not fit
+ * in one array either.
+ */
+async function* pullPages<T>(
+  serverUrl: string,
+  apiKey: string,
+  basePath: string,
+  key: 'items' | 'events' | 'tags',
+  pageSize: number
+): AsyncGenerator<T[]> {
+  let cursor: string | undefined;
+  let pages = 0;
+
+  while (pages < MAX_PULL_PAGES) {
+    let path = `${basePath}&limit=${pageSize}`;
+    if (cursor) {
+      path += `&cursor=${encodeURIComponent(cursor)}`;
+    }
+
+    const response = await serverFetch<Record<string, T[]> & { nextCursor?: string }>(
+      serverUrl,
+      apiKey,
+      path,
+      { timeoutMs: BULK_PULL_TIMEOUT_MS }
+    );
+    const rows = (response[key] || []) as T[];
+    pages++;
+
+    if (rows.length > 0) {
+      yield rows;
+    }
+
+    const next = response.nextCursor;
+    if (!next || next === cursor || rows.length === 0) {
+      return;
+    }
+    cursor = next;
+  }
+
+  console.warn(`[sync] ${key} pull stopped at ${MAX_PULL_PAGES} pages — server cursor never ended`);
+}
+
+// Items per batched push request. Deliberately below the server's own
+// MAX_ITEMS_PER_PUSH (500) so a chunk is never refused for its size alone, the
+// same relationship MAX_EVENTS_PER_PUSH has to the server's event cap.
+const MAX_ITEMS_PER_BATCH = 250;
+
 /**
  * Make an authenticated request to the sync server.
  * Sends version headers and checks server's response version headers.
@@ -462,33 +540,35 @@ export async function pullFromServer(
 
   // Fetch items from server with profile parameter
   // Use server profile ID (UUID) - the identifier the server uses for this profile
-  let path = '/items';
-  if (since && since > 0) {
-    path = `/items/since/${toISOString(since)}`;
-  }
+  //
+  // A full pull goes through the same `since` route with a timestamp of 0 rather
+  // than through GET /items. Both return the profile, but only the `since` route
+  // pages, and a full pull is the largest body sync ever asks for — the one that
+  // most needs paging. It also always carries tombstones, which GET /items only
+  // does when asked.
+  let path = `/items/since/${since && since > 0 ? toISOString(since) : 0}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
-  // Always include deleted items so tombstones propagate during sync
+  // Kept for a server old enough to route a full pull through GET /items
   path += '&includeDeleted=true';
 
   DEBUG && console.log(`[sync] Fetching from: ${serverUrl}${path}`);
 
-  const response = await serverFetch<{ items: ServerItem[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverItems = response.items;
-
-  DEBUG && console.log(`[sync] Received ${serverItems.length} items from server`);
-
   let pulled = 0;
   let conflicts = 0;
   let skipped = 0;
+  let received = 0;
 
-  for (const serverItem of serverItems) {
-    const result = mergeServerItem(serverItem);
-    if (result === 'pulled') pulled++;
-    if (result === 'conflict') conflicts++;
-    if (result === 'skipped') skipped++;
+  for await (const serverItems of pullPages<ServerItem>(serverUrl, apiKey, path, 'items', ITEMS_PAGE_SIZE)) {
+    received += serverItems.length;
+    for (const serverItem of serverItems) {
+      const result = mergeServerItem(serverItem);
+      if (result === 'pulled') pulled++;
+      if (result === 'conflict') conflicts++;
+      if (result === 'skipped') skipped++;
+    }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} items from server`);
 
   DEBUG && console.log(`[sync] Pull complete: ${pulled} pulled, ${conflicts} conflicts, ${skipped} skipped`);
 
@@ -768,14 +848,16 @@ export async function pushToServer(
     // Also include deleted tombstones that need to be pushed
     items = db.prepare(`
       SELECT * FROM items
-      WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
-         OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)
+      WHERE ((deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
+         OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt))
+        AND (syncError = '' OR updatedAt > syncErrorAt)
     `).all() as Item[];
   } else {
     // Full: all items that haven't been synced
     items = db.prepare(`
       SELECT * FROM items
       WHERE deletedAt = 0 AND syncedAt = 0
+        AND (syncError = '' OR updatedAt > syncErrorAt)
     `).all() as Item[];
   }
 
@@ -802,22 +884,24 @@ export async function pushToServer(
   let lastProgressCount = 0;
   let lastProgressAt = Date.now();
 
-  for (const item of items) {
-    try {
-      await pushSingleItem(serverUrl, apiKey, item);
-      pushed++;
-    } catch (error) {
-      const message = (error as Error).message;
-      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
-      failed++;
-      const ids = failuresByReason.get(message);
-      if (ids) {
-        ids.push(item.id);
-      } else {
-        failuresByReason.set(message, [item.id]);
-      }
+  const recordFailure = (item: Item, message: string, permanent: boolean): void => {
+    failed++;
+    // A 4xx means the server looked at this exact row and refused it, so the
+    // same body next run cannot do better — park it until the item itself
+    // changes. Anything else is the server or the link being unavailable,
+    // which an unchanged retry can clear on its own.
+    if (permanent) {
+      parkRejectedItem(item.id, item.updatedAt, message);
     }
+    const ids = failuresByReason.get(message);
+    if (ids) {
+      ids.push(item.id);
+    } else {
+      failuresByReason.set(message, [item.id]);
+    }
+  };
 
+  const reportProgress = (): void => {
     const done = pushed + failed;
     const now = Date.now();
     if (
@@ -828,6 +912,117 @@ export async function pushToServer(
       lastProgressCount = done;
       lastProgressAt = now;
     }
+  };
+
+  const pushOne = async (item: Item): Promise<void> => {
+    try {
+      await pushSingleItem(serverUrl, apiKey, item);
+      pushed++;
+    } catch (error) {
+      const message = (error as Error).message;
+      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
+      recordFailure(item, message, isPermanentPushFailure(message));
+    }
+    reportProgress();
+  };
+
+  /**
+   * Record what the server said about each item in a delivered chunk. One
+   * transaction for the whole chunk: 500 separate UPDATEs would be 500 fsyncs,
+   * which would hand back the cost the batching just removed.
+   */
+  const applyBatchResults = (chunk: Item[], results: ItemBatchResultRow[]): void => {
+    const byLocalId = new Map(chunk.map((item) => [item.id, item]));
+    const answered = new Set<string>();
+    const now = Date.now();
+    db.exec('BEGIN');
+    try {
+      for (const result of results) {
+        const item = result.localId ? byLocalId.get(result.localId) : undefined;
+        if (!item) continue;
+        answered.add(item.id);
+        if (result.id) {
+          db.prepare(`
+            UPDATE items SET syncId = ?, syncedAt = ?, syncError = '', syncErrorAt = 0 WHERE id = ?
+          `).run(result.id, now, item.id);
+          pushed++;
+        } else {
+          // Spelled exactly as serverFetch() would have thrown it on the
+          // single-item route, so the same rejection groups into one log line
+          // however the item happened to travel.
+          recordFailure(item, `Server error 400: ${JSON.stringify({ error: result.error })}`, true);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    // An item the response said nothing about was not confirmed stored, so it
+    // must stay eligible rather than be counted as sent.
+    for (const item of chunk) {
+      if (!answered.has(item.id)) {
+        recordFailure(item, 'No result for this item in the batch response', false);
+      }
+    }
+  };
+
+  // An image's payload is base64 in `content`, so batching images would build a
+  // body of unbounded size — the server refuses them per row for the same
+  // reason. They keep the one-request-per-item route.
+  const batchable = items.filter((item) => item.type !== 'image');
+  const singles = items.filter((item) => item.type === 'image');
+
+  // Set when the server answers 404 — it predates the batch route, so the rest of
+  // this run goes back to one request per item. No version negotiation to keep in
+  // step: the fallback costs one wasted request per run against an old server.
+  let batchUnsupported = false;
+
+  if (batchable.length > 0) {
+    const chunkCount = Math.ceil(batchable.length / MAX_ITEMS_PER_BATCH);
+    logSyncProgress(
+      'push-items',
+      'progress',
+      `Pushing ${batchable.length} item(s) in ${chunkCount} batch(es) of up to ${MAX_ITEMS_PER_BATCH}`
+    );
+  }
+
+  for (let i = 0; i < batchable.length; i += MAX_ITEMS_PER_BATCH) {
+    const chunk = batchable.slice(i, i + MAX_ITEMS_PER_BATCH);
+
+    if (batchUnsupported) {
+      for (const item of chunk) {
+        await pushOne(item);
+      }
+      continue;
+    }
+
+    try {
+      applyBatchResults(chunk, await pushItemsBatch(serverUrl, apiKey, chunk));
+      reportProgress();
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message.startsWith('Server error 404:')) {
+        batchUnsupported = true;
+        DEBUG && console.log('[sync] Server has no batch item route, falling back to one request per item');
+        logSyncProgress('push-items', 'progress', 'Server has no batch route — pushing one item at a time');
+        for (const item of chunk) {
+          await pushOne(item);
+        }
+      } else {
+        // The chunk never landed, and a chunk-level failure says nothing about
+        // any single row in it — so nothing here is parked.
+        DEBUG && console.log(`[sync] Item batch failed (${chunk.length} items), will retry next run:`, message);
+        for (const item of chunk) {
+          recordFailure(item, message, false);
+        }
+        reportProgress();
+      }
+    }
+  }
+
+  for (const item of singles) {
+    await pushOne(item);
   }
 
   // Always emit one final progress entry with the true final count, even
@@ -848,7 +1043,7 @@ export async function pushToServer(
   if (failuresByReason.size > 0) {
     const { permanent, transient } = partitionByPermanence(failuresByReason);
     for (const line of groupFailuresByReason(permanent, 'item')) {
-      logSyncProgress('push-items', 'error', `Item push rejected, will not succeed until the item changes — ${line}`);
+      logSyncProgress('push-items', 'error', `Item push rejected, parked until the item changes — ${line}`);
     }
     for (const line of groupFailuresByReason(transient, 'item')) {
       logSyncProgress('push-items', 'error', `Item push failed, will retry next run — ${line}`);
@@ -860,29 +1055,39 @@ export async function pushToServer(
   return { pushed, failed };
 }
 
+interface ItemPushBody {
+  type: string;
+  content?: string | null;
+  tags: string[];
+  metadata?: Record<string, unknown>;
+  sync_id?: string;
+  localId: string;
+  deletedAt?: number;
+  starred: number;
+  archived: number;
+  title: string;
+  domain: string;
+  favicon: string;
+  visitCount: number;
+  lastVisitAt: number;
+  frecencyScore: number;
+  mimeType: string;
+  createdAt: number;
+}
+
 /**
- * Push a single item to the server
+ * The wire body for one item, shared by both push routes so a batched item and a
+ * singly-pushed one are byte-identical to the server.
+ *
+ * `localId` is the client's own row id. The batch route echoes it back in that
+ * item's result, which is how the caller knows which local row a returned server
+ * id belongs to; the single-item route ignores it, since its response is already
+ * about the one item it was given.
  */
-async function pushSingleItem(
-  serverUrl: string,
-  apiKey: string,
-  item: Item
-): Promise<void> {
-  const db = getDb();
-
-  // Get active profile to determine which server profile to sync with
-  const activeProfile = getActiveProfile();
-  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
-
-  if (!profileSyncConfig) {
-    throw new Error('Sync not configured for active profile');
-  }
-
-  // Get tags for this item
+function buildItemPushBody(item: Item): ItemPushBody {
   const tags = getItemTags(item.id);
   const tagNames = tags.map((t: Tag) => t.name);
 
-  // Parse metadata
   let metadata: Record<string, unknown> | null = null;
   if (item.metadata && item.metadata !== '{}') {
     try {
@@ -892,29 +1097,12 @@ async function pushSingleItem(
     }
   }
 
-  // Build request body
-  const body: {
-    type: string;
-    content?: string | null;
-    tags: string[];
-    metadata?: Record<string, unknown>;
-    sync_id?: string;
-    deletedAt?: number;
-    starred: number;
-    archived: number;
-    title: string;
-    domain: string;
-    favicon: string;
-    visitCount: number;
-    lastVisitAt: number;
-    frecencyScore: number;
-    mimeType: string;
-    createdAt: number;
-  } = {
+  const body: ItemPushBody = {
     type: item.type,
     content: item.content,
     tags: tagNames,
     sync_id: item.syncId || item.id,  // Use existing syncId or local id
+    localId: item.id,
     starred: item.starred,
     archived: item.archived,
     title: item.title,
@@ -937,6 +1125,73 @@ async function pushSingleItem(
     body.deletedAt = item.deletedAt;
   }
 
+  return body;
+}
+
+/** One item's verdict in a batch response: a server id, or the reason it was refused. */
+interface ItemBatchResultRow {
+  localId?: string;
+  id?: string;
+  error?: string;
+}
+
+/**
+ * Push a chunk of items in ONE request, returning the server's per-item verdicts.
+ *
+ * The server refuses an unacceptable row on its own rather than rejecting the
+ * whole chunk (unlike POST /events), so a caller has to read every result — a
+ * 2xx here does not mean every item in the chunk was stored.
+ */
+async function pushItemsBatch(
+  serverUrl: string,
+  apiKey: string,
+  items: Item[]
+): Promise<ItemBatchResultRow[]> {
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const path = `/items/batch?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+  const response = await serverFetch<{ received: number; saved: number; results: ItemBatchResultRow[] }>(
+    serverUrl,
+    apiKey,
+    path,
+    {
+      method: 'POST',
+      body: { items: items.map(buildItemPushBody) },
+      // A chunk carries hundreds of items' content, so it is a bulk body on the
+      // wire even though each row is small — the default per-item budget is for
+      // a single row's round-trip.
+      timeoutMs: BATCH_PUSH_TIMEOUT_MS,
+    }
+  );
+
+  return Array.isArray(response.results) ? response.results : [];
+}
+
+/**
+ * Push a single item to the server
+ */
+async function pushSingleItem(
+  serverUrl: string,
+  apiKey: string,
+  item: Item
+): Promise<void> {
+  const db = getDb();
+
+  // Get active profile to determine which server profile to sync with
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const body = buildItemPushBody(item);
+
   // POST to server with profile parameter
   // Use server profile ID (UUID) - the identifier the server uses for this profile
   const path = `/items?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
@@ -947,27 +1202,64 @@ async function pushSingleItem(
     { method: 'POST', body }
   );
 
-  // Update local item with sync info and set syncedAt to track when we synced
+  // Update local item with sync info and set syncedAt to track when we synced.
+  // Clearing syncError here is what un-parks an item the server used to reject:
+  // the row has just been accepted, so whatever the old rejection said about it
+  // is no longer true.
   const now = Date.now();
   db.prepare(`
-    UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
+    UPDATE items SET syncId = ?, syncedAt = ?, syncError = '', syncErrorAt = 0 WHERE id = ?
   `).run(response.id, now, item.id);
 
   DEBUG && console.log(`[sync] Pushed item ${item.id} → ${response.id}`);
+}
+
+/**
+ * Park an item the server permanently rejected, so it stops being re-pushed on
+ * every run for as long as it stays unchanged.
+ *
+ * `syncErrorAt` is the item's own `updatedAt` at the moment of the rejection, and
+ * the push query skips the item only while `updatedAt` has not moved past it —
+ * so any later edit un-parks it automatically, without every edit path in
+ * datastore.ts having to know that parking exists. A push that later succeeds
+ * clears both columns (pushSingleItem() above).
+ *
+ * Deliberately NOT a reason to stop pulling, or to hide the item: it is local
+ * data the user still owns, and the sync log still names it and says the retry
+ * will not help until it changes.
+ */
+function parkRejectedItem(itemId: string, updatedAt: number, message: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE items SET syncError = ?, syncErrorAt = ? WHERE id = ?
+  `).run(message, updatedAt, itemId);
 }
 
 // ==================== Event Sync (item_events: series/feed observations) ====================
 //
 // item_events are append-only immutable facts, unlike items — there is no
 // content to merge and no last-write-wins conflict to resolve, so there is no
-// per-row syncedAt/syncId column here. There is still no per-row column: push
-// tracks its OWN watermark (feature_settings key 'lastEventPushAt', alongside
-// the existing 'lastSyncServerUrl' / 'lastSyncProfileId' / 'lastSyncDatastoreVersion'
-// keys), separate from the profile's shared item watermark (`lastSyncAt`) —
-// see getEventPushWatermark()/saveEventPushWatermark() below for why sharing
-// it is unsafe. packages/schema/v1.json's required_sync_columns for
-// item_events omits both syncId and syncedAt, so this still adds no datastore
-// schema column, and no bump across the backends the fidelity test gates.
+// per-row syncedAt/syncId column here. Push stamps its own per-row column
+// instead, `pushedAt` (0 = never delivered), rather than reading the profile's
+// shared item watermark (`lastSyncAt`): that watermark advances at the end of
+// every run that doesn't throw, including one where an item's push failed, and
+// events have no other per-row marker to fall back on the way items do with
+// their own `syncedAt`.
+//
+// A single global event watermark was the previous design, and is why this one
+// exists. It had to be held below the oldest event of ANY item still lacking a
+// syncId, so that events were not stranded when their parent item finally
+// synced. But an item the server permanently rejects — or one of a type that is
+// never synced at all — never earns a syncId, so it pinned the watermark
+// indefinitely and every run re-pushed the whole event tail behind it (24,000
+// events per run, measured live). With a per-row stamp, an event whose parent
+// cannot sync strands exactly itself, and is picked up whenever that parent
+// does sync.
+//
+// `pushedAt` is declared `"sync": false` in packages/schema/v1.json: it is local
+// bookkeeping, never sent on the wire, and the server has no such column — so it
+// needs no datastore version bump. datastore.ts migrateEventPushedAtColumn()
+// adds the column and backfills it from the retired watermark.
 //
 // Identity is the event's own id, shared verbatim with the server (no syncId
 // indirection): a push is idempotent purely because the server INSERT OR
@@ -1009,68 +1301,30 @@ interface EventPullResult {
 }
 
 /**
- * Read the event-push watermark: events with createdAt at or below this value
- * are either already durably pushed, or were deliberately left out of the
- * "already pushed" bucket because their parent item still has no syncId (see
- * saveEventPushWatermark() for why that second case matters). Tracked
- * separately from the profile's `lastSyncAt` (the shared item watermark) in
- * `feature_settings`, alongside 'lastSyncServerUrl' / 'lastSyncProfileId' /
- * 'lastSyncDatastoreVersion'.
- *
- * It CANNOT share `lastSyncAt`: that watermark advances to `Date.now()` at
- * the end of every syncAll() run that doesn't throw — including a run where
- * one item's push failed but pushToServer()'s own per-item try/catch let the
- * run finish anyway (this is normal, expected behavior for items, which track
- * their own per-row `syncedAt` and so don't care that the shared watermark
- * moved on). Events have no such per-row marker; if push read the shared
- * watermark, the failed item's events would be excluded from that run (its
- * syncId is still empty) and then, on every later run, ALSO excluded by a
- * watermark now sitting past their createdAt — stranding them permanently the
- * moment the item's own push finally does succeed.
+ * Stamp `pushedAt` on the events the server has just accepted. Called once per
+ * delivered chunk rather than once at the end, so a later chunk failing cannot
+ * un-record an earlier one that already landed.
  */
-function getEventPushWatermark(): number {
+function markEventsPushed(eventIds: string[]): void {
+  if (eventIds.length === 0) return;
   const db = getDb();
-  try {
-    const row = db.prepare(`
-      SELECT value FROM feature_settings
-      WHERE featureId = 'sync' AND key = 'lastEventPushAt'
-    `).get() as { value: string } | undefined;
-    if (row && row.value) {
-      const parsed = JSON.parse(row.value);
-      if (typeof parsed === 'number' && Number.isFinite(parsed)) return parsed;
-    }
-  } catch {
-    // fall through to default
-  }
-  return 0;
-}
-
-/**
- * Persist the event-push watermark. See getEventPushWatermark() for what it
- * means; pushEventsToServer() is the only caller, and computes it so it never
- * advances past an event that was not actually delivered this run.
- */
-function saveEventPushWatermark(timestamp: number): void {
-  const db = getDb();
+  const placeholders = eventIds.map(() => '?').join(',');
   db.prepare(`
-    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-    VALUES (?, 'sync', 'lastEventPushAt', ?, ?)
-  `).run('sync-lastEventPushAt', JSON.stringify(timestamp), Date.now());
+    UPDATE item_events SET pushedAt = ? WHERE id IN (${placeholders})
+  `).run(Date.now(), ...eventIds);
 }
 
 /**
  * Push local item_events whose parent item has already been synced (has a
- * non-empty syncId — see module comment above) and that haven't been pushed
- * yet, per the dedicated event-push watermark (getEventPushWatermark()).
+ * non-empty syncId — see module comment above) and that have never been
+ * delivered (`pushedAt = 0`).
  *
- * Events whose parent item isn't synced yet are excluded from THIS run's
- * batch, but — unlike a naive shared-watermark design — the watermark this
- * function saves afterward never advances past the oldest of them, so they
- * remain eligible on every future run until their item's own push finally
- * succeeds (see getEventPushWatermark()'s doc comment for the failure mode
- * this avoids). Re-pushing an already-delivered event is a no-op (the server
- * INSERT OR IGNOREs on id), so erring toward sending more than strictly
- * necessary is always safe here; erring toward sending less is not.
+ * Only the events a chunk actually delivered are stamped, so each of the three
+ * ways an event can miss a run — its parent item not synced yet, its row dropped
+ * as malformed, its chunk rejected — leaves that event, and only that event,
+ * eligible for the next run. Re-pushing an already-delivered event is a no-op
+ * (the server INSERT OR IGNOREs on id), so erring toward sending more than
+ * strictly necessary is always safe here; erring toward sending less is not.
  */
 export async function pushEventsToServer(
   serverUrl: string,
@@ -1084,23 +1338,19 @@ export async function pushEventsToServer(
     throw new Error('Sync not configured for active profile');
   }
 
-  const watermark = getEventPushWatermark();
-
-  // Captured BEFORE the SELECT below runs, not after the push completes: an
-  // event created during this function's own network round-trip (after the
-  // SELECT already ran, so it can't be in this run's batch) must still stay
-  // eligible for the NEXT run rather than being skipped by a watermark that
-  // advanced past it despite it never actually being sent.
-  const captureTime = Date.now();
-
+  // No time bound, deliberately: an event stays eligible until it has actually
+  // been delivered, which is what `pushedAt = 0` says. An event created during
+  // this function's own network round-trip is simply not in this result set, so
+  // nothing stamps it and the next run picks it up — the race a time-based
+  // watermark had to be computed around does not arise.
   const rows = db.prepare(`
     SELECT e.id as id, e.content as content, e.value as value, e.occurredAt as occurredAt,
       e.metadata as metadata, e.createdAt as createdAt, i.syncId as itemSyncId
     FROM item_events e
     JOIN items i ON e.itemId = i.id
-    WHERE i.syncId != '' AND e.createdAt > ?
+    WHERE i.syncId != '' AND e.pushedAt = 0
     ORDER BY e.createdAt ASC
-  `).all(watermark) as Array<{
+  `).all() as Array<{
     id: string;
     content: string | null;
     value: number | null;
@@ -1156,33 +1406,18 @@ export async function pushEventsToServer(
     }
   }
 
-  // Tracks the oldest createdAt among events that did NOT make it to the server this
-  // run — dropped rows (above) and rows from a chunk whose serverFetch failed (below).
-  // The watermark computed at the end must never advance past this, the same way it
-  // already never advances past the oldest blocked (parent-not-synced) event: either
-  // one silently skipped past would abandon that event, unrepairable even after the
-  // underlying data (or the server) is fixed.
-  let notDeliveredMinCreatedAt: number | null = null;
-  const trackNotDelivered = (batch: typeof rows) => {
-    for (const row of batch) {
-      if (notDeliveredMinCreatedAt === null || row.createdAt < notDeliveredMinCreatedAt) {
-        notDeliveredMinCreatedAt = row.createdAt;
-      }
-    }
-  };
-  trackNotDelivered(droppedRows);
+  // A dropped row needs no bookkeeping to stay repairable: it is simply never
+  // stamped, so it is back in the next run's batch, and every run after that,
+  // until whatever made it malformed is fixed.
 
   let pushed = 0;
   let failed = 0;
   // Reason (the server's own error message for the chunk) -> ids of every
   // event in a chunk that failed with it — see groupFailuresByReason() above.
   const chunkFailuresByReason = new Map<string, string[]>();
-  // How much work this stage is about to do, before it starts doing it. The
-  // count is NOT bounded by what changed since the last run: the watermark is
-  // held below the oldest event whose parent item has no syncId (see the
-  // blocked-event query below), so an item that can never sync pins it and
-  // every run re-pushes the whole tail. Stating the size up front is what
-  // tells that apart from a stage that is merely slow.
+  // How much work this stage is about to do, before it starts doing it — a
+  // stage that logs nothing between its start and finish lines reads as a hang,
+  // and this one used to have tens of thousands of events to get through.
   const chunkCount = Math.ceil(validRows.length / MAX_EVENTS_PER_PUSH);
   if (validRows.length > 0) {
     logSyncProgress(
@@ -1228,17 +1463,20 @@ export async function pushEventsToServer(
         { method: 'POST', body: { events } }
       );
       pushed += response.saved;
+      // Stamp what the server took, before any later chunk can fail. A 2xx means
+      // the whole batch was accepted; `saved` counts only the rows it actually
+      // inserted, since an id the server already holds is ignored, not rejected.
+      markEventsPushed(batch.map((row) => row.id));
     } catch (error) {
       // One failing chunk must not abandon the remaining chunks — each chunk is an
       // independent request, so a transient failure on chunk N has no bearing on
-      // whether chunk N+1 will succeed. The failed chunk's events stay eligible for
-      // the next run via notDeliveredMinCreatedAt below.
+      // whether chunk N+1 will succeed. The failed chunk's events are left
+      // unstamped, so they are eligible again on the next run.
       const message = (error as Error).message;
       DEBUG && console.log(
         `[sync] Event push chunk failed (${batch.length} events), will retry next run:`,
         message
       );
-      trackNotDelivered(batch);
       failed += batch.length;
       const ids = chunkFailuresByReason.get(message);
       const batchIds = batch.map((row) => row.id);
@@ -1264,10 +1502,10 @@ export async function pushEventsToServer(
   // Surfaced in the Settings sync log — grouped by the server's own error
   // message so N chunks failing for the SAME reason (e.g. the server down for
   // the whole run) collapse into one line instead of one per chunk. Events in
-  // a failed chunk are not lost — they stay eligible for the next run via
-  // notDeliveredMinCreatedAt above, and are retried unchanged regardless of
-  // which class this is (see isPermanentPushFailure()); only the wording
-  // below tells the two apart, so a 400 doesn't read as if next run will help.
+  // a failed chunk are not lost — being unstamped is what keeps them eligible,
+  // and they are retried unchanged regardless of which class this is (see
+  // isPermanentPushFailure()); only the wording below tells the two apart, so a
+  // 400 doesn't read as if next run will help.
   if (chunkFailuresByReason.size > 0) {
     const { permanent, transient } = partitionByPermanence(chunkFailuresByReason);
     for (const line of groupFailuresByReason(permanent, 'event')) {
@@ -1278,43 +1516,14 @@ export async function pushEventsToServer(
     }
   }
 
-  // Events whose parent item still has no syncId were excluded from the
-  // query above and were NOT pushed — no time bound here, deliberately: this
-  // must catch events blocked from an earlier run too (e.g. right after a
-  // server/datastore-version reset clears every item's syncId at once), not
-  // just ones newer than the watermark this run started with. The watermark
-  // must never advance past the oldest of them.
-  // `deletedAt = 0`: a deleted item that never synced can never GET a syncId —
-  // pushToServer() only sends a tombstone whose syncId is already set, so
-  // nothing will ever unblock its events. Without this term such an item pins
-  // the watermark permanently and every subsequent run re-pushes the entire
-  // event tail behind it, which is exactly what deleting an unsyncable item
-  // would otherwise cause.
-  const blocked = db.prepare(`
-    SELECT MIN(e.createdAt) as minCreatedAt
-    FROM item_events e
-    JOIN items i ON e.itemId = i.id
-    WHERE i.syncId = '' AND i.deletedAt = 0
-  `).get() as { minCreatedAt: number | null };
-
-  // `- 1`: the query above (and next run's) is a strict `createdAt > watermark`,
-  // so the watermark itself must sit BEFORE captureTime, not AT it — otherwise
-  // an event whose createdAt lands on the exact same millisecond as
-  // captureTime (very possible: captureTime is read microseconds before this
-  // point, well under the 1ms Date.now() resolution) would fail the next
-  // run's `>` check despite never having been sent, the same stranding this
-  // watermark exists to prevent. Symmetric with the blocked-event and
-  // not-delivered terms below.
-  let newWatermark = captureTime - 1;
-  if (blocked.minCreatedAt !== null && blocked.minCreatedAt !== undefined) {
-    newWatermark = Math.min(newWatermark, blocked.minCreatedAt - 1);
-  }
-  if (notDeliveredMinCreatedAt !== null) {
-    newWatermark = Math.min(newWatermark, notDeliveredMinCreatedAt - 1);
-  }
-  saveEventPushWatermark(newWatermark);
-
-  DEBUG && console.log(`[sync] Event push complete: ${pushed} saved, ${failed} failed, watermark -> ${newWatermark}`);
+  // Nothing to reconcile at the end of the run: events whose parent item has no
+  // syncId were excluded by the query above and were never stamped, so they are
+  // eligible again next run and stay that way until their item syncs. That
+  // includes an item that can NEVER sync — a permanently rejected one, a type
+  // outside getSyncedTypes(), a `peek://` item filtered by pushToServer() — which
+  // under the old global watermark held back every event in the datastore behind
+  // it.
+  DEBUG && console.log(`[sync] Event push complete: ${pushed} saved, ${failed} failed`);
 
   return { pushed, failed };
 }
@@ -1341,17 +1550,17 @@ export async function pullEventsFromServer(
   let path = `/events/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ events: ServerEvent[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverEvents = response.events;
-
-  DEBUG && console.log(`[sync] Received ${serverEvents.length} events from server`);
-
   let pulled = 0;
-  for (const serverEvent of serverEvents) {
-    if (mergeServerEvent(serverEvent)) pulled++;
+  let received = 0;
+
+  for await (const serverEvents of pullPages<ServerEvent>(serverUrl, apiKey, path, 'events', EVENTS_PAGE_SIZE)) {
+    received += serverEvents.length;
+    for (const serverEvent of serverEvents) {
+      if (mergeServerEvent(serverEvent)) pulled++;
+    }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} events from server`);
 
   DEBUG && console.log(`[sync] Event pull complete: ${pulled} pulled`);
 
@@ -1401,8 +1610,8 @@ function mergeServerEvent(serverEvent: ServerEvent): boolean {
 // description, metadata. Those are still no per-row syncedAt/syncId column on the
 // local `tags` table (packages/schema/v1.json's required_sync_columns for tags
 // does list them now, but as sync:true columns already present on the table, not
-// a new one) — push tracks its OWN watermark, the same pattern item_events uses
-// and for the same reason (see getEventPushWatermark()'s doc comment above): the
+// a new one) — push tracks its OWN watermark, for the same reason item_events
+// records delivery per row (see the event module comment above): the
 // shared `lastSyncAt` watermark advances even when one item's push failed
 // (pushToServer()'s own per-item try/catch lets the run finish anyway), and tags
 // have no per-row marker to fall back on the way items do with their own
@@ -1446,8 +1655,8 @@ interface TagPullResult {
  * Read the tag-push watermark: tags with updatedAt at or below this value are
  * already durably pushed. Tracked separately from the profile's `lastSyncAt`
  * (the shared item watermark) in `feature_settings`, alongside
- * 'lastEventPushAt' / 'lastSyncServerUrl' / 'lastSyncProfileId' /
- * 'lastSyncDatastoreVersion' — see the module comment above for why sharing
+ * 'lastSyncServerUrl' / 'lastSyncProfileId' / 'lastSyncDatastoreVersion' —
+ * see the module comment above for why sharing
  * `lastSyncAt` is unsafe for a table with no per-row syncedAt of its own.
  */
 function getTagPushWatermark(): number {
@@ -1585,9 +1794,9 @@ export async function pushTagsToServer(
   }
 
   // Reached only if every chunk above succeeded — see this function's doc
-  // comment. `- 1`: symmetric with pushEventsToServer()'s newWatermark — the
-  // next run's query is a strict `updatedAt > watermark`, so the watermark
-  // must sit BEFORE captureTime, not AT it.
+  // comment. `- 1`: the next run's query is a strict `updatedAt > watermark`, so
+  // the watermark must sit BEFORE captureTime, not AT it, or a tag updated in
+  // the same millisecond captureTime was read would never be sent.
   const newWatermark = captureTime - 1;
   saveTagPushWatermark(newWatermark);
 
@@ -1629,21 +1838,24 @@ export async function pullTagsFromServer(
   let path = `/tags/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ tags: ServerTag[] }>(serverUrl, apiKey, path, {
-    timeoutMs: BULK_PULL_TIMEOUT_MS,
-  });
-  const serverTags = response.tags;
-
-  DEBUG && console.log(`[sync] Received ${serverTags.length} tags from server`);
-
   let pulled = 0;
+  let received = 0;
+  // Pass 2 runs over every tag this pull applied, across all pages: a parent can
+  // arrive on a later page than its child, so parents can only be resolved once
+  // the whole pull has landed.
   const applied: ServerTag[] = [];
-  for (const serverTag of serverTags) {
-    if (mergeServerTag(serverTag)) {
-      pulled++;
-      applied.push(serverTag);
+
+  for await (const serverTags of pullPages<ServerTag>(serverUrl, apiKey, path, 'tags', TAGS_PAGE_SIZE)) {
+    received += serverTags.length;
+    for (const serverTag of serverTags) {
+      if (mergeServerTag(serverTag)) {
+        pulled++;
+        applied.push(serverTag);
+      }
     }
   }
+
+  DEBUG && console.log(`[sync] Received ${received} tags from server`);
 
   for (const serverTag of applied) {
     resolveTagParent(serverTag);
@@ -1816,34 +2028,30 @@ function breakCycle(db: ReturnType<typeof getDb>, cycleIds: string[]): void {
  */
 function resetPerItemSyncState(profileId: string, clearSyncId: boolean): void {
   const db = getDb();
+  // Both branches also clear syncError/syncErrorAt: a parked item was rejected by
+  // one server under one schema version, and the reset means at least one of those
+  // has changed. Keeping the park would silently exclude the item from the very
+  // re-push the reset exists to force.
   if (clearSyncId) {
     db.prepare(`
-      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
+      UPDATE items SET syncedAt = 0, syncId = '', syncError = '', syncErrorAt = 0 WHERE deletedAt = 0
     `).run();
   } else {
     db.prepare(`
-      UPDATE items SET syncedAt = 0 WHERE deletedAt = 0
+      UPDATE items SET syncedAt = 0, syncError = '', syncErrorAt = 0 WHERE deletedAt = 0
     `).run();
   }
   updateLastSyncTime(profileId, 0);
 
-  // Event watermark: reset to 0 either way, but for two independent reasons — only one
-  // of which applies when clearSyncId is false:
-  // - clearSyncId path only: clearing every item's syncId above means
-  //   pushEventsToServer()'s own "blocked" scan (WHERE i.syncId = '') would — for
-  //   exactly one run — see every item as newly blocked and pull the event watermark
-  //   back to cover them. But that scan only protects events whose parent is STILL
-  //   blocked at the moment it runs; an item that regains its syncId from THIS SAME
-  //   run's own item push (pushToServer always runs immediately before
-  //   pushEventsToServer) looks already-resolved by the time the scan runs, so events
-  //   excluded by an already-advanced watermark from BEFORE this reset would never be
-  //   rescued. This does not arise when syncId is left alone — no item goes blocked.
-  // - Either path: a datastore-version bump can add required_sync_columns to
-  //   item_events the same way it can to items/tags, and the event-push query only
-  //   re-sends rows with createdAt past the watermark — an event already pushed under
-  //   the old schema would stay out of that set forever without this reset. Same
-  //   reasoning as the tag watermark below.
-  saveEventPushWatermark(0);
+  // Event push state: cleared either way, so every event re-pushes. A
+  // datastore-version bump can add required_sync_columns to item_events the same
+  // way it can to items/tags, and the event-push query only sends rows that have
+  // never been delivered — an event already pushed under the OLD schema would
+  // otherwise stay out of that set forever. Same reasoning as the tag watermark
+  // below. (The retired global watermark also had to be reset to undo its own
+  // blocked-scan interaction with a syncId wipe; per-row stamps have no such
+  // coupling, since clearing syncId doesn't change what was already delivered.)
+  db.prepare(`UPDATE item_events SET pushedAt = 0`).run();
 
   // Tags have no "blocked" window — a tag isn't gated on any other entity's sync state
   // the way an event is gated on its parent item's syncId — but the same "start over"
@@ -2082,8 +2290,9 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     // Event push runs AFTER item push for the same reason: a locally-created
     // item needs the syncId its own push just assigned before its events can
     // be pushed. Unlike items, it does not take config.lastSyncTime — it
-    // tracks its own watermark (see pushEventsToServer()'s doc comment for
-    // why the shared one is unsafe for events).
+    // records delivery per event, in item_events.pushedAt (see
+    // pushEventsToServer()'s doc comment for why a shared watermark is unsafe
+    // for events).
     //
     // Isolated in its own try/catch, unlike every stage above: it is the LAST
     // stage, so letting it throw out to the outer catch would skip

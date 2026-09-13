@@ -1591,6 +1591,13 @@ body.dark .toggle-visibility-btn:hover {
   text-align: center;
 }
 
+.sync-failed-info {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #ff3b30;
+  text-align: center;
+}
+
 .sync-message {
   margin-top: 1rem;
   padding: 0.75rem;
@@ -1662,6 +1669,10 @@ body.dark .sync-btn:disabled {
 
 body.dark .sync-pending-info {
   color: #ff9f0a;
+}
+
+body.dark .sync-failed-info {
+  color: #ff453a;
 }
 
 body.dark .last-sync-info {

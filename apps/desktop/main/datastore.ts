@@ -205,7 +205,9 @@ const createTableStatements = `
     frecencyScore INTEGER DEFAULT 0,
     title TEXT DEFAULT '',
     domain TEXT DEFAULT '',
-    favicon TEXT DEFAULT ''
+    favicon TEXT DEFAULT '',
+    syncError TEXT DEFAULT '',
+    syncErrorAt INTEGER DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
@@ -283,6 +285,7 @@ const createTableStatements = `
     occurredAt INTEGER NOT NULL,
     metadata TEXT DEFAULT '{}',
     createdAt INTEGER NOT NULL,
+    pushedAt INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(itemId) REFERENCES items(id)
   );
   CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
@@ -495,6 +498,8 @@ export function initDatabase(dbPath: string): Db {
   migrateTagNavigationHistory();
   migrateExtensionSettingsToFeatureSettings();
   migrateItemThumbnailColumn();
+  migrateItemSyncErrorColumns();
+  migrateEventPushedAtColumn();
   migrateTagsUniqueIndex();
   dropLegacyAddressTables();
 
@@ -2531,6 +2536,98 @@ function migrateItemThumbnailColumn(): void {
     } catch (error) {
       DEBUG && console.log('main', `Item thumbnail column migration:`, (error as Error).message);
     }
+  }
+}
+
+/**
+ * Add items.syncError / items.syncErrorAt — the record of a push the server
+ * permanently rejected, so it stops being retried on every run forever.
+ *
+ * `syncErrorAt` holds the item's `updatedAt` at the moment of the rejection, and
+ * push skips the item only while `updatedAt` has not moved past it. That is what
+ * makes the park self-clearing: every edit path in this file bumps `updatedAt`,
+ * so an item the user fixes is eligible again without any of those paths having
+ * to know that parking exists. (Mobile's equivalent, peek-core sync.rs
+ * mark_item_sync_failed(), instead nulls its own `sync_error` column from each
+ * update statement — one missed statement there is an item that silently never
+ * syncs again.)
+ *
+ * Both columns are local bookkeeping, declared `"sync": false` in
+ * packages/schema/v1.json — never sent on the wire, no column on the server, no
+ * datastore version bump.
+ */
+function migrateItemSyncErrorColumns(): void {
+  if (!db) return;
+
+  const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
+  const names = new Set(columns.map((col) => col.name));
+
+  try {
+    if (!names.has('syncError')) {
+      DEBUG && console.log('main', 'Adding syncError column to items table');
+      db.exec(`ALTER TABLE items ADD COLUMN syncError TEXT DEFAULT ''`);
+    }
+    if (!names.has('syncErrorAt')) {
+      DEBUG && console.log('main', 'Adding syncErrorAt column to items table');
+      db.exec(`ALTER TABLE items ADD COLUMN syncErrorAt INTEGER DEFAULT 0`);
+    }
+  } catch (error) {
+    DEBUG && console.log('main', `Item syncError column migration:`, (error as Error).message);
+  }
+}
+
+/**
+ * Add item_events.pushedAt — the per-event record of when the sync server
+ * accepted that event (0 = never pushed).
+ *
+ * It replaces a single global event-push watermark kept in feature_settings
+ * ('lastEventPushAt'). That watermark had to be held below the oldest event of
+ * ANY item that could not sync, so one permanently-unsyncable item made every
+ * run re-push the entire event tail behind it — 24,000 events per run, measured
+ * live. A per-row stamp strands exactly the events whose own parent cannot sync,
+ * and nothing else.
+ *
+ * Backfill: every event at or below the old watermark was already delivered, so
+ * stamp it pushed, with the watermark's own value as the time. Only the tail
+ * behind the watermark re-pushes, once — apps/server/db.js saveEvents() INSERT OR
+ * IGNOREs on the event's own id, so a re-push duplicates nothing.
+ *
+ * No datastore version bump: pushedAt is never sent on the wire and the server
+ * has no such column, so nothing another client or the server sees changes.
+ *
+ * Takes an optional database so a node test can drive it against an in-memory
+ * one, the same way migrateEmptyTextCleanup() does.
+ */
+export function migrateEventPushedAtColumn(database: Db | null = db): void {
+  if (!database) return;
+
+  const columns = database.prepare(`PRAGMA table_info(item_events)`).all() as { name: string }[];
+  const hasPushedAt = columns.some((col) => col.name === 'pushedAt');
+  if (hasPushedAt) return;
+
+  DEBUG && console.log('main', 'Adding pushedAt column to item_events table');
+  try {
+    database.exec(`ALTER TABLE item_events ADD COLUMN pushedAt INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    DEBUG && console.log('main', `item_events pushedAt column migration:`, (error as Error).message);
+    return;
+  }
+
+  // Gated on the column being absent, so the backfill runs exactly once — on the
+  // same run that adds the column, before any push can read it.
+  try {
+    const row = database.prepare(`
+      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
+    `).get() as { value: string } | undefined;
+    const watermark = row && row.value ? JSON.parse(row.value) : 0;
+    if (typeof watermark === 'number' && Number.isFinite(watermark) && watermark > 0) {
+      const result = database.prepare(`
+        UPDATE item_events SET pushedAt = ? WHERE createdAt <= ?
+      `).run(watermark, watermark);
+      DEBUG && console.log('main', `Backfilled ${result.changes} already-pushed event(s) from the old watermark`);
+    }
+  } catch (error) {
+    DEBUG && console.log('main', `item_events pushedAt backfill:`, (error as Error).message);
   }
 }
 

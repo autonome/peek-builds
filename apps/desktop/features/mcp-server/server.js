@@ -680,6 +680,21 @@ function collectOnDiskPeekEntries() {
   return { entries, sawAnyFile };
 }
 
+// An on-disk value of the form "${VAR}" is a reference the client expands
+// before spawning us, so the entry holds the reference text and our env holds
+// the resolved value. The two are never string-equal and comparing them is
+// meaningless: there is no on-disk value to have drifted. A reference
+// therefore matches anything, while a literal must still match exactly.
+//
+// setup.js writes PEEK_MCP_REMOTE_URL and PEEK_MCP_CREDENTIAL in exactly this
+// reference form for every remote install (REMOTE_URL_REF/TOKEN_REF there), so
+// without this a correctly scaffolded remote project fails the drift check on
+// every spawn and exits in a loop.
+function onDiskValueMatches(onValue, curValue) {
+  if (/^\$\{[^}]+\}/.test(onValue)) return true;
+  return onValue === curValue;
+}
+
 function entryEnvMatchesCurrent(entry) {
   const env = entry.env || {};
   const onScope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
@@ -696,7 +711,8 @@ function entryEnvMatchesCurrent(entry) {
     // comparison entirely (design doc §4.3); the remote url and credential
     // lookup key take its place.
     return onScope === curScope && onReadonly === curReadonly &&
-      onRemoteUrl === curRemoteUrl && onCredential === curCredential;
+      onDiskValueMatches(onRemoteUrl, curRemoteUrl) &&
+      onDiskValueMatches(onCredential, curCredential);
   }
 
   const onDb = env.PEEK_DB_PATH || '';
@@ -724,14 +740,29 @@ function checkConfigDrift() {
   const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
   const curReadonly = process.env.PEEK_MCP_READONLY === '1';
   const curDb = process.env.PEEK_DB_PATH || '';
+  // Print the fields actually compared, which differ by mode — a message
+  // listing only the local-mode fields shows two identical lines when the
+  // mismatch is in the remote url or the credential key.
+  const curRemote = process.env.PEEK_MCP_REMOTE_URL || '';
+  const curCred = process.env.PEEK_MCP_CREDENTIAL || '';
+  const remoteMode = !!curRemote || entries.some(({ entry }) => (entry.env || {}).PEEK_MCP_REMOTE_URL);
+  const describeEnv = (scope, readonly, db, remote, cred) =>
+    `PEEK_MCP_SCOPE_TAG="${scope}" PEEK_MCP_READONLY=${readonly ? '"1"' : '(unset)'} ` +
+    (remoteMode
+      ? `PEEK_MCP_REMOTE_URL="${remote}" PEEK_MCP_CREDENTIAL="${cred}"`
+      : `PEEK_DB_PATH="${db}"`);
+
   let msg = 'Peek MCP config drift detected — no on-disk entry matches our spawn env:\n';
-  msg += `  current: PEEK_MCP_SCOPE_TAG="${curScope}" ` +
-    `PEEK_MCP_READONLY=${curReadonly ? '"1"' : '(unset)'} PEEK_DB_PATH="${curDb}"\n`;
+  msg += `  current: ${describeEnv(curScope, curReadonly, curDb, curRemote, curCred)}\n`;
   for (const { path: p, entry } of entries) {
     const env = entry.env || {};
-    msg += `  on-disk ${p}: PEEK_MCP_SCOPE_TAG="${(env.PEEK_MCP_SCOPE_TAG || '').trim()}" ` +
-      `PEEK_MCP_READONLY=${env.PEEK_MCP_READONLY === '1' ? '"1"' : '(unset)'} ` +
-      `PEEK_DB_PATH="${env.PEEK_DB_PATH || ''}"\n`;
+    msg += `  on-disk ${p}: ${describeEnv(
+      (env.PEEK_MCP_SCOPE_TAG || '').trim(),
+      env.PEEK_MCP_READONLY === '1',
+      env.PEEK_DB_PATH || '',
+      env.PEEK_MCP_REMOTE_URL || '',
+      env.PEEK_MCP_CREDENTIAL || '',
+    )}\n`;
   }
   msg += 'Exiting so client respawns with fresh env.\n';
   process.stderr.write(msg);

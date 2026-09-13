@@ -3302,6 +3302,21 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     })
 }
 
+/// File extension for a synthesized image filename, derived from the mime type
+/// (no filename is ever stored locally for an image item — see push_to_server).
+/// Falls back to "jpg" for anything unrecognized.
+fn extension_for_mime(mime: &str) -> &str {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        _ => "jpg",
+    }
+}
+
 /// Push local items to server using POST /items
 #[tauri::command]
 async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
@@ -3389,6 +3404,21 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
             "favicon": item.favicon,
             "frecencyScore": item.frecency_score,
         });
+
+        // Images: the server's unified endpoint wants the base64 payload in `content`,
+        // plus `mime` and `filename` — none of which the generic branch above sends.
+        // `item.content` is OCR text for images (a separate field), not the payload;
+        // the real bytes travel via `item.image_data`/`item.image_mime` (from the
+        // `blobs` join in get_items_to_push). No filename is ever stored locally, so
+        // synthesize one from the mime type.
+        if item.item_type == "image" {
+            if let (Some(image_bytes), Some(image_mime)) = (&item.image_data, &item.image_mime) {
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                body["content"] = serde_json::json!(STANDARD.encode(image_bytes));
+                body["mime"] = serde_json::json!(image_mime);
+                body["filename"] = serde_json::json!(format!("{}.{}", item.id, extension_for_mime(image_mime)));
+            }
+        }
 
         // Include deletedAt if the item was soft-deleted locally
         if let Some(ref deleted_at_str) = item.deleted_at {
@@ -3524,6 +3554,15 @@ fn get_sync_status() -> Result<SyncStatus, String> {
         last_sync_time,
         pending_count,
     })
+}
+
+/// Count items the server permanently rejected during push (parked with a
+/// `sync_error`). Surfaced separately from `get_sync_status`'s pending count so a
+/// rejected item doesn't just vanish from the badge without a trace.
+#[tauri::command]
+fn get_sync_failed_count() -> Result<usize, String> {
+    let store = get_store()?;
+    store.get_sync_failed_count()
 }
 
 /// Drain any share intents queued to disk by the Android side (MainActivity writes
@@ -3784,6 +3823,7 @@ pub fn run() {
             push_to_server,
             sync_all,
             get_sync_status,
+            get_sync_failed_count,
             // Legacy/deprecated
             get_shared_url,
             // Debug

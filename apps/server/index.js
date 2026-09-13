@@ -24,13 +24,15 @@ const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed",
 // carry their data in `metadata` and are allowed to have null content.
 //
 // `text` is deliberately NOT here. A client that holds an empty text item retries it
-// on every sync forever, and the item never earns a syncId — which stalls far more
-// than the one item: the event push holds its watermark below the oldest event of any
-// item without a syncId, so a single permanently-rejected item makes every subsequent
-// run re-push the entire event history behind it. Storing an empty note costs a row;
-// rejecting one costs sync. `url` keeps the requirement for now — an empty url item
-// has no meaning server-side (no domain, nothing to open) and none have been observed
-// in the wild, but it carries the same stall risk if that ever changes.
+// on every sync forever, the item never earns a syncId, and every event belonging to
+// it is stranded with it — an item this server refuses is an item no client can ever
+// resolve. It was worse still when event push tracked one global watermark, which had
+// to be held below the oldest event of any item without a syncId: a single rejected
+// item then made every run re-push the entire event history behind it (24,000 events
+// per run, measured). Storing an empty note costs a row; rejecting one costs sync.
+// `url` keeps the requirement for now — an empty url item has no meaning server-side
+// (no domain, nothing to open) and none have been observed in the wild, but it
+// carries the same stranding risk if that ever changes.
 const CONTENT_REQUIRED_TYPES = ["url"];
 
 // Resolve a pull/read type filter from the query string. `types` (comma-separated)
@@ -230,6 +232,9 @@ app.patch("/mcp/items/:id", async (c) => {
 });
 
 // DELETE /mcp/items/:id — server-side port of db.js deleteItem() (delete_item).
+// Soft delete, deliberately not cascaded into item_events — see
+// mcp-items.js deleteItem()'s comment; DELETE /mcp/items/:id/events is the
+// explicit alternative for clearing an item's events.
 app.delete("/mcp/items/:id", (c) => {
   const refused = readonlyRefused(c);
   if (refused) return refused;
@@ -261,16 +266,51 @@ app.delete("/mcp/items/:id/tags/:name", (c) => {
 });
 
 // POST /mcp/items/:id/events — server-side port of db.js recordEvent()
-// (record_event).
+// (record_event). Accepts {type, value} (backward compatible, pinned by
+// test.js) and, additionally, {content, occurredAt, metadata} — see
+// mcp-items.js recordEvent()'s comment for exactly how the two interact.
 app.post("/mcp/items/:id/events", async (c) => {
   const refused = readonlyRefused(c);
   if (refused) return refused;
   const body = await c.req.json().catch(() => ({}));
-  const result = mcpItems.recordEvent(
-    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
-  );
+  const result = mcpItems.recordEvent(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
   if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
   if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// GET /mcp/items/:id/events — a paged read of an item's event history, see
+// mcp-items.js listEvents()'s comment for the ceiling and why this route
+// exists alongside the ?events=N convenience on GET /mcp/items/:idOrPrefix.
+app.get("/mcp/items/:id/events", (c) => {
+  const result = mcpItems.listEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), {
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+  });
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ events: result.events });
+});
+
+// DELETE /mcp/items/:id/events/:eventId — removes one event. See
+// mcp-items.js deleteEvent()'s comment for the 404-vs-200/success:false
+// split.
+app.delete("/mcp/items/:id/events/:eventId", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteEvent(
+    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("eventId")
+  );
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json(result.result);
+});
+
+// DELETE /mcp/items/:id/events — removes every event under one item. See
+// deleteItem()'s comment for why THAT route does not do this itself.
+app.delete("/mcp/items/:id/events", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
   return c.json(result.result);
 });
 
@@ -688,6 +728,79 @@ app.post("/items", async (c) => {
   return c.json({ id, type, created: true });
 });
 
+// One request per item is what a full push used to cost: roughly 11k sequential
+// round-trips for a real datastore, about 25 minutes on a normal connection, while
+// the event push moved 24k rows in under a minute because it batches. Capped well
+// under the event cap because an item body is far larger than an event's.
+const MAX_ITEMS_PER_PUSH = 500;
+
+// Batch item push. Unlike POST /events, a bad row does NOT reject the whole batch:
+// items carry per-row identity the client has to record (the server's row id comes
+// back and becomes the client's syncId), and one unacceptable item among 500 must
+// not cost the other 499 — that shape is what turned a single malformed event into
+// a permanently stalled event stage before it was fixed client-side.
+//
+// The response is per-item and positional-by-localId: each entry carries the
+// client's own row id back, so the client can record the server id against the
+// right local row without depending on ordering.
+//
+// A client talking to a server that predates this route gets a 404 and falls back
+// to POST /items per item, so there is no version negotiation to keep in step.
+app.post("/items/batch", async (c) => {
+  const userId = c.get("userId");
+  const deviceId = c.get("deviceId") || "";
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const items = Array.isArray(body.items) ? body.items : [];
+
+  if (items.length === 0) {
+    return c.json({ error: "items array is required" }, 400);
+  }
+  if (items.length > MAX_ITEMS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_ITEMS_PER_PUSH} items per push` }, 400);
+  }
+
+  // Same per-row rules POST /items applies to a single item, applied here before
+  // anything is written, so a rejected row is reported as its own result instead
+  // of throwing mid-transaction.
+  const acceptable = [];
+  const results = [];
+  for (const it of items) {
+    const syncId = it.syncId || it.sync_id || null;
+    const deletedAt = it.deletedAt || it.deleted_at || null;
+    const localId = it.localId || syncId;
+    if (!it.type || !SYNCABLE_ITEM_TYPES.includes(it.type)) {
+      results.push({ localId, error: `type must be one of: ${SYNCABLE_ITEM_TYPES.join(", ")}` });
+      continue;
+    }
+    if (CONTENT_REQUIRED_TYPES.includes(it.type) && !it.content) {
+      results.push({ localId, error: `content is required for type '${it.type}'` });
+      continue;
+    }
+    if (it.type === "tagset" && (!it.tags || it.tags.length === 0)) {
+      results.push({ localId, error: "tags are required for type 'tagset'" });
+      continue;
+    }
+    // An image's payload is base64 in `content` and goes through saveImage(), with
+    // its own size limit — batching those would build a body of unbounded size, so
+    // they stay on the single-item route.
+    if (it.type === "image") {
+      results.push({ localId, error: "type 'image' must be pushed one at a time" });
+      continue;
+    }
+    acceptable.push({ ...it, syncId, deletedAt, localId, tags: it.tags || [] });
+  }
+
+  if (acceptable.length > 0) {
+    results.push(...db.saveItems(userId, profileId, acceptable, deviceId));
+  }
+
+  const saved = results.filter((r) => r.id).length;
+  console.log(`=== Sync Batch Received === user=${userId} profile=${profileId} items=${items.length} saved=${saved}`);
+
+  return c.json({ received: items.length, saved, results });
+});
+
 app.get("/items", (c) => {
   const userId = c.get("userId");
   const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
@@ -719,6 +832,62 @@ app.patch("/items/:id/tags", async (c) => {
 
 // === Sync endpoints ===
 
+// A `since` pull returns the whole matching set in one body unless the client
+// asks for a page. Nearly 10 MB of items in a single response was measured on a
+// real profile, and it grows without bound, so a client that knows about paging
+// sends `limit` and follows `nextCursor` until it stops coming back.
+//
+// Paging is opt-in in BOTH directions, which is what lets it ship without a
+// version bump: a client that sends no `limit` gets the whole set exactly as
+// before, and a client that sends one to a server too old to know the parameter
+// gets the whole set in one page with no `nextCursor`, so its loop ends after a
+// single round trip.
+const MAX_SYNC_PAGE = 1000;
+
+/**
+ * Read `limit` and `cursor` off a sync pull. Returns {error} for a limit that
+ * isn't a positive integer within range, or a cursor the server can't decode —
+ * both mean the client and server disagree about where the pull is, which is
+ * worth a 400 rather than a silent restart from the beginning.
+ */
+function resolvePageOptions(c) {
+  const rawLimit = c.req.query("limit");
+  const rawCursor = c.req.query("cursor");
+  const options = {};
+
+  if (rawLimit !== undefined) {
+    if (!/^\d+$/.test(rawLimit)) {
+      return { error: "limit must be a positive integer" };
+    }
+    const limit = parseInt(rawLimit, 10);
+    if (limit < 1 || limit > MAX_SYNC_PAGE) {
+      return { error: `limit must be between 1 and ${MAX_SYNC_PAGE}` };
+    }
+    options.limit = limit;
+  }
+
+  if (rawCursor !== undefined) {
+    const cursor = db.decodeCursor(rawCursor);
+    if (!cursor) {
+      return { error: "cursor is not valid" };
+    }
+    options.cursor = cursor;
+  }
+
+  return { options };
+}
+
+/**
+ * The cursor to hand back with a page, or undefined when this page is the last
+ * one. A full page is assumed to have a successor; the client discovers an
+ * exactly-full final page by fetching one more that comes back empty.
+ */
+function nextCursorFor(rows, options, timestampField) {
+  if (!options.limit || rows.length < options.limit) return undefined;
+  const last = rows[rows.length - 1];
+  return db.encodeCursor(last[timestampField], last.id);
+}
+
 // Get items modified since a timestamp (for incremental sync)
 app.get("/items/since/:timestamp", (c) => {
   const userId = c.get("userId");
@@ -742,8 +911,13 @@ app.get("/items/since/:timestamp", (c) => {
     return c.json({ error: `type must be one of: ${SYNCABLE_ITEM_TYPES.join(", ")}` }, 400);
   }
 
-  const items = db.getItemsSince(userId, unixMs, typeFilter.filter, profileId);
-  return c.json({ items, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const items = db.getItemsSince(userId, unixMs, typeFilter.filter, profileId, page.options);
+  return c.json({ items, since: rawTimestamp, nextCursor: nextCursorFor(items, page.options, "updatedAt") });
 });
 
 // Get a single item by ID
@@ -817,8 +991,13 @@ app.get("/events/since/:timestamp", (c) => {
     unixMs = date.getTime();
   }
 
-  const events = db.getEventsSince(userId, profileId, unixMs);
-  return c.json({ events, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const events = db.getEventsSince(userId, profileId, unixMs, page.options);
+  return c.json({ events, since: rawTimestamp, nextCursor: nextCursorFor(events, page.options, "createdAt") });
 });
 
 // === Tag metadata sync endpoints ===
@@ -879,8 +1058,13 @@ app.get("/tags/since/:timestamp", (c) => {
     unixMs = date.getTime();
   }
 
-  const tags = db.getTagsSince(userId, profileId, unixMs);
-  return c.json({ tags, since: rawTimestamp });
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const tags = db.getTagsSince(userId, profileId, unixMs, page.options);
+  return c.json({ tags, since: rawTimestamp, nextCursor: nextCursorFor(tags, page.options, "updatedAt") });
 });
 
 // === Backup endpoints ===

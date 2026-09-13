@@ -1132,6 +1132,185 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
       .toEqual(expect.objectContaining({ noActive: true, hasData: false, attached: null }));
   });
 
+  test('an open note survives a reload triggered by something else', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // Any subscribed pubsub event rebuilds the pane's whole DOM. Removing the
+    // focused textarea fires its blur handler, so before this was handled an
+    // open note closed mid-typing and the caret was lost — the text survived,
+    // but the editor did not.
+    const url = 'https://notes-reload.example.com/p';
+    await makeActiveWithUrl(url);
+    await waitOverlayReady();
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.seedNote((arg as any).url, 'original body');
+    }, { url });
+
+    // Open the note's editor by clicking its preview.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-content-preview')`);
+        }),
+      )
+      .toBe(true);
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`document.querySelector('#notes-panel .notes-content-preview').click(); true;`);
+    });
+
+    // Type into it, leaving the caret mid-text and the textarea still focused.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-textarea')`);
+        }),
+      )
+      .toBe(true);
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`
+        (() => {
+          const ta = document.querySelector('#notes-panel .notes-textarea');
+          ta.focus();
+          ta.value = 'original body, still typing';
+          ta.setSelectionRange(9, 9);
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()
+      `);
+    });
+
+    // Something else changes — a completed sync pull, which the pane subscribes
+    // to and reloads on.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('sync:pull-completed', { pulled: 0 });
+    });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`
+            (() => {
+              const ta = document.querySelector('#notes-panel .notes-textarea');
+              if (!ta) return { open: false };
+              return {
+                open: true,
+                value: ta.value,
+                caret: ta.selectionStart,
+                focused: document.activeElement === ta,
+              };
+            })()
+          `);
+        }),
+      )
+      .toEqual({ open: true, value: 'original body, still typing', caret: 9, focused: true });
+  });
+
+  test('leaving a note still closes it and saves what was typed', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // The other half of keeping an editor open across a rebuild: a blur that
+    // really is the user leaving must still commit and close, or a note would
+    // stay open forever.
+    const url = 'https://notes-close.example.com/p';
+    await makeActiveWithUrl(url);
+    await waitOverlayReady();
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.seedNote((arg as any).url, 'before edit');
+    }, { url });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-content-preview')`);
+        }),
+      )
+      .toBe(true);
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`document.querySelector('#notes-panel .notes-content-preview').click(); true;`);
+    });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-textarea')`);
+        }),
+      )
+      .toBe(true);
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`
+        (() => {
+          const ta = document.querySelector('#notes-panel .notes-textarea');
+          ta.focus();
+          ta.value = 'after edit';
+          ta.blur();
+          return true;
+        })()
+      `);
+    });
+
+    // The editor closes, the preview reflects what was typed immediately, and
+    // the datastore holds it too.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`!!document.querySelector('#notes-panel .notes-textarea')`);
+        }),
+      )
+      .toBe(false);
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`document.querySelector('#notes-panel .notes-content-preview').textContent`);
+        }),
+      )
+      .toBe('after edit');
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.evalInOverlay(`
+            (async () => {
+              const ds = window.app.datastore;
+              const tag = await ds.getOrCreateTag('annotation');
+              const tagId = tag && tag.data && tag.data.tag && tag.data.tag.id;
+              const items = await ds.getItemsByTag(tagId);
+              const list = (items && items.data) || [];
+              const mine = list.filter((it) => {
+                try {
+                  const meta = typeof it.metadata === 'string' ? JSON.parse(it.metadata) : (it.metadata || {});
+                  return meta.anchor && meta.anchor.url === ${JSON.stringify((arg as any).url)};
+                } catch { return false; }
+              });
+              return mine.map((it) => it.content).join('|');
+            })()
+          `);
+        }, { url }),
+      )
+      .toBe('after edit');
+  });
+
   test('draft note: an empty blur creates nothing, a typed blur creates exactly one item', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 

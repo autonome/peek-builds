@@ -2526,9 +2526,10 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
 
 // Regression suite for the empty-text sync stall: a desktop client holding an
 // empty `text` item retried it every sync forever, and the item never earned
-// a syncId — which stalled the event push's watermark behind it, forcing
-// every run to re-push the entire event history (see CONTENT_REQUIRED_TYPES
-// in index.js). `url` keeps the content requirement. Exercises the real
+// a syncId — which stranded its events, and (while event push ran off one
+// global watermark) forced every run to re-push the entire event history
+// behind it (see CONTENT_REQUIRED_TYPES in index.js). `url` keeps the content
+// requirement. Exercises the real
 // production app (`require("./index").app`), same convention as the POST
 // /items real-route suite above.
 describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPES)", () => {
@@ -2616,6 +2617,135 @@ describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPE
 // Coverage for item_events sync: append-only observations backing series/feed
 // items. Exercises the real production app (`require("./index").app`), same
 // convention as the POST /items real-route suite above.
+// A full push used to be one HTTP request per item — roughly 11k sequential
+// requests for a real datastore. This route takes a chunk at a time, in one
+// transaction, and reports per row: the identity work (syncId matching, the
+// server id coming back) has to survive batching, and one unacceptable item must
+// not cost the rest of the chunk.
+describe("POST /items/batch — batched item push", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "batchpushuser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function pushBatch(items) {
+    const res = await app.request("/items/batch", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ items }),
+    });
+    return { status: res.status, json: await res.json() };
+  }
+
+  async function fetchItems() {
+    const res = await app.request("/items", { headers: authHeaders() });
+    const json = await res.json();
+    return json.items;
+  }
+
+  it("saves every item in one request and returns a server id per item", async () => {
+    const { status, json } = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/one", title: "One" },
+      { localId: "l2", syncId: "l2", type: "url", content: "https://example.com/two", title: "Two" },
+      { localId: "l3", syncId: "l3", type: "text", content: "a note" },
+    ]);
+
+    assert.strictEqual(status, 200);
+    assert.strictEqual(json.received, 3);
+    assert.strictEqual(json.saved, 3);
+    assert.strictEqual(json.results.length, 3);
+    for (const result of json.results) {
+      assert.ok(result.id, `every accepted item must come back with a server id: ${JSON.stringify(result)}`);
+      assert.ok(result.localId, "and with the client's own row id, so the client can record it against the right row");
+    }
+    assert.strictEqual((await fetchItems()).length, 3);
+  });
+
+  it("reports one unacceptable item against itself and still saves the rest", async () => {
+    const { json } = await pushBatch([
+      { localId: "good-1", syncId: "good-1", type: "url", content: "https://example.com/good" },
+      { localId: "bad-1", syncId: "bad-1", type: "url", content: "" },
+      { localId: "good-2", syncId: "good-2", type: "url", content: "https://example.com/also-good" },
+    ]);
+
+    assert.strictEqual(json.saved, 2, "the two acceptable items must be stored");
+    const bad = json.results.find((r) => r.localId === "bad-1");
+    assert.ok(bad.error.includes("content is required"), `the bad row must carry its own reason; got ${JSON.stringify(bad)}`);
+    assert.strictEqual(bad.id, undefined, "and no server id, since nothing was stored for it");
+    assert.strictEqual((await fetchItems()).length, 2);
+  });
+
+  it("matches an existing row by the server id the first push returned, instead of duplicating it", async () => {
+    const first = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/one", title: "First title" },
+    ]);
+    const serverId = first.json.results[0].id;
+
+    const second = await pushBatch([
+      { localId: "l1", syncId: serverId, type: "url", content: "https://example.com/one", title: "Second title" },
+    ]);
+
+    assert.strictEqual(second.json.results[0].id, serverId, "the same row must come back, not a new one");
+    const items = await fetchItems();
+    assert.strictEqual(items.length, 1, "a re-push through the batch route must not duplicate the row");
+    assert.strictEqual(items[0].title, "Second title", "and it must actually apply the update");
+  });
+
+  it("refuses an image rather than building an unbounded body, and says so per row", async () => {
+    const { json } = await pushBatch([
+      { localId: "img-1", syncId: "img-1", type: "image", content: "aGVsbG8=", filename: "x.png", mime: "image/png" },
+      { localId: "txt-1", syncId: "txt-1", type: "text", content: "a note" },
+    ]);
+
+    const image = json.results.find((r) => r.localId === "img-1");
+    assert.ok(image.error.includes("one at a time"), `got ${JSON.stringify(image)}`);
+    assert.strictEqual(json.saved, 1, "the non-image item must still be stored");
+  });
+
+  it("rejects a batch larger than the cap, and an empty one", async () => {
+    const tooMany = Array.from({ length: 501 }, (_, i) => ({
+      localId: `l${i}`, syncId: `l${i}`, type: "text", content: `note ${i}`,
+    }));
+    const over = await pushBatch(tooMany);
+    assert.strictEqual(over.status, 400);
+    assert.ok(over.json.error.includes("at most"), over.json.error);
+
+    const empty = await pushBatch([]);
+    assert.strictEqual(empty.status, 400);
+  });
+
+  it("applies a tombstone through the batch route", async () => {
+    const first = await pushBatch([
+      { localId: "l1", syncId: "l1", type: "url", content: "https://example.com/gone" },
+    ]);
+    const serverId = first.json.results[0].id;
+
+    await pushBatch([
+      { localId: "l1", syncId: serverId, type: "url", content: "https://example.com/gone", deletedAt: Date.now() },
+    ]);
+
+    assert.strictEqual((await fetchItems()).length, 0, "a deleted item must not come back from GET /items");
+  });
+});
+
 describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () => {
   let app;
   let users;
@@ -3633,6 +3763,8 @@ describe("MCP Item Routes Tests", () => {
       const res = await app.request(`/mcp/items/${id}?events=20`, { headers: scopedHeaders() });
       const json = await res.json();
       assert.strictEqual(json.item.events.length, 1);
+      // The embedded window keeps the `content as type` alias for its existing
+      // callers; the paged GET /mcp/items/:id/events route drops it.
       assert.strictEqual(json.item.events[0].type, "started");
     });
 
@@ -3754,11 +3886,36 @@ describe("MCP Item Write Routes Tests", () => {
       const refused = readonlyRefused(c);
       if (refused) return refused;
       const body = await c.req.json().catch(() => ({}));
-      const result = mcpItemsMod.recordEvent(
-        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
-      );
+      const result = mcpItemsMod.recordEvent(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
       if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
       if (result.status === "invalid") return c.json({ error: result.error }, 400);
+      return c.json(result.result);
+    });
+
+    app.get("/mcp/items/:id/events", (c) => {
+      const result = mcpItemsMod.listEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), {
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+      });
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json({ events: result.events });
+    });
+
+    app.delete("/mcp/items/:id/events/:eventId", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.deleteEvent(
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("eventId")
+      );
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json(result.result);
+    });
+
+    app.delete("/mcp/items/:id/events", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.deleteEvents(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
       return c.json(result.result);
     });
 
@@ -3839,6 +3996,93 @@ describe("MCP Item Write Routes Tests", () => {
       assert.strictEqual(json.type, "started");
     });
 
+    it("GET /mcp/items/:id/events pages through an item's event history", async () => {
+      const id = makeItem(["work"]);
+      for (let i = 0; i < 3; i++) {
+        await app.request(`/mcp/items/${id}/events`, {
+          method: "POST",
+          headers: scopedHeaders(),
+          // Explicit occurredAt: three writes in the same millisecond leave the
+          // descending order — and so the page boundary — undefined.
+          body: JSON.stringify({ type: `evt-${i}`, occurredAt: 1735689600000 + i }),
+        });
+      }
+      const res = await app.request(`/mcp/items/${id}/events?limit=2&offset=1`, { headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.events.length, 2);
+      // Descending by occurredAt, offset 1 skips evt-2: evt-1 then evt-0. The
+      // content column comes back under its own name, not aliased to `type`.
+      assert.deepStrictEqual(json.events.map((e) => e.content), ["evt-1", "evt-0"]);
+      assert.strictEqual(json.events[0].type, undefined);
+    });
+
+    it("GET /mcp/items/:id/events returns a supplied content unaliased, so the type label is not overwritten by it", async () => {
+      const id = makeItem(["work"]);
+      await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({
+          type: "feed-entry",
+          value: 0,
+          content: "https://example.invalid/entry-1",
+          occurredAt: 1735689600000,
+          metadata: { guid: "g1", kind: "feed-entry" },
+        }),
+      });
+      const res = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      const [event] = (await res.json()).events;
+      assert.strictEqual(event.content, "https://example.invalid/entry-1");
+      assert.strictEqual(event.occurredAt, 1735689600000);
+      // There is no type column on item_events, so a caller that needs its
+      // events distinguishable by kind carries the label in metadata; what it
+      // must never get is its own content string back in a field named `type`.
+      assert.strictEqual(event.type, undefined);
+      assert.strictEqual(JSON.parse(event.metadata).kind, "feed-entry");
+    });
+
+    it("DELETE /mcp/items/:id/events/:eventId removes one event", async () => {
+      const id = makeItem(["work"]);
+      const created = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started" }),
+      });
+      const { id: eventId } = await created.json();
+      const res = await app.request(`/mcp/items/${id}/events/${eventId}`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      const remaining = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      assert.strictEqual((await remaining.json()).events.length, 0);
+    });
+
+    it("DELETE /mcp/items/:id/events/:eventId reports success:false for an eventId that isn't there", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events/no-such-event`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, false);
+    });
+
+    it("DELETE /mcp/items/:id/events removes every event under the item", async () => {
+      const id = makeItem(["work"]);
+      for (let i = 0; i < 3; i++) {
+        await app.request(`/mcp/items/${id}/events`, {
+          method: "POST",
+          headers: scopedHeaders(),
+          body: JSON.stringify({ type: `evt-${i}` }),
+        });
+      }
+      const res = await app.request(`/mcp/items/${id}/events`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.deleted, 3);
+      const remaining = await app.request(`/mcp/items/${id}/events`, { headers: scopedHeaders() });
+      assert.strictEqual((await remaining.json()).events.length, 0);
+    });
+
     it("returns 404 for a write against an out-of-scope item, same as a nonexistent one", async () => {
       const outOfScopeId = makeItem(["personal"]);
       const res = await app.request(`/mcp/items/${outOfScopeId}`, {
@@ -3859,6 +4103,8 @@ describe("MCP Item Write Routes Tests", () => {
         ["POST", `/mcp/items/${id}/tags`, { name: "extra" }],
         ["DELETE", `/mcp/items/${id}/tags/todo`, null],
         ["POST", `/mcp/items/${id}/events`, { type: "note" }],
+        ["DELETE", `/mcp/items/${id}/events/some-event-id`, null],
+        ["DELETE", `/mcp/items/${id}/events`, null],
         ["POST", `/mcp/tasks/${id}/complete`, { notes: "x" }],
         ["DELETE", `/mcp/items/${id}`, null],
       ];
@@ -3891,6 +4137,122 @@ describe("MCP Item Write Routes Tests", () => {
         body: JSON.stringify({ title: "allowed" }),
       });
       assert.strictEqual(res.status, 200);
+    });
+  });
+
+  describe("record_event: {type, value} stays byte-identical, content/occurredAt/metadata are additive", () => {
+    it("a {type, value} body writes the exact legacy row: content=type, value=0, metadata={notes:value}", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", value: "kicked off" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, value, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "started");
+      assert.strictEqual(row.value, 0);
+      assert.deepStrictEqual(JSON.parse(row.metadata), { notes: "kicked off" });
+    });
+
+    it("a {type} body with no value writes metadata '{}' same as before", async () => {
+      const id = makeItem(["work"]);
+      await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started" }),
+      });
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, value, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "started");
+      assert.strictEqual(row.value, 0);
+      assert.strictEqual(row.metadata, "{}");
+    });
+
+    it("content/occurredAt/metadata store directly into the columns of those names", async () => {
+      const id = makeItem(["work"]);
+      const occurredAt = 1700000000000;
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({
+          type: "feed_entry",
+          content: "https://example.com/article",
+          occurredAt,
+          metadata: { guid: "abc123", title: "An article" },
+        }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT content, occurredAt, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.content, "https://example.com/article");
+      assert.strictEqual(row.occurredAt, occurredAt);
+      assert.deepStrictEqual(JSON.parse(row.metadata), { guid: "abc123", title: "An article" });
+    });
+
+    it("an explicit metadata object also switches value to a real number instead of notes-wrapped text", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "score", value: 42, metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 42);
+    });
+
+    it("type is still required even when content/occurredAt/metadata are present", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ content: "x", occurredAt: 1, metadata: {} }),
+      });
+      assert.strictEqual(res.status, 400);
+    });
+
+    it("a numeric STRING value alongside metadata is accepted and coerced to a number", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "score", value: "42", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 42);
+    });
+
+    it("a non-numeric value alongside metadata is refused with 400, not silently coerced to 0", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", value: "kicked off", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /value must be a number/);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT * FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row, null, "a refused write must not leave a row behind");
+    });
+
+    it("an absent or empty value alongside metadata still defaults to 0, no refusal", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", metadata: { source: "test" } }),
+      });
+      assert.strictEqual(res.status, 200);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const row = conn.get("SELECT value FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(row.value, 0);
     });
   });
 
@@ -4128,5 +4490,188 @@ describe("MCP Item Write Routes Tests", () => {
       const events = conn.all("SELECT * FROM item_events WHERE itemId = ?", [id]);
       assert.strictEqual(events.length, 0, "no completion event should exist when the transaction rolled back");
     });
+  });
+});
+
+describe("Paged sync pulls (limit + cursor on the three `since` routes)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "paginguser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  after(() => {
+    cleanTestDir();
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function createItems(count) {
+    const ids = [];
+    for (let i = 0; i < count; i++) {
+      const res = await app.request("/items", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ type: "url", content: `https://example.com/paged-${i}` }),
+      });
+      const json = await res.json();
+      ids.push(json.id);
+    }
+    return ids;
+  }
+
+  // Walks every page the way a client does, and returns the rows in the order
+  // the server handed them over.
+  async function pullAllPages(basePath, key, limit) {
+    const rows = [];
+    let cursor;
+    for (let page = 0; page < 50; page++) {
+      const separator = basePath.includes("?") ? "&" : "?";
+      let url = `${basePath}${separator}limit=${limit}`;
+      if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+      const res = await app.request(url, { headers: authHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      rows.push(...json[key]);
+      if (!json.nextCursor) return rows;
+      cursor = json.nextCursor;
+    }
+    throw new Error("pull never ran out of pages");
+  }
+
+  it("a pull with no limit returns everything, exactly as before paging existed", async () => {
+    await createItems(7);
+    const res = await app.request("/items/since/0", { headers: authHeaders() });
+    const json = await res.json();
+    assert.strictEqual(json.items.length, 7);
+    assert.strictEqual(json.nextCursor, undefined, "an unpaged pull hands back no cursor to follow");
+  });
+
+  it("paging through items returns every row exactly once", async () => {
+    await createItems(7);
+    const paged = await pullAllPages("/items/since/0", "items", 3);
+    const ids = paged.map((i) => i.id);
+    assert.strictEqual(ids.length, 7, `expected 7 rows across pages, got ${ids.length}`);
+    assert.strictEqual(new Set(ids).size, 7, "no row should arrive twice");
+  });
+
+  it("rows sharing a timestamp still page correctly — the cursor carries the id too", async () => {
+    // Every row written with the same updatedAt: a cursor of "the last timestamp
+    // I saw" would either skip the rest of the group or repeat it forever.
+    const db = require("./db");
+    // The route resolves the "default" slug to the profile's UUID, so a
+    // connection opened on the slug is a different bucket entirely.
+    const conn = db.getConnection(TEST_USER, users.resolveProfileId(TEST_USER, "default"));
+    for (let i = 0; i < 10; i++) {
+      conn.run(
+        `INSERT INTO items (id, type, content, metadata, createdAt, updatedAt, deletedAt)
+         VALUES (?, 'url', ?, '{}', 5000, 5000, 0)`,
+        [`same-ts-${i}`, `https://example.com/same-${i}`]
+      );
+    }
+
+    const paged = await pullAllPages("/items/since/0", "items", 3);
+    const ids = paged.map((i) => i.id).sort();
+    assert.strictEqual(ids.length, 10, `expected all 10 rows, got ${ids.length}`);
+    assert.strictEqual(new Set(ids).size, 10, "no row should arrive twice");
+  });
+
+  it("paging through events returns every row exactly once", async () => {
+    const itemRes = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "series", metadata: { title: "Paged series" } }),
+    });
+    const itemId = (await itemRes.json()).id;
+
+    const events = [];
+    for (let i = 0; i < 8; i++) {
+      events.push({ id: `paged-evt-${i}`, itemId, content: null, value: i, occurredAt: 1000 + i, createdAt: 1000 + i });
+    }
+    await app.request("/events", { method: "POST", headers: authHeaders(), body: JSON.stringify({ events }) });
+
+    const paged = await pullAllPages("/events/since/0", "events", 3);
+    assert.strictEqual(paged.length, 8);
+    assert.strictEqual(new Set(paged.map((e) => e.id)).size, 8);
+  });
+
+  it("paging through tags returns every row exactly once", async () => {
+    const tags = [];
+    for (let i = 0; i < 8; i++) {
+      tags.push({ name: `paged-tag-${i}`, color: "#123456", createdAt: 1000 + i, updatedAt: 1000 + i });
+    }
+    await app.request("/tags", { method: "POST", headers: authHeaders(), body: JSON.stringify({ tags }) });
+
+    const paged = await pullAllPages("/tags/since/0", "tags", 3);
+    assert.strictEqual(paged.length, 8);
+    assert.strictEqual(new Set(paged.map((t) => t.name)).size, 8);
+  });
+
+  it("a page carries a cursor only while more rows remain", async () => {
+    await createItems(4);
+    const res = await app.request("/items/since/0?limit=4", { headers: authHeaders() });
+    const json = await res.json();
+    assert.strictEqual(json.items.length, 4);
+    // An exactly-full last page still offers a cursor — the client discovers the
+    // end by fetching one more page that comes back empty.
+    assert.ok(json.nextCursor, "a full page offers a cursor");
+
+    const nextRes = await app.request(`/items/since/0?limit=4&cursor=${encodeURIComponent(json.nextCursor)}`, {
+      headers: authHeaders(),
+    });
+    const nextJson = await nextRes.json();
+    assert.strictEqual(nextJson.items.length, 0, "the page past the end is empty");
+    assert.strictEqual(nextJson.nextCursor, undefined, "and offers nothing further to follow");
+  });
+
+  it("a limit outside the accepted range is refused", async () => {
+    for (const bad of ["0", "-1", "abc", "100000"]) {
+      const res = await app.request(`/items/since/0?limit=${bad}`, { headers: authHeaders() });
+      assert.strictEqual(res.status, 400, `limit=${bad} should be refused`);
+    }
+  });
+
+  it("a cursor the server cannot read is refused rather than restarting the pull", async () => {
+    const res = await app.request("/items/since/0?limit=2&cursor=not-a-real-cursor", { headers: authHeaders() });
+    assert.strictEqual(res.status, 400);
+    const json = await res.json();
+    assert.match(json.error, /cursor/);
+  });
+
+  it("all three routes refuse a bad cursor the same way", async () => {
+    for (const route of ["/items/since/0", "/events/since/0", "/tags/since/0"]) {
+      const res = await app.request(`${route}?cursor=%%%`, { headers: authHeaders() });
+      assert.strictEqual(res.status, 400, `${route} should refuse an unreadable cursor`);
+    }
+  });
+
+  it("a type filter still applies across pages", async () => {
+    await createItems(5);
+    for (let i = 0; i < 3; i++) {
+      await app.request("/items", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ type: "text", content: `paged note ${i}` }),
+      });
+    }
+
+    const paged = await pullAllPages("/items/since/0?type=text", "items", 2);
+    assert.strictEqual(paged.length, 3, "only the text items should come back");
+    assert.ok(paged.every((i) => i.type === "text"));
   });
 });

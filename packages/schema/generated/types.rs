@@ -52,6 +52,12 @@ pub struct SchemaItems {
     pub domain: String,
     /// Favicon URL
     pub favicon: String,
+    #[serde(rename = "syncError")]
+    /// Client-local: the server's own message from a push it permanently rejected ('' = not rejected). Never sent on the wire
+    pub sync_error: String,
+    #[serde(rename = "syncErrorAt")]
+    /// Client-local: the item's updatedAt at the moment of that rejection. Push skips the item only while updatedAt has not moved past this, so any later edit retries it automatically
+    pub sync_error_at: i64,
 }
 
 /// Tag definitions with frecency tracking
@@ -157,4 +163,7 @@ pub struct SchemaItemEvents {
     #[serde(rename = "createdAt")]
     /// Creation timestamp (Unix ms)
     pub created_at: i64,
+    #[serde(rename = "pushedAt")]
+    /// Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself
+    pub pushed_at: i64,
 }

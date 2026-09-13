@@ -714,15 +714,101 @@ function untagItemSync(itemId, tagName) {
   return { success: true, itemId, tagName };
 }
 
-function recordEventSync(itemId, type, value = '') {
+// Matches apps/server/mcp-items.js parseNumericEventValue() exactly: when
+// `metadata` is supplied, `value` has to actually be a number (or numeric
+// string) — `Number(value) || 0` would silently turn a caller's real text
+// into a bare 0 with no error, right on the shape someone migrating off the
+// old (itemId, type, value)-only call would plausibly send.
+function parseNumericEventValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// `opts.content`/`occurredAt`/`metadata` are additions matching the server-
+// side parity requirement (apps/server/mcp-items.js recordEvent()) — a
+// caller sending only (itemId, type, value) gets the exact legacy row:
+// content = type, value hardcoded to 0, metadata = {notes: value} (or '{}'
+// with no value), occurredAt = now. `type` still falls back into the
+// content column whenever `opts.content` is omitted. Supplying
+// `opts.metadata` switches `value` to a real number in the value column
+// instead of notes-wrapped text, same rule as the server side — and, same as
+// the server side, throws rather than coercing when `value` is present but
+// isn't cleanly numeric.
+function recordEventSync(itemId, type, value = '', opts = {}) {
+  const { content, occurredAt, metadata } = opts;
   const id = randomUUID();
   const now = Date.now();
-  const metaStr = value ? JSON.stringify({ notes: value }) : '{}';
+
+  const contentVal = content !== undefined ? content : type;
+  const occurredAtVal = occurredAt !== undefined ? occurredAt : now;
+  let metaStr;
+  let valueVal;
+  if (metadata !== undefined) {
+    metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
+    if (!value) {
+      valueVal = 0;
+    } else {
+      const parsed = parseNumericEventValue(value);
+      if (parsed === null) {
+        throw new Error(
+          'value must be a number when metadata is supplied — put free-form text in metadata itself, not value.'
+        );
+      }
+      valueVal = parsed;
+    }
+  } else {
+    metaStr = value ? JSON.stringify({ notes: value }) : '{}';
+    valueVal = 0;
+  }
+
   requireDb().prepare(`
     INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
-    VALUES (?, ?, ?, 0, ?, ?, ?)
-  `).run(id, itemId, type, now, metaStr, now);
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, itemId, contentVal, valueVal, occurredAtVal, metaStr, now);
   return { success: true, id, itemId, type };
+}
+
+// --- list_events / delete_event / delete_events: parity additions ---
+//
+// EVENTS_PAGE_LIMIT matches apps/server/mcp-items.js's ceiling of the same
+// name exactly — the two stores must agree on the cap or a caller could see
+// different behavior depending on which store answered.
+const EVENTS_PAGE_LIMIT = 200;
+
+// Returns the `content` column unaliased, matching listEvents() in
+// apps/server/mcp-items.js — see that function's comment for why the paged
+// read drops the `content as type` alias the embedded window keeps.
+function listEventsSync(itemId, { limit = 50, offset = 0 } = {}) {
+  const parsedLimit = Number(limit);
+  const boundedLimit =
+    Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(EVENTS_PAGE_LIMIT, Math.floor(parsedLimit)) : 50;
+  const parsedOffset = Number(offset);
+  const boundedOffset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? Math.floor(parsedOffset) : 0;
+
+  return requireDb().prepare(`
+    SELECT id, content, value, occurredAt, metadata
+    FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT ? OFFSET ?
+  `).all(itemId, boundedLimit, boundedOffset);
+}
+
+// Hard delete — item_events has no deletedAt column. An eventId not found
+// under this item reports {success:false}, matching untagItemSync()'s
+// missing-tag shape rather than throwing.
+function deleteEventSync(itemId, eventId) {
+  const result = requireDb().prepare(`DELETE FROM item_events WHERE id = ? AND itemId = ?`).run(eventId, itemId);
+  if (result.changes === 0) return { success: false, error: 'Event not found' };
+  return { success: true, id: eventId, itemId };
+}
+
+function deleteEventsSync(itemId) {
+  const result = requireDb().prepare(`DELETE FROM item_events WHERE itemId = ?`).run(itemId);
+  return { success: true, itemId, deleted: result.changes };
 }
 
 function listTasksSync({ tags = ['todo'], project } = {}) {
@@ -789,7 +875,10 @@ export async function openSqliteStore({ dbPath, scopeTag = '', readonly = false 
     async listTags(q) { return listTagsSync(q); },
     async tagItem(id, tagName) { return tagItemSync(id, tagName); },
     async untagItem(id, tagName) { return untagItemSync(id, tagName); },
-    async recordEvent(id, type, value) { return recordEventSync(id, type, value); },
+    async recordEvent(id, type, value, opts) { return recordEventSync(id, type, value, opts); },
+    async listEvents(id, opts) { return listEventsSync(id, opts); },
+    async deleteEvent(id, eventId) { return deleteEventSync(id, eventId); },
+    async deleteEvents(id) { return deleteEventsSync(id); },
     async listTasks(q) { return listTasksSync(q); },
     async completeTask(id, notes) { return completeTaskSync(id, notes); },
     async getTaskContext(idOrPrefix) { return getTaskContextSync(idOrPrefix, scopeTag); },

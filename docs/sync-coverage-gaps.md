@@ -40,7 +40,7 @@ server-stamped on every write instead — `mergeServerItem()`'s conflict resolut
 (last-write-wins) compares on it, so it can't also carry client-supplied values
 without breaking that comparison.
 
-## 2. `item_events` now syncs, on its own watermark
+## 2. `item_events` now syncs, stamped per event
 
 `packages/schema/v1.json` marks every `item_events` column `"sync": true` and lists
 the table in `validation.required_sync_columns`. `sync.ts pushEventsToServer()` /
@@ -48,18 +48,27 @@ the table in `validation.required_sync_columns`. `sync.ts pushEventsToServer()` 
 stores it. `series` and `feed` items — whose entire payload lives in `item_events`
 rows rather than in the item itself — restore with their observations intact.
 
-Push tracks its own watermark (`feature_settings` key `lastEventPushAt`), separate
-from the item watermark (`lastSyncAt`). This split is load-bearing, not
-incidental: an event's `itemId` on the wire is the *server's* item id, resolved
-from the local item's `syncId` — so an event whose parent item has no `syncId` yet
-(not pushed, or still mid-push) has to be skipped for this run. A shared watermark
-would still advance to "now" at the end of a run that skipped some events (because
-items track their own per-row `syncedAt` and tolerate that), which would push the
-watermark past those skipped events' `createdAt` and strand them permanently — the
-next run's `> watermark` filter would exclude them even after their item finally
-gets a `syncId`. The dedicated watermark only advances up to the oldest still-blocked
-event, so a blocked event stays eligible on every future run until its item's push
-succeeds.
+Push records delivery per event, in `item_events.pushedAt` (0 = never delivered),
+rather than against any time watermark. The reason a watermark cannot serve here:
+an event's `itemId` on the wire is the *server's* item id, resolved from the local
+item's `syncId` — so an event whose parent item has no `syncId` yet (not pushed, or
+still mid-push) has to be skipped for this run. Any watermark still advances at the
+end of that run (items tolerate this, since they track their own per-row
+`syncedAt`), which would push it past the skipped events' `createdAt` and strand
+them permanently.
+
+A dedicated event watermark, held below the oldest skipped event, was the previous
+answer and had its own failure: an item the server permanently rejects — or one of a
+type that never syncs at all — never earns a `syncId`, so it pinned that watermark
+indefinitely and every run re-pushed the whole event tail behind it (24,000 events
+per run, measured against production). With a per-row stamp, an event whose parent
+cannot sync strands exactly itself and is picked up whenever that parent does sync.
+
+`pushedAt` is declared `"sync": false` in `packages/schema/v1.json` — local
+bookkeeping, never sent on the wire, no column on the server — so it needs no
+datastore version bump. `datastore.ts migrateEventPushedAtColumn()` adds the column
+and stamps everything at or below the retired watermark as already delivered; only
+the tail behind it re-pushes, once, and the server ignores ids it already holds.
 
 Deletion does not propagate: a locally hard-deleted event reappears on the next
 pull if the server still has it. There is no `deletedAt` (or any tombstone) column
@@ -174,6 +183,135 @@ sends a full `tags` array on every item push. Pinned by
 
 **Settled by:** giving `tags` the same COALESCE-style omitted-means-unchanged
 treatment as every other column — unscheduled work, since no current client hits it.
+
+## 8. What the sync test suites can and cannot catch
+
+A green suite only means something if it is known what that suite is able to fail
+on. Five suites carry sync coverage; this is what each one exercises for real and
+what is invisible to it by construction. The occasion for writing it down:
+`sync-e2e.test.js` was 2 passed / 11 failed for two months (2026-06-24 to
+2026-08-18) while every other suite stayed green, because the only suite able to
+see that class of fault was the broken one.
+
+All five pass as of 2026-08-18: 41, 13, 9, 8 and 16 cases respectively.
+
+### `apps/desktop/main/sync.test.ts` — 41 cases
+
+Runs as runner 1 of the 6-runner desktop gate (`yarn test:desktop:electron`), and
+standalone via `yarn test:unit`. Exercises the real `sync.ts` push and pull
+functions against the real server app and a real `node:sqlite` datastore, and is
+the only suite covering all six stages deliberately rather than incidentally
+(`describe('IPC entry points — tile:sync:push / tile:sync:pull must run all three
+stages')`). It also owns the paged-pull cases (`describe('Paged pulls — the
+client follows the server cursor')`), which answer the item pull from a stub
+rather than the real app: what is under test there is the client's loop — how
+many requests it makes and when it stops.
+
+Blind by construction to any disagreement between two separately-configured HTTP
+clients: `setup()` stubs `globalThis.fetch` and routes it into the server's Hono
+`app.request()` in-process, so there is no socket, no header serialization round
+trip, and no second fetch implementation. That is exactly the shape of the
+`sync-e2e.test.js` fault, which is why this suite could not see it.
+
+Also blind to drift in the real IPC handlers: `replayTileSyncPush()` and
+`replayTileSyncPull()` re-implement the body of `tile-ipc.ts`'s handlers, because
+`tile-ipc.ts` cannot be imported under `ELECTRON_RUN_AS_NODE`. If the registered
+handler's stage order changes, the replay still passes.
+
+Covers all three recent changes: `pushedAt` per-event stamping, the parked-item
+columns, and the batched push including its 404 fallback.
+
+### `packages/integration-tests/sync-e2e.test.js` — 13 cases
+
+`yarn test:sync:e2e`. The only suite where a real desktop client and a real server
+process talk over a real socket: it spawns `apps/server/index.js` on port 3458 and
+drives the compiled `sync.ts` against it. This is the suite that can see a
+client/server disagreement, and the reason step 1 of restoring the foundation was
+repairing it rather than deleting it.
+
+Three limits:
+
+- Authentication is bypassed. The server is spawned with `E2E_TEST=true`, which
+  short-circuits `deviceMiddleware` and `multiUserMiddleware` in
+  `apps/server/auth.js`, so a credential-handling mismatch on the wire is invisible.
+- Tag and event stages are only incidental. No test calls `pushTagsToServer`,
+  `pullTagsFromServer`, `pushEventsToServer` or `pullEventsFromServer`, and no test
+  requests `/tags/since` or `/events/since`; those stages run only inside the two
+  tests that call `syncAll()` (`testBidirectionalSync`, `testIncrementalSync`), on
+  whatever data those tests happen to hold. `testTagsetSync` covers the `tags`
+  array on `/items`, not the tag-metadata routes.
+Two cases used to print a pass on every path and never inject a failure. They
+were replaced with assertions of the behaviour that actually holds now:
+`testDeletionTombstonePropagates()` proves a soft delete reaches the server as a
+`deletedAt` tombstone and drops out of the default listing, and
+`testRejectedItemIsParked()` proves a permanently rejected row records
+`syncError`/`syncErrorAt`, is not re-attempted while unchanged, and pushes once
+edited. That makes the parked-item mechanism the one recent change proven over a
+real socket rather than only in-process.
+
+`pushedAt` and the `/items/batch` 404 fallback are still in-process only. The
+batch route runs here as an implementation detail of `pushToServer()`, but the
+fallback cannot be reached, because the spawned server always has the route.
+
+### `packages/integration-tests/sync-integration.test.js` — 9 cases
+
+`yarn test:sync`. Real HTTP to a real spawned server on port 3457, with requests
+built by hand in `serverRequest()`. No desktop code is loaded at all, so this is a
+server-route suite: it validates `POST /items` and `GET /items/since/:timestamp`
+and nothing else. No `/tags` or `/events` route is requested. Nothing about how
+the real client builds a request or reads a response is under test.
+
+### `packages/integration-tests/sync-three-way.test.js` — 8 cases
+
+`yarn test:sync:three-way`. Real HTTP to a real spawned server on port 3459. Both
+"mobile" and "desktop" are the same hand-rolled `clientRequest()` helper with
+different `profile` query params — neither the desktop `sync.ts` nor the Rust
+mobile client is involved. What it actually proves is server-side profile
+resolution and isolation, including that an unregistered UUID gets its own profile
+rather than falling into `default`. Only `/items` is touched; no tag or event
+stages, no batching, no sync-state bookkeeping.
+
+### `packages/integration-tests/sync-version-compat.test.js` — 16 cases
+
+`yarn test:version-compat`. Two mechanisms in one file:
+
+- Header negotiation (`test1_bothV1` through `test8_bothNoHeaders`,
+  `testHealthCheck`, `testIncrementalSyncVersionCheck`) — real HTTP to a real
+  server on port 3460, but the client side is `versionedRequest()` setting
+  `X-Peek-Datastore-Version` and friends by hand, not `serverFetch()`. It proves
+  the server's reading of those headers, not the desktop's writing of them.
+- Version-bump behaviour (`test9_initWritesVersion` through
+  `test12_upgradeDetected`, `testServerDBVersion`) — not integration tests at all.
+  `checkAndWriteDatastoreVersion()` is redefined inside the test file as a copy of
+  the `datastore.ts` logic, and `testServerDBVersion()` builds its own `settings`
+  table instead of calling `db.js initializeSchema()`. A change to the real
+  implementation that is not mirrored into the copy goes undetected in both
+  directions.
+
+Only `/items` is requested; no tag or event stages.
+
+### Nothing runs any of this automatically
+
+There is no CI, no `.github/` workflows, no husky config, and no installed git
+hook (`core.hooksPath` unset, `.git/hooks` holds only the stock samples). Suites 2
+through 5 are standalone `yarn` scripts that no aggregate script calls. Suite 1
+rides the desktop gate, which itself requires explicit human approval per
+`apps/desktop/CLAUDE.md` before each run. That is why a June breakage surfaced in
+August.
+
+Decision: the four non-gate suites are grouped under `yarn test:sync:all` and run
+before landing any sync change, rather than being wired into a pre-commit hook.
+Each spawns a server process and together they take over a minute, which is too
+slow to run on every commit; the desktop gate stays the only place suite 1 runs.
+
+### The gaps this leaves
+
+- No suite exercises the tag or event stages over a real socket. Every event- and
+  tag-stage assertion lives in the in-process suite, which cannot see a
+  client/server disagreement.
+- No suite exercises real authentication end to end.
+- `pushedAt` and the `POST /items/batch` 404 fallback are proven only in-process.
+- The version-bump logic is proven against a copy of itself.
 
 ## Verifying any of this
 

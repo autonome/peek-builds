@@ -155,15 +155,14 @@ describe('Event push watermark — cross-run stranding regression', () => {
     return json.items.length;
   }
 
-  /** Reads back the watermark pushEventsToServer() just saved (see
-   * saveEventPushWatermark() in sync.ts — same feature_settings row read by
-   * the version-bump-reset describe block's own readFeatureSetting()). */
-  function readEventPushWatermark(): number {
+  /** Reads back the delivery stamp pushEventsToServer() writes on each event it
+   * got the server to accept (item_events.pushedAt; 0 means never delivered). */
+  function readEventPushedAt(eventId: string): number {
     const db = datastore.getDb();
     const row = db.prepare(`
-      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
-    `).get() as { value: string } | undefined;
-    return row ? JSON.parse(row.value) : 0;
+      SELECT pushedAt FROM item_events WHERE id = ?
+    `).get(eventId) as { pushedAt: number } | undefined;
+    return row ? row.pushedAt : 0;
   }
 
   it('an item whose push fails on run 1 still gets its events synced once its own push succeeds on run 2', async () => {
@@ -393,12 +392,12 @@ describe('Event push watermark — cross-run stranding regression', () => {
     assert.strictEqual(statusAfterRun2.lastError, null, 'run 2: a fully successful run must clear the prior stage error');
   });
 
-  it('a deleted never-synced item does not pin the watermark, but a live never-synced item still does', async () => {
-    const { apiKey } = setup('deleted-vs-live-blocked-item');
+  it('an item that can never sync strands only its own events, and a second run re-pushes nothing', async () => {
+    const { apiKey } = setup('unsyncable-item-strands-only-itself');
 
     // Parent item already synced on both sides, so its event is eligible for
-    // this run regardless of the watermark — it is what proves the watermark
-    // actually moved (or didn't) past the blocked items' events below.
+    // this run — it is what proves the two unsynced items below hold back only
+    // their own events, not everything created after them.
     const createRes = await serverApp.request('/items', {
       method: 'POST',
       headers: authHeaders(apiKey),
@@ -410,9 +409,9 @@ describe('Event push watermark — cross-run stranding regression', () => {
     const now = Date.now();
 
     // Oldest: a DELETED item that never synced (syncId === ''). It never will —
-    // pushToServer() only sends a tombstone whose syncId is already set — so its
-    // event must not pin the watermark (see the deletedAt = 0 term's comment above
-    // the blocked-event query in sync.ts).
+    // pushToServer() only sends a tombstone whose syncId is already set — which is
+    // exactly the case that used to pin a global watermark forever and make every
+    // run re-push the entire event tail behind it.
     const deletedItemId = 'local-deleted-never-synced-item';
     db.prepare(`
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
@@ -423,9 +422,8 @@ describe('Event push watermark — cross-run stranding regression', () => {
       VALUES (?, ?, NULL, ?, ?, '{}', ?)
     `).run('evt-deleted-item-old', deletedItemId, 1, now, now);
 
-    // Middle: a LIVE item that never synced yet — could still sync on a later
-    // run, so its event MUST keep pinning the watermark, same as before this
-    // change.
+    // Middle: a LIVE item that never synced yet — it could still sync on a later
+    // run, so its event must stay eligible rather than being written off.
     const liveItemId = 'local-live-never-synced-item';
     const liveEventCreatedAt = now + 10;
     db.prepare(`
@@ -437,8 +435,8 @@ describe('Event push watermark — cross-run stranding regression', () => {
       VALUES (?, ?, NULL, ?, ?, '{}', ?)
     `).run('evt-live-item-old', liveItemId, 2, liveEventCreatedAt, liveEventCreatedAt);
 
-    // Newest: an event on the already-synced item — the one whose fate the
-    // watermark actually controls.
+    // Newest: an event on the already-synced item — the one that must get
+    // through despite being created after both blocked events.
     const syncedItemId = 'local-blocked-watermark-synced-item';
     const syncedEventCreatedAt = now + 20;
     db.prepare(`
@@ -455,26 +453,35 @@ describe('Event push watermark — cross-run stranding regression', () => {
     assert.deepStrictEqual(
       await fetchServerEventIds(apiKey),
       ['evt-synced-item-new'],
-      'only the already-synced item\'s event should reach the server this run — the other two are still blocked'
+      'only the already-synced item\'s event should reach the server this run — the other two have no server item to belong to yet'
     );
 
-    const watermark = readEventPushWatermark();
     assert.ok(
-      watermark >= now,
-      `the deleted never-synced item's event (createdAt ${now}) must not pin the watermark below itself — ` +
-      `it can never get a syncId, so holding it down would strand every event after it forever; got watermark ${watermark}`
+      readEventPushedAt('evt-synced-item-new') > 0,
+      'the delivered event must be stamped, so no later run sends it again'
     );
-    assert.ok(
-      watermark < liveEventCreatedAt,
-      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must still pin the watermark below ` +
-      `itself — it could still sync on a later run, so this protection must stay intact; got watermark ${watermark}`
+    assert.strictEqual(
+      readEventPushedAt('evt-deleted-item-old'),
+      0,
+      `the deleted never-synced item's event (createdAt ${now}) must stay unstamped and eligible — but it holds back nothing else`
+    );
+    assert.strictEqual(
+      readEventPushedAt('evt-live-item-old'),
+      0,
+      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must stay eligible — its item could still sync on a later run`
     );
 
-    // Confirm the consequence, not just the number: on the next run, nothing
-    // new is selected — the synced item's event was already delivered, and
-    // the watermark sitting at/above its createdAt (not held down by the
-    // deleted item) means it is correctly not re-selected either.
-    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    // The regression this replaces a global watermark to prevent: with one, an
+    // item that can never sync held the watermark below its own event forever,
+    // so every subsequent run re-selected and re-pushed the entire event tail
+    // after it — 24,000 events per run, measured against production. Per-event
+    // stamps mean run 2 has nothing to send at all.
+    const secondRun = await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    assert.strictEqual(
+      secondRun.pushed,
+      0,
+      'run 2 must push nothing — an unsyncable item must not make already-delivered events eligible again'
+    );
     assert.deepStrictEqual(
       await fetchServerEventIds(apiKey),
       ['evt-synced-item-new'],
@@ -518,6 +525,11 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     // defaults to 500 (transient) when omitted. Lets a test drive a 4xx
     // (permanent, per isPermanentPushFailure()) failure through the same stub.
     itemPushStatusFor?: (bodyText: string) => number;
+    // Answers POST /items/batch with a 404, the way a server predating that
+    // route does, so the push falls back to one request per item. The two hooks
+    // above describe ONE item's fate, and only the single-item route can express
+    // that — a batched chunk gets one status for all 250 of it.
+    noBatchRoute?: boolean;
   } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
@@ -535,6 +547,10 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       const reqPath = url.replace(FAKE_SERVER_URL, '');
       const method = init.method || 'GET';
       const bodyText = typeof init.body === 'string' ? init.body : '';
+
+      if (opts.noBatchRoute && method === 'POST' && reqPath.startsWith('/items/batch')) {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      }
 
       if (opts.itemPushFailureFor && method === 'POST' && reqPath.startsWith('/items')) {
         const failMessage = opts.itemPushFailureFor(bodyText);
@@ -710,6 +726,9 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     const PERMANENT_MARKER = 'permanent-marker';
     const TRANSIENT_MARKER = 'transient-marker';
     const { apiKey } = setup('item-fail-mixed-permanence', {
+      // Per-item statuses, so the single-item route: one batched chunk carrying
+      // both markers could only come back with one status for both.
+      noBatchRoute: true,
       itemPushFailureFor: (bodyText) =>
         bodyText.includes(PERMANENT_MARKER)
           ? `content is required for type 'text'`
@@ -736,7 +755,7 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     const permanentEntry = failureEntries.find((e) => e.message.includes('local-permanent-item'));
     assert.ok(permanentEntry, `expected an entry naming the 4xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
     assert.ok(
-      permanentEntry!.message.includes('will not succeed until the item changes'),
+      permanentEntry!.message.includes('parked until the item changes'),
       `expected the 4xx failure to be worded as permanent, got: ${permanentEntry!.message}`
     );
 
@@ -791,6 +810,9 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
   it('item pushes failing with DIFFERENT errors produce one entry per distinct reason, capped with a rolled-up tail', async () => {
     let counter = 0;
     const { apiKey } = setup('item-fail-different-reasons', {
+      // A distinct reason per item needs a request per item — batched, all 40
+      // would share one chunk-level failure and one log line.
+      noBatchRoute: true,
       itemPushFailureFor: () => `distinct push failure #${counter++}`,
     });
 
@@ -1635,6 +1657,17 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         VALUES (?, 'text', 'bulk vs default item', '{}', '', 0, ?, ?, 0)
       `).run('local-bulk-vs-default-item', now, now);
 
+      // Force the single-item fallback: a batched push has its own, larger
+      // budget, and the per-item one is what this assertion is about.
+      const delayedFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+        const url = typeof input === 'string' ? input : String(input);
+        if (url.replace(FAKE_SERVER_URL, '').startsWith('/items/batch')) {
+          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+        }
+        return delayedFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+
       // pushToServer isolates per-item failures rather than throwing (see its
       // own doc comment), so the same artificial delay that the bulk pull
       // above survived shows up here as a counted failure, not a rejection.
@@ -1679,7 +1712,33 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         VALUES (?, 'text', 'timeout selection item', '{}', '', 0, ?, ?, 0)
       `).run('local-timeout-selection-item', now, now);
       await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
-      assert.deepStrictEqual(scaled.requestedTimeouts, [15000], 'a per-item push must request the default budget');
+      assert.deepStrictEqual(
+        scaled.requestedTimeouts,
+        [60000],
+        'a batched item push carries hundreds of items in one body, so it must request the batch budget'
+      );
+      scaled.requestedTimeouts.length = 0;
+
+      // Against a server with no batch route: the 404 comes back on the batch
+      // budget, and each item then goes out on the default one.
+      globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+        const url = typeof input === 'string' ? input : String(input);
+        const reqPath = url.replace(FAKE_SERVER_URL, '');
+        if (reqPath.startsWith('/items/batch')) {
+          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+        }
+        return serverApp.request(reqPath, { method: init.method || 'GET', headers: init.headers, body: init.body });
+      }) as typeof fetch;
+      db.prepare(`
+        INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+        VALUES (?, 'text', 'timeout fallback item', '{}', '', 0, ?, ?, 0)
+      `).run('local-timeout-fallback-item', now, now);
+      await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+      assert.deepStrictEqual(
+        scaled.requestedTimeouts,
+        [60000, 15000],
+        'the batch attempt asks for the batch budget; the per-item fallback asks for the default'
+      );
     } finally {
       scaled.restore();
     }
@@ -1694,7 +1753,7 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
         () => sync.pullFromServer(FAKE_SERVER_URL, apiKey),
         (error: Error) => {
           assert.ok(
-            error.message.startsWith('Request to /items?profile='),
+            error.message.startsWith('Request to /items/since/0?profile='),
             `error must name the request path, got: ${error.message}`
           );
           assert.ok(
@@ -1855,7 +1914,7 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
     );
   });
 
-  it('a version-bump reset clears syncedAt but leaves syncId populated, and resets the event/tag push watermarks to 0', async () => {
+  it('a version-bump reset clears syncedAt but leaves syncId populated, and clears the event stamps and tag watermark', async () => {
     const { apiKey } = setup('version-bump-scope');
 
     const db = datastore.getDb();
@@ -1864,16 +1923,27 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
       VALUES (?, 'text', 'version bump scope item', '{}', '', 0, ?, ?, 0)
     `).run('local-version-bump-scope-item', now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, 'version bump scope event', NULL, ?, '{}', ?)
+    `).run('evt-version-bump-scope', 'local-version-bump-scope-item', now, now);
 
-    // Baseline sync: pushes the item, establishing a non-empty syncId and a non-zero
-    // syncedAt/lastEventPushAt/lastTagPushAt to contrast against after the reset.
+    const eventPushedAt = (): number => {
+      const row = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?')
+        .get('evt-version-bump-scope') as { pushedAt: number } | undefined;
+      return row ? row.pushedAt : 0;
+    };
+
+    // Baseline sync: pushes the item and its event, establishing a non-empty syncId,
+    // a non-zero syncedAt, a stamped event and a non-zero lastTagPushAt to contrast
+    // against after the reset.
     await sync.syncAll(FAKE_SERVER_URL, apiKey);
 
     const baseline = db.prepare('SELECT syncId, syncedAt FROM items WHERE id = ?').get('local-version-bump-scope-item') as
       { syncId: string; syncedAt: number };
     assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
     assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
-    assert.notStrictEqual(readFeatureSetting('lastEventPushAt'), 0, 'sanity: baseline push advanced the event watermark past 0');
+    assert.notStrictEqual(eventPushedAt(), 0, 'sanity: baseline push stamped the event as delivered');
     assert.notStrictEqual(readFeatureSetting('lastTagPushAt'), 0, 'sanity: baseline push advanced the tag watermark past 0');
 
     backdateStoredDatastoreVersion();
@@ -1888,11 +1958,11 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.strictEqual(afterReset.syncId, baseline.syncId, 'version-bump reset must leave syncId populated — the row identity is still valid on the same server');
     assert.strictEqual(afterReset.syncedAt, 0, 'version-bump reset must clear syncedAt so the item is re-pushed');
-    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'version-bump reset must reset the event push watermark to 0 (schema catch-up — see resetPerItemSyncState() doc comment)');
+    assert.strictEqual(eventPushedAt(), 0, 'version-bump reset must clear every event delivery stamp so events re-push under the new schema (see resetPerItemSyncState() doc comment)');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'version-bump reset must reset the tag push watermark to 0, for the same schema catch-up reason');
   });
 
-  it('a server-URL-change reset still clears both syncedAt and syncId, and resets the event/tag push watermarks to 0', async () => {
+  it('a server-URL-change reset still clears both syncedAt and syncId, and clears the event stamps and tag watermark', async () => {
     const { apiKey } = setup('server-change-scope');
 
     const db = datastore.getDb();
@@ -1901,6 +1971,16 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
       VALUES (?, 'text', 'server change scope item', '{}', '', 0, ?, ?, 0)
     `).run('local-server-change-scope-item', now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, 'server change scope event', NULL, ?, '{}', ?)
+    `).run('evt-server-change-scope', 'local-server-change-scope-item', now, now);
+
+    const eventPushedAt = (): number => {
+      const row = db.prepare('SELECT pushedAt FROM item_events WHERE id = ?')
+        .get('evt-server-change-scope') as { pushedAt: number } | undefined;
+      return row ? row.pushedAt : 0;
+    };
 
     // Baseline sync against FAKE_SERVER_URL — records it as the last-known server, so a
     // later sync against a DIFFERENT url is a genuine "server changed" signal.
@@ -1910,6 +1990,7 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.notStrictEqual(baseline.syncId, '', 'sanity: baseline push recorded a syncId');
     assert.notStrictEqual(baseline.syncedAt, 0, 'sanity: baseline push recorded a syncedAt');
+    assert.notStrictEqual(eventPushedAt(), 0, 'sanity: baseline push stamped the event as delivered');
 
     installAlwaysFailingFetch();
 
@@ -1922,7 +2003,403 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
       { syncId: string; syncedAt: number };
     assert.strictEqual(afterReset.syncId, '', 'server-URL-change reset must clear syncId — the old value has no meaning on a different server');
     assert.strictEqual(afterReset.syncedAt, 0, 'server-URL-change reset must clear syncedAt so the item is re-pushed');
-    assert.strictEqual(readFeatureSetting('lastEventPushAt'), 0, 'server-URL-change reset must reset the event push watermark to 0');
+    assert.strictEqual(eventPushedAt(), 0, 'server-URL-change reset must clear every event delivery stamp — a different server has none of them');
     assert.strictEqual(readFeatureSetting('lastTagPushAt'), 0, 'server-URL-change reset must reset the tag push watermark to 0');
+  });
+});
+
+describe('Batched item push — one request per chunk, not per item', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  /**
+   * Records the path of every POST the push makes, so a test can assert how many
+   * requests a set of items actually cost — the whole point of batching. With
+   * `noBatchRoute`, POST /items/batch answers 404 the way a server predating the
+   * route does.
+   */
+  function setup(name: string, opts: { noBatchRoute?: boolean } = {}) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-batch-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `batch-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    const posts: string[] = [];
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      if (method === 'POST') {
+        posts.push(reqPath.split('?')[0]);
+      }
+      if (opts.noBatchRoute && method === 'POST' && reqPath.startsWith('/items/batch')) {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      }
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey, posts };
+  }
+
+  function insertItems(prefix: string, count: number): void {
+    const db = datastore.getDb();
+    const now = Date.now();
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < count; i++) {
+      insert.run(`${prefix}-${i}`, `note ${i}`, now, now);
+    }
+  }
+
+  it('sends a whole chunk in one request and records the server id returned for each item', async () => {
+    const { apiKey, posts } = setup('one-request');
+    insertItems('local-batched-item', 5);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 5, failed: 0 });
+    assert.deepStrictEqual(
+      posts.filter((p) => p === '/items/batch').length,
+      1,
+      `five items must cost ONE request, not five: ${JSON.stringify(posts)}`
+    );
+    assert.strictEqual(posts.filter((p) => p === '/items').length, 0, 'nothing should have gone out on the single-item route');
+
+    const unsynced = datastore.getDb().prepare(`
+      SELECT COUNT(*) as count FROM items WHERE syncId = '' OR syncedAt = 0
+    `).get() as { count: number };
+    assert.strictEqual(unsynced.count, 0, 'every item must have recorded the server id the batch returned');
+  });
+
+  it('falls back to one request per item against a server that has no batch route', async () => {
+    const { apiKey, posts } = setup('fallback', { noBatchRoute: true });
+    insertItems('local-fallback-item', 3);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 3, failed: 0 }, 'an old server must still receive every item');
+    assert.strictEqual(posts.filter((p) => p === '/items').length, 3, 'one request per item on the fallback path');
+    assert.strictEqual(
+      posts.filter((p) => p === '/items/batch').length,
+      1,
+      'the batch route is tried once and not again for the rest of the run'
+    );
+  });
+
+  it('parks only the row the server refuses, and stores the rest of the chunk', async () => {
+    const { apiKey } = setup('partial-rejection');
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'a fine note', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-good-1', now, now);
+    // A url item with no content: the server refuses it per row, in a chunk
+    // whose other items it accepts.
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', '', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-bad', now, now);
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', 'another fine note', '{}', '', 0, ?, ?, 0)
+    `).run('local-batch-good-2', now, now);
+
+    const result = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.deepStrictEqual(result, { pushed: 2, failed: 1 }, 'one refused row must not cost the rest of the chunk');
+
+    const parked = db.prepare('SELECT syncError, syncErrorAt FROM items WHERE id = ?').get('local-batch-bad') as
+      { syncError: string; syncErrorAt: number };
+    assert.ok(parked.syncError.includes('content is required'), `the refused row must be parked with its reason; got ${JSON.stringify(parked.syncError)}`);
+    assert.strictEqual(parked.syncErrorAt, now);
+
+    for (const id of ['local-batch-good-1', 'local-batch-good-2']) {
+      const stored = db.prepare('SELECT syncId, syncError FROM items WHERE id = ?').get(id) as
+        { syncId: string; syncError: string };
+      assert.notStrictEqual(stored.syncId, '', `${id} must have been stored and its server id recorded`);
+      assert.strictEqual(stored.syncError, '', `${id} must not be parked because a different row was refused`);
+    }
+  });
+});
+
+describe('An item the server permanently rejects is parked until it changes', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  /**
+   * Same harness as the blocks above — fresh desktop datastore and profile,
+   * fresh server-side user, every call routed to the real server app in-process.
+   * No injected failure: the rejection these tests turn on is a real one from
+   * the real route, since CONTENT_REQUIRED_TYPES in apps/server/index.js answers
+   * a `url` item with no content with a 400.
+   */
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-park-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `park-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      return serverApp.request(reqPath, {
+        method: init.method || 'GET',
+        headers: init.headers,
+        body: init.body,
+      });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  function readPark(itemId: string): { syncError: string; syncErrorAt: number } {
+    return datastore.getDb().prepare(`
+      SELECT syncError, syncErrorAt FROM items WHERE id = ?
+    `).get(itemId) as { syncError: string; syncErrorAt: number };
+  }
+
+  /** A `url` item with no content — the server rejects it with a 400, every time. */
+  function insertUnsyncableItem(id: string, updatedAt: number): void {
+    datastore.getDb().prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', '', '{}', '', 0, ?, ?, 0)
+    `).run(id, updatedAt, updatedAt);
+  }
+
+  it('stops being re-pushed after the rejection', async () => {
+    const { apiKey } = setup('rejected-once');
+    const now = Date.now();
+    insertUnsyncableItem('local-unsyncable-item', now);
+
+    const firstRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(firstRun.failed, 1, 'sanity: the server must actually reject this item');
+
+    const park = readPark('local-unsyncable-item');
+    assert.ok(
+      park.syncError.startsWith('Server error 400:'),
+      `the server's own message must be recorded, so the log can say why; got ${JSON.stringify(park.syncError)}`
+    );
+    assert.strictEqual(park.syncErrorAt, now, 'the park records the updatedAt it was rejected at, which is what a later edit has to move past');
+
+    const secondRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(
+      secondRun.failed,
+      0,
+      'a parked item must not be sent again — retrying a row the server has already refused, on every run forever, is what this replaces'
+    );
+    assert.strictEqual(secondRun.pushed, 0, 'and nothing else should have gone out either');
+  });
+
+  it('is eligible again as soon as it is edited, with no edit path having to know about parking', async () => {
+    const { apiKey } = setup('edited-after-rejection');
+    const now = Date.now();
+    insertUnsyncableItem('local-fixable-item', now);
+
+    await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.notStrictEqual(readPark('local-fixable-item').syncError, '', 'sanity: the first push parked it');
+
+    // What any edit does: new content, and updatedAt moves. Nothing here clears
+    // the park explicitly — moving past syncErrorAt is what un-parks it.
+    datastore.getDb().prepare(`
+      UPDATE items SET content = ?, updatedAt = ? WHERE id = ?
+    `).run('https://example.com/fixed', now + 1000, 'local-fixable-item');
+
+    const afterEdit = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(afterEdit.pushed, 1, 'the edited item must be pushed — a park that outlives the problem is silent data loss');
+    assert.strictEqual(afterEdit.failed, 0);
+
+    const park = readPark('local-fixable-item');
+    assert.strictEqual(park.syncError, '', 'a successful push clears the recorded rejection');
+    assert.strictEqual(park.syncErrorAt, 0);
+  });
+
+  it('is not parked by a network failure, which an unchanged retry can clear', async () => {
+    const { apiKey } = setup('transient-failure');
+    const now = Date.now();
+    datastore.getDb().prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', 'https://example.com/fine', '{}', '', 0, ?, ?, 0)
+    `).run('local-transient-item', now, now);
+
+    globalThis.fetch = (async () => {
+      throw new Error('simulated total network failure');
+    }) as typeof fetch;
+
+    const failedRun = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(failedRun.failed, 1, 'sanity: the push must have failed');
+    assert.strictEqual(
+      readPark('local-transient-item').syncError,
+      '',
+      'a timeout or dropped link says nothing about the row itself, so the item must stay eligible'
+    );
+  });
+});
+
+/**
+ * The pull side of paging: the client asks for a page, follows the cursor the
+ * server hands back, and merges each page as it lands.
+ *
+ * The server is answered by a stub here rather than the real app, because what
+ * is under test is the client's loop — how many requests it makes, what it puts
+ * in them, and when it stops — and driving that through the real app would mean
+ * writing a page's worth of rows per case to observe a single boundary.
+ */
+describe('Paged pulls — the client follows the server cursor', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  interface PullStub {
+    requestedPaths: string[];
+  }
+
+  /**
+   * Fresh desktop datastore and profile, plus a fetch stub whose item pulls are
+   * answered by `pages` — one entry per response, each already shaped the way
+   * the route shapes it. Everything else is routed to the real server app, so a
+   * pull that strays off the item route still behaves.
+   */
+  function setupPullStub(
+    name: string,
+    pages: Array<{ items: unknown[]; nextCursor?: string }>
+  ): { apiKey: string; stub: PullStub } {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-paging-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `paging-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    const stub: PullStub = { requestedPaths: [] };
+    let served = 0;
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+
+      if (reqPath.startsWith('/items/since/')) {
+        stub.requestedPaths.push(reqPath);
+        const page = pages[Math.min(served, pages.length - 1)];
+        served++;
+        return new Response(JSON.stringify(page), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return serverApp.request(reqPath, { method: init.method || 'GET', headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey, stub };
+  }
+
+  function serverItem(id: string, updatedAt: number) {
+    return {
+      id,
+      type: 'url',
+      content: `https://example.com/${id}`,
+      createdAt: updatedAt,
+      updatedAt,
+      deletedAt: 0,
+      starred: 0,
+      archived: 0,
+      tags: [],
+    };
+  }
+
+  it('asks for a page and follows the cursor until the server stops offering one', async () => {
+    const { apiKey, stub } = setupPullStub('follows-cursor', [
+      { items: [serverItem('page-1-a', 1000), serverItem('page-1-b', 1001)], nextCursor: 'cursor-1' },
+      { items: [serverItem('page-2-a', 1002)], nextCursor: 'cursor-2' },
+      { items: [] },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(result.pulled, 3, 'every row across every page must be merged');
+    assert.strictEqual(stub.requestedPaths.length, 3, 'one request per page, and one that ends it');
+    assert.ok(stub.requestedPaths[0].includes('limit='), 'the first request must ask for a page');
+    assert.ok(!stub.requestedPaths[0].includes('cursor='), 'the first request has nowhere to resume from');
+    assert.ok(stub.requestedPaths[1].includes('cursor=cursor-1'), 'the second request resumes where the first ended');
+    assert.ok(stub.requestedPaths[2].includes('cursor=cursor-2'));
+
+    const local = datastore.getDb().prepare('SELECT syncId FROM items ORDER BY syncId').all() as Array<{ syncId: string }>;
+    assert.deepStrictEqual(
+      local.map((r) => r.syncId),
+      ['page-1-a', 'page-1-b', 'page-2-a']
+    );
+  });
+
+  it('a server that knows nothing about paging is pulled in one request', async () => {
+    // What the deployed server does today: it ignores `limit`, returns the whole
+    // set, and sends no cursor. The loop has to end after one round trip, which
+    // is what lets this client ship before the server does.
+    const { apiKey, stub } = setupPullStub('unpaged-server', [
+      { items: [serverItem('all-1', 1000), serverItem('all-2', 1001), serverItem('all-3', 1002)] },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(result.pulled, 3);
+    assert.strictEqual(stub.requestedPaths.length, 1, 'no cursor came back, so there is nothing to follow');
+  });
+
+  it('a server that repeats the same cursor forever does not pin the pull', async () => {
+    const { apiKey, stub } = setupPullStub('stuck-cursor', [
+      { items: [serverItem('stuck-1', 1000)], nextCursor: 'same' },
+      { items: [serverItem('stuck-2', 1001)], nextCursor: 'same' },
+    ]);
+
+    const result = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+
+    assert.strictEqual(stub.requestedPaths.length, 2, 'the pull stops as soon as the cursor stops moving');
+    assert.strictEqual(result.pulled, 2);
   });
 });

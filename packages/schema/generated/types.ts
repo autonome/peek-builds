@@ -42,6 +42,10 @@ export interface SchemaItems {
   domain: string;
   /** Favicon URL */
   favicon: string;
+  /** Client-local: the server's own message from a push it permanently rejected ('' = not rejected). Never sent on the wire */
+  syncError: string;
+  /** Client-local: the item's updatedAt at the moment of that rejection. Push skips the item only while updatedAt has not moved past this, so any later edit retries it automatically */
+  syncErrorAt: number;
 }
 
 /** Tag definitions with frecency tracking */
@@ -128,6 +132,8 @@ export interface SchemaItemEvents {
   metadata: string;
   /** Creation timestamp (Unix ms) */
   createdAt: number;
+  /** Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself */
+  pushedAt: number;
 }
 
 /** Valid sync table names */

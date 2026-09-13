@@ -278,6 +278,65 @@ describe('openRemoteStore()', () => {
       assert.deepStrictEqual(result, { success: true, id: 'ev1', itemId: 'x', type: 'started' });
     });
 
+    it('recordEvent: opts.content/occurredAt/metadata are sent alongside type/value, undefined fields dropped', async () => {
+      let sentBody;
+      stubFetch([(url, opts) => { sentBody = JSON.parse(opts.body); return fakeResponse(200, { success: true, id: 'ev1', itemId: 'x', type: 'feed_entry' }); }]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await store.recordEvent('x', 'feed_entry', undefined, {
+        content: 'https://example.com/a', occurredAt: 1700000000000, metadata: { guid: 'g1' },
+      });
+      assert.deepStrictEqual(sentBody, {
+        type: 'feed_entry', content: 'https://example.com/a', occurredAt: 1700000000000, metadata: { guid: 'g1' },
+      });
+    });
+
+    it('recordEvent: a 400 (e.g. a non-numeric value alongside metadata) surfaces the server\'s message rather than being swallowed', async () => {
+      stubFetch([() => fakeResponse(400, {
+        error: 'value must be a number when metadata is supplied — put free-form text in metadata itself, not value.',
+      })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await assert.rejects(
+        () => store.recordEvent('x', 'started', 'kicked off', { metadata: { source: 'test' } }),
+        /value must be a number/,
+      );
+    });
+
+    it('listEvents: GET /mcp/items/:id/events with limit/offset, returns the events array', async () => {
+      stubFetch([() => fakeResponse(200, { events: [{ id: 'ev1', type: 'started' }] })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      const events = await store.listEvents('x', { limit: 5, offset: 10 });
+      assert.deepStrictEqual(events, [{ id: 'ev1', type: 'started' }]);
+      assert.ok(calls[0].url.includes('/mcp/items/x/events'));
+      assert.ok(calls[0].url.includes('limit=5'));
+      assert.ok(calls[0].url.includes('offset=10'));
+
+      stubFetch([() => fakeResponse(404, { error: 'item not found' })]);
+      const store2 = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await assert.rejects(() => store2.listEvents('missing'), /No item found/);
+    });
+
+    it('deleteEvent: forwards {success,...}, including the sqlite-parity {success:false} shape', async () => {
+      stubFetch([() => fakeResponse(200, { success: true, id: 'ev1', itemId: 'x' })]);
+      let store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      assert.deepStrictEqual(await store.deleteEvent('x', 'ev1'), { success: true, id: 'ev1', itemId: 'x' });
+      assert.ok(calls[0].url.includes('/mcp/items/x/events/ev1'));
+
+      stubFetch([() => fakeResponse(200, { success: false, error: 'Event not found' })]);
+      store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      assert.deepStrictEqual(await store.deleteEvent('x', 'nope'), { success: false, error: 'Event not found' });
+
+      stubFetch([() => fakeResponse(404, { error: 'item not found' })]);
+      store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await assert.rejects(() => store.deleteEvent('missing', 'ev1'), /No item found/);
+    });
+
+    it('deleteEvents: forwards {success, itemId, deleted}', async () => {
+      stubFetch([() => fakeResponse(200, { success: true, itemId: 'x', deleted: 3 })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      assert.deepStrictEqual(await store.deleteEvents('x'), { success: true, itemId: 'x', deleted: 3 });
+      assert.ok(calls[0].url.includes('/mcp/items/x/events'));
+    });
+
     it('listTasks: composes into a list_items call with the project tag appended', async () => {
       stubFetch([() => fakeResponse(200, { items: [] })]);
       const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });

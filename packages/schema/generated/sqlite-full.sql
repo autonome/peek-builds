@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS items (
   frecencyScore INTEGER DEFAULT 0,
   title TEXT DEFAULT '',
   domain TEXT DEFAULT '',
-  favicon TEXT DEFAULT ''
+  favicon TEXT DEFAULT '',
+  syncError TEXT DEFAULT '',
+  syncErrorAt INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
@@ -96,7 +98,8 @@ CREATE TABLE IF NOT EXISTS item_events (
   value REAL,
   occurredAt INTEGER NOT NULL,
   metadata TEXT DEFAULT '{}',
-  createdAt INTEGER NOT NULL
+  createdAt INTEGER NOT NULL,
+  pushedAt INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);

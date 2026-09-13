@@ -1248,6 +1248,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@peek/capabilities@workspace:packages/capabilities":
+  version: 0.0.0-use.local
+  resolution: "@peek/capabilities@workspace:packages/capabilities"
+  languageName: unknown
+  linkType: soft
+
 "@peek/desktop@workspace:apps/desktop":
   version: 0.0.0-use.local
   resolution: "@peek/desktop@workspace:apps/desktop"

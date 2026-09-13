@@ -38,11 +38,43 @@ Test counts as landed, each from a run in the primary checkout:
 | `node --test apps/desktop/features/mcp-server/setup.test.js` | 23 |
 | `node --test apps/desktop/features/mcp-server/schema-drift.test.js` | 43 |
 
-**What is not proven: the two halves have never talked to each other over a real
-socket.** Every test stubs one side — the server tests exercise the routes through a
-mirror app, and the remote store's tests stub `fetch`. An end-to-end run needs a
-deployed server, a minted grant, and a project scaffolded with `peek-mcp-init --remote`.
-Until that happens, "green" means each half behaves as specified in isolation.
+**The two halves have now talked to each other over a real socket, and they agree.**
+Every unit test still stubs one side — the server tests exercise the routes through a
+mirror app, and the remote store's tests stub `fetch` — so the end-to-end evidence comes
+from `tools/socket-proof.mjs` and `tools/socket-proof-ambiguous.mjs`, which drive
+`openRemoteStore()` against the live deployment. All twenty-one steps of the first and
+both branches of the second passed on the first run, with no change required to either
+half.
+
+What that covers: `describe`, the list and search reads against both an empty and a
+populated scope, `createItem`, `getItem`, `getItemTags`, `updateItem`, `tagItem`,
+`untagItem`, `recordEvent`, `getTaskContext`, `resolveItemId` for a miss, a full-id hit
+and an ambiguous prefix, and `deleteItem`. The ambiguity payload comes back in the shape
+`resolveItemIdSync()` in `store/sqlite-store.js` defines — `{ id, ambiguous, candidates,
+truncated }` — and `getItem()` turns it into the same text `formatAmbiguous()` produces,
+which is the one place a non-200 has to become a value-bearing error.
+
+A readonly grant is enforced, not merely reported. Running the same harness against a
+grant minted with `readonly: true` refuses all six mutating routes with HTTP 403 and
+leaves every read working; `tools/socket-proof.mjs` inverts its expectation for write
+steps when `PEEK_MCP_EXPECT_READONLY` is set, so a readonly run that quietly succeeded at
+writing fails rather than reading as green.
+
+**The scaffolded path found the one real defect, in `entryEnvMatchesCurrent()`.** For a
+remote install, `setup.js` writes `PEEK_MCP_REMOTE_URL` and `PEEK_MCP_CREDENTIAL` as
+`${PEEK_SYNC_URL}` reference text, which the client expands before spawning the server.
+The drift check compared that reference text against the expanded value, so it never
+matched: a correctly scaffolded remote project failed the check on every spawn and exited,
+and the client respawning produced the same result again. The diagnostic hid the cause by
+printing only the scope, readonly and database-path fields, none of which differ, so it
+showed two identical lines and called them a mismatch.
+
+An on-disk value in `${...}` form now matches anything, because there is no on-disk value
+to have drifted, while a literal still has to match exactly; the message prints the fields
+the comparison actually used. Every existing test for this function used literal values,
+which is why it survived — the two added cases use the reference form real installs write.
+With the fix, `tools/socket-proof-scaffolded.mjs` drives a scaffolded child through
+`initialize`, `tools/list`, and a create/list/delete round trip against the live server.
 
 A related survey, `docs/sync-coverage-gaps.md`, records what the sync engine does not
 carry between devices. **It is deliberately out of scope for this work.** Nothing in
@@ -51,15 +83,14 @@ is a signal to stop and report, not to widen the change.
 
 ### Next steps
 
-**First, the end-to-end run — it needs a human and nothing else can substitute for
-it.** Deploy the server, mint a grant through `POST /admin/mcp-grants`, scaffold a
-throwaway project with `peek-mcp-init --remote <url> --store-token`, restart Claude
-Code there, and confirm a scoped session lists and writes items. That exercise is the
-first time the two halves meet. Expect the first failure to be in the seam nothing
-tested: credential resolution, header shape, or an error body that does not map back to
-the text `formatAmbiguous()` produces.
+The end-to-end run is done — see above. What it leaves open, and then the rest in no
+particular order:
 
-Then, in no particular order:
+- **Redeploy before trusting the scaffolded path in practice.** The
+  `entryEnvMatchesCurrent()` fix is in this repository, and the running deployment does
+  not carry it. That does not affect the deployment (the drift check runs in the local
+  MCP child, not on the server), but any project scaffolded from an older checkout still
+  exits on every spawn.
 
 - **Make `apps/server/index.js` testable** — guard the listener with
   `require.main === module` and export the app, so routes can be tested through the real
