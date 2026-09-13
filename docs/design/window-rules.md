@@ -69,7 +69,7 @@ Each term is followed by the name the code uses for it.
 - **F5 raise-needs-a-surface.** A focus command lands only on a window that is visible and not pending hidden; on any other record it does nothing.
 - **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent.
 - **F7 hide-returns-key.** When the key window hides or closes, key goes to its prior window if that window is still visible; if that window is gone, to the topmost visible application window; if nothing in the app was key before it, nothing is focused.
-- **F8 land-somewhere.** After any dismissal something visible is key and accepts typing without a click.
+- **F8 dismissal-keeps-the-app.** A dismissal never deactivates the app: if the app was frontmost it stays frontmost, with no key window when nothing visible remains. Focus is never handed to another app by a dismissal.
 
 ## Visibility and lifecycle
 
@@ -96,7 +96,6 @@ Each term is followed by the name the code uses for it.
 - **D4 close-before-open.** The Escape fallback window opens only when no visible Escape-closable transient exists and the key window has nothing to close.
 - **D5 escape-order.** Close the Escape fallback window, then Escape pass-through, then exit fullscreen, then defer to content that consumed the press, then close or hide the target, then open the fallback window.
 - **D6 blur-dismissal.** A painted transient that is not key is dismissed when key lands elsewhere, unless the window that took key was opened by it or is its attached overlay, the focus was machine-caused and the transient opened after that focus was asked for, it is click-through, or it is itself an attached overlay.
-- **D7 no-self-dismissal.** A window that just took key is never dismissed by its prior window reclaiming focus by machine cause.
 - **D8 resign-sweep-after-resign.** No visible window is dismissed while the app is active; the deactivation sweep runs only after the app has deactivated and settled.
 - **D9 escape-closes-a-background-page.** Escape on an application window with nothing to close closes it in a default session, since the user came to it from another app and is going back there; otherwise it opens the Escape fallback window.
 
@@ -113,7 +112,7 @@ Each term is followed by the name the code uses for it.
 | Escape in the palette opens the switcher (defect B) | G2, D1 |
 | Palette swept ~250ms after opening with Peek not frontmost | V1, F2 |
 | Peek opens only every other press; new window destroyed during load (defect A) | G4, V1 |
-| Fresh peek vanishes 106–147ms after painting when its host reclaims focus | D7, F2 |
+| Fresh peek vanishes 106–147ms after painting when its host reclaims focus | F2, D6 |
 | Peek vanishes 0.9–1.3s later on its own | G4, D8 |
 | Quick-view on `data:`/`about:blank`/`peek://` never dismisses on blur | G5, D6 |
 | Late-painting quick-view stranded on screen after focus left | V5 |
@@ -124,15 +123,17 @@ Each term is followed by the name the code uses for it.
 | Machine focus reported as world; ordering floor disarmed | F2 |
 | Raise's confirmation counted as a new raise; several tokens churn | F3, S3 |
 | Hidden window re-appears on a late `show` echo with chrome re-attached | V2 |
-| Session restore leaves focus nowhere or on the wrong window | F7, F8 |
+| Session restore leaves focus nowhere or on the wrong window | F7 |
 | Restored window comes back un-maximized | G12 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
-Open against these rules: D7 (post-paint sweep). G1/F6 closed at `7e2eab6c` and G3/F7 at
-`a86b030c`, both verified by hand on the packaged build on 2026-09-12: with another app frontmost,
-the global hotkey put the command window up with `plan=take-key intent=user`, typing landed in it,
-the menubar stayed on the other app, and the second Escape hid it with no other window focused
-and focus back in the other app. S3's dismissal half closed at `b7e685e6`. Everything else in the
-table is fixed or not reproducing; G7, G10, G11 and F8 have not been checked by hand since
-2026-08-21. The kernel read
-against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
+Open against these rules: nothing. G1/F6 closed at `7e2eab6c` and G3/F7 at `a86b030c`, both
+verified by hand on the packaged build on 2026-09-12: with another app frontmost, the global
+hotkey put the command window up with `plan=take-key intent=user`, typing landed in it, the
+menubar stayed on the other app, and the second Escape hid it with no other window focused and
+focus back in the other app. S3's dismissal half closed at `b7e685e6`. The "fresh peek vanishes"
+row did not reproduce on 2026-09-13; the rule that used to cover it (a window that just took key
+survives its prior window reclaiming focus) was deleted the same day, since a transient that
+loses focus is dismissed by D6 with no exemption for being new. Everything else in the table is
+fixed or not reproducing; G7, G10, G11 have not been checked by hand since 2026-08-21. The kernel
+read against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
