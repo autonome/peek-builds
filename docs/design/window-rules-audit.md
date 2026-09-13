@@ -34,15 +34,15 @@ Gestures G1–G13 are composites of the rules below and are not audited separate
 | D6 blur-dismissal | holds | `transientAutocloseExemption`, `selectTransientAutoclose`, `isTransientAutocloseCandidate` | The four exemptions map one-to-one onto the record's own facts (`overlayFor` set, `acceptsInput` false, the focuser's `parentId`/`overlayFor` naming the victim, `openSeq` above the ordering floor) and all three readers call the single function. |
 | D7 no-self-dismissal | unimplemented | `transientAutocloseExemption` `focuser-relation`, `react` rule (c), `takeFocusCause` | Nothing expresses "the window I just took key from". `focuser-relation` is one-hop and points the other way (peek's `parentId` names the host). The host's reclaim is unarmed, reads `world`, disarms the floor, and rule (c) dismisses the peek on paint. |
 | D8 resign-sweep-after-resign | holds | `evolve AppResigned`, `AppResignSettled`, `react` rule (b) | Victims only when `!state.appActive` at the settle. |
-| D9 content-ignores-escape | contradicted | `escapeClosePolicy` | Only `workspace` is spared unconditionally; a `content` or `child-content` window closes on Escape in an incidental session via the `openedInBackground` arm. The rule now says "incidental session or not" so the arm is the contradiction, not a loophole. |
+| D9 escape-closes-a-background-page | holds (rule corrected 2026-09-13) | `escapeClosePolicy`, `escapeFallbackPolicy` | The rule used to say an application window never closes on Escape; that was wrong, and the code was right: a page opened while another app was frontmost (`openedInBackground`) closes on Escape because the user is going back to that app, and any other application window falls through to the fallback window. `workspace` is spared in both sessions. |
 
 ## Tally
 
 | Verdict | Count | Rules |
 |---|---|---|
-| holds | 14 | F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8, S3 (dismissal half) |
+| holds | 15 | F6 F7 V1 V3 V4 V5 V6 S1 D3 D5 D6 D8 D9, S3 (dismissal half) |
 | scattered | 9 | F2 F4 F5 V2 S2 S4 S5 D1 D4 |
-| contradicted | 6 | F1 F3 D2 D9, S3 (raise half) |
+| contradicted | 5 | F1 F3 D2, S3 (raise half) |
 | unimplemented | 2 | F8 D7 |
 
 S3 now splits like V6: the dismissal half moved to holds (fixed 2026-09-05); `S3` in the

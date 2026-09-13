@@ -98,7 +98,7 @@ Each term is followed by the name the code uses for it.
 - **D6 blur-dismissal.** A painted transient that is not key is dismissed when key lands elsewhere, unless the window that took key was opened by it or is its attached overlay, the focus was machine-caused and the transient opened after that focus was asked for, it is click-through, or it is itself an attached overlay.
 - **D7 no-self-dismissal.** A window that just took key is never dismissed by its prior window reclaiming focus by machine cause.
 - **D8 resign-sweep-after-resign.** No visible window is dismissed while the app is active; the deactivation sweep runs only after the app has deactivated and settled.
-- **D9 content-ignores-escape.** An application window does not close on Escape, default session or not.
+- **D9 escape-closes-a-background-page.** Escape on an application window with nothing to close closes it in a default session, since the user came to it from another app and is going back there; otherwise it opens the Escape fallback window.
 
 ## Recorded failures and the rule that forbids each
 
