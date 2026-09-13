@@ -735,6 +735,30 @@ further. Effect order relative to `SetStacking` is unchanged in practice: the ex
 `priorKey: null` no-raise case; "closing a parentless palette that holds key" in the key/main-split
 block, which had pinned the pre-F7 no-raise outcome for a close, now asserts the raise.
 
+**A headless raise never became key, closed (2026-09-13).** Under headless,
+`window-kernel-executor.ts planRaise` answers `'inactive-show'`, and `performEffect`'s
+`RaiseWindow` case called `backend.showWindow` with `activate: false`. `electron-window-backend.ts
+showWindow` always echoes the caller's `activate` value into `kernelWindowShown(id, opts.activate,
+opts.opSeq)` (`window-kernel-dispatch.ts`), which dispatches the confirming `OsFocusGained` only
+when that value is true — so a headless raise's own echo carried a `WindowShown` and nothing else,
+and `key`, whose sole writer is `evolve`'s `OsFocusGained` arm, never moved onto the raised window.
+Two consequences followed from the same gap: the first-paint sweep (`evolve`'s
+`WindowContentOrderable` arm) later dismissed the still-not-key window against a stale
+`lastAttention`, and an Escape landing on it read as a `stale-landing` drop because `key` never
+agreed with which window the press meant. Every headless Playwright spec that opens and
+immediately expects a raised window to hold key or answer Escape hit this — `slides-lazy-wake.spec.ts`,
+`slides-settings-race.spec.ts`, `peeks-settings-race.spec.ts`, `hybrid-transient-on-blur.spec.ts`
+(the startup-dance case), `hello-world-escape-switcher.spec.ts`, and `izui-escape.spec.ts`. Fix:
+the `'inactive-show'` arm now passes `activate: true`. `showWindow`'s own `!isHeadless()` mask
+still keeps the real OS activation off, so nothing paints or steals focus under headless, but the
+echo now carries `kernelWindowShown(id, true, opSeq)`, landing an `OsFocusGained` stamped with the
+raise's own `opSeq`, which `isOpConfirmation` accepts as the raise's own confirmation rather than a
+stray report. `planRaise` itself is unchanged — it still answers `'inactive-show'` under headless;
+only what the executor does with that answer moved. `window-kernel-executor.test.ts` pins the show
+call under headless directly (`activate: true`, carrying the raise request's own `opSeq`) and, by
+feeding the echo back by hand the way the real backend would, that `key` lands on the raised
+window; the tests that had pinned the old `activate: false` value are inverted to assert the new one.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,

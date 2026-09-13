@@ -708,13 +708,46 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual(backend.of('focusContent'), []);
   });
 
-  it('a headless run neither activates nor focuses', () => {
+  it('a headless raise reaches the port show with activate: true, carrying the raise request\'s opSeq', () => {
+    // `key` has exactly one writer — `evolve OsFocusGained` — and under headless
+    // the only way that event ever arrives for a raised window is the backend's
+    // own synthetic echo (`electron-window-backend.ts showWindow` →
+    // `kernelWindowShown(id, opts.activate, opts.opSeq)`), which carries an
+    // `OsFocusGained` only when `activate` is true. This recording backend
+    // performs no such echo, so the wire-level call to `showWindow` is what's
+    // observable here; the echo is fed back by hand below.
+    const { exec, backend } = makeExecutor({ headless: true });
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    backend.calls.length = 0;
+    const outcome = exec.execute({ type: 'RaiseWindow', id: wid(2), expectedVersion: exec.getState().version });
+    assert.ok('applied' in outcome, 'the command is accepted');
+    assert.deepStrictEqual(backend.of('raiseWindow'), [], 'headless never reaches the activating raise');
+    assert.deepStrictEqual(backend.of('focusContent'), []);
+
+    const shows = backend.of('showWindow');
+    assert.strictEqual(shows.length, 1);
+    const opts = shows[0].args[1] as { activate: boolean; opSeq: number };
+    assert.strictEqual(opts.activate, true, 'activate:true is what lets the echo carry a confirming OsFocusGained');
+    const requestOpSeq = exec.getState().order.find((w) => w.id === wid(2))!.lastOpSeq;
+    assert.strictEqual(opts.opSeq, requestOpSeq, 'the show carries the raise request\'s own opSeq');
+
+    // Stand in for the backend's synthetic echo, which this recording backend
+    // never performs on its own.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(2), cause: { kind: 'machine', opSeq: opts.opSeq } });
+    assert.strictEqual(exec.getState().key, wid(2), 'the echo confirms the raise and key moves, even headless');
+  });
+
+  it('a headless run neither activates nor focuses content, but the show still shows', () => {
     const backend = raiseSetup({}, true);
     assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(backend.of('focusContent'), []);
     const shows = backend.of('showWindow');
     assert.strictEqual(shows.length, 1);
-    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, true);
   });
 
   // ── the app-active gate (§: window-kernel-executor.ts planRaise) ───────────
@@ -740,13 +773,13 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(2)]);
   });
 
-  it('headless and backgrounded together still resolve to inactive-show — headless is not double-masked', () => {
+  it('headless and backgrounded together still resolve to inactive-show, and the show still carries activate: true', () => {
     const backend = raiseSetup({}, true, false);
-    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(backend.of('raiseWindow'), [], 'headless never reaches the activating raise, backgrounded or not');
     assert.deepStrictEqual(backend.of('focusContent'), []);
     const shows = backend.of('showWindow');
     assert.strictEqual(shows.length, 1);
-    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, true);
   });
 
   it('a backgrounded quick-view gets no content focus either — the gate suppresses that mask too', () => {
@@ -1038,8 +1071,10 @@ describe('effect performance', () => {
 
   it('a headless run asserts focus without taking first responder', () => {
     // Focus-free by construction (2b55f3af): the raise degrades to a
-    // non-activating show, and the content-focus half must degrade with it —
-    // taking first responder IS taking focus.
+    // non-activating show (`showWindow`'s own headless gate masks the OS
+    // call), and the content-focus half must degrade with it — taking first
+    // responder IS taking focus. The show still carries `activate: true`,
+    // since that's what lets the backend's echo confirm `key` on this window.
     const { exec, backend } = makeExecutor({ headless: true });
     exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
     exec.dispatch({ type: 'WindowShown', id: wid(1) });
@@ -1051,7 +1086,7 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(
       backend.of('showWindow').map((c) => (c.args[1] as { activate?: boolean } | undefined)?.activate),
-      [false],
+      [true],
     );
   });
 
