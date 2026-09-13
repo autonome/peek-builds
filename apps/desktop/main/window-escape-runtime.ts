@@ -1,32 +1,10 @@
-/**
- * window-escape-runtime.ts — the caller side of the Escape round trip.
- *
- * `window-escape.ts interpretEscape` is a pure `(keyEvent, snapshot) ->
- * EscapeOutcome`; it reads a snapshot once and decides, and its own docblock
- * ("THE ASK IS NOT DELETED") says the renderer ask moves OUT of the reducer
- * and into the caller, which asks and then re-enters `interpretEscape` with
- * the answer. This module is that caller: it takes one Escape keypress,
- * drives the two-pass decision, and performs whichever `EscapeOutcome` the
- * second pass settles on.
- *
- * Every dependency is INJECTED — `getState`, `execute`, `publish`, `ask`,
- * `track` — none of them a module-scope singleton, matching
- * `window-escape-renderer-handled.ts`'s `ipcMain` injection and for the same
- * reason: `electron` provides nothing under `ELECTRON_RUN_AS_NODE=1`, so a
- * static import of any real backend would fail this module's own unit tests
- * at load time.
- *
- * WIRED. `window-machine.ts dispatchEscapePress` is the one bound
- * caller — every dispatch site that used to feed `window-state.ts`'s
- * `ESC_PRESSED` arm calls it instead, so `handleEscapePress` below is now the
- * live Escape decider.
- *
- * Every decision point here also writes an always-on `window-diag.ts` line —
- * see that module's header for why it is not `DEBUG`-gated. The bias is
- * toward logging what did NOT happen: a stale keystroke, an outcome of
- * `nothing`, an ask that was skipped, are each their own line rather than
- * silence.
- */
+// window-escape-runtime.ts — the caller side of the Escape round trip.
+// `window-escape.ts interpretEscape` is a pure `(keyEvent, snapshot) ->
+// EscapeOutcome`; this module drives the two-pass decision around it (asking
+// the renderer, then re-deciding) and performs whichever outcome the second
+// pass settles on. Every dependency is injected — `electron` provides
+// nothing under `ELECTRON_RUN_AS_NODE=1`, so a static import of a real
+// backend would fail this module's own unit tests at load time.
 
 import {
   interpretEscape,
@@ -41,31 +19,23 @@ import type { Command, State, WindowId } from './window-kernel.js';
 // Inputs
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One Escape keystroke, as a dispatch site reports it — `EscapeKeyPress` minus the mirrored renderer fact, which this module supplies itself across the two passes. */
+// One Escape keystroke, as a dispatch site reports it.
 export interface EscapePress {
   readonly landedId: WindowId | 'global';
 }
 
-/**
- * Everything `handleEscapePress` needs from the rest of the app, injected
- * rather than imported.
- */
+// Everything `handleEscapePress` needs from the rest of the app, injected rather than imported.
 export interface EscapeRuntimeDeps {
-  /** A fresh kernel snapshot, read again for pass B — never cached across the ask. */
+  // A fresh kernel snapshot, read again for pass B — never cached across the ask.
   getState(): State;
-  /** Apply a kernel `Command`. Rejection (a stale `expectedVersion`) is the executor's business, not this module's. */
+  // Apply a kernel `Command`. Rejection (a stale `expectedVersion`) is the executor's business.
   execute(command: Command): void;
-  /** `pubsub.ts publish`, pre-bound to its source address — this module names only the topic and payload. */
+  // `pubsub.ts publish`, pre-bound to its source address.
   publish(topic: string, payload: unknown): void;
-  /** `windows.ts askWebContentsToHandleEscape`, by way of the active `WindowBackend`: "did this window's renderer consume the Escape it was just handed?" */
+  // `windows.ts askWebContentsToHandleEscape`: did this window's renderer consume the Escape it was just handed?
   ask(id: WindowId): Promise<boolean>;
-  /**
-   * Register a promise that outlives this call so a test bridge can await its
-   * settlement — the same channel `window-kernel-executor.ts
-   * trackExternalAsyncEffect` feeds, reachable through
-   * `window-machine.ts waitForPendingWindowEffects`. `handleEscapePress`
-   * itself returns `void`; this is how its async half becomes observable.
-   */
+  // Register a promise that outlives this call so a test bridge can await its
+  // settlement (`window-machine.ts waitForPendingWindowEffects`).
   track(pending: Promise<unknown>): void;
 }
 
@@ -73,14 +43,9 @@ export interface EscapeRuntimeDeps {
 // Which outcomes the renderer could have pre-empted
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * An outcome the renderer's own Escape handler could have already consumed —
- * the three cases where a mirrored "renderer handled it" answer of `true`
- * would change pass A's decision. `close-switcher` is NOT here: the switcher
- * is main-process chrome with no page content to hand the keystroke to.
- * `stale-landing` is not here either — a keystroke already dropped as stale
- * has no window left to ask.
- */
+// `close-switcher` is not here: the switcher is main-process chrome with no
+// page content to hand the keystroke to. `stale-landing` is not here either:
+// a keystroke already dropped as stale has no window left to ask.
 function rendererCouldHavePreempted(outcome: EscapeOutcome): boolean {
   if (outcome.kind === 'close-window') return true;
   if (outcome.kind === 'open-switcher') return true;
@@ -92,48 +57,30 @@ function rendererCouldHavePreempted(outcome: EscapeOutcome): boolean {
 // Performing an outcome
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Turn a decided `EscapeOutcome` into the one side effect it names — the
- * counterpart to `window-os-adapter.ts runEffect`'s `ASK_RENDERER` /
- * `OPEN_SWITCHER_WINDOW` / Escape-decided arms, minus the reducer plumbing
- * those arms existed only to feed back.
- */
 function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): void {
   switch (outcome.kind) {
     case 'nothing': {
-      // The case the old DEBUG-gated log missed whenever DEBUG was off — a
-      // decision to do nothing is exactly the fact that must stay visible,
-      // so this line is unconditional. `reason` says WHY nothing happened
-      // (`resolveEscapeTarget`'s `stale`, the mirrored renderer fact, or the
-      // policy table landing on `nothing`).
+      // A decision to do nothing is exactly the fact that must stay visible,
+      // so this line is unconditional rather than DEBUG-gated.
       wmLog('esc-action', { action: 'nothing', reason: outcome.reason });
       return;
     }
     case 'pass-through': {
-      // The keystroke was already left untouched at the before-input-event
-      // site (escapeMode:'ignore'); nothing left to do here.
       wmLog('esc-action', { action: 'pass-through', id: outcome.id });
       return;
     }
     case 'open-switcher': {
       // The kernel has no vocabulary for creating a window (see
-      // `window-escape.ts`'s "WHY FOUR OF THESE CARRY command: null"), so
-      // opening the switcher is an app-level publish — the same
-      // `cmd:execute:windows` trigger `window-os-adapter.ts`'s
-      // `OPEN_SWITCHER_WINDOW` arm used before that module was deleted.
+      // `window-escape.ts`'s `EscapeOutcome` note), so opening the switcher
+      // is an app-level publish rather than a `Command`.
       wmLog('esc-action', { action: 'open-switcher', topic: 'cmd:execute:windows' });
       deps.publish('cmd:execute:windows', {});
       return;
     }
     case 'close-switcher': {
-      // `outcome.restoreTargetId` is deliberately left unread. The old
-      // machine's restore path (`applyRaiseRequest` -> `RAISE_WINDOW` /
-      // `FOCUS_CONTENT` / `SET_STACKING`) was a labelled no-op in
-      // `window-os-adapter.ts runEffect`, so closing the switcher via
-      // Escape restores nothing in production, and this module preserves
-      // that no-op. Reading the target here and raising it would be NEW
-      // behavior, not the preserved behavior this module exists to carry
-      // forward.
+      // `outcome.restoreTargetId` is deliberately left unread here: closing
+      // the switcher via Escape restores nothing, and reading the target and
+      // raising it would be new behavior, not preserved behavior.
       wmLog('esc-action', {
         action: 'close-switcher',
         type: outcome.command.type,
@@ -175,40 +122,29 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
 // The two-pass decision
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Decide and perform one Escape keypress.
- *
- * PASS A decides against the CURRENT snapshot with no renderer answer. Three
- * of its outcomes are ones the renderer's own handler could have already
- * consumed (`rendererCouldHavePreempted`); when pass A lands on one of those
- * AND the keystroke resolves to an actual window (`resolveEscapeTarget`),
- * this asks that window's renderer and defers the decision — every other
- * outcome (`stale-landing`, `close-switcher`, `pass-through`,
- * `exit-fullscreen`) performs immediately, no ask.
- *
- * PASS B re-reads state AFTER the ask resolves and re-runs `interpretEscape`
- * with the answer folded in, against that fresh snapshot — never against
- * `stateA`. No epoch or sequence number rides along; what does ride along is
- * the id of the window pass A asked, and pass B performs only when it
- * resolves that same window. `resolveEscapeTarget` alone is not enough: it
- * returns `stale` only for a delivery record that disagrees with `key`, and a
- * `'global'` landing has no delivery record, so it re-resolves to whoever
- * holds key now — the window that opened during the ask, not the one the
- * user pressed Escape in. Pass A's `Command`, if any, is never performed —
- * only pass B's outcome is, and each command already carries the
- * `expectedVersion` of the snapshot it was decided against, so a pass-A
- * command executed after the pass-B re-read would be rejected as stale even
- * if this module tried.
- */
+// PASS A decides against the current snapshot with no renderer answer. When it
+// lands on an outcome the renderer's own handler could have already consumed
+// (`rendererCouldHavePreempted`) AND the keystroke resolves to an actual
+// window, this asks that window's renderer and defers the decision; every
+// other outcome performs immediately.
+//
+// PASS B re-reads state after the ask resolves and re-runs `interpretEscape`
+// against that fresh snapshot, never against `stateA`. What rides along is the
+// id of the window pass A asked, not an epoch/sequence number: pass B performs
+// only when it resolves that SAME window, because `resolveEscapeTarget` alone
+// can re-resolve a `'global'` landing to whoever holds key now — the window
+// that opened during the wait, not the one the user pressed Escape in. Pass
+// A's `Command`, if any, is never performed; each command already carries the
+// `expectedVersion` of the snapshot it was decided against, so a pass-A
+// command executed after the pass-B re-read would be rejected as stale.
 export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): void {
   const key: EscapeKeyPress = { landedId: press.landedId };
   wmLog('esc-press', { landedId: press.landedId });
 
   const stateA = deps.getState();
   const outcomeA = interpretEscape(key, stateA);
-  // Resolved unconditionally (not just inside the ask branch below) so the
-  // diagnostic line below always names what pass A targeted, including the
-  // `stale`/`none` cases that never reach an ask.
+  // Resolved unconditionally so the diagnostic line below always names what
+  // pass A targeted, including the `stale`/`none` cases that never reach an ask.
   const targetA = resolveEscapeTarget(key, stateA);
   wmLog('esc-pass-a', {
     outcome: outcomeA.kind,
@@ -224,22 +160,11 @@ export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): 
       deps.ask(targetId).then((rendererHandled) => {
         wmLog('esc-ask-answer', { targetId, rendererHandled });
         const stateB = deps.getState();
-        // THE PRESS IS ABOUT THE WINDOW PASS A ASKED, AND NO OTHER. The ask
-        // is a round trip of up to 500ms (`windows.ts
-        // askWebContentsToHandleEscape` times out at that), and the world
-        // moves while it is outstanding. `resolveEscapeTarget` re-resolves
-        // against the fresh snapshot, but for a `'global'` landing (the OS
-        // grab and the CLI) it names whichever window holds key NOW — it
-        // cannot come back `stale`, so on its own it would let a keystroke
-        // pressed against A act on B. Measured live: an Escape pressed with a
-        // page host key, whose ask timed out, closed the peek that had opened
-        // during the wait; and an Escape pressed on a peek that was dismissed
-        // during the wait opened the switcher over the host instead. Both are
-        // `resolveEscapeTarget`'s own rule 4 ("a keystroke meant for A applied
-        // to B"), reached through the delay rather than the delivery record.
-        // So pass B performs only when it resolves the SAME window pass A
-        // asked; anything else is a press against a world that no longer
-        // exists, and the user's next press decides against the settled one.
+        // The press is about the window pass A asked, and no other: the ask
+        // is a round trip of up to 500ms, and the world moves while it is
+        // outstanding. Pass B performs only when it resolves the same window;
+        // anything else is a press against a world that no longer exists, and
+        // the user's next press decides against the settled one.
         const targetB = resolveEscapeTarget(key, stateB);
         if (targetB.kind !== 'window' || targetB.record.id !== targetId) {
           wmLog('esc-pass-b', {
@@ -264,10 +189,7 @@ export function handleEscapePress(press: EscapePress, deps: EscapeRuntimeDeps): 
   }
 
   // No ask issued — either pass A's outcome could not have been preempted by
-  // the renderer (`close-switcher`, `pass-through`, `exit-fullscreen`,
-  // `stale-landing`), or it could have been but resolved no window to ask
-  // (`open-switcher` with no target). Named explicitly rather than left to be
-  // inferred from the absence of an `esc-ask` line above.
+  // the renderer, or it could have been but resolved no window to ask.
   wmLog('esc-no-ask', {
     reason: rendererCouldHavePreempted(outcomeA) ? 'no-window-target' : 'not-preemptable',
   });

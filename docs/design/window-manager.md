@@ -1591,6 +1591,13 @@ first press against a stale or absent fact. The interpreter still needs the ask 
 decide; what the cutover changes is only the answer's path back — an event round-tripped through the
 reducer, versus a value the ask's own caller already holds.
 
+Whether a key holder that reports nothing about its content focus should arm the OS-level Escape
+grab is settled, not open: such a holder handles Escape itself through `before-input-event`, and
+`globalShortcut` pre-empts that route rather than backing it up, so arming the grab over it would
+eat the window's own Escape. The alternative — arming whenever the report is absent rather than a
+known loss — covers no window in the tree today, since every key-holding `BrowserWindow` and guest
+`<webview>` already has a `before-input-event` Escape listener attached.
+
 ### 0.1.4 The state shape
 
 ```ts
