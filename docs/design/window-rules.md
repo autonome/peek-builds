@@ -135,5 +135,10 @@ focus back in the other app. S3's dismissal half closed at `b7e685e6`. The "fres
 row did not reproduce on 2026-09-13; the rule that used to cover it (a window that just took key
 survives its prior window reclaiming focus) was deleted the same day, since a transient that
 loses focus is dismissed by D6 with no exemption for being new. Everything else in the table is
-fixed or not reproducing; G7, G10, G11 have not been checked by hand since 2026-08-21. The kernel
-read against every rule, with a verdict and sites per rule, is `window-rules-audit.md`.
+fixed or not reproducing. G7, G10 and G11 were checked by hand on the packaged build on
+2026-09-13: G7 first failed (after Escape closed the switcher, key went to the chrome overlay and
+Escape was dead, because a closed key window asked for no successor) and passed after `8458ac93`,
+with every switcher close followed by a raise of the page host; G10 exits fullscreen on Escape and
+never opened the switcher; G11 brought a background page forward by Cmd+Tab and by its chrome
+with no flicker. The kernel read against every rule, with a verdict and sites per rule, is
+`window-rules-audit.md`.
