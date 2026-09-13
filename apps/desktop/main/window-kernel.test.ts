@@ -1,17 +1,6 @@
-/**
- * Unit tests for the rewritten window-manager kernel (`window-kernel.ts`).
- *
- * Blueprint: `docs/design/window-manager.md` §0.1, in particular §0.1.8 item 2
- * ("Replay determinism — a standing requirement, enforced by a test that
- * fails when it breaks"). Follows the harness conventions of
- * `window-state.test.ts` (`node:test` + `node:assert`, `.js`-suffixed import
- * of the compiled output, a small branded-id builder).
- *
- * NOTE on "effects": §0.1.1 makes `react(prev, ev, next): Effect[]` a pure
- * projection of the transition, separate from `evolve`. Both halves of the
- * determinism rule are enforced below: identical state AND an identical,
- * concatenated `react` effect list.
- */
+// Example-based unit tests for the window-manager kernel (window-kernel.ts).
+// Design reasoning: docs/design/window-manager.md § 0.1.
+// react(prev, ev, next): Effect[] is a pure projection of the transition, separate from evolve.
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
@@ -42,26 +31,15 @@ import {
   type Rectangle,
   type FocusCause,
 } from './window-kernel.js';
-// The overturn set at the end of this file asserts one behavior the kernel
-// stores the facts for but does not itself decide: whether the OS-level Escape
-// grab arms. `window-escape.ts` is a pure read of this kernel's snapshot (it
-// imports `window-kernel.js` and nothing else), so the overturned devtools /
-// dangling-key cases are pinned against the real predicate rather than
-// restated as prose.
+// window-escape.ts is a pure read of this kernel's snapshot, so the Escape-grab cases below are
+// pinned against the real predicate rather than restated as prose.
 import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
-// The devtools-target case below narrows `isContentWindow` with the role
-// predicate that supplies the http/https fact this kernel does not store
-// (`window-machine.ts getTopmostWebPageWindowId` is the production
-// composition). Same shape as the `window-escape.js` import above: a pure
-// sibling module, pinned against the real predicate rather than restated.
+// isWebPageRole supplies the http/https fact this kernel does not store, same reason as above.
 import { isWebPageRole } from './izui-roles.js';
 
-// ── Test builders ────────────────────────────────────────────────────────────
-
-/** Craft a WM WindowId for tests — the kernel never checks the shape, only identity. */
 const wid = (n: number): WindowId => `wk-${n}` as WindowId;
 
-/** Recursively `Object.freeze`s `value` — used to prove `react` never writes to its arguments. */
+// Used to prove react never writes to its arguments.
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value as object).forEach(deepFreeze);
@@ -74,7 +52,6 @@ function fold(events: Event[], start: State = initialState()): State {
   return events.reduce(evolve, start);
 }
 
-/** Folds `events`, accumulating `react(prev, ev, next)` at every step (§0.1.1). */
 function foldWithEffects(events: Event[], start: State = initialState()): { state: State; effects: Effect[] } {
   let state = start;
   const effects: Effect[] = [];
@@ -86,7 +63,6 @@ function foldWithEffects(events: Event[], start: State = initialState()): { stat
   return { state, effects };
 }
 
-/** A representative log touching all seven event variants, including a dangling key. */
 function buildLog(): Event[] {
   return [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -367,17 +343,12 @@ describe('window-kernel: re-registration merges in place', () => {
     );
   });
 
-  // The two cases below cover the re-registration MERGE's handling of a
-  // registration-time keepLive — kept independent of any runtime writer for
-  // the field (no such writer exists; `keepLive` is decided once, at
-  // registration, and never revisited — see the removed `SetKeepLive`/
-  // `KeepLiveSet` pair, git history). The merge hazard is real regardless:
-  // `keepLive` was silently dropped there once already.
+  // keepLive is decided once, at registration, and never revisited by any runtime writer, so the
+  // re-registration merge must not silently drop it.
   it('a re-registration that omits keepLive KEEPS a previously-set keepLive: true', () => {
-    // The failure this guards: `ipc.ts` registers every real window twice,
-    // and a second pass that never learned about keepLive must not silently
-    // strip it — a keepLive slide would be destroyed on close instead of
-    // hidden.
+    // ipc.ts registers every real window twice, and a second pass that never learned about
+    // keepLive must not silently strip it — a keepLive slide would be destroyed on close instead
+    // of hidden.
     const state = fold([
       { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
       { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -620,25 +591,10 @@ describe('window-kernel: raise vs. show', () => {
 
 // ── one order: where a background open lands (§0.1.10) ──────────────────────
 
-/**
- * ONE ORDER, and nothing else orders windows: a background open is placed
- * BELOW the last-focused window. The two rules that move anything are
- * complete and disjoint — a registration inserts under the key window, and a
- * focus gain raises its target to the top — so there is no second list and no
- * focus-recency counter to disagree with `order`.
- *
- * Every window here is registered with the facts its REAL construction site
- * produces (same discipline as `which windows a real app resign hides`): an
- * ordinary page host is `kind:'page-host'` at `BASE_LAYER`, focusable,
- * input-accepting, `class:'primary'`, `role:'content'` — and, being a
- * page-host, it is NOT positionable by the OS until its first composited
- * frame reports in (`WindowContentOrderable`). A rule that only held for
- * windows the OS can already stack would pass vacuously without that step.
- */
+// A registration inserts under the key window; a focus gain raises its target to the top — the
+// two complete, disjoint rules that move anything in order.
 describe('window-kernel: a background open lands BELOW the key window', () => {
-  /** The page host the user is working in. */
   const inUse = wid(1);
-  /** The one that opens behind it — a hotkeyed page, a restored session window. */
   const opened = wid(2);
 
   const registerPageHost = (id: WindowId): Event => ({
@@ -652,7 +608,6 @@ describe('window-kernel: a background open lands BELOW the key window', () => {
     role: 'content',
   });
 
-  /** One page host on screen, orderable, holding key. */
   const windowInUse = (): Event[] => [
     registerPageHost(inUse),
     { type: 'WindowShown', id: inUse },
@@ -672,8 +627,7 @@ describe('window-kernel: a background open lands BELOW the key window', () => {
     assert.strictEqual(topmost(shown, () => true)?.id, inUse, 'the window in use is still on top');
     assert.strictEqual(topmost(shown, isContentWindow)?.id, inUse, 'and is still the command target');
 
-    // The first composited frame re-asserts the whole stack — that emission is
-    // the machine's answer for what the screen looks like, bottom -> top.
+    // The first composited frame re-asserts the whole stack, bottom -> top.
     const firstFrame: Event = { type: 'WindowContentOrderable', id: opened };
     const after = evolve(shown, firstFrame);
     assert.deepStrictEqual(stackingIds(react(shown, firstFrame, after)), [opened, inUse]);
@@ -769,25 +723,8 @@ describe('window-kernel: a background open lands BELOW the key window', () => {
 
 // ── the raise a focus report drives (and why it is not a feedback loop) ─────
 
-/**
- * `react` emits `RaiseWindow` off a focus report, which contradicts the old
- * reducer's standing invariant ("no RAISE_WINDOW from OS_FOCUS_GAINED — the
- * pump's convergence obligation"). The invariant is superseded, not violated,
- * and these are the two facts that decide it:
- *
- *   - it is the ONLY route to key — `decide` turns a `RaiseWindow` COMMAND
- *     into an `OsFocusGained` event (§0.1.10, one order), so suppressing the
- *     emission would leave a raise command with nothing but `SetStacking`,
- *     which carries no activation;
- *   - it converges in one step — the raise moves its target to the top, so
- *     the focus report it provokes finds the target already topmost and the
- *     diff is empty. The emission is its own fixed point.
- *
- * The rule is also STRUCTURAL: "the top of `order` changed under unchanged
- * membership". It never asks which event moved it, which is why a close or a
- * registration — a membership change, not a window taking focus — raises
- * nothing.
- */
+// react emits RaiseWindow whenever the top of order changed under unchanged membership — never
+// for a close or a registration, since those change membership rather than move a focus target.
 describe('window-kernel: the raise a focus report drives', () => {
   const registerPageHost = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -802,7 +739,6 @@ describe('window-kernel: the raise a focus report drives', () => {
 
   const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
 
-  /** `top` holds key on top; `below` sits under it (a background open). */
   const twoWindows = (top: WindowId, below: WindowId): State =>
     fold([
       registerPageHost(top),
@@ -1013,14 +949,9 @@ describe('window-kernel: CloseOrHideWindow', () => {
   });
 
   it('a duplicate WindowHidden (backend echo + late native hide event) is a no-op re-merge', () => {
-    // Production: the backend echoes `WindowHidden` synchronously for every
-    // hide it performs, and the OS's own native hide event for the same
-    // window lags a tick behind (macOS — peek 71cfde09), so the kernel sees
-    // the SAME hide twice: echo first, native mirror later. `evolve`'s
-    // `WindowHidden` arm only ever writes `visible: false`, and RULE 2
-    // forbids it from touching `key` — so the second arrival should leave
-    // everything, including whatever `key` resolved to after the first hide,
-    // exactly as it was.
+    // The backend echoes WindowHidden synchronously for every hide it performs, and the OS's own
+    // native hide event for the same window lags a tick behind, so the kernel sees the same hide
+    // twice: echo first, native mirror later. The second arrival must leave everything as it was.
     const state = fold([
       { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
       { type: 'WindowShown', id: wid(1) },
@@ -1226,21 +1157,12 @@ describe('window-kernel: orderable gate on SetStacking', () => {
   });
 });
 
-// ── a window becoming visible re-asserts the pin (§0.1.6) ───────────────────
-//
-// The macOS ctor-time always-on-top flag is unreliable on its own, which is
-// why the old machine re-asserted it after construction. The kernel folds
-// always-on-top into `layer` and realizes it only through `SetStacking`
-// (`stackingLevelForLayer` in the executor), so a window that becomes visible
-// without reordering `order` — a NON-ACTIVATING show: session restore, the
-// inactive show path in `windows.ts`, an extension window — must still
-// re-trigger the full stacking re-assert, or a pinned window shown that way
-// never gets its level reinforced.
-
+// A window shown without reordering order (a non-activating show: session restore, the inactive
+// show path, an extension window) must still re-trigger the full stacking re-assert, or a pinned
+// window shown that way never gets its level reinforced.
 describe('window-kernel: a window becoming visible re-asserts stacking, not just an order change', () => {
   it('a non-activating WindowShown alone re-asserts stacking for an always-on-top window', () => {
-    // `kind: 'browser'` starts orderable, so a plain show is the only event
-    // needed — no `OsFocusGained`, no reorder, nothing "activating" about it.
+    // kind:'browser' starts orderable, so a plain show is the only event needed here.
     const state = fold(
       [{ type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: false, class: 'hud' }],
       initialState(),
@@ -1341,23 +1263,10 @@ describe('window-kernel: a window becoming visible re-asserts stacking, not just
   });
 });
 
-// ── SetStacking is a minimal diff, not a full re-assert ─────────────────────
-//
-// The retired property: `react` used to re-emit `SetStacking` for EVERY
-// visible+orderable window whenever `order` changed at all. It now emits only
-// a SUFFIX of each band's bottom -> top order — the smallest trailing run
-// that, replayed with `moveTop()` over whatever the OS already has, still
-// reproduces the whole band. "Windows whose index changed" is a DIFFERENT,
-// incorrect rule: bottom -> top `[A,B,C]` -> `[B,A,C]` only changes A's and
-// B's index, but replaying just those two yields `[C,B,A]`, not `[B,A,C]` —
-// the correct minimal replay is A then C (see the third case below).
-//
-// These build `prev`/`next` by hand, the same technique
-// "a pure REORDER raises nothing" above uses: `react` is a pure structural
-// diff of its two state arguments and never reads `ev`, so a hand-built pair
-// is exactly the call the executor would make.
+// react emits only a suffix of each band's bottom -> top order — the smallest trailing run that,
+// replayed with moveTop() over whatever the OS already has, still reproduces the whole band.
+// "Windows whose index changed" is a different, incorrect rule (see the third case below).
 describe('window-kernel: SetStacking replays only the windows that actually need re-raising', () => {
-  /** A fully eligible (visible, orderable) `kind: 'browser'` record at `layer`. */
   const makeRecord = (id: WindowId, layer: number): WindowRecord =>
     fold([
       { type: 'WindowRegistered', id, kind: 'browser', layer, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -1488,8 +1397,7 @@ describe('window-kernel: closing the key window raises nothing in its place', ()
   });
 });
 
-// ── Parent refocus on WindowClosed (kernel-native port of window-state.ts's
-// WINDOW_CLOSED arm — the deleted main.ts parentWin.focus() block) ──────────
+// ── Parent refocus on WindowClosed ───────────────────────────────────────────
 
 describe('window-kernel: parent refocus on WindowClosed', () => {
   const registerContent = (id: WindowId, extra: Partial<Event & { type: 'WindowRegistered' }> = {}): Event => ({
@@ -1638,9 +1546,7 @@ describe('window-kernel: parent refocus on WindowClosed', () => {
   });
 });
 
-// ── Successor raise on WindowHidden (kernel-native port of window-state.ts's
-// WINDOW_HIDDEN arm — the sibling of the parent-refocus rule above, read off
-// the visibility diff rather than the membership diff) ─────────────────────
+// ── Successor raise on WindowHidden ──────────────────────────────────────────
 
 describe('window-kernel: successor raise on WindowHidden', () => {
   const registerContent = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
@@ -1657,13 +1563,8 @@ describe('window-kernel: successor raise on WindowHidden', () => {
 
   const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
 
-  /**
-   * `key` (A), a shown successor (B), app active, A on top — and A's
-   * `priorKey` genuinely names B, because B took key first and A took it
-   * from B (F7 hide-returns-key reads that field, not "whatever else is on
-   * screen", so a fixture that never gives A a prior key holder would prove
-   * nothing about it).
-   */
+  // A's priorKey genuinely names B here, because B took key first and A took it from B — the
+  // hide-returns-key rule reads that field, not "whatever else is on screen".
   const keyAndSuccessor = (): State => {
     const A = wid(1);
     const B = wid(2);
@@ -1699,11 +1600,8 @@ describe('window-kernel: successor raise on WindowHidden', () => {
   });
 
   it('the window taking key had no prior key holder (key was null before it) — hiding raises nothing, even with another content window visible', () => {
-    // This is the live failure this rule exists to close: a palette opened
-    // by hotkey while another app was frontmost takes key directly from
-    // `null` — nothing in Peek was in use before it — and Escape dismissing
-    // it must not raise a Peek window (here, B) the user never touched, no
-    // matter how eligible B looks to the old unconditional `topmost` query.
+    // A palette opened by hotkey while another app was frontmost takes key directly from null,
+    // and Escape dismissing it must not raise a Peek window (here, B) the user never touched.
     const A = wid(1);
     const B = wid(2);
     const state = fold([
@@ -2031,14 +1929,8 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
   });
 
   it('normal -> entering stashes preBounds from the REAL bounds mirror, not a hardcoded null (95deff8c)', () => {
-    // Producer-side coverage for the `95deff8c` fix: the SetFullscreen
-    // 'normal' branch resolves `preBounds` as `rec.bounds ?? null`. Every
-    // other fixture in this describe block registers its window without
-    // ever setting bounds, so `rec.bounds` is `undefined` there and
-    // `rec.bounds ?? null` reads as `null` either way — a regression back to
-    // a hardcoded `null` would pass those unnoticed. This one seeds a real
-    // bounds mirror through `BoundsChanged` (the sole writer of `bounds`)
-    // before entering fullscreen, so that regression fails here.
+    // Every other fixture in this describe block never sets bounds, so rec.bounds ?? null reads
+    // as null either way; this one seeds a real bounds mirror first so a hardcoded null would fail.
     const state = fold(registerTwo(), initialState());
     const rect: Rectangle = { x: 10, y: 20, width: 640, height: 480 };
     const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: rect });
@@ -2081,10 +1973,8 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
     s = evolve(s, { type: 'OsFullscreenEntered', id: wid(1) });
     assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
 
-    // The OS's own fullscreen-rect report lands on the bounds mirror (the
-    // transient rect `WindowRecord.bounds`'s doc names) — a re-stash from
-    // THIS value, rather than the held `fsMode.preBounds`, would be the
-    // aa34cb50 lookalike trap.
+    // The OS's own fullscreen-rect report lands on the bounds mirror — a re-stash from this
+    // value, rather than the held fsMode.preBounds, would be wrong.
     const transientRect: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
     s = evolve(s, { type: 'BoundsChanged', id: wid(1), bounds: transientRect });
 
@@ -2439,13 +2329,8 @@ describe('window-kernel: geometry', () => {
   });
 
   it('Maximize with a workArea snaps bounds to it and stashes the TRUE pre-maximize bounds (not the just-written work area); Unmaximize restores them', () => {
-    // Pins the `459ed219`-shaped fix: `decide` used to flip `maximized`
-    // without ever writing `bounds`, because the command carried no rect —
-    // the window never actually moved. `preMaxBounds` is resolved from
-    // `rec.bounds` INSIDE `decide`, before any of the three returned events
-    // ever reach `evolve`/`fold`, so the stash is provably the pre-maximize
-    // value and not whatever `BoundsChanged` writes moments later — verified
-    // below by asserting the exact event order AND the two final values.
+    // preMaxBounds is resolved from rec.bounds inside decide, before any of the three returned
+    // events reach evolve/fold, so the stash is provably the pre-maximize value.
     const state = fold(registerTwo(), initialState());
     const original: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
     const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: original });
@@ -2630,7 +2515,7 @@ describe('window-kernel: geometry', () => {
     assert.strictEqual(seededRec.maximized, true);
     assert.strictEqual(seededRec.preMaxBounds, null, 'maximized with nowhere to restore to');
 
-    // The aa34cb50 guard, same as Maximize/SetBounds.
+    // Same fullscreen-owns-the-display guard as Maximize/SetBounds.
     const inFullscreen = evolve(state, { type: 'FullscreenTransitionStarted', id: wid(2), entering: true, preBounds: null });
     const fsSeed = decide(inFullscreen, { type: 'SeedMaximized', id: wid(2), preMaxBounds: null, expectedVersion: inFullscreen.version });
     assert.ok('events' in fsSeed);
@@ -2638,12 +2523,9 @@ describe('window-kernel: geometry', () => {
   });
 
   it('a window registered with construction-time bounds restores to them on maximize/unmaximize, even with no move or resize in between (RegisterWindow.bounds seed)', () => {
-    // The `459ed219` sibling: a window placed at construction fires no
-    // native resize or move, so without a seed `bounds` stays undefined
-    // until the first gesture — and `preMaxBounds is null when unseeded`
-    // above stays a real, valid case (a registration truly carrying no
-    // bounds). This is the seeded case: registration itself is the only
-    // event that ever reports this window's rect before Maximize runs.
+    // A window placed at construction fires no native resize or move, so without a seed bounds
+    // stays undefined until the first gesture — registration is the only event that ever reports
+    // this window's rect before Maximize runs.
     const seeded: Rectangle = { x: 10, y: 20, width: 300, height: 400 };
     const state = fold(
       [{ type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', bounds: seeded }],
@@ -2837,10 +2719,6 @@ describe('window-kernel: geometry', () => {
 });
 
 // ── Desktop membership: the platform-neutral follow/anchor intention ────────
-// (`docs/design/window-manager.md` §0, "the governing rule set") — the
-// window-manager-wide replacement for the boolean `visibleOnAllSpaces`. See
-// `window-kernel-properties.test.ts`'s pinned "the re-registration merge
-// preserves every lived fact" describe for the merge-preservation coverage.
 
 describe('window-kernel: desktop membership', () => {
   const registerOne = (): Event[] => [
@@ -3067,18 +2945,9 @@ describe('window-kernel: overlay attachment', () => {
   });
 });
 
-// ── Overlay follow: visibility and frame ────────────────────────────────────
-//
-// Ports `window-state.ts applyOverlayFollow`'s full rule set (via
-// `overlayFollowPatch`, `window-kernel.ts`): a non-normal host always hides
-// its attached overlay; a normal host takes the given frame and reveals the
-// overlay while the app is active. `WindowShown` is fired for neither host in
-// these scenes on purpose — a hand-written scene omitting it would leave
-// `visible` false and silently exclude the window from content predicates,
-// but the overlay-follow rule reads a host's `fsMode`/registration facts, not
-// its own visibility, so the hosts here are deliberately left unshown to keep
-// each scene to the minimum that exercises the rule under test.
-
+// A non-normal host always hides its attached overlay; a normal host takes the given frame and
+// reveals the overlay while the app is active. The rule reads a host's fsMode/registration facts,
+// not its own visibility, so the hosts here are deliberately left unshown.
 describe('window-kernel: overlay follow — visibility and frame', () => {
   const registerHostsAndOverlay = (): Event[] => [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
@@ -3088,13 +2957,11 @@ describe('window-kernel: overlay follow — visibility and frame', () => {
   const overlayId = wid(3);
   const hostA = wid(1);
   const hostB = wid(2);
-  /** Stand-ins for `expandToOverlayFrame(bounds, workArea)` — deliberately NOT
-   *  equal to any raw host bounds used alongside them, so an assertion can
-   *  tell "the expanded frame" apart from "the raw host rect". */
+  // Deliberately not equal to any raw host bounds used alongside them, so an assertion can tell
+  // the expanded frame apart from the raw host rect.
   const frameA: Rectangle = { x: -8, y: -44, width: 316, height: 452 };
   const frameB: Rectangle = { x: 92, y: 56, width: 336, height: 468 };
 
-  /** The app active, both hosts + the overlay registered, nothing attached yet. */
   const active = (): State => fold([...registerHostsAndOverlay(), { type: 'AppActivated' }], initialState());
 
   it('attach shows the overlay when the host is normal and the app is active — the frame lands before the reveal', () => {
@@ -3242,14 +3109,7 @@ describe('window-kernel: overlay follow — visibility and frame', () => {
   });
 });
 
-// ── react emits AttachOverlayTo — a diff of the attach target, never a
-// comparison against the stored overlayFor relation ────────────────────────
-//
-// `docs/design/overlay-attach-effect-plan.md` § 3. Every scene here registers
-// its own tracking record(s) rather than reusing `overlayFor`/`AttachOverlay`
-// fixtures from the describes above: this rule reads only `order` and
-// `tracksBaseLayerTop`, never the attachment relation those other describes
-// exercise.
+// ── react emits AttachOverlayTo off a diff of the attach target ─────────────
 
 describe('window-kernel: react emits AttachOverlayTo off a diff of the attach target', () => {
   const registerPageHost = (id: WindowId): Event => ({
@@ -3273,7 +3133,7 @@ describe('window-kernel: react emits AttachOverlayTo off a diff of the attach ta
     role: 'overlay',
     tracksBaseLayerTop: opts.tracksBaseLayerTop,
   });
-  /** Visible AND orderable — the two facts `topmostBaseLayerPageHost` requires. */
+  // Visible and orderable — the two facts topmostBaseLayerPageHost requires.
   const shown = (id: WindowId): Event[] => [
     { type: 'WindowShown', id },
     { type: 'WindowContentOrderable', id },
@@ -3526,16 +3386,8 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
 
 // ── The op counter: what makes one op distinguishable from another ─────────
 
-/**
- * `State.opSeqCounter` is the ordering `isStaleSelfEcho` reads, and it is
- * INERT unless `evolve` advances it: with the counter frozen every op ever
- * issued carries the same token, no echo can be older than any other, and a
- * guard that is correct in form matches nothing live traffic produces. These
- * tests state the counter's own behaviour — advance on exactly the
- * transitions that issue a focus-family op, stay put on every other one, and
- * hand `evolve`'s record stamp and `react`'s effect token the SAME number —
- * so a counter that stops advancing fails here instead of passing vacuously.
- */
+// opSeqCounter advances exactly on transitions that issue a focus-family op, and evolve's record
+// stamp and react's effect token must be the same number as the new counter value.
 describe('window-kernel: the op counter advances once per issued op', () => {
   const registerPageHost = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -3551,20 +3403,13 @@ describe('window-kernel: the op counter advances once per issued op', () => {
   const focusFamily = (effects: Effect[]): Extract<Effect, { opSeq: number }>[] =>
     effects.filter((e): e is Extract<Effect, { opSeq: number }> => e.type === 'ShowWindow' || e.type === 'RaiseWindow');
 
-  /** One transition, with everything the two coherence rules need to be checked. */
   function step(state: State, ev: Event): { next: State; effects: Effect[] } {
     const next = evolve(state, ev);
     return { next, effects: react(state, ev, next) };
   }
 
-  /**
-   * THE ROUND-TRIP RULE, asserted rather than assumed: for every focus-family
-   * effect `react` emits, the token on the effect, the counter in `next`, and
-   * the `lastOpSeq` stamped on the named record are one and the same number —
-   * and that number is exactly one more than the pre-transition counter.
-   * Anything else and the echo the backend sends back cannot line up with the
-   * stamp the guard compares it to.
-   */
+  // For every focus-family effect react emits, the token on the effect, the counter in next, and
+  // the lastOpSeq stamped on the named record must be the same number.
   function assertCoherent(prev: State, next: State, effects: Effect[], label: string): void {
     const stamped = focusFamily(effects);
     assert.strictEqual(
@@ -3681,7 +3526,6 @@ describe('window-kernel: the op counter advances once per issued op', () => {
 // ── App activation, resignation, and the macOS activation dance ────────────
 
 describe('window-kernel: app activation, resignation, and the dance guard', () => {
-  /** A key-holding "primary" window plus a non-key-holding "hud" window, both visible. */
   const registerPrimaryAndHud = (): Event[] => [
     { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
     { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 1, canBecomeKey: false, acceptsInput: true, class: 'hud' },
@@ -3856,30 +3700,27 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
 
 // ── The app-resign sweep predicate ──────────────────────────────────────────
 
-/**
- * Every window below is registered with the facts its REAL construction site
- * produces, so a predicate that matches nothing in production fails here
- * rather than passing vacuously — the defect this suite exists to catch. The
- * old reducer swept `class === 'hud' && visible`, i.e. exactly one of these.
- */
+// Every window below is registered with the facts its real construction site produces, so a
+// predicate that matches nothing in production fails here rather than passing vacuously.
 describe('window-kernel: which windows a real app resign hides', () => {
   const FLOATING = BASE_LAYER + 1;
 
-  /** The ordinary page-host the user works in. */
   const workspace = wid(1);
-  /** The HUD: `renderer/hud/background.js` opens `alwaysOnTop:true, focusable:false`, no role. */
+  // renderer/hud/background.js: alwaysOnTop:true, focusable:false, no role.
   const hud = wid(2);
-  /** The space-border indicator: `features/spaces/background.js` — always-on-top like the HUD, but `acceptsInput:false` (click-through, set via a follow-up `setIgnoreMouseEvents` call in the same open flow) — the one clause that keeps it out of the sweep, matching its documented purpose of staying visible while the user works in OTHER applications. */
+  // features/spaces/background.js: always-on-top like the HUD, but acceptsInput:false
+  // (click-through) — the one clause that keeps it out of the sweep.
   const spaceBorder = wid(3);
-  /** The privileged test fixture: `test-fixture-glue.ts` — `focusable:false`, and NOT floating. */
+  // test-fixture-glue.ts: focusable:false, and not floating.
   const testFixture = wid(4);
-  /** The cmd panel: floats, focusable, and `modal:true` (`renderer/cmd/background.js`) — self-closes on blur, its own policy. */
+  // renderer/cmd/background.js: floats, focusable, modal:true — self-closes on blur, its own policy.
   const cmdPanel = wid(5);
-  /** A quick-view: `inferIzuiRole` only ever derives this role from `modal:true`, so it self-closes on blur too — same policy as the cmd panel, never the app-resign sweep's business. */
+  // inferIzuiRole only ever derives this role from modal:true, so it self-closes on blur too —
+  // same policy as the cmd panel, never the app-resign sweep's business.
   const quickView = wid(6);
-  /** A HUD hidden before the resign, for a reason of its own. */
   const alreadyHiddenHud = wid(7);
-  /** The windows switcher: `renderer/windows/background.js openWindowsView` — maximized, always-on-top, `role:'switcher'`, `canBecomeKey:true` (typing filters the list), no `modal`. The defect this predicate exists to fix: neither old exclusion (`!canBecomeKey`, the transient-role clause) named the real reason to skip a floater, and both silently caught this window. */
+  // renderer/windows/background.js openWindowsView: maximized, always-on-top, role:'switcher',
+  // canBecomeKey:true (typing filters the list), no modal.
   const switcher = wid(8);
 
   const scene = (): State =>
@@ -3892,16 +3733,9 @@ describe('window-kernel: which windows a real app resign hides', () => {
       { type: 'WindowRegistered', id: quickView, kind: 'page-host', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'quick-view', role: 'quick-view', selfClosesOnBlur: true },
       { type: 'WindowRegistered', id: alreadyHiddenHud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
       { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher' },
-      // `workspace` takes key BEFORE any of the floaters/transients below are
-      // shown (S3, fixed 2026-09-05): `evolve`'s `OsFocusGained` arm now marks
-      // its own sweep victims `pendingHidden` in the same transition (see
-      // `WindowRecord.pendingHidden`'s doc), and a switcher shown before this
-      // report would already be a visible, unexempted transient losing focus
-      // to `workspace` — dismissed by this setup event before the resign
-      // scenario below ever gets to exercise it. Ordering the report first
-      // means nothing eligible for the law is visible yet, so it sweeps
-      // nothing, and `key` still ends on `workspace` for every test in this
-      // block that wants it.
+      // workspace takes key before any floater/transient below is shown, or a switcher shown
+      // first would already be a visible transient losing focus to workspace — dismissed by
+      // this setup event before the resign scenario below gets to exercise it.
       { type: 'WindowShown', id: workspace },
       { type: 'OsFocusGained', id: workspace },
       { type: 'WindowShown', id: hud },
@@ -3919,42 +3753,24 @@ describe('window-kernel: which windows a real app resign hides', () => {
     const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
     const swept = sweptBy(settled);
 
-    // A predicate matching nothing (the inert failure mode) dies on this line.
     assert.ok(swept.length > 0, 'a real app resign must hide something — a sweep that matches nothing is the bug');
     assert.deepStrictEqual(swept, [hud]);
     assert.strictEqual(settled.order.find((w) => w.id === hud)?.visible, false);
 
-    // The switcher floats above the regular stack exactly like the HUD, but a
-    // transient window loses focus on ANY app resign under the uniform
-    // dismissal law (`selectTransientAutoclose`), and dismissal is not
-    // reversible — so it is excluded from this reversible hide rather than
-    // swept alongside the HUD. `evolve` never marks a dismissal victim's
-    // `visible` false itself; the settle only arranges for `react` to name it
-    // on a `DismissWindow` effect (see the effects test below for that half).
+    // The switcher is excluded from this reversible hide, since a transient loses focus on any
+    // app resign under the uniform dismissal law, and dismissal is not reversible.
     assert.strictEqual(settled.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
     assert.strictEqual(settled.order.find((w) => w.id === switcher)?.visible, true);
 
-    // Everything else stayed exactly as visible as it was: the base-layer
-    // window, the non-floating test fixture, the click-through space border
-    // (its documented purpose is to stay visible while the user works in
-    // OTHER applications), and the two self-closing floaters (their own blur
-    // handler owns their app-resign policy).
     for (const id of [workspace, testFixture, cmdPanel, quickView, spaceBorder]) {
       assert.strictEqual(settled.order.find((w) => w.id === id)?.visible, true, `${id} must not be hidden by the resign sweep`);
     }
-    // The already-hidden HUD is not visible, so it is never marked — otherwise
-    // the re-show on activation would resurrect a window nobody asked for.
     assert.strictEqual(settled.order.find((w) => w.id === alreadyHiddenHud)?.hiddenByAppBlur, undefined);
   });
 
   it('the HUD hides on the RAW resign edge, before any settle; the switcher stays visible there — it is a dismissal victim, not a hide, and dismissal has no raw-edge half', () => {
-    // The old reducer hid `class === 'hud'` immediately on APP_RESIGNED.
-    // Waiting for the 500ms settle (as the settled-only sweep used to)
-    // leaves a floater over whatever app the user just switched to for the
-    // whole of that delay — the same cost an attached overlay would pay,
-    // which is why every eligible floater is hidden here, on the same edge,
-    // for the same reason: `layer > BASE_LAYER` puts any of them above OTHER
-    // applications' windows too, not just above Peek's own stack.
+    // Every eligible floater hides on the raw edge, not just at settle — otherwise it would sit
+    // over whatever app the user just switched to for the whole of the settle delay.
     const resigned = evolve(scene(), { type: 'AppResigned' });
     const swept = sweptBy(resigned);
 
@@ -3962,17 +3778,11 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(resigned.order.find((w) => w.id === hud)?.visible, false);
     assert.strictEqual(resigned.order.find((w) => w.id === hud)?.hiddenByAppBlur, true);
 
-    // The switcher is a `selectTransientAutoclose` candidate at this very
-    // resign, so `AppResigned`'s `dismissVictims` exclusion keeps it out of
-    // the reversible hide entirely — a raw edge that hid it here would read
-    // back `!visible` at the settle and be mistaken for already dismissed
-    // (see that arm's own doc). It is left untouched until the settle names
-    // it on a `DismissWindow` effect.
+    // The switcher is left untouched until the settle names it on a DismissWindow effect — a raw
+    // edge that hid it here would read back !visible and be mistaken for already dismissed.
     assert.strictEqual(resigned.order.find((w) => w.id === switcher)?.visible, true);
     assert.strictEqual(resigned.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
 
-    // Nothing else moved — same exclusions as the settled sweep, checked
-    // directly on the raw edge rather than after settle folds in behind it.
     for (const id of [workspace, testFixture, cmdPanel, quickView, spaceBorder]) {
       assert.strictEqual(resigned.order.find((w) => w.id === id)?.visible, true, `${id} must not be hidden by the raw-edge hide`);
     }
@@ -3982,19 +3792,9 @@ describe('window-kernel: which windows a real app resign hides', () => {
     const state = scene();
     const rec = (id: WindowId) => state.order.find((w) => w.id === id)!;
 
-    // The defect this predicate exists to fix: the switcher floats above the
-    // regular stack exactly like the HUD, but the OLD predicate excluded it
-    // twice over (`canBecomeKey: true`, and `role: 'switcher'` sitting in
-    // `TRANSIENT_ROLES`) — neither exclusion named the real reason to skip a
-    // floater here.
     assert.strictEqual(isAppResignSweepEligible(rec(switcher)), true, 'floats, accepts input, does not self-close — admitted');
     assert.strictEqual(isAppResignSweepEligible(rec(cmdPanel)), false, 'floats, but already self-closes on blur — its own policy');
     assert.strictEqual(isAppResignSweepEligible(rec(quickView)), false, 'floats, but already self-closes on blur — its own policy');
-    // The space border is click-through (`acceptsInput: false`, set via a
-    // follow-up `setIgnoreMouseEvents` call in the same open flow) — measured
-    // against its actual registration facts, NOT a role stand-in (see
-    // `isAppResignSweepEligible`'s own doc). It must stay out: its documented
-    // purpose is to remain visible while the user works in other applications.
     assert.strictEqual(isAppResignSweepEligible(rec(spaceBorder)), false, 'click-through — never admitted, matches its documented purpose');
     assert.strictEqual(isAppResignSweepEligible(rec(testFixture)), false, 'does not float — a base-layer window is never eligible');
     assert.strictEqual(isAppResignSweepEligible(rec(workspace)), false, 'does not float');
@@ -4009,14 +3809,11 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(activated.order.find((w) => w.id === hud)?.visible, true, 'hud must re-show');
     assert.strictEqual(activated.order.find((w) => w.id === hud)?.hiddenByAppBlur, false, 'hud must have its mark cleared');
 
-    // The switcher was a dismissal victim, not a reversible hide — it was
-    // never marked `hiddenByAppBlur`, so `appBlurRevealAdmits` has nothing to
-    // admit and this activation leaves it exactly as the resign left it.
+    // The switcher was a dismissal victim, not a reversible hide, so it carries no mark to clear.
     assert.strictEqual(activated.order.find((w) => w.id === switcher)?.visible, true);
     assert.strictEqual(activated.order.find((w) => w.id === switcher)?.hiddenByAppBlur, undefined);
 
     assert.strictEqual(activated.order.find((w) => w.id === alreadyHiddenHud)?.visible, false);
-    // The space border was never touched — it carries no mark to clear.
     assert.strictEqual(activated.order.find((w) => w.id === spaceBorder)?.hiddenByAppBlur, undefined);
     assert.deepStrictEqual(sweptBy(activated), []);
   });
@@ -4031,21 +3828,13 @@ describe('window-kernel: which windows a real app resign hides', () => {
       resignEffects.filter((e) => e.type === 'HideWindow').map((e) => e.id),
       [hud],
     );
-    // The switcher is not hidden on this edge, so nothing names it here
-    // either — its dismissal is the settle's business, below.
     assert.deepStrictEqual(
       resignEffects.filter((e) => e.type === 'DismissWindow'),
       [],
     );
 
-    // The settle step finds the HUD already `visible: false`, so its own
-    // re-application of `isAppResignSweepEligible` is a no-op for it and
-    // `react`'s structural diff has nothing to project a second time. The
-    // switcher is different: it is still visible, still a
-    // `selectTransientAutoclose` candidate, and this settle is the one that
-    // disarms `pendingAppResignSweep` while `appActive` stays false — so
-    // `react`'s resign-sweep rule fires and names it on a `DismissWindow`
-    // effect.
+    // The switcher is still visible at settle time, so react's resign-sweep rule fires and
+    // names it on a DismissWindow effect there instead.
     const settleEv: Event = { type: 'AppResignSettled' };
     const settled = evolve(resigned, settleEv);
     const settleEffects = react(resigned, settleEv, settled);
@@ -4060,8 +3849,7 @@ describe('window-kernel: which windows a real app resign hides', () => {
   });
 });
 
-// ── AppResigned hiding an attached overlay, and AppActivated's conditional
-// re-show of it (`appBlurRevealAdmits`) ─────────────────────────────────────
+// ── AppResigned hiding an attached overlay, and AppActivated's conditional re-show ──────────
 
 describe('window-kernel: AppResigned hides an attached overlay on the raw edge; AppActivated reveals it only when its host admits', () => {
   const FLOATING = BASE_LAYER + 1;
@@ -4071,7 +3859,6 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
   const other = wid(3);
   const detachedOverlay = wid(4);
 
-  /** Host + attached, shown overlay + an ordinary visible window with no overlayFor. */
   const attachedVisibleScene = (): State =>
     fold(
       [
@@ -4133,20 +3920,8 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
   });
 
   it('an unattached floating window that cannot take keys still hides — attachment is not the only admission', () => {
-    // Attachment selects the victims among windows that HAVE a host; it was
-    // never the only way onto the raw resign edge. This window is unattached,
-    // but it is above the base layer, cannot take keystrokes, and accepts
-    // input (not click-through) — structurally a HUD, and
-    // `isAppResignSweepEligible` admits it on exactly those facts. Above the
-    // regular stack means above OTHER applications' windows too, so leaving
-    // it up floats it over whatever the user switched to.
-    //
-    // Hiding is reversible, which is what lets it pay the raw edge; DISMISSAL
-    // waits for the settle because it is destructive and the activation dance
-    // cannot undo it.
-    //
-    // The real chrome overlay is not this window: it takes keys (the address
-    // bar is focusable), so it reaches the edge through attachment instead.
+    // Above the base layer, cannot take keystrokes, accepts input — structurally a HUD, and
+    // isAppResignSweepEligible admits it on exactly those facts, unattached or not.
     const state = fold(
       [
         { type: 'WindowRegistered', id: detachedOverlay, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'overlay' },
@@ -4247,13 +4022,6 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
     assert.strictEqual(healed.hiddenByAppBlur, false);
   });
 
-  // A non-overlay window carrying `hiddenByAppBlur` from the ordinary
-  // AppResignSettled sweep is still re-shown by AppActivated — the new query
-  // did not narrow that pre-existing path. Already pinned exactly by
-  // "window-kernel: app activation, resignation, and the dance guard" >
-  // "a later activation re-shows exactly the windows the sweep hid and
-  // clears the mark, leaving other-cause hides alone" — not duplicated here.
-
   it('the dance: AppResigned immediately followed by AppActivated with no settle in between leaves the overlay visible again and pendingAppResignSweep false', () => {
     const state = attachedVisibleScene();
     assert.strictEqual(state.order.find((w) => w.id === overlay)?.visible, true, 'precondition');
@@ -4271,7 +4039,6 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
 // ── Transient autoclose (the two selectors) ─────────────────────────────────
 
 describe('window-kernel: transient autoclose', () => {
-  /** Registration event for a window with a role; `openSeq` follows registration order. */
   const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
     type: 'WindowRegistered',
     id: wid(n),
@@ -4283,21 +4050,12 @@ describe('window-kernel: transient autoclose', () => {
     ...(role !== undefined ? { role } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
-  /**
-   * First-composited-frame report. A `page-host` is registered
-   * `orderable: false` and is NOT a transient-autoclose candidate until this
-   * lands (`isTransientAutocloseCandidate`), so a scene that means to exercise
-   * the dismissal law on a page host has to supply the fact production always
-   * supplies — a real host paints its own chrome within a frame or two of
-   * being shown, whether or not its page ever loads.
-   */
+  // A page-host is registered orderable: false and is not a transient-autoclose candidate until
+  // this first-composited-frame report lands.
   const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
 
-  /**
-   * wid(1) workspace, wid(2) palette, wid(3) quick-view, wid(4) overlay,
-   * wid(5) utility, wid(6) roleless, wid(7) a HIDDEN palette. Registration
-   * order is also `openSeq` order.
-   */
+  // wid(1) workspace, wid(2) palette, wid(3) quick-view, wid(4) overlay, wid(5) utility,
+  // wid(6) roleless, wid(7) a hidden palette.
   const scene = (): State =>
     fold(
       [
@@ -4389,16 +4147,9 @@ describe('window-kernel: transient autoclose', () => {
   });
 
   it('a RaiseWindow COMMAND for an older window does not sweep a peek opened after it — the eventual confirmation carries the machine cause', () => {
-    // The live shape: W is a base content window opened first; P is a
-    // quick-view peek opened LATER and currently key, exactly the "successor
-    // RaiseWindow for the surviving content window" `react` manufactures off
-    // a `WindowClosed`. This drives the COMMAND through `decide`, which stamps
-    // W's `lastOpSeq` via `FocusRaiseRequested` (no sweep runs yet — nothing
-    // about `key` has changed) and then through the backend's confirming
-    // `OsFocusGained`, whose `cause` carries that same opSeq — so a regression
-    // dropping that stamp, or reporting the confirmation as the world's,
-    // fails here even though the bare-selector INVARIANT test above still
-    // passes.
+    // W is a base content window opened first; P is a quick-view peek opened later and currently
+    // key. Drives the command through decide, which stamps W's lastOpSeq, then the backend's
+    // confirming OsFocusGained, whose cause carries that same opSeq.
     const W = wid(1);
     const P = wid(2);
     const state = fold([reg(1, 'workspace'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: P }], initialState());
@@ -4458,8 +4209,7 @@ describe('window-kernel: transient autoclose', () => {
   });
 
   it('a focuser exempts only the victim it points at — the shared chrome overlay does not sweep the host it frames', () => {
-    // hybrid-overlay.ts ensureOverlay attaches via OverlayAttached; the old
-    // docblock names this the "address bar dismisses the slide" regression.
+    // hybrid-overlay.ts ensureOverlay attaches via OverlayAttached.
     const host = wid(1);
     const overlay = wid(2);
     const state = fold(
@@ -4759,21 +4509,8 @@ describe('window-kernel: isNonParentRole', () => {
 
 // ── react applies transient autoclose (§0: rule application is non-optional) ─
 
-/**
- * `selectTransientAutoclose` (above) is a pure QUERY — proven sound in
- * isolation, against every focuser. This block proves the OTHER half of §0's
- * rule: the choice it makes actually reaches an effect for the transition
- * that just happened. As of S3 (fixed 2026-09-05) that is a two-step
- * pipeline rather than one function calling the other directly: `evolve`
- * calls the selector off the state it is about to produce and marks its
- * victims `pendingHidden` in that SAME transition, and `react` turns the mark
- * landing into a `DismissWindow` — a pure structural diff of `pendingHidden`
- * that never re-runs the selector itself (see `WindowRecord.pendingHidden`'s
- * doc for why re-running it would double-dismiss). Before this file's change,
- * no non-test caller ran the selector at all — a predicate can be "correct in
- * form but match nothing in practice", so these assert the emission, not just
- * the selector.
- */
+// selectTransientAutoclose is a pure query, proven sound in isolation elsewhere; this block
+// proves its choice actually reaches a DismissWindow effect for the transition that ran it.
 describe('window-kernel: react applies transient autoclose', () => {
   const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
     type: 'WindowRegistered',
@@ -4788,7 +4525,7 @@ describe('window-kernel: react applies transient autoclose', () => {
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
   const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
 
-  /** wid(1) workspace, wid(2) palette, wid(3) quick-view — all visible and orderable (so SetStacking fires too). */
+  // wid(1) workspace, wid(2) palette, wid(3) quick-view — all visible and orderable.
   const scene = (): State =>
     fold(
       [reg(1, 'workspace'), reg(2, 'palette'), reg(3, 'quick-view'), show(1), show(2), show(3), orderable(1), orderable(2), orderable(3)],
@@ -4852,12 +4589,9 @@ describe('window-kernel: react applies transient autoclose', () => {
     const next = evolve(focused, echo);
     assert.strictEqual(next.key, focused.key, 'key does not move — this is a re-confirmation');
     assert.notStrictEqual(next.lastAttention?.seq, focused.lastAttention?.seq, 'the attention seq still advances even though nothing new is dismissed');
-    // The old machine re-ran the sweep on EVERY report, including this one —
-    // exactly the S3 defect (fixed 2026-09-05): the two transients are
-    // already `pendingHidden` from the first report, `isTransientAutocloseCandidate`
-    // excludes a marked record from the law's own consideration set, so this
-    // second report — still queued behind the first's own `DismissWindow`
-    // pair at a real executor — selects neither of them again.
+    // The two transients are already pendingHidden from the first report, and
+    // isTransientAutocloseCandidate excludes a marked record from the law's own consideration
+    // set, so this second report selects neither of them again.
     assert.deepStrictEqual(dismissed(react(focused, echo, next)), [], 'no re-selection on the echo — the mark from the first report still stands');
   });
 
@@ -5004,13 +4738,9 @@ describe('window-kernel: react applies transient autoclose', () => {
   });
 
   it('a quick-view that becomes orderable AFTER focus has already moved on is still swept (Next Step 1)', () => {
-    // The regression this pins: a hybrid quick-view's first-composited-frame
-    // report (`WindowContentOrderable`) can land in a LATER transition than
-    // the host's `OsFocusGained` — rule (a) only re-derives the sweep off a
-    // fresh `lastAttention.seq`, so a candidate that was not yet orderable
-    // when that report ran is skipped and never revisited. Neither window is
-    // made `orderable` at registration — the quick-view starts a candidate of
-    // NEITHER report until its own `WindowContentOrderable` arrives.
+    // A quick-view's first-composited-frame report can land in a later transition than the
+    // host's OsFocusGained; a candidate not yet orderable when that report ran must still be
+    // reachable once its own WindowContentOrderable arrives.
     const state = fold([reg(1, undefined), reg(2, 'quick-view'), show(1), show(2)], initialState());
 
     const focusEv: Event = { type: 'OsFocusGained', id: wid(1) };
@@ -5181,34 +4911,21 @@ describe('window-kernel: contentFocused is three-valued', () => {
 
 // ── The content predicate (AppKit's "main" window) ──────────────────────────
 
-/**
- * Every window below is registered with the facts its REAL construction site
- * produces, so a predicate that matches nothing — or matches everything —
- * fails here rather than passing vacuously.
- */
+// Every window below is registered with the facts its real construction site produces, so a
+// predicate that matches nothing — or matches everything — fails here rather than passing vacuously.
 describe('window-kernel: which window the user is working in', () => {
   const FLOATING = BASE_LAYER + 1;
 
-  /** An ordinary http page host: `ipc.ts` window-open, `inferIzuiRole` -> 'content'. */
-  const pageHost = wid(1);
-  /** A page opened from another page: `inferIzuiRole` -> 'child-content'. */
-  const childPage = wid(2);
-  /** The settings window: a non-web-page surface, so `inferIzuiRole` -> 'workspace'. */
-  const settings = wid(3);
-  /** A chrome-extension popup: `chrome-extensions.ts` registers `role:'content', class:'extension-ui'`. */
-  const extensionPopup = wid(4);
-  /** The HUD: `renderer/hud/background.js` — `alwaysOnTop:true, focusable:false`, inferred role 'workspace'. */
-  const hud = wid(5);
-  /** The shared chrome overlay: `hybrid-overlay.ts` — focusable BY INVARIANT (typing a URL takes key). */
-  const chromeOverlay = wid(6);
-  /** The cmd panel: floats, focusable, `role:'palette'`, `modal:true` — self-closes on blur, its own app-resign policy. */
-  const cmdPanel = wid(7);
-  /** A slide: opened `modal:true`, so `inferIzuiRole` -> 'quick-view'. Focusable. */
-  const slide = wid(8);
-  /** Detached devtools: `main.ts` registers `role:'utility', class:'devtools'` — a real, focusable window. */
-  const devtools = wid(9);
-  /** The core background window: `core-glue.ts` — `role:'utility', class:'background'`, never shown. */
-  const backgroundWindow = wid(10);
+  const pageHost = wid(1); // ipc.ts window-open -> inferIzuiRole 'content'
+  const childPage = wid(2); // opened from another page -> 'child-content'
+  const settings = wid(3); // a non-web-page surface -> 'workspace'
+  const extensionPopup = wid(4); // chrome-extensions.ts: role:'content', class:'extension-ui'
+  const hud = wid(5); // renderer/hud/background.js: alwaysOnTop:true, focusable:false, 'workspace'
+  const chromeOverlay = wid(6); // hybrid-overlay.ts — focusable by invariant (address bar takes key)
+  const cmdPanel = wid(7); // floats, focusable, modal:true — self-closes on blur, its own policy
+  const slide = wid(8); // opened modal:true -> 'quick-view', focusable
+  const devtools = wid(9); // main.ts: role:'utility', class:'devtools' — a real, focusable window
+  const backgroundWindow = wid(10); // core-glue.ts: role:'utility', class:'background', never shown
 
   const scene = (): State =>
     fold([
@@ -5222,13 +4939,9 @@ describe('window-kernel: which window the user is working in', () => {
       { type: 'WindowRegistered', id: slide, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', keepLive: true },
       { type: 'WindowRegistered', id: devtools, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'devtools', role: 'utility' },
       { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
-      // `pageHost` takes key BEFORE `cmdPanel`/`slide` (both transient-law
-      // candidates: `selfClosesOnBlur`/`role:'quick-view'`) are shown (S3,
-      // fixed 2026-09-05): `evolve`'s `OsFocusGained` arm now marks its own
-      // sweep victims `pendingHidden` in the same transition, and either
-      // would already be a visible, unexempted candidate losing focus to
-      // `pageHost` if shown first — dismissed by this setup event before a
-      // test below gets to exercise the law fresh against them.
+      // pageHost takes key before cmdPanel/slide (both transient-law candidates) are shown, or
+      // either would already be a visible candidate losing focus to pageHost and get dismissed
+      // before a test below gets to exercise the law fresh against them.
       { type: 'WindowShown', id: pageHost },
       { type: 'OsFocusGained', id: pageHost },
       { type: 'WindowShown', id: childPage },
@@ -5262,8 +4975,6 @@ describe('window-kernel: which window the user is working in', () => {
   });
 
   it('the HUD is excluded by canBecomeKey alone — its inferred role is an admitted one', () => {
-    // If the predicate were role-only, the HUD would be main: it opens with no
-    // explicit role, and `inferIzuiRole`'s non-web-page tail returns 'workspace'.
     const rec = scene().order.find((w) => w.id === hud)!;
     assert.strictEqual(rec.role, 'workspace', 'the admitted role — so the role clause cannot be what excludes it');
     assert.strictEqual(rec.canBecomeKey, false);
@@ -5289,10 +5000,6 @@ describe('window-kernel: which window the user is working in', () => {
   // ── the devtools target: content, narrowed to a real web page ─────────────
 
   it('a focused peek:// tile takes main, but the devtools target stays the web page behind it', () => {
-    // The regression: `tile:window:devtools` resolved through
-    // `topmost(state, isContentWindow)` alone, and a `peek://` open infers
-    // role 'workspace', which IS a content role — so devtools opened on the
-    // tile instead of the page the user was reading.
     const host = wid(30);
     const peekTile = wid(31);
     const state = fold([
@@ -5319,10 +5026,8 @@ describe('window-kernel: which window the user is working in', () => {
   });
 
   it('the narrowed predicate ranks by focus recency, which is what `order` already carries', () => {
-    // The deleted selector ranked its http candidates by `focusSeq`.
-    // `OsFocusGained` re-pushes the focused record at the end of `order` and
-    // `topmost` scans from the end, so topmost-among-matching IS
-    // most-recently-focused-among-matching — no stored sequence needed.
+    // OsFocusGained re-pushes the focused record at the end of order, so topmost-among-matching
+    // is most-recently-focused-among-matching with no stored sequence needed.
     const first = wid(32);
     const second = wid(33);
     const webPage = (r: WindowRecord) => isContentWindow(r) && isWebPageRole(r.role);
@@ -5362,64 +5067,29 @@ describe('window-kernel: which window the user is working in', () => {
   });
 
   it('a focused slide holds key, so Escape reaches it — which is why main may exclude it', () => {
-    // The old model kept quick-views front-eligible ONLY so `front` could
-    // double as the Escape target. Escape now reads `key`, so the coupling
-    // is gone and a peek/slide can be the panel it is.
     const state = evolve(scene(), { type: 'OsFocusGained', id: slide });
     assert.strictEqual(keyWindow(state)?.id, slide);
     assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
   });
 
   it('the chrome overlay taking key at Cmd+N time does not lose the page host', () => {
-    // The live bug this maps to: `openNewPageWindow` inherits space mode from
-    // the front window, and the overlay routinely holds key (Cmd+L).
     const state = evolve(scene(), { type: 'OsFocusGained', id: chromeOverlay });
     assert.strictEqual(keyWindow(state)?.id, chromeOverlay);
     assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
   });
 
   it('main survives the loss of key entirely — which `keyWindow` cannot', () => {
-    // Sessions save on quit / app-resign / window-close, exactly when
-    // `OsFocusLost` has already nulled `key`. Mapping a saved descriptor's
-    // `focused` flag to `keyWindow` would mark every one of them false.
     const state = evolve(scene(), { type: 'OsFocusLost', id: pageHost });
     assert.strictEqual(keyWindow(state), null);
     assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
   });
 
-  // The tests below mirror `windows.ts resolveFocusedWindowIdForClose` — the
-  // key window when it is ITSELF front-eligible, else the topmost
-  // front-eligible window — over `isFrontEligibleWindow`, not `isContentWindow`.
-  //
-  // NOTE ON WHAT CAN AND CANNOT DISCRIMINATE THIS COMPOSITION FROM A BARE
-  // `topmost(state, pred)` CALL OVER THE SAME PREDICATE: nothing can, for any
-  // `pred`, in any state this kernel can reach. §0.1.10's invariant — "whenever
-  // `key` resolves to a record, that record is topmost in `order`" — is
-  // fuzz-tested over every generated event log
-  // (`window-kernel-properties.test.ts checkInvariants`, "the key window is
-  // not topmost in order") and is held deliberately by every arm that touches
-  // `order` (`WindowRegistered` inserts new records BELOW the key window
-  // rather than appending on top of it; `StackOrderImported` explicitly lifts
-  // the key record back to the top after permuting). So whenever `key`
-  // satisfies `pred`, it IS `topmost(state, pred)` by construction — the two
-  // composition branches can never name different windows for the same
-  // predicate. (An earlier draft of this suite tried to construct such a
-  // state via a fresh `WindowRegistered` + `WindowShown` after the scene's
-  // raise; the fresh registration lands BELOW the key window, not above it,
-  // so the attempt only proved the invariant rather than defeating it.)
-  //
-  // What DOES discriminate this composition — and what actually was the
-  // defect (`quick-view` silently inheriting `isContentWindow`'s exclusion) —
-  // is the CHOICE OF PREDICATE. The peek test below runs the same key/order
-  // state through both `isFrontEligibleWindow` (what the composition now
-  // uses) and `isContentWindow` (what it used to use) and shows they name
-  // different windows.
+  // Mirrors windows.ts resolveFocusedWindowIdForClose — the key window when it is itself
+  // front-eligible, else the topmost front-eligible window — over isFrontEligibleWindow, not
+  // isContentWindow. What discriminates this from isContentWindow is the choice of predicate: a
+  // quick-view is excluded from isContentWindow but admitted to isFrontEligibleWindow.
 
   it('the Cmd+W redirect (`windows.ts resolveFocusedWindowIdForClose`) never reaches PAST a focused extension popup to the page behind it', () => {
-    // The disproof of "always widen to the topmost": a focused extension popup
-    // is itself front-eligible (`role:'content'`), so the composition — the
-    // key window when it is ITSELF front-eligible, else topmost — must resolve
-    // to the popup, not past it to whatever page is topmost.
     const state = evolve(scene(), { type: 'OsFocusGained', id: extensionPopup });
     assert.strictEqual(keyWindow(state)?.id, extensionPopup, 'the popup takes keystrokes');
     assert.strictEqual(topmost(state, isFrontEligibleWindow)?.id, extensionPopup, 'and, freshly raised, is topmost too');
@@ -5430,10 +5100,6 @@ describe('window-kernel: which window the user is working in', () => {
   });
 
   it('a focused peek is its own Cmd+W target under isFrontEligibleWindow, but is wrongly skipped under isContentWindow', () => {
-    // The regression this predicate exists to fix: composing over
-    // `isContentWindow`, a focused peek/slide is excluded on both halves
-    // (`role:'quick-view'` is neither content nor key-is-content), so Cmd+W
-    // silently redirects to the page host behind it.
     const state = evolve(scene(), { type: 'OsFocusGained', id: slide });
     const rec = state.order.find((w) => w.id === slide)!;
     assert.strictEqual(keyWindow(state)?.id, slide, 'the peek holds key while focused');
@@ -5444,10 +5110,8 @@ describe('window-kernel: which window the user is working in', () => {
     const closeTarget = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
     assert.strictEqual(closeTarget?.id, slide, 'closes the peek itself, never falls through to the page host behind it');
 
-    // The disproof: the SAME state, composed over the pre-fix predicate,
-    // names the page host BEHIND the peek instead — `key` is excluded from
-    // `isContentWindow`, so the fallback walks past the peek to the next
-    // content window sitting below it in order.
+    // The pre-fix predicate excludes key from isContentWindow, so the fallback walks past the
+    // peek to the next content window sitting below it in order.
     const wrongTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
     assert.strictEqual(wrongTarget?.id, pageHost, 'the pre-fix predicate silently redirects Cmd+W to the page underneath');
   });
@@ -5460,12 +5124,6 @@ describe('window-kernel: which window the user is working in', () => {
   // ── The hiddenByAppBlur / AppActivated interaction ────────────────────────
 
   it('no content window is touched by the app-resign sweep, for every window this scene registers', () => {
-    // `isAppResignSweepEligible` carries an explicit `!isContentWindow(record)`
-    // clause naming this predicate directly (its own doc), so the disjointness
-    // holds BY CONSTRUCTION again — not merely because every content window
-    // this scene registers happens to sit at `layer: BASE_LAYER`. `visible`
-    // here cannot flicker across an app switch and main is stable through
-    // resign -> settle -> activate.
     const before = scene();
     const settled = evolve(evolve(before, { type: 'AppResigned' }), { type: 'AppResignSettled' });
     const activated = evolve(settled, { type: 'AppActivated' });
@@ -5475,11 +5133,6 @@ describe('window-kernel: which window the user is working in', () => {
     assert.strictEqual(topmost(settled, isContentWindow)?.id, pageHost);
     assert.strictEqual(topmost(activated, isContentWindow)?.id, pageHost);
 
-    // And the sweep genuinely did something, so the assertion above is not
-    // vacuous — the unattached chrome overlay is click-through
-    // (`acceptsInput: false`, its real registration fact) so it is spared too;
-    // the cmd panel is spared because it self-closes on blur
-    // (`selfClosesOnBlur: true` above). Only the HUD is left.
     assert.deepStrictEqual(settled.order.filter((w) => w.hiddenByAppBlur === true).map((w) => w.id), [hud]);
   });
 
@@ -5520,8 +5173,6 @@ describe('window-kernel: hostForOverlay', () => {
   it('a detached overlay reads null, even while a page host is topmost', () => {
     const state = evolve(attached(), { type: 'OverlayAttached', overlayId: overlay, hostId: null });
     assert.strictEqual(hostForOverlay(state, overlay), null);
-    // The distinction this query exists for: an ordering query would answer
-    // with a host the overlay is NOT framing.
     assert.strictEqual(topmost(state, (r) => r.kind === 'page-host')?.id, otherHost);
   });
 
@@ -5556,7 +5207,7 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     role: opts.role ?? 'content',
   });
 
-  /** Visible AND orderable — the two facts the query, like `isContentWindow`, requires. */
+  // Visible and orderable — the two facts the query, like isContentWindow, requires.
   const shown = (id: WindowId): Event[] => [
     { type: 'WindowShown', id },
     { type: 'WindowContentOrderable', id },
@@ -5568,9 +5219,8 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     const state = fold([
       registerPageHost(base),
       ...shown(base),
-      // Registered later, at the SAME base layer — real peeks/slides declare
-      // no `alwaysOnTop` (`izui-roles.ts deriveWindowLayer`), so they land at
-      // `BASE_LAYER` like any ordinary page, never in a floating band.
+      // Real peeks/slides declare no alwaysOnTop, so they land at BASE_LAYER like any ordinary
+      // page, never in a floating band.
       registerPageHost(quickView, { role: 'quick-view' }),
       ...shown(quickView),
     ]);
@@ -5719,57 +5369,25 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
   });
 });
 
-// ── The overturn set: what the key/main split reverses ──────────────────────
-//
-// `docs/design/window-manager.md` §0.1.9 ("The overturn set (bucket D)")
-// classifies 24 `window-state.test.ts` tests as behaviors that must be
-// OVERTURNED rather than translated. All share one shape: a satellite takes OS
-// focus, and the old reducer pins `front` on the content window so that ONE
-// stored fact can answer two questions. The kernel stores both — `key` on the
-// window that took focus, `topmost(state, isContentWindow)` for the window the
-// user means to act on — so each of those single assertions becomes two.
-//
-// They are written against the kernel BEFORE anything repoints to it, because
-// the mechanical `front` -> `keyWindow(state)` rename passes several of them
-// while asserting the OPPOSITE of the truth: `a background / non-focusable /
-// overlay surface (satellite) does NOT become front` asserts a literal `null`,
-// which survives the rename and is wrong — a window that genuinely took OS
-// focus genuinely holds key (see "with no content window on screen" below).
-//
-// Every window here carries the facts its REAL construction site produces; a
-// scene of synthetic fixtures would let these pass vacuously.
+// The kernel stores both key (the window that took OS focus) and topmost(state, isContentWindow)
+// (the window the user means to act on) as two separate facts. Every window here carries the
+// facts its real construction site produces; a scene of synthetic fixtures would pass vacuously.
 describe('window-kernel: what the key/main split overturns', () => {
   const FLOATING = BASE_LAYER + 1;
 
-  /** An http page opened through `ipc.ts` — `inferIzuiRole` -> 'content'; hybrid, so `kind: 'page-host'`. */
-  const pageHost = wid(1);
-  /** A second page window from the same construction site. */
-  const otherHost = wid(2);
-  /**
-   * The shared chrome overlay: `hybrid-overlay.ts ensureOverlay` opens a
-   * `BrowserWindow` with `focusable: true` (P1.4b-3 — a `focusable:false`
-   * window can never become key, so the navbar URL field could not be typed
-   * in), `alwaysOnTop: true`, `transparent`, and click-through until the
-   * reveal band captures — so `acceptsInput: false`.
-   */
+  const pageHost = wid(1); // ipc.ts http page -> inferIzuiRole 'content'; hybrid, kind:'page-host'
+  const otherHost = wid(2); // a second page window from the same construction site
+  // hybrid-overlay.ts ensureOverlay: focusable:true (so the navbar URL field can be typed in),
+  // alwaysOnTop:true, transparent, click-through until the reveal band captures.
   const chromeOverlay = wid(3);
-  /**
-   * The command panel: `renderer/cmd/background.js openPanelWindow` —
-   * `role: 'palette'`, `keepLive: true`, `alwaysOnTop: true`, focusable (it is
-   * typed into), and NO parent: its opener is the cmd background tile, not a
-   * window.
-   */
+  // renderer/cmd/background.js openPanelWindow: role:'palette', keepLive:true, alwaysOnTop:true,
+  // focusable, no parent — its opener is the cmd background tile, not a window.
   const cmdPanel = wid(4);
-  /**
-   * Detached devtools: `main.ts` on `'devtools-opened'` registers
-   * `kind: 'browser'`, `role: 'utility'`, `class: 'devtools'`, parented to its
-   * host, focusable, and NOT floating.
-   */
+  // main.ts on 'devtools-opened': kind:'browser', role:'utility', class:'devtools', parented to
+  // its host, focusable, and not floating.
   const devtools = wid(5);
-  /** The HUD: `renderer/hud/background.js openHud` — `focusable:false`, `alwaysOnTop:true`, `escapeMode:'ignore'`, no role given so `inferIzuiRole` -> 'workspace'. */
-  const hud = wid(6);
-  /** The core background renderer: `core-glue.ts` — `role:'utility'`, `class:'background'`, never shown. */
-  const backgroundWindow = wid(7);
+  const hud = wid(6); // renderer/hud/background.js openHud: focusable:false, alwaysOnTop:true
+  const backgroundWindow = wid(7); // core-glue.ts: role:'utility', class:'background', never shown
 
   const registerPage = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -5817,12 +5435,6 @@ describe('window-kernel: what the key/main split overturns', () => {
     role: 'overlay',
   };
 
-  /**
-   * The app mid-session: two page windows, the chrome overlay framing the one
-   * in use, the resident command panel, detached devtools on the page, the
-   * HUD, and the never-shown core background renderer. The app is active and
-   * the page host holds key.
-   */
   const scene = (): State =>
     fold([
       registerPage(pageHost),
@@ -5836,16 +5448,9 @@ describe('window-kernel: what the key/main split overturns', () => {
       { type: 'WindowContentOrderable', id: pageHost },
       { type: 'WindowShown', id: otherHost },
       { type: 'WindowContentOrderable', id: otherHost },
-      // `pageHost` takes key BEFORE `cmdPanel` (a bare, unattached transient
-      // candidate: `role:'palette'`) is shown (S3, fixed 2026-09-05): the
-      // `OsFocusGained` arm now marks its own sweep victims `pendingHidden`
-      // in the same transition, and a `cmdPanel` shown first would already
-      // be a visible, unexempted candidate losing focus to `pageHost` —
-      // dismissed (and so refused a raise by `admitsFocusAssert`'s own
-      // `pendingHidden` clause) before the tests below get to focus it fresh.
-      // The chrome overlay is unaffected by the reorder either way: it is
-      // exempted the moment `OverlayAttached` sets `overlayFor`, well before
-      // any later focus report could ever reach it.
+      // pageHost takes key before cmdPanel (a bare transient candidate) is shown, or cmdPanel
+      // would already be a visible candidate losing focus to pageHost and get dismissed before
+      // the tests below get to focus it fresh.
       { type: 'OsFocusGained', id: pageHost },
       { type: 'WindowShown', id: chromeOverlay },
       { type: 'WindowShown', id: cmdPanel },
@@ -5859,9 +5464,8 @@ describe('window-kernel: what the key/main split overturns', () => {
     effects.filter((e) => e.type === 'ShowWindow' || e.type === 'RaiseWindow').map((e) => e.id);
 
   it('the scene starts where the old model did: the page host holds key AND is the command target', () => {
-    // The premise every case below overturns — while these two agree, one
-    // stored fact is enough, and that is exactly why the old reducer could
-    // hold `front` alone. Each test after this one moves them apart.
+    // While key and main agree, one stored fact would be enough; each test after this one moves
+    // them apart.
     const state = scene();
     assert.strictEqual(state.appActive, true);
     assert.strictEqual(keyWindow(state)?.id, pageHost);
@@ -5941,10 +5545,8 @@ describe('window-kernel: what the key/main split overturns', () => {
     assert.strictEqual(overlayForHost(state, otherHost)?.id, chromeOverlay, 'and read from the host');
     assert.strictEqual(overlayForHost(state, pageHost), null, 'the OTHER page has no overlay — the exclusion could never say this');
 
-    // The Cmd+W redirect, as the composition `isContentWindow` documents: the
-    // key window when it is itself content, else main. With the chrome key,
-    // that resolves to the host — the redirect the old test spelled as "front
-    // is not the overlay".
+    // The Cmd+W redirect: the key window when it is itself content, else main. With the chrome
+    // key, that resolves to the host.
     const key = keyWindow(state);
     const closeTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
     assert.strictEqual(closeTarget?.id, otherHost);
@@ -6119,7 +5721,6 @@ describe('window-kernel: teardown commands and effects', () => {
 
   const oneWindow = (): State => fold([register(wid(1)), { type: 'WindowShown', id: wid(1) }], initialState());
 
-  /** Runs one command end to end and returns the events it produced plus the effects those events drove. */
   function run(state: State, cmd: Command): { events: Event[]; effects: Effect[]; state: State } {
     const decision = decide(state, cmd);
     assert.ok('events' in decision, `command ${cmd.type} was rejected: ${JSON.stringify(decision)}`);
@@ -6300,22 +5901,10 @@ describe('window-kernel: teardown commands and effects', () => {
   });
 });
 
-// ── Focus assert: a request that carries no state change of its own ──────────
-//
-// The port of the old machine's shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm
-// (`window-state.ts`, `applyRaiseRequest(state, state.front, effects)`).
-// Devtools opens with `activate: false` and takes macOS first responder off the
-// content `WebContentsView` of the front window; nothing about the window model
-// changes, so re-driving the raise is the only thing that gives first responder
-// back — and without it the `7c61e917` shape returns (no `before-input-event`,
-// so Escape has no handler at all).
-//
-// The whole point of the family: in this kernel the transition is a NO-DIFF one
-// — the target is already topmost, already visible, already key — so the
-// request has to become a fact `react` can diff, exactly like teardown above.
-// A plain `RaiseWindow` command would fold to an `OsFocusGained` that reorders
-// nothing and therefore drives nothing at all.
-
+// Focus assert: a request that carries no state change of its own. In this kernel the transition
+// is a no-diff one — the target is already topmost, visible, and key — so the request has to
+// become a fact react can diff, exactly like teardown; a plain RaiseWindow command would fold to
+// an OsFocusGained that reorders nothing and drives nothing at all.
 describe('window-kernel: the focus assert', () => {
   const contentWindow = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -6328,7 +5917,7 @@ describe('window-kernel: the focus assert', () => {
     role: 'content',
   });
 
-  /** A palette: focusable and visible, but NOT `isContentWindow` (its role is not a content role). */
+  // Focusable and visible, but not isContentWindow (its role is not a content role).
   const paletteWindow = (id: WindowId): Event => ({
     type: 'WindowRegistered',
     id,
@@ -6340,7 +5929,6 @@ describe('window-kernel: the focus assert', () => {
     role: 'palette',
   });
 
-  /** One visible, focused content window — the shape the devtools re-assert names. */
   const frontContent = (id: WindowId = wid(1)): State =>
     fold([contentWindow(id), { type: 'WindowShown', id }, { type: 'OsFocusGained', id }], initialState());
 
@@ -6385,10 +5973,8 @@ describe('window-kernel: the focus assert', () => {
   });
 
   it('a plain RaiseWindow command on the same window drives NOTHING — the regression this replaces', () => {
-    // The silent no-op that reproduces `7c61e917`: `decide` turns `RaiseWindow`
-    // into an `OsFocusGained`, the window is already topmost, so `react`'s
-    // reorder rule sees the same top in `prev` and `next` and emits nothing —
-    // and there is no `FocusContent` in that path at all.
+    // decide turns RaiseWindow into an OsFocusGained; the window is already topmost, so react's
+    // reorder rule sees the same top in prev and next and emits nothing.
     const state = frontContent();
     const result = run(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
     assert.deepStrictEqual(result.effects, [], 'no raise, and above all no content focus');
@@ -6580,25 +6166,9 @@ describe('window-kernel: the focus assert', () => {
     assert.deepStrictEqual(hiddenResult.effects, []);
   });
 
-  // ── appActive is not one of decide's/react's guards ───────────────────────
-  //
-  // The old reducer's `applyRaiseRequest` held two guards its caller
-  // (`ipc.ts`) never had to compose itself: `state.appActive` and
-  // `!state.switcher.open`. Neither lives in `decide`/`react` here — the
-  // `AssertFocus` command's own doc records why: the kernel HAS
-  // `state.appActive`, but the guard "belongs with the switcher condition...
-  // a caller that assembles the request already knows whether the app is
-  // active." `react` itself never reads `appActive` at all — it is a pure
-  // structural diff of `(prev, next)`, and the field plays no part in any of
-  // its rules. The port of the old background-suppression now lives in
-  // `window-kernel-executor.ts planRaise`, which reads `state.appActive` off
-  // the kernel `State` it holds and masks a raise down to `'inactive-show'`
-  // while the app is backgrounded — same category of decision as the
-  // headless mask already living there, and deliberately NOT a drop the way
-  // the old reducer's guard was (the window still orders and shows; only the
-  // app activation is withheld). Nothing below tests that: it is a fact about
-  // the executor, not about `decide`/`react`, which — as this describe block
-  // proves — hold no such guard and never will.
+  // decide/react hold no appActive/switcher-open guard on the raise — react never reads appActive
+  // at all, since it is a pure structural diff of (prev, next). The background-suppression that
+  // masks a raise while the app is backgrounded lives in window-kernel-executor.ts planRaise instead.
 
   it('a raise fires even while appActive is false — decide/react hold no such guard', () => {
     let state = frontContent();
@@ -6664,7 +6234,7 @@ describe('window-kernel: the stack-order import', () => {
     role: 'palette',
   });
 
-  /** A HUD: a higher band, never key — one of the windows `order` holds that the import never names. */
+  // A higher band, never key — one of the windows order holds that the import never names.
   const hud = (id: WindowId): Event => ({
     type: 'WindowRegistered',
     id,
@@ -6676,15 +6246,7 @@ describe('window-kernel: the stack-order import', () => {
     role: 'overlay',
   });
 
-  /**
-   * Three restored pages plus the two windows a session restore never names:
-   * the command palette (holding key, as it does when the user triggers a
-   * restore) and the HUD. Every window visible and orderable, so the stacking
-   * sweep really fires.
-   *
-   * `order` bottom -> top: [1, 2, 3, 11, 10] — the palette took key last, so
-   * it sits on top.
-   */
+  // order bottom -> top: [1, 2, 3, 11, 10] — the palette took key last, so it sits on top.
   const restored = (): State =>
     fold(
       [
@@ -6750,16 +6312,11 @@ describe('window-kernel: the stack-order import', () => {
     assert.deepStrictEqual(ids(after), [wid(3), wid(1), wid(2), wid(11), wid(10)]);
   });
 
-  // ── Where unnamed windows go — the divergence from the old machine ────────
+  // ── Where unnamed windows go ─────────────────────────────────────────────
 
   it('a window the import does not name keeps its index — NOT demoted below the imported set', () => {
-    // The conscious divergence from `window-state.ts`'s `STACK_ORDER_IMPORTED`,
-    // which rebuilds the list as `[...unnamed, ...imported]`. The old behavior
-    // was pinned by `window-state.test.ts` "members the import does not name
-    // keep their relative order BELOW the imported set", and that test is
-    // deliberately not ported: this kernel's `order` holds EVERY registered
-    // window, so demoting the palette and the HUD beneath every restored page
-    // would corrupt the `topmost(...)`-based queries built on it.
+    // This kernel's order holds every registered window, so demoting the palette and the HUD
+    // beneath every restored page would corrupt the topmost(...)-based queries built on it.
     const before = restored();
     assert.deepStrictEqual(ids(before), [wid(1), wid(2), wid(3), wid(11), wid(10)]);
 
@@ -6771,8 +6328,6 @@ describe('window-kernel: the stack-order import', () => {
     // ... and the two the payload never mentions did not move at all.
     assert.strictEqual(after.order.indexOf(before.order[3]), 3, 'the HUD kept its index');
     assert.strictEqual(after.order.indexOf(before.order[4]), 4, 'the palette kept its index');
-    // What the old machine would have produced instead, stated so the
-    // divergence is legible rather than implied.
     assert.notDeepStrictEqual(ids(after), [wid(11), wid(10), wid(3), wid(1), wid(2)]);
   });
 
@@ -6787,17 +6342,10 @@ describe('window-kernel: the stack-order import', () => {
   // ── What the import drives ────────────────────────────────────────────────
 
   it('an import emits only the windows the minimal diff needs re-raised, and NO RaiseWindow', () => {
-    // An order import must never activate anything (the old machine forbids it
-    // outright). It holds here without the import having to be constrained:
-    // `react`'s raise rule diffs `State.key`, which a permutation never writes.
-    //
-    // `react` no longer re-asserts the whole band (that property is retired —
-    // see `window-kernel.ts react`'s `SetStacking` block). Before this import,
-    // `order` is `[1,2,3,11,10]`; naming `[3,1,2]` rewrites those three into
-    // the same three slots (0,1,2), so `order` becomes `[3,1,2,11,10]` — the
-    // stacked-band OS replay `1,2,3,10` only needs `1,2,10` replayed on top of
-    // an unmoved `3` to reach `3,1,2,10`; the pinned band (`11` alone) did not
-    // move at all.
+    // An import must never activate anything: react's raise rule diffs State.key, which a
+    // permutation never writes. Before this import, order is [1,2,3,11,10]; naming [3,1,2]
+    // rewrites those three into the same three slots, so order becomes [3,1,2,11,10] — the
+    // stacked-band OS replay 1,2,3,10 only needs 1,2,10 replayed on top of an unmoved 3.
     const before = restored();
     const { state: after, effects } = importOrder(before, [wid(3), wid(1), wid(2)]);
 
@@ -6853,7 +6401,6 @@ describe('window-kernel: the stack-order import', () => {
 
   // ── the key window is never demoted (§0.1.10) ──────────────────────────────
 
-  /** Two content windows, both shown/orderable, key raised onto the second (the upper one). */
   const twoWindowsKeyOnTop = (): State =>
     fold(
       [
@@ -6869,9 +6416,8 @@ describe('window-kernel: the stack-order import', () => {
     );
 
   it('an import naming the key window and one below it never demotes the key window', () => {
-    // The hand-verified case `checkInvariants` used to reject: a
-    // slot-preserving permutation naming both ids swaps them, which would
-    // otherwise write the key window's record into the lower slot.
+    // A slot-preserving permutation naming both ids swaps them, which would otherwise write the
+    // key window's record into the lower slot.
     const before = twoWindowsKeyOnTop();
     assert.deepStrictEqual(ids(before), [wid(1), wid(2)]);
     assert.strictEqual(before.key, wid(2));
@@ -6976,12 +6522,7 @@ describe('window-kernel: the stack-order import', () => {
   });
 });
 
-// ── Arming the cold-start focus latch ───────────────────────────────────────
-//
-// The ARMING half only — what writes `State.pendingColdStartFocus`. SPENDING it
-// (the activation that re-raises the latched window and clears the field) has
-// its own block at the end of this file.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Arming the cold-start focus latch — the arming half only; spending it has its own block ──
 
 describe('window-kernel: arming the cold-start focus latch', () => {
   const contentWindow = (id: WindowId): Event => ({
@@ -6995,10 +6536,6 @@ describe('window-kernel: arming the cold-start focus latch', () => {
     role: 'content',
   });
 
-  /**
-   * Two restored pages, the second holding key — the shape a restore pass is in
-   * when it arms the latch on the saved-focused descriptor.
-   */
   const restored = (): State =>
     fold(
       [
@@ -7142,16 +6679,9 @@ describe('window-kernel: arming the cold-start focus latch', () => {
   });
 });
 
-// ── Spending the cold-start focus latch ─────────────────────────────────────
-//
-// The other half: `AppActivated` consumes `State.pendingColdStartFocus` by
-// clearing it and recording a `lastFocusAssert`, which `react`'s assert rule
-// turns into the raise. The scenario the latch exists for is the one where the
-// window model is ALREADY right and only the OS is wrong, so the tests below
-// insist on a raise even when the armed window is topmost and key — a
-// consumption that moved the record in `order` would emit nothing there.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// AppActivated consumes pendingColdStartFocus by clearing it and recording a lastFocusAssert,
+// which react's assert rule turns into a raise even when the armed window is already topmost
+// and key — the scenario the latch exists for is the model already being right, only the OS wrong.
 describe('window-kernel: spending the cold-start focus latch', () => {
   const contentWindow = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -7164,7 +6694,6 @@ describe('window-kernel: spending the cold-start focus latch', () => {
     role: 'content',
   });
 
-  /** Two restored pages, `wid(2)` topmost and key — the post-restore shape. */
   const restored = (): State =>
     fold(
       [
@@ -7222,9 +6751,8 @@ describe('window-kernel: spending the cold-start focus latch', () => {
   });
 
   it('an activation with NO latch emits nothing and does not bump the assert seq', () => {
-    // The non-regression that matters most: a bumped seq on every activation
-    // would project to a spurious raise every time the user comes back to the
-    // app.
+    // A bumped seq on every activation would project to a spurious raise every time the user
+    // comes back to the app.
     const before = restored();
     assert.strictEqual(before.pendingColdStartFocus, null, 'nothing armed');
     const after = activate(before);
@@ -7395,20 +6923,8 @@ describe('window-kernel: spending the cold-start focus latch', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The switcher selection (`State.pendingSelectionFocus`) — both halves.
-//
-// The rule this replaces lived in `main.ts`'s native `'closed'` handler and
-// could only live there: it matched the closing window's numeric Electron id
-// against the IZUI session, and the backend has already dropped its id map by
-// the time the kernel hears about a close. Recording the selection as a
-// `WindowId` while the switcher is still open is what let it become a kernel
-// rule at all.
-//
-// The behaviour is unchanged: an explicit selection restores focus, a plain
-// dismiss does not.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// The switcher selection (State.pendingSelectionFocus): an explicit selection restores focus on
+// the switcher's close, a plain dismiss does not.
 describe('window-kernel: the switcher selection restores focus on the switcher close', () => {
   const contentWindow = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -7421,10 +6937,6 @@ describe('window-kernel: the switcher selection restores focus on the switcher c
     role: 'content',
   });
 
-  /**
-   * Two ordinary pages and an open switcher holding key — the shape the app is
-   * in at the moment the user picks a window.
-   */
   const switcherOpen = (): State =>
     fold(
       [
@@ -7559,14 +7071,7 @@ describe('window-kernel: the switcher selection restores focus on the switcher c
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// `State.openedInBackground` — the one session fact the Escape decider needs.
-//
-// Transliterated from `izui-state.ts evaluateOnShow` + `notifyAppActiveGained`
-// + `popWindow`'s end-of-session. The coordinator's four states remain for
-// display; this is the bit anything DECIDES on.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// State.openedInBackground — the one session fact the Escape decider needs.
 describe('window-kernel: whether Peek came up while the user was in another app', () => {
   const contentWindow = (id: WindowId): Event => ({
     type: 'WindowRegistered',
@@ -7671,15 +7176,8 @@ describe('window-kernel: whether Peek came up while the user was in another app'
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The app steps aside when nothing of Peek's is left on screen.
-//
-// Ported from `windows.ts maybeHideApp` + `getVisibleWindowCount`, which the
-// two `closeOrHideWindow` tails called themselves — so a close reaching the
-// kernel by any other route never got it. Now a `react` rule, which means every
-// route does.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// The app steps aside (a react rule, so every close route reaches it) when nothing of Peek's is
+// left on screen.
 describe('window-kernel: handing the user back when nothing is left on screen', () => {
   const reg = (id: WindowId, cls: string): Event => ({
     type: 'WindowRegistered',

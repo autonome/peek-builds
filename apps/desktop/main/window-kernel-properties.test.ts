@@ -1,26 +1,7 @@
-/**
- * Property-based model tests for the window-manager kernel (`window-kernel.ts`).
- *
- * Blueprint: `docs/design/window-manager.md` §0.1.8 item 1 ("Property-based
- * model testing ... generate random command/event sequences, assert the
- * invariant list after every step ... Highest return on this list").
- *
- * DEPENDENCY NOTE: the design doc's own phrasing names `fast-check`
- * `modelRun` as the reference tool, but no dependency is added here — the
- * kernel is pure (`evolve`/`react` read nothing but their arguments, §0.1.1),
- * so a numeric seed plus the recorded event log reproduces any failure
- * exactly. We hand-roll a tiny seeded PRNG (mulberry32) instead and accept
- * the loss of automatic shrinking in exchange for zero new dependencies —
- * a failing seed's full log is printed verbatim in the assertion message,
- * which is enough to replay it by hand.
- *
- * This is a separate file from `window-kernel.test.ts` by design (not an
- * addition to it) — the hand-written tests there are example-based; this
- * file is the randomized model-testing layer the design doc calls for.
- *
- * Follows the harness conventions of `window-kernel.test.ts`: `node:test` +
- * `node:assert`, a `.js`-suffixed import of the compiled output.
- */
+// Randomized model tests for the window-manager kernel (window-kernel.ts):
+// generate random command/event sequences and assert the invariant list
+// after every step. Design reasoning: docs/design/window-manager.md § 0.1.8.
+// Separate from window-kernel.test.ts, which is example-based.
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
@@ -48,13 +29,9 @@ import {
   type FocusCause,
 } from './window-kernel.js';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Seeded PRNG — mulberry32. No Math.random() anywhere in this file: a given
-// seed always produces the same log, forever.
-// ─────────────────────────────────────────────────────────────────────────────
-
 type Rng = () => number;
 
+// No Math.random() anywhere in this file — a given seed always produces the same log.
 function mulberry32(seed: number): Rng {
   let a = seed >>> 0;
   return () => {
@@ -65,7 +42,6 @@ function mulberry32(seed: number): Rng {
   };
 }
 
-/** Integer in `[0, maxExclusive)`. */
 function randomInt(rng: Rng, maxExclusive: number): number {
   return Math.floor(rng() * maxExclusive);
 }
@@ -78,7 +54,6 @@ function pick<T>(rng: Rng, values: readonly T[]): T {
   return values[randomInt(rng, values.length)];
 }
 
-/** A small, plausible outer-bounds rectangle — this slice's geometry events. */
 function randomRectangle(rng: Rng): Rectangle {
   return {
     x: randomInt(rng, 2000),
@@ -88,24 +63,12 @@ function randomRectangle(rng: Rng): Rectangle {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Random event-log generator — deliberately unfiltered. It must produce
-// nonsense as readily as sensible sequences: events naming windows that were
-// never registered, a second WindowClosed for the same id, focus gained on a
-// closed window. The hand-written tests already cover "legal" sequences;
-// this exists to find the states those miss.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Small pool of ids so collisions, reuse, and never-registered references happen naturally. */
+// Small pool of ids so collisions, reuse, and never-registered references happen naturally.
 const POOL_SIZE = 6;
 const wid = (n: number): WindowId => `wkp-${n}` as WindowId;
 const KINDS: readonly WindowKind[] = ['page-host', 'browser'];
 const CLASSES = ['primary', 'hud', 'overlay', 'utility'];
-/**
- * The live IZUI role vocabulary plus `undefined` — a registration that names
- * no role is as legitimate as one that does, and both the transient sets and
- * the exempt sets must be reachable by generation.
- */
+// The live IZUI role vocabulary plus `undefined`, which is a legitimate value on its own.
 const ROLES: readonly (string | undefined)[] = [
   'palette',
   'quick-view',
@@ -117,43 +80,25 @@ const ROLES: readonly (string | undefined)[] = [
   'child-content',
   undefined,
 ];
-/**
- * The Escape override plus `undefined` — absent is a meaningful value, not a
- * hole, so generation must produce it at least as often as the one live
- * override.
- */
+// The Escape override plus `undefined`, generated at least as often as the one live value.
 const ESCAPE_MODES: readonly ('ignore' | undefined)[] = ['ignore', undefined];
 
-/**
- * A stack-order import payload, DELIBERATELY MALFORMED as often as not. The
- * membership-preservation and one-order invariants below are worth nothing
- * against a generator that only ever emits well-formed orders, so all five
- * shapes are produced: empty, ids that were never registered, duplicates, an
- * arbitrary partial subset (which also produces duplicates on its own), and a
- * full shuffled permutation of the pool.
- */
+// Malformed as often as not — unknown ids, duplicates, partial and full permutations — so the
+// membership-preservation and one-order invariants below are actually exercised, not assumed.
 function randomStackOrderPayload(rng: Rng): WindowId[] {
   switch (randomInt(rng, 5)) {
     case 0:
-      // Empty — the identity permutation, and the shape `session.ts` produces
-      // when every window it walked has already died.
       return [];
     case 1:
-      // Names nothing that was ever registered.
       return Array.from({ length: 1 + randomInt(rng, 3) }, () => wid(POOL_SIZE + randomInt(rng, 4)));
     case 2: {
-      // Explicit duplicates, interleaved — collapsing to the first occurrence
-      // is a documented property of the arm, not a caller obligation.
       const a = wid(randomInt(rng, POOL_SIZE));
       const b = wid(randomInt(rng, POOL_SIZE));
       return [a, b, a, b, a];
     }
     case 3:
-      // An arbitrary partial subset drawn with replacement — repeats and
-      // omissions both fall out of this without being arranged.
       return Array.from({ length: 1 + randomInt(rng, POOL_SIZE) }, () => wid(randomInt(rng, POOL_SIZE)));
     default: {
-      // A full permutation of the pool (Fisher-Yates over the seeded rng).
       const ids = Array.from({ length: POOL_SIZE }, (_, n) => wid(n));
       for (let i = ids.length - 1; i > 0; i--) {
         const j = randomInt(rng, i + 1);
@@ -166,28 +111,20 @@ function randomStackOrderPayload(rng: Rng): WindowId[] {
   }
 }
 
-/** A log item is either a fact fed straight to `evolve`, or a request fed through `decide` first. */
 type LogItem = Event | Command;
 
-/** Distinguishes the two — only `Command` variants carry `expectedVersion`. */
+// Only `Command` variants carry `expectedVersion`.
 function isCommand(item: LogItem): item is Command {
   return 'expectedVersion' in item;
 }
 
-/**
- * The intrinsics shared by `WindowRegistered` (case 0) and `RegisterWindow`
- * (case 8) — pulled out once so the registration-bias branch below can build
- * either shape without duplicating the field list a third time.
- */
 function randomRegistrationFields(rng: Rng) {
   const hasParent = rng() < 0.3;
   const hasKeepLive = rng() < 0.3;
   const role = pick(rng, ROLES);
   const escapeMode = pick(rng, ESCAPE_MODES);
-  // Hoisted out of the returned object's `kind:` line (below) rather than
-  // left inline, so `tracksBaseLayerTop` can read it — same textual
-  // position, so the `rng()` call sequence is unchanged: no draw added, no
-  // pinned seed's downstream numbers move.
+  // Hoisted to the same textual position `tracksBaseLayerTop` below reads it at, so no draw is
+  // added and no pinned seed's downstream rng() numbers move.
   const kind = pick(rng, KINDS);
   return {
     kind,
@@ -199,75 +136,17 @@ function randomRegistrationFields(rng: Rng) {
     ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
     ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
     ...(escapeMode !== undefined ? { escapeMode } : {}),
-    // `tracksBaseLayerTop` (see `WindowRecord.tracksBaseLayerTop`'s doc):
-    // declared `true` for `kind: 'browser'` registrations only — mirrors
-    // the one production declaration site (the shared chrome overlay,
-    // `kind: 'browser'`) closely enough to give the field real coverage
-    // without spending a fresh `rng()` draw of its own (see `kind` above).
     ...(kind === 'browser' ? { tracksBaseLayerTop: true } : {}),
-    // `selfClosesOnBlur` (see `WindowRecord.selfClosesOnBlur`'s doc): declared
-    // `true` for `role: 'palette'` or `role: 'quick-view'` — `inferIzuiRole`
-    // only ever derives either role from `modal:true`, so this mirrors the
-    // production fact exactly, reading the already-drawn `role` above rather
-    // than spending a fresh `rng()` draw of its own.
     ...(role === 'palette' || role === 'quick-view' ? { selfClosesOnBlur: true } : {}),
   };
 }
 
-/**
- * Registration bias — MEASURED problem, not a hunch: a flat 36-way split
- * reaches registration (case 0/8) only ~2/36 of the time, roughly matching
- * how often a close-worthy variant fires, so `order` sat at 0-1 records deep
- * almost always (see the coverage comments below `checkOpSeqInvariants`).
- * That starved every arm needing a payload that names a REGISTERED,
- * currently-live window: the cold-start latch's raise-emitting half, `react`'s
- * `FocusContent` half of a focus assert, and the disjointness clause in
- * `checkAutocloseInvariants`. This constant raises registration's combined
- * share well above its flat-switch odds without suppressing anything the
- * switch below still generates — the roll happens BEFORE the 36-way switch,
- * as an extra source of registration traffic layered on top of it, same
- * event/command sub-roll shape as case 33/34/35 below.
- */
 const REGISTRATION_BIAS = 0.3;
-
-/**
- * A second, complementary bias: once registration (above) is no longer the
- * rare case, the id every OTHER variant names should follow suit — a raw
- * pool draw still lands on a currently-registered id only at `order`'s own
- * fill fraction, which is exactly the coincidence the cold-start latch's
- * raise-emitting half and `react`'s `FocusContent` half need (a window that
- * is not just registered but SHOWN, so an assert on it can resolve
- * `isContentWindow`). Drawing from `state.order` itself this often is what
- * makes those windows commonly NAMED, not just commonly present. Still fully
- * unfiltered: the complementary share keeps drawing from the raw pool, so a
- * never-registered or already-closed target stays ordinary generated
- * traffic, same as before.
- */
 const EXISTING_WINDOW_BIAS = 0.65;
-
-/**
- * A third bias, needed for the SAME reason `EXISTING_WINDOW_BIAS` is: a
- * registered-but-never-shown window is still `visible: false`, and
- * `isContentWindow` requires `visible` — so `react`'s `FocusContent` half
- * cannot fire on a window nobody ever showed, no matter how deep `order`
- * gets or how often a focus assert names a live id. `WindowShown` (case 1)
- * sits at the same flat ~1/36 odds as registration did, so it needed the same
- * treatment: a leading roll, at the existing-window-biased `id`, so a show
- * commonly lands on something already registered rather than on an id that
- * is not there to become visible. Still fully unfiltered — the complementary
- * share still reaches the flat switch's own `case 1`, which can and does
- * name an unregistered id.
- */
 const SHOWN_BIAS = 0.15;
 
-/**
- * `state` is the live state at generation time — used both to produce a
- * mostly-plausible `expectedVersion` for the command variants (sometimes
- * deliberately stale, to exercise rejection) and, via `EXISTING_WINDOW_BIAS`
- * above, to occasionally pick `id` off `state.order` itself. Neither reads
- * make the log non-reproducible: the same seed walks the same state
- * trajectory, so the same seed always produces the same concrete log.
- */
+// Deliberately unfiltered — ids may be unregistered or already closed, and orderings may be
+// nonsensical, so evolve's/decide's total handling is exercised rather than assumed.
 function randomLogItem(rng: Rng, state: State): LogItem {
   if (rng() < REGISTRATION_BIAS) {
     const id = wid(randomInt(rng, POOL_SIZE));
@@ -293,9 +172,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       return { type: 'WindowHidden', id };
     case 3:
       return { type: 'WindowClosed', id };
-    // Unfiltered — all three cause shapes (absent, world, machine with an
-    // arbitrary opSeq, including ones from the future and the distant past),
-    // same reasoning as every other event variant here.
     case 4: {
       const causeVariant = randomInt(rng, 3);
       const cause: FocusCause | undefined =
@@ -304,10 +180,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     }
     case 5:
       return { type: 'OsFocusLost', id };
-    // Unfiltered — nonsense orderings included (settle without a resign,
-    // double activate, resign twice) so the dance guard's total handling of
-    // every combination is exercised, same reasoning as every other event
-    // variant here.
     case 6:
       return { type: 'AppResigned' };
     case 7:
@@ -324,10 +196,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       const stale = rng() < 0.2;
       return { type: 'SetFullscreen', id, desired: randomBool(rng), expectedVersion: stale ? state.version + 1 : state.version };
     }
-    // Unfiltered — the four "internal" fullscreen events, fed straight to
-    // `evolve` bypassing `decide`, so nonsense combos (e.g. a
-    // FullscreenDesireRecorded against a settled record) exercise its
-    // total handling directly, same as any other event variant here.
     case 11:
       return { type: 'FullscreenTransitionStarted', id, entering: randomBool(rng), preBounds: null };
     case 12:
@@ -338,8 +206,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       return { type: 'OsFullscreenLeft', id };
     case 15:
       return { type: 'FullscreenSettleTimeout', id };
-    // Geometry commands (this slice) — go through `decide`, same
-    // stale-expectedVersion treatment as the other command variants above.
     case 16: {
       const stale = rng() < 0.2;
       return { type: 'SetBounds', id, bounds: randomRectangle(rng), expectedVersion: stale ? state.version + 1 : state.version };
@@ -367,9 +233,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         expectedVersion: stale ? state.version + 1 : state.version,
       };
     }
-    // Unfiltered — the OS-report-style geometry events, fed straight to
-    // `evolve` bypassing `decide`, same reasoning as the fullscreen family
-    // above (variants 11-15).
     case 20:
       return { type: 'BoundsChanged', id, bounds: randomRectangle(rng) };
     case 21: {
@@ -382,10 +245,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     }
     case 22:
       return { type: 'MaximizeExitedByResize', id };
-    // Unfiltered — `decide`'s own synthetic geometry translations, fed
-    // directly so nonsense combos (e.g. a Maximized against a not-`normal`
-    // fsMode) exercise evolve's total handling directly, same reasoning as
-    // FullscreenTransitionStarted/FullscreenDesireRecorded above.
     case 23:
       return { type: 'Maximized', id, preMaxBounds: rng() < 0.5 ? null : randomRectangle(rng) };
     case 24:
@@ -394,65 +253,29 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       return { type: 'PendingProjectionDiscarded', id };
     case 26:
       return { type: 'DesktopMembershipSet', id, membership: randomBool(rng) ? 'follow' : 'anchor' };
-    // Overlay attachment (this slice) — goes through `decide`, same
-    // stale-expectedVersion treatment as the other command variants above.
-    // hostId is drawn from the raw id pool (possibly unregistered, possibly
-    // `id` itself) since `decide`'s guard is what's under test here.
     case 27: {
       const stale = rng() < 0.2;
       let hostId: WindowId | null = rng() < 0.2 ? null : wid(randomInt(rng, POOL_SIZE));
-      if (hostId === id) hostId = null; // never target self — no window is its own overlay host
+      if (hostId === id) hostId = null; // no window is its own overlay host
       return { type: 'AttachOverlay', overlayId: id, hostId, expectedVersion: stale ? state.version + 1 : state.version };
     }
     case 28: {
-      // Unfiltered — decide's own synthetic translation of AttachOverlay,
-      // fed straight to `evolve` (same reasoning as Maximized/Unmaximized
-      // above). `hostId` is drawn from the raw id pool like every other
-      // event variant here — possibly unregistered, possibly `id` itself,
-      // possibly a since-closed id. This bypasses `decide`'s guard entirely,
-      // so `evolve` must normalize a nonsensical host into a detach rather
-      // than store it; `checkInvariants` below holds only because of that
-      // normalization, not because this generator avoids the cases.
+      // Fed straight to evolve, bypassing decide's guard, so a nonsensical hostId must be
+      // normalized into a detach rather than stored — checkInvariants below relies on that.
       const hostId: WindowId | null = rng() < 0.2 ? null : wid(randomInt(rng, POOL_SIZE));
       return { type: 'OverlayAttached', overlayId: id, hostId };
     }
-    // App activation dance (this slice) — unfiltered, same reasoning as
-    // case 6 (`AppResigned`) above: nonsense orderings (settle without a
-    // resign, double activate, resign twice) are exactly what exercises the
-    // arm/disarm/settle guard's total handling.
     case 29:
       return { type: 'AppActivated' };
     case 30:
       return { type: 'AppResignSettled' };
-    // Unfiltered like everything else: the first-responder mirror is reported
-    // for ids that were never registered, for `browser`-kind windows that
-    // would never produce one in production, and in nonsense orders (held
-    // twice, lost before ever held).
-    //
-    // SHARES ITS SLOT with the click-through mirror (`WindowAcceptsInputChanged`)
-    // via a sub-roll, same shape as the `cause` sub-roll on variant 4 — both
-    // are mechanical, effect-free mirror writes. Growing the switch's own
-    // modulus for a second one would re-derive every case's probability
-    // boundary and reshuffle every already-pinned seed's trajectory (the same
-    // measured cost that motivated case 32's four-way sub-roll below).
     case 31:
       return rng() < 0.5
         ? { type: 'ContentFirstResponderChanged', id, held: randomBool(rng) }
         : { type: 'WindowAcceptsInputChanged', id, acceptsInput: randomBool(rng) };
-    // Teardown commands (§0.1.5) — through `decide`, same stale-expectedVersion
-    // treatment as the other command variants above. `id` is drawn from the raw
-    // pool exactly like everything else here, so the majority of these name a
-    // window that was never registered or has already retired: that is not a
-    // degenerate case for this family, it is the production one (`ipc.ts
-    // runHybridFinalize`), and it is what exercises the unknown-window
-    // exemption and the effect-invariant permission it forces.
-    //
-    // ALL FOUR SHARE ONE VARIANT SLOT, chosen by a sub-roll (same shape as the
-    // `cause` sub-roll in variant 4). Four slots of their own would have cut
-    // the whole rest of the generator's share by an eighth, and the focus-family
-    // op rate the next describe MEASURES is thin enough that it moved: 27 seeds
-    // -> 15, below its own floor. One slot keeps the existing coverage where it
-    // was measured while still reaching every teardown arm.
+    // Teardown commands mostly name a window never registered or already retired — that's the
+    // production case (ipc.ts runHybridFinalize), and it's what exercises the unknown-window
+    // exemption. All four share one variant slot so their share stays where it was measured.
     case 32: {
       const stale = rng() < 0.2;
       const expectedVersion = stale ? state.version + 1 : state.version;
@@ -463,43 +286,25 @@ function randomLogItem(rng: Rng, state: State): LogItem {
           return { type: 'CloseContent', id, expectedVersion };
         case 2:
           return { type: 'CloseWindowDirect', id, expectedVersion };
-        // Names no window — the shape a caller-side fan-out would destroy.
         default:
           return { type: 'DestroyAllGuests', expectedVersion };
       }
     }
-    // Stack-order import — the command and the raw event, by a sub-roll (same
-    // shape as the `cause` sub-roll in variant 4). The payload comes from
-    // `randomStackOrderPayload`, which is malformed as often as not: empty,
-    // unknown ids, duplicates, partial subsets, full permutations. None of
-    // those shapes is held back — the arm's membership preservation is claimed
-    // to fall out of its construction rather than out of caller discipline,
-    // and that claim is only tested if the generator attacks it.
     case 33: {
       const order = randomStackOrderPayload(rng);
       if (rng() < 0.5) return { type: 'StackOrderImported', order };
       const stale = rng() < 0.2;
       return { type: 'ImportStackOrder', order, expectedVersion: stale ? state.version + 1 : state.version };
     }
-    // Cold-start focus latch — command and raw event, same sub-roll shape.
-    // `null` is a real payload (it CLEARS the latch), not an omission, so it is
-    // generated as a value. The id pool is WIDER than the registration pool, so
-    // a latch naming a window that was never registered is ordinary generated
-    // traffic; a latch naming a window CLOSED before any activation spends it
-    // falls out on its own from the `WindowClosed` variant, and that is the
-    // production case the arm's "needs no guard here, and gets none" rests on.
     case 34: {
+      // null clears the latch — a real payload, not an omission.
       const latch: WindowId | null = rng() < 0.25 ? null : wid(randomInt(rng, POOL_SIZE + 2));
       if (rng() < 0.5) return { type: 'ColdStartFocusArmed', id: latch };
       const stale = rng() < 0.2;
       return { type: 'ArmColdStartFocus', id: latch, expectedVersion: stale ? state.version + 1 : state.version };
     }
-    // Focus assert — command and raw event, and the split is load-bearing
-    // rather than symmetry for its own sake: `decide` gates `AssertFocus` on
-    // `isContentWindow`, so generating only the command would leave `evolve`'s
-    // and `react`'s handling of an assert on a NON-content or unregistered
-    // window ungenerated. `id` is drawn from the raw pool like every other
-    // variant here, so most targets are one or the other.
+    // Command and raw event both generated — decide gates AssertFocus on isContentWindow, so the
+    // command alone would leave evolve's/react's handling of a non-content target ungenerated.
     case 35:
     default: {
       if (rng() < 0.5) return { type: 'FocusAssertRequested', id };
@@ -509,13 +314,6 @@ function randomLogItem(rng: Rng, state: State): LogItem {
   }
 }
 
-/**
- * Applies one log item: an `Event` folds straight through `evolve`; a
- * `Command` first goes through `decide` — a rejection is a no-op (same
- * `state` returned, by reference, so callers can tell nothing happened), an
- * acceptance folds its (possibly empty) event list, accumulating `react`
- * effects at each step exactly like a directly-supplied event would.
- */
 function stepLogItem(state: State, item: LogItem): { state: State; effects: Effect[]; steps: Step[] } {
   if (!isCommand(item)) {
     const next = evolve(state, item);
@@ -524,6 +322,7 @@ function stepLogItem(state: State, item: LogItem): { state: State; effects: Effe
   }
   const decision = decide(state, item);
   if ('rejected' in decision) {
+    // Same state returned by reference, so callers can tell nothing happened.
     return { state, effects: [], steps: [] };
   }
   let s = state;
@@ -539,37 +338,16 @@ function stepLogItem(state: State, item: LogItem): { state: State; effects: Effe
   return { state: s, effects, steps };
 }
 
-/**
- * ONE `evolve`/`react` transition. Kept per-EVENT rather than per-log-item so
- * the op-token invariants below are stated over the unit they are actually
- * about: a command can fold into several events, and aggregating their effects
- * would blur which transition minted which token.
- */
+// One evolve/react transition — kept per-event rather than per-log-item so aggregating a
+// command's several events never blurs which transition minted which op token.
 interface Step {
   prev: State;
   next: State;
   effects: Effect[];
 }
 
-/**
- * THE OP-TOKEN INVARIANTS (`State.opSeqCounter` / `WindowRecord.lastOpSeq`).
- *
- * This is the counter that makes an echo's provenance ORDERABLE, and it is
- * inert unless `evolve` advances it — a frozen counter hands every op ever
- * issued the same token, so `isStaleSelfEcho` matches nothing live traffic
- * produces while every example-based test that injects a synthetic older
- * token still passes. Stated as a biconditional in both directions, so the
- * counter cannot go inert (no advance where an op is issued) or noisy
- * (an advance where none is) without a failure here:
- *
- *   1. the counter advances by exactly 1 on a transition that emits at least
- *      one focus-family effect, and not at all on any other transition;
- *   2. every focus-family effect carries `next.opSeqCounter` as its token;
- *   3. the record that effect names carries the SAME number as `lastOpSeq` —
- *      `evolve`'s stamp and `react`'s token are one value, which is what lets
- *      the echo the backend sends back line up with the stamp the guard
- *      compares it against.
- */
+// opSeqCounter advances by exactly 1 on a transition emitting a focus-family effect and never
+// otherwise; that effect and the record it names must carry the same new counter value.
 function checkOpSeqInvariants(step: Step): string[] {
   const violations: string[] = [];
   const stamped = step.effects.filter((e) => e.type === 'ShowWindow' || e.type === 'RaiseWindow');
@@ -606,13 +384,8 @@ function generateLog(seed: number, length: number): LogItem[] {
   return log;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Invariant checker — returns a list of violation strings; empty = OK.
-// Takes the optional previous state so the two monotonicity invariants
-// (version, the two counters) can be checked against the immediately prior
-// step, the same way the property-test loop calls it.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Returns a list of violation strings; empty = OK. `prev`, when given, lets the monotonicity
+// clauses below check against the immediately prior step.
 function checkInvariants(state: State, prev?: State): string[] {
   const violations: string[] = [];
 
@@ -628,9 +401,7 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (typeof record.layer !== 'number' || !Number.isFinite(record.layer)) {
       violations.push(`malformed layer for ${record.id}: ${JSON.stringify(record.layer)}`);
     }
-    // Fullscreen (§0.1.8): `fsMode.name` is always one of the four, and
-    // `preBounds` is present exactly when non-normal — never a missing key
-    // on a non-normal record, never a stray key on `normal`.
+    // fsMode.name is one of the four, and preBounds is present exactly when non-normal.
     const fsModeNames = ['normal', 'entering', 'fullscreen', 'leaving'];
     if (!fsModeNames.includes(record.fsMode.name)) {
       violations.push(`invalid fsMode.name for ${record.id}: ${JSON.stringify(record.fsMode)}`);
@@ -643,18 +414,16 @@ function checkInvariants(state: State, prev?: State): string[] {
       violations.push(`non-normal fsMode missing preBounds for ${record.id}: ${JSON.stringify(record.fsMode)}`);
     }
 
-    // Geometry (this slice): preMaxBounds is non-null EXACTLY while maximized.
+    // preMaxBounds is non-null exactly while maximized.
     if (record.preMaxBounds !== null && !record.maximized) {
       violations.push(`preMaxBounds is non-null while not maximized for ${record.id}: ${JSON.stringify(record.preMaxBounds)}`);
     }
-    // pendingProjectedBounds is held only while the window is blocked on at
-    // least one axis (non-normal fsMode, or hidden).
+    // pendingProjectedBounds is held only while the window is blocked on at least one axis.
     if (record.pendingProjectedBounds !== null && record.fsMode.name === 'normal' && record.visible) {
       violations.push(`pendingProjectedBounds held for ${record.id} but neither axis is blocked`);
     }
 
-    // Overlay attachment (this slice): `overlayFor` never dangles onto a
-    // window absent from `order`, and no window is its own overlay host.
+    // overlayFor never dangles onto a window absent from order, and no window is its own host.
     if (record.overlayFor !== undefined) {
       if (!state.order.some((w) => w.id === record.overlayFor)) {
         violations.push(`overlayFor names a window absent from order for ${record.id}: ${JSON.stringify(record.overlayFor)}`);
@@ -664,54 +433,35 @@ function checkInvariants(state: State, prev?: State): string[] {
       }
     }
 
-    // App activation dance (this slice): `hiddenByAppBlur` names a window the
-    // sweep hid — it can never be true on a window that is currently visible.
+    // hiddenByAppBlur names a window the sweep hid — never true on a currently visible window.
     if (record.hiddenByAppBlur === true && record.visible) {
       violations.push(`hiddenByAppBlur is set on a visible window: ${record.id}`);
     }
 
-    // Transient autoclose (this slice): `role` is an intrinsic declared at
-    // registration — either absent or a non-empty string, never an empty
-    // string or a non-string smuggled through the merge.
     if (record.role !== undefined && (typeof record.role !== 'string' || record.role.length === 0)) {
       violations.push(`malformed role for ${record.id}: ${JSON.stringify(record.role)}`);
     }
 
-    // Escape override: absent, or exactly the ONE live value. Nothing may
-    // smuggle a fourth-vocabulary value ('auto'/'close'/'navigate') onto a
-    // record through the registration merge.
     if (record.escapeMode !== undefined && record.escapeMode !== 'ignore') {
       violations.push(`invalid escapeMode for ${record.id}: ${JSON.stringify(record.escapeMode)}`);
     }
 
-    // First-responder mirror: THREE-VALUED. Absent, `true`, or `false` — and
-    // never anything that would let a consumer's `=== false` test misfire.
+    // contentFocused is three-valued: absent, true, or false — never a fourth value.
     if (record.contentFocused !== undefined && typeof record.contentFocused !== 'boolean') {
       violations.push(`malformed contentFocused for ${record.id}: ${JSON.stringify(record.contentFocused)}`);
     }
 
-    // Click-through mirror (this slice): required, never absent — a shape
-    // check only, the same as `layer` above.
     if (typeof record.acceptsInput !== 'boolean') {
       violations.push(`malformed acceptsInput for ${record.id}: ${JSON.stringify(record.acceptsInput)}`);
     }
 
-    // `pendingHidden` (this slice): absent or boolean — a shape check only.
-    // Deliberately NOT a "never decays back to absent" clause the way
-    // `contentFocused`/`keepLive`/`overlayFrame`/`bounds` get below: clearing
-    // is legitimate for this field (`WindowShown`/`WindowHidden`/`WindowClosed`
-    // all clear it — see `WindowRecord.pendingHidden`'s doc), so a decay
-    // invariant here would be flagging correct behavior. The re-registration
-    // merge protection for this field rests entirely on the hand-built
-    // "the re-registration merge preserves every lived fact" describe below,
-    // with no generator backstop.
+    // pendingHidden legitimately clears back to absent, so no decay check applies to it.
     if (record.pendingHidden !== undefined && typeof record.pendingHidden !== 'boolean') {
       violations.push(`malformed pendingHidden for ${record.id}: ${JSON.stringify(record.pendingHidden)}`);
     }
 
-    // The content predicate is SOUND: everything it admits is visible, can
-    // hold key, and declares a document-like role. Restated independently
-    // (like the role sets below) so this is a check, not a tautology.
+    // isContentWindow is restated independently: everything it admits must be visible,
+    // key-capable, not pendingHidden, and a document-like role.
     if (isContentWindow(record)) {
       if (!record.visible || !record.canBecomeKey) {
         violations.push(`isContentWindow admitted a hidden or non-key-capable window: ${record.id}`);
@@ -724,20 +474,12 @@ function checkInvariants(state: State, prev?: State): string[] {
       }
     }
 
-    // The `hiddenByAppBlur` / `AppActivated` interaction, asserted rather than
-    // reasoned about in a comment: a content window is never a candidate for
-    // the app-resign hide sweep, so the predicate's `visible` clause cannot
-    // flicker across an app switch. `isAppResignSweepEligible` carries an
-    // explicit `!isContentWindow(record)` clause naming this predicate
-    // directly (its own doc) — this check restates that guarantee
-    // independently rather than trusting the clause is still there, exactly
-    // like the role-set checks above restate `CONTENT_ROLES` independently of
-    // the kernel's own constant.
+    // A content window is never app-resign-sweep eligible.
     if (isContentWindow(record) && isAppResignSweepEligible(record)) {
       violations.push(`a window is both content and app-resign-sweep eligible: ${record.id}`);
     }
 
-    // `hostForOverlay` and `overlayFor` are the same fact read two ways.
+    // hostForOverlay and overlayFor are the same fact read two ways.
     const host = hostForOverlay(state, record.id);
     if (record.overlayFor === undefined) {
       if (host !== null) {
@@ -748,9 +490,7 @@ function checkInvariants(state: State, prev?: State): string[] {
     }
   }
 
-  // App activation dance (this slice): the sweep flag can only be armed while
-  // the app is inactive — `AppActivated` disarms it in the same step it flips
-  // `appActive` true.
+  // The sweep flag can only be armed while the app is inactive.
   if (state.appActive && state.pendingAppResignSweep) {
     violations.push('pendingAppResignSweep is true while appActive is true');
   }
@@ -760,31 +500,9 @@ function checkInvariants(state: State, prev?: State): string[] {
     violations.push(`keyWindow() resolved to a record not present in order: ${JSON.stringify(kw)}`);
   }
 
-  // §0.1.10 — ONE ORDER: whenever `key` resolves to a record, that record is
-  // the TOPMOST one. A fresh registration is inserted BELOW the key window
-  // and a focus gain moves its target to the end — those two transitions are
-  // why the clause holds in general. It is NOT true, though, that no other
-  // transition touches membership or position:
-  //
-  //   - `WindowClosed`'s parent-refocus (`evolve`'s `WindowClosed` arm) moves
-  //     an eligible parent to the top of `order`, but ONLY when the closed
-  //     record itself held `key` — `key` then still names the just-removed
-  //     id, so `keyWindow` below resolves to null and this clause is skipped
-  //     entirely for that transition. The move can never land a parent above
-  //     a record that still holds a LIVE key, by construction, not by luck.
-  //   - `StackOrderImported` permutes `order` and, without a further step,
-  //     could violate this clause: a slot-preserving permutation naming the
-  //     key window and one record below it would otherwise demote the key
-  //     window. So the arm lifts the key window's record to the top after
-  //     assembling the permutation, without ever touching `key` itself
-  //     (unconditional — an import must never activate anything): the
-  //     import holds the key window at top. Verified by hand on two
-  //     registered windows: key on the upper one, import `[key, other]`, and
-  //     the key window stays topmost.
-  //
-  // Stated over every generated log — including the nonsense ones — rather
-  // than over the hand-written scenes, because the pre-rule kernel
-  // (registration appended on top) violated it with two events.
+  // Whenever `key` resolves to a record, that record is the topmost one in order — WindowClosed's
+  // parent-refocus and StackOrderImported's key-lift are the only transitions allowed to move
+  // membership/position, and both preserve this.
   const top = state.order[state.order.length - 1];
   if (kw !== null && top !== undefined && top.id !== kw.id) {
     violations.push(`the key window is not topmost in order: key=${kw.id} top=${top.id}`);
@@ -800,22 +518,14 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (state.opSeqCounter < prev.opSeqCounter) {
       violations.push(`opSeqCounter decreased: prev=${prev.opSeqCounter} next=${state.opSeqCounter}`);
     }
-    // Teardown (§0.1.5): `lastTeardown.seq` is what `react` diffs, so it must
-    // never repeat a value and never go backwards — two identical requests for
-    // the same window have to read as two teardowns. Nothing clears the field
-    // either: once set it stays set, so a later transition can never turn a
-    // recorded teardown back into `null`.
+    // lastTeardown.seq never repeats or decreases, and is never cleared once set.
     if (prev.lastTeardown !== null && state.lastTeardown === null) {
       violations.push('lastTeardown was cleared back to null');
     }
     if (state.lastTeardown !== null && prev.lastTeardown !== null && state.lastTeardown.seq < prev.lastTeardown.seq) {
       violations.push(`lastTeardown.seq decreased: prev=${prev.lastTeardown.seq} next=${state.lastTeardown.seq}`);
     }
-    // Focus assert: the same two clauses, for the same reason — the whole
-    // family rests on `lastFocusAssert.seq` being what `react` diffs, and the
-    // payload is IDENTICAL between consecutive requests (the same window, every
-    // devtools open and close), so a repeated or reset seq collapses two
-    // asserts into one and the second re-assert silently never reaches the OS.
+    // lastFocusAssert has the same never-repeat/never-clear rule, for the same reason.
     if (prev.lastFocusAssert !== null && state.lastFocusAssert === null) {
       violations.push('lastFocusAssert was cleared back to null');
     }
@@ -826,12 +536,7 @@ function checkInvariants(state: State, prev?: State): string[] {
     ) {
       violations.push(`lastFocusAssert.seq decreased: prev=${prev.lastFocusAssert.seq} next=${state.lastFocusAssert.seq}`);
     }
-    // Attention: the same two clauses again, for the same reason — `react`'s
-    // transient-autoclose sweep rests on `lastAttention.seq` being what it
-    // diffs, and the old machine ran that sweep on EVERY `OS_FOCUS_GAINED`
-    // report (including an echo re-confirming the window that already holds
-    // key), so a repeated or reset seq would collapse two reports — and two
-    // sweeps — into one.
+    // lastAttention has the same never-repeat/never-clear rule, for the same reason.
     if (prev.lastAttention !== null && state.lastAttention === null) {
       violations.push('lastAttention was cleared back to null');
     }
@@ -844,13 +549,13 @@ function checkInvariants(state: State, prev?: State): string[] {
         `lastAttention.seq decreased: prev=${prev.lastAttention.seq} next=${state.lastAttention.seq}`,
       );
     }
-    // `orderable` never goes true -> false (§0.1.4: "Never reset once true").
+    // orderable never flips true -> false.
     for (const prevRecord of prev.order) {
       const nextRecord = state.order.find((w) => w.id === prevRecord.id);
       if (nextRecord !== undefined && prevRecord.orderable && !nextRecord.orderable) {
         violations.push(`orderable flipped true -> false for ${prevRecord.id}`);
       }
-      // `lastOpSeq` (focus provenance) never decreases per window.
+      // lastOpSeq (focus provenance) never decreases per window.
       if (
         nextRecord !== undefined &&
         prevRecord.lastOpSeq !== undefined &&
@@ -858,39 +563,20 @@ function checkInvariants(state: State, prev?: State): string[] {
       ) {
         violations.push(`lastOpSeq decreased for ${prevRecord.id}: prev=${prevRecord.lastOpSeq} next=${nextRecord.lastOpSeq}`);
       }
-      // `contentFocused` NEVER DECAYS BACK TO ABSENT. Once the OS has
-      // reported first-responder status for a window, "nothing reported yet"
-      // is no longer a true statement about it — and it is a DIFFERENT answer
-      // from `false` for every consumer (see the field's doc). The only way
-      // to lose it is a registration merge dropping the field, which is
-      // exactly the bug class both prior property-test failures were.
+      // contentFocused never decays back to absent — a re-registration merge must preserve it.
       if (nextRecord !== undefined && prevRecord.contentFocused !== undefined && nextRecord.contentFocused === undefined) {
         violations.push(`contentFocused decayed back to absent for ${prevRecord.id}`);
       }
-      // Same rule for the Escape override, for the same reason: a
-      // re-registration that omits it means "did not report", never "clear".
+      // Same rule for escapeMode: an omission on re-registration means "did not report", never "clear".
       if (nextRecord !== undefined && prevRecord.escapeMode !== undefined && nextRecord.escapeMode === undefined) {
         violations.push(`escapeMode was silently stripped from ${prevRecord.id}`);
       }
-      // Same rule for keepLive, for the same reason: once registration has
-      // reported it, "nothing reported" is no longer true — and it is a
-      // DIFFERENT answer from `false` for the CloseOrHideWindow branch point
-      // (§0.1) that reads it. `keepLive` is decided exactly once, at
-      // registration, and never revisited by any other writer (no runtime
-      // command exists for it — see the removed `SetKeepLive`/`KeepLiveSet`
-      // pair, git history), but this invariant stays: it protects the
-      // registration-time field against the re-registration MERGE, which is a
-      // real hazard independent of any runtime writer — `keepLive` was
-      // silently dropped there once already.
+      // Same rule for keepLive: decided once at registration and never revisited by a runtime
+      // writer, so a re-registration merge must not drop it.
       if (nextRecord !== undefined && prevRecord.keepLive !== undefined && nextRecord.keepLive === undefined) {
         violations.push(`keepLive decayed back to absent for ${prevRecord.id}`);
       }
-      // Same rule for `tracksBaseLayerTop`, for the same reason: it is
-      // declared exactly once, at registration (see the field's own doc),
-      // and the rule that will consume it needs to still find the overlay
-      // record once detached — a re-registration merge silently dropping
-      // the fact back to absent is the same bug class `keepLive` already
-      // suffered.
+      // Same rule for tracksBaseLayerTop: declared once at registration, must survive the merge.
       if (
         nextRecord !== undefined &&
         prevRecord.tracksBaseLayerTop !== undefined &&
@@ -898,13 +584,7 @@ function checkInvariants(state: State, prev?: State): string[] {
       ) {
         violations.push(`tracksBaseLayerTop decayed back to absent for ${prevRecord.id}`);
       }
-      // Same rule for `selfClosesOnBlur`, for the same reason: it is declared
-      // exactly once, at registration, from the caller's open-time options
-      // (see the field's own doc), and `isAppResignSweepEligible` needs it to
-      // still read true on a re-registered palette or quick-view — a
-      // re-registration merge silently dropping the fact back to absent would
-      // make that window newly eligible for the raw-edge hide sweep, the same
-      // bug class `keepLive` and `tracksBaseLayerTop` already suffered.
+      // Same rule for selfClosesOnBlur: declared once at registration, must survive the merge.
       if (
         nextRecord !== undefined &&
         prevRecord.selfClosesOnBlur !== undefined &&
@@ -912,18 +592,11 @@ function checkInvariants(state: State, prev?: State): string[] {
       ) {
         violations.push(`selfClosesOnBlur decayed back to absent for ${prevRecord.id}`);
       }
-      // Same rule for `overlayFrame`, for the same reason: it is a lived fact
-      // (the frame the overlay was last asked to occupy — see the field's
-      // doc), and a re-registration merge dropping it is the same bug class
-      // that once dropped `keepLive` and `parentId`.
+      // Same rule for overlayFrame: a lived fact that must survive the merge.
       if (nextRecord !== undefined && prevRecord.overlayFrame !== undefined && nextRecord.overlayFrame === undefined) {
         violations.push(`overlayFrame decayed back to absent for ${prevRecord.id}`);
       }
-      // Same rule for `bounds`, for the same reason: once the OS (or a
-      // registration seed) has reported a rect, "nothing reported" is no
-      // longer true — a re-registration merge dropping it is the same bug
-      // class that once dropped `keepLive`/`overlayFrame`, and it is exactly
-      // what left `Maximize` with nothing to restore to.
+      // Same rule for bounds: once the OS has reported a rect, a merge must not drop it.
       if (nextRecord !== undefined && prevRecord.bounds !== undefined && nextRecord.bounds === undefined) {
         violations.push(`bounds decayed back to absent for ${prevRecord.id}`);
       }
@@ -933,57 +606,28 @@ function checkInvariants(state: State, prev?: State): string[] {
   return violations;
 }
 
-/**
- * Extra invariant tied to a specific log item rather than to `state` alone
- * (§0.1.8): a window named by a `FullscreenSettleTimeout` must never sit in
- * `entering`/`leaving` afterward — that's the entire point of the event.
- */
+// A window named by FullscreenSettleTimeout must never sit in entering/leaving afterward
+// without being marked unverified — leaving it unmarked strands it, since nothing else settles it.
 function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
   const violations: string[] = [];
   if (item.type !== 'FullscreenSettleTimeout') return violations;
 
   const record = next.order.find((w) => w.id === item.id);
-  if (record === undefined) return violations; // named a window that is not there — nothing to settle and nothing to ask about
+  if (record === undefined) return violations;
   if (record.fsMode.name !== 'entering' && record.fsMode.name !== 'leaving') return violations;
 
-  // The record is still in flight, which is CORRECT and is the whole contract:
-  // the machine cannot know from the inside whether the OS completed the
-  // transition, so a settle timeout asks rather than decides (§0, `fsMode`
-  // reconcile). What it may never do is drop the question — a timeout that
-  // leaves a window transitional AND asks nothing has stranded it, because no
-  // later event will settle `fsMode` on its own.
-  //
-  // This replaced an earlier invariant asserting the opposite — that a settle
-  // timeout must leave no record transitional. That held only while `evolve`
-  // force-settled `fsMode` from its own belief, which the old reducer never
-  // did and which could strand `preBounds` or leave a black macOS Space when
-  // the guess was wrong.
   if (record.fsMode.unverified !== true) {
     violations.push(`FullscreenSettleTimeout left ${item.id} in ${JSON.stringify(record.fsMode)} without marking it unverified`);
   }
   return violations;
 }
 
-/**
- * Extra invariants on the two transient-autoclose selectors, checked against
- * every generated state. The role set is restated here rather than imported
- * — the kernel keeps it private, and an independent restatement is what makes
- * this a check rather than a tautology. The exemption itself is NOT a role
- * set to restate: it's a relation over `overlayFor`/`parentId` (§0,
- * "Ownership, not role"), so the checks below read that relation directly off
- * `state` instead of a mirrored constant.
- */
-/**
- * The document-like roles `isContentWindow` admits, restated independently of
- * the kernel's own `CONTENT_ROLES` for the same reason as the set below: an
- * imported constant would make the soundness check a tautology.
- */
+// The document-like roles isContentWindow admits, restated independently of the kernel's own
+// CONTENT_ROLES — an imported constant would make the soundness check a tautology.
 const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']);
 
-// Mirrors `window-kernel.ts TRANSIENT_ROLES` exactly. A role present there but
-// missing here makes `isSweepableVictim` report a false violation the moment the
-// generator emits it. `'switcher'` is in the kernel set and is now emitted by
-// `ROLES` too, so this set is no longer latent — the generator can reach it.
+// Mirrors window-kernel.ts TRANSIENT_ROLES exactly — a role missing here makes isSweepableVictim
+// report a false violation the moment the generator emits it.
 const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 function checkAutocloseInvariants(state: State): string[] {
@@ -994,15 +638,11 @@ function checkAutocloseInvariants(state: State): string[] {
     if (rec === undefined) return false;
     if (rec.id === focusedId) return false;
     if (!rec.visible) return false;
-    // Candidacy: a transient role, OR `selfClosesOnBlur` (the `modal` open
-    // option, roleless — `izui-roles.ts windowSelfClosesOnBlur`). Restated
-    // independently of `isTransientAutocloseCandidate`, same reason as the
-    // role set above.
+    // Candidacy: a transient role, or selfClosesOnBlur (the roleless `modal` open option).
     const isTransientRole = rec.role !== undefined && TRANSIENT_ROLES_EXPECTED.has(rec.role);
     if (!isTransientRole && rec.selfClosesOnBlur !== true) return false;
     if (rec.overlayFor !== undefined) return false;
-    // Policy, not a relation (window-kernel.ts selectTransientAutoclose's own
-    // doc): a window the pointer passes through is never a victim.
+    // A window the pointer passes through is never a victim.
     if (!rec.acceptsInput) return false;
     const focuser = state.order.find((w) => w.id === focusedId);
     if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return false;
@@ -1025,8 +665,7 @@ function checkAutocloseInvariants(state: State): string[] {
       }
       sweptByTransientAutoclose.add(victim);
     }
-    // A machine cause arms an ORDERING test — it can only ever spare windows
-    // relative to a world-caused focus, never sweep extra ones.
+    // A machine cause can only ever spare windows relative to a world-caused focus, never sweep extra ones.
     for (const victim of machine) {
       if (!world.includes(victim)) {
         violations.push(`machine-caused sweep is not a subset of the world-caused one for ${focusedId}: ${victim}`);
@@ -1044,31 +683,9 @@ function checkAutocloseInvariants(state: State): string[] {
     }
   }
 
-  // The app-resign hide sweep and the transient autoclose sweep now
-  // legitimately NAME THE SAME WINDOW — this is a deliberate rule change, not
-  // a regression to paper over. Under the retired design
-  // `isAppResignSweepEligible` excluded every transient role, so the two
-  // selectors' candidate sets were disjoint by construction; that exclusion is
-  // gone (see the predicate's own doc), and the windows switcher is the
-  // motivating example of why: it is a legitimate candidate for BOTH the
-  // raw-edge/settle hide (reversible — `AppActivated` undoes it) AND a
-  // dismissal the instant some OTHER Peek window takes key (destructive —
-  // `selectTransientAutoclose`). Those are two different acts, triggered by
-  // two different transitions, and a window being eligible for both at once is
-  // not a contradiction — asserting "never both" here would just re-encode the
-  // retired design as a test, not check anything true of this one.
-  //
-  // What DOES still have to hold, and is the rule now checked: the two
-  // mechanisms never race, because both read the SAME `visible` fact from
-  // opposite sides. `isAppResignSweepEligible` requires `record.visible`;
-  // `selectTransientAutoclose` requires `rec.visible` too (its own
-  // `!rec.visible` exclusion, checked independently above via
-  // `isSweepableVictim`). So once the raw-edge (or settled-backstop) hide has
-  // actually run for a window — `hiddenByAppBlur: true`, which never
-  // accompanies `visible: true` (checked elsewhere in this file) — that same
-  // window can no longer be a `selectTransientAutoclose` victim for ANY
-  // focuser: the hide always wins, and the settle's dismissal never fires a
-  // second act against a window the hide has already taken off screen.
+  // The app-resign hide sweep and transient autoclose may legitimately name the same window —
+  // not a contradiction, since both read the same visible fact. Once hiddenByAppBlur is true for
+  // a window, it can no longer be a selectTransientAutoclose victim for any focuser.
   for (const record of state.order) {
     if (record.hiddenByAppBlur === true && sweptByTransientAutoclose.has(record.id)) {
       violations.push(
@@ -1080,42 +697,8 @@ function checkAutocloseInvariants(state: State): string[] {
   return violations;
 }
 
-/**
- * Extra invariant proving `react` actually PROJECTS `evolve`'s own dismissal
- * choice for the transition it just ran, rather than a lookalike rule that
- * matches nothing in practice (this repo's documented failure mode for
- * predicates). `checkAutocloseInvariants` above only checks the selector's own
- * soundness in isolation, against every possible focuser — it says nothing
- * about whether `react`'s emitted `DismissWindow` effects are actually its
- * output for the ONE real transition that just happened.
- *
- * ONE structural diff feeds `DismissWindow` now (S3, fixed 2026-09-05): the
- * choice of WHICH record to dismiss is made in `evolve`, by whichever of its
- * three sweep triggers (`OsFocusGained`, `AppResignSettled`,
- * `WindowContentOrderable`) ran this transition, and each marks its own
- * victims `pendingHidden` in that SAME transition (`WindowRecord.pendingHidden`'s
- * doc). `react` only diffs the mark: a record whose `pendingHidden` reads
- * not-true in `prev` and `true` in `next` is expected on a `DismissWindow`,
- * UNLESS the flip is explained by a teardown request naming the same record
- * (the Teardown rule's own effect, not this one) — `next.lastTeardown`
- * changing this transition, restated here exactly as `react` restates it.
- *
- * TWO further properties this same check pins, named directly in `react`'s
- * own doc for the diff rule:
- *
- *   - NO DUPLICATE ID among one `react()` call's `DismissWindow` effects —
- *     `pendingHidden` is a boolean, so a record can flip at most once per
- *     transition, and `isTransientAutocloseCandidate`'s own `pendingHidden`
- *     clause is what keeps `evolve`'s sweep from ever choosing an
- *     already-marked record again.
- *   - EVERY `DismissWindow` NAMES A RECORD WHOSE `pendingHidden` READS TRUE
- *     IN `next` — the mark and the effect are written by the same choice, so
- *     the two can never disagree.
- *
- * Kept per-EVENT (`Step`, same unit `checkOpSeqInvariants` uses above), not
- * per-log-item: a command can fold into several events, and aggregating their
- * effects would blur which transition's diff produced which dismissal.
- */
+// react's DismissWindow effects equal exactly the pendingHidden true-flips in this transition,
+// with no duplicate id, unless a teardown request on the same record explains the flip instead.
 function checkAutocloseWiring(step: Step): string[] {
   const { prev, next, effects } = step;
   const violations: string[] = [];
@@ -1150,30 +733,9 @@ function checkAutocloseWiring(step: Step): string[] {
   return violations;
 }
 
-/**
- * THE TRANSIENT-DISMISSAL LAW, held as a standing invariant on `next` alone
- * (`docs/design/window-manager.md` § 0: "a transient closes on any focus
- * loss, with exactly three exemptions, none of them per-role"): no record
- * whose role is in `TRANSIENT_ROLES` may carry `hiddenByAppBlur === true`
- * unless one of the three exemptions holds. Restated here as literal clause
- * checks rather than a call into `selectTransientAutoclose` — this checker
- * exists to catch a hide-instead-of-dismiss path even one that never runs
- * that selector at all, which is exactly the shape the bug it pins took
- * (`evolve`'s `AppResigned`/`AppResignSettled` arms hid a transient on the
- * raw resign edge / settle backstop, and `selectTransientAutoclose` — reading
- * `visible` — could no longer see it as a dismissal candidate).
- *
- * `hiddenByAppBlur` is a REVERSIBLE hide; a transient hidden that way instead
- * of dismissed survives an `AppActivated` re-show — the command palette
- * surviving a Cmd+Tab and reappearing over whatever the user switched to.
- *
- * Exemption 1 (a focuser naming this record as parent or overlay) is
- * VACUOUS for every setter of `hiddenByAppBlur` today: both arms that write
- * it true derive their hide from an app resign, which names no focuser at
- * all (see those arms' own doc) — so only exemptions 2 and 3 can ever spare
- * a hidden transient in the current kernel, and clause 1 is checked anyway
- * so a future arm that DOES have a focuser is held to the same law.
- */
+// No record whose role is in TRANSIENT_ROLES may carry hiddenByAppBlur===true unless a
+// focuser/overlay/click-through exemption holds — restated as literal clauses so this catches a
+// hide-instead-of-dismiss path even one that never calls selectTransientAutoclose at all.
 function checkTransientHideIsNotDismiss(step: Step): string[] {
   const violations: string[] = [];
   const holder = step.next.lastAttention?.holder ?? null;
@@ -1181,16 +743,9 @@ function checkTransientHideIsNotDismiss(step: Step): string[] {
   for (const rec of step.next.order) {
     if (rec.hiddenByAppBlur !== true) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    // Candidacy clause: a record that has never reported a composited frame is
-    // not governed by the dismissal law at all (`window-kernel.ts
-    // isTransientAutocloseCandidate`), so an ordinary reversible hide is the
-    // correct outcome for it rather than a dismissal standing in for one.
     if (!rec.orderable) continue;
-    // Exemption 1: the focuser names this record as parent or overlay.
     if (focuser !== undefined && (focuser.parentId === rec.id || focuser.overlayFor === rec.id)) continue;
-    // Exemption 2: an overlay is attached to this record.
     if (rec.overlayFor !== undefined) continue;
-    // Exemption 3: click-through — can never be in the user's way.
     if (!rec.acceptsInput) continue;
     violations.push(
       `transient record ${rec.id} (role=${rec.role}) carries hiddenByAppBlur===true with none of the three ` +
@@ -1200,42 +755,9 @@ function checkTransientHideIsNotDismiss(step: Step): string[] {
   return violations;
 }
 
-/**
- * THE SAME LAW, PINNED AGAINST THE SELECTOR ITSELF RATHER THAN AGAINST A
- * RESTATEMENT OF IT. `checkTransientHideIsNotDismiss` above deliberately
- * spells the clauses out — it has to, so it can catch a hide-instead-of-
- * dismiss path that never runs the selector. This one asks the opposite
- * question: does what the kernel actually did to `hiddenByAppBlur` agree with
- * what `selectTransientAutoclose` would say about the very same record?
- *
- * The obstacle is that the two can never be compared directly: a record
- * carrying `hiddenByAppBlur === true` is invisible, and the selector skips
- * every invisible record, so it answers "not a victim" for exactly the
- * records this law is about. The comparison is therefore COUNTERFACTUAL —
- * the record is probed with `visible: true` flipped on, which changes nothing
- * else and asks only "if this window were on screen, would the law sweep it?"
- * Nothing else in the state is altered, so the answer is the law's, not a
- * fixture's.
- *
- * Both directions are asserted, and the second is the one nothing else covers:
- *
- *   - MUST-CLEAR: a record the law would sweep may not be sitting on a
- *     reversible hide. This is `checkTransientHideIsNotDismiss`'s territory,
- *     restated through the selector so a clause that exists in one and not the
- *     other is caught rather than silently tolerated.
- *   - MUST-NOT-OVER-CLEAR: a record whose `hiddenByAppBlur` was cleared by
- *     this very transition, and which is STILL hidden afterwards, must be one
- *     the law would have swept. A clear on a still-hidden record can only be
- *     `evolve`'s `WindowRegistered` merge arm stranding fix — an `AppActivated`
- *     or `WindowShown` clear comes with `visible: true`, which this excludes —
- *     and that arm may only clear the mark for a record the law would really
- *     have dismissed. Clearing it for one the law SPARES (a click-through
- *     window, say) would drop a hide the app-resign sweep legitimately owns.
- *
- * `null` is the right focuser for both probes: the transitions that write
- * `hiddenByAppBlur` derive from an app resign, and a re-registration names no
- * focuser either, so no window is in a relation that could spare it.
- */
+// Cross-checks the kernel's hiddenByAppBlur marks against what selectTransientAutoclose would
+// say if the record were visible — a counterfactual probe, since the selector skips invisible
+// records outright and so cannot be compared to them directly otherwise.
 function checkStrandedHideAgreesWithSelector(step: Step): string[] {
   const { prev, next } = step;
   const violations: string[] = [];
@@ -1269,49 +791,24 @@ function checkStrandedHideAgreesWithSelector(step: Step): string[] {
   return violations;
 }
 
-/**
- * Extra invariant on `react`'s output: every emitted effect names a window
- * still in `next.order` — this is what guarantees, among other things, that
- * no `SetBounds` effect (this slice) ever names a window absent from `order`.
- *
- * `CloseWindow` is the one deliberate exception: RULE 1 makes `WindowClosed`
- * the sole way membership shrinks, so `react` derives `CloseWindow` from a
- * record's ABSENCE in `next.order` (see `react`'s close diff) — the effect
- * can only ever name a window that has already left `order`, by construction.
- *
- * The three window-naming TEARDOWN effects (§0.1.5) are permitted the same
- * absence, and each for the same measured reason rather than for tidiness:
- * their commands are exempt from `decide`'s unknown-window rejection because
- * `ipc.ts runHybridFinalize` dispatches a content-close naming a window
- * `finalizeWindowClose` retired microseconds earlier, in the same synchronous
- * body, on every hybrid close (the opener-initiated path has the same shape,
- * its `hostMachineId` being a captured constant). Requiring presence here
- * would assert the opposite of what the port must accept. The permission is
- * exactly these three and stops there: it is granted per effect type, never
- * widened to "teardown-ish" effects, and every other effect type still has to
- * name a live record.
- *
- * `DestroyAllGuests` is skipped before the lookup rather than permitted after
- * it: it carries no `id` at all (the port iterates the process-wide guest map),
- * so "names a window not in order" is not a question that can be asked of it.
- */
+// ipc.ts runHybridFinalize dispatches a content-close naming a window that retired microseconds
+// earlier in the same synchronous body, so these three effects' commands are exempt from
+// decide's unknown-window rejection and may still name a just-retired record here.
 const TEARDOWN_EFFECTS_MAY_NAME_A_RETIRED_WINDOW: ReadonlySet<Effect['type']> = new Set([
   'DestroyWindow',
   'CloseContent',
   'CloseWindowDirect',
 ]);
 
+// Every emitted effect must name a window still in next.order, except CloseWindow (react derives
+// it from the record's absence, so it can only ever name one already gone) and the three teardown
+// effects above.
 function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
-    // The two effects that name no window at all — nothing here to check
-    // against `order`.
     if (effect.type === 'DestroyAllGuests') continue;
     if (effect.type === 'HideApp') continue;
-    // `AttachOverlayTo` names a RELATION, not a single window (§ Effect
-    // docblock) — `overlayId` and, when not a detach, `hostId` each get the
-    // same "still in next.order" check the rest of this function runs, just
-    // read off different fields than the generic `effect.id` lookup below.
+    // AttachOverlayTo names a relation (overlayId + hostId), not a single window.
     if (effect.type === 'AttachOverlayTo') {
       if (!next.order.some((w) => w.id === effect.overlayId)) {
         violations.push(`AttachOverlayTo names an overlayId not present in order: ${JSON.stringify(effect)}`);
@@ -1336,11 +833,6 @@ function checkEffectInvariants(effects: Effect[], next: State): string[] {
   return violations;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fold helpers over a mixed `LogItem[]` — an `Event` folds straight through
-// `evolve`; a `Command` goes through `decide`/`stepLogItem` first (see above).
-// ─────────────────────────────────────────────────────────────────────────────
-
 function fold(log: LogItem[], start: State = initialState()): State {
   let state = start;
   for (const item of log) {
@@ -1360,19 +852,15 @@ function foldWithEffects(log: LogItem[], start: State = initialState()): { state
   return { state, effects };
 }
 
-/** Reproducibility: every failure message carries the seed and the full JSON log, so it replays verbatim. */
+// Every failure message carries the seed and the full JSON log, so it replays verbatim.
 function reproMessage(seed: number, log: LogItem[], stepIndex: number, detail: string): string {
   return `${detail}\n  seed=${seed} step=${stepIndex}/${log.length}\n  log=${JSON.stringify(log)}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The property tests — a fixed, committed list of seeds (deterministic, not
-// time-derived): 0..199.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const SEED_COUNT = 200;
 const LOG_LENGTH = 30;
 
+// A fixed, committed list of seeds (deterministic, not time-derived): 0..199.
 describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
   for (let seed = 0; seed < SEED_COUNT; seed++) {
     it(`seed ${seed}: invariants hold after every step; evolve never throws; replay is deterministic`, () => {
@@ -1389,10 +877,6 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
         }
         const { state: next, effects, steps } = result;
 
-        // Per-EVENT, and checked before the `next === state` early-out below:
-        // a command that folds to zero events is a genuine no-op, but a
-        // transition that changed nothing else can still have moved the
-        // counter, and that would be a bug rather than a no-op.
         for (const step of steps) {
           const opSeqViolations = checkOpSeqInvariants(step);
           if (opSeqViolations.length > 0) {
@@ -1416,9 +900,7 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           }
         }
 
-        // A rejected command is a no-op — same state, no events, nothing to
-        // check (the version-strictly-increases invariant would misfire on
-        // a genuine no-op, since nothing happened).
+        // A rejected command is a no-op (same state, by reference) — nothing to check.
         if (next === state) {
           continue;
         }
@@ -1446,8 +928,7 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
         state = next;
       }
 
-      // Replay determinism + effect-list determinism (§0.1.8 item 2, applied
-      // to a randomly generated log instead of a hand-written one).
+      // Replay determinism: folding the same log twice must produce identical state and effects.
       const r1 = foldWithEffects(log);
       const r2 = foldWithEffects(log);
       assert.deepStrictEqual(r1.state, r2.state, reproMessage(seed, log, log.length, 'replay determinism: state mismatch'));
@@ -1461,83 +942,10 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The op-token invariants, proven non-vacuous — MEASURED, not assumed. Both
-// halves matter: the generated logs must actually issue focus-family ops (or
-// clause 1 never has a positive case to check), and the checker must actually
-// name a violation when the counter misbehaves (or it is decoration).
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe('window-kernel: the op-token invariants are not vacuous', () => {
-  /**
-   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 190 seeds issue an
-   * op, 524 ops in 6000 generated log items. No longer thin — the three
-   * leading-roll biases above `randomLogItem` (`REGISTRATION_BIAS`,
-   * `EXISTING_WINDOW_BIAS`, `SHOWN_BIAS`) exist specifically to raise the odds
-   * of the combination an op needs: a REGISTERED window that is also
-   * currently hidden (a show) or not currently the key holder (a raise). They
-   * did — an op now fires in the large majority of seeds instead of a fifth
-   * of them.
-   *
-   * THE NUMBER IS TRAJECTORY-SENSITIVE, not proportional to how many variants
-   * exist. It was 27 seeds / 28 ops before the teardown variant (32) was added,
-   * then 19/20 after, then 31/33, then 37/41 once variant 35's raw
-   * `FocusAssertRequested` started minting tokens of its own; one extra
-   * variant cannot dilute or inflate a rate by a third, and it did not —
-   * adding any variant re-rolls every seed's whole log, and this rate rides on
-   * id/state coincidences, so it moves for reasons unrelated to the addition
-   * by itself. The jump to 190/524 has an unambiguous cause, not a re-roll
-   * artifact: `REGISTRATION_BIAS` / `EXISTING_WINDOW_BIAS` / `SHOWN_BIAS` put
-   * a registered, often-visible window in play on most log items instead of
-   * leaving it to a rare id-pool coincidence, so a show or a raise stopped
-   * being the exception and became the common case. Re-measure and re-record
-   * after any generator or rule change rather than reading a move either way
-   * as a regression. A counter that stopped advancing would fail ~190 seeds
-   * here, which is a signal but not the proof; the example-based coverage
-   * (`window-kernel.test.ts` "the op counter advances once per issued op",
-   * `window-kernel-executor.test.ts` "drops the late echo of a superseded op")
-   * is what actually pins this behaviour. Constraining generation to make ops
-   * common is exactly the move that would make the invariant vacuous — the
-   * generator stays unfiltered, and this rate is a side effect of biasing
-   * WHICH window a payload names, not of suppressing anything; this test just
-   * states the measurement.
-   *
-   * WHAT THE THREE NEWEST FAMILIES ACTUALLY REACH, measured the same way. The
-   * same three biases also lifted `order`'s typical depth — averaging 2.86
-   * (out of a POOL_SIZE of 6, n=5416 reached states, max 6) where it used to
-   * sit at 0-1 — so a payload drawn from the id pool now names something live
-   * far more often, and the arms below moved with it:
-   *
-   *   - stack-order import: 92 generated (down from ~170 — the leading rolls
-   *     eat into the flat 36-way switch's own share), 15 of them actually
-   *     PERMUTE `order`, and 3 land while `key` resolves. So the
-   *     membership-preservation clause sees real permutations regularly now,
-   *     not barely.
-   *   - cold-start latch: 107 arms, and 23 activations spend a held latch —
-   *     of those, 7 name a window that IS in `order` and visible, so the
-   *     arm's raise-emitting half (a latch spent onto a live window) is now
-   *     generated rather than reaching only `window-kernel.test.ts`.
-   *   - focus assert: 84 generated, 21 naming a window absent from `order`,
-   *     60 naming a registered NON-content window, and 3 naming a content
-   *     window — so `react`'s `FocusContent` half of the assert rule is now
-   *     generated (3 times) instead of zero, matching the 3 `FocusContent`
-   *     effects `react` actually emitted across the run.
-   *
-   * A CONFLICT THIS GENERATION DID NOT HAPPEN TO HIT, recorded so it is not
-   * rediscovered as a mystery failure. The §0.1.10 one-order clause in
-   * `checkInvariants` ("the key window is not topmost in order") justifies
-   * itself with "no other transition touches membership or position" — and
-   * `StackOrderImported` permutes within the slots the named ids occupy
-   * without touching `key` (deliberately: an import must never activate
-   * anything). Left there, an import naming the key window and one below it
-   * would demote the key window and violate the clause — so the arm lifts
-   * the key window's record to the top after assembling the permutation.
-   * Verified by hand on two registered windows: key on the upper one, import
-   * `[key, other]`, and the key window stays topmost. Even with the deeper
-   * `order` the biases now produce, only 3 of the 15 permuting imports above
-   * land while `key` resolves, so this case still leans on the hand check
-   * rather than on generation alone.
-   */
+  // Measured at POOL_SIZE=6, LOG_LENGTH=30, 200 seeds: 190 seeds issue a focus-family op, 524
+  // ops total. Trajectory-sensitive, not proportional to variant count — one extra generator
+  // variant re-rolls every seed's log, so re-measure and re-record after any generator change.
   it('the generated logs issue focus-family ops at the measured rate', () => {
     let issued = 0;
     let seedsWithAnOp = 0;
@@ -1559,18 +967,12 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
       if (count > 0) seedsWithAnOp += 1;
       assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
     }
-    // Floors sit just under the recorded measurement (190/524) — a wider
-    // margin than the earlier pairs (15/15 under 19/20, 20/20 under 27/28,
-    // 25/25 under 31/33, 30/30 under 37/41) carried, because the biases moved
-    // the trajectory by an order of magnitude, not by a few counts. They exist
-    // to catch the invariant going vacuous, not to pin an exact trajectory.
     assert.ok(seedsWithAnOp >= 150, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
     assert.ok(issued >= 400, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
   });
 
   it('the checker names the violation when the counter goes inert', () => {
-    // The pre-fix shape, hand-built: a transition that emits a ShowWindow but
-    // leaves the counter (and the record's stamp) where they were.
+    // Hand-built: a transition emits ShowWindow but the counter and stamp don't move.
     const id = wid(0);
     const reg: Event = { type: 'WindowRegistered', id, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' };
     const prev = fold([reg]);
@@ -1591,9 +993,7 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
   });
 
   it('the checker names the violation when the stamp and the token disagree', () => {
-    // The other half of the round trip: the counter advanced and `react`
-    // stamped the effect, but the record kept an older `lastOpSeq` — the shape
-    // a stamp written from the PRE-transition counter produces.
+    // The counter advances and the effect is stamped, but the record keeps an older lastOpSeq.
     const id = wid(0);
     const reg: Event = { type: 'WindowRegistered', id, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' };
     const prev = fold([reg]);
@@ -1613,14 +1013,7 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pinned reproducer, first surfaced by this property run at seed 0 (and
-// ~half of seeds 0..199): two `WindowRegistered` events for the same id with
-// no `WindowClosed` in between (the id is still live when the second one
-// lands) must merge in place, not append a second record. Kept independent
-// of the log generator so it survives any future change to `generateLog`.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// A second WindowRegistered for a still-live id must merge in place, not append a duplicate record.
 describe('window-kernel: re-registration of a still-live id merges in place', () => {
   it('a second WindowRegistered for a still-open id merges — no duplicate id in order', () => {
     const id = wid(0);
@@ -1639,15 +1032,8 @@ describe('window-kernel: re-registration of a still-live id merges in place', ()
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pinned placement coverage (§0.1.10) — same reasoning as the merge coverage
-// below: the generator's odds of registering a window WHILE another one holds
-// key are thin (only ~2 of the 36 variants register, and `key` stays null
-// until a focus event names an id that a registration already created), so the
-// one-order invariant is pinned on a hand-built log rather than left to
-// generator luck.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// A fresh registration is inserted below the key window, never above it — pinned by hand since
+// the generator's odds of registering while another window holds key are thin.
 describe('window-kernel: a registration never lands above the key window', () => {
   const inUse = wid(0);
   const opened = wid(1);
@@ -1673,8 +1059,7 @@ describe('window-kernel: a registration never lands above the key window', () =>
   });
 
   it('the invariant names the violation when a record IS placed on top', () => {
-    // The pre-rule shape (`order: [...state.order, record]`), hand-built, so
-    // the clause is proven to fire rather than merely present.
+    // The pre-rule shape (a plain append) is hand-built so the clause is proven to fire.
     const before = fold([...windowInUse(), register(opened)]);
     const appended: State = {
       ...before,
@@ -1687,19 +1072,8 @@ describe('window-kernel: a registration never lands above the key window', () =>
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pinned merge coverage — MEASURED, not assumed. The random generator's odds
-// of producing "a lived fact is written for id X, and X is then re-registered
-// while still live" are thin at POOL_SIZE=6 / LOG_LENGTH=30: only ~2 of the
-// 36 variants register, so most ids are never registered at all, and across
-// all 200 seeds the combination for a given field may not occur even once.
-// That was checked by deliberately dropping `contentFocused` from the merge:
-// every seed still passed. So the merge invariants above are pinned here on a
-// hand-built log instead of left to generator luck — the re-registration merge
-// is where both bugs this property suite has ever caught lived, and each was a
-// lived field silently dropped.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Pinned on a hand-built log — the generator's odds of a lived-fact-then-re-register sequence
+// are thin, and both bugs this property suite has ever caught were a lived field silently dropped.
 describe('window-kernel: the re-registration merge preserves every lived fact', () => {
   const id = wid(0);
   const host = wid(1);
@@ -1708,12 +1082,8 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     type: 'WindowRegistered',
     id,
     kind: 'page-host',
-    // BASE_LAYER, deliberately — `strip('pendingHidden')` below restores this
-    // content-role, key-capable record to `isContentWindow`-admitted, and a
-    // `layer` above `BASE_LAYER` would ALSO make it `isAppResignSweepEligible`
-    // (see that predicate's doc — no `canBecomeKey` clause protects the
-    // disjointness anymore), which would add a second, unrelated violation to
-    // the assertion below and defeat the point of this describe.
+    // BASE_LAYER deliberately — a higher layer would also make this isAppResignSweepEligible,
+    // adding an unrelated violation to the assertion below.
     layer: BASE_LAYER,
     canBecomeKey: true,
     acceptsInput: true,
@@ -1724,7 +1094,6 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     ...(parentId !== undefined ? { parentId } : {}),
   });
 
-  /** A log that writes every lived fact the record can carry, then re-registers. */
   const livedLog = (): LogItem[] => [
     { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
     register('ignore', true, host),
@@ -1736,16 +1105,12 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     { type: 'DesktopMembershipSet', id, membership: 'anchor' },
     { type: 'OverlayAttached', overlayId: id, hostId: host, frame: { x: 10, y: 20, width: 30, height: 40 } },
     { type: 'ContentFirstResponderChanged', id, held: false },
-    // `register()` above declares `acceptsInput: true`; flipping it false
-    // here proves the merge preserves the LIVED value rather than the one
-    // the event happens to share with registration.
+    // register() above declares acceptsInput: true; flipping it false here proves the merge
+    // preserves the lived value rather than the one the event happens to share with registration.
     { type: 'WindowAcceptsInputChanged', id, acceptsInput: false },
     { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
-    // Sets `pendingHidden` without removing the record from `order` — a
-    // teardown REQUEST, not the confirming `WindowClosed`. Without this the
-    // assertion below is vacuous for that field, exactly how `keepLive`,
-    // `parentId`, `overlayFrame` and `bounds` were each silently dropped
-    // before.
+    // A teardown request, not the confirming WindowClosed — sets pendingHidden without removing
+    // the record, or the assertion below would be vacuous for that field.
     { type: 'WindowDestroyRequested', id },
   ];
 
@@ -1755,23 +1120,13 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     const prevRecord = before.order.find((w) => w.id === id)!;
     const nextRecord = after.order.find((w) => w.id === id)!;
 
-    // Everything except `version` is identical — the merge overwrote the
-    // intrinsics with the same values and touched nothing else.
+    // Everything except version is identical, and each of these fields specifically survives
+    // the merge: keepLive, the OverlayAttached frame, the BoundsChanged bounds, and the
+    // teardown-request pendingHidden mark — the fields once silently dropped.
     assert.deepStrictEqual(nextRecord, prevRecord);
-    // Explicitly: the registration-time keepLive survives a re-registration
-    // that names none — `WindowRegistered`'s merge arm must read
-    // `existing.keepLive`, not overwrite it with the new event's absent field.
     assert.strictEqual(nextRecord.keepLive, true);
-    // Explicitly: the frame `OverlayAttached` wrote survives too — the gap
-    // this describe was extended to close.
     assert.deepStrictEqual(nextRecord.overlayFrame, { x: 10, y: 20, width: 30, height: 40 });
-    // Explicitly: the bounds `BoundsChanged` wrote survives too — a
-    // re-registration must not clobber a lived bounds mirror with a stale
-    // construction-time seed (see `WindowRegistered`'s merge arm doc).
     assert.deepStrictEqual(nextRecord.bounds, { x: 1, y: 2, width: 3, height: 4 });
-    // Explicitly: the `pendingHidden` mark the teardown request set survives
-    // too — a producer re-announcing a window's declared properties knows
-    // nothing about an in-flight teardown (see the field's own doc).
     assert.strictEqual(nextRecord.pendingHidden, true);
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
@@ -1797,8 +1152,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
   });
 
   it('the hiddenByAppBlur mark survives a re-registration mid-sweep', () => {
-    // Registered non-focusable + floating so the sweep takes it, which is the
-    // only way to set the mark.
+    // Non-focusable + floating so the sweep takes it — the only way to set the mark.
     const swept = wid(2);
     const reg: Event = { type: 'WindowRegistered', id: swept, kind: 'browser', layer: 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
     const before = fold([reg, { type: 'WindowShown', id: swept }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
@@ -1809,36 +1163,11 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
 
-  // ───────────────────────────────────────────────────────────────────────
-  // A REVERSIBLE HIDE MEETING A ROLE CHANGE, both outcomes, hand-built.
-  //
-  // The test above re-registers as `workspace` — still non-transient — so it
-  // never reaches `WindowRegistered`'s stranding fix at all. These two do, and
-  // they are hand-built rather than left to the generator for the reason the
-  // "Pinned merge coverage — MEASURED, not assumed" block records: the
-  // re-registration path is thin enough that dropping a whole merge field left
-  // all 200 seeds passing, and a re-registration that ALSO flips a marked
-  // record's role into `TRANSIENT_ROLES` is rarer still.
-  //
-  // The pair differs in exactly one fact, `acceptsInput`, because that is the
-  // clause whose absence changes nothing anywhere else: the law spares a
-  // click-through window (it can never be in the user's way), so the hide it
-  // is carrying must be left alone, while an input-taking transient must have
-  // that hide dropped or `AppActivated` would later reveal a window the law
-  // says should have been dismissed.
-  //
-  // `acceptsInput` is flipped by `WindowAcceptsInputChanged` rather than by
-  // the registration, and it has to be: registration-time `acceptsInput` is a
-  // lived fact the merge preserves rather than overwrites (see
-  // `WindowRegistered`'s merge arm), AND a click-through window is not
-  // `isAppResignSweepEligible` in the first place, so registering one
-  // click-through would leave no mark to reason about and the test would
-  // assert nothing.
-
   it('a re-registration that turns a marked window transient drops the reversible hide', () => {
     const marked = wid(3);
-    // Floating (`layer > BASE_LAYER`), input-taking, non-content — the shape
-    // `isAppResignSweepEligible` accepts, which is the only way to get the mark.
+    // Floating, input-taking, non-content — the shape isAppResignSweepEligible accepts, the
+    // only way to get the mark. An input-taking transient must have the hide dropped, or
+    // AppActivated would later reveal a window the law says should have been dismissed.
     const asWorkspace: Event = { type: 'WindowRegistered', id: marked, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
     const before = fold([asWorkspace, { type: 'WindowShown', id: marked }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
     const markedRecord = before.order.find((w) => w.id === marked)!;
@@ -1854,15 +1183,14 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
       false,
       'a transient the law would dismiss may not sit on a hide AppActivated would reverse',
     );
-    // Still hidden — the fix clears the MARK, not the hide. Nothing re-shows
-    // the window here, and nothing should: the mark is what would have made
-    // `AppActivated` reveal it.
+    // Still hidden — the fix clears the mark, not the hide; nothing re-shows the window here.
     assert.strictEqual(afterRecord.visible, false);
     assert.deepStrictEqual(checkInvariants(after, before), []);
     assert.deepStrictEqual(checkStrandedHideAgreesWithSelector({ prev: before, next: after, effects: [] }), []);
   });
 
   it('a re-registration that turns a marked CLICK-THROUGH window transient keeps the hide', () => {
+    // A click-through transient keeps its hide — the law spares click-through windows outright.
     const marked = wid(4);
     const asWorkspace: Event = { type: 'WindowRegistered', id: marked, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
     const before = fold([
@@ -1891,9 +1219,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
   });
 
   it('the prev/next invariants name the field when a lived fact IS dropped', () => {
-    // Feeds `checkInvariants` a hand-mutilated `next` — the shape a merge bug
-    // produces — so the two new prev/next clauses are proven to fire rather
-    // than merely present.
+    // Feeds checkInvariants a hand-mutilated next — the shape a merge bug produces.
     const before = fold(livedLog());
     const record = before.order.find((w) => w.id === id)!;
     const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds' | 'pendingHidden' | 'acceptsInput'): State => {
@@ -1915,38 +1241,20 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.deepStrictEqual(checkInvariants(strip('bounds'), before), [
       `bounds decayed back to absent for ${id}`,
     ]);
-    // `acceptsInput` is required, so stripping it produces a shape violation
-    // rather than a "decayed back to absent" one — the field can never be
-    // legitimately absent, only malformed.
+    // acceptsInput is required, so stripping it is a shape violation, not a decay-to-absent one.
     assert.deepStrictEqual(checkInvariants(strip('acceptsInput'), before), [
       `malformed acceptsInput for ${id}: undefined`,
     ]);
-    // `pendingHidden` is the deliberate exception (see `checkInvariants`' own
-    // comment): clearing it is legitimate kernel behavior, not a merge bug,
-    // so stripping it back to absent must NOT be named as a violation the way
-    // the three fields above are.
+    // pendingHidden is the deliberate exception — clearing it is legitimate kernel behavior.
     assert.deepStrictEqual(checkInvariants(strip('pendingHidden'), before), []);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The `lastFocusAssert` clauses, proven to fire.
-//
-// The generator DOES produce a focus assert now (variant 35, both the command
-// and the raw event), but it almost never produces one that fires these two
-// clauses: `lastFocusAssert` is only written by a second assert following a
-// first, and the measurement recorded above shows the generated asserts name a
-// window absent from `order` 21 times in 84, a registered non-content window
-// 60 times, and a content window only 3 times. So the two clauses stay pinned
-// here against hand-built states, the same anti-vacuity move the merge clauses
-// above use: a clause nobody has ever seen fail is decoration, and generated
-// coverage that thin is not a substitute for one that has.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Pinned by hand — the generator only rarely produces the asserted-twice sequence these two
+// clauses need.
 describe('window-kernel: the lastFocusAssert invariants name the violation', () => {
   const id = wid(0);
 
-  /** One visible, focused content window, then an assert on it. */
   const asserted = (): { prev: State; next: State } => {
     const prev = fold([
       { type: 'WindowRegistered', id, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
@@ -1980,17 +1288,10 @@ describe('window-kernel: the lastFocusAssert invariants name the violation', () 
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The settle-timeout invariant, proven non-vacuous. It replaced one asserting
-// the OPPOSITE (that no record stays transitional through a timeout), so a
-// silent pass here would mean the check had simply stopped looking rather than
-// started checking the new contract.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Proven non-vacuous, not just present.
 describe('window-kernel: the settle-timeout invariant names the violation', () => {
   const id = wid(0);
 
-  /** One window mid-entry, then the settle timeout that asks about it. */
   const timedOut = (): { next: State; item: LogItem } => {
     const prev = fold([
       { type: 'WindowRegistered', id, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
@@ -2020,39 +1321,8 @@ describe('window-kernel: the settle-timeout invariant names the violation', () =
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The `WindowRegistered` key-carry, pinned against a hand-built two-press
-// scene — "a peek opens only on every other hotkey press", where the peek is
-// a transient (`role:'quick-view'`, `keepLive:false`, `acceptsInput:true`)
-// registered while another page-host holds key, and ~30-50ms later that host
-// retakes focus and either spares or dismisses the peek depending on whether
-// its `OsFocusGained` carries `cause:'machine'` (the `newer-than-focuser`
-// exemption arms) or `cause:'world'` (it does not).
-//
-// A LEADING HYPOTHESIS for what alternates between presses: `WindowClosed`
-// deliberately leaves `state.key` naming the closed window (see that arm's
-// own doc — a dangling key is made unobservable by `keyWindow` rather than
-// repaired there), and `OsFocusGained` is the only writer of `key`. So how
-// press N's peek died decides what press N+1 inherits — dismissed WHILE it
-// still held key leaves `key` DANGLING; dismissed AFTER the other host
-// already retook key leaves `key` LIVE. `WindowRegistered`'s fresh-record
-// branch reads exactly that carry to place the next peek: `insertAt =
-// keyIdx === -1 ? state.order.length : keyIdx` — dangling appends it on top
-// of `order`, live inserts it below the key window.
-//
-// THIS IS REFUTED BELOW. The carry genuinely moves `order` (proven by the
-// second `it`) and genuinely changes which `SetStacking` effects `react`
-// emits on the next show (proven by the third) — but
-// `transientAutocloseExemption` never reads `order` position: its only
-// ordering input is `rec.openSeq` against the FOCUSER's own `openSeq`
-// (`selectTransientAutoclose`'s `orderingFloor`), and `openSeq` is a
-// monotonic counter (`state.openSeqCounter`) assigned at registration,
-// untouched by where the fresh record lands in `order`. The last `it` plays
-// the SAME press-2 scene from each carry with the second host's refocus
-// cause held fixed, and the dismiss/spare verdict is identical either way —
-// the carry is staging, not the alternation's cause.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// The key-carry after a dismissed peek changes where the next peek is staged, but not the
+// transient-autoclose verdict — refuted here against the hypothesis that it would.
 describe('window-kernel: the WindowRegistered key-carry moves staging, not the transient-autoclose verdict', () => {
   const hostA = wid(0);
   const peek1 = wid(1);
@@ -2083,17 +1353,11 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
     keepLive: false,
   });
 
-  /** hostA registered, orderable, shown, and holding key — what every press below opens against. */
   const baseline = (): State =>
     fold([registerHost(), { type: 'WindowContentOrderable', id: hostA }, { type: 'WindowShown', id: hostA }, { type: 'OsFocusGained', id: hostA, cause: worldCause }]);
 
-  /**
-   * Press 1, dismissed by hostA retaking focus AFTER it already holds key —
-   * `OsFocusGained` writes `key` before the sweep it triggers runs
-   * (`react`'s raise-then-sweep ordering), so the closed peek's
-   * `WindowClosed` lands with `key` already naming a LIVE record. Produces
-   * the "live" carry.
-   */
+  // hostA reclaims key before the sweep runs (react's raise-then-sweep order), so WindowClosed
+  // sees key already live.
   const liveCarryPrefix = (): State =>
     fold(
       [
@@ -2106,11 +1370,8 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
       baseline(),
     );
 
-  /**
-   * Press 1, closed directly WHILE it still holds key — e.g. Escape closing
-   * the still-focused peek — before hostA (or anything else) ever retakes
-   * focus. `WindowClosed` leaves `key` naming the just-closed peek: dangling.
-   */
+  // The peek is closed while still holding key, before anything else retakes it — key is left
+  // dangling.
   const danglingCarryPrefix = (): State =>
     fold(
       [registerPeek(peek1), { type: 'WindowShown', id: peek1 }, { type: 'OsFocusGained', id: peek1, cause: machineCause }, { type: 'WindowClosed', id: peek1 }],
@@ -2145,23 +1406,14 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
         .filter((e) => e.type === 'SetStacking')
         .map((e) => e.id);
     };
-    // Live: registration already sat peek2 BELOW hostA, so hostA's own
-    // stacking position also has to be replayed once peek2's show forces it
-    // into the band (the minimal-diff suffix search — see `react`'s
-    // `SetStacking` doc). Dangling: peek2 was already registered on top of
-    // `order`, so its own show is the whole replay.
+    // Live re-derives hostA's stacking too (the minimal-diff suffix replay); dangling only
+    // replays peek2's own show.
     assert.deepStrictEqual(stackingTargets(liveCarryPrefix()), [peek2, hostA]);
     assert.deepStrictEqual(stackingTargets(danglingCarryPrefix()), [peek2]);
   });
 
-  /**
-   * THE VERDICT, held fixed against the carry. Press 2 replays exactly
-   * press 1's shape (peek2 opens, takes key, hostA retakes it), with hostA's
-   * refocus `cause` — the actual defect's real binary — the only input that
-   * varies BETWEEN the two cases below, and held IDENTICAL across the two
-   * carries WITHIN each case. If the leading hypothesis held, the two
-   * carries would disagree here; they do not.
-   */
+  // Holds the refocus cause fixed as the only variable between carries — if the carry mattered,
+  // the two would disagree here.
   const dismissVerdict = (prefix: State, hostRefocusCause: FocusCause): boolean => {
     let state = evolve(prefix, registerPeek(peek2));
     state = evolve(state, { type: 'WindowShown', id: peek2 });
