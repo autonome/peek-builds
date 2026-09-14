@@ -47,7 +47,6 @@ yarn tauri:ios:xcode      # Open Xcode project
 yarn tauri:android:dev    # Run on Android emulator
 
 # Server (webhook API for mobile sync)
-yarn server:install       # Install server dependencies
 yarn server:start         # Run production server
 yarn server:dev           # Run with hot reload
 yarn server:test          # Run server tests
@@ -736,19 +735,18 @@ yarn mobile:ios:device:run
 
 ## Server Backend (Webhook API)
 
-The server backend (`backend/server/`) is a remote HTTP API for syncing data from the mobile app. It's separate from the desktop backends - it doesn't implement the Peek API, it's a standalone Node.js server.
+The server backend (`apps/server/`) is a remote HTTP API for syncing data from the mobile app. It's separate from the desktop backends - it doesn't implement the Peek API, it's a standalone Node.js server.
 
 ### Server Commands
 ```bash
 # From project root
-yarn server:install      # Install dependencies (first time)
 yarn server:start        # Run production server (port 3000)
 yarn server:dev          # Run with hot reload
 yarn server:test         # Run unit tests (92 tests)
 yarn server:healthcheck  # Verify server starts and responds
 
-# From backend/server/
-npm install
+# From apps/server/
+# Dependencies: run yarn install at the repo root (apps/server is a yarn workspace; npm install inside apps/server rewrites the root yarn.lock)
 npm start
 npm run dev
 npm test

@@ -5,14 +5,14 @@ Webhook server for the Peek mobile app. Receives URLs, texts, tagsets, and image
 ## Commands
 
 ```bash
+# Dependencies: run yarn install at the repo root. apps/server is a yarn workspace, and npm install inside it rewrites the root yarn.lock.
+
 # From this directory (apps/server/)
-npm install          # Install dependencies
 npm start            # Run the production server
 npm run dev          # Run with file watching (auto-restart on changes)
 npm test             # Run the test suite
 
 # From project root
-yarn server:install  # Install server dependencies
 yarn server:start    # Run the production server
 yarn server:dev      # Run with file watching
 yarn server:test     # Run the test suite

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 // apps/server's own dependencies are just hono/archiver/@hono/node-server
-// (see apps/server/CLAUDE.md — a fresh `npm install --prefix apps/server`
+// (see apps/server/CLAUDE.md — a fresh `yarn install` at the repo root
 // pulls nothing else). Reaching for an unzip package would only resolve here
 // because the workspace root happens to hoist one; a plain `npm install` in
 // apps/server alone would not have it. readZipEntries/extractZipEntry/

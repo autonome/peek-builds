@@ -42,7 +42,7 @@ steps:
   - name: sync integration tests
     # Spawns apps/server as a child process against a temp data dir. Its
     # deps come from the yarn install above, since apps/server is a yarn
-    # workspace. `yarn server:install` must not run here: npm, run inside
-    # a workspace, installs at the root and rewrites yarn.lock, and every
-    # later yarn command then refuses the lockfile.
+    # workspace. `npm install` must not run inside apps/server here: npm,
+    # run inside a workspace, installs at the root and rewrites yarn.lock,
+    # and every later yarn command then refuses the lockfile.
     command: yarn test:sync

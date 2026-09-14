@@ -38,8 +38,8 @@ the tests, and no dependency on the root `node_modules/better-sqlite3` build
 (that native module still exists at the repo root for the desktop app under
 Electron's ABI — see `apps/desktop/CLAUDE.md` — but the server never touches
 it). A fresh checkout just needs `apps/server`'s plain JS dependencies
-(`yarn server:install` / `npm install --prefix apps/server`, for `hono` /
-`archiver` / `@hono/node-server`) — no rebuild, no ABI matching, and running
+(`hono` / `archiver` / `@hono/node-server`, installed by `yarn install` at
+the repo root, since apps/server is a yarn workspace) — no rebuild, no ABI matching, and running
 `npm rebuild` at the repo root (still forbidden — see the desktop guide) has
 no effect on the server either way.
 
