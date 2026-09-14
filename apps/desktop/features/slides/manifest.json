@@ -28,7 +28,6 @@
       "scopes": ["global"],
       "topics": [
         "slides:settings-changed",
-        "slides:settings-update",
         "window:closed",
         "cli:slide-open"
       ]
