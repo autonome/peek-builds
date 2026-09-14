@@ -322,6 +322,11 @@ or slowing down tests.
 - Increase wait time in test
 - Check URL patterns match actual window URLs
 - Use `app.windows()` to debug available windows
+- Slides, peeks and pages open as hybrid page-hosts (`BaseWindow`), which
+  `BrowserWindow.getAllWindows()` does not enumerate. A `windowUrlExists`-style helper built on
+  it reads as always-false for an open slide, which looks exactly like the slide failing to
+  open. Assert that a window opened with `app.getWindow(urlSubstring, timeout)`, which does see
+  hybrid hosts; keep `getAllWindows()` helpers to negative precondition checks.
 
 ### Data conflicts between tests
 - Ensure unique PROFILE per test suite
