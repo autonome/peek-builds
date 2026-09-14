@@ -125,6 +125,12 @@ a recording catches it twice.
   continued failures are attributed to a second, undiagnosed defect: a subsequent activation's
   handoff (or a content event) fails to land on the renderer even after it is demonstrably
   subscribed (`docs/design/window-manager.md` § 4.3 dim 3b), not to first-load subscription timing.
+  **One Linux-only share of this cluster is diagnosed and fixed at `0013a7a9`:** specs that open a
+  REAL host through `app.window.open` and activate it through the bridge's `setActive` lost the
+  chrome because the bridge hid the focused host first. The rows here that open real hosts
+  (`page-layout.spec.ts`, `hybrid-content-window-gesture.spec.ts`, and five in
+  `permission-prompt.spec.ts`) should leave the failing set; the fake-host rows should not. See
+  "Linux single-spec A/B of the bridge `setActive` fix" below.
 - **headless paint** — `scripts/playwright-with-display.sh` unsets `HEADLESS`/`PEEK_HEADLESS` on
   Linux, because windows must render into Xvfb or Chromium's hidden page-visibility state hangs
   RAF-based waits. Specs asserting the headless suppression path therefore cannot pass here by
@@ -145,6 +151,50 @@ a recording catches it twice.
   renamed and rewritten: its Escape assertion was vacuous, and the guard is now the opened window's
   classification. The row above carries the current name. Whether it still fails on Linux is
   **unverified** — the rewrite has only been run on macOS, where it passes 6/6 packaged, twice.
+
+## Linux single-spec A/B of the bridge `setActive` fix (2026-09-14)
+
+Not a gate run, and the tables above are not re-recorded from it: each row is one spec file run
+alone (source build, `--workers=1`, Xvfb + openbox) at `0013a7a9` ("fixed") and at the same head
+with only `hybrid-overlay.ts` restored to its parent ("unfixed"). It exists because two of the
+"overlay race" rows above have a diagnosed cause, and a later gate run should expect the failing
+set to move.
+
+**The diagnosed cause.** `hybrid-overlay.ts installTestBridge setActive(id)` hid every visible
+base-layer page host, the target included, before reporting the target shown and focused. For a
+REAL host (opened through `app.window.open`) that hide is a native hide of a window holding real
+OS focus, which Linux runs grant. openbox hands focus to the settings window;
+`electron-window-backend.ts` suppresses one hide-provoked focus, but two arrive, and the second
+raises the settings window above the host. `window-kernel.ts topmostBaseLayerPageHost` then answers
+null, the chrome detaches, and `waitOverlayReady` reports `activeHandoffApplied: false`. Fake hosts
+(`makeFakeHybridWindow`) hold no OS focus, so they were never affected. `0013a7a9` leaves the
+target out of the hide.
+
+| Spec | Unfixed | Fixed |
+|---|---|---|
+| `desktop-disruptive/hybrid-content-window-gesture-fullscreen.spec.ts` | 2 of 2 failed, 2 runs | 2 of 2 passed, 3 runs |
+| `hybrid-content-window-gesture.spec.ts` | not re-run at this head | 6 of 6 passed, 1 run |
+| `page-layout.spec.ts` | not re-run at this head | 5 of 5 passed, 1 run |
+| `permission-prompt.spec.ts` | 6 failed, 1 run | 2 failed, 1 run |
+| `hybrid-overlay.spec.ts` | 20 and 23 failed, 2 runs | 20 and 21 failed, 2 runs |
+
+- **`permission-prompt.spec.ts`.** The five rows in the deterministic table above (geolocation
+  Deny, Allow path, Remember + Deny, Remember + Allow, window close) all open real hosts; four of
+  them failed unfixed and all five pass fixed. Two tests missing from the table above fail on BOTH
+  trees: "queueing: two requests show ONE prompt…" and "background-window deferral: request for a
+  non-active window stays queued; surfaces on setActive". Both use fake hosts, so the fix cannot
+  reach them. Run alone on the fixed build (2 runs), background-window deferral failed both times
+  and queueing passed both times, so queueing's failure depends on the tests before it.
+- **`hybrid-overlay.spec.ts`.** Roughly twenty tests fail on both trees, and the fix does not move
+  the set: the tests that differ between the four runs ("retarget is focus-free", "maximize snaps to
+  work area", "a hidden host must not leave the chrome revealed", "entities panel renders…", "Cmd+L
+  reveals the navbar AND focuses the URL field") are the race `docs/design/window-manager.md`
+  § 4.3.1 records. The table above lists only "repeat Cmd+L (press 2)" as deterministic, so for this
+  file the table is stale at this head. The cause of the growth since `43cda804` is not attributed;
+  every test in the file uses fake hosts, so it is not the mechanism above.
+- **`hybrid-content-window-gesture.spec.ts` and `page-layout.spec.ts`** pass fixed, but their
+  unfixed state was not re-measured at this head, so "fixed by `0013a7a9`" is inferred from the
+  mechanism (both open real hosts through `app.window.open`) and the table above, not A/B'd.
 
 ## Refreshing this file
 
