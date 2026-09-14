@@ -952,9 +952,25 @@ function installTestBridge(): void {
       // is both correct and sufficient: whatever a hide promotes is itself a
       // visible base-layer page-host (`isBaseLayerPageHost`), so it is already
       // present in the snapshot taken before any hide fired.
+      //
+      // The host being activated is left out of the drain. For a fake host its
+      // hide-then-show was a no-op, but for a REAL host (a window opened through
+      // `app.window.open`) the kernel realizes the hide as a native hide of a
+      // window that may hold real OS focus. A window manager that reassigns
+      // focus on hide (Linux/openbox under the test harness) then hands focus to
+      // another Peek window — the settings window — and once the backend's
+      // one-shot hide-provoked suppression is spent, a second focus event for
+      // that window lands as a world focus, raises it above the host, and
+      // `topmostBaseLayerPageHost` answers null: the chrome detaches and the
+      // handoff never paints. Skipping the target loses nothing, because the
+      // `kernelWindowShown(wid, true)` below dispatches `OsFocusGained`, which
+      // moves the target to the top of `order` whether or not it already held
+      // key.
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
-      const drained = getKernelExecutor().getState().order.filter(isBaseLayerPageHost);
+      const drained = getKernelExecutor()
+        .getState()
+        .order.filter((r) => isBaseLayerPageHost(r) && r.id !== wid);
       getKernelExecutor().markTimeline(
         `setActive(${String(wid)}) drain=[${drained.map((r) => String(r.id)).join(',')}]`,
       );
