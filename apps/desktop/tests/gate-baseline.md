@@ -496,3 +496,28 @@ cause). Live shares the path through `raiseWindow`'s `kernelWindowShown(id, true
 Packaging note: `electron-builder --dir` failed twice in a row with `certificate has expired`
 from a network fetch inside electron-builder, then succeeded on the same command with no
 change. A gate that dies there has not run any test; rerun it.
+
+### Tenth macOS gate run — 2026-09-14
+
+Run at commit `a63df259`, the restore-activation fix over the talk-deck move `b8c51d9e`.
+Green.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3265 | 0 | — |
+| node unit | 759 | 0 | — |
+| desktop | 437 | 0 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The fix: session restore's cold-start focus block passes user activation intent, so the
+saved-focused window's raise runs `app.focus({ steal: true })` through the same channel the
+palette uses (`session.ts restoreSessionSnapshot`, `windows.ts showHybridHost`). Before it,
+a packaged launch with another app frontmost left that app frontmost, restore lifted a
+different window to the top, and every window past the eager five stayed black because its
+deferred load is released only by host OS focus. Hand check on a packaged build against a
+clone of the production profile, launched with the terminal frontmost: Peek came to the
+front, the window frontmost at quit was key, and no window was black after a minute. All
+three symptoms shared the missing activation; the stack-import key re-lift and the
+focus-gated deferred load are still in the code but no longer produce a symptom.
