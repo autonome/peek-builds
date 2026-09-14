@@ -267,9 +267,15 @@ const init = async () => {
     // tile-spawning FIRST press doesn't run against the bundled defaults (where
     // only 'Up' is enabled). See settingsLoaded.
     await settingsLoaded;
+    // Resolve the edge against the SAVED settings, not `currentSettings`. An
+    // address edit writes the row and then publishes slides:settings-changed,
+    // whose reinit() reloads asynchronously; a press landing before that reload
+    // finished opened the old address. See slides-address-edit-while-open.spec.ts
+    // "hotkey pressed before settings-changed arrives".
+    const saved = await loadSettings();
     const raw = String(msg?.args?.[0] ?? '');
     const edge = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
-    const item = (currentSettings.items || []).find(i => i.screenEdge === edge && i.enabled);
+    const item = (saved.items || []).find(i => i.screenEdge === edge && i.enabled);
     if (!item) {
       console.warn('[ext:slides] cli:slide-open — no enabled item with screenEdge=' + edge);
       return;

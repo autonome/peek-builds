@@ -296,3 +296,56 @@ test.describe('Slides address edit while the slide window is open — ordering B
     expect(newWindowId, 'the new-address window must open once the old one is closed').not.toBeNull();
   });
 });
+
+// The hotkey can beat the change notification. manage.js save() writes the row and
+// then publishes `slides:settings-changed`, and the awake tile's reinit() reloads
+// settings asynchronously — so a press landing inside that window used to open the
+// OLD address (seen under full-suite load: a second window keyed to the old address
+// opened ~140ms after the edit). The saved row is the source of truth, so the press
+// must read it rather than the tile's in-memory copy. Writing the row with no
+// publish at all makes that ordering deterministic.
+test.describe('Slides hotkey reads the saved address, not a stale in-memory copy @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+  let server: http.Server;
+  let serverPort: number;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('slides-address-hotkey-beats-notify'));
+    ({ server, port: serverPort } = await startServer());
+  });
+
+  test.afterAll(async () => {
+    if (server) server.close();
+    if (app) await app.close();
+  });
+
+  test('hotkey pressed before settings-changed arrives opens the saved address', async () => {
+    test.skip(!(await bridgePresent(app)), 'no hybrid overlay / test bridge in this configuration');
+
+    const oldAddress = `http://127.0.0.1:${serverPort}/beats-notify-old`;
+    const newAddress = `http://127.0.0.1:${serverPort}/beats-notify-new`;
+
+    // Wake the tile with the old address so its in-memory settings hold it.
+    await seedSlide(bgWindow, oldAddress);
+    await fireSlideOpen(app, EDGE);
+    const oldWindowId = await waitHybridForUrl(app, oldAddress, []);
+    expect(oldWindowId, 'the old-address slide must open').not.toBeNull();
+
+    await closeWindowId(bgWindow, oldWindowId!);
+    await expect.poll(() => hybridWindowExists(app, oldWindowId!), {
+      timeout: 10000, message: 'the old window never closed',
+    }).toBe(false);
+
+    // Save the new address WITHOUT publishing slides:settings-changed.
+    await seedSlide(bgWindow, newAddress);
+
+    await fireSlideOpen(app, EDGE);
+    const newWindowId = await waitHybridForUrl(app, newAddress, [oldWindowId!], 8000);
+    expect(
+      newWindowId,
+      'the hotkey must open the saved address even before the tile hears settings-changed',
+    ).not.toBeNull();
+    expect(await hybridAddresses(app)).not.toContain(oldAddress);
+  });
+});
