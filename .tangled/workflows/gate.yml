@@ -39,13 +39,10 @@ steps:
   - name: extension unit tests
     command: yarn test:extension
 
-  - name: server dependencies
-    # apps/server is deliberately npm-only and outside the yarn
-    # workspaces (see apps/server/CLAUDE.md) — its deps don't come from
-    # the yarn install above.
-    command: yarn server:install
-
   - name: sync integration tests
-    # Spawns apps/server as a child process against a temp data dir, so
-    # it needs the step above to have run first.
+    # Spawns apps/server as a child process against a temp data dir. Its
+    # deps come from the yarn install above, since apps/server is a yarn
+    # workspace. `yarn server:install` must not run here: npm, run inside
+    # a workspace, installs at the root and rewrites yarn.lock, and every
+    # later yarn command then refuses the lockfile.
     command: yarn test:sync
