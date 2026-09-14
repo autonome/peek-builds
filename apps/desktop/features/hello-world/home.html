@@ -86,7 +86,7 @@ api.commands.<span class="fn">register</span>({
         <p><strong>Unit tests</strong> — pure logic, no Electron needed:</p>
         <pre>yarn test:unit</pre>
         <p><strong>Electron integration tests</strong> — full app, headless:</p>
-        <pre>yarn test:electron:bg   <span class="cmt"># background, logs to /tmp/test-electron.log</span>
+        <pre>yarn test:electron:bg   <span class="cmt"># background, tail the log with yarn test:log</span>
 yarn test:electron      <span class="cmt"># foreground headless</span></pre>
         <p><strong>Minimal Playwright test for a tile command:</strong></p>
         <pre>test(<span class="str">'hello world command shows window'</span>, <span class="kw">async</span> ({ page }) =&gt; {

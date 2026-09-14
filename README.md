@@ -409,7 +409,7 @@ peek/
 
 **Lex** — Lexicon feature: UI logic and background processing.
 
-Background test commands: `yarn test:desktop:electron:bg` runs the full desktop (electron) gate headless in background (logs to `/tmp/test-electron.log`).
+Background test commands: `yarn test:desktop:electron:bg` runs the full desktop (electron) gate headless in background (tail the log with `yarn test:log`).
 
 ### Notes
 

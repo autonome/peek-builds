@@ -32,6 +32,13 @@
 #   e.g. scripts/bg-run.sh /tmp/test-electron.log yarn test:desktop:electron
 # Side files, derived from <logfile>: <base>.exit (real exit code, written on
 # completion) and <base>.pid (child pid, for the liveness check).
+#
+# <logfile> is taken as-is — this script has no opinion on the path. Callers (e.g.
+# apps/desktop/package.json's `:bg` scripts) tag it via scripts/tagged-path.sh, which
+# derives a suffix from the calling checkout's own worktree root, so two worktrees (or a
+# worktree and the primary checkout) running the same gate at the same time don't share a
+# log or a staging file. Do not flatten those tagged paths back to constants — that's what
+# let one run's output silently clobber another's.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------

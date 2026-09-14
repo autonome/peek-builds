@@ -208,7 +208,7 @@ export function emitGateRejected(reason: GateRejectReason, ctx: GateRejectContex
     // Never propagate telemetry failures — drop silently + log.
     console.error('[tile-ipc-gate] Failed to publish gate:rejected:', err);
   }
-  // Also mirror to console.warn so /tmp/test-electron.log carries the
+  // Also mirror to console.warn so the :bg test run's log carries the
   // full drop context (rate-limited publishes hide this from pubsub
   // subscribers that arrived late).
   console.warn(`[tile-ipc-gate] gate:rejected reason=${reason} op=${ctx.op} tileId=${ctx.tileId ?? '<none>'}`);

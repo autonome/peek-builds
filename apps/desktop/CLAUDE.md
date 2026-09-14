@@ -122,8 +122,9 @@ anchoring each project to its own `tests/<dir>/`.
 
 ```bash
 yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~3190)
-yarn test:desktop:electron:bg       # same, backgrounded → tail /tmp/test-electron.log
-                                    #   pass/fail = /tmp/test-electron.exit, NOT the :bg exit code
+yarn test:desktop:electron:bg       # same, backgrounded → tail with yarn test:log
+                                    #   pass/fail = the log's .exit sentinel, NOT the :bg exit code
+                                    #   (path is worktree-tagged: scripts/tagged-path.sh test-electron.log)
 yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test
 yarn test:desktop:electron:source   # Escape hatch: source-only, no packaging (runners 3+4 only)
 yarn test:desktop:electron:x        # Packaged desktop project, stop on first failure
@@ -320,15 +321,17 @@ the below was covered — every one became a user-visible regression. Invariants
 the decision/state via the hybrid test bridge, not real focus. Coverage added:
 `hybrid-show-activate`, `hybrid-activation-policy`, `hybrid-close-shortcut`,
 `hybrid-shortcut-routing`. The `:bg` test family detaches cross-platform via
-`scripts/bg-run.sh` (macOS `nohup` / Linux `setsid -f`), backgrounding the gate to
-`/tmp/test-electron.log` (tail with `yarn test:log`).
+`scripts/bg-run.sh` (macOS `nohup` / Linux `setsid -f`), backgrounding the gate to a log
+(tail with `yarn test:log`) at a path tagged per checkout by `scripts/tagged-path.sh` —
+`scripts/tagged-path.sh test-electron.log` prints it — so two worktrees (or a worktree and
+the primary checkout) running the gate at once don't share one log.
 
 **A `:bg` launch returning 0 means the run STARTED, not that it passed.** The script's
 own status can only report the launch; the run outlives it. To judge a `:bg` run:
 
-- **`/tmp/test-electron.exit`** — the sentinel: the gate's real exit code, written by the
-  child on completion. Absent = still running. This is the machine-readable pass/fail;
-  don't grep the log for "passed".
+- **The log's `.exit` sentinel** (`scripts/tagged-path.sh test-electron.exit`) — the gate's
+  real exit code, written by the child on completion. Absent = still running. This is the
+  machine-readable pass/fail; don't grep the log for "passed".
 - The log always opens with `bg-run: STARTED <cmd> @<ts>` and closes with `bg-run: EXIT <code>`.
   A log with STARTED but no EXIT is still in flight; an empty log means the launcher itself
   never ran. (Before those banners an empty-looking log was indistinguishable from a quiet

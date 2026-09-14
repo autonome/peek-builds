@@ -140,7 +140,7 @@ trigger.
 
 ```
 yarn test:electron:bg                      # full chain (desktop + serial)
-tail -F /tmp/test-electron.log
+yarn test:log                              # tail the run's log
 
 # or isolated:
 HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh \
