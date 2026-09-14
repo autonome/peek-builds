@@ -105,7 +105,9 @@ function optInput(label, value, onChange, options = {}) {
   input.disabled = options.disabled || false;
   if (options.placeholder) input.placeholder = options.placeholder;
 
-  // peek-input re-emits the native input's `change` (composed) — read .value.
+  // peek-input's render() re-dispatches its inner input's native `change`
+  // as a composed custom event on the host (peek-input.js PeekInput
+  // _handleChange()) — read .value.
   input.addEventListener('change', () => {
     let val = options.type === 'number' ? parseFloat(input.value) : input.value;
     if (options.type === 'number' && Number.isNaN(val) && options.default !== undefined) {

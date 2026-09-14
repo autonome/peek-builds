@@ -164,4 +164,67 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
     });
     expect(persistedPrefix).toBe(newPrefix);
   });
+
+  test('typing into an Options text field with the keyboard and blurring persists the value', async () => {
+    // Regression coverage for the real editing gesture, not a synthetic
+    // dispatchEvent: focus the native <input> inside the peek-input shadow
+    // root, type with the keyboard, then blur (Tab). The native `change`
+    // fired by the browser on blur is not composed, so it never reaches a
+    // host-side `change` listener unless peek-input re-dispatches it.
+    await bgWindow.evaluate(() => {
+      (window as any).__peeksSettingsChangedTyped = 0;
+      (window as any).app.subscribe('peeks:settings-changed', () => {
+        (window as any).__peeksSettingsChangedTyped++;
+      });
+    });
+
+    const manager = await openManager(app, bgWindow);
+
+    await manager.waitForFunction(() => {
+      const cards = Array.from(document.querySelectorAll('.feature-card'));
+      return cards.some(c => (c as HTMLElement).dataset.featureId === 'peeks');
+    }, { timeout: 15000 });
+
+    // Expand the peeks Options panel (idempotent — a no-op if it's already
+    // open from an earlier test sharing this window via the reused key).
+    await manager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
+      if (panel && panel.style.display === 'none') {
+        (card?.querySelector('.feature-options-toggle') as HTMLElement | null)?.click();
+      }
+    });
+
+    await manager.waitForFunction(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
+      return !!panel && panel.style.display !== 'none' && !!panel.querySelector('.form-group peek-input');
+    }, { timeout: 15000 });
+
+    const nativeInput = manager
+      .locator('.feature-card[data-feature-id="peeks"] .feature-options-panel .form-group peek-input input')
+      .first();
+
+    const newPrefix = 'Option+Ctrl+';
+    await nativeInput.click({ clickCount: 3 }); // focus + select existing text
+    await manager.keyboard.type(newPrefix);
+    await manager.keyboard.press('Tab'); // blur — fires the native change
+
+    // (a) the peeks:settings-changed publish fired.
+    await manager.waitForTimeout(500);
+    const changedCount = await bgWindow.evaluate(() => (window as any).__peeksSettingsChangedTyped);
+    expect(changedCount).toBeGreaterThan(0);
+
+    // (b) the typed value landed in the peeks feature_settings namespace.
+    const persistedPrefix = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const table = await api.datastore.getTable('feature_settings');
+      const row = table.data?.['peeks:prefs'];
+      if (!row) return undefined;
+      return JSON.parse(row.value).shortcutKeyPrefix;
+    });
+    expect(persistedPrefix).toBe(newPrefix);
+  });
 });

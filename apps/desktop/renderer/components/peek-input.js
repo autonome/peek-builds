@@ -247,6 +247,15 @@ export class PeekInput extends PeekElement {
     this._filterSuggestions();
   }
 
+  _handleChange() {
+    // The native <input> inside the shadow root fires a `change` that does
+    // NOT cross the shadow boundary (native `change` is not composed), so
+    // every host-side `change` listener silently never fires. Re-dispatch
+    // as a composed custom event so the host sees it. `value` is already
+    // current — `_handleInput` keeps it in sync on every keystroke.
+    this.emit('change', { value: this.value });
+  }
+
   _handleFocus() {
     if (this.value.length >= this.minChars && this._filteredSuggestions.length > 0) {
       this._open = true;
@@ -324,8 +333,10 @@ export class PeekInput extends PeekElement {
 
     this.emit('suggestion-select', { value: label, item });
 
-    // Trigger input change event
-    this.inputElement?.dispatchEvent(new Event('change', { bubbles: true }));
+    // Same composed `change` the inner input's native `change` triggers —
+    // go through the one path rather than dispatching a non-composed native
+    // event on the inner input, which would never reach the host.
+    this._handleChange();
   }
 
   _highlightMatch(text) {
@@ -362,6 +373,7 @@ export class PeekInput extends PeekElement {
           aria-autocomplete="list"
           aria-controls="suggestions"
           @input=${this._handleInput}
+          @change=${this._handleChange}
           @focus=${this._handleFocus}
           @blur=${this._handleBlur}
           @keydown=${this._handleKeydown}
