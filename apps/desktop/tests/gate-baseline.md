@@ -521,3 +521,28 @@ clone of the production profile, launched with the terminal frontmost: Peek came
 front, the window frontmost at quit was key, and no window was black after a minute. All
 three symptoms shared the missing activation; the stack-import key re-lift and the
 focus-gated deferred load are still in the code but no longer produce a symptom.
+
+### Eleventh macOS gate run — 2026-09-14
+
+Run at commit `19fa3f8a`, the peek-input change-event fix plus the Features Manager
+search-field focus, over `d96e8dce`. Green.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3265 | 0 | — |
+| node unit | 759 | 0 | — |
+| desktop | 439 | 0 | 31 |
+| desktop-serial | 40 | 0 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+The fix: `peek-input` renders its native `<input>` inside a shadow root, and the native
+`change` event is not composed, so it never reached the `change` listener the Features
+Manager attaches on the host (`manage.js optInput()`). Text fields in Features Manager →
+Options therefore never saved, while switches and selects did because their elements emit
+composed custom events. The production datastore showed the symptom directly: both slides
+rows rewritten in the same second as a switch toggle, carrying the unchanged address, and
+the slide opening that address 22 seconds later. `PeekInput._handleChange()` now re-emits
+the inner input's `change` as a composed event. The two new desktop specs drive the field
+with real keyboard input and blur; the pre-existing options-save spec dispatched a
+synthetic composed `change`, which is why it passed on the broken code.
