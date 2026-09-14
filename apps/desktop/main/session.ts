@@ -1489,13 +1489,27 @@ export async function restoreSessionSnapshot(
         // WINDOW_SHOWN{focused:true}, so the machine's `front` is set
         // synchronously rather than waiting on the async OS focus event —
         // the same contract the hybrid branch below has had since step 6A-2.
+        //
+        // At cold start the app itself may not be the OS-active app yet (the
+        // launch can land before or straddle the startup activation dance),
+        // and `win.show()`/`makeKeyAndOrderFront` does not activate an app
+        // another app has displaced (docs/design/window-manager.md, "The
+        // palette summoned from another app was on screen but dead"). Cold
+        // start therefore carries the same `activation: 'user'` intent the
+        // palette's own user-summoned show carries, so
+        // `electron-window-backend.ts raiseWindow` takes its
+        // `app.focus({ steal: true })` branch instead of a bare show. Warm,
+        // in-session restore never reaches this branch unless the app is
+        // already active (`planRestoreFocus`), so leaving it unstolen there
+        // changes nothing.
+        const activation = isColdStart ? ({ activation: 'user' as const }) : undefined;
         if (focusWin) {
-          showWindowHeadlessSafe(focusWin, { active: true });
+          showWindowHeadlessSafe(focusWin, { active: true, ...activation });
           _restoreFocusCount++;
           _restoreFocusedId = focusedWindowId;
           DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
         } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
-          showHybridHost(hybridFocus.baseWin);
+          showHybridHost(hybridFocus.baseWin, activation);
           _restoreFocusCount++;
           _restoreHybridActivationCount++;
           _restoreFocusedId = focusedWindowId;

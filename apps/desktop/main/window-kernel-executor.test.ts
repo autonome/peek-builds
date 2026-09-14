@@ -856,6 +856,26 @@ describe('performing a RaiseWindow effect', () => {
       [[wid(2), 'user']],
     );
   });
+
+  it('a cold-start restore focus produces an activating raise for the saved-focused window even while appActive is still false (peek bc513e8c)', () => {
+    // Reproduces `session.ts restoreSessionSnapshot`'s cold-start focus block
+    // exactly: the loop already showed the saved-focused window INACTIVE
+    // (`WindowShown`), the macOS startup dance has not yet handed the app
+    // `appActive: true`, and the block re-drives it through the SAME two
+    // commands `kernelShowRequested(id, true, { activation: 'user' })` sends —
+    // `ShowWindow` then a `RaiseWindow` carrying `intent: 'user'` — rather than
+    // a bare `win.show()` that cannot activate an app another app displaced.
+    const { exec, backend } = makeExecutor({ appActive: false });
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    backend.calls.length = 0;
+    exec.execute({ type: 'ShowWindow', id: wid(1), expectedVersion: exec.getState().version });
+    exec.execute({ type: 'RaiseWindow', id: wid(1), expectedVersion: exec.getState().version, intent: 'user' });
+    const raises = backend.of('raiseWindow');
+    assert.strictEqual(raises.length, 1, 'the cold-start raise reaches the port instead of being masked by !appActive');
+    assert.strictEqual(raises[0].args[0], wid(1));
+    assert.strictEqual(raises[0].args[2], 'user', 'the backend brings the app forward on this raise (darwin)');
+  });
 });
 
 // ── The rest of the effect surface ───────────────────────────────────────────

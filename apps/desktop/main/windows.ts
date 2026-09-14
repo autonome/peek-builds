@@ -124,7 +124,7 @@ export function hybridShowIntent(
 // would end up frontmost instead of the page the user left focused.
 export function showHybridHost(
   baseWin: import('electron').BaseWindow,
-  opts?: { inactive?: boolean; nonActivating?: boolean },
+  opts?: { inactive?: boolean; nonActivating?: boolean; activation?: 'user' },
 ): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
   const intent = hybridShowIntent(isHeadless(), {
     inactive: opts?.inactive === true,
@@ -139,7 +139,11 @@ export function showHybridHost(
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
-    kernelShowRequested(id, opts?.inactive !== true);
+    kernelShowRequested(
+      id,
+      opts?.inactive !== true,
+      opts?.activation === 'user' ? { activation: 'user' } : undefined,
+    );
   }
   return intent;
 }
