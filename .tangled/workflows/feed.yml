@@ -1,0 +1,30 @@
+# Feed freshness: docs/feed.xml must match what CHANGELOG.md generates.
+#
+# The feed is served straight from git (the feedUrl in CHANGELOG.md points at
+# raw/main/docs/feed.xml), so a stale committed feed is a stale published feed.
+# scripts/changelog-to-rss.js is deterministic — lastBuildDate comes from the
+# newest changelog entry, not the clock — so regenerating and diffing is an
+# exact check. This replaces the per-machine pre-push hook that used to
+# regenerate the feed locally and only warn.
+#
+# On failure: run `yarn rss` and commit docs/feed.xml alongside the changelog
+# change (`yarn changelog:bump` does both).
+
+when:
+  - event: ["push"]
+    branch: ["main"]
+  - event: ["pull_request"]
+    branch: ["main"]
+  - event: ["manual"]
+
+engine: "nixery"
+
+dependencies:
+  nixpkgs: [nodejs_24, git]
+
+steps:
+  - name: feed freshness check
+    command: |
+      set -e
+      node scripts/changelog-to-rss.js
+      git diff --exit-code -- docs/feed.xml

@@ -103,7 +103,12 @@ function stableGuid(date, body) {
 }
 
 function generateRss(meta, items) {
-  const now = new Date().toUTCString();
+  // lastBuildDate is the newest item's date, not wall-clock time, so the
+  // output is byte-identical until CHANGELOG.md changes. The feed is served
+  // from git (see feedUrl in CHANGELOG.md), and a wall-clock stamp made every
+  // regenerate a spurious diff that the pre-push hook then nagged about.
+  const newest = items.map((i) => i.date).sort((a, b) => b.localeCompare(a))[0];
+  const now = new Date(newest + 'T12:00:00Z').toUTCString();
 
   let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
