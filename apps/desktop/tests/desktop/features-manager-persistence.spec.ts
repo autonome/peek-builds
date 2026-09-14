@@ -42,6 +42,33 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
     if (app) await app.close();
   });
 
+  // Runs first in this describe, before any other test's button clicks move
+  // focus elsewhere — the fix focuses the search field only ONCE (guarded),
+  // right after the initial feature list render, so this assertion is only
+  // meaningful against a freshly opened manager window.
+  test('search field is focused once the initial feature list has rendered', async () => {
+    const manager = await openManager(app, bgWindow);
+
+    await manager.waitForFunction(() => {
+      const cards = Array.from(document.querySelectorAll('.feature-card'));
+      return cards.some(c => (c as HTMLElement).dataset.featureId === 'peeks');
+    }, { timeout: 15000 });
+
+    // search-input is a <peek-input> — the focused element in the light DOM
+    // is the host, and the shadow root's own activeElement must be its inner
+    // native <input>.
+    const focusState = await manager.evaluate(() => {
+      const input = document.getElementById('search-input') as any;
+      const innerInput = input?.shadowRoot?.querySelector('input') ?? null;
+      return {
+        activeIsHost: document.activeElement === input,
+        shadowActiveIsInner: input?.shadowRoot?.activeElement === innerInput,
+      };
+    });
+    expect(focusState.activeIsHost).toBe(true);
+    expect(focusState.shadowActiveIsInner).toBe(true);
+  });
+
   test('builtin toggle writes core-store ITEMS enabled flag + publishes core:feature:toggle', async () => {
     // Seed the core-store ITEMS list with a peeks entry (this is what the
     // bgWindow / old Settings pane would have persisted). The builtin toggle

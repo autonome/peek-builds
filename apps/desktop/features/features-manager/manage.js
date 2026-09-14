@@ -362,8 +362,21 @@ let searchFilter = '';
 let pendingInstallUri = null;  // AT URI currently being previewed
 let pendingCapReviewId = null; // Feature ID pending capability review
 let createDirSelected = null;  // Selected directory for feature creation
+let hasFocusedSearchInput = false; // Focus the search field once, after the initial list renders.
 
 // ─── Data loading ───────────────────────────────────────────────────
+
+// Focuses the search field so typing filters immediately on page load.
+// Called once, after the FIRST feature list render — not before, so the
+// focus isn't stolen by the DOM work render() itself does — and guarded so
+// later re-renders (search, toggle, pubsub refresh) don't re-steal focus
+// from wherever the user has since moved it. searchInput is a <peek-input>;
+// its focus() reaches into its shadow root to focus the native input.
+function focusSearchInputOnce() {
+  if (hasFocusedSearchInput) return;
+  hasFocusedSearchInput = true;
+  searchInput.focus();
+}
 
 async function loadFeatures() {
   if (!hasPeekAPI) {
@@ -405,6 +418,7 @@ async function loadFeatures() {
     features = merged;
     render();
     updateLastCheckedFooter();
+    focusSearchInputOnce();
   } catch (err) {
     console.error('[features-manager] Failed to load features:', err);
     showEmpty('Failed to load features');
