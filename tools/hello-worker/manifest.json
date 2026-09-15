@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 3,
+  "id": "hello-worker",
+  "name": "Hello Worker",
+  "tiles": [],
+  "worker": {
+    "url": "worker.js",
+    "entry": "hello",
+    "schedule": "every 15m"
+  },
+  "capabilities": {
+    "datastore": {},
+    "network": { "domains": ["*"] }
+  }
+}
