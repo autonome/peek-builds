@@ -213,6 +213,11 @@ dispatcher's.** Red → reset `main` back, send the failing output to the
 original agent via `SendMessage` (it still has the context and the installed
 worktree), and re-review when it returns.
 
+An unattended agent cannot perform a manual phone check: when the item's
+`## Verify` names a device and steps rather than a command, the tick cannot
+treat it as passed. Such an item still lands at `peek:needs-review`, with the
+manual steps surfaced verbatim for a person to run.
+
 Clean up only after the task is marked done:
 
 ```bash

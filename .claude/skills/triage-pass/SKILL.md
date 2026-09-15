@@ -63,6 +63,12 @@ Skip anything tagged `peek:wip`, `peek:needs-review`, `peek:hold`,
    A command that does not exist is worse than no command: it sends an agent to
    fabricate its own acceptance criteria.
 
+   Exception: for a mobile UI change (`apps/mobile`), Verify may instead be a
+   manual check on a phone — Android or iOS — naming the device, the exact
+   steps, and what the screen shows when it passes. "No automated check
+   exists" alone is no longer a reason to hold a mobile UI item in
+   `peek:triage`.
+
 5. **Promote, or don't.**
    - Both sections written with confidence, and scope known →
      `peek:todo` + `peek:ready`, clearing `peek:triage`.

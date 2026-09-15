@@ -165,6 +165,12 @@ invents its own, and a reviewer with none to check against falls back to
 `dispatch` skill claims from unattended, so the two sections are the difference
 between queued work and work an agent can be trusted to finish alone.
 
+For a mobile UI change (`apps/mobile`), Verify may instead be a manual check
+on a phone — Android or iOS — naming the device, the exact steps, and what
+the screen shows when it passes. Android is a supported platform on the same
+footing as iOS; "no automated check exists" is not, on its own, a reason to
+leave a mobile item in `peek:triage`.
+
 Writing them is the `triage-pass` skill's job. Anything it cannot write with
 confidence stays `peek:triage` and surfaces as a question rather than a guess.
 
