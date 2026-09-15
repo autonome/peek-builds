@@ -4,6 +4,13 @@
 # a tag; to iterate on a feature branch, add that branch to the push trigger
 # temporarily and drop it again before merging.
 #
+# On a tag push the build is also published (scripts/publish-release.sh): the
+# AppImage goes to an R2 bucket and the tag gets a download link on tangled.
+# Manual runs only build. Release tags must be annotated (git tag -a), since
+# tangled attaches files only to annotated tags. Publishing reads the repo
+# secrets R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+# R2_PUBLIC_URL and ATP_APP_PASSWORD; the script header describes each.
+#
 # Engine choice: nixery rather than microvm. Packaging never executes the
 # Electron binary — electron-builder only bundles it — so the build needs no
 # steam-run and no NixOS guest. A microvm run of this workflow failed before
@@ -34,7 +41,8 @@ engine: "nixery"
 # would otherwise run from its downloaded AppImage bundle. Those are linked
 # against a loader at /lib64, which this image does not have, so exec fails
 # with ENOENT even though the file is present. curl and gnutar fetch the
-# bundle so its data files (runtimes/, lib/) can be reused as shipped.
+# bundle so its data files (runtimes/, lib/) can be reused as shipped. jq
+# builds and reads the JSON the publish step exchanges with the PDS.
 dependencies:
   nixpkgs:
     [
@@ -46,6 +54,7 @@ dependencies:
       curl,
       gnutar,
       gzip,
+      jq,
     ]
 
 steps:
@@ -87,3 +96,7 @@ steps:
       cp "$(command -v desktop-file-validate)" "$TOOLS/desktop-file-validate"
       export APPIMAGE_TOOLS_PATH="$TOOLS"
       yarn workspace @peek/desktop run build:electron:dist
+
+  - name: publish release
+    # Tag runs only; the script exits 0 without publishing otherwise.
+    command: scripts/publish-release.sh

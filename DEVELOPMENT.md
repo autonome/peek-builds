@@ -571,6 +571,28 @@ The Settings UI surfaces this in the Keyboard Shortcuts group when running on Wa
 
 For the full history (XWayland attempt, XDG GlobalShortcuts portal research and abandon reasoning, eventual-revisit conditions, and the implementation plan kept on file for that revisit), see [`docs/global-hotkeys-on-wayland.md`](docs/global-hotkeys-on-wayland.md).
 
+## Releases
+
+Pushing an annotated tag starting with `v` builds the Linux AppImage in CI and
+publishes it (`.tangled/workflows/appimage.yml`, `scripts/publish-release.sh`):
+
+```bash
+git tag -a v0.1.0 -m "Peek 0.1.0"
+git push tangled v0.1.0
+```
+
+The AppImage and a `SHA256SUMS` file land in the R2 bucket under `v0.1.0/`, and
+the tag's page on tangled gets a small text file with the download URL and
+checksum. The binary is not attached to the tag directly because tangled caps a
+tag attachment at 50 MiB. A plain (lightweight) tag fails the publish step,
+since tangled attaches files only to annotated tags.
+
+Retrying a tag's run from tangled's pipelines page rebuilds without publishing:
+a retry runs as a manual trigger and carries no tag. To republish, delete the
+tag on the remote and push the same local tag again
+(`git push tangled :refs/tags/v0.1.0`, then `git push tangled v0.1.0`); that
+overwrites the R2 objects and replaces the tag's text file.
+
 ## Claude Code Permissions
 
 All package.json scripts are pre-approved via wildcard permissions in `.claude/settings.local.json`:
