@@ -174,7 +174,13 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
   async function getItem(id, opts = {}) {
     const { status, body } = await request('GET', `/mcp/items/${encodeURIComponent(id)}`, {
       query: {
-        maxContentLength: opts.maxContentLength,
+        // Default to the whole body (-1): server.js's shapeItemForResponse()
+        // is the single windowing point for the MCP tools now — asking the
+        // server to window too would have it cut the content AND report a
+        // truncated contentLength, which shapeItemForResponse would then
+        // mistake for the real length. A caller that explicitly wants a
+        // server-side window can still pass opts.maxContentLength.
+        maxContentLength: opts.maxContentLength ?? -1,
         contentOffset: opts.contentOffset,
         events: opts.events,
       },
@@ -219,8 +225,10 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
   async function getTaskContext(id) {
     // Always requests events — matches getTaskContextSync()'s fixed 20-row
     // window; there is no per-call events option on this tool's surface.
+    // maxContentLength: -1 for the same reason as getItem() above — content
+    // windowing happens once, in server.js's shapeItemForResponse().
     const { status, body } = await request('GET', `/mcp/items/${encodeURIComponent(id)}`, {
-      query: { events: 20 },
+      query: { maxContentLength: -1, events: 20 },
     });
     if (status === 404) return null;
     if (status === 409) throw ambiguousError(id, body?.candidates, body?.truncated);

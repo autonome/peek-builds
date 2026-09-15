@@ -194,6 +194,12 @@ function normalizeContentWindow(args) {
 function shapeItemForResponse(item, args) {
   const out = { ...item };
   delete out.favicon;
+  // This function is the only content-windowing point for the MCP tools —
+  // any contentTruncated/contentLength already on `item` (e.g. the remote
+  // store's own server-side window) belongs to a different window than the
+  // one computed below and must not leak through.
+  delete out.contentTruncated;
+  delete out.contentLength;
   if (typeof out.content !== 'string') return out; // null content: nothing to window
   const { max, offset } = normalizeContentWindow(args);
   const fullLength = out.content.length;

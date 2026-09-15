@@ -10,6 +10,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1268,6 +1269,143 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       });
       assert.equal(r.isError, true);
     });
+  });
+});
+
+// --- Remote store content windowing (peek dc710276) ---
+//
+// Drives server.js as a real subprocess (like McpClient above) but against a
+// fake HTTP `/mcp/*` server instead of a sqlite fixture, so this exercises
+// the actual remote-store.js request path rather than a stub. The fake
+// server's own windowing is a faithful copy of apps/server/mcp-items.js's
+// windowContent() (default 4000, -1 = unlimited) — the point of these tests
+// is that shapeItemForResponse() in server.js is the ONLY windowing that
+// counts for the MCP tools now: remote-store.js always asks the fake server
+// for the whole body (maxContentLength=-1), so the fake server's own default
+// window is irrelevant to what the client sees.
+
+function windowContentReplica(item, query) {
+  if (typeof item.content !== 'string') return;
+  let max = 4000;
+  const rawMax = query.get('maxContentLength');
+  if (rawMax !== null && rawMax !== '') {
+    const n = Number(rawMax);
+    if (Number.isFinite(n)) {
+      if (n === -1) max = Infinity;
+      else if (n >= 0) max = Math.floor(n);
+    }
+  }
+  let offset = 0;
+  const rawOffset = query.get('contentOffset');
+  if (rawOffset !== null && rawOffset !== '') {
+    const n = Number(rawOffset);
+    if (Number.isFinite(n) && n > 0) offset = Math.floor(n);
+  }
+  const fullLength = item.content.length;
+  item.contentLength = fullLength;
+  const end = max === Infinity ? fullLength : Math.min(fullLength, offset + max);
+  if (offset > 0 || end < fullLength) {
+    item.content = item.content.slice(offset, Math.max(offset, end));
+    item.contentTruncated = true;
+  }
+}
+
+// items: Map<id, item>. Serves just enough of the `/mcp/*` surface for
+// get_item/get_task_context: GET /mcp/session (startup scope check) and
+// GET /mcp/items/:id (windowed the same way apps/server does).
+function startFakeRemoteServer(items) {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (req.method === 'GET' && url.pathname === '/mcp/session') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ scopeTag: '', readonly: false, profileId: 'default', datastoreVersion: 1 }));
+      return;
+    }
+    const match = url.pathname.match(/^\/mcp\/items\/([^/]+)$/);
+    if (req.method === 'GET' && match) {
+      const id = decodeURIComponent(match[1]);
+      const item = items.get(id);
+      if (!item) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'item not found' }));
+        return;
+      }
+      const out = { ...item };
+      windowContentReplica(out, url.searchParams);
+      if (url.searchParams.has('events')) out.events = item.events || [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ item: out }));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
+describe('MCP Server — remote store content windowing', () => {
+  // 5000 chars, position-distinct so an offset slice is verifiable.
+  const LONG_CONTENT = 'a'.repeat(4000) + 'b'.repeat(1000);
+  let fakeServer;
+  let client;
+
+  before(async () => {
+    fakeServer = await startFakeRemoteServer(new Map([
+      ['remote-long', { id: 'remote-long', type: 'text', title: 'Remote Long', content: LONG_CONTENT, tags: [], events: [] }],
+    ]));
+    const { port } = fakeServer.address();
+    // dbPath is unused in remote mode (main() never reads PEEK_DB_PATH once
+    // PEEK_MCP_REMOTE_URL is set) — pass '' rather than leave it undefined,
+    // which spawn() would reject as a non-string env value.
+    client = new McpClient('', {
+      PEEK_MCP_REMOTE_URL: `http://127.0.0.1:${port}`,
+      PEEK_MCP_TOKEN: 'fake-remote-token',
+    });
+    await client.start();
+  });
+
+  after(async () => {
+    client.stop();
+    await new Promise((resolve) => fakeServer.close(resolve));
+  });
+
+  it('get_item: maxContentLength -1 returns the whole body with the true length, untruncated', async () => {
+    const item = await client.callTool('get_item', { itemId: 'remote-long', maxContentLength: -1 });
+    assert.equal(item.content, LONG_CONTENT);
+    assert.equal(item.contentLength, LONG_CONTENT.length);
+    assert.ok(!('contentTruncated' in item));
+  });
+
+  it('get_item: default call windows to 4000 chars but still reports the true 5000-char length', async () => {
+    const item = await client.callTool('get_item', { itemId: 'remote-long' });
+    assert.equal(item.content, LONG_CONTENT.slice(0, 4000));
+    assert.equal(item.contentLength, LONG_CONTENT.length);
+    assert.equal(item.contentTruncated, true);
+  });
+
+  it('get_item: contentOffset pages through the remote body past the default window', async () => {
+    const item = await client.callTool('get_item', { itemId: 'remote-long', contentOffset: 4000 });
+    assert.equal(item.content, LONG_CONTENT.slice(4000));
+    assert.equal(item.content.length, 1000);
+    assert.equal(item.contentLength, LONG_CONTENT.length);
+    assert.equal(item.contentTruncated, true);
+  });
+
+  it('get_task_context: same windowing behavior as get_item over the remote store', async () => {
+    const full = await client.callTool('get_task_context', { itemId: 'remote-long', maxContentLength: -1 });
+    assert.equal(full.content, LONG_CONTENT);
+    assert.equal(full.contentLength, LONG_CONTENT.length);
+    assert.ok(!('contentTruncated' in full));
+
+    const dflt = await client.callTool('get_task_context', { itemId: 'remote-long' });
+    assert.equal(dflt.content, LONG_CONTENT.slice(0, 4000));
+    assert.equal(dflt.contentLength, LONG_CONTENT.length);
+    assert.equal(dflt.contentTruncated, true);
+
+    const page = await client.callTool('get_task_context', { itemId: 'remote-long', contentOffset: 4000 });
+    assert.equal(page.content, LONG_CONTENT.slice(4000));
+    assert.equal(page.contentLength, LONG_CONTENT.length);
+    assert.equal(page.contentTruncated, true);
   });
 });
 
