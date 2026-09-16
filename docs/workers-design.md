@@ -21,7 +21,7 @@ cannot do, which existing pieces it reuses, and which pieces do not exist yet.
 8. [How an agent addresses and invokes a worker](#8-how-an-agent-addresses-and-invokes-a-worker)
 9. [What the runtime has to provide](#9-what-the-runtime-has-to-provide)
 10. [Runtime evaluation](#10-runtime-evaluation)
-11. [Recommendation](#11-recommendation)
+11. [Recommendation (superseded — see `docs/worker-runtime-portability.md`)](#11-recommendation-superseded)
 12. [Deliberately out of scope](#12-deliberately-out-of-scope)
 13. [Open questions](#13-open-questions)
 
@@ -669,7 +669,16 @@ untrusted programs that mostly sleep.
 
 ---
 
-## 11. Recommendation
+## 11. Recommendation (superseded)
+
+> **Superseded by `docs/worker-runtime-portability.md`.** The recommendation in this section —
+> adopt the Cloudflare Workers and Durable Objects *API* as the worker runtime contract — is no
+> longer the design. The contract is Peek's own: a small host interface, with Cloudflare, celld, a
+> bare Node process and a container each an adapter behind it. Cloudflare remains the likely first
+> hosted target; it stops being the contract. The reasoning below is kept rather than deleted,
+> because most of it survives the change and §11.2 says which parts do.
+
+### 11.1 The recommendation as it stood
 
 **Build against the Cloudflare Workers and Durable Objects *API* as the worker runtime contract.
 Deploy on Cloudflare first. Keep celld as the self-hosted escape hatch, and say so in writing
@@ -717,6 +726,43 @@ the wrong *first* deployment.
 untouched, and the architecture here depends on it: the worker is a client of `apps/server`
 (§6), not a replacement for it. A worker fleet on Cloudflare talking to a Hono server on Railway
 is the intended shape, not a transitional one.
+
+### 11.2 What replaced it, and what survived
+
+Three things broke §11.1 as a *contract*, and `docs/worker-runtime-portability.md` §1 argues each
+in full:
+
+- **It excludes the host that already works.** A plain Node process cannot serve the Workers and
+  Durable Objects API, but it can run a Peek worker — `tools/hello-worker/run.mjs` does, in 137
+  lines. Making that API the contract makes `workerd` with a Cap'n Proto config the only way to run
+  a worker on a Linux box.
+- **The part of the Durable Objects API a worker uses is three operations wide.** A Durable
+  Object's substance is its per-object SQLite, and §4 and §7 of this document already put every
+  durable byte in the Peek store instead. What is left to want is an alarm, a single-instance
+  guarantee and an address.
+- **A worker module never sees that API.** Feature code calls `api.*` and exports an entry
+  function. It never receives `env`, never touches `DurableObjectState`, and never writes
+  `export default { fetch, scheduled }`. The Workers API is the vocabulary the *host* speaks to the
+  *platform*, so naming it the worker contract describes a seam the worker is not on.
+
+What survives unchanged, and is carried into the new document:
+
+- **Cloudflare first among hosted targets, for isolation.** §10.3's argument against a container is
+  untouched: an isolate runtime is the thing that isolates untrusted feature code. That is a
+  requirement of the stage where third-party workers run, which is not the first stage (§13.3).
+- **Schedules compile to alarms, not cron**, for the reasons §11.1 gives — and now also because a
+  DO alarm's retry policy is published while a cron trigger's is not
+  (`docs/worker-runtime-portability.md` §6.1).
+- **Not celld first**, for what celld's own documentation says about hostile multi-tenant use.
+- **Not a plain container**, for §10.3's third reason.
+- **Not a move of `apps/server`**, and `notes/cloudflare-vs-railway-evaluation.md` stands.
+- **celld and Cloudflare share one implementation.** This was §11.1's real economy and it survives
+  as a two-for-one on a single adapter rather than as the contract itself.
+
+What changed is where the seam sits: below the worker host rather than below the worker, so that
+the logic turning a manifest grant into an `api` object is written once and only the platform
+primitives — module loading, a restricted `fetch`, credential custody, the scheduler, the duplex
+channel, the log sink — are per-target.
 
 ---
 

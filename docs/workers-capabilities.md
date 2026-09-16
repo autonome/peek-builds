@@ -777,9 +777,11 @@ contributing the first two.
 3. **Where does the worker's registration credential live, and who can read it?** §2.2 narrows
    bearer exposure without eliminating it, and §8.1 leaves the credential in the runtime's secret
    store. Cloudflare secrets bindings and celld's operator environment have different properties,
-   and `docs/workers-design.md` §11 recommends the first while keeping the second as an escape
-   hatch. **Settled by:** deciding whether a worker's grant is per-deployment or per-install — which
-   is really the question of whether a hosted Peek runs everyone's workers in one account.
+   and `docs/worker-runtime-portability.md` makes both adapters behind one host contract, where
+   reading the credential is a named operation (`readCredential`) whose implementation is the
+   platform's secret storage — a 0600 file on a bare Node process, a secret binding on Cloudflare.
+   **Settled by:** deciding whether a worker's grant is per-deployment or per-install — which is
+   really the question of whether a hosted Peek runs everyone's workers in one account.
 
 4. **Should the desktop adopt the fixes this document proposes for the server?** §1.1's three
    weaknesses — checks in handlers rather than the pipeline, `TILE_STRICT` off by default, no
