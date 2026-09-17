@@ -271,6 +271,13 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    */
   kernelTimelineForTest: (): readonly string[] => getKernelExecutor().timelineForTests(),
   /**
+   * Test-only: the kernel's current `State` (`window-kernel.ts State`) — the
+   * facts the timeline's transitions ended on: `appActive`, `key`, and every
+   * record's `visible` / `pendingHidden`. Plain data, so it crosses the
+   * Playwright boundary as-is.
+   */
+  kernelStateForTest: () => getKernelExecutor().getState(),
+  /**
    * Test-only: is `windowId` a live hybrid page-host (BaseWindow) window?
    * Lets the session-restore-page-host spec skip its canvas-only chrome-param
    * assertions now that hybrid is the only page-host, the same way the
