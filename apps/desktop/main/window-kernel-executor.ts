@@ -5,6 +5,7 @@
 
 import { DEBUG, isHeadless } from './config.js';
 import { wmLog } from './window-diag.js';
+import { diag } from './cmd-url-diag.js'; // TEMPORARY — see cmd-url-diag.ts
 import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 import type { WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
@@ -401,6 +402,9 @@ export class WindowKernelExecutor {
   }
 
   private performEffect(effect: Effect): void {
+    // TEMPORARY — one line per effect the kernel realizes: type, window id
+    // (when the effect carries one), and intent (RaiseWindow only).
+    diag(`apply effect type=${effect.type} id=${'id' in effect ? effect.id : '-'} intent=${'intent' in effect ? effect.intent : undefined}`);
     switch (effect.type) {
       case 'ShowWindow': {
         this.backend.showWindow(effect.id, { activate: false, opSeq: effect.opSeq });
@@ -431,7 +435,9 @@ export class WindowKernelExecutor {
       }
       case 'RaiseWindow': {
         const record = this.state.order.find((w) => w.id === effect.id);
-        switch (planRaise(record, this.headless, this.state.appActive, effect.intent)) {
+        const plan = planRaise(record, this.headless, this.state.appActive, effect.intent);
+        diag(`planRaise id=${effect.id} appActive=${this.state.appActive} headless=${this.headless} intent=${effect.intent} answer=${plan}`); // TEMPORARY
+        switch (plan) {
           case 'suppressed':
             wmLog('raise-suppressed', { id: effect.id, appActive: this.state.appActive, headless: this.headless });
             return;

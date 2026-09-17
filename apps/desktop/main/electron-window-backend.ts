@@ -13,6 +13,7 @@ import { app, globalShortcut, screen, systemPreferences, webContents } from 'ele
 import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
+import { diag } from './cmd-url-diag.js'; // TEMPORARY — see cmd-url-diag.ts
 import {
   askWebContentsToHandleEscape,
   closeOrHideWindow,
@@ -206,9 +207,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
+      diag(`app did-become-active isHidden=${app.isHidden()}`); // TEMPORARY
       kernelAppActivated();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
+      diag(`app did-resign-active isHidden=${app.isHidden()}`); // TEMPORARY
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       this.appResignSettleTimer = setTimeout(() => {
@@ -224,6 +227,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
         kernelAppResignSettled();
       }, APP_RESIGN_SETTLE_MS);
+    });
+    // TEMPORARY — diagnostic only, no kernel wiring: the app's real handling of
+    // these two events is platform-conditional (main.ts), but the raw Electron
+    // events fire on darwin too and this live trace needs to see them.
+    (app as unknown as { on(e: string, l: () => void): void }).on('browser-window-focus', () => {
+      diag(`app browser-window-focus isHidden=${app.isHidden()}`);
+    });
+    (app as unknown as { on(e: string, l: () => void): void }).on('browser-window-blur', () => {
+      diag(`app browser-window-blur isHidden=${app.isHidden()}`);
     });
     this.attachSpaceChangeListener();
   }
@@ -544,7 +556,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   raiseWindow(id: WindowId, opSeq: number, intent?: 'user'): void {
     const entry = this.windows.get(id);
     if (!entry) return;
-    const { win, kind, rendererWC } = entry;
+    const { win, kind, windowClass, rendererWC } = entry;
     if (win.isDestroyed()) return;
     const visible = this.isVisibleSafe(win);
     const focused = this.isFocused(win);
@@ -556,6 +568,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // raise of a non-panel.
     if (intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin') {
       try {
+        diag(`app.focus({steal:true}) id=${id} kind=${kind} windowClass=${windowClass} intent=${intent}`); // TEMPORARY
         app.focus({ steal: true });
       } catch {
         /* activation refused by the OS — the window calls below still run */
@@ -569,6 +582,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           this.reorderToTop(id, win);
           if (plan === 'take-key' && !isHeadless()) {
             try {
+              diag(`win.focus() id=${id} kind=${kind} windowClass=${windowClass} opSeq=${opSeq} site=raiseWindow/page-host/take-key`); // TEMPORARY
               win.focus();
             } catch {
               /* window gone mid-raise */
@@ -582,6 +596,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           this.armSelfCausedFocus(id, opSeq);
+          diag(`rendererWC.focus() id=${id} kind=${kind} windowClass=${windowClass} opSeq=${opSeq} site=raiseWindow/page-host/content`); // TEMPORARY
           rendererWC.focus();
         } catch {
           /* wc gone mid-raise */
@@ -597,6 +612,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.reorderToTop(id, win);
         if (plan === 'take-key' && !isHeadless()) {
           try {
+            diag(`win.focus() id=${id} kind=${kind} windowClass=${windowClass} opSeq=${opSeq} site=raiseWindow/take-key`); // TEMPORARY
             win.focus();
           } catch {
             /* window gone mid-raise */
@@ -608,6 +624,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         if (!isHeadless()) {
           try {
             this.armSelfCausedFocus(id, opSeq);
+            diag(`win.focus() id=${id} kind=${kind} windowClass=${windowClass} opSeq=${opSeq} site=raiseWindow/show-and-take-key`); // TEMPORARY
             win.focus();
           } catch {
             /* window gone mid-raise */
@@ -619,9 +636,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   focusContent(id: WindowId, opSeq: number): void {
-    const wc = this.windows.get(id)?.rendererWC;
+    const entry = this.windows.get(id);
+    const wc = entry?.rendererWC;
     if (!wc || wc.isDestroyed()) return;
     this.armSelfCausedFocus(id, opSeq);
+    diag(`wc.focus() id=${id} kind=${entry?.kind} windowClass=${entry?.windowClass} opSeq=${opSeq} site=focusContent`); // TEMPORARY
     wc.focus();
   }
 
@@ -834,6 +853,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // Every show this backend performs funnels here. Opacity is zeroed before
   // the show, under headless, so nothing paints on the real display.
   private performOsShow(id: WindowId, win: NativeWindow, activate: boolean, opSeq: number): void {
+    const entry = this.windows.get(id);
+    diag(`performOsShow id=${id} kind=${entry?.kind} windowClass=${entry?.windowClass} activate=${activate} opSeq=${opSeq} isHidden=${app.isHidden()}`); // TEMPORARY
     // Arm BEFORE either native call below — see `pendingShowOpSeq`'s doc:
     // the native `'show'` this provokes can land ahead of this method's own
     // synthetic echo, so the listener needs the token armed first.
@@ -852,12 +873,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // branch: `showInactive()` below takes no focus at all (see
         // `pendingSelfCausedFocus`).
         this.armSelfCausedFocus(id, opSeq);
+        diag(`win.show() id=${id} opSeq=${opSeq} site=performOsShow`); // TEMPORARY
         win.show();
       } catch {
         /* show unsupported in some envs */
       }
     } else {
       try {
+        diag(`win.showInactive() id=${id} opSeq=${opSeq} site=performOsShow`); // TEMPORARY
         win.showInactive();
       } catch {
         /* showInactive unsupported in some envs */
@@ -870,7 +893,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   hideWindow(id: WindowId, opSeq?: number): void {
-    const win = this.windows.get(id)?.win;
+    const entry = this.windows.get(id);
+    const win = entry?.win;
     if (!win) return;
     if (opSeq !== undefined) this.pendingHideOpSeq.set(id, opSeq);
     else this.pendingHideOpSeq.delete(id);
@@ -880,6 +904,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // window the machine never named — gated on the window actually
       // holding focus, since hiding an unfocused window reassigns nothing.
       this.pendingHideProvokedFocus = this.isFocused(win);
+      diag(`win.hide() id=${id} kind=${entry?.kind} windowClass=${entry?.windowClass} opSeq=${opSeq} isHidden=${app.isHidden()}`); // TEMPORARY
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */
@@ -1002,6 +1027,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // macOS only: `app.hide()` is an AppKit notion with no equivalent on other
   // platforms this backend runs on, so elsewhere this is correctly a no-op.
   hideApp(): void {
+    diag('hideApp() entry'); // TEMPORARY
     if (process.platform !== 'darwin') return;
     DEBUG && console.log('[window-backend] hiding the app — nothing left holding it on screen');
     app.hide();

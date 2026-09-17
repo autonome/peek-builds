@@ -29,6 +29,7 @@ import {
   getKernelExecutorForApp,
 } from './window-machine.js';
 import { wmLog } from './window-diag.js';
+import { diag } from './cmd-url-diag.js'; // TEMPORARY — see cmd-url-diag.ts
 import type { WindowClass } from './izui-roles.js';
 import {
   kernelCloseWindowDirect,
@@ -126,6 +127,7 @@ export function showHybridHost(
   baseWin: import('electron').BaseWindow,
   opts?: { inactive?: boolean; nonActivating?: boolean; activation?: 'user' },
 ): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
+  diag(`showHybridHost entry id=${baseWin.id} opts=${JSON.stringify(opts ?? {})}`); // TEMPORARY
   const intent = hybridShowIntent(isHeadless(), {
     inactive: opts?.inactive === true,
     nonActivating: opts?.nonActivating === true,
