@@ -19,7 +19,6 @@
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
 import type { BaseWindow } from 'electron';
 import { broadcast, getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
-import { diag } from './cmd-url-diag.js'; // TEMPORARY — see cmd-url-diag.ts
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -765,7 +764,6 @@ export function registerTileIpcHandlers(): void {
     // reload / iframe removed).
     const callback = (): void => {
       DEBUG && console.log('[tile-ipc] shortcut fired', args.shortcut, 'for', activeGrant.tileId);
-      diag(`global hotkey fired shortcut=${args.shortcut} tileId=${activeGrant.tileId} isGlobal=${isGlobal}`); // TEMPORARY
       if (!args.replyTopic) return;
       try {
         if (!ev.sender.isDestroyed()) {

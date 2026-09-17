@@ -10,7 +10,6 @@ import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './windo
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
-import { diag } from './cmd-url-diag.js'; // TEMPORARY — see cmd-url-diag.ts
 
 import {
   getDb,
@@ -684,7 +683,7 @@ function createHybridHostBaseWindow(
   rect: { x?: number; y?: number; width: number; height: number },
   opts?: { type?: Electron.BaseWindowConstructorOptions['type'] },
 ): Electron.BaseWindow {
-  const host = new BaseWindow({
+  return new BaseWindow({
     ...(typeof rect.x === 'number' ? { x: rect.x } : {}),
     ...(typeof rect.y === 'number' ? { y: rect.y } : {}),
     width: rect.width,
@@ -712,32 +711,6 @@ function createHybridHostBaseWindow(
     // not affect maximize (that path uses explicit work-area setBounds, not setFullScreen).
     ...(opts?.type === 'panel' ? { fullscreenable: false } : {}),
   });
-
-  // TEMPORARY — live-trace diagnostics for the cmd-palette URL-open-while-
-  // unfocused bug. Every hybrid page-host (including the one a palette URL
-  // open creates) gets its lifecycle events logged, plus a sampled snapshot
-  // at 0/100/300/800/2000ms after open.
-  const hostId = host.id;
-  const hostAsEmitter = host as unknown as { on(e: string, l: () => void): void };
-  for (const evt of ['show', 'hide', 'focus', 'blur', 'minimize', 'closed']) {
-    hostAsEmitter.on(evt, () => diag(`hybrid host event=${evt} id=${hostId}`));
-  }
-  for (const ms of [0, 100, 300, 800, 2000]) {
-    setTimeout(() => {
-      if (host.isDestroyed()) {
-        diag(`hybrid host snapshot id=${hostId} t=${ms}ms destroyed=true`);
-        return;
-      }
-      diag(
-        `hybrid host snapshot id=${hostId} t=${ms}ms isVisible=${host.isVisible()} ` +
-        `isMinimized=${host.isMinimized()} isFocused=${host.isFocused()} ` +
-        `bounds=${JSON.stringify(host.getBounds())} isAlwaysOnTop=${host.isAlwaysOnTop()} ` +
-        `appIsHidden=${app.isHidden()}`
-      );
-    }, ms);
-  }
-
-  return host;
 }
 
 /**
@@ -2628,7 +2601,6 @@ export function registerWindowHandlers(): void {
 
     // Always log escapeMode for debugging window lifecycle
     console.log(`[window-open] url: ${url}, source: ${msg.source}, escapeMode: ${options?.escapeMode}, key: ${options?.key}, options keys: ${options ? Object.keys(options).join(',') : 'none'}`);
-    diag(`window-open options arrived url=${url} key=${options?.key} activation=${options?.activation} show=${options?.show}`); // TEMPORARY
 
     // Phase timing — only emit when this open is part of a session
     // restore (skipTracking is set by session.ts:restoreSessionSnapshot).
@@ -2789,7 +2761,6 @@ export function registerWindowHandlers(): void {
         // (`window-kernel-executor.ts planRaise`, rule F6). Only the reuse
         // path threads it — a fresh open's constructor show already brings
         // the app forward natively.
-        diag(`window-open reuse show-request id=${existingWindow.window.id} activation=${options.activation} reuseActivate=${reuseActivate}`); // TEMPORARY
         showWindowHeadlessSafe(existingWindow.window, {
           active: reuseActivate,
           ...(options.activation === 'user' ? { activation: 'user' as const } : {}),
@@ -3364,7 +3335,6 @@ export function registerWindowHandlers(): void {
       !usePageHost &&
       tileWebPrefs.token !== undefined;
     perfMark('before-create');
-    diag(`window-open fresh-open before-create url=${url} key=${options?.key} activation=${options?.activation}`); // TEMPORARY — does activation survive to a fresh (non-reused) open?
     let win: BrowserWindow;
     if (isRealTileLaunch && tileWebPrefs) {
       // Pull webPreferences overrides out so the helper's baseline tile
@@ -3386,7 +3356,6 @@ export function registerWindowHandlers(): void {
     } else {
       win = new BrowserWindow(winOptions);
     }
-    diag(`window-open fresh-open created id=${win.id} url=${url} key=${options?.key}`); // TEMPORARY
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
     perfMark('after-create');
 
