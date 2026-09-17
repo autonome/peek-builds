@@ -1324,8 +1324,15 @@ export function evolve(state: State, ev: Event): State {
     case 'FocusRaiseRequested': {
       // Stamps `lastOpSeq` without touching `key`, `order` or `lastAttention`; `key` moves only on the backend's confirming `OsFocusGained`.
       const targetRecord = state.order.find((w) => w.id === ev.id);
+      // Same "already key is not evidence the ask was honoured" exception
+      // `react`'s raise-request diff applies below — kept in sync with it so
+      // an op this arm decides to issue also gets a fresh `opSeq` to stamp,
+      // rather than colliding with whichever op last touched the counter.
+      const alreadyKeyButUnhonoured = state.key === ev.id && ev.intent === 'user' && !state.appActive;
       const issuesRaiseRequest =
-        state.key !== ev.id && targetRecord !== undefined && admitsFocusAssert(targetRecord, targetRecord.visible);
+        (state.key !== ev.id || alreadyKeyButUnhonoured) &&
+        targetRecord !== undefined &&
+        admitsFocusAssert(targetRecord, targetRecord.visible);
       const requestOpSeq = issuesRaiseRequest ? state.opSeqCounter + 1 : state.opSeqCounter;
       // An inactive app cannot honour a raise by coming forward unless the
       // raise carries user intent, and an ordinary-level window of an inactive
@@ -1691,11 +1698,21 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //
   // Gated on `next.key !== raiseRequest.id` in addition to `admitsFocusAssert`:
   // a `RaiseWindow` command on the window that already holds key is the
-  // silent no-op `AssertFocus` exists to override.
+  // silent no-op `AssertFocus` exists to override — EXCEPT while the app is
+  // inactive and the request carries user intent. `key` only ever names which
+  // window the OS treats as the input target; an inactive app can already
+  // have handed a window key (a plain `OsFocusGained` echo, no intent) without
+  // the app itself ever coming forward, so "already key" is not evidence the
+  // user's request was already honoured. Dropping it there is exactly the gap
+  // a fresh window-open's automatic shown/focused report opened: it hands the
+  // fresh window key before the user-intent raise this open also issues ever
+  // reaches this diff, and the diff's own no-op guard swallowed the raise. A
+  // user-intent raise while inactive is never redundant.
   const raiseRequest = next.lastRaiseRequest;
   if (raiseRequest !== null && raiseRequest.seq !== prev.lastRaiseRequest?.seq) {
     const record = next.order.find((w) => w.id === raiseRequest.id);
-    if (record !== undefined && next.key !== raiseRequest.id && admitsFocusAssert(record, record.visible)) {
+    const alreadyKeyButUnhonoured = next.key === raiseRequest.id && raiseRequest.intent === 'user' && !next.appActive;
+    if (record !== undefined && (next.key !== raiseRequest.id || alreadyKeyButUnhonoured) && admitsFocusAssert(record, record.visible)) {
       effects.push({
         type: 'RaiseWindow',
         id: raiseRequest.id,

@@ -7467,3 +7467,72 @@ describe('window-kernel: a page asked forward while the app is inactive is held 
     assert.deepStrictEqual([...holds(again.effects), ...releases(again.effects)], []);
   });
 });
+
+// A fresh window built already-visible (non-headless: `winOptions.show: true`
+// at construction) is reported shown+focused at registration before its
+// caller's own intent-carrying raise request ever runs (`window-machine.ts
+// registerWindowWithMachine`'s `pumpShownEvent`, driven by the native window
+// already being visible) — so by the time the raise request lands, `key`
+// already names the window and the raise-request diff's own-op-request guard
+// (`next.key !== raiseRequest.id`) read it as a no-op and dropped the raise
+// outright. Headless never hits this: a headless window is always built
+// `show: false`, so `pumpShownEvent` never fires and `key` is still null when
+// the raise request lands — the branch below is unreached under headless,
+// which is why the palette's fresh-open spec passed while a real display
+// still suppressed the raise.
+describe('window-kernel: a user-intent raise is never redundant while the app is inactive', () => {
+  // The pumped report's own `OsFocusGained` is a genuine key change (null ->
+  // the window), so it mints its own no-intent `RaiseWindow` via the
+  // key-change rule above — the one the executor's `planRaise` answers
+  // `raise-suppressed` for on a real display. That effect is expected and
+  // belongs to a different rule than the one under test here; isolating just
+  // the final `FocusRaiseRequested` transition's own effects keeps this test
+  // about the raise-request diff alone.
+  const registerShownFocused = (extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', ...extra },
+    // The automatic pumped report: WindowShown + OsFocusGained, with no
+    // intent, exactly what `kernelWindowShown(id, true)` dispatches.
+    { type: 'WindowShown', id: wid(1) },
+    { type: 'OsFocusGained', id: wid(1) },
+  ];
+
+  it('is honoured even though the window already holds key from an earlier, intent-less shown+focused report', () => {
+    const before = fold([{ type: 'AppResigned' }, ...registerShownFocused()]);
+    assert.strictEqual(before.key, wid(1), 'precondition: the pumped report already made it key');
+    // The caller's own intent-carrying ask, arriving after — the window is
+    // already key by the time this lands.
+    const raiseEv: Event = { type: 'FocusRaiseRequested', id: wid(1), intent: 'user' };
+    const after = evolve(before, raiseEv);
+    assert.deepStrictEqual(
+      react(before, raiseEv, after).filter((e) => e.type === 'RaiseWindow'),
+      [{ type: 'RaiseWindow', id: wid(1), opSeq: after.opSeqCounter, intent: 'user' }],
+      'the user-intent raise is not swallowed by the already-key no-op guard',
+    );
+  });
+
+  it('an intent-less raise on an already-key window is still the no-op it always was', () => {
+    const before = fold([{ type: 'AppResigned' }, ...registerShownFocused()]);
+    const raiseEv: Event = { type: 'FocusRaiseRequested', id: wid(1) };
+    const after = evolve(before, raiseEv);
+    assert.deepStrictEqual(
+      react(before, raiseEv, after).filter((e) => e.type === 'RaiseWindow'),
+      [],
+      'no intent means the exception does not apply',
+    );
+  });
+
+  it('an already-key user-intent raise issues no second raise once the app is active — appActive alone does not gate it', () => {
+    // Not the reported scenario (the app is active, so nothing was ever
+    // suppressed), but the guard reads `next.appActive` explicitly and must
+    // not accidentally admit every already-key raise once active.
+    const before = fold(registerShownFocused());
+    assert.strictEqual(before.appActive, true, 'precondition: active by default, no AppResigned here');
+    const raiseEv: Event = { type: 'FocusRaiseRequested', id: wid(1), intent: 'user' };
+    const after = evolve(before, raiseEv);
+    assert.deepStrictEqual(
+      react(before, raiseEv, after).filter((e) => e.type === 'RaiseWindow'),
+      [],
+      'the app is active, so the already-key guard applies as before',
+    );
+  });
+});
