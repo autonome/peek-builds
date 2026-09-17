@@ -122,7 +122,10 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
 
     const state = (await app.evaluateMain!((_e: unknown) => {
       return (globalThis as any).__peek_test.kernelStateForTest();
-    })) as { appActive: boolean; order: Array<{ id: string; visible: boolean; pendingHidden?: boolean }> };
+    })) as {
+      appActive: boolean;
+      order: Array<{ id: string; visible: boolean; pendingHidden?: boolean; heldAboveOtherApps?: boolean }>;
+    };
     const timeline = ((await app.evaluateMain!((_e: unknown) => {
       return (globalThis as any).__peek_test.kernelTimelineForTest();
     })) as string[]).slice(baselineLen);
@@ -148,5 +151,34 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
       return win ? win.isVisible() : null;
     }) as any, opened.id);
     expect(nativeVisible).toBe(true);
+
+    // With the app inactive the page is held above other apps' windows: the
+    // kernel marks the record and issues exactly one hold for it, and no
+    // release yet. The native level is not asserted — the executor does not
+    // realize the hold under headless, so nothing floats over the real display.
+    const effectsFor = (lines: string[], effect: string) =>
+      lines.filter((l) => l.includes(`${effect}(${pageWmId})`));
+    expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
+    expect(effectsFor(timeline, 'HoldAboveOtherApps').length, timeline.join('\n')).toBe(1);
+    expect(effectsFor(timeline, 'ReleaseFromAboveOtherApps'), timeline.join('\n')).toEqual([]);
+
+    // The app becoming active returns the same window to ordinary stacking.
+    await app.evaluateMain!((_e: unknown) => {
+      (globalThis as any).__peek_test.setAppFocusedForTest(true);
+    });
+    const stateAfter = (await app.evaluateMain!((_e: unknown) => {
+      return (globalThis as any).__peek_test.kernelStateForTest();
+    })) as { appActive: boolean; order: Array<{ id: string; visible: boolean; heldAboveOtherApps?: boolean }> };
+    const timelineAfter = ((await app.evaluateMain!((_e: unknown) => {
+      return (globalThis as any).__peek_test.kernelTimelineForTest();
+    })) as string[]).slice(baselineLen);
+
+    expect(stateAfter.appActive).toBe(true);
+    const pageAfter = stateAfter.order.find((w) => w.id === pageWmId);
+    expect(pageAfter, 'the page window left the kernel on activation').toBeTruthy();
+    expect(pageAfter!.visible).toBe(true);
+    expect(pageAfter!.heldAboveOtherApps === true, timelineAfter.join('\n')).toBe(false);
+    expect(stateAfter.order.some((w) => w.heldAboveOtherApps === true)).toBe(false);
+    expect(effectsFor(timelineAfter, 'ReleaseFromAboveOtherApps').length, timelineAfter.join('\n')).toBe(1);
   });
 });

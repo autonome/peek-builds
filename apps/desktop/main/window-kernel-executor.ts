@@ -525,6 +525,19 @@ export class WindowKernelExecutor {
         this.backend.hideApp();
         return;
       }
+      case 'HoldAboveOtherApps': {
+        // Headless-gated: a headless window is fully transparent but still takes clicks, so
+        // holding one above other applications would put an invisible click target over them.
+        if (this.headless) return;
+        this.backend.pinAlwaysOnTop(effect.id, true);
+        return;
+      }
+      case 'ReleaseFromAboveOtherApps': {
+        // Gated with the hold it undoes — under headless there is nothing to release.
+        if (this.headless) return;
+        this.backend.pinAlwaysOnTop(effect.id, false);
+        return;
+      }
       case 'AttachOverlayTo': {
         // No headless gate — this only asks the backend to frame `hostId`; the visibility that
         // follows is gated by its own `ShowWindow`/`RaiseWindow` effects.

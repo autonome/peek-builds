@@ -979,6 +979,30 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('setDesktopMembership'), []);
   });
 
+  it('holds a page above other apps on an inactive raise request, and releases it on activation', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    backend.calls.length = 0;
+    exec.dispatch({ type: 'FocusRaiseRequested', id: wid(1) });
+    assert.deepStrictEqual(backend.of('pinAlwaysOnTop').map((c) => c.args), [[wid(1), true]]);
+
+    backend.calls.length = 0;
+    exec.dispatch({ type: 'AppActivated' });
+    assert.deepStrictEqual(backend.of('pinAlwaysOnTop').map((c) => c.args), [[wid(1), false]]);
+  });
+
+  it('skips the hold and its release under headless — a transparent window must not sit over other apps', () => {
+    const { exec, backend } = makeExecutor({ headless: true });
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'FocusRaiseRequested', id: wid(1) });
+    exec.dispatch({ type: 'AppActivated' });
+    assert.deepStrictEqual(backend.of('pinAlwaysOnTop'), []);
+  });
+
   it('drives an overlay attach through the port with both arguments, and a detach when the target goes null — no headless gate', () => {
     const { exec, backend } = makeExecutor({ headless: true });
     const hostA = wid(1);

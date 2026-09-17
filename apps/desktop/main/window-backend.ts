@@ -87,6 +87,10 @@ export interface WindowBackend {
   // (window-kernel.ts isStaleWindowEcho).
   hideWindow(id: WindowId, opSeq?: number): void;
 
+  // Hold a window above other applications' windows (`on`), or return it to
+  // ordinary stacking (`!on`). Never activates the app, never focuses the
+  // window, and acts on the existing window. A backend whose platform keeps an
+  // inactive app's windows where they were shown may answer with a no-op.
   pinAlwaysOnTop(id: WindowId, on: boolean): void;
 
   // Bounded per guest and over the whole batch, so it can never turn a quit

@@ -892,6 +892,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     kernelWindowHidden(id, opSeq);
   }
 
+  // Realizes the kernel's hold above other apps / release pair on the existing
+  // window: only its level changes, it is never re-created, shown or focused.
+  // macOS restacks an ordinary-level window of a non-active app behind the
+  // active app's frontmost window shortly after it is shown; the floating
+  // level is exempt from that restack and takes neither activation nor key.
   pinAlwaysOnTop(id: WindowId, on: boolean): void {
     const win = this.windows.get(id)?.win;
     if (!win) return;

@@ -19,6 +19,7 @@ import {
   isStaleSelfEcho,
   selectTransientAutoclose,
   isAppResignSweepEligible,
+  holdsAppOnScreen,
   isNonParentRole,
   TRANSIENT_ROLES,
   BASE_LAYER,
@@ -7308,5 +7309,145 @@ describe('window-kernel: handing the user back when nothing is left on screen', 
     const state = fold([reg(wid(1), 'primary'), { type: 'WindowShown', id: wid(1) }]);
     const after = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], state);
     assert.deepStrictEqual(after.effects.filter((e) => e.type === 'HideApp'), [{ type: 'HideApp' }]);
+  });
+});
+
+describe('window-kernel: a page asked forward while the app is inactive is held above other apps', () => {
+  const page = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+    ...extra,
+  });
+  const record = (state: State, id: WindowId): WindowRecord => state.order.find((w) => w.id === id)!;
+  const holds = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'HoldAboveOtherApps');
+  const releases = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'ReleaseFromAboveOtherApps');
+
+  // An open that asks to come forward is a show followed by a raise request;
+  // session restore and any `show: false` open is the show alone.
+  const openForward = (id: WindowId, extra?: Partial<Extract<Event, { type: 'WindowRegistered' }>>): Event[] => [
+    page(id, extra),
+    { type: 'WindowShown', id },
+    { type: 'FocusRaiseRequested', id },
+  ];
+
+  it('holds the page when the raise request arrives with the app inactive', () => {
+    const after = foldWithEffects([{ type: 'AppResigned' }, ...openForward(wid(1))]);
+    assert.strictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), [{ type: 'HoldAboveOtherApps', id: wid(1) }]);
+    assert.deepStrictEqual(releases(after.effects), []);
+    // The hold takes nothing: the app stays inactive and no window becomes key.
+    assert.strictEqual(after.state.appActive, false);
+    assert.strictEqual(after.state.key, null);
+    assert.strictEqual(record(after.state, wid(1)).layer, BASE_LAYER, 'the declared layer is untouched');
+  });
+
+  it('a show with no raise request holds nothing — session restore and show:false opens', () => {
+    const after = foldWithEffects([{ type: 'AppResigned' }, page(wid(1)), { type: 'WindowShown', id: wid(1) }]);
+    assert.notStrictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), []);
+  });
+
+  it('holds nothing while the app is active', () => {
+    const after = foldWithEffects(openForward(wid(1)));
+    assert.notStrictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), []);
+  });
+
+  it('a raise carrying user intent activates the app instead, so nothing is held', () => {
+    const after = foldWithEffects([
+      { type: 'AppResigned' },
+      page(wid(1)),
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'FocusRaiseRequested', id: wid(1), intent: 'user' },
+    ]);
+    assert.notStrictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), []);
+  });
+
+  it('only a visible base-layer content page is held', () => {
+    const cases: Array<[string, Event[]]> = [
+      ['a palette', openForward(wid(1), { role: 'palette', class: 'palette' })],
+      ['a quick-view', openForward(wid(1), { role: 'quick-view', class: 'quick-view' })],
+      ['a browser-kind window', openForward(wid(1), { kind: 'browser' })],
+      ['a window already above the base layer', openForward(wid(1), { layer: BASE_LAYER + 1 })],
+      ['a window that cannot become key', openForward(wid(1), { canBecomeKey: false })],
+      ['a page that is not on screen', [page(wid(1)), { type: 'FocusRaiseRequested', id: wid(1) }]],
+    ];
+    for (const [label, events] of cases) {
+      const after = foldWithEffects([{ type: 'AppResigned' }, ...events]);
+      assert.notStrictEqual(record(after.state, wid(1)).heldAboveOtherApps, true, label);
+      assert.deepStrictEqual(holds(after.effects), [], label);
+    }
+  });
+
+  it('a second raise request on a held page issues no second hold', () => {
+    const held = fold([{ type: 'AppResigned' }, ...openForward(wid(1))]);
+    const again = foldWithEffects([{ type: 'FocusRaiseRequested', id: wid(1) }], held);
+    assert.strictEqual(record(again.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(again.effects), []);
+  });
+
+  it('app activation releases every held page, and only those', () => {
+    const held = fold([
+      page(wid(9)),
+      { type: 'WindowShown', id: wid(9) },
+      { type: 'AppResigned' },
+      ...openForward(wid(1)),
+      ...openForward(wid(2)),
+    ]);
+    const after = foldWithEffects([{ type: 'AppActivated' }], held);
+    for (const w of after.state.order) {
+      assert.notStrictEqual(w.heldAboveOtherApps, true, String(w.id));
+      assert.strictEqual(w.visible, true, 'the same window stays on screen');
+    }
+    assert.deepStrictEqual(
+      releases(after.effects).map((e) => ('id' in e ? e.id : null)).sort(),
+      [wid(1), wid(2)],
+    );
+    // Released once: a later activation has nothing left to release.
+    const later = foldWithEffects([{ type: 'AppResigned' }, { type: 'AppActivated' }], after.state);
+    assert.deepStrictEqual(releases(later.effects), []);
+  });
+
+  it('the app-resign sweep neither hides nor dismisses a held page, and it still holds the app on screen', () => {
+    // The resign half of the dance, the open, then the settle.
+    const after = foldWithEffects([{ type: 'AppResigned' }, ...openForward(wid(1)), { type: 'AppResignSettled' }]);
+    const held = record(after.state, wid(1));
+    assert.strictEqual(held.visible, true);
+    assert.notStrictEqual(held.pendingHidden, true);
+    assert.notStrictEqual(held.hiddenByAppBlur, true);
+    assert.strictEqual(held.heldAboveOtherApps, true);
+    assert.strictEqual(isAppResignSweepEligible(held), false);
+    assert.strictEqual(holdsAppOnScreen(held), true);
+    assert.deepStrictEqual(selectTransientAutoclose(after.state, null), []);
+    assert.ok(!after.effects.some((e) => e.type === 'HideWindow' || e.type === 'DismissWindow' || e.type === 'HideApp'));
+  });
+
+  it('a held page going off screen is released, so a later show does not float', () => {
+    const held = fold([{ type: 'AppResigned' }, ...openForward(wid(1))]);
+    const hidden = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], held);
+    assert.notStrictEqual(record(hidden.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(releases(hidden.effects), [{ type: 'ReleaseFromAboveOtherApps', id: wid(1) }]);
+    const reshown = foldWithEffects([{ type: 'WindowShown', id: wid(1) }], hidden.state);
+    assert.deepStrictEqual(holds(reshown.effects), []);
+  });
+
+  it('a held page closing issues no release — there is no window left to restack', () => {
+    const held = fold([{ type: 'AppResigned' }, ...openForward(wid(1))]);
+    const closed = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], held);
+    assert.deepStrictEqual(releases(closed.effects), []);
+  });
+
+  it('a re-registration keeps the hold — it is a lived fact, not a declared one', () => {
+    const held = fold([{ type: 'AppResigned' }, ...openForward(wid(1))]);
+    const again = foldWithEffects([page(wid(1))], held);
+    assert.strictEqual(record(again.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual([...holds(again.effects), ...releases(again.effects)], []);
   });
 });

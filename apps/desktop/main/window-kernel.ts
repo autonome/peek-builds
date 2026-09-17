@@ -85,6 +85,13 @@ export interface WindowRecord {
   appLifetime?: boolean;
 
   contentFocused?: boolean;
+
+  // A lived fact, orthogonal to the declared `layer`: this window was asked
+  // forward while the app was inactive, so it sits above other applications'
+  // windows — without activation and without content focus — until the app
+  // becomes active. Written by `withHeldAboveOtherApps` / cleared by
+  // `withoutHeldAboveOtherApps` only; see `admitsHoldAboveOtherApps`.
+  heldAboveOtherApps?: boolean;
 }
 
 export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
@@ -282,6 +289,12 @@ export type Effect =
   // Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window.
   | { type: 'DestroyAllGuests' }
   | { type: 'HideApp' }
+  // Keep this window above other applications' windows without activating the
+  // app or focusing the window — emitted when `heldAboveOtherApps` goes true.
+  | { type: 'HoldAboveOtherApps'; id: WindowId }
+  // Return a held window to ordinary stacking — the same window, only its
+  // stacking changes. Emitted when `heldAboveOtherApps` goes from true to not-true.
+  | { type: 'ReleaseFromAboveOtherApps'; id: WindowId }
   | { type: 'FocusContent'; id: WindowId }
   | { type: 'AttachOverlayTo'; overlayId: WindowId; hostId: WindowId | null };
 
@@ -446,6 +459,8 @@ export function evolve(state: State, ev: Event): State {
           ...(existing.pendingHidden !== undefined ? { pendingHidden: existing.pendingHidden } : {}),
           // Dropping this would silently turn an observed `false` back into "nothing reported yet", a different answer.
           ...(existing.contentFocused !== undefined ? { contentFocused: existing.contentFocused } : {}),
+          // A lived fact too: dropping it would strand the window above other apps with no release ever issued.
+          ...(existing.heldAboveOtherApps !== undefined ? { heldAboveOtherApps: existing.heldAboveOtherApps } : {}),
           // Intrinsic, declared-at-registration properties — an event that
           // names one overwrites; an event that omits one keeps the existing
           // value rather than erasing it.
@@ -614,8 +629,18 @@ export function evolve(state: State, ev: Event): State {
       const target = state.order.find((w) => w.id === ev.id);
       const hidesGenuinely = target !== undefined && target.visible === true;
       // The confirming echo clears a doomed mark, genuine or not — this is the report a teardown was waiting for.
+      // A hold ends with the window leaving the screen — `heldAboveOtherApps`
+      // can never be true on a hidden window, so a later show (a keepLive
+      // reuse, a restore-style show) starts from ordinary stacking.
       const order = state.order.map((w) =>
-        w.id === ev.id ? { ...w, visible: false, ...(w.pendingHidden === true ? { pendingHidden: false } : {}) } : w,
+        w.id === ev.id
+          ? {
+              ...w,
+              visible: false,
+              ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
+              ...(w.heldAboveOtherApps === true ? { heldAboveOtherApps: false } : {}),
+            }
+          : w,
       );
       const successor =
         hidesGenuinely && state.key === ev.id && state.appActive === true
@@ -881,11 +906,15 @@ export function evolve(state: State, ev: Event): State {
           // that single number once.
           const stamped = (reshow && !w.visible) || (assertsFocus && w.id === latched);
           const unverifiedMode = markFsModeUnverified(w.fsMode);
-          if (!reshow && !stamped && unverifiedMode === w.fsMode) {
+          // Every window held above other apps returns to ordinary stacking:
+          // the app is the active one now, so its windows stack as its own.
+          const released = w.heldAboveOtherApps === true;
+          if (!reshow && !stamped && !released && unverifiedMode === w.fsMode) {
             return w;
           }
           return {
             ...w,
+            ...(released ? { heldAboveOtherApps: false } : {}),
             ...(reshow ? { visible: true, hiddenByAppBlur: false } : {}),
             ...(stamped ? { lastOpSeq: opSeq } : {}),
             fsMode: unverifiedMode,
@@ -1298,9 +1327,19 @@ export function evolve(state: State, ev: Event): State {
       const issuesRaiseRequest =
         state.key !== ev.id && targetRecord !== undefined && admitsFocusAssert(targetRecord, targetRecord.visible);
       const requestOpSeq = issuesRaiseRequest ? state.opSeqCounter + 1 : state.opSeqCounter;
+      // An inactive app cannot honour a raise by coming forward unless the
+      // raise carries user intent, and an ordinary-level window of an inactive
+      // app is restacked behind the active app's windows by the OS. So a raise
+      // request that will not activate the app holds its target above other
+      // apps instead. A show with no raise request — session restore, any
+      // `show: false` open — never reaches this arm, so it never holds.
+      const holds =
+        !state.appActive && ev.intent !== 'user' && targetRecord !== undefined && admitsHoldAboveOtherApps(targetRecord);
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, lastOpSeq: requestOpSeq } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.id ? { ...w, lastOpSeq: requestOpSeq, ...(holds ? { heldAboveOtherApps: true } : {}) } : w,
+        ),
         opSeqCounter: requestOpSeq,
         lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent === 'user' ? { intent: 'user' as const } : {}) },
         version: state.version + 1,
@@ -1517,6 +1556,19 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord?.pendingHidden === true) continue;
     effects.push({ type: 'DismissWindow', id: nextRecord.id });
+  }
+
+  // Hold above other apps: a per-record structural diff of
+  // `heldAboveOtherApps`, written only by `evolve` (`FocusRaiseRequested`
+  // sets it; `AppActivated` and `WindowHidden` clear it). A record that left
+  // `next.order` yields no release — there is no window left to restack.
+  // Ahead of `SetStacking` on purpose: a released window re-enters ordinary
+  // stacking first, and the replay below then orders it among its peers.
+  for (const nextRecord of next.order) {
+    const wasHeld = prev.order.find((w) => w.id === nextRecord.id)?.heldAboveOtherApps === true;
+    const isHeld = nextRecord.heldAboveOtherApps === true;
+    if (isHeld && !wasHeld) effects.push({ type: 'HoldAboveOtherApps', id: nextRecord.id });
+    else if (!isHeld && wasHeld) effects.push({ type: 'ReleaseFromAboveOtherApps', id: nextRecord.id });
   }
 
   // SetStacking: a minimal replay, not a re-assert of everything eligible. The
@@ -2080,14 +2132,27 @@ function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
 }
 
 // Disjoint from `selectTransientAutoclose` by construction; asserted by a property test.
+//
+// A window held above other apps (`heldAboveOtherApps`) is never eligible: it
+// keeps its declared `layer`, and it is on screen over another app on purpose —
+// the clause states that outright rather than leaning on `isContentWindow`.
 export function isAppResignSweepEligible(record: WindowRecord): boolean {
   return (
     record.visible &&
     record.layer > BASE_LAYER &&
     record.acceptsInput &&
     !record.selfClosesOnBlur &&
+    record.heldAboveOtherApps !== true &&
     !isContentWindow(record)
   );
+}
+
+// Which window a non-activating raise request holds above other apps: a page
+// the user works in, on screen, at the base layer. A window declared above the
+// base layer already sits over other apps and needs no hold; a palette or
+// quick-view owns its own on-blur policy.
+export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
+  return record.kind === 'page-host' && record.layer === BASE_LAYER && isContentWindow(record);
 }
 
 export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {

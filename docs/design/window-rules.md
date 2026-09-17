@@ -29,6 +29,7 @@ Each term is followed by the name the code uses for it.
 - **Application window** — a window the user works in (today one of the roles in `CONTENT_ROLES`). A window may be neither transient nor an application window.
 - **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`type: 'panel'` at open, `WindowRecord.nonActivating`).
 - **Pinned** — kept above the normal stack of windows (`layer` above `BASE_LAYER`, from `alwaysOnTop`).
+- **Held above other apps** — an unpinned window kept, for now, above other apps' windows without the app activating and without the window taking key; its declared layer is unchanged and it is the same window throughout (`heldAboveOtherApps`, `admitsHoldAboveOtherApps`).
 - **Prior window** — the window that had focus when this one took it (`priorKey`).
 - **Opener** — the window that opened this one (`parentId`).
 - **Attached overlay** — a window bound to a host and shown, hidden and moved with it (`overlayFor`). Its **host** is the application window it is bound to.
@@ -47,7 +48,7 @@ Each term is followed by the name the code uses for it.
 
 ## Gestures — what the user does and must see
 
-- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window opens or is focused. With the app already active the same focus is an ordinary focus.
+- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the panel — does not bring the app forward: it is held above other apps, the other app keeps key, and the app activating returns every window held that way to ordinary stacking. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
 - **G2 escape-is-one-change.** Escape does exactly one thing per press: content that consumes it changes only that content; otherwise the one key window hides or closes; with nothing to hide, the Escape fallback window opens.
 - **G3 hide-returns.** When a transient hides, key returns to its prior window: a window of the app if the app was active when it opened, the other app if not. No window that was not in use comes forward.
 - **G4 transient-opens-every-time.** A transient opened over an application window shows above that window and key, on every open, and stays until dismissed or the app deactivates.
@@ -67,7 +68,7 @@ Each term is followed by the name the code uses for it.
 - **F3 confirmation-drives-nothing.** The OS report confirming an asked-for focus causes no further focus change and no dismissal.
 - **F4 raise-means-key.** A window the manager focuses ends up key and accepting input; if it was already key it is only brought to the front.
 - **F5 raise-needs-a-surface.** A focus command lands only on a window that is visible and not pending hidden; on any other record it does nothing.
-- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent.
+- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent: such a focus never activates the app and never moves key, and on an unpinned page-hosting application window it holds that window above other apps instead (G1) until the app activates or the window leaves the screen.
 - **F7 hide-returns-key.** When the key window hides or closes, key goes to its prior window if that window is still visible; if that window is gone, to the topmost visible application window; if nothing in the app was key before it, nothing is focused.
 - **F8 dismissal-keeps-the-app.** A dismissal never deactivates the app: if the app was frontmost it stays frontmost, with no key window when nothing visible remains. Focus is never handed to another app by a dismissal.
 
