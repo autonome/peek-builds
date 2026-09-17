@@ -6203,14 +6203,30 @@ describe('window-kernel: the focus assert', () => {
     assert.deepStrictEqual(hiddenResult.effects, []);
   });
 
-  // decide/react hold no appActive/switcher-open guard on the raise — react never reads appActive
-  // at all, since it is a pure structural diff of (prev, next). The background-suppression that
-  // masks a raise while the app is backgrounded lives in window-kernel-executor.ts planRaise instead.
+  // decide/react hold no appActive/switcher-open guard on the RaiseWindow effect — it fires whether
+  // or not the app is active, and the background suppression that keeps that raise from taking key
+  // or activating the app lives in window-kernel-executor.ts planRaise instead. The paired
+  // FocusContent effect is a different decision: an assert never carries user intent
+  // (`FocusAssertRequested` has no `intent` field), so `react` withholds it while the app is
+  // inactive (F6) rather than let it reach the backend and activate the app out from under the
+  // raise that `planRaise` is about to answer `suppressed` for.
 
-  it('a raise fires even while appActive is false — decide/react hold no such guard', () => {
+  it('a raise fires even while appActive is false, but its content focus is withheld — the two are not the same decision', () => {
     let state = frontContent();
     state = fold([{ type: 'AppResigned' }], state);
     assert.strictEqual(state.appActive, false, 'the app is backgrounded');
+
+    const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+    assert.deepStrictEqual(
+      result.effects,
+      [{ type: 'RaiseWindow', id: wid(1), opSeq: result.state.opSeqCounter }],
+      'no FocusContent while the app is inactive (F6) — the raise alone reaches the executor, which suppresses it',
+    );
+  });
+
+  it('the same assert restores the paired FocusContent once the app is active — appActive is the only thing that changed', () => {
+    const state = frontContent();
+    assert.strictEqual(state.appActive, true, 'precondition: active');
 
     const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
     assert.deepStrictEqual(result.effects, [

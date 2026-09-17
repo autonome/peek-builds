@@ -1672,7 +1672,13 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     if (record !== undefined && admitsFocusAssert(record, record.visible)) {
       effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
       // `isContentWindow` earns its keep for an assert dispatched as a raw event, bypassing `decide`'s own gate.
-      if (isContentWindow(record)) {
+      // An assert never carries user intent (`FocusAssertRequested` has no `intent` field), so the
+      // content focus paired with the raise above must follow F6 the same way the raise itself does:
+      // the executor's `planRaise` answers `suppressed` for this raise while the app is inactive, and a
+      // content focus that still reached the backend would take first responder and activate the app
+      // out from under the suppressed raise. Emitting it only while the app is active keeps the
+      // suppression decision in this one place instead of adding a second gate in the executor.
+      if (isContentWindow(record) && next.appActive) {
         effects.push({ type: 'FocusContent', id: focusAssert.id });
       }
     }
