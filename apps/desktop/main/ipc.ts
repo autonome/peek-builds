@@ -1315,9 +1315,18 @@ function assembleHybridPageHost(
   // takes key input while the frontmost app keeps OS focus — the non-activating
   // overlay the user expects (regression 524f7aba). Popups (createWindow path)
   // pass `options:{}` → no role → they activate like a normal web window.
+  //
+  // `activation: 'user'` forwarded the same way the window-REUSE path already
+  // forwards it (see the plain-BrowserWindow reuse branch above): a raise that
+  // carries no user intent while the app is inactive is held rather than
+  // raised (`window-kernel.ts` `FocusRaiseRequested`, rule F6), so a caller's
+  // declared user gesture (the palette hotkey, `peek-cli cmd-open`) must reach
+  // the same raise request here, on the fresh open, or its first raise is
+  // suppressed identically to a stale one.
   showHybridHost(baseWin, {
     inactive: options.show === false,
     nonActivating: options.role === 'quick-view',
+    ...(options.activation === 'user' ? { activation: 'user' as const } : {}),
   });
 }
 
@@ -3564,9 +3573,25 @@ export function registerWindowHandlers(): void {
       // echoes WINDOW_SHOWN for the show it performs — and non-headless the
       // native `'show'`/`'focus'` listeners cover any other path.
       if (options.show !== false) {
-        // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
-        // the window manager.
-        kernelWindowShown(machineWindowId, true);
+        // `activation: 'user'` says a user gesture (the palette hotkey,
+        // `peek-cli cmd-open`) asked for this open, same fact the window-
+        // REUSE path forwards a few hundred lines up. Route through
+        // `kernelShowRequested` — the raise-request command that carries
+        // `intent: 'user'` into `window-kernel.ts` `FocusRaiseRequested`
+        // (rule F6) — so the raise this open triggers is admitted even
+        // while another app is frontmost, instead of the plain `WindowShown`
+        // + `OsFocusGained` report below, whose raise carries no intent and
+        // is held/suppressed exactly like an unrequested one. Every other
+        // fresh open (no declared activation) keeps reporting itself shown
+        // the old way — this only changes the open a caller marked as a
+        // user gesture.
+        if (options.activation === 'user') {
+          kernelShowRequested(machineWindowId, true, { activation: 'user' });
+        } else {
+          // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
+          // the window manager.
+          kernelWindowShown(machineWindowId, true);
+        }
       }
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);

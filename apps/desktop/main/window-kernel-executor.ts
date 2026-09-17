@@ -266,7 +266,17 @@ export class WindowKernelExecutor {
     if (!TIMELINE_ENABLED) return;
     const evId = 'id' in event && event.id !== undefined ? `(${String(event.id)})` : '';
     const keyDelta = prev.key === next.key ? `key=${String(next.key)}` : `key=${String(prev.key)}->${String(next.key)}`;
-    const eff = effects.map((e) => ('id' in e ? `${e.type}(${String(e.id)})` : e.type)).join(',') || '-';
+    // A `RaiseWindow` effect's `intent` rides as a `:user` suffix rather than
+    // a separate field, so an existing `includes('RaiseWindow(<id>)')` /
+    // regex check (matching the bare parenthesized id) keeps matching either
+    // way — only a check for the intent itself needs the suffix.
+    const eff = effects
+      .map((e) => {
+        if (!('id' in e)) return e.type;
+        const intentSuffix = 'intent' in e && e.intent ? `:${e.intent}` : '';
+        return `${e.type}(${String(e.id)})${intentSuffix}`;
+      })
+      .join(',') || '-';
     const hosts = next.order
       .filter((r) => r.kind === 'page-host' && r.layer === BASE_LAYER)
       .map((r) => `${String(r.id)}${r.visible ? '+' : '-'}${r.orderable ? 'o' : ''}`)
