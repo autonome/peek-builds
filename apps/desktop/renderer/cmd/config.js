@@ -6,7 +6,9 @@ const id = 'cmd';
 // global registration is rejected by the compositor anyway. Use
 // CommandOrControl+Space on Linux so the local fallback works cleanly.
 const isLinux = typeof window !== 'undefined' && window.app?.platform?.os === 'linux';
-const defaultShortcutKey = isLinux ? 'CommandOrControl+Space' : 'Option+Space';
+// TEMPORARY live-trace diagnostic: Control+Option+Space so this instance's
+// global hotkey does not collide with an installed Peek holding Option+Space.
+const defaultShortcutKey = isLinux ? 'CommandOrControl+Space' : 'Control+Option+Space';
 
 const labels = {
   name: 'Cmd',
