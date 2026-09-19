@@ -465,6 +465,8 @@ function wireClickCapture(): void {
     // click-through until the app is active again (become-active restores it).
     const capture = !!(msg && msg.capture) && getAppActive();
     lastCaptureState = capture;
+    // TEMP-DIAG
+    console.log(`[wm] t=${Date.now()} event=diag-capture-request asked=${!!(msg && msg.capture)} appActive=${getAppActive()} honored=${capture}`);
     if (!overlayWin || overlayWin.isDestroyed()) return;
     // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
     // only the backend calls `setIgnoreMouseEvents` now. capture:true means
