@@ -41,7 +41,7 @@ import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
-import { planRaiseRealization } from './window-kernel-executor.js';
+import { planRaiseRealization, hideProvokesFocusReassignment } from './window-kernel-executor.js';
 import {
   getKernelExecutor,
   kernelOsFocusGained,
@@ -881,7 +881,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Hiding the focused window makes the platform reassign focus to a
       // window the machine never named — gated on the window actually
       // holding focus, since hiding an unfocused window reassigns nothing.
-      this.pendingHideProvokedFocus = this.isFocused(win);
+      // and on the app being active, since an inactive app's hide reassigns
+      // nothing either and the unanswered expectation would swallow the next
+      // real focus. Only macOS reports app activity; elsewhere it counts as active.
+      const isActive = (app as unknown as { isActive?: () => boolean }).isActive;
+      const appActive = typeof isActive === 'function' ? isActive.call(app) : true;
+      this.pendingHideProvokedFocus = hideProvokesFocusReassignment(this.isFocused(win), appActive);
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */

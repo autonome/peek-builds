@@ -68,6 +68,15 @@ export function planRaiseRealization(alreadyVisible: boolean, alreadyKey: boolea
   return 'take-key';
 }
 
+// Whether hiding a window makes the platform hand focus to another of the
+// app's windows, a focus the machine never asked for and must not read as the
+// user's. Only a focused window's hide does, and only while the app is active:
+// an inactive app's hide reassigns nothing, so expecting an echo there would
+// leave the expectation standing until it swallowed the user's next real click.
+export function hideProvokesFocusReassignment(windowFocused: boolean, appActive: boolean): boolean {
+  return windowFocused && appActive;
+}
+
 export function planRestoreFocus(coldStart: boolean, headless: boolean, appActive: boolean): boolean {
   return appActive || (coldStart && !headless);
 }

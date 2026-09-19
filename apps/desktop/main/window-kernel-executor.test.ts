@@ -17,6 +17,7 @@ import {
   WindowKernelExecutor,
   planRaise,
   planRaiseRealization,
+  hideProvokesFocusReassignment,
   planRestoreFocus,
   stackingLevelForLayer,
   type FsSettleOutcome,
@@ -668,6 +669,25 @@ describe('planRaiseRealization — refining an activating raise once isVisible()
 
   it('visible but not key takes key without re-showing — the keepLive command palette reuse', () => {
     assert.strictEqual(planRaiseRealization(true, false), 'take-key');
+  });
+});
+
+// Wired in `electron-window-backend.ts hideWindow`, which is not
+// unit-reachable here for the same reason as `raiseWindow` above; the live
+// signal is the absence of an `os-focus-suppressed reason=hide-provoked`
+// record on the first click into a page opened while the app was inactive.
+describe('hideProvokesFocusReassignment — when a hide is followed by a focus the platform chose', () => {
+  it('a focused window hidden while the app is active provokes one', () => {
+    assert.strictEqual(hideProvokesFocusReassignment(true, true), true);
+  });
+
+  it('a focused window hidden while the app is inactive provokes none — the palette dismissed over another app', () => {
+    assert.strictEqual(hideProvokesFocusReassignment(true, false), false);
+  });
+
+  it('an unfocused window provokes none, active or not', () => {
+    assert.strictEqual(hideProvokesFocusReassignment(false, true), false);
+    assert.strictEqual(hideProvokesFocusReassignment(false, false), false);
   });
 });
 
