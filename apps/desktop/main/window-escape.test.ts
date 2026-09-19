@@ -227,6 +227,19 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     });
   });
 
+  it('Escape on a window holding key while the app is inactive closes it instead of opening the switcher', () => {
+    const sidePage = wid(90);
+    const state = fold([{ type: 'AppResigned' }, regHost(sidePage), show(sidePage), focus(sidePage)], loneHost());
+    assert.strictEqual(state.appActive, false);
+    assert.deepStrictEqual(interpretEscape(press({ landedId: sidePage }), state), {
+      kind: 'close-window',
+      command: { type: 'CloseOrHideWindow', id: sidePage, expectedVersion: state.version },
+    });
+    // The same window with the app active keeps the ordinary page answer.
+    const active = fold([{ type: 'AppActivated' }, focus(sidePage)], state);
+    assert.strictEqual(interpretEscape(press({ landedId: sidePage }), active).kind, 'open-switcher');
+  });
+
   it('a landing naming a window that has since closed reads as no landing', () => {
     const state = fold([{ type: 'WindowClosed', id: palette }], paletteOverHost());
     // `key` still names the closed palette, so `keyWindow` resolves to null and

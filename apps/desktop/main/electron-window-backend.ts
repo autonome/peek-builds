@@ -20,7 +20,7 @@ import {
 } from './windows.js';
 // `dispatchEscapePress` is called only inside `escGrabHandler`'s closure, never
 // at this module's top level — window-machine.js imports this file directly.
-import { dispatchEscapePress } from './window-machine.js';
+import { dispatchEscapePress, getAppActive } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import {
@@ -883,10 +883,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // holding focus, since hiding an unfocused window reassigns nothing.
       // and on the app being active, since an inactive app's hide reassigns
       // nothing either and the unanswered expectation would swallow the next
-      // real focus. Only macOS reports app activity; elsewhere it counts as active.
-      const isActive = (app as unknown as { isActive?: () => boolean }).isActive;
-      const appActive = typeof isActive === 'function' ? isActive.call(app) : true;
-      this.pendingHideProvokedFocus = hideProvokesFocusReassignment(this.isFocused(win), appActive);
+      // real focus. The kernel's record of app activity is the authority: the
+      // platform's own query answers true while an inactive app's palette
+      // holds key, which is exactly the case this guards.
+      this.pendingHideProvokedFocus = hideProvokesFocusReassignment(this.isFocused(win), getAppActive());
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */

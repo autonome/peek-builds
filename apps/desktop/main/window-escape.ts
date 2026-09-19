@@ -194,6 +194,17 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
     return { kind: 'nothing', reason: 'renderer-handled', command: null };
   }
 
+  // A window that takes Escape while the app is inactive is a side task over
+  // another app: Escape ends it and leaves the user where they were, whatever
+  // its role. The switcher would bring the app forward over the task the user
+  // never left. A workspace window is never closed by Escape, here included.
+  if (!state.appActive && record.role !== 'workspace') {
+    return {
+      kind: 'close-window',
+      command: { type: 'CloseOrHideWindow', id: record.id, expectedVersion: state.version },
+    };
+  }
+
   // Read off the kernel, not the keypress, so a caller cannot supply a
   // different session answer than the one the kernel has.
   if (escapeClosePolicy(state.openedInBackground, record.role) === 'close') {
