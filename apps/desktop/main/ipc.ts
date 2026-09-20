@@ -90,6 +90,7 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
+  isKeyHeldWhileAppInactive,
 } from './window-machine.js';
 import {
   kernelDestroyWindow,
@@ -116,6 +117,7 @@ import {
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   windowNonActivating,
+  pageOpensAsSideTask,
   deriveWindowSurface,
   isSatelliteRegistration,
   classifyWindowRegistration,
@@ -3167,6 +3169,16 @@ export function registerWindowHandlers(): void {
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
     if (usePageHost) {
+      // A side task (`izui-roles.ts pageOpensAsSideTask()`) is built as a
+      // panel, the one window type that can hold key in an inactive app, and
+      // its open carries the user intent of the keystroke that asked for it,
+      // so the raise reaches it (window-rules.md F6) with content focus and
+      // without the app coming forward.
+      if (pageOpensAsSideTask(isKeyHeldWhileAppInactive(), options)) {
+        options.type = 'panel';
+        options.activation = 'user';
+        wmLog('page-opens-as-side-task', { url: String(url) });
+      }
       // Tracks the constructed host across the try so the catch can clean up
       // a construct→register-gap throw (see destroyUnassembledHybridHost).
       let constructedHost: Electron.BaseWindow | null = null;

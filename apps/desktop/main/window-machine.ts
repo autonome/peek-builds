@@ -208,6 +208,15 @@ export function getAppActive(): boolean {
   return getKernelExecutor().getState().appActive;
 }
 
+// True while one of the app's windows holds key although the app is inactive:
+// the user is typing into a panel over another app. A window opened from
+// there can take key without taking anything from the other app, which a
+// window opened with nobody typing here (a command-line open) cannot.
+export function isKeyHeldWhileAppInactive(): boolean {
+  const state = getKernelExecutor().getState();
+  return !state.appActive && state.key !== null;
+}
+
 // Edge-deduped: fires only when the boolean actually flips, not on every dispatch. Binds to
 // whichever executor getKernelExecutor() answers with at call time, so a caller registered
 // before initWindowStateMachine() runs would bind to the fallback — setKernelExecutorProvider

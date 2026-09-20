@@ -21,6 +21,7 @@ import {
   type QuitCleanupPhase,
   windowSelfClosesOnBlur,
   windowNonActivating,
+  pageOpensAsSideTask,
   hybridResizeDirAt,
   downloadCloseTarget,
   RESIZE_EDGE_PX,
@@ -208,6 +209,26 @@ describe('windowNonActivating (the Panel open-time declaration — window-rules.
   it('no type, or any other type, does not declare a panel', () => {
     assert.strictEqual(windowNonActivating({}), false);
     assert.strictEqual(windowNonActivating({ type: 'normal' }), false);
+  });
+});
+
+describe('pageOpensAsSideTask (a page opened from a panel over another app — window-rules.md G1)', () => {
+  it('a page opened to show while a panel holds key over another app is a side task', () => {
+    assert.strictEqual(pageOpensAsSideTask(true, {}), true);
+    assert.strictEqual(pageOpensAsSideTask(true, { show: true }), true);
+  });
+
+  it('nobody typing into the app — an active app, or a command-line open — is an ordinary open', () => {
+    assert.strictEqual(pageOpensAsSideTask(false, {}), false);
+  });
+
+  it('a window opened not to show is never a side task', () => {
+    assert.strictEqual(pageOpensAsSideTask(true, { show: false }), false);
+  });
+
+  it("a caller's own window type is left alone", () => {
+    assert.strictEqual(pageOpensAsSideTask(true, { type: 'panel' }), false);
+    assert.strictEqual(pageOpensAsSideTask(true, { type: 'normal' }), false);
   });
 });
 

@@ -61,6 +61,42 @@ Each term is followed by the name the code uses for it.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
 
+### Opening a page from another app: which app holds OS focus at each step
+
+The purpose of G1 is that a page can be opened as a side task without leaving
+the task in the other app. The page has everything a frontmost window has —
+key, content focus, the close shortcut, Escape — except that the app never
+becomes the active app. Ending the side task leaves the user exactly where
+they were before pressing the panel hotkey. The other app stays the active app
+at every step.
+
+| Step | The user | Active app | Typing goes to | On screen |
+|---|---|---|---|---|
+| 1 | works in the other app | other app | other app | — |
+| 2 | presses the panel hotkey | other app | the panel (user intent, F6) | panel above the other app |
+| 3 | enters a URL | other app | the page, at once and without a click | panel gone; page above the other app, key and content-focused |
+| 4 | reads, types, scrolls in the page | other app | the page | unchanged |
+| 5a | presses Escape | other app | other app | page leaves the screen and stays open in the app (`window-escape.ts SIDE_TASK_ESCAPE`, `'hide'`; `'close'` ends it instead) |
+| 5b | presses the close shortcut | other app | other app | page closes |
+| 5c | clicks the other app | other app | other app | page stays on screen, no longer key |
+
+A page is a side task (`izui-roles.ts pageOpensAsSideTask()`) when it is opened
+to show while one of the app's panels holds key over another app — the user is
+already typing into the app, so handing key to the page takes nothing from the
+other app. Only a non-activating window can hold key in an inactive app, and
+that is fixed when a window is built, so a side task is built as a panel and
+stays one: clicking it never brings the app forward; the app comes forward
+only through the app switcher or the dock.
+
+A page opened while the app is inactive with nobody typing into the app — a
+command-line open — is not a side task. It takes no key; it is held above other
+apps unfocused (G1), and the first click on it brings the app forward. That
+click must reach the kernel as a world-caused focus: a hide made while the app
+is inactive provokes no platform-chosen focus, so none is expected after it
+(`window-kernel-executor.ts hideProvokesFocusReassignment()`); an expectation
+left standing swallows the click, leaves no key window, and sends the next
+Escape to the Escape fallback window.
+
 ## Focus
 
 - **F1 one-key.** At most one window is key, and `key` is written only by an OS focus report, never by anything the manager does on its own: not a focus command, not restoring a saved stack order, not preparing a focus for later.

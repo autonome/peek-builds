@@ -38,6 +38,7 @@ export interface EscapeKeyPress {
 
 type CloseOrHideCommand = Extract<Command, { type: 'CloseOrHideWindow' }>;
 type SetFullscreenCommand = Extract<Command, { type: 'SetFullscreen' }>;
+type HideCommand = Extract<Command, { type: 'HideWindow' }>;
 
 // Why an Escape produced no outcome at all — carried for logs and tests.
 export type EscapeNothingReason =
@@ -62,7 +63,15 @@ export type EscapeOutcome =
       readonly restoreTargetId: WindowId | null;
     }
   | { readonly kind: 'exit-fullscreen'; readonly command: SetFullscreenCommand }
-  | { readonly kind: 'close-window'; readonly command: CloseOrHideCommand };
+  | { readonly kind: 'close-window'; readonly command: CloseOrHideCommand }
+  | { readonly kind: 'hide-window'; readonly command: HideCommand };
+
+// What Escape does to a side task — a page taking keys while the app is
+// inactive (`interpretEscape`). `'hide'` takes it off screen and leaves it open
+// in the app, so the side task persists; `'close'` ends it. A code-level
+// setting, with no user-facing control.
+export type SideTaskEscape = 'hide' | 'close';
+export const SIDE_TASK_ESCAPE: SideTaskEscape = 'hide';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The switcher, as an ordinary window record
@@ -154,7 +163,11 @@ export function escapeFallbackPolicy(
 // what Escape means while one is showing, fullscreen or not; the fullscreen
 // exit check runs ahead of every outcome that could open the switcher, so a
 // switcher can never appear over a fullscreen window.
-export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcome {
+export function interpretEscape(
+  key: EscapeKeyPress,
+  state: State,
+  sideTaskEscape: SideTaskEscape = SIDE_TASK_ESCAPE,
+): EscapeOutcome {
   const target = resolveEscapeTarget(key, state);
   if (target.kind === 'stale') {
     return { kind: 'nothing', reason: 'stale-landing', command: null };
@@ -194,20 +207,27 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
     return { kind: 'nothing', reason: 'renderer-handled', command: null };
   }
 
-  // A window that takes Escape while the app is inactive is a side task over
-  // another app: Escape ends it and leaves the user where they were, whatever
-  // its role. The switcher would bring the app forward over the task the user
-  // never left. A workspace window is never closed by Escape, here included.
-  if (!state.appActive && record.role !== 'workspace') {
+  // Read off the kernel, not the keypress, so a caller cannot supply a
+  // different session answer than the one the kernel has.
+  if (escapeClosePolicy(state.openedInBackground, record.role) === 'close') {
     return {
       kind: 'close-window',
       command: { type: 'CloseOrHideWindow', id: record.id, expectedVersion: state.version },
     };
   }
-
-  // Read off the kernel, not the keypress, so a caller cannot supply a
-  // different session answer than the one the kernel has.
-  if (escapeClosePolicy(state.openedInBackground, record.role) === 'close') {
+  // A window that takes Escape while the app is inactive is a side task over
+  // another app: Escape ends it and leaves the user where they were, whatever
+  // its role. The switcher would bring the app forward over the task the user
+  // never left. A workspace window is never closed by Escape, here included,
+  // and a role Escape always closes keeps that answer below. What ending a
+  // side task means is `SIDE_TASK_ESCAPE`.
+  if (!state.appActive && record.role !== 'workspace' && !roleIn(ESC_CLOSE_ROLES, record.role)) {
+    if (sideTaskEscape === 'hide') {
+      return {
+        kind: 'hide-window',
+        command: { type: 'HideWindow', id: record.id, expectedVersion: state.version },
+      };
+    }
     return {
       kind: 'close-window',
       command: { type: 'CloseOrHideWindow', id: record.id, expectedVersion: state.version },

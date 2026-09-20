@@ -62,6 +62,20 @@ export function windowNonActivating(options: { type?: string }): boolean {
   return options.type === 'panel';
 }
 
+// A page opened to show while the user is typing into one of the app's panels
+// over another app is a side task: it takes key and content focus without the
+// app coming forward, so the user can use it at once and return to the other
+// app by closing it. Only a non-activating window can hold key in an inactive
+// app, and that is fixed when the window is built, so the declaration is made
+// at open time. A caller's own window type is never overridden, and a window
+// opened not to show (session restore) is never a side task.
+export function pageOpensAsSideTask(
+  keyHeldWhileAppInactive: boolean,
+  options: { show?: boolean; type?: string },
+): boolean {
+  return keyHeldWhileAppInactive && options.show !== false && options.type === undefined;
+}
+
 export function spacesPolicyForRole(
   role: string,
   platform: NodeJS.Platform,
