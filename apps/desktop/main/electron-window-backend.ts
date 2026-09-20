@@ -216,7 +216,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
-      wmLog('diag-app-active', { active: true }); // TEMP-DIAG
       const askedFor = getKernelExecutor().getState().pendingColdStartFocus;
       kernelAppActivated();
       // Armed only for a window the activation really can put in front.
@@ -225,7 +224,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.activationFocusTarget = askedRecord !== undefined && askedRecord.visible ? askedFor : null;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
-      wmLog('diag-app-active', { active: false }); // TEMP-DIAG
       this.activationFocusTarget = null;
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
@@ -941,46 +939,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     } catch {
       /* pinning a torn-down window is a no-op */
     }
-    // TEMP-DIAG: while any window is held, sample every native window once a
-    // second. A read-only observation sampler, not a wait on anything: native
-    // window level and visibility change with no event to hang a log on.
-    wmLog('diag-pin', { id, on });
-    if (on && !this.diagDumpTimer) {
-      this.diagDumpTimer = setInterval(() => this.diagDumpWindows('tick'), 1000);
-    }
-    this.diagDumpWindows(on ? 'hold' : 'release');
-  }
-
-  // TEMP-DIAG
-  private diagDumpTimer: ReturnType<typeof setInterval> | null = null;
-  private diagAcceptsInput = new Map<WindowId, boolean>();
-  private diagDumpWindows(why: string): void {
-    for (const [wid, entry] of this.windows) {
-      const w = entry.win as unknown as {
-        isDestroyed(): boolean;
-        isVisible(): boolean;
-        isAlwaysOnTop(): boolean;
-        isFocused?(): boolean;
-        getOpacity?(): number;
-        getBounds(): Rectangle;
-      };
-      try {
-        if (!w || w.isDestroyed()) continue;
-        if (!w.isVisible()) continue;
-        const b = w.getBounds();
-        wmLog('diag-win', {
-          why,
-          id: wid,
-          onTop: w.isAlwaysOnTop(),
-          focused: w.isFocused ? w.isFocused() : undefined,
-          opacity: w.getOpacity ? w.getOpacity() : undefined,
-          acceptsInput: this.diagAcceptsInput.get(wid),
-          bounds: `${b.x},${b.y},${b.width}x${b.height}`,
-        });
-      } catch {
-        /* diag only */
-      }
-    }
   }
 
   // A `pinned` window (the chrome overlay) needs `setAlwaysOnTop` rather than
@@ -1039,9 +997,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     try {
       if (win.isDestroyed()) return;
       win.setIgnoreMouseEvents(!acceptsInput, { forward: true });
-      // TEMP-DIAG
-      this.diagAcceptsInput.set(id, acceptsInput);
-      wmLog('diag-accepts-input', { id, acceptsInput, visible: win.isVisible() });
     } catch {
       /* torn-down window mid-command — the machine already recorded intent */
     }
