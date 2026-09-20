@@ -654,10 +654,13 @@ export function evolve(state: State, ev: Event): State {
           ? successorOnHide({ ...state, order }, target!)
           : null;
       const opSeq = successor !== null ? state.opSeqCounter + 1 : state.opSeqCounter;
+      // A window set aside comes back in front on the activation that re-shows it.
+      const setAside = ev.returnsOnActivation === true && state.appActive === false && target !== undefined;
       return {
         ...state,
         order: successor !== null ? order.map((w) => (w.id === successor.id ? { ...w, lastOpSeq: opSeq } : w)) : order,
         opSeqCounter: opSeq,
+        ...(setAside ? { pendingColdStartFocus: ev.id } : {}),
         ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
         version: state.version + 1,
       };
@@ -1347,14 +1350,24 @@ export function evolve(state: State, ev: Event): State {
       // request that will not activate the app holds its target above other
       // apps instead. A show with no raise request — session restore, any
       // `show: false` open — never reaches this arm, so it never holds.
+      // A user-intent raise of a non-activating window does not bring the app
+      // forward either — it takes key over the other app — so it holds too,
+      // and the app activating later returns it to ordinary stacking like any
+      // other held window rather than leaving it above every app for good.
+      const raiseLeavesAppInactive = ev.intent !== 'user' || targetRecord?.nonActivating === true;
       const holds =
-        !state.appActive && ev.intent !== 'user' && targetRecord !== undefined && admitsHoldAboveOtherApps(targetRecord);
+        !state.appActive && raiseLeavesAppInactive && targetRecord !== undefined && admitsHoldAboveOtherApps(targetRecord);
       return {
         ...state,
         order: state.order.map((w) =>
           w.id === ev.id ? { ...w, lastOpSeq: requestOpSeq, ...(holds ? { heldAboveOtherApps: true } : {}) } : w,
         ),
         opSeqCounter: requestOpSeq,
+        // A held window is what the user was last given over the other app. The
+        // platform hands key to the app's main window on activation, which a
+        // non-activating window never is, so the next activation is asked to
+        // put the held window in front — the same one-shot latch a restore arms.
+        ...(holds ? { pendingColdStartFocus: ev.id } : {}),
         lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent === 'user' ? { intent: 'user' as const } : {}) },
         version: state.version + 1,
       };

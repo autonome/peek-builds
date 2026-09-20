@@ -163,15 +163,16 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     // The palette held key over the other app when the page was asked for, so
     // the page is a side task (docs/design/window-rules.md G1): built
     // non-activating, raised with the user's intent, and handed key — all with
-    // the app still inactive. It is never held above other apps; that is the
-    // answer for a page nobody was typing toward.
+    // the app still inactive. It is held above other apps until the app next
+    // becomes active, so it does not stay above every app for good. The native
+    // level is not asserted — the executor does not realize the hold headless.
     const effectsFor = (lines: string[], effect: string) =>
       lines.filter((l) => l.includes(`${effect}(${pageWmId})`));
     expect(page!.nonActivating, timeline.join('\n')).toBe(true);
     expect(effectsFor(timeline, 'RaiseWindow')[0], timeline.join('\n')).toContain(`RaiseWindow(${pageWmId}):user`);
     expect(state.key, timeline.join('\n')).toBe(pageWmId);
-    expect(page!.heldAboveOtherApps === true, timeline.join('\n')).toBe(false);
-    expect(effectsFor(timeline, 'HoldAboveOtherApps'), timeline.join('\n')).toEqual([]);
+    expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
+    expect(effectsFor(timeline, 'HoldAboveOtherApps').length, timeline.join('\n')).toBe(1);
 
     // Escape on the side task takes it off screen and leaves it open
     // (`window-escape.ts SIDE_TASK_ESCAPE`), with the app still inactive.

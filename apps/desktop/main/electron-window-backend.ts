@@ -147,6 +147,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   private readonly pendingStackingFocus = new Set<WindowId>();
   private pendingHideProvokedFocus = false;
 
+  // The window an app activation was asked to put in front, from the moment
+  // the activation is reported until that window's own focus arrives. On
+  // activation the platform hands key to the app's main window by itself; when
+  // the kernel asked for a different window, that focus is the platform's
+  // choice, not the user's, and reporting it would raise the main window back
+  // over the one asked for. Spent by the first such focus, by the asked-for
+  // window's own focus echo, or by the app resigning, so it never outlives the
+  // activation it belongs to and swallows at most one focus.
+  private activationFocusTarget: WindowId | null = null;
+
   // Armed before the native show/hide call that can provoke it — a
   // `BaseWindow`'s native 'show'/'hide' can fire ahead of this method's own
   // synthetic echo, so the listener needs the token armed first.
@@ -207,10 +217,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       wmLog('diag-app-active', { active: true }); // TEMP-DIAG
+      const askedFor = getKernelExecutor().getState().pendingColdStartFocus;
       kernelAppActivated();
+      // Armed only for a window the activation really can put in front.
+      const askedRecord =
+        askedFor !== null ? getKernelExecutor().getState().order.find((w) => w.id === askedFor) : undefined;
+      this.activationFocusTarget = askedRecord !== undefined && askedRecord.visible ? askedFor : null;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       wmLog('diag-app-active', { active: false }); // TEMP-DIAG
+      this.activationFocusTarget = null;
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       this.appResignSettleTimer = setTimeout(() => {
@@ -389,6 +405,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         getKernelExecutor().markTimeline(`focus suppressed hide-provoked ${String(id)} cause=${cause.kind}`);
         wmLog('os-focus-suppressed', { id, reason: 'hide-provoked', causeKind: cause.kind });
         return;
+      }
+      const activationTarget = this.activationFocusTarget;
+      if (activationTarget !== null) {
+        if (id === activationTarget) {
+          this.activationFocusTarget = null;
+        } else if (cause.kind !== 'machine') {
+          // The platform hands key over once per activation, so one
+          // suppression spends the expectation.
+          this.activationFocusTarget = null;
+          getKernelExecutor().markTimeline(`focus suppressed activation-provoked ${String(id)} cause=${cause.kind}`);
+          wmLog('os-focus-suppressed', { id, reason: 'activation-provoked', causeKind: cause.kind, askedFor: activationTarget });
+          return;
+        }
       }
       kernelOsFocusGained(id, cause);
     });
