@@ -101,7 +101,7 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
     // the kernel's transient-dismissal sweep runs off that `OsFocusGained`.
     await fireFocus(focuserId);
 
-    expect(await isPresent(modalId)).toBe(false);
+    await expect.poll(() => isPresent(modalId)).toBe(false);
     await closeWindow(focuserId);
   });
 
