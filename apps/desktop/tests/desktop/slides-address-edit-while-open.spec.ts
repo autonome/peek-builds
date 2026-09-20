@@ -222,7 +222,7 @@ test.describe('Slides address edit while the slide window is open — ordering A
     const oldWindowId = await waitHybridForUrl(app, oldAddress, []);
     expect(oldWindowId, 'the old-address slide must open').not.toBeNull();
 
-    // Edit the address WITHOUT closing the still-open old window.
+    // Edit the address without closing the still-open old window first.
     await editAddressViaOptionsUi(bgWindow, manager, newAddress);
 
     // Fire the hotkey again — same edge, no restart, old window still open.
@@ -239,16 +239,15 @@ test.describe('Slides address edit while the slide window is open — ordering A
         'proof this is not an in-place reuse of the still-open window',
     ).not.toBe(oldWindowId);
 
-    // The old window is untouched: still registered, still at its OLD address.
-    // (Documents the actual current behavior — two windows now coexist — rather
-    // than asserting anything about which one is visually frontmost, which is
-    // unobservable headless.)
-    expect(
-      await hybridWindowExists(app, oldWindowId!),
-      'the old window must still exist (unaffected), not be swallowed into the reuse',
-    ).toBe(true);
+    // The old window does not survive: slides are transient quick-view windows,
+    // and opening the second slide closes the first (window-kernel.ts
+    // transientAutocloseExemption() exempts no older slide). The close is
+    // asynchronous, so poll rather than read once.
+    await expect.poll(() => hybridWindowExists(app, oldWindowId!), {
+      timeout: 10000, message: 'the old window never closed',
+    }).toBe(false);
     const addresses = await hybridAddresses(app);
-    expect(addresses).toContain(oldAddress);
+    expect(addresses).not.toContain(oldAddress);
     expect(addresses).toContain(newAddress);
   });
 });
