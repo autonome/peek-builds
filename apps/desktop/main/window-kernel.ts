@@ -170,7 +170,7 @@ export type Event =
       appLifetime?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
-  | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
+  | { type: 'WindowHidden'; id: WindowId; opSeq?: number; returnsOnActivation?: true }
   | { type: 'WindowClosed'; id: WindowId }
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
   | { type: 'OsFocusLost'; id: WindowId }
@@ -216,7 +216,10 @@ export type Event =
 export type Command =
   | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
-  | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
+  // `returnsOnActivation`: the window is set aside, not dismissed — it comes
+  // back on screen when the app next becomes active. Honored only while the
+  // app is inactive; with the app active a hide is a plain hide.
+  | { type: 'HideWindow'; id: WindowId; expectedVersion: number; returnsOnActivation?: true }
   // The keepLive branch point: hide if keepLive, else close. Decided in `decide`, never `evolve`.
   | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number }
   // Carries the intrinsic properties; `decide` produces a `WindowRegistered` event.
@@ -639,6 +642,10 @@ export function evolve(state: State, ev: Event): State {
               visible: false,
               ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
               ...(w.heldAboveOtherApps === true ? { heldAboveOtherApps: false } : {}),
+              // A window set aside while the app is inactive rides the same
+              // mark as one the app-resign sweep hid: `AppActivated` re-shows
+              // every record carrying it (`appBlurRevealAdmits`).
+              ...(ev.returnsOnActivation === true && state.appActive === false ? { hiddenByAppBlur: true } : {}),
             }
           : w,
       );
@@ -1849,7 +1856,9 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':
-      return { events: [{ type: 'WindowHidden', id: cmd.id }] };
+      return {
+        events: [{ type: 'WindowHidden', id: cmd.id, ...(cmd.returnsOnActivation === true ? { returnsOnActivation: true } : {}) }],
+      };
     case 'CloseOrHideWindow': {
       // Refusal first: a record whose lifetime is the app's own rejects the
       // command outright — neither hidden nor closed, and no cascade runs.

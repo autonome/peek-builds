@@ -76,7 +76,7 @@ at every step.
 | 2 | presses the panel hotkey | other app | the panel (user intent, F6) | panel above the other app |
 | 3 | enters a URL | other app | the page, at once and without a click | panel gone; page above the other app, key and content-focused |
 | 4 | reads, types, scrolls in the page | other app | the page | unchanged |
-| 5a | presses Escape | other app | other app | page leaves the screen and stays open in the app (`window-escape.ts SIDE_TASK_ESCAPE`, `'hide'`; `'close'` ends it instead) |
+| 5a | presses Escape | other app | other app | page is set aside: it leaves the screen, stays open, and comes back on screen when the app next becomes active (`window-escape.ts SIDE_TASK_ESCAPE`, `'hide'`; `'close'` ends it instead) |
 | 5b | presses the close shortcut | other app | other app | page closes |
 | 5c | clicks the other app | other app | other app | page stays on screen, no longer key |
 

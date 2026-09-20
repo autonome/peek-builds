@@ -67,8 +67,9 @@ export type EscapeOutcome =
   | { readonly kind: 'hide-window'; readonly command: HideCommand };
 
 // What Escape does to a side task — a page taking keys while the app is
-// inactive (`interpretEscape`). `'hide'` takes it off screen and leaves it open
-// in the app, so the side task persists; `'close'` ends it. A code-level
+// inactive (`interpretEscape`). `'hide'` sets it aside: it leaves the screen,
+// stays open, and comes back on screen when the app next becomes active, so
+// the side task persists; `'close'` ends it. A code-level
 // setting, with no user-facing control.
 export type SideTaskEscape = 'hide' | 'close';
 export const SIDE_TASK_ESCAPE: SideTaskEscape = 'hide';
@@ -225,7 +226,7 @@ export function interpretEscape(
     if (sideTaskEscape === 'hide') {
       return {
         kind: 'hide-window',
-        command: { type: 'HideWindow', id: record.id, expectedVersion: state.version },
+        command: { type: 'HideWindow', id: record.id, expectedVersion: state.version, returnsOnActivation: true },
       };
     }
     return {
