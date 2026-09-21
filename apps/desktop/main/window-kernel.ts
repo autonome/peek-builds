@@ -181,6 +181,7 @@ export type Event =
   | { type: 'WindowContentOrderable'; id: WindowId }
   | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
   | { type: 'WindowAcceptsInputChanged'; id: WindowId; acceptsInput: boolean }
+  | { type: 'WindowLayerChanged'; id: WindowId; layer: number }
   | { type: 'FullscreenTransitionStarted'; id: WindowId; entering: boolean; preBounds: Rectangle | null }
   | { type: 'FullscreenDesireRecorded'; id: WindowId; desired: boolean }
   // OS report: the window IS fullscreen now. Settles `entering`/`leaving`/`normal`.
@@ -254,6 +255,11 @@ export type Command =
   | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean; expectedVersion: number }
+  // Moves an already-open window between the pinned band (`layer > BASE_LAYER`)
+  // and the base band — see docs/design/window-rules.md "Persistent windows:
+  // workspace-pinned and global HUD". A fresh, non-registration entry point for
+  // the same field `WindowRegistered` sets once at open time.
+  | { type: 'SetLayer'; id: WindowId; layer: number; expectedVersion: number }
   | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; frame?: Rectangle; expectedVersion: number }
   | { type: 'ImportStackOrder'; order: readonly WindowId[]; expectedVersion: number }
   | { type: 'DestroyWindow'; id: WindowId; expectedVersion: number }
@@ -284,6 +290,11 @@ export type Effect =
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership }
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean }
+  // Emitted by `react` as a structural diff of the pinned-band membership
+  // `layer` implies — independent of `SetStacking`'s z-order replay below, so
+  // an unpin reliably clears the native always-on-top flag rather than
+  // depending on a z-order-only effect that never touches it.
+  | { type: 'SetPinned'; id: WindowId; pinned: boolean }
   | { type: 'DestroyWindow'; id: WindowId }
   // Tear down the window's content surface — the wedged-guest fallback (see the `CloseContent` command).
   | { type: 'CloseContent'; id: WindowId }
@@ -1015,6 +1026,15 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'WindowLayerChanged': {
+      // Mechanical mirror write, same shape as `WindowAcceptsInputChanged` above.
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, layer: ev.layer } : w)),
+        version: state.version + 1,
+      };
+    }
+
     case 'FullscreenTransitionStarted': {
       // `decide` already ran the in-flight guard and resolved `preBounds` —
       // this is a mechanical write, no per-mode branching.
@@ -1535,6 +1555,22 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Pinned band — a structural diff of `layer > BASE_LAYER`, same pattern as
+  // click-through above. Deliberately separate from the `SetStacking` replay
+  // below: that replay's `stacked` branch only reorders (`moveTop()`), so it
+  // alone would never clear a real always-on-top flag on unpin.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    const wasPinned = prevRecord.layer > BASE_LAYER;
+    const isPinned = nextRecord.layer > BASE_LAYER;
+    if (wasPinned !== isPinned) {
+      effects.push({ type: 'SetPinned', id: nextRecord.id, pinned: isPinned });
+    }
+  }
+
   // RaiseWindow: `State.key` changed — diffed rather than the top of `order`,
   // so a pure reorder never raises but an already-topmost window taking key
   // from someone else still does; gated on `admitsFocusAssert` and on
@@ -1968,6 +2004,8 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       return { events: [{ type: 'DesktopMembershipSet', id: cmd.id, membership: cmd.membership }] };
     case 'SetAcceptsInput':
       return { events: [{ type: 'WindowAcceptsInputChanged', id: cmd.id, acceptsInput: cmd.acceptsInput }] };
+    case 'SetLayer':
+      return { events: [{ type: 'WindowLayerChanged', id: cmd.id, layer: cmd.layer }] };
     case 'AssertFocus': {
       // Reached only after the unknown-window guard above — this command is
       // not exempt from it, unlike the teardown arms.

@@ -2823,6 +2823,66 @@ describe('window-kernel: desktop membership', () => {
   });
 });
 
+// ── Layer: moving an already-open window between the pinned band and base ───
+
+describe('window-kernel: layer', () => {
+  const registerOne = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('SetLayer round-trips through decide -> evolve -> state, both directions', () => {
+    const state = fold(registerOne(), initialState());
+
+    const pinDecision = decide(state, { type: 'SetLayer', id: wid(1), layer: 1, expectedVersion: state.version });
+    assert.ok('events' in pinDecision);
+    assert.deepStrictEqual(pinDecision.events, [{ type: 'WindowLayerChanged', id: wid(1), layer: 1 }]);
+    const pinned = fold(pinDecision.events, state);
+    assert.strictEqual(pinned.order.find((w) => w.id === wid(1))?.layer, 1);
+
+    const unpinDecision = decide(pinned, { type: 'SetLayer', id: wid(1), layer: 0, expectedVersion: pinned.version });
+    assert.ok('events' in unpinDecision);
+    assert.deepStrictEqual(unpinDecision.events, [{ type: 'WindowLayerChanged', id: wid(1), layer: 0 }]);
+    const unpinned = fold(unpinDecision.events, pinned);
+    assert.strictEqual(unpinned.order.find((w) => w.id === wid(1))?.layer, 0);
+  });
+
+  it('react emits SetPinned only when the pinned BAND actually changes, never as a raw-value diff', () => {
+    const state = fold(registerOne(), initialState());
+
+    const pinDecision = decide(state, { type: 'SetLayer', id: wid(1), layer: 1, expectedVersion: state.version });
+    assert.ok('events' in pinDecision);
+    const first = foldWithEffects(pinDecision.events, state);
+    assert.deepStrictEqual(
+      first.effects.filter((e) => e.type === 'SetPinned'),
+      [{ type: 'SetPinned', id: wid(1), pinned: true }],
+    );
+
+    // A second pinned layer value — still inside the pinned band — diffs to no SetPinned effect.
+    const reDecision = decide(first.state, { type: 'SetLayer', id: wid(1), layer: 2, expectedVersion: first.state.version });
+    assert.ok('events' in reDecision);
+    const second = foldWithEffects(reDecision.events, first.state);
+    assert.deepStrictEqual(
+      second.effects.filter((e) => e.type === 'SetPinned'),
+      [],
+      'a layer change that stays inside the pinned band diffs to no SetPinned effect',
+    );
+
+    const unpinDecision = decide(second.state, { type: 'SetLayer', id: wid(1), layer: 0, expectedVersion: second.state.version });
+    assert.ok('events' in unpinDecision);
+    const third = foldWithEffects(unpinDecision.events, second.state);
+    assert.deepStrictEqual(
+      third.effects.filter((e) => e.type === 'SetPinned'),
+      [{ type: 'SetPinned', id: wid(1), pinned: false }],
+    );
+  });
+
+  it('SetLayer against an unregistered window is rejected', () => {
+    const state = initialState();
+    const decision = decide(state, { type: 'SetLayer', id: wid(1), layer: 1, expectedVersion: state.version });
+    assert.deepStrictEqual(decision, { rejected: 'no-such-window' });
+  });
+});
+
 // ── Overlay attachment: the shared chrome overlay relation ──────────────────
 
 describe('window-kernel: overlay attachment', () => {

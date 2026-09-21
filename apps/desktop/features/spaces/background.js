@@ -347,69 +347,36 @@ async function switchSpace(targetName) {
 //
 // A pinned window is an ordinary Pinned window (window-kernel.ts `layer`
 // above `BASE_LAYER`, from `alwaysOnTop`) — see docs/design/window-rules.md
-// "Persistent windows: workspace-pinned and global HUD". `layer` is set at
-// open time only (window-kernel.ts has no command to change an already-open
-// window's layer — no kernel change is part of this design), so pinning or
-// unpinning an already-open window means closing it and reopening it at the
-// same address and bounds with the new `alwaysOnTop` flag, the same
-// recreate-on-toggle pattern `features/windows` already uses for its
-// switcher view. The 'pin' context key (read by the badge, `closeSpace()`,
-// and the save-side projections) is the one source of truth for scope —
-// nothing infers it from window flags.
+// "Persistent windows: workspace-pinned and global HUD". `api.window.setPinned`
+// moves an already-open window between the pinned band and the base band in
+// place (window-kernel.ts `SetLayer`) — the window is never closed or
+// reopened, so it keeps its page state. The 'pin' context key (read by the
+// badge, `closeSpace()`, and the save-side projections) is the one source of
+// truth for scope — nothing infers it from window flags.
 
-async function findWindowInfo(windowId) {
-  const result = await api.window.list({ includeInternal: true });
-  if (!result?.success || !Array.isArray(result.windows)) return null;
-  return result.windows.find((w) => w.id === windowId) || null;
-}
-
-async function reopenWithPinState(windowId, scope) {
-  const info = await findWindowInfo(windowId);
-  if (!info) return { success: false, error: 'Window not found' };
-
-  const modeResult = await api.context.get('mode', windowId);
-  const priorSpaceMode = modeResult?.data?.value === 'space' ? modeResult.data : null;
-
-  const openOptions = {
-    role: (info.params && info.params.role) || 'content',
-    alwaysOnTop: !!scope,
-  };
-  if (scope) {
-    // Set BEFORE loadURL, main-process side (ipc.ts windowOpenHandler), the
-    // same way `spaceMode` is — so the reopened window's own tile can read
-    // its own pin state at init time instead of racing a context:changed
-    // publish sent after api.window.open already resolved. Left unset for
-    // an unpin: a freshly opened window simply carries no 'pin' entry.
-    openOptions.pinScope = scope;
+async function setPinState(windowId, scope) {
+  const result = await api.window.setPinned(windowId, !!scope);
+  if (!result?.success) {
+    return { success: false, error: result?.error || (scope ? 'Failed to pin window' : 'Failed to unpin window') };
   }
-  if (info.bounds) {
-    openOptions.x = info.bounds.x;
-    openOptions.y = info.bounds.y;
-    openOptions.width = info.bounds.width;
-    openOptions.height = info.bounds.height;
-  }
-
-  api.window.close(windowId);
-  const reopened = await api.window.open(info.url, openOptions);
-  if (!reopened?.id) {
-    return { success: false, error: scope ? 'Failed to reopen window for pinning' : 'Failed to reopen window for unpinning' };
-  }
+  // The badge (and everything else that cares about scope) reads this key,
+  // not the kernel layer — api.context.set publishes context:changed itself,
+  // so the badge updates without a reload.
+  await api.context.set('pin', scope || null, {}, windowId);
 
   if (scope === 'workspace') {
     // Associate with the CURRENT workspace regardless of the window's prior
     // mode — "pin to this workspace" means this one, not wherever it was.
     await api.context.setMode('space', {
-      windowId: reopened.id,
+      windowId,
       metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
     });
-  } else if (priorSpaceMode) {
-    // Global pin, or unpin: leave whatever space membership the window
-    // already had (a global pin does not detach it from its workspace; an
-    // unpin does not either — only its pin scope changes).
-    await api.context.setMode('space', { windowId: reopened.id, metadata: priorSpaceMode.metadata });
   }
+  // A global pin, or an unpin, leaves whatever space membership the window
+  // already had — the window was never recreated, so there is nothing to
+  // restore.
 
-  return { success: true, windowId: reopened.id, scope: scope || null };
+  return { success: true, windowId, scope: scope || null };
 }
 
 async function pinWindow(scope) {
@@ -418,13 +385,13 @@ async function pinWindow(scope) {
   }
   const windowId = await api.window.getFocusedVisibleWindowId();
   if (!windowId) return { success: false, error: 'No active window to pin' };
-  return reopenWithPinState(windowId, scope);
+  return setPinState(windowId, scope);
 }
 
 async function unpinWindow() {
   const windowId = await api.window.getFocusedVisibleWindowId();
   if (!windowId) return { success: false, error: 'No active window to unpin' };
-  return reopenWithPinState(windowId, null);
+  return setPinState(windowId, null);
 }
 
 // ===== Command Registration =====

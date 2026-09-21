@@ -142,8 +142,11 @@ import {
   kernelShowRequested,
   kernelHideRequested,
   kernelSetAcceptsInput,
+  kernelSetLayer,
   kernelArmSelectionFocus,
 } from './window-kernel-dispatch.js';
+import { BASE_LAYER } from './window-kernel.js';
+import { FLOATING_LAYER } from './izui-roles.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -3115,6 +3118,43 @@ export function registerTileIpcHandlers(): void {
           kernelHideRequested(machineId);
         }
       }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-pinned ────────────────────────────────────────
+  //
+  // Moves an already-open window between the pinned band and the base band
+  // in place (window-kernel.ts `SetLayer`) — no close/reopen, so the page
+  // keeps its state. Gated by `window.manage`. `args.pinned` goes through
+  // the same headless gate the open-time `alwaysOnTop` request already does
+  // (ipc.ts's `alwaysOnTopResolved`), so a headless window's `layer` doesn't
+  // start reporting pinned when its native always-on-top flag was never
+  // actually applied.
+  registerTileIpc('tile:window:set-pinned', { mode: 'handle' }, async (event, args: {
+    token: string;
+    id: number;
+    pinned: boolean;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'set-pinned');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:set-pinned', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (typeof args.id !== 'number') {
+        return { success: false, error: 'Window ID is required' };
+      }
+      const machineId = getWindowIdFor(args.id);
+      if (machineId == null) {
+        return { success: false, error: 'Window not found' };
+      }
+      kernelSetLayer(machineId, !isHeadless() && args.pinned ? FLOATING_LAYER : BASE_LAYER);
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

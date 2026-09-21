@@ -19,7 +19,8 @@ export type WindowOp =
   | 'fullscreen'
   | 'get-focused-visible-id'
   | 'set-overlay-focus-target'
-  | 'set-visible-on-all-workspaces';
+  | 'set-visible-on-all-workspaces'
+  | 'set-pinned';
 
 export type WindowCheckResult =
   | { ok: true }
@@ -98,7 +99,8 @@ export function checkWindowAllowed(
     case 'maximize':
     case 'fullscreen':
     case 'set-overlay-focus-target':
-    case 'set-visible-on-all-workspaces': {
+    case 'set-visible-on-all-workspaces':
+    case 'set-pinned': {
       if (cap.manage !== true) {
         return { ok: false, error: `window.manage capability required for ${op}` };
       }

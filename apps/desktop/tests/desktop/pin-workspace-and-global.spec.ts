@@ -8,14 +8,14 @@
  * (`renderer/lib/pin-badge.js`, wired into `features/spaces/home.js`), and
  * `closeSpace()` leaving a globally-pinned window alone.
  *
- * Pinning or unpinning an already-open window closes it and reopens it with
- * the new `alwaysOnTop` flag (see `reopenWithPinState` in
- * `features/spaces/background.js`) — layer is set at open time only, and no
- * kernel change is part of this design. Every assertion below re-resolves the
- * pinned window by its NEW native id (from the pin/unpin command's result),
- * not by URL alone: the closed-then-reopened window shares its predecessor's
- * URL, so a plain URL match can race a not-yet-closed old window with the
- * same address.
+ * Pinning or unpinning an already-open window moves it between the pinned
+ * band and the base band IN PLACE (`window-kernel.ts` `SetLayer`, dispatched
+ * via `api.window.setPinned` — see `setPinState` in
+ * `features/spaces/background.js`): the window is never closed or reopened,
+ * so its native id and its page state both survive. Every assertion below
+ * still resolves the pinned window by id (from the pin/unpin command's
+ * result) rather than URL alone, since more than one window can share a URL
+ * across the suite.
  *
  * Run with:
  *   yarn test:grep "pin mechanism"
@@ -110,8 +110,14 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
     if (app) await app.close();
   });
 
-  test('"pin to this workspace" pins the active window and draws the workspace badge', async () => {
+  test('"pin to this workspace" pins the active window in place and draws the workspace badge', async () => {
     const windowId = await openBlankWorkspaceHome('pin-spec-workspace-badge');
+    const page = await getWindowById(windowId);
+    // A marker set before pinning — still present after proves pinning never
+    // closed/reopened (and so never reloaded) this window.
+    await page.evaluate(() => {
+      (window as unknown as { __peekPinTestMarker?: string }).__peekPinTestMarker = 'present-before-pin';
+    });
 
     const result = await runCommand('pin to this workspace');
     expect(result?.error, `pin to this workspace failed: ${result?.error}`).toBeUndefined();
@@ -119,12 +125,16 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
     expect(result?.scope).toBe('workspace');
 
     const pinnedId = result.windowId as number;
-    expect(pinnedId).not.toBe(windowId); // pin closes and reopens the window
+    expect(pinnedId, 'pinning changes the window\'s layer in place, not its id').toBe(windowId);
 
     const pinEntry = await getPinContext(pinnedId);
-    expect(pinEntry?.value, 'the reopened window is not recorded as workspace-pinned').toBe('workspace');
+    expect(pinEntry?.value, 'the window is not recorded as workspace-pinned').toBe('workspace');
 
-    const page = await getWindowById(pinnedId);
+    await expect(
+      page.evaluate(() => (window as unknown as { __peekPinTestMarker?: string }).__peekPinTestMarker),
+      'pinning reloaded the page — a value set before pinning did not survive',
+    ).resolves.toBe('present-before-pin');
+
     await expect(page.locator('.pin-badge')).toHaveAttribute('data-scope', 'workspace');
     await expect(page.locator('.pin-badge-label')).toHaveText(/this workspace/);
     await expect(page.locator('.pin-badge-unpin')).toBeVisible();
@@ -132,10 +142,17 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
     // Clean up via the badge's own unpin control — also covers it end to end.
     await page.locator('.pin-badge-unpin').click();
     await expect(page.locator('.pin-badge')).toHaveCount(0, { timeout: 15000 });
+
+    // Unpinning only changes the window's layer in place — it is never
+    // closed — so close it explicitly, or it lingers as an extra
+    // `spaces/home.html` window for a later test's window-count assertion.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as unknown as { app: any }).app.window.close(id);
+    }, pinnedId);
   });
 
-  test('"pin across workspaces" pins the active window and draws the distinct global badge', async () => {
-    await openBlankWorkspaceHome('pin-spec-global-badge');
+  test('"pin across workspaces" pins the active window in place and draws the distinct global badge', async () => {
+    const windowId = await openBlankWorkspaceHome('pin-spec-global-badge');
 
     const result = await runCommand('pin across workspaces');
     expect(result?.error, `pin across workspaces failed: ${result?.error}`).toBeUndefined();
@@ -143,8 +160,9 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
     expect(result?.scope).toBe('global');
 
     const pinnedId = result.windowId as number;
+    expect(pinnedId, 'pinning changes the window\'s layer in place, not its id').toBe(windowId);
     const pinEntry = await getPinContext(pinnedId);
-    expect(pinEntry?.value, 'the reopened window is not recorded as globally pinned').toBe('global');
+    expect(pinEntry?.value, 'the window is not recorded as globally pinned').toBe('global');
 
     const page = await getWindowById(pinnedId);
     await expect(page.locator('.pin-badge')).toHaveAttribute('data-scope', 'global');
@@ -156,6 +174,11 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
 
     await runCommand('unpin window');
     await expect(page.locator('.pin-badge')).toHaveCount(0, { timeout: 15000 });
+
+    // Same as above — unpinning never closes the window.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as unknown as { app: any }).app.window.close(id);
+    }, pinnedId);
   });
 
   test('"unpin window" clears pin state via the palette, independent of the badge control', async () => {
@@ -171,10 +194,16 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
 
     const unpinnedId = unpinResult.windowId as number;
     const pinEntry = await getPinContext(unpinnedId);
-    expect(pinEntry?.value ?? null, 'the reopened window still reads as pinned after unpin').toBeNull();
+    expect(pinEntry?.value ?? null, 'the window still reads as pinned after unpin').toBeNull();
 
     const page = await getWindowById(unpinnedId);
     await expect(page.locator('.pin-badge')).toHaveCount(0);
+
+    // The palette unpin doesn't close the window either — clean up so it
+    // doesn't linger for a later test's window-count assertion.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as unknown as { app: any }).app.window.close(id);
+    }, unpinnedId);
   });
 
   test('a workspace-pinned window closes on workspace switch and reopens pinned on re-entry', async () => {

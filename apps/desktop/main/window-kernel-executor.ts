@@ -499,6 +499,14 @@ export class WindowKernelExecutor {
         this.backend.setAcceptsInput(effect.id, effect.acceptsInput);
         return;
       }
+      case 'SetPinned': {
+        // Headless-gated, same as HoldAboveOtherApps/ReleaseFromAboveOtherApps below — a headless
+        // window's always-on-top flag was never applied at open time either (ipc.ts's
+        // `alwaysOnTopResolved` gate), so there is nothing real to toggle here.
+        if (this.headless) return;
+        this.backend.pinAlwaysOnTop(effect.id, effect.pinned);
+        return;
+      }
       case 'SetStacking': {
         // Handled by the band replay in `runEffects`; never reached.
         this.backend.setStacking(effect.id, stackingLevelForLayer(effect.layer));

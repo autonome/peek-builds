@@ -781,6 +781,19 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Move an already-open window between the pinned band and the base band
+     * in place — no close/reopen, so the window keeps its page state.
+     * Requires `window.manage` (or trustedBuiltin).
+     */
+    setPinned: (id: number, pinned: boolean) => {
+      return ipcRenderer.invoke('tile:window:set-pinned', {
+        token: tileToken,
+        id,
+        pinned,
+      });
+    },
+
+    /**
      * Show a hidden window. Requires `window.manage` (or trustedBuiltin).
      */
     show: (id: number) => {

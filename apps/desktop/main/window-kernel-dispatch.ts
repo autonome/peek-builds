@@ -360,6 +360,17 @@ export function kernelSetAcceptsInput(id: WindowId, acceptsInput: boolean): void
   });
 }
 
+// Moves an already-open window between the pinned band and the base band —
+// see window-kernel.ts's `SetLayer` command doc.
+export function kernelSetLayer(id: WindowId, layer: number): void {
+  kernelExecute({
+    type: 'SetLayer',
+    id,
+    layer,
+    expectedVersion: getKernelExecutor().getState().version,
+  });
+}
+
 // kernelShowRequested with activate is ShowWindow then RaiseWindow, and opts.activation === 'user' puts intent on the raise.
 export function kernelShowRequested(id: WindowId, activate: boolean, opts?: { activation?: 'user' }): void {
   kernelExecute({ type: 'ShowWindow', id, expectedVersion: getKernelExecutor().getState().version });
