@@ -310,17 +310,19 @@ let defaultSpaceReady = null;
  * First launch only: whatever windows the general session restore already
  * opened, before this feature ever ran, become the default workspace's
  * membership from here on — the default is a real space from the start, not
- * one adopted piecemeal window-by-window later. Skips this feature's own
- * chrome (home/border/panel, none of which exist this early anyway) and the
- * core background window; anything else with no mode of its own yet is
- * ordinary content the user already had open.
+ * one adopted piecemeal window-by-window later. Adopts only content windows
+ * (`params.role === 'content'`, the same role `features/windows/windows.js
+ * loadWindows()` treats as user content) — dedicated chrome (the palette,
+ * overlays, the switcher, the workspace panel) and background pages carry a
+ * different role or none at all, so they're left alone without a name-list
+ * of URLs to skip.
  */
 async function adoptOpenWindowsIntoDefault(tag, spaceName) {
   try {
     const listResult = await api.window.list();
     if (!listResult?.success || !Array.isArray(listResult.windows)) return;
     for (const w of listResult.windows) {
-      if (!w?.id || !w.url || w.url.includes('/spaces/') || w.url.includes('background.html')) continue;
+      if (!w?.id || w.params?.role !== 'content') continue;
       const modeResult = await api.context.get('mode', w.id);
       if (modeResult?.success && modeResult.data?.value) continue; // already has a mode of its own
       await api.context.setMode('space', {

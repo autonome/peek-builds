@@ -218,10 +218,11 @@ result — the same signal `main/onboarding-seed.ts` uses for its own once-per-p
 though this one rides the tag's own creation rather than a separate row), whatever windows a
 general session restore already opened before this feature ran become the default workspace's
 membership from that moment on: `adoptOpenWindowsIntoDefault()` walks `api.window.list()` and
-tags anything without a mode of its own (skipping this feature's own chrome and the core
-background window) into `space:default`. Every later launch skips adoption — the default
-workspace's membership from then on is whatever was tagged into it explicitly, the same as any
-other space.
+tags anything with no mode of its own **and role `'content'`** into `space:default` — the same
+role `features/windows/windows.js loadWindows()` uses to tell user content from dedicated chrome
+(palette, overlays, switcher, workspace panel) and background pages, so nothing skips by matching
+a URL substring. Every later launch skips adoption — the default workspace's membership from then
+on is whatever was tagged into it explicitly, the same as any other space.
 
 ### Enter and exit
 
