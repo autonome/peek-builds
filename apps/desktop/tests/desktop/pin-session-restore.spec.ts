@@ -69,7 +69,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
 
   test('a workspace-scoped pin is written into that workspace\'s saved row', async () => {
     const spaceName = 'pin-restore-spec-workspace';
-    await openAndPin(spaceName, 'to this workspace');
+    const windowId = await openAndPin(spaceName, 'to this workspace');
 
     // Resolve the same tag id the row is keyed on, mirroring
     // space-workspace-page-host.spec.ts.
@@ -93,6 +93,15 @@ test.describe('pin session restore: both scopes @desktop', () => {
       row.windows.every((w: { pinned?: boolean }) => w.pinned === true),
       'the pinned window is not recorded as pinned in its own workspace\'s saved row',
     ).toBe(true);
+
+    // Left open, this window's url still matches every later test's
+    // `spaces/home.html` window-count poll — including the third test's
+    // wait for its own globally-pinned window to close, which can then never
+    // observe a count of zero.
+    await bgWindow.evaluate(
+      async (id: number) => (window as unknown as { app: any }).app.window.close(id),
+      windowId,
+    );
   });
 
   test('a cross-workspace pin is written into the not-workspace-scoped pin list', async () => {

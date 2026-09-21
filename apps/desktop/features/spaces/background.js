@@ -303,7 +303,8 @@ async function closeSpace() {
     if (api.session?.saveSpaceWorkspaces) {
       await api.session.saveSpaceWorkspaces();
     }
-  } catch {
+  } catch (err) {
+    console.error('[ext:spaces] Failed to save workspace layouts on close:', err);
   }
 
   // Get all windows in this space and close them — except one pinned across
