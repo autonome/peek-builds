@@ -49,16 +49,16 @@ machine. It is expected to shrink monotonically to zero; the check fails a PR th
 
 ### Open design decisions
 
-**Stacking: pinned, always-on-top and HUD windows (opened 2026-09-13).** The use cases and rules
-for a window that stays above others have not been worked through: what "pinned" means across
-virtual desktops, whether a HUD window can ever be key, what an always-on-top change does to
-focus, and how a pinned window interacts with the transient dismissal law. The behaviour must be
-the same on all three desktop platforms. Two claims in the code wait on this: `electron-window-backend.ts
-STACKING_TAKES_FOCUS` asserts that a stacking change steals focus everywhere except macOS, justified
-only by a comment and never checked on a Linux or Windows display, and `pinAlwaysOnTop` arms nothing
-while `setStacking`'s `'pinned'` branch arms `pendingStackingFocus` for the same primitive off macOS.
-Neither changes until the rules exist; the rules are written first, in `window-rules.md`'s stacking
-section, then the code is read against them.
+**Stacking: pinned, always-on-top and HUD windows (opened 2026-09-13) — answered 2026-09-21.** The
+two kinds of persistent window — workspace-pinned and global HUD (Peek items `0807b46c`,
+`57b89e6e`) — and every open question `57b89e6e` raised for them (selection, the badge, workspace
+membership, multi-display, session restore, overlapping pins, focus, cmd-panel interaction) are
+decided in `window-rules.md`'s "Persistent windows: workspace-pinned and global HUD" section, which
+also amends G8 with the one genuinely new rule: an exemption from the app-deactivate sweep for a
+window declared to survive it. `electron-window-backend.ts STACKING_TAKES_FOCUS`'s cross-platform
+claim and the `pinAlwaysOnTop` / `pendingStackingFocus` asymmetry it names are unaffected by this
+decision — they are about whether today's Pinned primitive already behaves correctly off macOS,
+not about what the two kinds should do, and stay open as implementation debt.
 
 The previous open decision — whether `order` includes never-shown and offscreen windows — was answered
 on 2026-08-21: **it does**, every window always, with no registration-time membership test. The
