@@ -421,7 +421,7 @@ The default for most built-ins now — production boot went from 6 windows to 2.
 - **Global hotkeys with no renderer running:** accelerators register at boot even for unloaded tiles; a shortcut can publish a command or wake topic directly.
 - **Core semantic wake events:** e.g. `page:search-engine-discovered` wakes `websearch` exactly when a page advertises an OpenSearch descriptor.
 
-**Loading mode:** consolidated built-ins (`cmd`, `groups`, `peeks`, `slides`) load as iframes in one shared host (~80–120 MB vs ~200–400 MB), still origin-isolated. External + user-installed features get their own process — full crash isolation. `cmd` loads first, synchronously, and can't be disabled.
+**Loading mode:** every feature is its own tile window and process — full crash isolation. The shared iframe host for built-ins is gone. `cmd` is core (`renderer/cmd/`), loads first, synchronously, and can't be disabled.
 
 ## The features I use
 
@@ -429,7 +429,7 @@ The default for most built-ins now — production boot went from 6 windows to 2.
 
 | Feature | What it does | Key |
 |---|---|---|
-| **cmd** | The command palette; loads first, can't be disabled | Opt+Space / Cmd+K |
+| **cmd** | The command palette; core, not a feature dir; loads first, can't be disabled | Opt+Space / Cmd+K |
 | **groups** | Tag-based page grouping (Panorama heritage) | — |
 | **spaces** | Workspace mode, auto-tagging, session mgmt | — |
 | **windows** | Full-screen window switcher (only `izui:true`) | Cmd+Shift+W |
@@ -459,11 +459,13 @@ Three cooperating mechanisms:
 2. **`setVisibleOnAllWorkspaces`** on modal/alwaysOnTop windows — visible on any Space.
 3. **Headless-safe show discipline** — real show does `show()` + `contentWC.focus()`; headless does `showInactive()` + `opacity:0`. Getting this wrong is the "dead focus" bug (NSBeep, no first responder).
 
+The same holds for pages: a URL opened from the palette over another app takes the keyboard without activating Peek. ESC sets the page aside, and it comes back the next time Peek activates.
+
 ## The upstream walls
 
 **The macOS Spaces bug:** on Space 2 you hit the hotkey and macOS yanks you to Space 1. `setVisibleOnAllWorkspaces(true)` sets `CanJoinAllSpaces` but not `MoveToActiveSpace` — and Electron doesn't expose the latter flag at all (electron/electron#8734, open since 2016). A real, cited, unresolved gap.
 
-**Wayland: global hotkeys are impossible by design.** Peek ships three layered answers: try global anyway (works on macOS/Windows/X11); register every global shortcut *also* as a local one; and CLI-verb dispatch — a Unix-socket daemon + a tiny Node helper you bind to a key in your *own* DE settings. The OS owns the keygrab. The "correct" XDG portal was investigated and rejected (GNOME backend not shipping on target LTSes).
+**Wayland: global hotkeys are impossible by design.** Peek ships three layered answers: try global anyway (works on macOS/Windows/X11); register every global shortcut *also* as a local one; and CLI-verb dispatch — a Unix-socket daemon + a tiny Node helper you bind to a key in your *own* DE settings. The OS owns the keygrab. Linux ships as an AppImage, built in CI on release tags. The "correct" XDG portal was investigated and rejected (GNOME backend not shipping on target LTSes).
 
 ## Why peeks always land right
 
@@ -482,29 +484,29 @@ Both are transient, modal, quick-access windows hosting a *real web page*, bound
 
 Both are lazy tiles, woken by `cli:peek-open` / `cli:slide-open`, with real hotkeys from user settings (self-healing backfill for migrated profiles).
 
-> Demo: Opt+3 peeks a page centered; Opt+Left slides one in from the edge; ESC dismisses either.
+> Demo: Opt+0 peeks a page centered; Opt+Up slides one in from the edge; ESC dismisses either. (Those two are the only defaults — other digits and directions need configuring first.)
 
 ## Cmd → anything
 
 The palette isn't just a launcher — a command's `execute()` result decides what opens next:
 - **no output** → panel closes (silent success — a known UX gap).
-- **single item** → opens the editor.
+- **single item** → opens the editor (a new `note` lands here; only a tagset closes silently).
 - **array** → an arrow-navigable list + preview pane, inside the panel.
 - **chainable output** (declares a MIME another command accepts) → chain mode.
 - Commands can also open a full tile window, or fire a declarative pubsub event.
 
-So one `Opt+Space` entry point can terminate in a note saved silently, a full window, an in-panel array browser, a markdown editor, or a multi-step pipeline.
+So one `Opt+Space` entry point can terminate in a tagset saved silently, a full window, an in-panel array browser, a markdown editor, or a multi-step pipeline.
 
 ## The window switcher
 
-IZUI governs how a window behaves based on *how it was invoked*: `active` (already in Peek), `transient` (from another app — ESC closes, focus returns), `overlay` (full-screen — hides other Peek windows, ESC restores them), `idle`. Transient state propagates down a session's window tree.
+IZUI governs how a window behaves based on *how it was invoked*: `active` (already in Peek), `transient` (from another app — ESC closes, focus returns), `overlay` (full-screen, on top of everything), `idle`. Transient state propagates down a session's window tree.
 
 The switcher (`features/windows/`) is a transparent, alwaysOnTop overlay tile:
-- **Invocation:** Cmd/Ctrl+Shift+W, *or* **ESC as a global fallback** when no Peek window has OS focus — a focus-gated global Escape grab, live only when nothing Peek-owned is focused, so it never eats ESC from a focused peek.
+- **Invocation:** Cmd/Ctrl+Shift+W, *or* **ESC** while Peek is the active app — from a focused page, or when no Peek window holds the keyboard. The Escape grab is armed only while Peek is active, so it never eats ESC from another app. Two exceptions: ESC never opens the switcher over a fullscreen window, and a page reached from another app closes instead.
 - **Shows:** every open window as a card — favicon, title, thumbnail (real screenshot or a hostname placeholder), a Hidden badge.
 - **Navigation:** vim `hjkl` or arrows; Enter activates; `/` searches; two view modes (Exposé-style `fit` default, `columns`). Pre-selects the previously focused window.
 
-> Demo: with nothing Peek-focused, press ESC → the switcher zooms out over everything; hjkl to a card, Enter to jump.
+> Demo: switch to Peek with a page focused, press ESC → the switcher zooms out over everything; hjkl to a card, Enter to jump.
 
 ## The cmd bar
 
@@ -602,8 +604,8 @@ The idle-CPU collapse is the biggest win: transparent canvases ran a continuous 
 
 ## Page host: the invariants that replaced the old model
 
-The migration broke almost every focus/ESC/menu assumption. The invariants now live as a regression log:
-- **`getFocusedWindow()` returns `null` for a hybrid host** (a `BaseWindow`, not `BrowserWindow`). "What's the current window?" must fall back to `getActiveHybridWindowId()`. This one broke cmd+W, the global ESC fallback, and window-close resolution.
+The migration broke almost every focus/ESC/menu assumption. The invariants now live in a pure window kernel (`window-kernel.ts`), property-tested and checked against a written rulebook (`docs/design/window-rules.md`):
+- **`getFocusedWindow()` returns `null` for a hybrid host** (a `BaseWindow`, not `BrowserWindow`). So "what's the current window?" is answered by the kernel's own record of which window holds the keyboard, never by Electron. This one broke cmd+W, the global ESC fallback, and window-close resolution.
 - **Show discipline:** `show()` + `contentWC.focus()` makes the content view the first responder. Missing that on a re-raise caused "ESC is dead until I click the page."
 - Real macOS first-responder behavior is **unobservable in headless runs** — several bugs surfaced only via live `fs-diag` instrumentation in a real `yarn start` session.
 
@@ -613,7 +615,9 @@ The nav chrome (address bar, navbar) is no longer per-page DOM — it's a single
 
 Peek exposes a **Model Context Protocol server** so Claude Code can read/write the *same* SQLite datastore the desktop app uses.
 
-Architecture: `Claude Code ⇄ stdio (JSON-RPC) ⇄ peek-mcp launcher ⇄ server.js ⇄ db.js ⇄ SQLite`. The launcher is an Electron-as-Node wrapper so clients don't need system Node. `db.js` mirrors `main/datastore.ts` policy — if it diverges, MCP misbehaves.
+Architecture: `Claude Code ⇄ stdio (JSON-RPC) ⇄ peek-mcp launcher ⇄ server.js ⇄ store/ ⇄ SQLite`. The launcher is an Electron-as-Node wrapper so clients don't need system Node. The local store mirrors `main/datastore.ts` policy — if it diverges, MCP misbehaves.
+
+**Two stores, same 13 tools:** local (the desktop SQLite file) or remote (`peek-mcp-init --remote`, which points the tools at the sync server's scoped item API) — so an agent on a machine with no Peek install still works the same task list.
 
 **13 tools:** 6 read-only always-on (`list_items`, `search_items`, `get_item`, `list_tags`, `list_tasks`, `get_task_context`); 7 mutating, only with `--writes` (`create_item`, `update_item`, `delete_item`, `tag_item`, `untag_item`, `record_event`, `complete_task`).
 
@@ -623,21 +627,21 @@ Architecture: `Claude Code ⇄ stdio (JSON-RPC) ⇄ peek-mcp launcher ⇄ server
 - **Git-short-hash id resolution** — any unique leading prefix works; ambiguous prefixes hard-error (mutations never act on a guess).
 - **Content windowing** — `get_item` returns the first 4,000 chars so a page-capture can't blow the caller's context.
 
-**Scoping** — `PEEK_MCP_SCOPE_TAG=<scope>` confines a session to items tagged `<scope>` or `<scope>:*`. Reads filter to in-scope; writes force-add the scope; foreign-namespace tags are rejected so an agent can't poison a sibling project; out-of-scope prefix matches read as not-found (no existence leak). Installed per-project via `peek-mcp-init`.
+**Scoping** — `PEEK_MCP_SCOPE_TAG=<scope>` confines a session to items tagged `<scope>` or `<scope>:*`. Reads filter to in-scope; writes force-add the scope; foreign-namespace tags are rejected so an agent can't poison a sibling project; out-of-scope prefix matches read as not-found (no existence leak). Installed per-project via `peek-mcp-init`. In a scoped session, `complete_task` moves a task from `<scope>:todo` to `<scope>:needs-review` — it only reaches `<scope>:done` once a human accepts it.
 
 Env is frozen at spawn — changes need a Claude Code restart. The server self-exits when its config changes so the client respawns with fresh env.
 
-Peek becomes an agent-writable personal knowledge + task backend, over the *same* SQLite the human UI reads live. This repo dogfoods it — its own `peek:*` tasks run through these tools.
+Peek becomes an agent-writable personal knowledge + task backend — in local mode, over the *same* SQLite the human UI reads live. This repo dogfoods it — its own `peek:*` tasks run through these tools.
 
-> Demo: run `mcp server setup`, then show Claude Code reading and tagging items in the same store the Peek UI is displaying — human and agent on one live datastore.
+> Demo: run `peek-mcp-init <scope> --writes` in a project dir, then show Claude Code reading and tagging items in the same store the Peek UI is displaying — human and agent on one live datastore.
 
 ## Plus hundreds of micro-tweaks
 
 - Peeks always open on your primary display
 - ESC returns focus to the previous app you were using
 - Cmd panel scrolls the selected result into view
-- Double-click a page to maximize, triple-click for fullscreen
-- Exiting fullscreen restores the pre-gesture window size
+- Double-click a page to maximize
+- Exiting fullscreen restores the prior window size
 - Cmd+click a link opens a loaded window, not blank
 - Hold and drag anywhere on a page to move its window
 - Undo-close reopens the window at its last URL and scroll
@@ -672,9 +676,6 @@ Peek becomes an agent-writable personal knowledge + task backend, over the *same
 - Navbar stops flickering as the cursor crosses its edge
 - Hovering the top edge reveals the navbar
 - No white flash when the navbar shows or hides
-- Loading glow gives instant feedback while a page loads
-- Failed pages show a branded error overlay, not blank white
-- Hung loads time out into a visible error
 - Webviews keep rounded corners for edge-to-edge display
 - Resize handles reachable even when the window is maximized
 - Maximize restores to the exact pre-maximize size
@@ -727,7 +728,7 @@ Peek becomes an agent-writable personal knowledge + task backend, over the *same
 - Stuck "Loading..." titles backfill to the hostname
 - Permission prompt shows favicon, nav-count badge, and timestamps
 - Clear-all button resets the permissions list
-- Removed conflicting global hotkeys (pagestream, composer)
+- Removed conflicting global hotkeys (pagestream, composer, groups)
 - Slides and peeks dismiss when you switch apps
 - Slide and peek chrome no longer flashes before activation
 - Focused window shows a colored screen border
@@ -741,6 +742,6 @@ Extra detail, kept back for Q&A.
 
 ## Monorepo layout
 
-`apps/{desktop, mobile, server, extension, tauri-desktop}` + `packages/{schema, sync, integration-tests}`.
+`apps/{desktop, mobile, server, extension, tauri-desktop}` + `packages/{schema, sync, capabilities, integration-tests}`.
 
 *(README/DEVELOPMENT.md still describe an older `app/` + `backend/` layout — stale. `docs/architecture.md` uses the current paths.)*
