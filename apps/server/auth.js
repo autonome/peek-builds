@@ -59,6 +59,13 @@ function singleUserMiddleware(singleUser) {
       return next();
     }
 
+    // POST /enrol has its own code-based gate, not a user/device credential
+    // — a brand-new device has no key yet, only an enrolment code (see
+    // users.exchangeEnrolmentCode).
+    if (c.req.path === "/enrol") {
+      return next();
+    }
+
     // Skip auth in e2e test mode
     if (process.env.E2E_TEST === 'true') {
       c.set("userId", userId);
@@ -107,6 +114,13 @@ function multiUserMiddleware() {
     // or a future path like /mcp-admin would skip this gate without gaining
     // another.
     if (c.req.path.startsWith("/mcp/")) {
+      return next();
+    }
+
+    // POST /enrol has its own code-based gate, not a user/device credential
+    // — a brand-new device has no key yet, only an enrolment code (see
+    // users.exchangeEnrolmentCode).
+    if (c.req.path === "/enrol") {
       return next();
     }
 

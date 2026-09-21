@@ -68,6 +68,28 @@ function getSystemDb() {
       CREATE INDEX IF NOT EXISTS idx_devices_hash ON devices(key_hash);
       CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
     `);
+
+    // Initialize enrolment_codes table.
+    //
+    // A short-lived, single-use code an account holder mints on a device
+    // that is already signed in, which a brand-new device trades for its own
+    // device key (see createEnrolmentCode/exchangeEnrolmentCode below). The
+    // code is hashed the same way a device key is — only its hash is ever
+    // stored, so a leaked database row does not itself grant enrolment.
+    //
+    // used_at NULL = still redeemable; non-NULL = already spent (reject).
+    systemDb.exec(`
+      CREATE TABLE IF NOT EXISTS enrolment_codes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        code_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_enrolment_codes_hash ON enrolment_codes(code_hash);
+    `);
   }
   return systemDb;
 }
@@ -389,6 +411,130 @@ function renameDevice(userId, deviceId, label) {
     "SELECT id, label, created_at, last_seen_at, revoked_at FROM devices WHERE id = ?",
     [deviceId]
   );
+}
+
+// ==================== Enrolment Codes ====================
+//
+// How a new device gets its own key without pasting one: an already-signed-in
+// device asks for a code (createEnrolmentCode), the account holder hands it to
+// the new device, and the new device trades it for its own device key
+// (exchangeEnrolmentCode). The code is never itself a key — a new device never
+// receives another device's key, only a freshly minted one of its own.
+
+// No ambiguous glyphs (0/O, 1/I/L) — this code gets read off one screen and
+// typed into another.
+const ENROLMENT_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const ENROLMENT_CODE_LENGTH = 8;
+const ENROLMENT_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function generateEnrolmentCode() {
+  let code = "";
+  for (let i = 0; i < ENROLMENT_CODE_LENGTH; i++) {
+    code += ENROLMENT_CODE_ALPHABET[crypto.randomInt(ENROLMENT_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+function normalizeEnrolmentCode(code) {
+  return String(code).trim().toUpperCase();
+}
+
+// exchangeEnrolmentCode is the one route in this module reachable without a
+// key (a brand-new device has none yet to prove it), which makes it the one
+// guessable by brute force despite the code's short expiry. This in-memory
+// attempt window caps how many exchanges can be spent guessing, independent
+// of which code is tried. It resets on restart — fine, since a real code
+// only ever lives for minutes anyway.
+const ENROLMENT_EXCHANGE_WINDOW_MS = 60 * 1000;
+const ENROLMENT_EXCHANGE_MAX_ATTEMPTS = 10;
+let enrolmentExchangeAttempts = [];
+
+function enrolmentExchangeRateLimited() {
+  const now = Date.now();
+  enrolmentExchangeAttempts = enrolmentExchangeAttempts.filter(
+    (t) => now - t < ENROLMENT_EXCHANGE_WINDOW_MS
+  );
+  if (enrolmentExchangeAttempts.length >= ENROLMENT_EXCHANGE_MAX_ATTEMPTS) {
+    return true;
+  }
+  enrolmentExchangeAttempts.push(now);
+  return false;
+}
+
+/**
+ * Create an enrolment code for a user (the account holder, from a device
+ * that is already signed in). The raw code is returned ONCE and never
+ * stored (only its hash) — matches the device/grant key pattern.
+ *
+ * @param {string} userId
+ * @returns {{ code: string, expiresAt: string }}
+ */
+function createEnrolmentCode(userId) {
+  const db = getSystemDb();
+
+  const user = db.get("SELECT id FROM users WHERE id = ?", [userId]);
+  if (!user) {
+    throw new Error(`User '${userId}' does not exist`);
+  }
+
+  const code = generateEnrolmentCode();
+  const codeHash = hashApiKey(code);
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const expiresAt = new Date(now + ENROLMENT_CODE_TTL_MS).toISOString();
+
+  db.run(
+    "INSERT INTO enrolment_codes (id, user_id, code_hash, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
+    [id, userId, codeHash, createdAt, expiresAt]
+  );
+
+  return { code, expiresAt };
+}
+
+/**
+ * Exchange a valid enrolment code for a brand-new device key. Unauthenticated
+ * by design — the caller has no key yet, only the code. Refuses an unknown,
+ * already-used, or expired code, and is rate-limited against guessing (see
+ * enrolmentExchangeRateLimited above).
+ *
+ * @param {string} code
+ * @param {string} [label] - Label for the new device; defaults if omitted
+ * @returns {{ deviceId: string, userId: string, label: string, apiKey: string }}
+ */
+function exchangeEnrolmentCode(code, label) {
+  if (enrolmentExchangeRateLimited()) {
+    const err = new Error("Too many enrolment attempts, try again shortly");
+    err.status = 429;
+    throw err;
+  }
+  if (!code || !String(code).trim()) {
+    throw new Error("Enrolment code is required");
+  }
+
+  const db = getSystemDb();
+  const codeHash = hashApiKey(normalizeEnrolmentCode(code));
+  const row = db.get(
+    "SELECT id, user_id, expires_at, used_at FROM enrolment_codes WHERE code_hash = ?",
+    [codeHash]
+  );
+  if (!row) {
+    throw new Error("Invalid enrolment code");
+  }
+  if (row.used_at) {
+    throw new Error("Enrolment code already used");
+  }
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    throw new Error("Enrolment code expired");
+  }
+
+  db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
+    new Date().toISOString(),
+    row.id,
+  ]);
+
+  const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
+  return createDevice(row.user_id, deviceLabel);
 }
 
 /**
@@ -750,6 +896,8 @@ module.exports = {
   revokeDevice,
   renameDevice,
   migrateLegacyKeysToDevices,
+  createEnrolmentCode,
+  exchangeEnrolmentCode,
   // Profile management
   createProfile,
   createProfileWithId,

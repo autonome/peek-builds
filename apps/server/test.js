@@ -3683,6 +3683,131 @@ describe("Account-Holder Device Routes Tests", () => {
   });
 });
 
+describe("Enrolment Code Routes Tests", () => {
+  // Exercises the real POST /devices/enrolment-codes (account-holder,
+  // authenticated) and POST /enrol (unauthenticated exchange) routes through
+  // the real index.js app — how a new device gets its own key without
+  // pasting one. Shaped like "Account-Holder Device Routes Tests" above.
+  let app;
+  let users;
+  const TEST_USER = "enroluser";
+  let deviceA; // TEST_USER's already-signed-in device, mints the code
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    users.createUser(TEST_USER);
+    deviceA = users.createDevice(TEST_USER, "phone");
+  });
+
+  function headersFor(device) {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${device.apiKey}` };
+  }
+
+  it("creates an enrolment code for the authenticated account", async () => {
+    const res = await app.request("/devices/enrolment-codes", {
+      method: "POST",
+      headers: headersFor(deviceA),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(typeof json.code, "string");
+    assert.ok(json.code.length > 0);
+    assert.ok(new Date(json.expiresAt).getTime() > Date.now());
+  });
+
+  it("exchanges a valid code for a new device key, unauthenticated", async () => {
+    const created = await (
+      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
+    ).json();
+
+    const res = await app.request("/enrol", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: created.code, label: "new laptop" }),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.device.label, "new laptop");
+    assert.strictEqual(typeof json.device.apiKey, "string");
+    assert.notStrictEqual(json.device.apiKey, deviceA.apiKey, "a new device never receives another device's key");
+  });
+
+  it("refuses to reuse an already-exchanged code", async () => {
+    const created = await (
+      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
+    ).json();
+    const first = await app.request("/enrol", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: created.code }),
+    });
+    assert.strictEqual(first.status, 200);
+
+    const second = await app.request("/enrol", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: created.code }),
+    });
+    assert.strictEqual(second.status, 400);
+  });
+
+  it("refuses an expired code", async () => {
+    const created = await (
+      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
+    ).json();
+
+    const db = users.getSystemDb();
+    db.run("UPDATE enrolment_codes SET expires_at = ? WHERE code_hash = ?", [
+      new Date(Date.now() - 1000).toISOString(),
+      users.hashApiKey(created.code),
+    ]);
+
+    const res = await app.request("/enrol", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: created.code }),
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  it("refuses an unknown code", async () => {
+    const res = await app.request("/enrol", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: "NOTAREALCODE" }),
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  it("the minted key authenticates on the real routes", async () => {
+    const created = await (
+      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
+    ).json();
+    const exchanged = await (
+      await app.request("/enrol", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: created.code }),
+      })
+    ).json();
+
+    const res = await app.request("/devices", {
+      headers: { Authorization: `Bearer ${exchanged.device.apiKey}` },
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.ok(json.devices.some((d) => d.id === exchanged.device.deviceId));
+  });
+});
+
 describe("MCP Item Routes Tests", () => {
   // Exercises the real mcp-items.js business logic (queryItems/searchItems/
   // resolveItemId/getItemForRoute) through a Hono app wired the same way

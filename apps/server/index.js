@@ -1220,6 +1220,49 @@ app.delete("/devices/:deviceId", (c) => {
   }
 });
 
+// === Enrolment codes (mint a device key without pasting an existing one) ===
+//
+// A device that is already signed in mints a short-lived, single-use code as
+// the account holder (POST /devices/enrolment-codes, authenticated through
+// multiUserMiddleware() like the group above). A brand-new device — which has
+// no key yet — trades that code for its own device key at POST /enrol,
+// deliberately unauthenticated (see the /enrol skip in auth.js). The code is
+// never itself a key: exchanging it always mints a fresh device credential,
+// never hands back someone else's.
+
+// POST /devices/enrolment-codes -> { code, expiresAt }
+// No body: the account holder isn't naming their own device, they're
+// pre-authorizing the next one — the new device supplies its own label at
+// exchange time.
+app.post("/devices/enrolment-codes", (c) => {
+  const userId = c.get("userId");
+  try {
+    const { code, expiresAt } = users.createEnrolmentCode(userId);
+    return c.json({ code, expiresAt });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// POST /enrol  { code, label? } -> { device }
+// Unauthenticated: a brand-new device holds only the code, not a key yet.
+// The raw apiKey on the returned device is returned ONCE, same as
+// POST /admin/devices. See users.exchangeEnrolmentCode for the guessing
+// protection (rate-limited) and expiry/reuse checks.
+app.post("/enrol", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { code, label } = body;
+  if (!code) {
+    return c.json({ error: "code is required" }, 400);
+  }
+  try {
+    const device = users.exchangeEnrolmentCode(code, label);
+    return c.json({ device });
+  } catch (e) {
+    return c.json({ error: e.message }, e.status || 400);
+  }
+});
+
 // === Admin endpoints (per-device credential management) ===
 //
 // Gated by the ADMIN_TOKEN env var, independent of user/device api keys. When
