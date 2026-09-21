@@ -233,6 +233,8 @@ It turns passive browsing into a typed, self-classifying knowledge base with no 
 
 ## Entities on desktop
 
+<img class="shot" src="screenshots/entities.jpg" alt="The entities browser, showing typed entity cards with confidence and page counts">
+
 Feature "Entity Recognition" v3.0.0, `builtin`, a **lazy background tile** woken by the rules engine (`page:content-ready` / `item:created`-URL). Debounced (2s), cooldowned (1h). Three extractors in parallel — structured-data (conf 0.85–0.9), microformats (0.9–0.95), regex (0.6–0.9).
 
 Dedup by normalized name + aliases; thumbs-down suppresses. UX: an entities browser window + per-page display.
@@ -499,6 +501,8 @@ So one `Opt+Space` entry point can terminate in a tagset saved silently, a full 
 
 ## The window switcher
 
+<img class="shot" src="screenshots/switcher.jpg" alt="The window switcher, every open window as a card in a grid">
+
 IZUI governs how a window behaves based on *how it was invoked*: `active` (already in Peek), `transient` (from another app — ESC closes, focus returns), `overlay` (full-screen, on top of everything), `idle`. Transient state propagates down a session's window tree.
 
 The switcher (`features/windows/`) is a transparent, alwaysOnTop overlay tile:
@@ -532,6 +536,8 @@ Audited, current, not hidden:
 
 ## Commands I use a lot
 
+<img class="shot" src="screenshots/websearch.jpg" alt="The web search engine list with slash aliases">
+
 73 commands across 35 feature dirs, plus a set baked into the cmd module. Built-in: `note`/`notes` (the core capture verb), `url`/`urls`, `edit`, `email`, `bookmark`, `history`, `containertab`, `sendtowindow`, `item-query`.
 
 | Command | What it does | Key |
@@ -551,6 +557,8 @@ Audited, current, not hidden:
 | `lex` | AT Protocol identity | — |
 
 ## The editor
+
+<img class="shot" src="screenshots/editor.jpg" alt="The markdown editor open on a note">
 
 A **markdown** editor (not rich-text, not block-based) on CodeMirror 6, three panels. `Cmd/Ctrl+E`.
 
@@ -735,6 +743,18 @@ Peek becomes an agent-writable personal knowledge + task backend — in local mo
 - Space color dot marks each window's group
 - Editor gains tighter padding and edge-to-edge card space
 - Card grid gains sorting and view-mode toggles
+
+## Groups
+
+<img class="shot" src="screenshots/groups.jpg" alt="The groups browser, tags promoted to groups with page counts">
+
+## Feed reader
+
+<img class="shot" src="screenshots/feeds.jpg" alt="The feed reader with three subscriptions and their entries">
+
+## Settings
+
+<img class="shot" src="screenshots/settings.jpg" alt="The core settings window">
 
 # Parking lot
 

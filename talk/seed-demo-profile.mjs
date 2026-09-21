@@ -160,10 +160,8 @@ if (want("feeds")) console.log("feeds:", await evalIn(CORE, `
   return n + ' entries';
 `, FEEDS));
 
-if (want("windows")) console.log("timers, sheet and page windows:", await evalIn(CORE, `
-  window.app.publish('cmd:execute:timer countdown', { search: '25m Rehearsal run-through' });
-  window.app.publish('cmd:execute:timer countdown', { search: '5m Tea' });
-  window.app.publish('cmd:execute:timer stopwatch', { search: 'Slide polish' });
+if (want("windows")) console.log("sheet and page windows:", await evalIn(CORE, `
+  // No timers: the datastore rejects item type 'timer', so the timers feature cannot create any.
   window.app.publish('cmd:execute:new sheet', { args: 'Conference budget' });
   for (const url of arg) window.app.window.open(url, { key: url });   // not awaited: a slow page would stall the script
   return arg.length + ' windows';
