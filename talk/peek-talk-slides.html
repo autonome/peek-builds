@@ -113,12 +113,23 @@
   #minimap .mm-item:hover { color: var(--text-2); }
   #minimap .mm-item.current { color: var(--text-2); border-right: 2px solid var(--accent); padding-right: calc(0.4em - 2px); }
   @media (max-width: 1000px) { #minimap { display: none; } }    /* would overlap slide content below this width */
+  img.shot {                                                    /* feature screenshot thumbnail — click to expand */
+    display: block; max-width: 100%; max-height: 42vh; margin: 1em 0; cursor: zoom-in;
+    border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+  }
+  #lightbox {
+    position: fixed; inset: 0; z-index: 20; display: none; cursor: zoom-out;
+    background: rgba(0,0,0,0.92); align-items: center; justify-content: center;
+  }
+  #lightbox.open { display: flex; }
+  #lightbox img { max-width: 98vw; max-height: 98vh; object-fit: contain; }
 </style>
 
 <nav id="minimap"></nav>
 <div id="deck"><div class="slide" id="slide"></div></div>
 <div id="hud"></div>
 <div id="hint">left / right to navigate &middot; f fullscreen</div>
+<div id="lightbox"><img alt=""></div>
 
 <script>
 (function () {
@@ -335,8 +346,24 @@
     setTimeout(function () { hintEl.style.opacity = "0"; }, 4000);
   }
 
+  // ---- screenshot lightbox: click an img.shot to fill the window; click or Escape closes ----
+  var lightboxEl = document.getElementById("lightbox");
+  function openLightbox(src, alt) {
+    var img = lightboxEl.querySelector("img");
+    img.src = src; img.alt = alt || "";
+    lightboxEl.classList.add("open");
+  }
+  function closeLightbox() { lightboxEl.classList.remove("open"); }
+  function lightboxOpen() { return lightboxEl.classList.contains("open"); }
+
   document.addEventListener("keydown", function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (lightboxOpen()) {                        // any nav key just closes the expanded shot
+      if (e.key === "Escape" || e.key === " " || e.key === "Enter" || /^Arrow|^Page/.test(e.key)) {
+        e.preventDefault(); closeLightbox();
+      }
+      return;
+    }
     switch (e.key) {
       case "ArrowRight": case "PageDown": case " ":
         e.preventDefault(); show(idx + 1); break;
@@ -352,6 +379,10 @@
     }
   });
   window.addEventListener("click", function (e) {
+    if (lightboxOpen()) { closeLightbox(); return; }
+    if (e.target.tagName === "IMG" && e.target.classList.contains("shot")) {
+      openLightbox(e.target.src, e.target.alt); return;
+    }
     if (e.target.closest("a") || e.target.closest("label") || e.target.tagName === "INPUT" ||
         e.target.closest("#minimap")) return;
     show(e.clientX > window.innerWidth / 2 ? idx + 1 : idx - 1);   // tap right/left half
