@@ -30,7 +30,6 @@ Each term is followed by the name the code uses for it.
 - **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`type: 'panel'` at open, `WindowRecord.nonActivating`).
 - **Pinned** — kept above the normal stack of windows (`layer` above `BASE_LAYER`, from `alwaysOnTop`).
 - **Held above other apps** — an unpinned window kept, for now, above other apps' windows without the app activating and without the window taking key; its declared layer is unchanged and it is the same window throughout (`heldAboveOtherApps`, `admitsHoldAboveOtherApps`).
-- **Survives deactivation** — a declared property of a pinned window: the app deactivating does not take it off screen. Unlike Held above other apps, this is not temporary and does not end when the app activates — the window was never hidden (name TBD at implementation; see "Persistent windows" below).
 - **Prior window** — the window that had focus when this one took it (`priorKey`).
 - **Opener** — the window that opened this one (`parentId`).
 - **Attached overlay** — a window bound to a host and shown, hidden and moved with it (`overlayFor`). Its **host** is the application window it is bound to.
@@ -56,7 +55,7 @@ Each term is followed by the name the code uses for it.
 - **G5 transient-blur.** A visible transient loses to a world-caused focus elsewhere: it is dismissed, whatever content it loaded.
 - **G6 close-lands-behind.** Closing a key transient, by Escape or by a close request, closes it and not the window behind; that window is key and accepts typing at once, with no click, and an overlay attached to it stays on it.
 - **G7 fallback-window.** Escape with an application window key and nothing to close opens the Escape fallback window; Escape in it closes it; the app deactivating closes it and the other app keeps focus.
-- **G8 app-deactivate.** The app deactivating takes off screen, with the app, every visible pinned window that accepts input, is neither transient nor an application window, and does not survive deactivation; a window that survives deactivation is left exactly as it was and stays above the other app; nothing else lingers over the other app; nothing is dismissed before the app has actually deactivated.
+- **G8 app-deactivate.** The app deactivating takes off screen, with the app, every visible pinned window that accepts input and is neither transient nor an application window; nothing lingers over the other app; nothing is dismissed before the app has actually deactivated.
 - **G9 app-activate.** The app activating shows again what deactivation hid, an attached overlay in front of its host, and never a window that was dismissed.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
@@ -150,112 +149,144 @@ Limits and checking notes for a side task:
 
 The general pinned persistent-overlay window class (Peek item `0807b46c`) has two kinds
 (`57b89e6e`, note event 2026-09-21): **workspace-pinned** windows, visible while one workspace is
-active and gone when it isn't, and **global HUD** windows, visible regardless of which workspace
-is active or which app is frontmost. Neither is a new `WindowClass` value, and neither is a
-generic "pin any window" user action — `57b89e6e`'s original OS-pin / app-pin framing assumed any
-window could be toggled into either; the settled two-kind model names two window roles a feature
-declares when it opens a window instead, and the two roles are what answers the framing's own
-question below.
+active and gone when it isn't, and **global HUD** windows, visible whichever workspace is active.
+Both are ordinary Pinned windows and both are **app-level**: neither floats above another app's
+windows, and both hide when Peek deactivates and reshow when it reactivates, the same as every
+other Pinned window — `57b89e6e`'s original OS-pin / app-pin split does not survive into the
+settled model; the only difference between the two kinds is workspace scope, not how they relate
+to the rest of the OS. Pin is a **per-window attribute the user can set on any window** — workspace
+scope or global scope — not a role only a feature can declare; a feature-created window (the
+workspace panel) can still be born pinned, but pinning is not confined to windows a feature builds
+for the purpose.
 
 ### What each kind is, in the vocabulary already defined above
 
-- **Workspace-pinned = Pinned + owned by one workspace.** `layer` above `BASE_LAYER`
-  (`window-kernel.ts` `WindowRecord.layer`), same as any other Pinned window — no new axis. "Owned
-  by one workspace" is not a window-kernel fact at all: the workspace feature
-  (`features/spaces/background.js` `openSpace`, `closeSpace`, `switchSpace`) opens the window when
-  its workspace becomes active and closes it — not hides, closes — when that workspace is exited.
-  The window-kernel never learns which workspace a window belongs to, the same way it never learns
-  which feature opened an ordinary content window. G8 and G9 govern it unchanged: it hides when
-  Peek deactivates and reshows when Peek reactivates, exactly like every other Pinned window today.
-  This is the **app-pin** half of `57b89e6e`'s original split (visible only while Peek is the
-  focused app) — it needs nothing new, because ordinary Pinned already behaves that way.
-- **Global HUD = Pinned + Panel + follows Spaces + survives deactivation.** `layer` above
-  `BASE_LAYER`, `nonActivating: true` (the Panel term above — takes key, if it takes key at all,
-  without activating the app, per G1), `desktopMembership: 'follow'` (visible on whichever macOS
-  Space is active, satisfying `57b89e6e`'s "visible across all desktop spaces / Mission Control").
-  None of those three properties has been combined for this purpose before, but all three already
-  exist. The one genuinely new fact is Survives deactivation (Vocabulary, above) — G8 amended.
-  This is the **OS-pin** half of `57b89e6e`'s split (floats above every app's windows, seen whether
-  or not Peek is frontmost), and it is the one piece of new kernel behaviour this design commits
-  to. Everything else below is composition of what already exists.
+- **Both kinds = Pinned.** `layer` above `BASE_LAYER` (`window-kernel.ts` `WindowRecord.layer`,
+  from `alwaysOnTop`) — the same axis, the same G8/G9 behaviour, for both. G8 ("app-deactivate")
+  and G9 ("app-activate") are unchanged: a pinned window, of either scope, hides when Peek
+  deactivates and reshows when Peek reactivates, exactly like it does today. No `nonActivating`
+  (Panel), no `desktopMembership: 'follow'`, and no exemption from G8 — those would have made a
+  pinned window behave like the rejected OS-pin, floating above another app or surviving Peek
+  losing focus, which is exactly what this correction rules out. Neither kind is a new
+  `WindowClass` value.
+- **The one axis that is new: workspace scope.** Not a window-kernel fact — the window-kernel
+  still never learns about workspaces, the same way it never learns which feature opened an
+  ordinary content window. A workspace-pinned window is associated with the one workspace it was
+  pinned in; a global HUD window is associated with none, or equivalently with all of them. This
+  association lives in the workspace/session layer (`features/spaces/background.js`,
+  `main/session.ts`), not in `WindowRecord` — see "Workspace interaction" and "Lifecycle" below for
+  where it is read and written.
 
-**The mapping `57b89e6e`'s note event asked for:** workspace-pinned windows are app-pin — they
-hide with Peek and are never seen floating over another app. Global HUD windows are OS-pin — they
-float above every app, seen whether or not Peek is frontmost. A global HUD window is meant to be
-glanced at without switching back to Peek, which only means something if it survives Peek losing
-focus — why "non-activating" is named in the goal ("persistent, non-activating and toggleable")
-even though non-activating matters only for a window that can still be seen while Peek isn't
-frontmost.
+### Pinning and unpinning
+
+- **The user action.** A command-palette command, `cmd:execute:<command>` through the existing
+  command registry — "Pin to this workspace" and "Pin across workspaces" as two distinct commands
+  (or one command with a follow-up choice; either reads the same from the palette), plus "Unpin."
+  Once a window carries the badge (below), a control on the badge itself also unpins it — clicking
+  the badge is a shorter path than reopening the palette for a window that is already visibly
+  pinned. Reason: the palette is the action surface the rest of the app already uses for anything
+  that is not tied to one specific piece of chrome (windows, cmd, peeks, slides all register
+  commands this way), so pin/unpin follows the established pattern rather than inventing a
+  right-click menu or window-chrome control the app does not otherwise use — Peek's windows are
+  largely chromeless tile content, not native-decorated windows, so a native context menu has
+  nothing to attach to. The badge control exists only for unpinning, because only a pinned window
+  has a badge to put it on; pinning a not-yet-pinned window always goes through the palette.
+- **The workspace panel is not user-pinned.** It is a global HUD window (see "The workspace panel"
+  below) that the workspace feature opens already pinned across workspaces — the user does not
+  pin or unpin the panel itself, only content windows they choose to pin. Both paths set the same
+  underlying attribute; they differ only in who sets it and when.
+- **The badge.** Settled by the note event for workspace-pinned windows: a small badge in the
+  top-left corner, rendered by the window's own content (its tile draws it in CSS), not a
+  window-kernel property — the reducer already keeps decoration out of `WindowRecord`, and one
+  visual is not a reason to add it there. Global HUD windows get a **distinct** badge, not no
+  badge: the workspace-pinned badge's meaning ("this goes away if you switch workspaces") does not
+  apply to a global HUD window, but a visual indicator still has to be there for two reasons — the
+  unpin control above lives on the badge, so a global HUD window needs a badge to carry it, and a
+  window pinned across every workspace is exactly as worth signalling as one pinned to a single
+  workspace, just with the opposite meaning ("this window follows you everywhere," not "this
+  window is local to here").
+
+### The workspace panel
+
+The workspace panel (`2a07c0ac`) — shown while a workspace is active, naming the current
+workspace, with close and switch controls — is a **global HUD window**: pinned across workspaces,
+so it is visible whichever workspace the user is in, not just one. This corrects the earlier
+reading of `0807b46c`'s note event, which called it "the first HUD instance"; a workspace-pinned
+reading (visible only in one workspace, gone on switch) would have made it disappear exactly when
+it is supposed to orient the user during a switch. Naming the *current* workspace, rather than
+being scoped to one, is itself evidence for the global-HUD reading.
 
 ### Settling `57b89e6e`'s open questions
 
-- **Selection UX.** No user gesture pins or unpins an arbitrary window. A workspace-pinned window
-  is created and destroyed by the workspace feature's own enter/exit logic, not toggled by the
-  user directly. A global HUD window is shown and hidden by a toggle command
-  (`cmd:execute:<command>`, the mechanism the deleted HUD used and the one peeks and slides
-  already use for their own on/off state), bound to a shortcut through
-  `main/feature-shortcut-registrar.ts registerWakeShortcuts`. Reason: the two known instances (the
-  workspace panel, a bottom-of-screen activity-trail panel) are both features that own their own
-  window, not arbitrary content a user elects to pin — nothing in scope needs a user to pin a
-  window a feature didn't already build as one of the two kinds.
-- **Visual indicator.** Settled by the note event for workspace-pinned windows: a small badge in
-  the top-left corner, rendered by the window's own content (its tile draws it in CSS), not a
-  window-kernel property — the reducer already keeps decoration out of `WindowRecord`, and one
-  visual is not a reason to add it there. Global HUD windows carry no badge: the badge tells the
-  user "this goes away if you switch workspaces," and a global HUD window never does, so the badge
-  would be a warning that does not apply to it.
-- **Workspace interaction.** A workspace-pinned window is not an "Application window" (the roles
-  in `CONTENT_ROLES`) — G8 already describes pinned windows as "neither transient nor an
-  application window," so this needs no new exclusion. It does not count toward the workspace's
-  saved window list (`main/session.ts saveSpaceWorkspaces` / `serializeSpaceWorkspaces`): that
-  projection serializes user content, and a workspace-pinned window is recreated by workspace
-  entry, not restored from a snapshot, so it stays out of the projection the same way background,
-  bridge and offscreen windows already do. Neither kind appears in the Windows switcher, for the
-  same reason peripheral chrome already doesn't: the switcher lists application windows, and
-  neither kind is one.
-- **Multi-display.** Anchored to the display it opened on; it does not follow the cursor. Neither
-  known instance (the workspace panel, the activity-trail panel) needs to chase the pointer across
-  monitors, and nothing in the kernel today relocates a window's bounds without a user action
-  (`bounds` changes only through an explicit command) — inventing live cross-display tracking for
-  a case nothing asks for is the "invent an axis so the mapping comes out clean" mistake
-  `window-manager.md` §0.1.7 warns against.
-- **Lifecycle — session restore and force-quit.** There is no per-window pin state to restore for
-  either kind, because pin-kind is declared at registration, not toggled by the user (see
-  Selection UX above) — a feature that opens a global HUD window always opens it the same way.
-  What does need to survive restart is whether a global HUD window was toggled visible when the
-  app last quit: a boolean, persisted the way any other feature's on/off state already is (a
-  `feature_settings` row, the pattern `lazy_wake_shortcuts` already uses), restored by reissuing
-  the same toggle command at boot if it was last on. A workspace-pinned window needs nothing
-  bespoke: which workspace was active already has to survive restart for `2a07c0ac`'s own
-  workspace/session model, and re-entering that workspace recreates its pinned windows the same
-  way entering it fresh does.
+- **Selection UX.** Answered above under "Pinning and unpinning": a palette command to pin (to
+  this workspace or across workspaces) and to unpin, plus an unpin control on the badge.
+- **Visual indicator.** Answered above: the badge, distinct per scope.
+- **Workspace interaction.** A pinned window keeps whatever role it already had — pinning a page
+  the user is reading does not turn it into chrome, and `layer` is orthogonal to role by
+  construction (`window-manager.md` §0.1.4: "orthogonal properties, no pre-combined class"). So a
+  pinned application window (`CONTENT_ROLES`) appears in the Windows switcher and counts as an
+  ordinary window of its workspace exactly as an unpinned one would; only the workspace panel
+  itself, being dedicated chrome rather than user content, is excluded from the switcher, by role,
+  the same way other chrome already is. Pin state is recorded as part of the window's own saved
+  state, not tracked separately or specially recreated: a workspace-scoped pin is a field on that
+  window's entry within its own workspace's saved session (`main/session.ts
+  saveSpaceWorkspaces` / `serializeSpaceWorkspaces`), restored with the rest of that workspace's
+  windows when it is re-entered; a cross-workspace pin is recorded in session state that is not
+  scoped to any one workspace, so it is restored regardless of which workspace becomes active.
+  `features/spaces/background.js closeSpace()` closes every window `api.context.getWindowsInSpace`
+  reports for the outgoing workspace — a global HUD window must not be one of them (either because
+  membership in a space's window set already excludes anything scoped "across workspaces," or
+  because `closeSpace()` gains an explicit skip; which of the two is a step-3 implementation
+  choice, not a design one). A workspace-pinned window that has no cross-workspace claim is closed
+  by that same sweep like any other window in the workspace, and comes back from the workspace's
+  saved session — with its pin and badge intact — the next time that workspace is entered.
+- **Multi-display.** Unaffected by this correction. Anchored to the display it opened on; it does
+  not follow the cursor. Nothing pins to a display over time in this design, and nothing in the
+  kernel today relocates a window's bounds without a user action (`bounds` changes only through an
+  explicit command) — inventing live cross-display tracking for a case nothing asks for is the
+  "invent an axis so the mapping comes out clean" mistake `window-manager.md` §0.1.7 warns against.
+- **Lifecycle — session restore and force-quit.** Covered under "Workspace interaction" above: pin
+  state is part of the window's own saved state, workspace-scoped or applying to every workspace,
+  restored the same way the window's other saved properties (bounds, URL) are. There is no separate
+  "is this window pinned" store to keep in sync with the window itself.
 - **Conflict resolution — overlapping pins.** No new layout rule. Windows in the Pinned layer band
-  already resolve their relative order the way any layer band does — `order` position within the
-  band, realized bottom-to-top (`window-manager.md` §0.1.6) — so the most recently raised or
-  opened one sits on top. Neither known instance occupies the same screen region as the other (a
-  top-left badge corner, a bottom-edge trail), so real overlap is not a case in scope; an instance
-  that does overlap another gets a placement rule when it is built, not speculatively now.
-- **Focus semantics.** A global HUD window is a Panel: G1 already governs it — it can take key
-  without activating Peek, and clicking it never brings Peek forward. A workspace-pinned window
-  needs no special case: G8 already keeps it hidden whenever Peek is not the active app, so "does
-  clicking it while another app is frontmost bring Peek forward" cannot arise — it is never on
-  screen to click in that state. While Peek is active it behaves like any other focusable Peek
-  window.
-- **Cmd panel / modal interaction.** Neither kind is added to the hidden-window list a palette or
-  the switcher passes to `izui-state.ts IzuiCoordinator.enterOverlay` — the same list that already
-  leaves satellite and transient windows alone. The palette and a global HUD window are both
-  Panels in the same Pinned band; they coexist by ordinary stacking order, with no dimming
-  invented for this design.
+  resolve their relative order the way any layer band does — `order` position within the band,
+  realized bottom-to-top (`window-manager.md` §0.1.6) — so the most recently raised or opened one
+  sits on top. The workspace panel and a bottom-of-screen HUD instance, if one is built, do not
+  occupy the same screen region, so real overlap between two pinned windows is not a case in scope
+  today; an instance that does overlap another gets a placement rule when it is built, not
+  speculatively now.
+- **Focus semantics.** Unaffected by this correction, now for a different reason than before: a
+  pinned window, workspace-scoped or global, is only ever visible while Peek is the active app
+  (G8 hides it otherwise), so "does clicking it bring Peek forward while another app is frontmost"
+  cannot arise for either kind — it is never on screen to click in that state. While Peek is
+  active, a pinned window behaves like any other focusable Peek window of its role; nothing
+  non-activating is needed.
+- **Cmd panel / modal interaction.** No special exemption for being pinned. Whatever the
+  palette's or switcher's existing hidden-window candidate logic
+  (`izui-state.ts IzuiCoordinator.enterOverlay`'s `hiddenIds`) already does for a window's role
+  continues to apply unchanged — the workspace panel is excluded the way other chrome already is,
+  by role; a pinned ordinary tab is treated exactly like an unpinned one.
 
 ### What is genuinely new
 
-Everything above composes existing axes (`layer`, `nonActivating`, `desktopMembership`) and
-existing rules (G1, G8, G9, S1, §0.1.6's band realization) except one: Survives deactivation, the
-exemption from G8's app-deactivate sweep for a window declared to survive it, which is what lets a
-global HUD window float above another app the way `57b89e6e` asked OS-pin to. Everything else
-that read as open — the badge, the toggle, workspace ownership, session restore — already had a
-home once the two kinds were named, and none of it needed a new `WindowRecord` field, a new
-`class` value, or a user-facing pin/unpin action.
+One axis, and it is not on `WindowRecord`: workspace scope — which single workspace a
+workspace-pinned window belongs to, or that a global HUD window belongs to none/all of them — kept
+by the workspace/session layer, read at workspace-entry/exit time and at session save/restore
+time. Everything else is the existing `layer` axis (Pinned) plus a palette command to set and
+clear it, a badge the pinned window's own content renders, and an unpin control on that badge.
+No `WindowRecord` field, no `class` value, and no change to G8 or G9.
+
+**Flag for confirmation:** G8 today exempts an "application window" from the app-deactivate sweep
+(`window-rules.md` Vocabulary, "Application window") — a clause that, per `window-manager.md`
+§0.1.4's survey, no production window currently exercises, since nothing pinned has been an
+application-role window before. Once a user can pin an ordinary content window, that exemption
+would (read literally) leave a pinned, application-role window floating above another app when
+Peek deactivates — the OS-pin-like behaviour this correction just ruled out, arrived at by a
+different path. This design does not rely on that exemption: a workspace-pinned or global-HUD
+window is swept by G8 regardless of role. Worth the account holder's confirmation once a pinned
+content-window instance actually exists, since a Picture-in-Picture-style "keep my pinned tab
+visible while I alt-tab away" reading is also plausible and was not addressed by the correction.
 
 ## Dismissal and Escape
 

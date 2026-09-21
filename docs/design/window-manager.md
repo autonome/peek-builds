@@ -53,12 +53,15 @@ machine. It is expected to shrink monotonically to zero; the check fails a PR th
 two kinds of persistent window — workspace-pinned and global HUD (Peek items `0807b46c`,
 `57b89e6e`) — and every open question `57b89e6e` raised for them (selection, the badge, workspace
 membership, multi-display, session restore, overlapping pins, focus, cmd-panel interaction) are
-decided in `window-rules.md`'s "Persistent windows: workspace-pinned and global HUD" section, which
-also amends G8 with the one genuinely new rule: an exemption from the app-deactivate sweep for a
-window declared to survive it. `electron-window-backend.ts STACKING_TAKES_FOCUS`'s cross-platform
-claim and the `pinAlwaysOnTop` / `pendingStackingFocus` asymmetry it names are unaffected by this
-decision — they are about whether today's Pinned primitive already behaves correctly off macOS,
-not about what the two kinds should do, and stay open as implementation debt.
+decided in `window-rules.md`'s "Persistent windows: workspace-pinned and global HUD" section. Both
+kinds are ordinary Pinned windows, app-level, governed by G8/G9 unchanged — no exemption from the
+app-deactivate sweep, no `WindowClass` value, no `WindowRecord` field. The only new axis is
+workspace scope (which single workspace a pinned window belongs to, or none/all for a global HUD
+window), and it lives in the workspace/session layer, not the kernel. `electron-window-backend.ts
+STACKING_TAKES_FOCUS`'s cross-platform claim and the `pinAlwaysOnTop` / `pendingStackingFocus`
+asymmetry it names are unaffected by this decision — they are about whether today's Pinned
+primitive already behaves correctly off macOS, not about what the two kinds should do, and stay
+open as implementation debt.
 
 The previous open decision — whether `order` includes never-shown and offscreen windows — was answered
 on 2026-08-21: **it does**, every window always, with no registration-time membership test. The
