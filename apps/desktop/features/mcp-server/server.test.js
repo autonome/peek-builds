@@ -1270,6 +1270,44 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       assert.equal(r.isError, true);
     });
   });
+
+  describe('tasks', () => {
+    it('list_tasks with no tags argument defaults to <scope>:todo, not bare todo', async () => {
+      const task = await client.callTool('create_item', {
+        type: 'text', title: 'scoped task', content: 'x', tags: ['peek:todo'],
+      });
+      const tasks = await client.callTool('list_tasks');
+      const ids = tasks.map((t) => t.id);
+      assert.ok(ids.includes(task.id));
+      // p-only carries bare `peek` only, no status tag — must not appear.
+      assert.ok(!ids.includes('p-only'));
+    });
+
+    it('complete_task with accepted omitted moves peek:todo to peek:needs-review, leaves it in the queue', async () => {
+      const task = await client.callTool('create_item', {
+        type: 'text', title: 'scoped review', content: 'x', tags: ['peek:todo'],
+      });
+      const result = await client.callTool('complete_task', { itemId: task.id, notes: 'ready for review' });
+      assert.ok(result.tags.includes('peek:needs-review'));
+      assert.ok(!result.tags.includes('peek:todo'));
+      assert.ok(result.tags.includes('peek'));
+      assert.ok(!result.tags.includes('done'));
+      assert.ok(!result.tags.includes('peek:done'));
+    });
+
+    it('complete_task with accepted: true moves peek:todo straight to peek:done', async () => {
+      const task = await client.callTool('create_item', {
+        type: 'text', title: 'scoped approved', content: 'x', tags: ['peek:todo'],
+      });
+      const result = await client.callTool('complete_task', {
+        itemId: task.id, notes: 'shipped', accepted: true,
+      });
+      assert.ok(result.tags.includes('peek:done'));
+      assert.ok(!result.tags.includes('peek:todo'));
+      assert.ok(!result.tags.includes('peek:needs-review'));
+      assert.ok(!result.tags.includes('done'));
+    });
+  });
 });
 
 // --- Remote store content windowing (peek dc710276) ---

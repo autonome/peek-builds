@@ -115,7 +115,8 @@
  *   apps/server/mcp-items.js's header comment)
  *
  * @typedef {Object} TaskQuery
- * @property {string[]} [tags] - default ['todo']
+ * @property {string[]} [tags] - default ['todo'] unscoped, ['<scopeTag>:todo']
+ *   in a scoped session; an explicit value is always honored as given
  * @property {string} [project]
  *
  * @typedef {Object} SessionInfo
@@ -150,7 +151,11 @@
  * @property {(id: string, eventId: string) => Promise<{success: boolean, id?: string, itemId?: string, error?: string}>} deleteEvent
  * @property {(id: string) => Promise<{success: boolean, itemId: string, deleted: number}>} deleteEvents
  * @property {(q: TaskQuery) => Promise<ItemView[]>} listTasks
- * @property {(id: string, notes?: string) => Promise<ItemView>} completeTask
+ * @property {(id: string, notes?: string, accepted?: boolean) => Promise<ItemView>} completeTask
+ *   - unscoped: adds `done`, removes `todo`, `accepted` ignored. Scoped:
+ *   `accepted` false/absent adds `<scopeTag>:needs-review`; `accepted: true`
+ *   adds `<scopeTag>:done`; both remove `<scopeTag>:todo`/`wip`/`ready`/
+ *   `triage` (and `needs-review` too, when accepted)
  * @property {(id: string) => Promise<ItemView|null>} getTaskContext
  * @property {() => Promise<SessionInfo>} describe
  * @property {() => Promise<void>} close

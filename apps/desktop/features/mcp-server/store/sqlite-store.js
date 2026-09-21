@@ -714,6 +714,18 @@ function untagItemSync(itemId, tagName) {
   return { success: true, itemId, tagName };
 }
 
+// Internal: removes a tag from an item if both the tag and the association
+// exist; a no-op otherwise (matching untagItemSync()'s "Tag not found"
+// ok-path, just without the status wrapper since callers here don't need
+// it). Assumes a transaction is already open. Mirrors untagItemInTx() in
+// apps/server/mcp-items.js.
+function untagItemInTx(itemId, tagName) {
+  const d = requireDb();
+  const tag = d.prepare(`SELECT id FROM tags WHERE name = ?`).get(tagName);
+  if (!tag) return;
+  d.prepare(`DELETE FROM item_tags WHERE itemId = ? AND tagId = ?`).run(itemId, tag.id);
+}
+
 // Matches apps/server/mcp-items.js parseNumericEventValue() exactly: when
 // `metadata` is supplied, `value` has to actually be a number (or numeric
 // string) — `Number(value) || 0` would silently turn a caller's real text
@@ -811,30 +823,53 @@ function deleteEventsSync(itemId) {
   return { success: true, itemId, deleted: result.changes };
 }
 
-function listTasksSync({ tags = ['todo'], project } = {}) {
-  const allTags = [...tags];
+// No explicit `tags` argument defaults to `<scopeTag>:todo` in a scoped
+// session and `todo` unscoped, matching completeTaskSync()'s own scoped/
+// unscoped split below — a scoped session's open work lives under its own
+// namespaced tag, not the bare one shared across every project. An explicit
+// `tags` argument is always honored as given, in either session.
+function listTasksSync({ tags, project } = {}, scopeTag = '') {
+  const defaultTags = scopeTag ? [`${scopeTag}:todo`] : ['todo'];
+  const allTags = [...(tags || defaultTags)];
   if (project) allTags.push(project);
   return queryItemsSync({ tags: allTags, sort: 'recent' });
 }
 
-function completeTaskSync(id, notes = '') {
-  // Wrap the three-step operation so an item can't end up with both
-  // `todo` and `done` if a step fails mid-way.
+// One transaction, records the completion event and swaps status tags.
+// Wrapped so a mid-way failure (e.g. the event insert) leaves the tag state
+// exactly as it was. Mirrors completeTask() in apps/server/mcp-items.js.
+//
+// Unscoped session (empty scopeTag): unchanged from before namespaced status
+// tags existed — add `done`, remove `todo`. `accepted` is ignored.
+//
+// Scoped session: bare `todo`/`done` are never touched, only the `<scope>:*`
+// namespace. `accepted` false or absent (the default — someone other than
+// the task's owner is reporting the work as done) adds `<scope>:needs-review`
+// and removes `<scope>:todo`/`wip`/`ready`/`triage`, leaving the item in the
+// work queue for review. `accepted: true` (the owner has approved the work)
+// adds `<scope>:done` and also removes `<scope>:needs-review`, taking the
+// item out of the queue for good.
+function completeTaskSync(id, notes = '', accepted = false, scopeTag = '') {
   transaction(() => {
     const now = Date.now();
-    tagItemInTx(id, 'done', now);
 
-    const d = requireDb();
-    const todo = d.prepare(`SELECT id FROM tags WHERE name = 'todo'`).get();
-    if (todo) {
-      d.prepare(`DELETE FROM item_tags WHERE itemId = ? AND tagId = ?`).run(id, todo.id);
+    if (scopeTag) {
+      const addTag = accepted ? `${scopeTag}:done` : `${scopeTag}:needs-review`;
+      const removeTags = [`${scopeTag}:todo`, `${scopeTag}:wip`, `${scopeTag}:ready`, `${scopeTag}:triage`];
+      if (accepted) removeTags.push(`${scopeTag}:needs-review`);
+      tagItemInTx(id, addTag, now);
+      for (const tagName of removeTags) untagItemInTx(id, tagName);
+    } else {
+      tagItemInTx(id, 'done', now);
+      untagItemInTx(id, 'todo');
     }
 
-    const eventMeta = notes ? JSON.stringify({ notes }) : '{}';
+    const eventMeta = { ...(notes ? { notes } : {}), ...(accepted ? { accepted: true } : {}) };
+    const d = requireDb();
     d.prepare(`
       INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
       VALUES (?, ?, 'completed', 0, ?, ?, ?)
-    `).run(randomUUID(), id, now, eventMeta, now);
+    `).run(randomUUID(), id, now, JSON.stringify(eventMeta), now);
   });
   return getItemSync(id);
 }
@@ -879,8 +914,8 @@ export async function openSqliteStore({ dbPath, scopeTag = '', readonly = false 
     async listEvents(id, opts) { return listEventsSync(id, opts); },
     async deleteEvent(id, eventId) { return deleteEventSync(id, eventId); },
     async deleteEvents(id) { return deleteEventsSync(id); },
-    async listTasks(q) { return listTasksSync(q); },
-    async completeTask(id, notes) { return completeTaskSync(id, notes); },
+    async listTasks(q) { return listTasksSync(q, scopeTag); },
+    async completeTask(id, notes, accepted) { return completeTaskSync(id, notes, accepted, scopeTag); },
     async getTaskContext(idOrPrefix) { return getTaskContextSync(idOrPrefix, scopeTag); },
     async describe() {
       let datastoreVersion = 0;

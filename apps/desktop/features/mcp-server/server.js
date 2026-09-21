@@ -350,23 +350,24 @@ const TOOLS = [
   },
   {
     name: 'list_tasks',
-    description: 'List task items (tagged #todo by default). Optionally filter by project tag.',
+    description: 'List task items. In an unscoped session, defaults to items tagged "todo". In a session confined to a scope (PEEK_MCP_SCOPE_TAG), defaults to items tagged "<scope>:todo" instead, so only this project\'s open work shows up rather than every project\'s. Pass tags explicitly to override either default. Optionally filter by project tag.',
     inputSchema: {
       type: 'object',
       properties: {
-        tags: { type: 'array', items: { type: 'string' }, description: 'Task tags (default: ["todo"])' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Task tags (default: ["todo"] unscoped, ["<scope>:todo"] in a scoped session)' },
         project: { type: 'string', description: 'Project tag filter (e.g., "peek", "mobile")' },
       },
     },
   },
   {
     name: 'complete_task',
-    description: 'Mark a task as done: adds "done" tag, removes "todo" tag, records completion event.',
+    description: 'Mark a task as done and record a completion event. In an unscoped session: adds "done", removes "todo"; "accepted" is ignored. In a session confined to a scope (PEEK_MCP_SCOPE_TAG): bare "todo"/"done" are left alone — with "accepted" false or omitted, adds "<scope>:needs-review" and removes "<scope>:todo"/"wip"/"ready"/"triage", leaving the item in the work queue for its owner to review; only pass "accepted: true" once the task\'s owner has approved the work, which adds "<scope>:done" instead and takes the item out of the queue for good.',
     inputSchema: {
       type: 'object',
       properties: {
         itemId: { type: 'string', description: 'Item ID' },
         notes: { type: 'string', description: 'Completion notes' },
+        accepted: { type: 'boolean', description: 'Scoped sessions only: true once the task\'s owner has approved the work (moves to "<scope>:done" instead of "<scope>:needs-review"). Default false. Ignored unscoped.' },
       },
       required: ['itemId'],
     },
@@ -495,7 +496,7 @@ async function handleToolCall(name, args) {
     case 'complete_task': {
       const itemId = await resolveItemIdForMutation(args);
       await assertItemInScope(itemId);
-      return store.completeTask(itemId, args.notes);
+      return store.completeTask(itemId, args.notes, args.accepted === true);
     }
     case 'get_task_context': {
       // Same inline-resolution shape as get_item above.

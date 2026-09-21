@@ -70,7 +70,7 @@ function joinTags(tags) {
  * @param {import('./types').StoreConfig} config
  * @returns {Promise<import('./types').PeekStore>}
  */
-export async function openRemoteStore({ remoteUrl, credential } = {}) {
+export async function openRemoteStore({ remoteUrl, credential, scopeTag = '' } = {}) {
   assertResolved(remoteUrl, 'PEEK_MCP_REMOTE_URL');
   const baseUrl = (remoteUrl || '').trim().replace(/\/+$/, '');
   if (!baseUrl) {
@@ -214,10 +214,14 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
     return body.tags;
   }
 
-  async function listTasks({ tags = ['todo'], project } = {}) {
+  async function listTasks({ tags, project } = {}) {
     // Composes to the same list_items call the sqlite path uses (design doc
-    // §3.3: "no endpoint" for list_tasks) — no separate request.
-    const allTags = [...tags];
+    // §3.3: "no endpoint" for list_tasks) — no separate request. No explicit
+    // `tags` defaults to `<scopeTag>:todo` in a scoped session and `todo`
+    // unscoped, matching sqlite-store.js's listTasksSync(); an explicit
+    // `tags` argument is always honored as given.
+    const defaultTags = scopeTag ? [`${scopeTag}:todo`] : ['todo'];
+    const allTags = [...(tags || defaultTags)];
     if (project) allTags.push(project);
     return queryItems({ tags: allTags, sort: 'recent' });
   }
@@ -329,9 +333,9 @@ export async function openRemoteStore({ remoteUrl, credential } = {}) {
     return body;
   }
 
-  async function completeTask(id, notes) {
+  async function completeTask(id, notes, accepted) {
     const { status, body } = await request('POST', `/mcp/tasks/${encodeURIComponent(id)}/complete`, {
-      body: { notes },
+      body: { notes, accepted },
     });
     if (status === 404) throw new Error(`No item found with id "${id}".`);
     if (status !== 200) throw unexpectedStatus('complete_task', status, body);

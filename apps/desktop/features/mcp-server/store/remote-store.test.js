@@ -347,6 +347,27 @@ describe('openRemoteStore()', () => {
       assert.ok(calls[0].url.includes('sort=recent'));
     });
 
+    it('listTasks: with no tags argument, defaults to ["todo"] when the store carries no scope tag', async () => {
+      stubFetch([() => fakeResponse(200, { items: [] })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await store.listTasks({});
+      assert.ok(calls[0].url.includes('tags=todo'));
+    });
+
+    it('listTasks: with no tags argument, defaults to ["<scope>:todo"] when the store carries a scope tag', async () => {
+      stubFetch([() => fakeResponse(200, { items: [] })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN, scopeTag: 'peek' });
+      await store.listTasks({});
+      assert.ok(calls[0].url.includes('tags=peek%3Atodo') || calls[0].url.includes('tags=peek:todo'));
+    });
+
+    it('listTasks: an explicit tags argument is honored as given even with a scope tag configured', async () => {
+      stubFetch([() => fakeResponse(200, { items: [] })]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN, scopeTag: 'peek' });
+      await store.listTasks({ tags: ['peek:wip'] });
+      assert.ok(calls[0].url.includes('tags=peek%3Awip') || calls[0].url.includes('tags=peek:wip'));
+    });
+
     it('completeTask: 200 returns the updated item, 404 throws', async () => {
       stubFetch([() => fakeResponse(200, { item: { id: 'x', tags: ['done'] } })]);
       let store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
@@ -355,6 +376,14 @@ describe('openRemoteStore()', () => {
       stubFetch([() => fakeResponse(404, { error: 'item not found' })]);
       store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
       await assert.rejects(() => store.completeTask('missing'), /No item found/);
+    });
+
+    it('completeTask: sends accepted in the POST body', async () => {
+      let sentBody;
+      stubFetch([(url, opts) => { sentBody = JSON.parse(opts.body); return fakeResponse(200, { item: { id: 'x', tags: ['peek:done'] } }); }]);
+      const store = await openRemoteStore({ remoteUrl: FAKE_URL, credential: FAKE_TOKEN });
+      await store.completeTask('x', 'notes', true);
+      assert.deepStrictEqual(sentBody, { notes: 'notes', accepted: true });
     });
 
     it('getTaskContext: 200 returns the item with events, 404 returns null', async () => {
