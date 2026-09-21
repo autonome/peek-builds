@@ -2761,6 +2761,167 @@ const renderSyncSettings = async () => {
   return container;
 };
 
+// Render the account-holder device panel: lists, renames and revokes the
+// devices sync-enrolled on this account via the server's account-holder
+// /devices routes (apps/server/index.js — GET/PATCH/DELETE /devices, keyed
+// off the same serverUrl/apiKey the Sync panel above configures). Uses the
+// shared <peek-*> component library rather than this file's hand-rolled
+// style — see apps/desktop/CLAUDE.md "the <peek-*> component system is the
+// DEFAULT". Minting a key for a NEW device is intentionally not wired up
+// here: it waits on an account-holder decision about how a fresh device
+// gets its first key (peek 8415f3de step 3) — see the placeholder card
+// below, which names the gap rather than offering a button that does
+// nothing.
+const renderDevicesSettings = async () => {
+  const container = document.createElement('div');
+  container.className = 'devices-panel';
+
+  const newDeviceCard = document.createElement('peek-card');
+  const newDeviceHeader = document.createElement('span');
+  newDeviceHeader.slot = 'header';
+  newDeviceHeader.textContent = 'Add a device';
+  newDeviceCard.appendChild(newDeviceHeader);
+  const newDeviceBody = document.createElement('p');
+  newDeviceBody.style.cssText = 'margin: 0; color: var(--text-tertiary); font-size: 13px;';
+  newDeviceBody.textContent =
+    'Minting a key for a new device from this panel is not available yet. Until then, ' +
+    'enroll a new device the way this one was enrolled.';
+  newDeviceCard.appendChild(newDeviceBody);
+  container.appendChild(newDeviceCard);
+
+  const statusLine = document.createElement('p');
+  statusLine.className = 'devices-panel-status';
+  statusLine.style.cssText = 'color: var(--text-tertiary); font-size: 13px;';
+  container.appendChild(statusLine);
+
+  const listContainer = document.createElement('div');
+  listContainer.className = 'devices-panel-list';
+  listContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; margin-top: 12px;';
+  container.appendChild(listContainer);
+
+  const renderDeviceCard = (device) => {
+    const card = document.createElement('peek-card');
+    card.dataset.deviceId = device.id;
+    if (device.revoked_at) {
+      card.dataset.revoked = 'true';
+    }
+
+    const header = document.createElement('div');
+    header.slot = 'header';
+    header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; width: 100%;';
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'device-label';
+    labelSpan.textContent = device.label || '(unnamed device)';
+    header.appendChild(labelSpan);
+    const badge = document.createElement('span');
+    badge.className = 'device-badge';
+    badge.style.cssText = device.revoked_at
+      ? 'font-size: 12px; color: var(--text-tertiary);'
+      : 'font-size: 12px; color: var(--accent-primary);';
+    badge.textContent = device.revoked_at ? 'Revoked' : 'Active';
+    header.appendChild(badge);
+    card.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.className = 'device-meta';
+    meta.style.cssText = 'display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-secondary);';
+    const created = document.createElement('div');
+    created.textContent = `Created: ${device.created_at ? new Date(device.created_at).toLocaleString() : 'unknown'}`;
+    meta.appendChild(created);
+    const lastSeen = document.createElement('div');
+    lastSeen.textContent = `Last seen: ${device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : 'never'}`;
+    meta.appendChild(lastSeen);
+    card.appendChild(meta);
+
+    if (!device.revoked_at) {
+      const footer = document.createElement('div');
+      footer.slot = 'footer';
+      footer.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+
+      const renameInput = document.createElement('peek-input');
+      renameInput.dataset.role = 'rename-input';
+      renameInput.placeholder = 'Device name';
+      renameInput.value = device.label || '';
+      renameInput.style.cssText = 'flex: 1;';
+      footer.appendChild(renameInput);
+
+      const renameBtn = document.createElement('peek-button');
+      renameBtn.dataset.role = 'rename-button';
+      renameBtn.setAttribute('variant', 'secondary');
+      renameBtn.setAttribute('size', 'sm');
+      renameBtn.textContent = 'Rename';
+      renameBtn.addEventListener('click', async () => {
+        const label = (renameInput.value || '').trim();
+        if (!label) {
+          alert('Device name cannot be empty');
+          return;
+        }
+        const result = await api.sync.renameDevice(device.id, label);
+        if (!result.success) {
+          alert(`Failed to rename device: ${result.error}`);
+          return;
+        }
+        await loadDevices();
+      });
+      footer.appendChild(renameBtn);
+
+      const revokeBtn = document.createElement('peek-button');
+      revokeBtn.dataset.role = 'revoke-button';
+      revokeBtn.setAttribute('variant', 'danger');
+      revokeBtn.setAttribute('size', 'sm');
+      revokeBtn.textContent = 'Revoke';
+      revokeBtn.addEventListener('click', async () => {
+        if (!confirm(`Revoke "${device.label || 'this device'}"? It will lose sync access immediately.`)) return;
+        const result = await api.sync.revokeDevice(device.id);
+        if (!result.success) {
+          alert(`Failed to revoke device: ${result.error}`);
+          return;
+        }
+        await loadDevices();
+      });
+      footer.appendChild(revokeBtn);
+
+      card.appendChild(footer);
+    }
+
+    return card;
+  };
+
+  const loadDevices = async () => {
+    listContainer.innerHTML = '';
+    statusLine.textContent = '';
+
+    const configResult = await api.sync.getConfig();
+    if (!configResult.success || !configResult.data?.serverUrl || !configResult.data?.apiKey) {
+      statusLine.textContent = 'Configure sync (Server URL and API Key, above) to manage devices.';
+      return;
+    }
+
+    const result = await api.sync.listDevices();
+    if (!result.success) {
+      statusLine.textContent = `Failed to load devices: ${result.error}`;
+      return;
+    }
+
+    const devices = result.data || [];
+    if (devices.length === 0) {
+      statusLine.textContent = 'No devices yet.';
+      return;
+    }
+
+    devices.forEach((device) => listContainer.appendChild(renderDeviceCard(device)));
+  };
+
+  // Exposed so the sidebar nav click handler can refresh this panel — the
+  // Sync panel above may change serverUrl/apiKey after this panel already
+  // rendered once, same pattern as window._refreshPermissionsList.
+  window._refreshDevicesList = loadDevices;
+
+  await loadDevices();
+
+  return container;
+};
+
 // Navigation handling
 const showSection = (sectionId) => {
   // Hide all sections
@@ -3778,6 +3939,35 @@ const init = async () => {
   });
 
   contentArea.appendChild(syncSection);
+
+  // Add Devices management section (between Sync and Profiles)
+  const devicesNav = document.createElement('a');
+  devicesNav.className = 'nav-item';
+  devicesNav.textContent = 'Devices';
+  devicesNav.dataset.section = 'devices';
+  devicesNav.addEventListener('click', () => {
+    showSection('devices');
+    if (window._refreshDevicesList) {
+      window._refreshDevicesList();
+    }
+  });
+  sidebarNav.appendChild(devicesNav);
+
+  const devicesSection = document.createElement('div');
+  devicesSection.className = 'section';
+  devicesSection.id = 'section-devices';
+
+  const devicesTitle = document.createElement('h2');
+  devicesTitle.className = 'section-title';
+  devicesTitle.textContent = 'Devices';
+  devicesSection.appendChild(devicesTitle);
+
+  // Load devices content async
+  renderDevicesSettings().then(content => {
+    devicesSection.appendChild(content);
+  });
+
+  contentArea.appendChild(devicesSection);
 
   // Add Profiles management section
   const profilesNav = document.createElement('a');

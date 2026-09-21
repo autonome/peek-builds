@@ -178,6 +178,9 @@ import {
   pullEventsFromServer,
   pushTagsToServer,
   pushEventsToServer,
+  listDevices,
+  renameDevice,
+  revokeDevice,
 } from './sync.js';
 import {
   listProfiles,
@@ -5231,6 +5234,81 @@ export function registerTileIpcHandlers(): void {
 
       const pushed = tagPushResult.pushed + result.pushed + eventPushResult.pushed;
       return { success: true, data: { pushed, failed: result.failed } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:sync:list-devices / rename-device / revoke-device ─────────
+  //
+  // Settings UI consumes these via api.sync.{listDevices,renameDevice,
+  // revokeDevice} — the account-holder device panel. trustedBuiltin only,
+  // same reasoning as the rest of the sync surface: network + server creds.
+
+  registerTileIpc('tile:sync:list-devices', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:list-devices', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:list-devices' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+      const devices = await listDevices(config.serverUrl, config.apiKey);
+      return { success: true, data: devices };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:rename-device', { mode: 'handle' }, async (event, args: {
+    token: string;
+    deviceId: string;
+    label: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:rename-device', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:rename-device' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+      const device = await renameDevice(config.serverUrl, config.apiKey, args.deviceId, args.label);
+      return { success: true, data: device };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:revoke-device', { mode: 'handle' }, async (event, args: {
+    token: string;
+    deviceId: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:revoke-device', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:revoke-device' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+      const revoked = await revokeDevice(config.serverUrl, config.apiKey, args.deviceId);
+      return { success: true, data: { revoked } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

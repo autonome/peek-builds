@@ -2200,6 +2200,67 @@ function saveSyncServerConfig(serverUrl: string): void {
   `).run('sync-lastSyncProfileId', JSON.stringify(currentProfileId), Date.now());
 }
 
+// ==================== Devices (account-holder self-service) ====================
+//
+// Talks to the server's account-holder `/devices` routes (apps/server/index.js,
+// authenticated through the same bearer apiKey as item sync — see
+// `apps/server/users.js` `listDevices()`/`renameDevice()`/`revokeDevice()`).
+// Distinct from item/tag/event sync above: this is CRUD on the account's own
+// device-key rows, not datastore content. No pull/push/merge — the server is
+// the only copy, so every call here goes straight through serverFetch().
+
+/** One row from the server's `devices` table. Timestamps are the server's
+ * own ISO strings (or null when not yet set/revoked) — displayed as-is via
+ * `new Date(...).toLocaleString()`, not converted to desktop's unix-ms
+ * convention the way item timestamps are. */
+export interface SyncDevice {
+  id: string;
+  label: string;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+}
+
+/** List the account's own devices (no key material — the server never
+ * returns any). */
+export async function listDevices(serverUrl: string, apiKey: string): Promise<SyncDevice[]> {
+  const response = await serverFetch<{ devices: SyncDevice[] }>(serverUrl, apiKey, '/devices');
+  return response.devices;
+}
+
+/** Rename one of the account's own devices. */
+export async function renameDevice(
+  serverUrl: string,
+  apiKey: string,
+  deviceId: string,
+  label: string
+): Promise<SyncDevice> {
+  const response = await serverFetch<{ device: SyncDevice }>(
+    serverUrl,
+    apiKey,
+    `/devices/${encodeURIComponent(deviceId)}`,
+    { method: 'PATCH', body: { label } }
+  );
+  return response.device;
+}
+
+/** Revoke one of the account's own devices. Revoking the device the caller is
+ * currently using is allowed by the server — this same apiKey then gets 401
+ * on its next request (see the server route's own comment). */
+export async function revokeDevice(
+  serverUrl: string,
+  apiKey: string,
+  deviceId: string
+): Promise<boolean> {
+  const response = await serverFetch<{ revoked: boolean }>(
+    serverUrl,
+    apiKey,
+    `/devices/${encodeURIComponent(deviceId)}`,
+    { method: 'DELETE' }
+  );
+  return response.revoked;
+}
+
 // ==================== Full Bidirectional Sync ====================
 
 // Module-level error state — surfaced in getSyncStatus so the settings

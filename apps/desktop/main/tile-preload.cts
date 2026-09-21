@@ -2061,6 +2061,13 @@ function buildAPI(): Record<string, unknown> {
     getLog: () => ipcRenderer.invoke('tile:sync:get-log', { token: tileToken }),
     pull: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:pull', { token: tileToken, since: options?.since }),
     push: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:push', { token: tileToken, since: options?.since }),
+    // Account-holder device panel (Settings > Devices): list/rename/revoke
+    // the account's own device keys via the server's /devices routes.
+    listDevices: () => ipcRenderer.invoke('tile:sync:list-devices', { token: tileToken }),
+    renameDevice: (deviceId: string, label: string) =>
+      ipcRenderer.invoke('tile:sync:rename-device', { token: tileToken, deviceId, label }),
+    revokeDevice: (deviceId: string) =>
+      ipcRenderer.invoke('tile:sync:revoke-device', { token: tileToken, deviceId }),
   };
 
   // ── Ad blocker ────────────────────────────────────────────────────
