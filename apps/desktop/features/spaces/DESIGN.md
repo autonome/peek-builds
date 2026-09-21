@@ -251,6 +251,38 @@ one workspace's membership in the first place. A window pinned to one workspace 
 comes back, pinned, from that workspace's own saved row, exactly like an unpinned window in the
 same space.
 
+### External links
+
+A URL from another app — macOS `open-url`, the Windows/Linux second-instance handoff, a CLI arg,
+or `peek-cli open-url` — always opens into `space:default`, whichever workspace is active, and
+without leaving that workspace: it does not call `openSpace('default')`, which would save-and-close
+whatever the user is in the middle of just because a link arrived from outside it. All of these
+sources funnel through one place, `main/main.ts handleExternalUrl()` → the `external:open-url`
+pubsub event → `renderer/index.js`'s subscriber, which is where the window actually gets opened.
+
+That subscriber resolves `space:default` itself (`api.datastore.getOrCreateTag('space:default')`,
+the same generic tag primitive `features/spaces/background.js bootstrapDefaultSpace()` uses to
+create it) and passes the result as the window's explicit `spaceMode` option, tagging the window
+into the default at the moment it opens — the same mechanism `enterWorkspace()` uses to restore a
+saved workspace's windows into their space. This runs in core rather than being left to the spaces
+feature to tag after the fact: that feature loads lazily (`manifest.json`'s background tile), woken
+only by its own commands (`open space` / `close space` / `switch space` / the pin commands), so a
+link arriving before the user has ever touched a workspace command would reach a spaces feature
+that isn't running yet. Core's background window is never lazy, so resolving the tag itself removes
+that race entirely, at the cost of core knowing one space-specific fact (the tag name
+`space:default`) that would otherwise live only in the feature layer — a deliberate trade of a
+single literal for correctness on a cold start.
+
+Passing `spaceMode` only works because `main/ipc.ts`'s window-open handler now honors it on both
+window-host implementations it has: the plain `BrowserWindow` branch already read
+`options.spaceMode`, but the hybrid page-host branch — which is what actually serves every
+http/https/file content URL (`usePageHost`, decided by URL scheme) — silently dropped it. Since
+external links are ordinary web URLs, they went through the exact branch where `spaceMode` didn't
+work; the hybrid branch now sets the same `mode` context entry the plain branch does when the
+option is present. This also fixes `spaceMode` for any other caller restoring a real web-page URL
+into a workspace (`enterWorkspace()`'s saved-session restore, for one) — previously silent for any
+saved window whose URL was a real web page rather than a `peek://` tile.
+
 ---
 
 ## Open Questions

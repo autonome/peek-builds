@@ -639,12 +639,33 @@ export const init = async () => {
     log('core', 'external:open-url', msg);
     const { url, trackingSource, trackingSourceId } = msg;
 
+    // A link from outside Peek lands in the default workspace, whichever
+    // workspace is active (features/spaces/DESIGN.md "External links") —
+    // set here, at open time, rather than by routing through the spaces
+    // feature's own commands: that feature loads lazily and may not be
+    // running yet when the first link of a session arrives, while core is
+    // always live. `space:default` is resolved through the same generic
+    // tag primitive the spaces feature itself uses to bootstrap it
+    // (`getOrCreateTag`, idempotent either way), so this doesn't depend on
+    // that feature having run first.
+    let spaceMode;
+    try {
+      const tagResult = await api.datastore.getOrCreateTag('space:default');
+      if (tagResult?.success && tagResult.data?.tag) {
+        const tag = tagResult.data.tag;
+        spaceMode = { spaceId: tag.id, spaceName: 'default', color: tag.color };
+      }
+    } catch (error) {
+      log.error('core', 'Error resolving the default workspace tag for an external URL:', error);
+    }
+
     try {
       // Use URL as key to reuse existing windows
       await windowManager.createWindow(url, {
         key: url,
         trackingSource,
-        trackingSourceId
+        trackingSourceId,
+        ...(spaceMode ? { spaceMode } : {})
       });
     } catch (error) {
       log.error('core', 'Error opening external URL (attempt 1):', error);
@@ -655,7 +676,8 @@ export const init = async () => {
         await windowManager.createWindow(url, {
           key: url,
           trackingSource,
-          trackingSourceId
+          trackingSourceId,
+          ...(spaceMode ? { spaceMode } : {})
         });
       } catch (retryError) {
         log.error('core', 'Error opening external URL (retry failed):', retryError);

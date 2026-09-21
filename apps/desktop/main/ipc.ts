@@ -3279,6 +3279,23 @@ export function registerWindowHandlers(): void {
           });
         }
 
+        // Explicit `spaceMode` option, same shape and meaning as the plain
+        // BrowserWindow branch below (`options.spaceMode` →
+        // `addContextEntry('mode', 'space', …)`) — honored here too so a
+        // caller opening a URL doesn't need to know which window-host
+        // implementation ends up serving it. Content URLs (http/https/
+        // file/new-tab) always route through this branch (`usePageHost`
+        // above), so without this a `spaceMode` option on any real web page
+        // was silently dropped.
+        if (options.spaceMode) {
+          const { spaceId, spaceName, color } = options.spaceMode;
+          addContextEntry('mode', 'space', {
+            windowId: baseWin.id,
+            source: msg.source,
+            metadata: { spaceId, spaceName, color, url },
+          });
+        }
+
         publish(getSystemAddress(), 'window:opened', {
           id: baseWin.id,
           url,
