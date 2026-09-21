@@ -602,6 +602,16 @@ function tagItemInTx(conn, itemId, tagName, now) {
   return tag.id;
 }
 
+// Internal: removes a tag from an item if both the tag and the association
+// exist; a no-op otherwise (matching untagItem()'s "Tag not found" ok-path,
+// just without the status wrapper since callers here don't need it).
+// Assumes a transaction is already open.
+function untagItemInTx(conn, itemId, tagName) {
+  const tag = conn.get("SELECT id FROM tags WHERE name = ?", [tagName]);
+  if (!tag) return;
+  conn.run("DELETE FROM item_tags WHERE itemId = ? AND tagId = ?", [itemId, tag.id]);
+}
+
 // --- create_item: POST /mcp/items ---
 //
 // Images are explicitly out of scope for the remote MCP backend (design doc
@@ -965,30 +975,44 @@ function deleteEvents(userId, profileId, scopeTag, id) {
 
 // --- complete_task: POST /mcp/tasks/:id/complete ---
 //
-// One transaction, matching completeTaskSync() exactly: add `done`, remove
-// `todo`, record the completion event. Wrapped so a mid-way failure (e.g. the
-// event insert) leaves neither tag change applied — an item can never end up
-// carrying both `done` and `todo`, and never loses `todo` without gaining
-// `done`.
-function completeTask(userId, profileId, scopeTag, id, notes = "") {
+// One transaction, records the completion event and swaps status tags.
+// Wrapped so a mid-way failure (e.g. the event insert) leaves the tag state
+// exactly as it was.
+//
+// Unscoped session (empty scopeTag): unchanged from before namespaced status
+// tags existed — add `done`, remove `todo`. `accepted` is ignored.
+//
+// Scoped session: bare `todo`/`done` are never touched, only the `<scope>:*`
+// namespace. `accepted` false or absent (the default — someone other than
+// the task's owner is reporting the work as done) adds `<scope>:needs-review`
+// and removes `<scope>:todo`/`wip`/`ready`/`triage`, leaving the item in the
+// work queue for review. `accepted: true` (the owner has approved the work)
+// adds `<scope>:done` and also removes `<scope>:needs-review`, taking the
+// item out of the queue for good.
+function completeTask(userId, profileId, scopeTag, id, notes = "", accepted = false) {
   const conn = getConnection(userId, profileId);
   const existing = fetchItemRowById(conn, id, scopeTag);
   if (!existing) return { status: "not_found" };
 
   conn.transaction(() => {
     const now = Date.now();
-    tagItemInTx(conn, id, "done", now);
 
-    const todo = conn.get("SELECT id FROM tags WHERE name = 'todo'", []);
-    if (todo) {
-      conn.run("DELETE FROM item_tags WHERE itemId = ? AND tagId = ?", [id, todo.id]);
+    if (scopeTag) {
+      const addTag = accepted ? `${scopeTag}:done` : `${scopeTag}:needs-review`;
+      const removeTags = [`${scopeTag}:todo`, `${scopeTag}:wip`, `${scopeTag}:ready`, `${scopeTag}:triage`];
+      if (accepted) removeTags.push(`${scopeTag}:needs-review`);
+      tagItemInTx(conn, id, addTag, now);
+      for (const tagName of removeTags) untagItemInTx(conn, id, tagName);
+    } else {
+      tagItemInTx(conn, id, "done", now);
+      untagItemInTx(conn, id, "todo");
     }
 
-    const eventMeta = notes ? JSON.stringify({ notes }) : "{}";
+    const eventMeta = { ...(notes ? { notes } : {}), ...(accepted ? { accepted: true } : {}) };
     conn.run(
       `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
        VALUES (?, ?, 'completed', 0, ?, ?, ?)`,
-      [crypto.randomUUID(), id, now, eventMeta, now]
+      [crypto.randomUUID(), id, now, JSON.stringify(eventMeta), now]
     );
 
     conn.run("UPDATE items SET updatedAt = ? WHERE id = ?", [now, id]);

@@ -315,13 +315,19 @@ app.delete("/mcp/items/:id/events", (c) => {
 });
 
 // POST /mcp/tasks/:id/complete — server-side port of db.js completeTask()
-// (complete_task). One transaction: adds `done`, removes `todo`, records the
-// completion event, or none of the three (design doc §3.3/§4.1).
+// (complete_task). One transaction: swaps status tags and records the
+// completion event, or none of it (design doc §3.3/§4.1). An unscoped grant
+// still just adds `done` and removes `todo`; a scoped grant moves the item
+// between its `<scope>:*` status tags instead, landing on `<scope>:done`
+// only when the request marks the work `accepted` — see
+// mcpItems.completeTask() for the full contract.
 app.post("/mcp/tasks/:id/complete", async (c) => {
   const refused = readonlyRefused(c);
   if (refused) return refused;
   const body = await c.req.json().catch(() => ({}));
-  const result = mcpItems.completeTask(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes);
+  const result = mcpItems.completeTask(
+    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes, body.accepted === true
+  );
   if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
   return c.json({ item: result.item });
 });

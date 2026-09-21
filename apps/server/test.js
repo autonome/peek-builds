@@ -3924,7 +3924,7 @@ describe("MCP Item Write Routes Tests", () => {
       if (refused) return refused;
       const body = await c.req.json().catch(() => ({}));
       const result = mcpItemsMod.completeTask(
-        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes, body.accepted === true
       );
       if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
       return c.json({ item: result.item });
@@ -4450,11 +4450,11 @@ describe("MCP Item Write Routes Tests", () => {
   });
 
   describe("POST /mcp/tasks/:id/complete is one transaction (design doc §3.3/§4.1)", () => {
-    it("on success: adds done, removes todo, and records one completion event", async () => {
+    it("unscoped: adds done, removes todo, and records one completion event", async () => {
       const id = makeItem(["work", "todo"]);
       const res = await app.request(`/mcp/tasks/${id}/complete`, {
         method: "POST",
-        headers: scopedHeaders(),
+        headers: unscopedHeaders(),
         body: JSON.stringify({ notes: "shipped it" }),
       });
       assert.strictEqual(res.status, 200);
@@ -4467,7 +4467,7 @@ describe("MCP Item Write Routes Tests", () => {
       assert.strictEqual(events[0].content, "completed");
     });
 
-    it("a failure recording the event leaves the tag state exactly as it was — no partial completion", () => {
+    it("unscoped: a failure recording the event leaves the tag state exactly as it was — no partial completion", () => {
       const id = makeItem(["work", "todo"]);
       const conn = db.getConnection(TEST_USER, PROFILE);
       const originalRun = conn.run.bind(conn);
@@ -4478,7 +4478,7 @@ describe("MCP Item Write Routes Tests", () => {
         return originalRun(sql, params);
       };
 
-      assert.throws(() => mcpItemsMod.completeTask(TEST_USER, PROFILE, "work", id, "notes"));
+      assert.throws(() => mcpItemsMod.completeTask(TEST_USER, PROFILE, "", id, "notes"));
       conn.run = originalRun;
 
       const tagsAfter = conn
@@ -4486,6 +4486,69 @@ describe("MCP Item Write Routes Tests", () => {
         .map((r) => r.name)
         .sort();
       assert.deepStrictEqual(tagsAfter, ["todo", "work"], "done must not apply and todo must survive a rolled-back transaction");
+
+      const events = conn.all("SELECT * FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(events.length, 0, "no completion event should exist when the transaction rolled back");
+    });
+
+    it("scoped, accepted omitted: adds <scope>:needs-review, removes the other status tags, leaves bare tags alone", async () => {
+      const id = makeItem(["work", "work:wip"]);
+      const res = await app.request(`/mcp/tasks/${id}/complete`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ notes: "shipped it" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags.sort(), ["work", "work:needs-review"]);
+
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const events = conn.all("SELECT content, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].content, "completed");
+      assert.deepStrictEqual(JSON.parse(events[0].metadata), { notes: "shipped it" });
+    });
+
+    it("scoped, accepted true: adds <scope>:done, removes every other status tag, and records accepted in the event", async () => {
+      const id = makeItem(["work", "work:needs-review"]);
+      const res = await app.request(`/mcp/tasks/${id}/complete`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ accepted: true }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags.sort(), ["work", "work:done"]);
+
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const events = conn.all("SELECT content, metadata FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(events.length, 1);
+      assert.deepStrictEqual(JSON.parse(events[0].metadata), { accepted: true });
+    });
+
+    it("scoped: a failure recording the event leaves the status tags exactly as they were", () => {
+      const id = makeItem(["work", "work:todo"]);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const originalRun = conn.run.bind(conn);
+      conn.run = (sql, params) => {
+        if (sql.includes("INSERT INTO item_events")) {
+          throw new Error("simulated failure recording the completion event");
+        }
+        return originalRun(sql, params);
+      };
+
+      assert.throws(() => mcpItemsMod.completeTask(TEST_USER, PROFILE, "work", id, "notes", true));
+      conn.run = originalRun;
+
+      const tagsAfter = conn
+        .all("SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?", [id])
+        .map((r) => r.name)
+        .sort();
+      assert.deepStrictEqual(
+        tagsAfter,
+        ["work", "work:todo"],
+        "work:done must not apply and work:todo must survive a rolled-back transaction"
+      );
 
       const events = conn.all("SELECT * FROM item_events WHERE itemId = ?", [id]);
       assert.strictEqual(events.length, 0, "no completion event should exist when the transaction rolled back");
