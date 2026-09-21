@@ -18,6 +18,195 @@ Research dated 2026-09-20. Source file: `Peek-Needle-Firefox-for-entities-and-wo
 2. Check the `wasm` platform folder for the undocumented JS API before committing to Needle in Electron.
 3. Label one week of `item_visits` + notes into tasks (~300 items, 15–30 tasks), then run the bake-off table below.
 
+## Results (2026-09-21): the first two steps, run for real
+
+Steps 1 and 2 above were run on a Linux x86_64 box (16 cores, 30 GiB RAM) with normal outbound
+network access. Step 3 needs the account holder's own labelled data and stays untested. Nothing
+below is a substitute for the bake-off table further down — it is 8 hand-picked utterances and 2
+hand-picked texts, run once each, to see whether Needle runs at all and what its failure modes
+look like, not an accuracy benchmark.
+
+**What was installed and where it came from.** `pip install cactus-needle` in a throwaway
+virtualenv resolved `cactus-needle==3.0.4` from PyPI with no trouble (this box has a working
+`pip`; the research environment apparently did not). On first use it downloaded, from the
+`Cactus-Compute/needle3` Hugging Face repo at commit `b274efcb211a9eef48c9a88da4b43bd569696a39`:
+engine version `3.0.1`'s `linux-x86_64` build (`libneedle.so`, 1.23 MB) and the base weights
+(`needle3.cact`, 33.7 MB — the "8–29 MB" the research's spec table quotes is the 2-bit *layer*
+weights at some depths; the full 20-layer default archive downloaded here is larger). Both
+downloads and every call ran with no network failures — the research's central blocker (no
+weights download in its own environment) did not reproduce here. Pin: `cactus-needle==3.0.4`,
+`Cactus-Compute/needle3` commit `b274efcb211a9eef48c9a88da4b43bd569696a39`, engine generation 3
+build `3.0.1`.
+
+**Cold load and memory.** First `Needle(tools=[...13 schemas...])` — engine fetch was already
+cached by this point, so this is init only — took 5.76 s and left peak RSS at 148 MB. Across a
+run that kept re-initializing the engine for different tool subsets (see "two-step routing"
+below), peak RSS crept to 153.3 MB. A second run that kept one agent alive for its whole batch
+(just calling `reset()` between turns, never rebuilding the tool schema) stayed at 98.9–105 MB
+the entire time. The bake-off table's cost row sets a "under 150 MB" bar for the always-on path;
+a stable single-schema agent clears that comfortably, a design that swaps tool schemas in and
+out of one process does not.
+
+**`complete()` — routing an utterance to a Peek MCP call.** All 13 tool schemas from
+`apps/desktop/features/mcp-server/server.js` were converted from Peek's MCP shape
+(`name`/`description`/`inputSchema`) to Needle's (`name`/`description`/`parameters`) and passed
+to one `Needle()` agent — 13 tools is over the vendor's 5-tool render cap, so this also exercises
+the embedding-retrieval fallback the spec describes. 8 utterances were run with `agent.reset()`
+before each one, so results are not contaminated by conversation carry-over (see the note on that
+below):
+
+| Utterance | Correct tool | What Needle called | Verdict |
+| --- | --- | --- | --- |
+| "show me all my todo tasks" | `list_tasks` | `list_tasks({})` | correct |
+| "mark item a1b2c3d4 as done" | `complete_task` | `complete_task({itemId, notes:"as done"})` | correct |
+| "search my items for the mcp server fix" | `search_items` | `list_items({tags:["mcp server fix"]})` | wrong tool |
+| "tag item a1b2c3d4 with project-x" | `tag_item` | `tag_item({itemId, tagName:"project-x"})` | correct |
+| "what tags do I have" | `list_tags` | `list_tags({})` | correct |
+| "create a note that says buy milk on the way home" | `create_item` | `create_item({type:"note", title, content})` | wrong value — `type` has to be one of `url/text/tagset/image/series/feed/entity`; `"note"` isn't in that set and the model invented it anyway |
+| "list tasks for the mobile project" | `list_tasks` | `list_tasks({project:"mobile"})` | correct |
+| "record that I finished the design review on item a1b2c3d4" | `record_event` | `record_event({itemId, type:"finished", value:"finished"})` | right tool, but the real content ("design review") never made it into any argument |
+
+5/8 exactly right, 1/8 right tool with lost content, 2/8 wrong. Both misses share a pattern:
+`search_items` exists specifically for free-text search, but the model reached for `list_items`
+(with the query jammed into a `tags` filter) or, in an earlier un-reset run, `list_tags` — it
+never once picked `search_items` for a search-shaped utterance across either run. Latency per
+call (warm agent, after the one-time cold load) ran 160–330 ms; raw responses, including
+`prefill_tps`/`decode_tps`/`peak_ram_mb` and the engine's own `reasoning` and `confidence`
+fields, are in the throwaway run's saved output (not committed — see the note under
+"Repro" below) rather than reproduced in full here.
+
+**Conversation state is not reset by default — a real integration hazard.** The first version of
+this run reused one `Needle` agent across all 8 utterances without calling `reset()` between
+them, on the assumption that a one-shot `complete()` call is stateless. It is not: the engine's
+own `reasoning` field on later calls said things like *"carries over `list_tasks` from history"*
+and *"changes project from 'mobile' to 'mobile'"* — unrelated, single-turn command-bar utterances
+were silently treated as turns in one ongoing conversation, and answers to later utterances were
+shaped by earlier ones. Nothing in the response schema flags that this happened short of reading
+the prose `reasoning` field. A Peek command bar built on Needle must call `reset()` (or build a
+fresh agent) before every independent command, or unrelated commands will contaminate each
+other's routing.
+
+**Two-step routing (research's suggestion for the 5-tool cap) — tried, not clearly better.** The
+research recommends routing in two steps to stay under the 5-tool render cap: classify which noun
+(items / tags / tasks) the utterance needs, then hand the model only that noun's ≤5 tools. Tried
+with a 3-way noun classifier + per-noun sub-agent: it was markedly *slower* (600 ms–3.9 s per
+utterance, because switching tool schemas forces the engine to re-run `needle_init` each time,
+which this run measured at multiple seconds once state had accumulated) and not more accurate on
+this small sample — several utterances didn't confidently classify into any of the three nouns
+and fell through to the full 13-tool agent anyway. One genuinely good sign: on the "tag item"
+utterance, the noun-routed sub-agent produced a fabricated `metadata.project: -6` argument at
+confidence `0.0`, and the engine correctly withheld it as a `suppressed_calls` entry rather than
+returning it as a live call — the confidence-gating mechanism the spec describes did work,
+exactly once, in this batch. Whether two-step routing earns its latency cost needs the real
+bake-off (command-routing row), not this smoke test.
+
+**`extract()` — typed entity extraction.** Two short texts, a fabricated event announcement and a
+fabricated call note (see the throwaway script for the exact wording), through a schema asking
+for people, organizations, places, and events (name/date/venue). Both calls returned structured
+output rather than erroring, but both fabricated structure the source text doesn't support:
+
+- Event-announcement text: got both named people right, but swapped the event's *name* field for
+  the *venue* text ("Fairmont Hotel in San Francisco"), filed the real event name ("Mozilla AI
+  Summit") under `organizations` instead of `events[].name`, and dropped one of the two
+  organizations named in the text and the `places` field entirely.
+- Note text: correctly pulled the one full name and company, but invented two `events` entries —
+  an "RFP" event and a "Legal" event, each with a fabricated `venue` and a fabricated `date` —
+  out of a note that describes no dated event at all. The date it filled in both times was the
+  *system's own auto-injected "today" fact* (the date the process happened to run on), not a
+  resolution of the text's "next Friday," and not a value that appears anywhere in the input.
+
+This directly contradicts the research's repeated claim that `extract()` output is
+"span-grounded" and "does not invent entities" (Needle-fit table, page-extraction section,
+Needle-3 spec table). That claim held for flat string spans lifted verbatim from the text in
+these two runs (every person and organization name returned was a real substring of the input),
+but it did not hold once the schema asked for a nested object (an event with its own date and
+venue) — the model filled the shape of the schema even where the text gave it nothing coherent to
+put there.
+
+**`strict=True` did not reliably catch the fabrication, and identical calls were not
+reproducible.** Needle ships a `strict` grounding check (raises `ExtractionValidationError` when
+a date argument contradicts a literal year in the input, among other checks). Running the exact
+same schema and note text with `strict=True`, in isolation, produced a `null` result twice in a
+row — not because grounding failed, but because the call silently truncated at the 512-token
+default budget with zero function calls (`"error": "tool call truncated: token budget
+exhausted"`). Running the *same* text through a process that had already made one unrelated
+`extract()` call first produced a full (still partially fabricated) result instead of a
+truncation. So the same schema and the same text produced three different outcomes across three
+runs, depending only on what else had run earlier in the same process — not on anything about the
+input. This is a reliability finding the research does not anticipate: `extract()`'s framing as a
+one-shot, stateless call is not borne out by this engine's process-level behavior, and neither a
+fresh `Needle` instance nor an explicit `reset()` fully isolates one call from the ones before it.
+
+**Step 2 — the `wasm` platform folder.** No build was attempted (out of scope); the vendor's
+shipped files were downloaded from the same `Cactus-Compute/needle3` repo and read directly:
+`wasm/needle.js` (62.5 KB Emscripten glue), `wasm/needle.wasm` (672 KB engine binary — inside the
+research's "engine under 1 MB" estimate), and `wasm/needle.h` (the same 5-function C header:
+`needle_init`, `needle_load`, `needle_reset`, `needle_complete`, `needle_embed`). Reading
+`needle.js` directly (not instantiating it) shows:
+
+- It detects and explicitly supports a Node environment (`require("node:fs")`,
+  `require("node:crypto")`, an `ENVIRONMENT_IS_NODE` branch that reads the `.wasm` file off disk
+  instead of `fetch`-ing it) and ships as a CommonJS module (`module.exports = createNeedle`) —
+  this is not a browser-only build.
+- It exports Emscripten's standard high-level JS convenience layer —
+  `Module.ccall`, `Module.cwrap`, `Module.UTF8ToString`, `Module._malloc`, `Module._free` — over
+  the same five raw `_needle_*` C-ABI symbols the header declares. This layer was not stripped
+  from the build.
+
+This undermines the research's "Risks" framing ("the WASM build runs in Node, per the vendor, but
+the JS calls are undocumented... the fallback is a native addon over `libneedle.a`"). The API is
+undocumented in prose, but it is not hidden: it is the same `ccall`/`cwrap` surface Emscripten
+always generates, discoverable by reading the shipped file. An Electron utility process (which is
+a Node process) could plausibly `require()` this module, `await createNeedle()`, and drive
+`needle_init`/`needle_complete`/`needle_embed` with the same shape of buffer-marshaling glue
+(`_malloc` an output buffer, `ccall` with string/number argument types, `UTF8ToString` to read the
+result, `_free` it) that the Python `ctypes` binding already does — no native addon over
+`libneedle.a` appears to be *required*, only some hand-written marshaling code. This was verified
+by reading the shipped artifact's source, not by instantiating and calling it end to end (no
+product code was built, per this track's scope) — whether it actually runs correctly inside
+Electron's utility-process sandbox, and its real memory/latency profile there relative to the
+native engine, is still untested.
+
+**Which of the research's recommendations this evidence undermines:**
+
+- **"The JS/WASM API surface is not documented; only Python and the C header... are"** and its
+  native-addon fallback — undermined. The `ccall`/`cwrap` layer is present and Node is explicitly
+  supported; a native addon is very likely not the only route, contrary to how the "Risks"
+  section frames it.
+- **"[`extract()`] output is span-grounded... it does not invent entities"** — undermined for
+  nested/object-shaped schema fields (an event with a date and venue). It held for flat string
+  spans in these two runs, but not once the schema asked the model to assemble a structured
+  relationship the text didn't state.
+- **"Calls below 0.1 confidence go to `suppressed_calls`"** as a general safety net — narrowed,
+  not undermined: it worked exactly as described once in this run (a fabricated numeric field at
+  confidence 0.0 was suppressed), but the entity-extraction fabrications above happened at
+  confidence 0.34–0.52, comfortably above the 0.1 floor, so confidence gating alone will not catch
+  most of what this run saw.
+- **Two-step "pick a noun, then route within 5 tools"** as a way to raise accuracy under the
+  5-tool cap — not supported here, though not refuted either: it was clearly slower (per-turn
+  engine re-init) and no more accurate on this 8-utterance sample. Needs the real command-routing
+  bake-off row, not this smoke test, to settle.
+- **The bake-off's "under 150 MB for the always-on path" bar** — supported, with a caveat the
+  research doesn't state: it holds for a design that keeps one stable tool-schema agent alive
+  (98.9–105 MB measured here), but a design that swaps tool schemas per call trends higher
+  (153.3 MB measured here) because each swap re-runs `needle_init`.
+- **"Needle is untested" / "the research environment could not download the weights"** — no
+  longer true on this box: the engine, its weights, and the WASM platform folder all downloaded
+  from Hugging Face with no network failures. Whatever blocked the original research environment
+  is specific to that environment, not to Needle's distribution.
+- **Everything in the "Bake-off plan" table below stays untested by this run**, per this track's
+  scope: task clustering (ARI), workspace-suggestion precision/recall, entity F1 against labelled
+  ground truth, command-routing exact-match against 150 hand-mapped utterances, and cluster-naming
+  preference all need the account holder's own labelled data. The 8 utterances and 2 texts above
+  are illustrative failure-mode probes, not a substitute for that table's numbers.
+
+**Repro.** The conversion script, smoke-test scripts, and raw JSON output referenced above live
+under `.tmp/` in the `track/local-ai-needle` worktree (`needle_smoke.py`,
+`needle_smoke_reset.py`, `needle_extract_strict_debug.py`, `needle_extract_reset_debug.py`,
+`extract_tools.cjs`, and their `*_output.txt` companions) — throwaway, not committed, per this
+track's rules. The MCP tool schemas were extracted programmatically from
+`apps/desktop/features/mcp-server/server.js`'s `TOOLS` array rather than transcribed by hand.
+
 ---
 
 Use Needle as Peek's action and extraction layer, not as its clustering engine. Clustering and workspace suggestion should copy Firefox's embed-then-cluster pipeline, fed with Peek's richer visit signals.
