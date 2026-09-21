@@ -53,6 +53,7 @@
         "window:focused",
         "window:closed",
         "app:focus-changed",
+        "context:changed",
         "spaces:*"
       ]
     },
@@ -60,8 +61,8 @@
       "tables": ["tags", "items", "item_tags"]
     },
     "context": {
-      "read": ["mode"],
-      "write": ["mode"],
+      "read": ["mode", "pin"],
+      "write": ["mode", "pin"],
       "modes": true,
       "queryWindows": true
     },
@@ -101,6 +102,21 @@
           "role": "workspace"
         }
       }
+    },
+    {
+      "name": "pin to this workspace",
+      "description": "Keep the active window visible only while this workspace is active",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "pin across workspaces",
+      "description": "Keep the active window visible in every workspace",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "unpin window",
+      "description": "Stop pinning the active window",
+      "action": { "type": "execute" }
     }
   ]
 }

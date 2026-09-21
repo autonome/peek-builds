@@ -608,6 +608,16 @@ export interface SpaceWorkspaceWindowEntry {
    */
   zOrder: number;
   focused: boolean;
+  /**
+   * Present and `true` only for a workspace-pinned window (pin scope
+   * 'workspace' — see `docs/design/window-rules.md` "Persistent windows:
+   * workspace-pinned and global HUD"); absent for an unpinned one, matching
+   * the optional-field convention the rest of this entry already follows.
+   * `openSpace()` (`features/spaces/background.js`) reads it back to reopen
+   * the window pinned. A cross-workspace pin never appears here — it is not
+   * scoped to this space, so it rides in `saveGlobalPinnedWindows` instead.
+   */
+  pinned?: true;
 }
 
 /** The persisted per-space snapshot — on-disk contract, see the module header. */
@@ -704,6 +714,7 @@ export function serializeSpaceWorkspaces(input: SerializeSpaceWorkspacesInput): 
       bounds: restorableBoundsFromRecord(rec) ?? presentation.bounds,
       zOrder: w.machineId != null ? (kernelOrderIndexById.get(w.machineId) ?? 0) : 0,
       focused: w.machineId != null && w.machineId === input.topmostContentWindowId,
+      ...(context.pinScope === 'workspace' ? { pinned: true as const } : {}),
     });
   }
 

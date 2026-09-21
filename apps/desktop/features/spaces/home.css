@@ -498,3 +498,35 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   opacity: 0;
   pointer-events: none;
 }
+
+/* Pin badge — see renderer/lib/pin-badge.js. Two visually distinct forms:
+   workspace-scoped (default) and cross-workspace (data-scope="global"). */
+.pin-badge {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.pin-badge[data-scope="global"] {
+  background: rgba(88, 43, 168, 0.8);
+}
+
+.pin-badge-unpin {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}

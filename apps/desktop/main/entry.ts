@@ -89,7 +89,7 @@ import {
 import { startHotReload, stopHotReload } from './hotreload.js';
 import { checkAndRunDailyBackup } from './backup.js';
 import { initThumbnailDir, cleanupThumbnails } from './thumbnails.js';
-import { getActiveThumbnailHashes } from './datastore.js';
+import { getActiveThumbnailHashes, getContextEntry } from './datastore.js';
 import {
   applyAdblockerConfig,
   cleanupAdblocker,
@@ -113,7 +113,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, saveGlobalPinnedWindows, restoreGlobalPinnedWindows, readGlobalPinnedWindowsForTest } from './session.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -182,6 +182,12 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * tests/desktop/session-restore-focus.spec.ts.
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
+  /** Force-save the cross-workspace ("global HUD") pin list. See session.ts saveGlobalPinnedWindows. */
+  forceSaveGlobalPins: () => saveGlobalPinnedWindows(),
+  /** Force-restore the cross-workspace pin list, bypassing the boot-only call site. */
+  forceRestoreGlobalPins: () => restoreGlobalPinnedWindows(),
+  /** Read the persisted cross-workspace pin list directly. */
+  getGlobalPinsForTest: () => readGlobalPinnedWindowsForTest(),
   // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
   // is kernel state (`pendingColdStartFocus`), spent by `AppActivated`. Drive it
   // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
@@ -226,6 +232,8 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * shows=0 + focuses=0 when appFocused was false at restore time.
    */
   getRestoreFocusCounters: () => getRestoreFocusCounters(),
+  /** Read a context entry directly (e.g. the 'pin' key) for pin-mechanism specs. */
+  getContextEntryForTest: (key: string, windowId: number) => getContextEntry(key, windowId),
   /**
    * Synchronously flush a pending debounced session-save (the one that
    * normally runs ~500ms after a window close). Lets the close-survives-
@@ -1503,6 +1511,16 @@ const onReady = async () => {
       } else {
         // No session restore pending — signal immediately
         notifySessionRestoreDone();
+      }
+
+      // Reopen every globally-pinned ("global HUD") window, independent of
+      // whether a general session snapshot exists — a global HUD window is
+      // not scoped to one workspace, so its persistence does not depend on
+      // _sessionRestorePending above. See session.ts restoreGlobalPinnedWindows.
+      if (!isTestProfile()) {
+        restoreGlobalPinnedWindows().catch((err) => {
+          console.error('[session] Failed to restore global pins:', err);
+        });
       }
 
       // Start periodic autosave timer (Phase 3)

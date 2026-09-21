@@ -3686,6 +3686,18 @@ export function registerWindowHandlers(): void {
         }
       }
 
+      // A 'pin' option lets a window be born already carrying its pin scope
+      // — see docs/design/window-rules.md "Persistent windows: workspace-
+      // pinned and global HUD". Set BEFORE loadURL, same as mode above, so a
+      // tile's own init() can read its own pin state at load time instead of
+      // racing a later context:changed publish set by the opener afterward.
+      if (options.pinScope === 'workspace' || options.pinScope === 'global') {
+        addContextEntry('pin', options.pinScope, {
+          windowId: win.id,
+          source: msg.source,
+        });
+      }
+
       // Log the detected mode
       const detectedMode = detectModeFromUrl(modeUrl);
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);

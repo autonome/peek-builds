@@ -252,6 +252,15 @@ async function openSpace(spaceName) {
         const result = await api.window.open(w.url, {
           role: 'content',
           spaceMode: { spaceId: tag.id, spaceName: activeSpaceName, color: tag.color },
+          // A workspace-pinned window (w.pinned, see session.ts
+          // serializeSpaceWorkspaces) restores at the Pinned layer directly,
+          // and carries its pin scope from the moment it opens (ipc.ts
+          // windowOpenHandler's `pinScope` option, set before loadURL, the
+          // same way `spaceMode` is) — layer is set at open time
+          // (window-kernel.ts), so restoring it unpinned and pinning it
+          // after the fact would mean a second close+reopen right after
+          // this one.
+          ...(w.pinned ? { alwaysOnTop: true, pinScope: 'workspace' } : {}),
           ...(w.bounds || {}),
         });
         if (result?.id) {
@@ -297,11 +306,18 @@ async function closeSpace() {
   } catch {
   }
 
-  // Get all windows in this space and close them
+  // Get all windows in this space and close them — except one pinned across
+  // every workspace (a global HUD window): it is not scoped to this space in
+  // the first place, so leaving this workspace must not sweep it. A
+  // workspace-pinned window has no such claim and closes normally; it comes
+  // back — pinned, badge intact — from the saved workspace row on re-entry
+  // (see openSpace()).
   const result = await api.context.getWindowsInSpace(activeSpaceId);
   if (result.success && result.data) {
     for (const windowId of result.data) {
       try {
+        const pinResult = await api.context.get('pin', windowId);
+        if (pinResult?.data?.value === 'global') continue;
         await api.window.close(windowId);
       } catch {
       }
@@ -325,6 +341,90 @@ async function switchSpace(targetName) {
   if (!targetName) return { success: false, error: 'Usage: switch space <name>' };
   await closeSpace();
   return openSpace(targetName);
+}
+
+// ===== Pin / Unpin =====
+//
+// A pinned window is an ordinary Pinned window (window-kernel.ts `layer`
+// above `BASE_LAYER`, from `alwaysOnTop`) — see docs/design/window-rules.md
+// "Persistent windows: workspace-pinned and global HUD". `layer` is set at
+// open time only (window-kernel.ts has no command to change an already-open
+// window's layer — no kernel change is part of this design), so pinning or
+// unpinning an already-open window means closing it and reopening it at the
+// same address and bounds with the new `alwaysOnTop` flag, the same
+// recreate-on-toggle pattern `features/windows` already uses for its
+// switcher view. The 'pin' context key (read by the badge, `closeSpace()`,
+// and the save-side projections) is the one source of truth for scope —
+// nothing infers it from window flags.
+
+async function findWindowInfo(windowId) {
+  const result = await api.window.list({ includeInternal: true });
+  if (!result?.success || !Array.isArray(result.windows)) return null;
+  return result.windows.find((w) => w.id === windowId) || null;
+}
+
+async function reopenWithPinState(windowId, scope) {
+  const info = await findWindowInfo(windowId);
+  if (!info) return { success: false, error: 'Window not found' };
+
+  const modeResult = await api.context.get('mode', windowId);
+  const priorSpaceMode = modeResult?.data?.value === 'space' ? modeResult.data : null;
+
+  const openOptions = {
+    role: (info.params && info.params.role) || 'content',
+    alwaysOnTop: !!scope,
+  };
+  if (scope) {
+    // Set BEFORE loadURL, main-process side (ipc.ts windowOpenHandler), the
+    // same way `spaceMode` is — so the reopened window's own tile can read
+    // its own pin state at init time instead of racing a context:changed
+    // publish sent after api.window.open already resolved. Left unset for
+    // an unpin: a freshly opened window simply carries no 'pin' entry.
+    openOptions.pinScope = scope;
+  }
+  if (info.bounds) {
+    openOptions.x = info.bounds.x;
+    openOptions.y = info.bounds.y;
+    openOptions.width = info.bounds.width;
+    openOptions.height = info.bounds.height;
+  }
+
+  api.window.close(windowId);
+  const reopened = await api.window.open(info.url, openOptions);
+  if (!reopened?.id) {
+    return { success: false, error: scope ? 'Failed to reopen window for pinning' : 'Failed to reopen window for unpinning' };
+  }
+
+  if (scope === 'workspace') {
+    // Associate with the CURRENT workspace regardless of the window's prior
+    // mode — "pin to this workspace" means this one, not wherever it was.
+    await api.context.setMode('space', {
+      windowId: reopened.id,
+      metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
+    });
+  } else if (priorSpaceMode) {
+    // Global pin, or unpin: leave whatever space membership the window
+    // already had (a global pin does not detach it from its workspace; an
+    // unpin does not either — only its pin scope changes).
+    await api.context.setMode('space', { windowId: reopened.id, metadata: priorSpaceMode.metadata });
+  }
+
+  return { success: true, windowId: reopened.id, scope: scope || null };
+}
+
+async function pinWindow(scope) {
+  if (scope === 'workspace' && !activeSpaceId) {
+    return { success: false, error: 'No active workspace — open a space first' };
+  }
+  const windowId = await api.window.getFocusedVisibleWindowId();
+  if (!windowId) return { success: false, error: 'No active window to pin' };
+  return reopenWithPinState(windowId, scope);
+}
+
+async function unpinWindow() {
+  const windowId = await api.window.getFocusedVisibleWindowId();
+  if (!windowId) return { success: false, error: 'No active window to unpin' };
+  return reopenWithPinState(windowId, null);
 }
 
 // ===== Command Registration =====
@@ -374,11 +474,61 @@ const initCommands = () => {
     params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
   });
 
-  console.log('[ext:spaces] Commands registered: open space, close space, switch space');
+  // "pin to this workspace"
+  api.pubsub.subscribe('cmd:execute:pin to this workspace', async (msg) => {
+    const result = await pinWindow('workspace');
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+  api.pubsub.publish('cmd:register', {
+    name: 'pin to this workspace',
+    description: 'Keep the active window visible only while this workspace is active',
+    source: 'spaces',
+    scope: 'global',
+  });
+
+  // "pin across workspaces"
+  api.pubsub.subscribe('cmd:execute:pin across workspaces', async (msg) => {
+    const result = await pinWindow('global');
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+  api.pubsub.publish('cmd:register', {
+    name: 'pin across workspaces',
+    description: 'Keep the active window visible in every workspace',
+    source: 'spaces',
+    scope: 'global',
+  });
+
+  // "unpin window" — NOT "unpin": features/groups/home.js already owns a
+  // single-word "pin" / "unpin" pair for pinning an ITEM inside a group, an
+  // unrelated concept. Reusing that exact name would double-subscribe
+  // cmd:execute:unpin and race groups' own result onto this command's
+  // result topic.
+  api.pubsub.subscribe('cmd:execute:unpin window', async (msg) => {
+    const result = await unpinWindow();
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+  api.pubsub.publish('cmd:register', {
+    name: 'unpin window',
+    description: 'Stop pinning the active window',
+    source: 'spaces',
+    scope: 'global',
+  });
+
+  console.log('[ext:spaces] Commands registered: open space, close space, switch space, ' +
+    'pin to this workspace, pin across workspaces, unpin window');
 };
 
 const uninitCommands = () => {
-  for (const name of ['open space', 'close space', 'switch space']) {
+  for (const name of [
+    'open space', 'close space', 'switch space',
+    'pin to this workspace', 'pin across workspaces', 'unpin window',
+  ]) {
     api.pubsub.publish('cmd:unregister', { name });
   }
 };

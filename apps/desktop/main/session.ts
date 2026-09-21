@@ -469,9 +469,17 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
   try {
     const modeEntry = getContextEntry('mode', nativeId);
     if (modeEntry) {
+      let pinScope: string | null = null;
+      try {
+        const pinEntry = getContextEntry('pin', nativeId);
+        pinScope = (pinEntry?.value as string) || null;
+      } catch {
+        // Pin context not available, treat as unpinned
+      }
       return {
         mode: modeEntry.value as string,
         modeMetadata: (modeEntry.metadata as Record<string, unknown>) || null,
+        pinScope,
       };
     }
   } catch {
@@ -651,6 +659,9 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
 
     // Also save per-space workspace snapshots (for space layout restore)
     saveSpaceWorkspaces();
+
+    // Also save cross-workspace ("global HUD") pins — see saveGlobalPinnedWindows.
+    saveGlobalPinnedWindows();
   } catch (error) {
     console.error('[session] Failed to save session snapshot:', error);
   }
@@ -1698,6 +1709,151 @@ export function saveSpaceWorkspaces(): void {
   }
 
   DEBUG && console.log(`[session] Saved workspace snapshots for ${spaceSnapshots.size} space(s)`);
+}
+
+/** One entry of the persisted cross-workspace pin list — see `saveGlobalPinnedWindows`. */
+export interface GlobalPinEntry {
+  url: string;
+  bounds: Electron.Rectangle | null;
+}
+
+/**
+ * Save the set of currently globally-pinned windows ("global HUD" scope, per
+ * `docs/design/window-rules.md` "Persistent windows: workspace-pinned and
+ * global HUD") to feature_settings, independent of any one workspace's saved
+ * session — restored regardless of which workspace is active, unlike a
+ * workspace-scoped pin (which rides in `saveSpaceWorkspaces`'s per-space row).
+ *
+ * Recomputed fresh from live context state every call, the same way
+ * `saveSpaceWorkspaces` recomputes its snapshot from the kernel + context
+ * rather than maintaining a second mutable list in memory — the 'pin'
+ * context entry (see `readSaveContext`) is the one source of truth for which
+ * windows are pinned and at what scope.
+ *
+ * Synchronous (safe for before-quit handler), same contract as
+ * `saveSpaceWorkspaces`.
+ */
+export function saveGlobalPinnedWindows(): void {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return;
+  }
+
+  const entries: GlobalPinEntry[] = [];
+  for (const [nativeId] of getAllWindows()) {
+    let pinScope: string | null = null;
+    try {
+      const pinEntry = getContextEntry('pin', nativeId);
+      pinScope = (pinEntry?.value as string) || null;
+    } catch {
+      continue;
+    }
+    if (pinScope !== 'global') continue;
+
+    const presentation = getWindowPresentation(nativeId);
+    if (!presentation) continue;
+    entries.push({ url: presentation.address, bounds: presentation.bounds || null });
+  }
+
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES (?, 'window-pins', 'global-pins', ?, ?)
+    `).run('window-pins:global-pins', JSON.stringify(entries), Date.now());
+    DEBUG && console.log(`[session] Saved ${entries.length} globally-pinned window(s)`);
+  } catch (error) {
+    console.error('[session] Failed to save global pins:', error);
+  }
+}
+
+/**
+ * Reopen every globally-pinned window recorded by `saveGlobalPinnedWindows`,
+ * pinned across every workspace — called once at boot (see `entry.ts`), as a
+ * sibling of `restoreSessionSnapshot` rather than nested inside it, since a
+ * global HUD window's persistence is NOT scoped to whether a general session
+ * snapshot exists at all.
+ *
+ * Each reopened window is re-marked with the 'pin' context entry so it reads
+ * back as pinned (badge, `closeSpace()` skip) exactly like a window pinned
+ * interactively in the same run.
+ */
+export async function restoreGlobalPinnedWindows(): Promise<void> {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return;
+  }
+
+  let entries: GlobalPinEntry[] = [];
+  try {
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'window-pins' AND key = 'global-pins'`
+    ).get() as { value: string } | undefined;
+    if (row?.value) entries = JSON.parse(row.value);
+  } catch (error) {
+    console.error('[session] Failed to read global pins:', error);
+    return;
+  }
+  if (!Array.isArray(entries) || entries.length === 0) return;
+
+  const bgWin = getBackgroundWindow();
+  if (!invokeWindowOpen || !bgWin) {
+    console.error('[session] invokeWindowOpen or bgWindow not ready — cannot restore global pins');
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry?.url) continue;
+    const options: Record<string, unknown> = {
+      alwaysOnTop: true,
+      // Set before loadURL, main-process side (ipc.ts windowOpenHandler),
+      // the same way `spaceMode` is — the reopened window's own tile reads
+      // its own pin state at init time with no context:changed race to lose.
+      pinScope: 'global',
+      trackingSource: 'pin',
+      trackingSourceId: 'global',
+    };
+    if (entry.bounds) {
+      options.x = entry.bounds.x;
+      options.y = entry.bounds.y;
+      options.width = entry.bounds.width;
+      options.height = entry.bounds.height;
+    }
+    try {
+      const openResult = await invokeWindowOpen(
+        { sender: bgWin.webContents },
+        { source: WEB_CORE_ADDRESS, url: entry.url, options },
+      ) as { success: boolean; id?: number };
+      if (!openResult?.success) {
+        console.error('[session] Failed to restore globally pinned window:', entry.url);
+      }
+    } catch (error) {
+      console.error('[session] Failed to restore globally pinned window:', entry.url, error);
+    }
+  }
+}
+
+/** Read the persisted cross-workspace pin list directly, for specs. */
+export function readGlobalPinnedWindowsForTest(): GlobalPinEntry[] {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return [];
+  }
+  try {
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'window-pins' AND key = 'global-pins'`
+    ).get() as { value: string } | undefined;
+    if (!row?.value) return [];
+    const entries = JSON.parse(row.value);
+    return Array.isArray(entries) ? entries : [];
+  } catch {
+    return [];
+  }
 }
 
 /**

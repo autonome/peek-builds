@@ -26,6 +26,10 @@ function getBrowserWindowClass(): typeof BrowserWindowType | null {
 export interface WindowContext {
   mode: string | null;
   modeMetadata: Record<string, unknown> | null;
+  // The window's pin scope ('workspace' | 'global'), read off the 'pin'
+  // context key — see docs/design/window-rules.md "Persistent windows:
+  // workspace-pinned and global HUD". Absent/null for an unpinned window.
+  pinScope?: string | null;
 }
 
 export interface WindowDescriptor {

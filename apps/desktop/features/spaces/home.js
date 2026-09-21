@@ -17,6 +17,7 @@ import {
 } from 'peek://app/lib/grid-nav.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
+import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
 import { resolveVividColor } from './config.js';
 
 const api = window.app;
@@ -837,6 +838,12 @@ const init = async () => {
 
   if (api.escape) api.escape.onEscape(handleEscape);
 
+  // Pinned windows draw their own badge — see the pin-badge module header.
+  // A window is only badged once IT is pinned (via the "pin to this
+  // workspace" / "pin across workspaces" palette commands), so this is a
+  // no-op most of the time.
+  attachPinBadge(api);
+
   loadViewPrefs();
   setupToolbar();
 
@@ -881,4 +888,14 @@ const init = async () => {
   showSpaces();
 };
 
-document.addEventListener('DOMContentLoaded', init);
+// home.js loads via a dynamic `import()` awaited after `window.app.initialize()`
+// (see home.html's bottom script) — slow enough, under load, that
+// DOMContentLoaded can already have fired by the time this module's top
+// level runs. A plain `addEventListener('DOMContentLoaded', init)` then
+// never calls `init` at all: the event already happened, and this listener
+// missed it (silently — no error, just a home page that never populates).
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
