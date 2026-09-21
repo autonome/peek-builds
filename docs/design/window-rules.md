@@ -97,6 +97,26 @@ is inactive provokes no platform-chosen focus, so none is expected after it
 left standing swallows the click, leaves no key window, and sends the next
 Escape to the Escape fallback window.
 
+Limits and checking notes for a side task:
+
+- It cannot go fullscreen. `ipc.ts createHybridHostBaseWindow()` sets
+  `fullscreenable: false` for every panel-type host, and a fullscreen
+  non-activating panel is untested on macOS.
+- A content page that came up in the background as the app's only window still
+  closes on Escape (`window-escape.ts escapeClosePolicy()`,
+  `openedInBackground`); `SIDE_TASK_ESCAPE` does not reach that case.
+- macOS restacks an ordinary-level window of a non-active app behind the active
+  app's frontmost window about 20ms after it is shown, and Electron reports that
+  as `hide` while `isVisible()` stays true. The floating level is exempt, which
+  is why a hold uses it (`electron-window-backend.ts pinAlwaysOnTop()`).
+- Electron's `app.isActive()` answers true while an inactive app's palette holds
+  key, so app activity is read from the kernel (`getAppActive()`).
+- Live checks run without `DEBUG`. Under `DEBUG` the palette's detached DevTools
+  window is an ordinary activating window; showing it activates the app before
+  anything else runs, so the first palette press looks broken.
+  `main/window-diag.ts wmLog()` is always on and is enough to follow focus,
+  raise and Escape decisions from the launch output.
+
 ## Focus
 
 - **F1 one-key.** At most one window is key, and `key` is written only by an OS focus report, never by anything the manager does on its own: not a focus command, not restoring a saved stack order, not preparing a focus for later.
