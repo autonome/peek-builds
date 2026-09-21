@@ -123,31 +123,32 @@ Dev mode adds two bypass detectors that monkeypatch `WebContents.send` and `Brow
 
 ## State machines instead of timing hacks
 
-Three explicit FSMs replaced ad-hoc sleeps, polling, visibilitychange listeners, and retry hacks. Each rules out a whole class of bugs and is unit-testable as a pure function:
+Four explicit FSMs replaced ad-hoc sleeps, polling, visibilitychange listeners, and retry hacks. Each rules out a whole class of bugs and is unit-testable as a pure function:
 
 1. **Tile lifecycle** — *when* a tile is alive.
 2. **PubSub** — *what* messages flow in each state.
 3. **Cmd panel** — the command-bar UI states.
+4. **Window kernel** — open, close, focus, raise, Escape and dismissal, decided in one place.
 
 Window placement is also pure: bounds are a *derived projection* of intent against live display state, never stored as truth, never consulting cursor position.
 
 ## The API surface is small on purpose
 
-Everything a tile sees is `window.app`. The design question was: what's the *minimum* capability set a tile needs? Namespaces: window, shortcuts, pubsub, commands, datastore, escape, izui, files, settings, themes, sync, profiles, net, session.
+Everything a tile sees is `window.app`. The design question was: what's the *minimum* capability set a tile needs? Namespaces: window, shortcuts, pubsub, commands, datastore, escape, izui, filesystem, settings, theme, sync, profiles, network, session, rules, oauth, permissions.
 
 Small and portable — features built on it could run in other environments with minimal adaptation.
 
 ## Sharp edges I learned the hard way
 
 - **`tile-preload` must stay `.cts` (CommonJS).** `.ts` emits ESM under `NodeNext`, and the Electron sandbox preload **silently rejects ESM** — empty `window.app`, every tile broken, no error.
-- **`app/` (the core renderer) is backend-agnostic** — must run unchanged under Electron *and* Tauri. Never modify without review.
+- **`renderer/` (the core renderer, served at `peek://app/`) is backend-agnostic** — must run unchanged under Electron *and* Tauri. Never modify without review.
 - **Electron eats ESC at the main-process `before-input-event`** — DOM ESC listeners in renderers are dead code. ESC arrives via IPC to an `onEscape` handler.
 - **Linux/Wayland forbids global hotkeys when backgrounded** — `globalShortcut.register()` returns false silently.
-- Requires **Electron 40, Node 24+.** Electron is by far the best option today; there's nothing else remotely suited yet.
+- Requires **Electron 43, Node 24+.** Electron is by far the best option today; there's nothing else remotely suited yet.
 
 ## Scale
 
-~3,190 tests across 6 runners, ~10 min wall-clock (including ~1,950 main-process unit tests). 146+ package.json scripts. MIT. Primary remote is Tangled; GitHub is Railway-deploy only.
+~3,190 tests across 6 runners, ~10 min wall-clock (including ~1,950 main-process unit tests). 180+ package.json scripts. MIT. The only remote is Tangled, whose CI runs checks on every push and builds a Linux AppImage on release tags; Railway deploys are manual.
 
 # Three clients, one sync contract
 
@@ -159,35 +160,34 @@ All three speak a shared sync schema (`packages/schema`) through a shared sync e
 
 ## The apps
 
-- **desktop — Electron, the flagship.** The whole tile model, capabilities, IZUI, the FSMs, cmd bar, editor, entities, MCP. Data in SQLite via better-sqlite3.
+- **desktop — Electron, the flagship.** The whole tile model, capabilities, IZUI, the FSMs, cmd bar, editor, entities, MCP. Data in SQLite via Node's built-in `node:sqlite`.
 - **mobile — Tauri "Peek Save" (iOS + Android).** A save/capture + browse companion, not the full workbench. React + TS + Vite front, Rust + Tauri v2 back, a shared `peek-core` Rust crate. The iOS Share Extension is custom Swift, running the same `peek-core` via UniFFI against the same App Group SQLite.
-- **server — Hono on Railway.** A passive sync+store service I use daily. Multi-user or single-user self-host; Bearer keys, SHA-256 hashed. Doesn't implement the Peek API — it shares only the schema/sync contract.
+- **server — Hono on Railway.** A passive sync+store service I use daily. Multi-user or single-user self-host; Bearer keys, SHA-256 hashed. Doesn't implement the Peek API — it shares the schema/sync contract, plus a tag-scoped item API that lets MCP clients work against it remotely.
 - **extension — MV3 (Chrome + Firefox).** No build step. Sync, profiles, and one-way browser → Peek import (bookmarks/tabs/history, each tagged `from:*`). The spiritual heir to the original Peek, now a satellite.
 - **tauri-desktop — Rust desktop, off the critical path.** Months out of date. Exists only as proof the core is backend-agnostic. Don't demo.
-- **packages** — `schema` (canonical `v1.json`, validated on startup), `sync` (the shared JS engine), `integration-tests` (where the multi-device promise is actually verified).
+- **packages** — `schema` (canonical `v1.json`, validated on startup), `sync` (the shared JS engine), `capabilities` (the tile capability model), `integration-tests` (where the multi-device promise is actually verified).
 
 ## How it syncs
 
 Hub-and-spoke, **server is source of truth**, last-write-wins on `updatedAt`. Local-first, not peer-to-peer, not CRDT. Desktop and mobile each hold local SQLite; all push/pull via the server REST API.
 
-**Transport (live in prod):** Hono + better-sqlite3 on Railway. Multi-user or single-user self-host; Bearer tokens, SHA-256-hashed. Two version gates — `DATASTORE_VERSION` (schema shape) + `PROTOCOL_VERSION` (wire format) — return HTTP 409 on mismatch (lenient about missing headers, strict about mismatched).
+**Transport (live in prod):** Hono + `node:sqlite` on Railway. Multi-user or single-user self-host; Bearer tokens, SHA-256-hashed. Two version gates — `DATASTORE_VERSION` (schema shape) + `PROTOCOL_VERSION` (wire format) — return HTTP 409 on mismatch (lenient about missing headers, strict about mismatched).
 
 Per-item sync metadata (`_sync: {createdBy, modifiedBy, …}`) lives *inside* the item's metadata JSON so it survives the trip. Device IDs are raw UUIDs.
 
 ## Sync: conflict handling
 
-**Conflict handling:** pull matches local by `syncId`, inserts/updates/skips by recency, soft-deletes on tombstone. Push: items where `syncedAt=0 OR updatedAt>syncedAt`. Tombstones propagate deletes (never hard-deleted by sync).
+**Conflict handling:** pull matches local by `syncId`, inserts/updates/skips by recency, soft-deletes on tombstone. Push: items where `syncedAt=0 OR updatedAt>syncedAt`. Tombstones propagate deletes (never hard-deleted by sync). Pulls arrive in pages, and `item_events` push too, so entity sightings sync.
 
-**Local-only (not synced):** frecencyScore, title, domain, favicon, visitCount, color, tag hierarchy.
+**Local-only (not synced):** frecencyScore, title, domain, favicon, visitCount. Tag color and hierarchy do sync.
 
 ## Sync: the wrinkles
 
 **The same protocol is re-implemented in FOUR places:** unified JS `SyncEngine` (mobile-web/extension), `apps/desktop/main/sync.ts` (Electron), plus Rust in Tauri-desktop and mobile. A recurring risk.
 
-**Known limitations:** push failures are logged but **not retried** — high severity (`lastSyncTime` advances, so failed items are skipped next time). Mobile runs an older schema shape, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format (JSON) is independent of the local schema.
+**Known limitations:** failed pushes retry on the next run; items the server permanently rejects are parked and counted. Mobile runs an older schema shape, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format (JSON) is independent of the local schema.
 
-**Testing:** a clean-room three-way E2E (server + desktop + iOS-simulator) covering tombstone propagation. Node sync tests must run under Electron's Node for the better-sqlite3 ABI.
-
+**Testing:** a clean-room three-way E2E (server + desktop + iOS-simulator) covering tombstone propagation.
 ## Profiles
 
 Each is an isolated workspace:
@@ -287,7 +287,7 @@ Peek is a minimal *platform* core; browsing is one feature bolted onto it. Inste
 
 **Features (tiles):** web page rendering, websearch, peeks, slides, groups, tags, editor, entities, mcp-server, windows, and dozens more. Each lives in `features/<id>/` with a `manifest.json`.
 
-**Core (`app/` — no manifest, no sandbox):**
+**Core (`renderer/`, served at `peek://app/` — no manifest, no sandbox):**
 - **bgWindow** — the orchestrator. Cmd registry, page controller, HUD, session, pubsub. Every publish reaches it.
 - **cmd, page, hud** — the three surfaces, consolidated into the core renderer.
 - The **main process** — datastore, IPC, the `peek://` protocol, the lifecycle/pubsub/gate machinery.
@@ -299,7 +299,7 @@ Peek is a minimal *platform* core; browsing is one feature bolted onto it. Inste
 3. They need deep platform integration — sandboxing them is actively harmful.
 4. The capability model is for *untrusted* code and breaks down when the code *is* the platform.
 
-The tile model, bgWindow-as-core, `trustedBuiltin`, and renderer consolidation are **shipped** (v1 removed April 2026). The *physical* move of cmd/page/hud out of `features/` is **planned**, not done — don't present it as done.
+The tile model, bgWindow-as-core, `trustedBuiltin`, and renderer consolidation are **shipped** (v1 removed April 2026). cmd/page/hud have moved out of `features/` into `renderer/`. Extracting that core into a package shared across backends is **planned**, not done — don't present it as done.
 
 ## The cross-backend API
 
@@ -316,7 +316,7 @@ Feature code only ever touches `window.app.*` — bare Electron IPC is a smell. 
 
 *Caveat:* the tile runtime itself (launcher, preload, csp, ipc, tokens) is currently Electron-specific — Tauri needs equivalents. Future work, not blocking.
 
-## Datastore: better-sqlite3
+## Datastore: node:sqlite
 
 Synchronous SQLite in the main process. Renderers go through IPC via `window.app.datastore.*`. DB file: `{app_data}/{profile}/datastore.sqlite`. Canonical schema at `packages/schema/v1.json`.
 
@@ -335,13 +335,14 @@ There's no reactive-store binding layer. Instead: **SQL is the source of truth; 
 
 Gotcha: a direct `tagItem()` doesn't publish — use `tagItemAndPublish()` for reactive updates.
 
-## The three FSMs
+## The four FSMs
 
 - **Tile lifecycle** (`tile-lifecycle.ts` + pure `tile-fsm.ts`): *when* a tile is alive. Manifest cached on `registered` so a tile's commands appear in the palette before it ever runs; token minted on `ready`, revoked on unload/crash; one code path for window creation.
 - **PubSub** (`pubsub.ts` + `tile-ipc-gate.ts`): *what* flows in each state. **The token IS the capability handle.** The pubsub path never reads lifecycle state; it runs `validateToken(t) → grant | null`. Because lifecycle mints/revokes the token exactly on ready/unload, the "checked before or after the state change?" race can't happen. One hub, subscriber-indexed delivery. Every rejection emits telemetry — never silent.
-- **Cmd panel** (`app/cmd/state-machine.js`, pure): 10 states. Replaces the old "every bug fix adds another boolean flag" model.
+- **Cmd panel** (`renderer/cmd/state-machine.js`, pure): 10 states. Replaces the old "every bug fix adds another boolean flag" model.
+- **Window kernel** (`window-kernel.ts`, pure decide/evolve/react): the sole decider of open, close, focus, raise, Escape and dismissal. Property-tested, and checked against a written rulebook (`docs/design/window-rules.md`). It replaced the old window-state engine.
 
-A fourth FSM was written for the *canvas* page-host, which is gone.
+A fifth FSM was written for the *canvas* page-host, which is gone.
 
 ## A tile is a feature.
 
