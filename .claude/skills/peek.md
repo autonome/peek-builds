@@ -39,10 +39,12 @@ Status is one of these namespaced tags:
 | `peek:future` | Parking lot — not now, not no |
 | `peek:wontfix` | Closed without shipping |
 
-Don't invent new statuses. Never use bare `todo` / `done` — those are unnamespaced and shared across every project. Two MCP defaults trip on this, so do status changes by hand in the `peek:*` namespace:
+Don't invent new statuses.
 
-- `mcp__peek__list_tasks()` defaults to `tags: ['todo']` (BARE) — surfaces every project's todos. Use `list_items({ tags: ['peek:todo'] })` instead.
-- `mcp__peek__complete_task({ itemId })` writes bare `done` / `todo` — does NOT touch `peek:todo` / `peek:done`. Do status changes manually (below).
+- `mcp__peek__list_tasks()` in a scoped session defaults to `tags: ['peek:todo']`.
+- `mcp__peek__complete_task({ itemId })` moves the task to `peek:needs-review`, clearing `peek:todo` / `peek:wip` / the readiness markers (`peek:ready` / `peek:triage`).
+- `mcp__peek__complete_task({ itemId, accepted: true })` moves it to `peek:done` instead — only for when the task's owner has approved the work in the current conversation.
+- Never use bare `todo` / `done` by hand — those are unnamespaced and shared across every project.
 
 ## Add a task
 
@@ -92,13 +94,16 @@ An ambiguous prefix errors and lists the candidates — pass more of the id to d
 
 ## Status changes — manual untag + tag + event
 
-Tag the new status, untag the old, and record an event:
+Finishing a task uses `complete_task`, not a manual tag/untag pair — see
+above. Manual `tag_item` + `untag_item` + `record_event` stays for moves
+`complete_task` doesn't cover: into `peek:wip`, `peek:future`,
+`peek:wontfix`, or reopening an item back to `peek:todo`.
 
 ```js
-mcp__peek__tag_item({ itemId, tagName: 'peek:done' })
+mcp__peek__tag_item({ itemId, tagName: 'peek:wip' })
 mcp__peek__untag_item({ itemId, tagName: 'peek:todo' })
 mcp__peek__record_event({
-  itemId, type: 'completed', value: 'shipped in <ref>',
+  itemId, type: 'started', value: 'picked up',
 })
 ```
 
@@ -224,8 +229,10 @@ In use today, as a starting point rather than a fence: `peek:bug`,
 
 Work shipped (commits landed on `main` via the chokepoint scripts, suite green)
 but NOT yet `peek:done`. Tests and LLM review are necessary, not sufficient — the
-user is the final gate. Move the item to `peek:needs-review`, surface the diff and
-the test result, and let their approval flip it to `peek:done`. See the
+user is the final gate. Call `complete_task({ itemId })` to move the item to
+`peek:needs-review` and surface the diff and the test result; only call
+`complete_task({ itemId, accepted: true })` — moving it to `peek:done` — once
+the user has approved the work in the current conversation. See the
 `/agent-review` skill.
 
 ### Starred tracking items

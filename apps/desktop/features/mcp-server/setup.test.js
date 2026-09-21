@@ -236,13 +236,33 @@ describe('scaffolded skill — tag model', () => {
     );
   });
 
-  it('keeps the bare todo/done cross-project warning (separate concern)', () => {
+  it('describes the list_tasks/complete_task scope defaults and keeps the bare todo/done warning', () => {
     const { projDir, dbPath } = scaffoldProject(['--scope', 'membertag']);
     tmpDirs.push(projDir);
     const skill = readSkill(projDir);
 
     assert.ok(
-      /bare `?todo`? \/? ?`?done`?/i.test(skill) || /bare `todo`/.test(skill),
+      skill.includes("`mcp__peek__list_tasks()` in a scoped session defaults to `tags: ['membertag:todo']`"),
+      'skill should state list_tasks defaults to the scope todo tag in a scoped session',
+    );
+    assert.ok(
+      skill.includes('`mcp__peek__complete_task({ itemId })` moves the task to `membertag:needs-review`'),
+      'skill should state complete_task moves the task to the scope needs-review tag',
+    );
+    assert.ok(
+      skill.includes('clearing `membertag:todo` / `membertag:wip` / the readiness markers (`membertag:ready` / `membertag:triage`)'),
+      'skill should state complete_task clears the todo/wip/readiness tags',
+    );
+    assert.ok(
+      skill.includes('`mcp__peek__complete_task({ itemId, accepted: true })` moves it to `membertag:done` instead'),
+      'skill should state accepted: true moves the task to the scope done tag',
+    );
+    assert.ok(
+      /only for when the task's owner has approved the work in the current conversation/i.test(skill),
+      'skill should state accepted: true is only for owner-approved work',
+    );
+    assert.ok(
+      /bare `?todo`? \/? ?`?done`?/i.test(skill),
       'skill should still warn about bare todo/done',
     );
     assert.ok(

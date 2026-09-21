@@ -127,13 +127,30 @@ cross-project and will pollute every other Peek consumer.
 
 ### The bare-tag trap
 
-`mcp__peek__list_tasks()` defaults to `tags: ['todo']` (bare) and
-`mcp__peek__complete_task()` is hardcoded to add bare `done` and remove
-bare `todo`. Neither respects the scope tag's namespace.
+`mcp__peek__list_tasks()` and `mcp__peek__complete_task()` are
+scope-aware and namespace their own defaults correctly:
+
+- `list_tasks()` with no `tags` argument defaults to `['<scope>:todo']`
+  in a scoped session, `['todo']` unscoped. Pass `tags` explicitly to
+  override either default.
+- `complete_task({ itemId })` in a scoped session never touches bare
+  `todo`/`done`. With `accepted` false or omitted it adds
+  `<scope>:needs-review` and removes `<scope>:todo`/`wip`/`ready`/`triage`,
+  leaving the item pending its owner's review. `complete_task({ itemId,
+  accepted: true })` adds `<scope>:done` instead (and also removes
+  `<scope>:needs-review`) — pass `accepted: true` only once the task's
+  owner has approved the work in the current conversation. Unscoped, it
+  adds bare `done`, removes bare `todo`, and ignores `accepted`.
+
+The remaining trap is manual tagging: a `tag_item`/`untag_item` call
+naming bare `todo`/`done` by hand still writes a cross-project tag that
+pollutes every other Peek consumer, scoped session or not.
 
 - ✅ `list_items({ tags: ['<scope>:todo'] })` — correct
 - ✅ Manual `tag_item` (new status) + `untag_item` (old status) +
-  `record_event` for status changes
+  `record_event` for status changes `complete_task` doesn't cover —
+  moving to `<scope>:wip`, `<scope>:future`, `<scope>:wontfix`, or
+  reopening a task
 
 ### Item-id prefix resolution (git-short-hash style)
 

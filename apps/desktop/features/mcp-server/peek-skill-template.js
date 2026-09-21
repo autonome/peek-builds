@@ -60,10 +60,12 @@ Status is one of these namespaced tags:
 | \`{SCOPE}:future\` | Parking lot — not now, not no |
 | \`{SCOPE}:wontfix\` | Closed without shipping |
 
-Don't invent new statuses. Never use bare \`todo\` / \`done\` — those are unnamespaced and shared across every project. Two MCP defaults trip on this, so do status changes by hand in the \`{SCOPE}:*\` namespace:
+Don't invent new statuses.
 
-- \`mcp__peek__list_tasks()\` defaults to \`tags: ['todo']\` (BARE) — surfaces every project's todos. Use \`list_items({ tags: ['{SCOPE}:todo'] })\` instead.
-- \`mcp__peek__complete_task({ itemId })\` writes bare \`done\` / \`todo\` — does NOT touch \`{SCOPE}:todo\` / \`{SCOPE}:done\`. Do status changes manually (below).
+- \`mcp__peek__list_tasks()\` in a scoped session defaults to \`tags: ['{SCOPE}:todo']\`.
+- \`mcp__peek__complete_task({ itemId })\` moves the task to \`{SCOPE}:needs-review\`, clearing \`{SCOPE}:todo\` / \`{SCOPE}:wip\` / the readiness markers (\`{SCOPE}:ready\` / \`{SCOPE}:triage\`).
+- \`mcp__peek__complete_task({ itemId, accepted: true })\` moves it to \`{SCOPE}:done\` instead — only for when the task's owner has approved the work in the current conversation.
+- Never use bare \`todo\` / \`done\` by hand — those are unnamespaced and shared across every project.
 
 ## Add a task
 

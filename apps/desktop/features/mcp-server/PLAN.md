@@ -145,12 +145,19 @@ The Peek tile's role: provides UI for configuring the MCP server, shows connecti
 ### Peek-Specific
 
 **`list_tasks`** — Convenience wrapper: items tagged with specified task tags
-- Params: `tags?: string[]` (default: `['todo']`), `project?: string` (additional tag filter like 'peek', 'mobile')
+- Params: `tags?: string[]` (default: `['todo']` unscoped, `['<scope>:todo']` in a
+  scoped session), `project?: string` (additional tag filter like 'peek', 'mobile')
 - Returns: items sorted by creation date, with all tags included
 
-**`complete_task`** — Mark a task item as done
-- Params: `itemId: string, notes?: string`
-- Action: adds `done` tag, removes `todo` tag, records completion event with notes
+**`complete_task`** — Move a task out of the work queue
+- Params: `itemId: string, notes?: string, accepted?: boolean` (default `false`)
+- Action, unscoped: adds `done` tag, removes `todo` tag, records completion
+  event with notes; `accepted` is ignored.
+- Action, scoped: `accepted` false/omitted adds `<scope>:needs-review` and
+  removes `<scope>:todo`/`wip`/`ready`/`triage`, leaving the item pending its
+  owner's review; `accepted: true` — only once the task's owner has approved
+  the work — adds `<scope>:done` instead and also removes
+  `<scope>:needs-review`. Bare `todo`/`done` are left untouched either way.
 
 **`get_task_context`** — Get a task with surrounding context
 - Params: `itemId: string`
@@ -239,7 +246,11 @@ Once configured, the workflow:
 3. Claude Code sees the task list, asks user which to work on (or picks based on priority)
 4. Claude Code calls `record_event(id, 'started', 'Working on this now')`
 5. Claude Code implements the task
-6. Claude Code calls `complete_task(id, 'Implemented in commit abc123')` — adds `done` tag, removes `todo`, records event
+6. Claude Code calls `complete_task(id, 'Implemented in commit abc123')` — in
+   a scoped session, moves the item to `<scope>:needs-review` (or
+   `<scope>:done` with `accepted: true`, once the owner has approved the
+   work); unscoped, adds `done` and removes `todo`; records the completion
+   event either way
 7. User sees the updated status in Peek
 
 ## Implementation Phases
