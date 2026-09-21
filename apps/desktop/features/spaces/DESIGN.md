@@ -198,6 +198,60 @@ SQL migration: `ALTER TABLE extension_settings RENAME TO feature_settings`, rena
 
 ---
 
+## The Default Workspace
+
+Every workspace is named, and there is one named default workspace: what is open when no other
+workspace is active. It is a real space — a `space:default` tag plus its own saved window
+session, written and read through the exact same `space-workspaces` row (`workspace:<tagId>`)
+every named workspace uses — not an implicit "no space" state layered on top of the mechanism
+above. `features/spaces/background.js` resolves it once per profile through the same
+`getOrCreateTag()` every other space goes through; nothing about the default lives in a separate
+table or a separate code path.
+
+Display name: the tag strips to `"default"` the same way any space tag with no `displayName`
+metadata does — no special-cased label.
+
+### First launch
+
+The very first time `getOrCreateTag('space:default')` creates the tag (`created: true` in its
+result — the same signal `main/onboarding-seed.ts` uses for its own once-per-profile sentinel,
+though this one rides the tag's own creation rather than a separate row), whatever windows a
+general session restore already opened before this feature ran become the default workspace's
+membership from that moment on: `adoptOpenWindowsIntoDefault()` walks `api.window.list()` and
+tags anything without a mode of its own (skipping this feature's own chrome and the core
+background window) into `space:default`. Every later launch skips adoption — the default
+workspace's membership from then on is whatever was tagged into it explicitly, the same as any
+other space.
+
+### Enter and exit
+
+`enterWorkspace(tag, name)` is the one function that makes a workspace — named or default — the
+active one: restore its saved session if it has one, otherwise open one new empty group (a single
+window) to start from. The default is the one exception to the empty-group fallback: an empty
+default is genuinely empty, since it is what is left when nothing else is active rather than a
+workspace being entered for the first time. The default also shows no border and no workspace
+panel — chrome that announces "you are in a workspace" would be backwards for the state that
+means the opposite.
+
+`openSpace(name)` — "entering" — first calls `closeCurrentWorkspaceWindows()` on whatever
+workspace is active now, the default included, saving and closing its windows (skipping any
+window pinned across every workspace), then calls `enterWorkspace()` on the target. `switchSpace()`
+is now a thin wrapper over `openSpace()`: entering already closes the outgoing workspace, so
+"switching" and "opening while something else is active" are the same operation.
+
+`closeSpace()` — "leaving" — is `openSpace('default')` with a guard: leaving when the default is
+already active is an error (nothing to leave), the same as the old "no active space" error before
+a default existed at all. Leaving does not keep the workspace panel; entering a named workspace
+from another named workspace does, so the panel only closes when there is no longer any workspace
+to name.
+
+A window pinned across every workspace is never touched by either direction — it is not scoped to
+one workspace's membership in the first place. A window pinned to one workspace closes with it and
+comes back, pinned, from that workspace's own saved row, exactly like an unpinned window in the
+same space.
+
+---
+
 ## Open Questions
 
 - Mode inheritance opt-in (`inherit: true`) vs opt-out? Recommend opt-in.

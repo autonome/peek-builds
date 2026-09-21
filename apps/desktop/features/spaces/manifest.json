@@ -92,7 +92,7 @@
     },
     {
       "name": "close space",
-      "description": "Save window state and close all space windows",
+      "description": "Save window state, close the workspace, and return to the default workspace",
       "action": { "type": "execute" }
     },
     {
