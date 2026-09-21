@@ -171,6 +171,15 @@ const handleKeydown = (e) => {
   }
 };
 
+// Roles that mark a window as dedicated chrome rather than user content —
+// izui-roles.ts's TRANSIENT_ROLES plus 'panel' (the workspace panel's own
+// role — deliberately not a TRANSIENT_ROLE itself, see
+// features/spaces/background.js showPanel()). Duplicated rather than
+// imported: this file is a plain peek:// tile script with no import path
+// into main-process TypeScript (see apps/desktop/CLAUDE.md's tile
+// architecture notes).
+const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
+
 /**
  * Load all visible windows
  */
@@ -184,12 +193,16 @@ const loadWindows = async () => {
     // - Background pages (extension background scripts)
     // - Extension host window
     // - Settings window (internal UI)
+    // - Dedicated chrome windows (palette, overlays, this view itself, the
+    //   workspace panel) — identified by role, not URL
     state.windows = result.windows.filter(w => {
       const url = w.url || '';
       // Skip windows view
       if (url.includes('windows.html')) return false;
       // Skip background pages
       if (url.includes('background.html')) return false;
+      // Skip dedicated chrome, by role
+      if (CHROME_ROLES.has(w.params?.role)) return false;
       // Include everything else (content windows and peek:// UI pages)
       return true;
     });

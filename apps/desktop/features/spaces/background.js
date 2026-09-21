@@ -105,6 +105,81 @@ function cancelHideTimer() {
   }
 }
 
+// ===== Workspace Panel =====
+// A global HUD window (docs/design/window-rules.md "The workspace panel"):
+// names the active workspace and offers close/switch controls. Opened
+// already pinned across workspaces — the one case where a window is pinned
+// by a feature rather than by the user — so it survives closeSpace()'s sweep
+// the same way any other globally-pinned window does, and gets no unpin
+// control. Unlike the border, it must stay open and merely update across a
+// workspace switch rather than closing and reopening (switchSpace() passes
+// `keepPanel: true` to closeSpace() for exactly this reason).
+
+let panelWindowId = null;
+
+async function showPanel(spaceName) {
+  if (panelWindowId) {
+    try {
+      const exists = await api.window.exists(panelWindowId);
+      if (exists?.exists) {
+        api.pubsub.publish('spaces:panel-update', { spaceName });
+        return;
+      }
+    } catch { /* window gone */ }
+    panelWindowId = null;
+  }
+
+  try {
+    const displayResult = await api.screen.getPrimaryDisplay();
+    if (!displayResult.success) return;
+    const { bounds } = displayResult.data;
+    const width = 260;
+    const height = 112;
+    const margin = 16;
+
+    const panelHtml = `peek://spaces/panel.html?spaceName=${encodeURIComponent(spaceName)}`;
+    const result = await api.window.open(panelHtml, {
+      // Chrome, not content: excluded from the Windows switcher by role
+      // (features/windows/windows.js loadWindows()'s CHROME_ROLES filter).
+      // Deliberately NOT 'overlay' — that's one of izui-roles.ts's
+      // TRANSIENT_ROLES, whose OS-Space-follow and blur-sweep treatment is
+      // for short-lived chrome (the border, the palette); the panel is
+      // pinned and must persist for the life of the workspace instead of
+      // being dismissed on a focus change.
+      role: 'panel',
+      x: bounds.x + bounds.width - width - margin,
+      y: bounds.y + bounds.height - height - margin,
+      width,
+      height,
+      resizable: false,
+      frame: false,
+      transparent: true,
+      skipTaskbar: true,
+      // Born already pinned across every workspace — the existing pin
+      // mechanism (window-kernel.ts Pinned layer + the 'pin' context key),
+      // set at open time the same way a restored globally-pinned window is
+      // (session.ts restoreGlobalPinnedWindows).
+      alwaysOnTop: true,
+      pinScope: 'global',
+    });
+
+    if (result?.id) {
+      panelWindowId = result.id;
+    }
+  } catch (err) {
+    console.error('[ext:spaces] Failed to create workspace panel window:', err);
+  }
+}
+
+function hidePanel() {
+  if (panelWindowId) {
+    try {
+      api.window.close(panelWindowId);
+    } catch { /* ignore */ }
+    panelWindowId = null;
+  }
+}
+
 // ===== Auto-tagging =====
 // Subscribe to item:created — if originating window is in space mode, tag it.
 
@@ -289,11 +364,16 @@ async function openSpace(spaceName) {
   const borderColor = resolveSpaceBorderColor(tag.color, tag.id);
   showBorder(borderColor, activeSpaceName);
 
+  // Show or update the workspace panel — see it stays open across a switch
+  // (switchSpace() keeps it alive through closeSpace(); showPanel() reuses
+  // an already-open one instead of recreating it).
+  showPanel(activeSpaceName);
+
   console.log(`[ext:spaces] Opened space "${activeSpaceName}"`);
   return { success: true, spaceId: tag.id, spaceName: activeSpaceName };
 }
 
-async function closeSpace() {
+async function closeSpace(options = {}) {
   if (!activeSpaceId) {
     return { success: false, error: 'No active space to close' };
   }
@@ -329,6 +409,11 @@ async function closeSpace() {
   cancelHideTimer();
   hideBorder();
 
+  // Shown while any workspace is active, closed when none is — but a switch
+  // (switchSpace(), below) passes keepPanel so the same window carries
+  // through to the next openSpace() instead of closing and reopening.
+  if (!options.keepPanel) hidePanel();
+
   const closedName = activeSpaceName;
   activeSpaceId = null;
   activeSpaceName = null;
@@ -340,7 +425,7 @@ async function closeSpace() {
 
 async function switchSpace(targetName) {
   if (!targetName) return { success: false, error: 'Usage: switch space <name>' };
-  await closeSpace();
+  await closeSpace({ keepPanel: true });
   return openSpace(targetName);
 }
 
@@ -532,6 +617,7 @@ const uninit = () => {
   uninitCommands();
   cancelHideTimer();
   hideBorder();
+  hidePanel();
 };
 
 export default {
