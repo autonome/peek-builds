@@ -12,6 +12,7 @@ marked ⚠ are things that are real-but-rough — demo them, don't lean on them.
 - Another app in the foreground (Safari) with a couple of tabs — you need a "not-Peek" app to peek *over*.
 - A content-rich page open or bookmarked for entities (one with real JSON-LD / an article, org, or product page).
 - A handful of saved URLs in the store (so `list urls` returns rows for the chain demo).
+- Only **Opt+0** (peek) and **Opt+Up** (slide) are bound by default — to use other digits or directions, set them in the Features Manager options for Peeks and Slides first.
 - Claude Code installed and a throwaway project dir for the MCP beat.
 - Optional: iPhone / simulator with the share extension installed for the mobile beat.
 - Optional: Activity Monitor open to a filtered "Peek" view for the perf beat.
@@ -23,21 +24,22 @@ marked ⚠ are things that are real-but-rough — demo them, don't lean on them.
 ### 1. The hook — peek without losing your place  (overview §2 / §6.9)
 - **Do:** From Safari, press **Opt+Space** → cmd bar appears on top → act → press **ESC**.
 - **See:** A pill drops in over Safari; on ESC it vanishes and you're back in Safari, same tab, same Space.
+- ⚠ Pick an action that doesn't open a page. A URL opened here appears over Safari without activating Peek; ESC sets it aside and it reappears the next time Peek activates — narrate that if you show it.
 - **Point:** Zero context-switch. Your active app and macOS Space never change — the signature "peek, don't switch" bet (IZUI).
 
 ### 2. Peeks & slides — any page, one keystroke  (§6.10)
-- **Do:** **Opt+3** → a page peeks in centered. **ESC**. **Opt+Left** → a page slides in from the edge. **ESC**.
+- **Do:** **Opt+0** → a page peeks in centered. **ESC**. **Opt+Up** → a page slides in from the top edge. **ESC**.
 - **See:** A real web page as a transient centered window; then one anchored to a screen edge.
 - **Point:** Same transient model, two shapes — bound to a key, gone on ESC, focus returns to where you were.
 
 ### 3. The windows switcher — Exposé for Peek  (§6.11)
-- **Do:** With **nothing Peek-focused**, press **ESC** → switcher zooms out over everything → **hjkl** (or arrows) to a card → **Enter**.
+- **Do:** **Cmd+Tab** to Peek with a page focused, press **ESC** (or **Cmd+Shift+W** from anywhere in Peek) → switcher zooms out over everything → **hjkl** (or arrows) to a card → **Enter**.
 - **See:** Every open window as a card (favicon, title, live thumbnail); vim-navigable; Enter jumps to it.
-- **Point:** A global ESC grab (only when nothing Peek owns focus) turns into a full-screen switcher — reuses one key for two jobs without stealing ESC from a focused peek.
+- **Point:** ESC on a focused page zooms out to a full-screen switcher — one key, two jobs. The Escape grab is armed only while Peek is the active app, so it never takes ESC from another app; a page you reached from another app closes on ESC instead.
 
 ### 4. Cmd → anything — one entry point, many surfaces  (§6.12)
-- **Do:** **Opt+Space**, type `note buy milk` → **Enter** (saves silently). Reopen, run `groups` → a full window opens.
-- **See:** Same bar; one command closes silently after saving, another opens a whole tile window.
+- **Do:** **Opt+Space**, type `note buy milk` → **Enter** (saves, and drops you into the editor on the new note). Reopen, run `groups` → a full window opens.
+- **See:** Same bar; one command saves and opens the editor, another opens a whole tile window. (A tagset is the case that closes silently.)
 - **Point:** A command's output decides the surface — silent save, a window, an in-panel list, the editor, or a data pipeline. One keystroke fans out to N surface *shapes*.
 - ⚠ **Say the honest bit:** there's no success toast on a silent save yet (`result.message` is discarded) — a known, still-open UX gap, not a bug to hide.
 
@@ -70,7 +72,7 @@ marked ⚠ are things that are real-but-rough — demo them, don't lean on them.
 - **Point:** Same local-first datastore, capture at the OS share sheet.
 
 ### 10. MCP — agent and human on one live datastore  (§6.19)
-- **Do:** In a project dir run `mcp server setup` (or `peek-mcp-init <scope> --writes`), then in Claude Code ask it to list/search/tag items → watch the Peek UI update live.
+- **Do:** In a project dir run `/Applications/Peek.app/Contents/Resources/peek-mcp-init <scope> --writes`, restart Claude Code, then ask it to list/search/tag items → reopen the view in Peek to see the change.
 - **See:** Claude Code reading your saved pages and tagging items in the **same SQLite** the Peek window is showing, right now.
 - **Point:** Peek becomes an agent-writable personal knowledge + task backend — scoped per project (an agent can't poison a sibling project's tags). The peek repo dogfoods this with its own `peek:*` task queue.
 
