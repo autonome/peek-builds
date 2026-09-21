@@ -374,22 +374,6 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
         return fetchFile(absolutePath, req.url);
       }
 
-      // Backwards-compat: peek://ext/hud/{path} resolves to app/hud/ now that
-      // HUD has been extracted out of the features/ directory into core app code.
-      // The HUD background script still opens `peek://ext/hud/hud.html` and
-      // references widget URLs like `peek://ext/hud/widgets/mode.html`, so we
-      // preserve that URL contract.
-      if (extId === 'hud') {
-        const absolutePath = path.resolve(rootDir, 'renderer', 'hud', extPath);
-        const hudBase = path.resolve(rootDir, 'renderer', 'hud');
-        if (!absolutePath.startsWith(hudBase)) {
-          console.error('Path traversal attempt blocked:', absolutePath);
-          return new Response('Forbidden', { status: 403 });
-        }
-        DEBUG && console.log(`[protocol] ext/hud/${extPath} -> ${absolutePath}`);
-        return fetchFile(absolutePath, req.url);
-      }
-
       // Backwards-compat: peek://ext/page/{path} resolves to app/page/ now that
       // page has been extracted out of features/ into core app code.
       // The page background iframe URL was peek://ext/page/background.html; we
@@ -650,21 +634,6 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
       DEBUG && console.log(`[protocol] cmd/${cmdPath} -> ${absolutePath}`);
-      return fetchFile(absolutePath, req.url);
-    }
-
-    // Backwards-compat: peek://hud/{path} resolves to app/hud/
-    // HUD used to be a consolidated extension served from features/hud/; it's
-    // now core app code in app/hud/.
-    if (host === 'hud') {
-      const hudPath = pathname || 'background.html';
-      const absolutePath = path.resolve(rootDir, 'renderer', 'hud', hudPath);
-      const hudBase = path.resolve(rootDir, 'renderer', 'hud');
-      if (!absolutePath.startsWith(hudBase)) {
-        console.error('Path traversal attempt blocked:', absolutePath);
-        return new Response('Forbidden', { status: 403 });
-      }
-      DEBUG && console.log(`[protocol] hud/${hudPath} -> ${absolutePath}`);
       return fetchFile(absolutePath, req.url);
     }
 

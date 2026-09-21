@@ -1361,7 +1361,7 @@ export async function loadFeatures(): Promise<number> {
 // Core renderers that are always considered "running" once the app has started.
 // These are not feature tiles (no tile manifest in features/) but the
 // Features pane should always show them as running.
-const CORE_RENDERER_IDS = ['cmd', 'hud', 'page'];
+const CORE_RENDERER_IDS = ['cmd', 'page'];
 
 /**
  * Get running tiles info.
@@ -1370,7 +1370,7 @@ const CORE_RENDERER_IDS = ['cmd', 'hud', 'page'];
 export function getRunningTiles(): Array<{ id: string; manifest: unknown; status: string }> {
   const running: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Add core renderers (cmd, hud, page) — always running once app is up
+  // Add core renderers (cmd, page) — always running once app is up
   for (const tileId of CORE_RENDERER_IDS) {
     if (!isBuiltinFeatureEnabled(tileId)) continue;
     const tilePath = getTilePath(tileId);

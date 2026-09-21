@@ -121,8 +121,6 @@ import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js'
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { getTilePreloadPath } from './config.js';
-import { createTrustedBuiltinGrant } from './tile-manifest.js';
-import { generateToken } from './tile-tokens.js';
 import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
 import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-installer.js';
@@ -538,17 +536,13 @@ for (const arg of process.argv) {
 const systemAddress = getSystemAddress();
 
 // Inject tile-preload into <webview> elements that load peek:// URLs.
-// This gives internal widget pages (e.g., HUD widgets, widget-demo cards)
-// access to window.app API while leaving external web content webviews untouched.
+// This gives internal widget pages (e.g., widget-demo cards) access to
+// window.app API while leaving external web content webviews untouched.
 //
 // Resolution order:
-//   1. HUD widget webviews: peek://hud/widgets/*.html get a dedicated
-//      trustedBuiltin token (hud-widget). HUD has no tile manifest but
-//      widgets use api.window/context/izui/pubsub — all covered by
-//      trustedBuiltin grant.
-//   2. Tile-backed URLs: URL resolves to a registered tile manifest — use
+//   1. Tile-backed URLs: URL resolves to a registered tile manifest — use
 //      tile-preload.cjs with manifest-derived capability token.
-//   3. Unrecognised peek:// URL: log a warning and skip preload injection.
+//   2. Unrecognised peek:// URL: log a warning and skip preload injection.
 //
 // Also auto-inject MAIN-world content_scripts (e.g. webauthn.js) from loaded
 // chrome extensions whose manifest match-patterns accept the webview URL.
@@ -719,25 +713,6 @@ app.on('web-contents-created', (_event, contents) => {
     if (params.src && params.src.startsWith('peek://')) {
       const tilePreloadPath = getTilePreloadPath();
       if (!tilePreloadPath) return;
-
-      // Special-case: HUD widget webviews (peek://hud/widgets/*.html).
-      // HUD has no tile manifest; mint a trustedBuiltin token for all widgets
-      // under a unified hud-widget tile id so they can use api.window.*,
-      // api.context.*, api.izui.*, api.pubsub.*, etc.
-      if (params.src.startsWith('peek://hud/widgets/')) {
-        const HUD_WIDGET_ID = 'hud-widget';
-        const HUD_WIDGET_ENTRY = 'main';
-        const hudWidgetGrant = createTrustedBuiltinGrant(HUD_WIDGET_ID);
-        const hudWidgetToken = generateToken(HUD_WIDGET_ID, HUD_WIDGET_ENTRY, hudWidgetGrant);
-        webPreferences.preload = tilePreloadPath;
-        (webPreferences as { additionalArguments?: string[] }).additionalArguments = [
-          `--tile-id=${HUD_WIDGET_ID}`,
-          `--tile-entry=${HUD_WIDGET_ENTRY}`,
-          `--tile-token=${hudWidgetToken}`,
-        ];
-        DEBUG && console.log(`[webview] Injecting trustedBuiltin tile-preload for HUD widget: ${params.src}`);
-        return;
-      }
 
       const tileWebPrefs = getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest);
       if (tileWebPrefs) {

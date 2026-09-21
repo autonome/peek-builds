@@ -42,7 +42,6 @@ const PSEUDO_TILES: Record<string, PseudoTileEntry> = {
   'peek://app/settings/settings.html':   { tileId: 'settings',         entryId: 'main' },
   'peek://app/diagnostic.html':          { tileId: 'diagnostic',       entryId: 'main' },
   'peek://app/datastore/viewer.html':    { tileId: 'datastore-viewer', entryId: 'main' },
-  'peek://hud/hud.html':                 { tileId: 'hud-overlay',      entryId: 'main' },
   'peek://cmd/panel.html':               { tileId: 'cmd-ui',           entryId: 'panel' },
   'peek://cmd/chain-editor.html':        { tileId: 'cmd-ui',           entryId: 'chain-editor' },
   'about:blank':                         { tileId: 'about-blank',      entryId: 'main' },

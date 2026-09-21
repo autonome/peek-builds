@@ -7,10 +7,6 @@ import migrations from './migrations/index.js';
 import { log } from './log.js';
 import { initCmd } from './cmd/background.js';
 import { initPage } from './page/background.js';
-// HUD disabled 2026-04-23 — unused feature, failing tests post pubsub FSM.
-// Re-enable by restoring the import + initHud() call below and un-skipping
-// hud.spec.ts + the HUD test in groups-context.spec.ts.
-// import { initHud } from './hud/background.js';
 
 const { id, labels, schemas, storageKeys, defaults } = appConfig;
 
@@ -586,7 +582,6 @@ export const init = async () => {
   // this core background renderer.
   await initCmd();
   await initPage();
-  // await initHud(); // disabled — see import comment above
 
   // Register feature:all-loaded subscriber BEFORE publishing topicCorePrefs.
   // Main subscribes to topicCorePrefs and kicks off loadFeatures() which
