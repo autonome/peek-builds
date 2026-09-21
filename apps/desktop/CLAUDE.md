@@ -66,6 +66,10 @@ port for Electron/AppKit vocabulary and fails on a new one. Full rule and its ra
 > not an unknown to guess at.
 >
 > Fast single-test iteration (`yarn test:grep`) never needs to ask, in any environment.
+
+Main-process `console.log` output does not reach a `yarn test:grep` run's captured output. Only
+lines containing the literal `[wm]` do, through `tests/fixtures/desktop-app.ts forwardWmLines`. To
+trace main-process behaviour from a spec, log through `main/window-diag.ts wmLog()`.
 >
 > **A single spec file is NOT a substitute for the gate.** `test:desktop:electron:spec`
 > and `:spec:bg` run `PACKAGED=1` against whatever `electron-builder` last produced and
