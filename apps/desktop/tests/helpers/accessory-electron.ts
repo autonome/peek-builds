@@ -35,3 +35,13 @@ export function accessoryElectronAppPath(): string {
 export function accessoryElectronBinaryPath(): string {
   return path.join(accessoryElectronAppPath(), 'Contents', 'MacOS', 'Electron');
 }
+
+/**
+ * Path to the marker written next to (not inside) the copied bundle, only
+ * after a copy and its plist patch both complete. Its absence means the
+ * copy is unfinished or has since lost files — see
+ * tests/helpers/accessory-electron-freshness.js.
+ */
+export function accessoryElectronMarkerPath(): string {
+  return path.join(accessoryElectronDir(), '.complete');
+}

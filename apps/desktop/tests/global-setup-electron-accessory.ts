@@ -19,6 +19,17 @@
  * Any other run (non-darwin, non-headless, or the packaged path) is a no-op and
  * the fixture falls back to today's behavior. The headless/packaged detection
  * mirrors isHeadless()/isPackaged() in fixtures/desktop-app.ts.
+ *
+ * The existing copy is reused only when it is WHOLE, not merely current: the
+ * copied binary must exist and be at least as new as the source, a completion
+ * marker written after a full prior copy must exist, and a short list of
+ * bundle files known to matter must all be present. A copy sitting under the
+ * OS temp dir can lose files to the OS's own one-at-a-time purge (observed:
+ * chrome_crashpad_handler, libvk_swiftshader.dylib, the framework's
+ * Resources/Info.plist, every locale.pak) while its main binary's mtime is
+ * untouched, so an mtime-only check reuses a broken copy and every launch
+ * that follows dies before any test runs. The decision itself is the pure
+ * function shouldRebuildAccessoryElectron (helpers/accessory-electron-freshness.js).
  */
 import fs from 'fs';
 import path from 'path';
@@ -28,7 +39,12 @@ import {
   accessoryElectronDir,
   accessoryElectronAppPath,
   accessoryElectronBinaryPath,
+  accessoryElectronMarkerPath,
 } from './helpers/accessory-electron';
+import {
+  shouldRebuildAccessoryElectron,
+  REQUIRED_BUNDLE_RELATIVE_PATHS,
+} from './helpers/accessory-electron-freshness.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,19 +79,27 @@ export default async function globalSetup(): Promise<void> {
 
   const destApp = accessoryElectronAppPath();
   const destBinary = accessoryElectronBinaryPath();
+  const markerPath = accessoryElectronMarkerPath();
 
-  // Skip the ~250MB copy when the existing copy is up to date (mtime >= source).
-  // Only re-copies after an Electron upgrade bumps the source binary's mtime.
-  if (fs.existsSync(destBinary)) {
-    const srcMtime = fs.statSync(srcBinary).mtimeMs;
-    const destMtime = fs.statSync(destBinary).mtimeMs;
-    if (destMtime >= srcMtime) {
-      return;
-    }
+  const binaryExists = fs.existsSync(destBinary);
+  const missingRequiredFiles = binaryExists
+    ? REQUIRED_BUNDLE_RELATIVE_PATHS.filter((rel) => !fs.existsSync(path.join(destApp, rel)))
+    : [...REQUIRED_BUNDLE_RELATIVE_PATHS];
+
+  const rebuild = shouldRebuildAccessoryElectron({
+    binaryExists,
+    sourceMtimeMs: fs.statSync(srcBinary).mtimeMs,
+    copyMtimeMs: binaryExists ? fs.statSync(destBinary).mtimeMs : 0,
+    markerExists: fs.existsSync(markerPath),
+    missingRequiredFiles,
+  });
+  if (!rebuild) {
+    return;
   }
 
   // (Re)build the copy. Clear any stale copy first so cp doesn't merge into it.
   fs.rmSync(destApp, { recursive: true, force: true });
+  fs.rmSync(markerPath, { force: true });
   fs.mkdirSync(accessoryElectronDir(), { recursive: true });
   // cp -R preserves the symlinks inside a macOS .app bundle (Frameworks, etc.),
   // which fs.cpSync's defaults do not reliably reproduce.
@@ -84,4 +108,8 @@ export default async function globalSetup(): Promise<void> {
   // Patch the COPY's Info.plist — same helper the packaged path uses.
   const patchScript = path.join(REPO_ROOT, 'scripts', 'patch-test-plist.sh');
   execFileSync(patchScript, [destApp], { stdio: 'inherit' });
+
+  // Marker written LAST, after the copy and the patch both succeed, so a
+  // copy interrupted at any earlier point is also treated as not whole.
+  fs.writeFileSync(markerPath, new Date().toISOString());
 }
