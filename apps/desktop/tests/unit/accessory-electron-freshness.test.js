@@ -3,6 +3,7 @@
  * tests/helpers/accessory-electron-freshness.js for why a plain mtime
  * comparison misses a copy that macOS has partially purged.
  */
+// @no-product-import: the module under test is test infrastructure (tests/helpers/), imported for real below — no shipping module is involved.
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { shouldRebuildAccessoryElectron } from '../helpers/accessory-electron-freshness.js';
