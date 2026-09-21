@@ -1174,6 +1174,52 @@ app.delete("/profiles/:profileId", (c) => {
   }
 });
 
+// === Account-holder device endpoints (self-service, own devices only) ===
+//
+// Authenticated by a device key through multiUserMiddleware(): c.get("userId")
+// is the owning account, c.get("deviceId") is the device making THIS request
+// (empty string for a pre-migration legacy key — see auth.js). Distinct from
+// the ADMIN_TOKEN-gated /admin/devices below, which can act on any user.
+
+// GET /devices - list the authenticated account's own devices (no key material).
+app.get("/devices", (c) => {
+  const userId = c.get("userId");
+  return c.json({ devices: users.listDevices(userId) });
+});
+
+// PATCH /devices/:deviceId  { label }  -> rename one of the caller's own devices.
+app.patch("/devices/:deviceId", async (c) => {
+  const userId = c.get("userId");
+  const deviceId = c.req.param("deviceId");
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.label) {
+    return c.json({ error: "label is required" }, 400);
+  }
+  try {
+    const device = users.renameDevice(userId, deviceId, body.label);
+    return c.json({ device });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// DELETE /devices/:deviceId - revoke one of the caller's own devices,
+// including the device making this very request. There is no session to tear
+// down mid-request — only a bearer key re-checked on every request — so
+// revoking-self succeeds here and the SAME key is rejected starting with its
+// next use (resolveDevice returns { revoked: true }, multiUserMiddleware
+// turns that into 401).
+app.delete("/devices/:deviceId", (c) => {
+  const userId = c.get("userId");
+  const deviceId = c.req.param("deviceId");
+  try {
+    const revoked = users.revokeDevice(userId, deviceId);
+    return c.json({ revoked });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
 // === Admin endpoints (per-device credential management) ===
 //
 // Gated by the ADMIN_TOKEN env var, independent of user/device api keys. When

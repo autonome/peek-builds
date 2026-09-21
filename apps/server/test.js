@@ -3437,6 +3437,252 @@ describe("MCP Grant Admin Routes Tests", () => {
   });
 });
 
+describe("Device Admin Routes Tests", () => {
+  // Exercises the real /admin/devices routes, wired the same way index.js
+  // wires them (ADMIN_TOKEN gate, then the route handlers calling users.js).
+  let app;
+  let users;
+  const ADMIN_TOKEN = "test-admin-token-fixture";
+  const TEST_USER = "deviceadminuser";
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./users")];
+    cleanTestDir();
+
+    users = require("./users");
+    users.createUser(TEST_USER);
+
+    const { Hono } = require("hono");
+    const crypto = require("crypto");
+    app = new Hono();
+
+    // Mirrors index.js's adminTokenMatches gate.
+    app.use("/admin/*", async (c, next) => {
+      const auth = c.req.header("Authorization") || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      const a = Buffer.from(token);
+      const b = Buffer.from(ADMIN_TOKEN);
+      const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+      if (!matches) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      return next();
+    });
+
+    app.post("/admin/devices", async (c) => {
+      const body = await c.req.json().catch(() => ({}));
+      const { userId, label } = body;
+      if (!userId || !label) {
+        return c.json({ error: "userId and label are required" }, 400);
+      }
+      try {
+        const device = users.createDevice(userId, label);
+        return c.json({ device });
+      } catch (e) {
+        return c.json({ error: e.message }, 400);
+      }
+    });
+
+    app.get("/admin/devices", (c) => {
+      const userId = c.req.query("userId");
+      if (!userId) {
+        return c.json({ error: "userId query param is required" }, 400);
+      }
+      return c.json({ devices: users.listDevices(userId) });
+    });
+
+    app.delete("/admin/devices/:deviceId", (c) => {
+      const userId = c.req.query("userId");
+      const deviceId = c.req.param("deviceId");
+      if (!userId) {
+        return c.json({ error: "userId query param is required" }, 400);
+      }
+      try {
+        const revoked = users.revokeDevice(userId, deviceId);
+        return c.json({ revoked });
+      } catch (e) {
+        return c.json({ error: e.message }, 400);
+      }
+    });
+  });
+
+  after(() => {
+    if (users && users.closeSystemDb) users.closeSystemDb();
+    cleanTestDir();
+  });
+
+  function adminHeaders() {
+    return { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  }
+
+  it("rejects an unauthenticated mint", async () => {
+    const res = await app.request("/admin/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: TEST_USER, label: "iPhone" }),
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("mints a device and returns the raw key exactly once", async () => {
+    const res = await app.request("/admin/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "iPhone 15" }),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.ok(json.device.apiKey, "mint response should carry the raw key");
+    assert.strictEqual(json.device.label, "iPhone 15");
+    assert.strictEqual(json.device.userId, TEST_USER);
+  });
+
+  it("never returns key material from the list route", async () => {
+    await app.request("/admin/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "laptop" }),
+    });
+
+    const res = await app.request(`/admin/devices?userId=${TEST_USER}`, {
+      headers: adminHeaders(),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.devices.length, 1);
+    assert.strictEqual(json.devices[0].apiKey, undefined);
+    assert.strictEqual(json.devices[0].key_hash, undefined);
+    assert.strictEqual(json.devices[0].keyHash, undefined);
+  });
+
+  it("revokes a device so its key stops resolving", async () => {
+    const mintRes = await app.request("/admin/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "rogue" }),
+    });
+    const { device } = await mintRes.json();
+
+    const delRes = await app.request(`/admin/devices/${device.deviceId}?userId=${TEST_USER}`, {
+      method: "DELETE",
+      headers: adminHeaders(),
+    });
+    assert.strictEqual(delRes.status, 200);
+    const delJson = await delRes.json();
+    assert.strictEqual(delJson.revoked, true);
+
+    assert.deepStrictEqual(users.resolveDevice(device.apiKey), { revoked: true });
+  });
+});
+
+describe("Account-Holder Device Routes Tests", () => {
+  // Exercises the real GET/PATCH/DELETE /devices routes through the real
+  // index.js app, authenticated by a device key through auth.js
+  // multiUserMiddleware() — not the ADMIN_TOKEN-gated /admin/devices above.
+  let app;
+  let users;
+  const TEST_USER = "selfserveuser";
+  const OTHER_USER = "otheraccountholder";
+  let deviceA; // TEST_USER's device, used as the authenticated caller below
+  let deviceB; // TEST_USER's second device
+  let deviceC; // OTHER_USER's device — must stay invisible/untouchable to TEST_USER
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    users.createUser(TEST_USER);
+    users.createUser(OTHER_USER);
+    deviceA = users.createDevice(TEST_USER, "phone");
+    deviceB = users.createDevice(TEST_USER, "laptop");
+    deviceC = users.createDevice(OTHER_USER, "their phone");
+  });
+
+  function headersFor(device) {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${device.apiKey}` };
+  }
+
+  it("rejects an unauthenticated list", async () => {
+    const res = await app.request("/devices");
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("lists only the authenticated account's own devices, without key material", async () => {
+    const res = await app.request("/devices", { headers: headersFor(deviceA) });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    const ids = json.devices.map((d) => d.id).sort();
+    assert.deepStrictEqual(ids, [deviceA.deviceId, deviceB.deviceId].sort());
+    for (const dev of json.devices) {
+      assert.strictEqual(dev.apiKey, undefined);
+      assert.strictEqual(dev.key_hash, undefined);
+    }
+  });
+
+  it("renames one of the caller's own devices", async () => {
+    const res = await app.request(`/devices/${deviceA.deviceId}`, {
+      method: "PATCH",
+      headers: headersFor(deviceA),
+      body: JSON.stringify({ label: "work phone" }),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.device.label, "work phone");
+
+    const list = await (await app.request("/devices", { headers: headersFor(deviceA) })).json();
+    assert.strictEqual(list.devices.find((d) => d.id === deviceA.deviceId).label, "work phone");
+  });
+
+  it("rejects renaming a device belonging to another account", async () => {
+    const res = await app.request(`/devices/${deviceC.deviceId}`, {
+      method: "PATCH",
+      headers: headersFor(deviceA),
+      body: JSON.stringify({ label: "hijacked" }),
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  it("revokes one of the caller's own devices", async () => {
+    const res = await app.request(`/devices/${deviceB.deviceId}`, {
+      method: "DELETE",
+      headers: headersFor(deviceA),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.revoked, true);
+    assert.deepStrictEqual(users.resolveDevice(deviceB.apiKey), { revoked: true });
+  });
+
+  it("rejects revoking a device belonging to another account", async () => {
+    const res = await app.request(`/devices/${deviceC.deviceId}`, {
+      method: "DELETE",
+      headers: headersFor(deviceA),
+    });
+    assert.strictEqual(res.status, 400);
+    // Untouched — still resolves as an active device for its own owner.
+    assert.strictEqual(users.resolveDevice(deviceC.apiKey).deviceId, deviceC.deviceId);
+  });
+
+  it("revoking the device making the request succeeds, and that key is rejected on its next use", async () => {
+    const res = await app.request(`/devices/${deviceA.deviceId}`, {
+      method: "DELETE",
+      headers: headersFor(deviceA),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.revoked, true, "revoking the requesting device's own key is allowed");
+
+    const next = await app.request("/devices", { headers: headersFor(deviceA) });
+    assert.strictEqual(next.status, 401, "the same key must be rejected on its next use");
+  });
+});
+
 describe("MCP Item Routes Tests", () => {
   // Exercises the real mcp-items.js business logic (queryItems/searchItems/
   // resolveItemId/getItemForRoute) through a Hono app wired the same way

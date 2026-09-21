@@ -364,6 +364,34 @@ function revokeDevice(userId, deviceId) {
 }
 
 /**
+ * Rename a device by id (verifies ownership). Returns the updated device row
+ * (no key material).
+ *
+ * @param {string} userId
+ * @param {string} deviceId
+ * @param {string} label
+ * @returns {{id: string, label: string, created_at: string, last_seen_at: string|null, revoked_at: string|null}}
+ */
+function renameDevice(userId, deviceId, label) {
+  const db = getSystemDb();
+  if (!label || !String(label).trim()) {
+    throw new Error("Device label is required");
+  }
+  const device = db.get(
+    "SELECT id FROM devices WHERE id = ? AND user_id = ?",
+    [deviceId, userId]
+  );
+  if (!device) {
+    throw new Error(`Device '${deviceId}' not found for user '${userId}'`);
+  }
+  db.run("UPDATE devices SET label = ? WHERE id = ?", [String(label).trim(), deviceId]);
+  return db.get(
+    "SELECT id, label, created_at, last_seen_at, revoked_at FROM devices WHERE id = ?",
+    [deviceId]
+  );
+}
+
+/**
  * Migrate each user's legacy shared api_key (users.api_key_hash) into the
  * devices table as a "legacy-shared" device, so the existing key keeps
  * authenticating AND becomes individually revocable once every real device has
@@ -720,6 +748,7 @@ module.exports = {
   resolveDevice,
   listDevices,
   revokeDevice,
+  renameDevice,
   migrateLegacyKeysToDevices,
   // Profile management
   createProfile,
