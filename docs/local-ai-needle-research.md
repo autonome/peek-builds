@@ -471,6 +471,75 @@ Needle was not run during this research: the research environment blocked Huggin
 - **Young dependencies:** sqlite-vec is pre-1.0, and GLiNER.js has a small community. Wrap both behind the `ml` service so either can be swapped.
 - **Stale mirror:** the GitHub mirror `autonome/peek` has the old `extensions/` layout, so review against tangled.
 
+
+## How to run the bake-off (2026-09-21)
+
+The first measurements are done and recorded in `docs/local-ai-needle-research.md` on `main`
+(the "Results (2026-09-21)" section). What remains needs the account holder's own data on a
+machine with the real profile, because the labels are judgement about which visits belonged to
+the same task, and no synthetic set answers that.
+
+### Before anything else
+
+1. Pull `main`, then build the desktop app (`yarn install`, then `yarn workspace @peek/desktop
+   build`). The doc names the exact steps that produced the first numbers, including the
+   throwaway Python virtualenv, so they can be repeated rather than re-derived.
+2. Reproduce the smoke test on the real machine. The engine version matters: the run on the
+   Linux box installed `cactus-needle==3.0.4` from PyPI, which then fetched engine `3.0.1` and
+   base weights `needle3.cact` (33.7 MB) from `Cactus-Compute/needle3` at commit
+   `b274efcb211a9eef48c9a88da4b43bd569696a39`. Record whichever version the run actually loads
+   next to every number it produces; the weights changed on the hub within a day during the
+   original research.
+3. Two hazards the first run found, which shape how the harness must be written:
+   - Reuse of one engine instance across unrelated inputs contaminates later answers with
+     earlier context unless it is reset between calls. A harness that reuses an instance
+     silently produces better-looking numbers than a cold one, so reset between every item and
+     say so in the write-up.
+   - Typed extraction fabricated nested fields (an event's date and venue) from text that
+     described no event, and the strict option did not reliably catch it. Entity scoring must
+     therefore count invented values as errors, not just missed ones, or the F1 figure will
+     flatter it.
+
+### The labelling pass, about two days
+
+Export one week of `item_visits` plus the notes written in that week, roughly 300 items, and
+group them by hand into the tasks they belonged to — 15 to 30 groups is the expected shape.
+A task is a stretch of work with a purpose, not a topic: two visits to the same site on
+different days for different reasons belong to different tasks. Items that belong to no task
+stay unlabelled rather than being forced into one; the clustering scores need a rejection class.
+
+Keep the labelled set outside the repo. It is a week of personal browsing, and the repo is
+treated as public.
+
+For the entity row, label a separate set: 100 pages spread across news, event listings, docs
+and product pages, plus 50 notes, marked up with the people, organisations, places and events
+each one genuinely contains. Spans must be verbatim quotes from the text, so a fabricated value
+is unambiguous when scoring.
+
+For the command-routing row, write down 150 things actually said to the command bar, each with
+the Peek API call it should have produced, including a handful that no tool can serve — refusal
+accuracy is part of the measure and cannot be scored without them.
+
+### Running the candidates, about three days
+
+Work the bake-off table in the doc row by row, and for each row record the metric it names, the
+pass bar, and whether the bar was met. Two rules keep the result honest:
+
+- Every row keeps its non-ML baseline (frecency and tokenised search, tag and session
+  heuristics, the current regex and microformats extractor). A model that does not beat the
+  baseline by a clear margin loses, and the baseline number goes in the write-up next to it.
+- The cost row runs on the slowest target machine and one phone, not on the fastest machine
+  available. The always-on path has a 150 MB memory ceiling, and a figure from a developer
+  laptop says nothing about it.
+
+### What the result decides
+
+The outcome is a decision per job, not a single verdict on the engine: which component does
+always-on indexing, which does clustering, whether typed extraction is trustworthy enough to
+merge with the existing extractors, and whether command routing is accurate enough to put in
+front of people. Record each decision with the number that drove it. A row whose bar was not
+met stays unbuilt rather than shipping behind a flag.
+
 ## Sources
 
 - [Needle 3 product page](https://cactuscompute.com/needle)
