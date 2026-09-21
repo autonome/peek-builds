@@ -151,6 +151,14 @@ test.describe('Device Settings Panel @desktop', () => {
     await expect(phoneCard).toContainText('Phone');
     await expect(phoneCard).toContainText('never'); // last_seen_at: null
 
+    // The <peek-card>/<peek-input>/<peek-button> custom elements actually
+    // upgraded (shadow root attached) — proves settings-importmap.json +
+    // settings-components.js resolved under the page's strict
+    // `script-src 'self'` CSP, not just that light-DOM text survived.
+    await expect
+      .poll(() => laptopCard.evaluate((el) => !!(el as unknown as { shadowRoot: unknown }).shadowRoot))
+      .toBe(true);
+
     // The "add a device" spot exists and is inert — no button that does
     // anything, per the mint-flow decision still being open (8415f3de step 3).
     await expect(settingsWindow.locator('.devices-panel')).toContainText('Add a device');

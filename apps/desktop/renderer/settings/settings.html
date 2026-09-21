@@ -3,14 +3,24 @@
   <head>
     <title>peek:core:settings</title>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'sha256-96U6BuEeNnCAcU6IYLjRKxmy4/cHZCtf8prIt3WXPLw=';">
     <meta name="description" content="">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="settings.css">
 
     <!-- Import map for resolving bare module specifiers, used by the shared
-         <peek-*> components (Devices panel and any future one). Copied
-         verbatim from features/windows/windows.html. -->
+         <peek-*> components (Devices panel and any future one). Same mapping
+         as features/windows/windows.html. External `<script type="importmap"
+         src=...>` was tried first (would have let the CSP stay a plain
+         `script-src 'self'` with no exception at all) but this app's Electron
+         build does not apply an import map loaded that way — bare specifiers
+         inside the component modules failed to resolve and the elements
+         never upgraded (no shadow root), confirmed by
+         apps/desktop/tests/desktop/device-settings.spec.ts. Inline is
+         required, so this page keeps `'unsafe-inline'` out of its CSP and
+         allows only this exact script by its sha256 hash instead — the hash
+         must be recomputed (see the comment at the closing tag below)
+         whenever this block's content changes. -->
     <script type="importmap">
     {
       "imports": {
@@ -25,13 +35,14 @@
       }
     }
     </script>
+    <!-- ^ CSP hashes the raw text between the tags verbatim, whitespace
+         included — recompute after any edit to the block above and paste
+         the result (with the "sha256-" prefix) into the CSP meta tag above:
+         node -e "const fs=require('fs');const h=fs.readFileSync('settings.html','utf8');const s='<script type=\"importmap\">';const i=h.indexOf(s)+s.length;const j=h.indexOf('</script>',i);console.log('sha256-'+require('crypto').createHash('sha256').update(h.slice(i,j),'utf8').digest('base64'))" -->
 
-    <!-- Import peek-components used by the Devices panel -->
-    <script type="module">
-      import 'peek://app/components/peek-card.js';
-      import 'peek://app/components/peek-input.js';
-      import 'peek://app/components/peek-button.js';
-    </script>
+    <!-- Import peek-components used by the Devices panel. External module
+         script — not inline, so no CSP exception needed for this one. -->
+    <script type="module" src="./settings-components.js"></script>
   </head>
   <body>
     <div class="settings-layout">
