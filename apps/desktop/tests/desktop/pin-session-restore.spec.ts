@@ -122,7 +122,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
       windowId,
     );
     await expect
-      .poll(() => app.windows().filter((p) => p.url().includes('spaces/home.html')).length, {
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('spaces/home.html')).length, {
         timeout: 15000,
         message: 'the globally-pinned window never closed — restore would be unfalsifiable',
       })

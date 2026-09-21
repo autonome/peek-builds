@@ -72,7 +72,8 @@
       "manage": true
     },
     "commands": true,
-    "settings": { "readForeign": ["space-workspaces"] }
+    "settings": { "readForeign": ["space-workspaces"] },
+    "session": true
   },
   "commands": [
     {
