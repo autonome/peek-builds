@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 3,
+  "id": "second-worker",
+  "name": "Second Worker",
+  "tiles": [],
+  "worker": {
+    "url": "worker.js",
+    "entry": "second",
+    "schedule": "every 500ms, twice"
+  },
+  "capabilities": {
+    "datastore": {},
+    "network": { "domains": ["allowed.example"] }
+  }
+}

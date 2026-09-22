@@ -16,9 +16,11 @@ file to copy.
 
 **Sourcing.** Claims about platforms either point at `docs/workers-design.md` §10 — whose numbers
 were fetched 2026-08-18 and carry their URLs there — or are fetched fresh for this document on
-**2026-09-16** and carry a URL and the page's own last-updated date where it publishes one.
-Anything not established either way is marked **unverified** and named as such rather than
-smoothed over.
+**2026-09-16** and carry a URL and the page's own last-updated date where it publishes one. One
+claim (§5.5, the workerd alarm restart) is neither: it was measured directly on **2026-09-22**
+against a real `workerd` process rather than read off a page, and is cited by that date and the
+`workerd` version used rather than a URL. Anything not established either way is marked
+**unverified** and named as such rather than smoothed over.
 
 ## Contents
 
@@ -406,6 +408,37 @@ right shape for a proof and the wrong one for a fleet. Against §4.4:
 So: six of eleven, and the five missing ones are the five that need a runtime rather than a script.
 That is the honest measure of how far a worker has actually got.
 
+### 4.7 `tools/second-worker`, read as the next implementation
+
+`tools/second-worker` (this branch) is the case §8 argues for: not a bigger worker, but
+`hello-worker`'s shape extended with a manifest that denies a network domain, a schedule that fires
+twice, and a channel that delivers one command. Its `worker.js` reads `ctx`; its `run.mjs` supplies
+the five operations §4.6 found missing, each in a function named after the operation it implements:
+
+| Operation | In `tools/second-worker/run.mjs` |
+|---|---|
+| `installGlobals` | **Yes.** Sets `globalThis.app` and `globalThis.window.app` before every import — the exact pair §4.4's own comment names as required. |
+| `ensureSchedule` / `cancelSchedule` | **Yes, non-durably.** An in-process `setInterval` standing in for the "resident supervisor" §5.1 says a bare Node target needs; it produces two distinct `RunContext`s with two distinct `scheduledFor` values, which is what §4.2 asks of a schedule, but it does not survive the process and proves nothing about restart durability — unlike the workerd alarm measured in §5.5, nothing here is written to disk. |
+| `openChannel` | **Yes, simulated.** A `deliver()` escape hatch stands in for a real inbound transport, matching the honesty `tools/feeds-worker-spike/worker-api.mjs`'s own pubsub comment states about itself: nothing outside the process delivers to it. One command is delivered this way, dispatched through the same `runWorker()` the schedule uses. |
+| `RunContext` | **Yes**, as the second parameter — see the decision below. Exercises `trigger` (branching on `kind`), `deadline` (logged), and `waitUntil` (wraps the command's result publish). `signal` is constructed and passed but not read by the worker or wired into the network guard — both named as gaps in `tools/second-worker/README.md`. |
+| `declares` | **Yes.** A filled-in `AdapterDeclaration` (§4.3), honest about what this script is: `isolation: 'shared-process'`, not `'process-per-run'`, because every run happens in one OS process. |
+| §4.5 fresh module graph | **Verified live, not just claimed.** `worker.js` exports `capturedApi`, captured at its own import time; `runWorker()` compares it against the `api` object it just installed and logs a warning if they differ. Checked by hand during development: removing the cache-busting specifier in `loadWorkerModule()` flips every run after the first to the warning, confirming the check catches the exact failure §4.5 is written against (`docs/workers-design.md` §13.4's `nouns.js` measurement) rather than passing regardless. |
+
+**Decision: `RunContext` is a second parameter to the entry function, not a namespace on `api`.**
+Open question 4 asked this; writing `tools/second-worker/worker.js` settled it, for a reason that
+only surfaced once a worker had to actually read `ctx.trigger` and `ctx.waitUntil`. `api`'s contract
+is presence-means-granted: a namespace exists exactly when the manifest's grant permits it, and
+absence is a `TypeError` at the call site (§2, §7). `ctx`'s fields are not gated by any grant —
+every worker gets a trigger, a deadline and a `waitUntil` regardless of what its manifest declares.
+Folding them into `api` as `api.run.*` would put two different kinds of fact behind one object's
+presence rule: "what this worker may do" and "why this run is happening." `onCommand()` in
+`tools/second-worker/worker.js` makes the distinction concrete — it reads `ctx.trigger.name` and
+`ctx.trigger.resultTopic`, which exist because of *this run's cause*, next to `api.publish`, which
+exists because of the *manifest's grant*. A worker author asking "can I do X" and "why am I running"
+would be asking both of an `api.run.*` object that answers "present" for a different reason each
+time. The second parameter keeps that boundary legible instead of asking one object to mean both
+things. See `tools/second-worker/README.md`'s "What this settles" for the fuller argument.
+
 ---
 
 ## 5. What each target supplies, and what it cannot
@@ -488,18 +521,29 @@ to the Cloudflare network", and Durable Objects "currently will always run local
 (`https://developers.cloudflare.com/workers/local-development/`, last updated Aug 20 2026).
 
 So it is a genuine way to run the Cloudflare adapter on hardware Peek owns, and it is the answer to
-"what if Cloudflare is not acceptable but celld is too alpha". Two honest limits:
+"what if Cloudflare is not acceptable but celld is too alpha". One limit resolved, one standing:
 
-- **The durability of a Durable Object under standalone workerd is unverified.** Nothing fetched
-  states what happens to a DO's storage across a workerd restart, or on a second node. celld exists
-  precisely to supply that (per-cell SQLite replicated to the operator's bucket), which is
-  suggestive but is not evidence about workerd. Since a Peek worker keeps no durable state in the
-  object (§1), the question narrows to whether a *pending alarm* survives a restart — and that is
-  the one thing the contract's `ensureSchedule` actually needs. **Unverified, and it decides
-  whether this target is usable.**
+- **A pending Durable Object alarm survives a standalone workerd restart.** Measured directly,
+  2026-09-22, `workerd` 1.20260922.1 (`npx workerd`, prebuilt Linux binary), against a
+  single-object config with `durableObjectStorage = (localDisk = ...)`: an alarm was set 30 seconds
+  out, the process was killed with `SIGKILL` while it was still pending, restarted immediately, and
+  left completely untouched — no request of any kind — until 26 seconds past the alarm's due time.
+  The first request made after that point read back `alarm()` having already run, timestamped
+  1,790,067,587,294ms — 3ms after the 1,790,067,587,291ms the alarm was originally set for, and
+  strictly before the request that observed it. Because nothing touched the object between the
+  restart and the observation, the alarm did not run lazily in response to being read; `workerd`'s
+  own scheduler tracked and fired it while nothing was asking. The `<uniqueKey>/<id>.sqlite` file
+  the object's storage produces on disk is what makes this possible: the alarm timestamp is part of
+  the durable object's own storage, which `localDisk` writes to a real file, so a restart reads the
+  same file back rather than starting from nothing. This answers the question this document opened
+  with only as far as "one object, one process, one restart" — nothing here tests a second node, a
+  crash mid-write, or many objects, and celld's own replication story (per-cell SQLite mirrored to
+  the operator's bucket) is a different durability mechanism this experiment says nothing about.
+  Within that scope: self-hosting the Cloudflare adapter on a Linux box is a real option for
+  scheduling, not only a development convenience.
 - **"workerd is not a hardened sandbox"**, per its own README, with malicious code requiring "an
   appropriate secure sandbox, such as a virtual machine". So it does not inherit Cloudflare's
-  isolation answer for stage two by running the same code.
+  isolation answer for stage two by running the same code. Unaffected by the measurement above.
 
 It counts as a deployment of the Cloudflare adapter, with its own declaration.
 
@@ -741,7 +785,14 @@ never said no in this worker — and anything at all about a target other than N
 entry function that never touches `window.app`, so §4.5's sharpest requirement is untested by it.
 
 The next case after hello-world is therefore not a bigger worker. It is the same worker with a
-manifest that denies, a schedule that fires twice, and a channel that delivers one command.
+manifest that denies, a schedule that fires twice, and a channel that delivers one command —
+`tools/second-worker` (§4.7). It closes most of that list: assertion 4 (fresh module graph,
+verified live rather than by construction), the network guard actually denying a real fetch attempt
+rather than never being asked to, a schedule producing two distinct `RunContext`s, and one command
+dispatched through a channel with `ctx.waitUntil` used for the result. `tools/second-worker/README.md`
+states what even it does not prove — a target other than one Node process, `ctx.deadline` actually
+biting, `ctx.signal` reaching a network call, and any durability at all for its schedule or channel,
+all of which stay open for whatever exercises a second target.
 
 ---
 
@@ -790,11 +841,11 @@ A design that only lists benefits has not been thought about.
    is exactly stage one and no further. **Settled by:** reading the Workers for Platforms docs and
    pricing against the one-grant-per-worker model.
 
-2. **Whether a pending Durable Object alarm survives a standalone workerd restart.** §5.5. This is
-   the only thing the contract needs from workerd's durability story, and it decides whether
-   self-hosting the Cloudflare adapter is a real option or a development convenience.
-   **Unverified. Settled by:** a ten-minute experiment — set an alarm, restart workerd, see whether
-   it fires.
+2. ~~Whether a pending Durable Object alarm survives a standalone workerd restart.~~ **Settled,
+   2026-09-22 (§5.5): yes.** An alarm set 30 seconds out fired within 3ms of its scheduled time
+   after a `SIGKILL` and restart, with zero requests made to the object between the restart and the
+   observation — so the firing was the runtime's own scheduler, not a side effect of being read.
+   Scope: one object, one process, one restart; a second node and a crash mid-write are untested.
 
 3. **What the Node adapter's resident supervisor actually is.** §5.1 establishes that a wake or a
    command needs a process holding the channel, and that a run needs a fresh module graph. A
@@ -804,12 +855,11 @@ A design that only lists benefits has not been thought about.
    long-running Node process, or something the container adapter shares is undecided, and the
    schedule's durability answer depends on it.
 
-4. **Whether `RunContext` is worth its second parameter.** Every worker written so far takes only
-   `api`. The trigger, the deadline and the abort signal are all real needs — §6.1 needs
-   `scheduledFor` to make retries safe, §6.6 needs the deadline to make the budget visible on
-   unbounded targets — but they could equally hang off `api` as `api.run.*`, which would keep the
-   entry signature at one argument and put the whole surface in one place. **Settled by:** writing
-   the second worker, the one with a schedule.
+4. ~~Whether `RunContext` is worth its second parameter.~~ **Settled (§4.7): yes, as a second
+   parameter, not `api.run.*`.** `api`'s namespaces exist exactly when the manifest's grant permits
+   them; `ctx`'s fields exist on every run regardless of any grant. Folding them together would ask
+   one object's presence to mean two different things. `tools/second-worker/worker.js` is the
+   worker this was settled by.
 
 5. **Whether the shared host is a package or a copy.** §3 depends on the host being one
    implementation. `docs/workers-capabilities.md` §3.1 already commits `resolveCapabilities()` and
