@@ -84,6 +84,13 @@ export interface FeatureListEntry extends FeatureRegistryEntry {
    * cleanly, or hasn't been attempted yet.
    */
   loadError?: string;
+  /**
+   * Tile entry ids that are running right now, derived from the tile
+   * lifecycle FSM by `feature-devtools-target.ts` — per-session and
+   * IPC-only, NEVER persisted to registry.json (same rule as `loadError`,
+   * see module header). Absent when the caller did not ask for liveness.
+   */
+  liveEntries?: string[];
 }
 
 /**
@@ -216,20 +223,31 @@ export function collectLoadErrors(results: FeatureLoadOutcome[]): Map<string, st
  * result — including entries with no cache row, since a manifest-parse
  * failure (the most common load error) is exactly what leaves a feature
  * without one.
+ *
+ * `liveEntries` joins the same way: per-session running-entry ids, also
+ * for entries with no cache row. Omitting the argument leaves the field
+ * absent, so callers that don't ask about liveness are unaffected.
  */
 export function enrichFeatureEntries(
   entries: FeatureRegistryEntry[],
   rows: ManifestCacheRowLike[],
   loadErrors?: Map<string, string>,
+  liveEntries?: Map<string, string[]>,
 ): FeatureListEntry[] {
   const byId = new Map<string, ManifestCacheRowLike>();
   for (const row of rows) byId.set(row.featureId, row);
 
   return entries.map(entry => {
     const loadError = loadErrors?.get(entry.id);
+    const live = liveEntries?.get(entry.id);
 
     const row = byId.get(entry.id);
-    if (!row) return loadError ? { ...entry, loadError } : { ...entry };
+    if (!row) {
+      const bare: FeatureListEntry = { ...entry };
+      if (loadError) bare.loadError = loadError;
+      if (live) bare.liveEntries = live;
+      return bare;
+    }
 
     const commands: FeatureCommandSummary[] = (row.commands ?? []).map(cmd => ({
       name: cmd.name,
@@ -247,6 +265,7 @@ export function enrichFeatureEntries(
     const openCommand = pickOpenCommand(entry.id, row.manifest?.shortname, commands);
     if (openCommand) enriched.openCommand = openCommand;
     if (loadError) enriched.loadError = loadError;
+    if (live) enriched.liveEntries = live;
 
     return enriched;
   });

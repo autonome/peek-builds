@@ -162,6 +162,12 @@ import { checkWindowAllowed } from './tile-window-enforcement.js';
 import { checkFeaturesAllowed, sourceTypeAllowed } from './tile-features-enforcement.js';
 import * as manifestCache from './manifest-cache.js';
 import { enrichFeatureEntries } from './feature-list-entries.js';
+import { getState as getTileEntryState } from './tile-lifecycle.js';
+import {
+  liveDevtoolsEntries,
+  pickDevtoolsEntries,
+  type LiveEntriesResult,
+} from './feature-devtools-target.js';
 import { checkSettingsForeignAllowed } from './tile-settings-foreign-enforcement.js';
 import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
@@ -214,6 +220,37 @@ import {
   restoreSessionSnapshot,
   getSessionSnapshotInfo,
 } from './session.js';
+
+/**
+ * Which of a feature's declared tile entries are running right now.
+ *
+ * The single derived answer to "is this feature running", read from the
+ * lifecycle FSM plus the tile window map. Both the devtools-open handler
+ * and the feature list go through it, so the card's enabled state and the
+ * handler's verdict cannot disagree.
+ */
+function featureEntryLiveness(featureId: string): LiveEntriesResult {
+  let entryIds: string[] = [];
+  try {
+    const tiles = (manifestCache.get(featureId)?.manifest as
+      { tiles?: Array<{ id?: string }> } | null | undefined)?.tiles;
+    if (Array.isArray(tiles)) {
+      entryIds = tiles
+        .map(tile => tile?.id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    }
+  } catch (err) {
+    DEBUG && console.warn('[featureEntryLiveness] manifest-cache unavailable:', err);
+  }
+
+  return liveDevtoolsEntries(entryIds, entryId => {
+    const win = getTileWindow(featureId, entryId);
+    return {
+      state: getTileEntryState(featureId, entryId),
+      hasWindow: !!win && !win.isDestroyed(),
+    };
+  });
+}
 
 // Re-export for test access — keeps the public enforcement API on tile-ipc.
 export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
@@ -1322,7 +1359,15 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       DEBUG && console.warn('[tile:features:list] manifest-cache unavailable:', err);
     }
-    const entries = enrichFeatureEntries(visible, rows, getFeatureLoadErrors());
+    // Per-entry running state, from the same derivation the devtools-open
+    // handler uses — so a card's DevTools button is enabled exactly when
+    // that handler would find something to attach to.
+    const liveEntries = new Map<string, string[]>();
+    for (const feature of visible) {
+      liveEntries.set(feature.id, featureEntryLiveness(feature.id).live);
+    }
+
+    const entries = enrichFeatureEntries(visible, rows, getFeatureLoadErrors(), liveEntries);
     return { entries };
   });
 
@@ -2385,15 +2430,31 @@ export function registerTileIpcHandlers(): void {
     }
 
     if (!args.featureId) return { error: 'featureId is required' };
-    const entryId = args.entryId || 'background';
 
     try {
-      const win = getTileWindow(args.featureId, entryId);
-      if (win && !win.isDestroyed()) {
-        win.webContents.openDevTools({ mode: 'detach' });
-        return { success: true, message: `Opened DevTools for ${args.featureId}:${entryId}` };
+      // Authoritative path: the lifecycle FSM says which entries are running
+      // and the window map says which of those can actually be attached to.
+      const { live, drift } = featureEntryLiveness(args.featureId);
+      const picked = pickDevtoolsEntries(args.entryId, live, drift, args.featureId);
+
+      if (live.length > 0) {
+        if (!picked.entries) return { error: picked.error };
+        const attached: string[] = [];
+        for (const pickedEntryId of picked.entries) {
+          const win = getTileWindow(args.featureId, pickedEntryId);
+          if (win && !win.isDestroyed()) {
+            win.webContents.openDevTools({ mode: 'detach' });
+            attached.push(`${args.featureId}:${pickedEntryId}`);
+          }
+        }
+        if (attached.length > 0) {
+          return { success: true, message: `Opened DevTools for ${attached.join(', ')}` };
+        }
       }
 
+      // Fallback: webview-hosted tile contexts (HUD widgets, page-canvas
+      // guests) never appear in the tile window map, so a URL scan is their
+      // only route. Reached only when the map yielded nothing to attach to.
       const urlPrefix = `peek://${args.featureId}/`;
       const allContents = webContents.getAllWebContents();
       let opened = 0;
@@ -2404,6 +2465,8 @@ export function registerTileIpcHandlers(): void {
         }
       }
       if (opened === 0) {
+        // Every matching webContents, not just the first: a feature hosted in
+        // several subframes has several contexts worth opening.
         for (const wc of allContents) {
           try {
             const mainFrame = wc.mainFrame;
@@ -2417,12 +2480,11 @@ export function registerTileIpcHandlers(): void {
           } catch {
             // ignore inaccessible webContents
           }
-          if (opened > 0) break;
         }
       }
 
       if (opened === 0) {
-        return { error: `No active tile found for ${args.featureId}:${entryId}. The feature may not be loaded yet.` };
+        return { error: picked.error ?? `No active tile found for ${args.featureId}. The feature may not be loaded yet.` };
       }
       return { success: true, message: `Opened DevTools for ${opened} context(s)` };
     } catch (err) {
