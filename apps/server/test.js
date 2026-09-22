@@ -1467,24 +1467,6 @@ describe("Users Module Tests", () => {
     });
   });
 
-  describe("regenerateApiKey", () => {
-    it("should generate new API key for existing user", () => {
-      const { apiKey: oldKey } = users.createUser("regen");
-      const { apiKey: newKey } = users.regenerateApiKey("regen");
-
-      assert.notStrictEqual(oldKey, newKey);
-      assert.strictEqual(users.getUserIdFromApiKey(oldKey), null);
-      assert.strictEqual(users.getUserIdFromApiKey(newKey), "regen");
-    });
-
-    it("should reject non-existent user", () => {
-      assert.throws(
-        () => users.regenerateApiKey("nonexistent"),
-        /does not exist/
-      );
-    });
-  });
-
   describe("hashApiKey", () => {
     it("should produce consistent hashes", () => {
       const hash1 = users.hashApiKey("test-key");
@@ -1556,14 +1538,11 @@ describe("Devices Module Tests", () => {
       assert.strictEqual(users.resolveDevice(null), null);
     });
 
-    it("should fall back to a legacy users-table key (pre-migration)", () => {
-      // A key that only lives in the users table (no device row) still
-      // authenticates, but without a device identity.
+    it("should reject a legacy users-table-only key (no device row)", () => {
+      // A key that only lives in the users table (never enrolled as a
+      // device) no longer authenticates — the shared-key fallback is gone.
       const { apiKey } = users.createUser("legacyuser");
-      const cred = users.resolveDevice(apiKey);
-      assert.strictEqual(cred.userId, "legacyuser");
-      assert.strictEqual(cred.deviceId, null);
-      assert.strictEqual(cred.legacy, true);
+      assert.strictEqual(users.resolveDevice(apiKey), null);
     });
 
     it("should bump last_seen_at on a successful resolve", () => {
@@ -2381,8 +2360,11 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   function authHeaders() {
@@ -2548,8 +2530,11 @@ describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPE
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   function authHeaders() {
@@ -2638,8 +2623,11 @@ describe("POST /items/batch — batched item push", () => {
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   function authHeaders() {
@@ -2762,8 +2750,11 @@ describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () =>
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   function authHeaders() {
@@ -2920,8 +2911,11 @@ describe("Tag Sync Routes (POST /tags, GET /tags/since/:timestamp)", () => {
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   function authHeaders() {
@@ -5000,8 +4994,11 @@ describe("Paged sync pulls (limit + cursor on the three `since` routes)", () => 
     users = require("./users");
     ({ app } = require("./index"));
 
-    const result = users.createUser(TEST_USER);
-    apiKey = result.apiKey;
+    users.createUser(TEST_USER);
+    // The real app authenticates through resolveDevice(), which only matches
+    // an enrolled device key (see users.js resolveDevice()) — mint one here
+    // rather than using the raw users.api_key_hash key directly.
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
   });
 
   after(() => {

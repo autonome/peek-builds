@@ -184,33 +184,13 @@ function listUsers() {
 /**
  * Whether a user id names a real, registered user. restore.js checks this
  * before joining userId unsanitized into a filesystem path (getUserBackupDir,
- * db.getProfileDir) — the same shape of check createUser()/regenerateApiKey()
- * already do inline, pulled out here so a caller that only needs the
- * yes/no doesn't have to duplicate the query.
+ * db.getProfileDir) — the same shape of check createUser() already does
+ * inline, pulled out here so a caller that only needs the yes/no doesn't
+ * have to duplicate the query.
  */
 function userExists(userId) {
   const db = getSystemDb();
   return !!db.get("SELECT id FROM users WHERE id = ?", [userId]);
-}
-
-/**
- * Regenerate API key for existing user.
- * Returns new API key (only time it's available).
- */
-function regenerateApiKey(userId) {
-  const db = getSystemDb();
-
-  const existing = db.get("SELECT id FROM users WHERE id = ?", [userId]);
-  if (!existing) {
-    throw new Error(`User '${userId}' does not exist`);
-  }
-
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
-
-  db.run("UPDATE users SET api_key_hash = ? WHERE id = ?", [apiKeyHash, userId]);
-
-  return { userId, apiKey };
 }
 
 /**
@@ -301,8 +281,6 @@ function createDeviceWithKey(userId, label, existingKey) {
  * Returns:
  *   { userId, deviceId, label }            — active device credential
  *   { revoked: true }                      — key matches a REVOKED device (reject)
- *   { userId, deviceId: null, legacy: true } — key matches only the legacy
- *                                              users.api_key_hash (pre-migration safety net)
  *   null                                   — no match (reject)
  *
  * On a successful active-device match, last_seen_at is bumped (cheap audit).
@@ -330,14 +308,6 @@ function resolveDevice(apiKey) {
       device.id,
     ]);
     return { userId: device.user_id, deviceId: device.id, label: device.label };
-  }
-
-  // Pre-migration safety net: key may still live only in the users table
-  // (migrateLegacyKeysToDevices not yet run, or single-user bootstrap). Accept
-  // it but without a device identity.
-  const userId = getUserIdFromApiKey(apiKey);
-  if (userId) {
-    return { userId, deviceId: null, legacy: true };
   }
 
   return null;
@@ -991,7 +961,6 @@ module.exports = {
   deleteUser,
   listUsers,
   userExists,
-  regenerateApiKey,
   closeSystemDb,
   // Device management
   createDevice,

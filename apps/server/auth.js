@@ -131,8 +131,6 @@ function multiUserMiddleware() {
     }
 
     c.set("userId", cred.userId);
-    // deviceId is null only for a pre-migration legacy-key match; downstream
-    // attribution treats that as an empty origin.
     c.set("deviceId", cred.deviceId || "");
     return next();
   };
