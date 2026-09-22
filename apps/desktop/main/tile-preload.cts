@@ -2144,10 +2144,11 @@ function buildAPI(): Record<string, unknown> {
   // session methods to this object; never re-assign `api.session`.
   //
   // The methods do NOT share a gate:
-  //   - `saveWorkspaceSnapshot` / `restoreWorkspaceSnapshot` require the
-  //     `session` capability. Used by features/spaces and features/groups to
-  //     persist/reopen a named workspace's window layout through the general
-  //     session-snapshot pipeline (`main/session.ts`, keyed by workspace id).
+  //   - `saveWorkspaceSnapshot` / `restoreWorkspaceSnapshot` /
+  //     `getWorkspaceSnapshotInfo` require the `session` capability. Used by
+  //     features/spaces and features/groups to persist/reopen/inspect a
+  //     named workspace's window layout through the general session-snapshot
+  //     pipeline (`main/session.ts`, keyed by workspace id).
   //   - `save` / `restoreInteractive` / `reopenLastClosed` are
   //     trustedBuiltin only, consumed by the core background renderer
   //     (renderer/index.js).
@@ -2175,6 +2176,15 @@ function buildAPI(): Record<string, unknown> {
         return Promise.reject(new Error('[tile-preload] api.session.restoreWorkspaceSnapshot requires the session capability'));
       }
       return ipcRenderer.invoke('tile:session:restore-workspace-snapshot', {
+        token: tileToken,
+        key,
+      });
+    },
+    getWorkspaceSnapshotInfo: (key: string) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.getWorkspaceSnapshotInfo requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:get-workspace-snapshot-info', {
         token: tileToken,
         key,
       });

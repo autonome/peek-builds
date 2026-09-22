@@ -50,7 +50,7 @@
       "queryWindows": true
     },
     "commands": true,
-    "settings": { "readForeign": ["session"] },
+    "settings": true,
     "session": true,
     "rules": true
   },

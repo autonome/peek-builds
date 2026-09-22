@@ -308,6 +308,15 @@ async function updateBorderVisibility() {
 
 const DEFAULT_SPACE_NAME = 'default';
 
+// Session-snapshot key for the default workspace — must match the literal
+// `'default'` `main/session.ts` calls `DEFAULT_WORKSPACE_KEY`. The default
+// workspace IS the app's own startup/quit snapshot (spec: "one code path
+// either way"), so its row has to be the same one `session.ts` and
+// `entry.ts`'s quit/boot paths already read and write — never this
+// workspace's own tag id, which would create a second, unsynced "default"
+// snapshot that the ordinary autosave/before-quit save never touches.
+const DEFAULT_WORKSPACE_SNAPSHOT_KEY = 'default';
+
 let defaultSpaceId = null;
 let defaultSpaceReady = null;
 
@@ -361,6 +370,17 @@ async function bootstrapDefaultSpace() {
 // ===== Session Management =====
 
 /**
+ * The session-snapshot key for a workspace tag: the literal
+ * `DEFAULT_WORKSPACE_SNAPSHOT_KEY` for the default workspace (so its row is
+ * the SAME one `session.ts`/`entry.ts`'s quit/boot paths read and write —
+ * requirement 1's "one code path either way"), the tag id for any named
+ * workspace.
+ */
+function workspaceSnapshotKey(tagId) {
+  return tagId === defaultSpaceId ? DEFAULT_WORKSPACE_SNAPSHOT_KEY : tagId;
+}
+
+/**
  * Restore a workspace's saved session, or start it empty. Shared by every
  * path that makes a workspace the active one — entering a named workspace
  * and returning to the default are the same operation with a different
@@ -369,19 +389,19 @@ async function bootstrapDefaultSpace() {
  *
  * A workspace is a named session snapshot: entering it restores that
  * snapshot through the same `restoreSessionSnapshot` pipeline the app's own
- * boot/quit restore uses, keyed by this workspace's tag id
- * (`api.session.restoreWorkspaceSnapshot`) — nav history, scroll, focus and
- * z-order all come back the same way they do across a quit/relaunch, since
- * it is literally the same restore. A workspace with no saved snapshot opens
- * one new empty group (a single window) so the user has somewhere to start —
- * except the default: its empty state is genuinely empty, since it is what
- * is left when nothing else is active, not a workspace being entered for the
- * first time.
+ * boot/quit restore uses, keyed by this workspace's snapshot key
+ * (`api.session.restoreWorkspaceSnapshot`, see `workspaceSnapshotKey()`) —
+ * nav history, scroll, focus and z-order all come back the same way they do
+ * across a quit/relaunch, since it is literally the same restore. A
+ * workspace with no saved snapshot opens one new empty group (a single
+ * window) so the user has somewhere to start — except the default: its
+ * empty state is genuinely empty, since it is what is left when nothing else
+ * is active, not a workspace being entered for the first time.
  */
 async function enterWorkspace(tag, spaceName) {
   const isDefault = tag.id === defaultSpaceId;
 
-  const restoreResult = await api.session.restoreWorkspaceSnapshot(tag.id);
+  const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
   const restored = !!restoreResult?.success && (restoreResult.total ?? 0) > 0;
 
   if (!restored && !isDefault) {
@@ -421,16 +441,17 @@ async function enterWorkspace(tag, spaceName) {
  * the two differ only in whether the panel survives the transition.
  *
  * The save is the same `saveSessionSnapshot` the app's own quit/autosave
- * uses, keyed by the outgoing workspace's tag id and excluding any window
- * pinned across every workspace — it is not scoped to the workspace being
- * left, so it is excluded from both this save and the close sweep below
+ * uses, keyed by the outgoing workspace's snapshot key (see
+ * `workspaceSnapshotKey()`) and excluding any window pinned across every
+ * workspace — it is not scoped to the workspace being left, so it is
+ * excluded from both this save and the close sweep below
  * (`docs/design/window-rules.md` "Persistent windows").
  */
 async function closeCurrentWorkspaceWindows(options = {}) {
   if (!activeSpaceId) return;
 
   try {
-    await api.session.saveWorkspaceSnapshot(activeSpaceId, { excludeGlobalPins: true });
+    await api.session.saveWorkspaceSnapshot(workspaceSnapshotKey(activeSpaceId), { excludeGlobalPins: true });
   } catch (err) {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }

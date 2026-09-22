@@ -490,9 +490,11 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
 /**
  * The one workspace that boot restores and that the ordinary autosave/
  * before-quit/manual save writes to — see `session.ts`'s module doc and
- * `SessionSnapshot.workspaceKey`.
+ * `SessionSnapshot.workspaceKey`. Exported so other main-process modules
+ * (e.g. `tile-ipc.ts`) that need to recognize or exclude the default
+ * workspace's own row reuse this literal instead of re-declaring `'default'`.
  */
-const DEFAULT_WORKSPACE_KEY = 'default';
+export const DEFAULT_WORKSPACE_KEY = 'default';
 
 /**
  * Resolve the `feature_settings` row key for a workspace's snapshot/metadata.
@@ -907,6 +909,18 @@ export async function restoreSessionSnapshot(
   // (features/spaces/background.js) are the SAME call with a different key;
   // only the key changes, one code path either way.
   key: string = DEFAULT_WORKSPACE_KEY,
+  // WORKSPACE-SWITCH signal — true ONLY for the `tile:session:restore-
+  // workspace-snapshot` caller (a live workspace switch, entering or
+  // returning to any workspace including the default). Kept SEPARATE from
+  // `isColdStart` (which is false for a workspace switch AND for the
+  // pre-existing interactive "Restore Previous Session" path,
+  // `tile:session:restore-interactive` — so `!isColdStart` alone can't tell
+  // them apart). A workspace switch never closes a globally-pinned window
+  // (see `serializeSession`'s `excludeGlobalPins`), so it's still open at
+  // restore time and reopening it would duplicate it; interactive restore
+  // has no such guarantee — the user may have closed that window first and
+  // the restore dialog explicitly offers to bring it back.
+  isWorkspaceSwitch: boolean = false,
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
@@ -1043,11 +1057,16 @@ export async function restoreSessionSnapshot(
     }
     // A window pinned across every workspace is never closed by a workspace
     // switch (see `serializeSession`'s `excludeGlobalPins`), so it is still
-    // open at this point in any restore that ISN'T a cold boot — reopening it
-    // here would duplicate it. At cold start nothing is open yet, so a
-    // globally-pinned descriptor (present because the ordinary
-    // autosave/before-quit save never excludes it) restores normally.
-    if (!isColdStart && descriptor.context?.pinScope === 'global') {
+    // open at this point in a workspace-switch restore — reopening it here
+    // would duplicate it. This is narrower than "any non-cold-start restore":
+    // the pre-existing interactive "Restore Previous Session" path
+    // (`tile:session:restore-interactive`) is ALSO non-cold-start but carries
+    // no such guarantee — the user may have closed that pinned window before
+    // asking to restore, and the dialog explicitly offers to bring it back.
+    // Only `isWorkspaceSwitch` (set solely by the workspace-switch caller)
+    // skips it; a plain non-cold-start restore with that flag unset (manual
+    // restore, interactive restore) restores it normally, same as cold start.
+    if (isWorkspaceSwitch && descriptor.context?.pinScope === 'global') {
       DEBUG && console.log(`[session] Skipping already-open cross-workspace pin: ${descriptor.url || '(empty)'}`);
       return false;
     }
@@ -1743,6 +1762,42 @@ export function getSessionSnapshotInfo(): { windowCount: number; savedAt: number
       savedAt: snapshot.createdAt,
       reason: snapshot.reason,
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the bounds/z-order a NAMED workspace's saved snapshot has for each of
+ * its windows, without restoring anything — used by `features/groups/home.js
+ * openGroup()` to reopen a group's windows in their last-saved layout.
+ *
+ * Deliberately refuses `DEFAULT_WORKSPACE_KEY`: this is a narrow read of one
+ * workspace's own row, not a general foreign-settings read. Widening it to
+ * the default key would hand a feature tile the app's own last-quit window
+ * list — exactly what routing this through the general
+ * `tile:settings:get-foreign` surface (gated only per-featureId, not
+ * per-key) would have exposed. Returns `null` for the default key, a
+ * missing/invalid snapshot, or a read error.
+ */
+export function getWorkspaceSnapshotWindowInfo(
+  key: string,
+): { url: string; bounds: { x: number; y: number; width: number; height: number }; zOrder: number }[] | null {
+  if (!key || key === DEFAULT_WORKSPACE_KEY) return null;
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotRowKey(key)) as { value: string } | undefined;
+
+    if (!row?.value) return null;
+
+    const snapshot: SessionSnapshot = JSON.parse(row.value);
+    if (snapshot.version !== 1 || !Array.isArray(snapshot.windows)) return null;
+
+    return snapshot.windows
+      .filter((d) => isValidDescriptor(d) && d.url && d.bounds)
+      .map((d) => ({ url: d.url, bounds: d.bounds, zOrder: d.zOrder ?? 0 }));
   } catch {
     return null;
   }

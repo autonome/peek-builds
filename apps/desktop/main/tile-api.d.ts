@@ -614,6 +614,12 @@ interface TileSession {
    * Requires `session` capability.
    */
   restoreWorkspaceSnapshot(key: string): Promise<{ success: boolean; restored?: number; failed?: number; total?: number; error?: string }>;
+  /**
+   * Read a named workspace's saved window bounds/z-order without restoring
+   * anything — a narrow, workspace-scoped read (never the default workspace's
+   * own row). Requires `session` capability.
+   */
+  getWorkspaceSnapshotInfo(key: string): Promise<{ success: boolean; windows?: { url: string; bounds: { x: number; y: number; width: number; height: number }; zOrder: number }[]; error?: string }>;
   /** Save the full session. Requires trustedBuiltin. */
   save(): Promise<{ success: boolean; error?: string }>;
   /** Restore the saved session interactively. Requires trustedBuiltin. */

@@ -4148,8 +4148,43 @@ export function registerTileIpcHandlers(): void {
       // launch" preference is a boot-time setting; the user just explicitly
       // asked to enter this workspace, so it always restores. `isColdStart`
       // is false: this is a live in-app switch, never the app's own boot.
-      const result = await restoreSessionSnapshot({}, undefined, true, false, args.key);
+      // `isWorkspaceSwitch: true` is what lets `restoreSessionSnapshot` skip
+      // an already-open globally-pinned window here without also skipping it
+      // on the unrelated interactive "Restore Previous Session" path (which
+      // calls this same function with that flag left false).
+      const result = await restoreSessionSnapshot({}, undefined, true, false, args.key, true);
       return { success: true, ...result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // Read a named workspace's saved window bounds/z-order without restoring
+  // anything — the narrow substitute for the foreign-settings read
+  // features/groups `openGroup()` used to make (see
+  // `tile-session-enforcement.ts`'s `get-workspace-snapshot-info` doc for
+  // why: `tile:settings:get-foreign` allowlists per-featureId, not per-key,
+  // so a `readForeign: ["session"]` grant would also expose the app's own
+  // default-workspace snapshot and crash-recovery metadata).
+  registerTileIpc('tile:session:get-workspace-snapshot-info', { mode: 'handle' }, async (event, args: {
+    token: string;
+    key: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkSessionAllowed(grant, 'get-workspace-snapshot-info');
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:get-workspace-snapshot-info', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+
+    try {
+      const { getWorkspaceSnapshotWindowInfo } = await import('./session.js');
+      const windows = getWorkspaceSnapshotWindowInfo(args.key);
+      return { success: true, windows: windows ?? [] };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

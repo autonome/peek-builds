@@ -9,12 +9,14 @@
  * these checks can be unit-tested without pulling in `tile-ipc`'s
  * Electron dependencies.
  *
- * Current surface: `save-workspace-snapshot` and `restore-workspace-snapshot`,
- * used by features/spaces and features/groups to persist/reopen a named
- * workspace's window layout through the general session-snapshot pipeline
- * (`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, keyed by
- * workspace id). The capability is declared as `session: true` in the
- * manifest (boolean only; no sub-flags yet).
+ * Current surface: `save-workspace-snapshot`, `restore-workspace-snapshot`,
+ * and `get-workspace-snapshot-info`, used by features/spaces and
+ * features/groups to persist/reopen/inspect a named workspace's window
+ * layout through the general session-snapshot pipeline (`main/session.ts
+ * saveSessionSnapshot` / `restoreSessionSnapshot` /
+ * `getWorkspaceSnapshotWindowInfo`, keyed by workspace id). The capability is
+ * declared as `session: true` in the manifest (boolean only; no sub-flags
+ * yet).
  */
 
 import type { CapabilityGrant } from './tile-manifest.js';
@@ -29,8 +31,15 @@ import type { CapabilityGrant } from './tile-manifest.js';
  * - `restore-workspace-snapshot` — reopen a named workspace's saved layout
  *   through the same session-restore pipeline the app's own boot/quit
  *   snapshot uses. Used by features/spaces when entering a workspace.
+ * - `get-workspace-snapshot-info` — read a named workspace's saved
+ *   bounds/z-order without restoring anything. Used by features/groups
+ *   `openGroup()` to reopen a group's windows in their last-saved layout —
+ *   a narrow, workspace-scoped substitute for the foreign-settings read it
+ *   used to make (`tile:settings:get-foreign` has no per-key scoping, so a
+ *   `readForeign: ["session"]` grant would also expose the app's own
+ *   default-workspace snapshot and crash-recovery metadata).
  */
-export type SessionOp = 'save-workspace-snapshot' | 'restore-workspace-snapshot';
+export type SessionOp = 'save-workspace-snapshot' | 'restore-workspace-snapshot' | 'get-workspace-snapshot-info';
 
 export type SessionCheckResult =
   | { ok: true }
@@ -59,7 +68,8 @@ export function checkSessionAllowed(
 
   switch (op) {
     case 'save-workspace-snapshot':
-    case 'restore-workspace-snapshot': {
+    case 'restore-workspace-snapshot':
+    case 'get-workspace-snapshot-info': {
       return { ok: true };
     }
 

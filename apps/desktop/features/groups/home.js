@@ -713,30 +713,31 @@ const openGroup = async (groupName) => {
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
   try {
-    // `snapshot:<id>` rows are written by `session.ts saveSessionSnapshot()`
-    // under featureId `session`, keyed by workspace id — the same general
-    // session-snapshot pipeline the app's own boot/quit save uses.
-    const wsResult = api.settings.getExtKey
-      ? await api.settings.getExtKey('session', 'snapshot:' + tag.id)
+    // A named workspace's saved bounds/z-order, read through the narrow
+    // `session` capability (never the app's own default-workspace snapshot
+    // — see `main/session.ts getWorkspaceSnapshotWindowInfo()`), not the
+    // general foreign-settings read: `tile:settings:get-foreign` allowlists
+    // per-featureId, not per-key, so reading `session`'s `snapshot:<id>` rows
+    // that way would also expose the literal `snapshot`/`metadata` rows —
+    // the whole app's last-quit window list and crash-recovery bookkeeping.
+    const wsResult = api.session?.getWorkspaceSnapshotInfo
+      ? await api.session.getWorkspaceSnapshotInfo(tag.id)
       : { success: false };
-    if (wsResult.success && wsResult.data) {
-      const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
-      if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
-        savedBoundsMap = new Map();
-        for (const w of snapshot.windows) {
-          if (w.url && w.bounds) {
-            savedBoundsMap.set(normalizeUrlForCompare(w.url), { bounds: w.bounds, zOrder: w.zOrder ?? 0 });
-          }
+    if (wsResult.success && Array.isArray(wsResult.windows) && wsResult.windows.length > 0) {
+      savedBoundsMap = new Map();
+      for (const w of wsResult.windows) {
+        if (w.url && w.bounds) {
+          savedBoundsMap.set(normalizeUrlForCompare(w.url), { bounds: w.bounds, zOrder: w.zOrder ?? 0 });
         }
-        sortedUrlItems = [...urlItems].sort((a, b) => {
-          const aPinned = pinnedSet.has(a.id) ? 1 : 0;
-          const bPinned = pinnedSet.has(b.id) ? 1 : 0;
-          if (aPinned !== bPinned) return bPinned - aPinned;
-          const aZ = savedBoundsMap.get(normalizeUrlForCompare(a._openUrl))?.zOrder ?? 0;
-          const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
-          return bZ - aZ;
-        });
       }
+      sortedUrlItems = [...urlItems].sort((a, b) => {
+        const aPinned = pinnedSet.has(a.id) ? 1 : 0;
+        const bPinned = pinnedSet.has(b.id) ? 1 : 0;
+        if (aPinned !== bPinned) return bPinned - aPinned;
+        const aZ = savedBoundsMap.get(normalizeUrlForCompare(a._openUrl))?.zOrder ?? 0;
+        const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
+        return bZ - aZ;
+      });
     }
   } catch {
   }

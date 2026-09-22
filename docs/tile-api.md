@@ -263,6 +263,7 @@ See `tile-features-strict.test.ts` for full gate matrix.
 |---|---|
 | `api.session.saveWorkspaceSnapshot(key, opts?)` | Persist the current window layout under a named workspace key |
 | `api.session.restoreWorkspaceSnapshot(key)` | Reopen a named workspace's saved window layout |
+| `api.session.getWorkspaceSnapshotInfo(key)` | Read a named workspace's saved window bounds/z-order without restoring anything (refuses the default workspace's own key) |
 
 ---
 
