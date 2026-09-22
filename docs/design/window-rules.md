@@ -290,6 +290,45 @@ pinned window — a workspace-pinned or global-HUD window, application-role cont
 reactivates. There is no picture-in-picture case where a pinned window stays visible while another
 app is frontmost.
 
+### Workspace membership
+
+**Every content window on screen belongs to exactly one workspace** (`CONTENT_ROLES`: content,
+child-content, workspace), whatever route opened it — the command palette, a click inside a
+space's own item list, a page's own popup, a declarative `window` command such as `open spaces`,
+a restored snapshot row. The default workspace is a workspace like any other for this purpose:
+when no named workspace is active, new windows belong to the default. A window belongs to the
+workspace that was active when it opened and keeps that membership until it closes (or is
+re-pinned to another workspace — "Pinning and unpinning" above); it is closed by the per-workspace
+sweep when its workspace is left and comes back from that workspace's saved row when the
+workspace is re-entered. A global HUD window is the one exception, as above: it belongs to none.
+
+Membership is still not a window-kernel fact. It is the `mode=space` context row on the window
+(`spaceId` = the workspace's tag id), written **at open time by the main process** — before the
+page loads, so the page reads its own membership at load and the session projection files the
+window under its workspace from its first autosave. The write happens in one place every
+construction path calls, `ipc.ts inheritedModeForNewWindow`: an explicit `spaceMode` option wins,
+else the opener's own space/group membership, else the declared default for new windows
+(`datastore.ts setContextDefault('mode', …)`, `api.context.setDefault`), which the Spaces feature
+declares as the active workspace at bootstrap and at the top of every workspace entry — before
+that workspace's snapshot is restored, so a restored row without a saved mode lands in the
+workspace being entered, never the one being left.
+
+Two kinds of window take no default, on purpose:
+
+- **Not content** — satellites (palette, switcher, overlay), quick-views (peeks, slides), and
+  feature chrome (the screen border, the workspace panel). They belong to no workspace and are
+  never swept by one; the panel and border are closed by the feature itself.
+- **Not on screen** — a window born unshown (`show: false`): the pre-warmed settings singleton, a
+  helper page, a snapshot row mid-restore. It is not something the user has open in this
+  workspace; sweeping it, or saving it as workspace content, would be wrong. A restored row
+  carries its own saved membership instead.
+
+Failure this forbids: a window that survives every switch and belongs nowhere. Before this rule a
+palette-opened page, or the browse-all Spaces page, carried no membership, stayed visible in every
+workspace, hid the border whenever it was focused (the border follows the focused window's
+membership), and — for the browse-all page — was duplicated on every return to the default, which
+restored the saved copy beside the one that never left (`specs/spaces-window-locking-regressions.md`).
+
 ## Dismissal and Escape
 
 - **D1 one-escape-rule.** Escape closes the topmost visible Escape-closable window; no window kind gets an Escape rule of its own.

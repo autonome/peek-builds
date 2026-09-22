@@ -787,13 +787,19 @@ Measured after the fix: the spec 5/5 three runs in a row, two of them with the r
 (`native-focus-arrived id=<anchor>` before `hybrid:first-frame`), the dismissal riding the
 `WindowContentOrderable` transition.
 
-**Returning to the default space duplicates the browse-all Spaces window, open (found
-2026-09-22).** Found while fixing `spaces-workspace-switch-regressions`; not one of that spec's
-four symptoms and not fixed there. The default space's row saves every window on screen when a
-switch away happens, but the switch-back window sweep in `apps/desktop/features/spaces/
-background.js` closes only windows tagged `mode=default`, so a previously-open browse-all Spaces
-window (which carries no `mode` tag) survives the sweep and a fresh one opens alongside it on
-return.
+**Returning to the default space duplicates the browse-all Spaces window, fixed (found
+2026-09-22, fixed 2026-09-22 in `spaces-window-locking-regressions`).** Found while fixing
+`spaces-workspace-switch-regressions`; not one of that spec's four symptoms and not fixed there.
+The default space's row saves every window on screen when a switch away happens, but the
+switch-back window sweep in `apps/desktop/features/spaces/background.js` closed only windows
+tagged with the workspace, and a browse-all Spaces window opened by its declarative `open spaces`
+command carried no `mode` tag — so it survived the sweep and a fresh one opened alongside it on
+return. One instance of the general gap: a window belonged to a workspace only when opened with
+an explicit `spaceMode` or from an opener that had one. Resolved as a consequence of the general
+rule, not a special case — every content window opened while a workspace is active is tagged at
+open time in the main process (`ipc.ts inheritedModeForNewWindow`, `docs/design/window-rules.md`
+"Workspace membership"), so the browse-all page is swept on the switch away and restored once on
+return. Confirmed live: two alpha round trips from the default left exactly one browse-all window.
 
 **A single border flicker when the workspace panel first appears, open (found 2026-09-22).**
 Found by trace during the same track — not a symptom of it, not a loop (see the switch-space
