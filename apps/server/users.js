@@ -522,10 +522,18 @@ function tooManyAttemptsError(message) {
 // opportunistically (on every mint and every exchange — both rare, and the
 // table never holds more than a handful of rows) rather than on a timer,
 // since there's no background scheduler in this process.
-function pruneEnrolmentCodes(db) {
-  db.run("DELETE FROM enrolment_codes WHERE used_at IS NOT NULL OR expires_at < ?", [
-    new Date().toISOString(),
-  ]);
+//
+// `keepHash`, when given, spares that one code_hash from this sweep even if
+// it now qualifies (used_at just got set). Without it, a duplicate exchange
+// of the code a caller just redeemed — a double-click, a client retrying a
+// dropped response — would find no row at all and get the generic "Invalid
+// enrolment code" instead of the accurate "already used". The spared row is
+// still swept normally on the next unrelated mint or exchange.
+function pruneEnrolmentCodes(db, keepHash) {
+  db.run(
+    "DELETE FROM enrolment_codes WHERE (used_at IS NOT NULL OR expires_at < ?) AND code_hash != ?",
+    [new Date().toISOString(), keepHash || ""]
+  );
 }
 
 /**
@@ -596,31 +604,40 @@ function exchangeEnrolmentCode(code, label, requesterIp) {
 
   const db = getSystemDb();
   const codeHash = hashApiKey(normalizeEnrolmentCode(code));
-  const row = db.get(
-    "SELECT id, user_id, expires_at, used_at FROM enrolment_codes WHERE code_hash = ?",
-    [codeHash]
-  );
-  if (!row) {
-    throw new Error("Invalid enrolment code");
-  }
-  if (row.used_at) {
-    throw new Error("Enrolment code already used");
-  }
-  if (new Date(row.expires_at).getTime() < Date.now()) {
-    throw new Error("Enrolment code expired");
-  }
-
   const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
-  // Mint the device before burning the code: if createDevice() throws (e.g.
-  // the owning user row was deleted), the code must stay usable for a retry
-  // rather than being permanently spent with no device to show for it.
-  const device = createDevice(row.user_id, deviceLabel);
 
-  db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
-    new Date().toISOString(),
-    row.id,
-  ]);
-  pruneEnrolmentCodes(db);
+  // The check-mint-mark sequence runs as one transaction so two concurrent
+  // exchanges of the same code can't both pass the used/expired check before
+  // either reaches the UPDATE — re-reading the row inside the transaction
+  // (not just before it) is what actually closes that race.
+  const device = db.transaction(() => {
+    const row = db.get(
+      "SELECT id, user_id, expires_at, used_at FROM enrolment_codes WHERE code_hash = ?",
+      [codeHash]
+    );
+    if (!row) {
+      throw new Error("Invalid enrolment code");
+    }
+    if (row.used_at) {
+      throw new Error("Enrolment code already used");
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      throw new Error("Enrolment code expired");
+    }
+
+    // Mint the device before burning the code: if createDevice() throws (e.g.
+    // the owning user row was deleted), the code must stay usable for a retry
+    // rather than being permanently spent with no device to show for it.
+    const minted = createDevice(row.user_id, deviceLabel);
+
+    db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
+      new Date().toISOString(),
+      row.id,
+    ]);
+
+    return minted;
+  });
+  pruneEnrolmentCodes(db, codeHash);
 
   return device;
 }

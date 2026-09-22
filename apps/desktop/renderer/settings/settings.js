@@ -2232,7 +2232,11 @@ const renderSyncSettings = async () => {
       const newKey = result.data?.apiKey || '';
       config.apiKey = newKey;
       apiKeyInput.value = newKey;
-      await api.sync.setConfig({ apiKey: newKey });
+      const persistResult = await api.sync.setConfig({ apiKey: newKey });
+      if (!persistResult.success) {
+        showEnrolError(persistResult.error || 'Enrolled, but failed to save the new key. Try again.');
+        return;
+      }
       enrolInput.value = '';
       enrolLabelInput.value = '';
       enrolStatus.textContent = 'Enrolled — this device now has its own key.';

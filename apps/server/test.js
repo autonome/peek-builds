@@ -3772,6 +3772,19 @@ describe("Enrolment Code Routes Tests", () => {
     assert.strictEqual(second.status, 400);
   });
 
+  it("redeeming the same code twice back-to-back only allows the first", async () => {
+    // Sequential, single-process: exercises users.exchangeEnrolmentCode
+    // directly (bypassing HTTP) so the second call's thrown error is
+    // observable, not just the route's 400 status.
+    const created = await (await mintCode()).json();
+
+    users.exchangeEnrolmentCode(created.code, "first device");
+    assert.throws(
+      () => users.exchangeEnrolmentCode(created.code, "second device"),
+      /already used/
+    );
+  });
+
   it("refuses an expired code", async () => {
     const created = await (await mintCode()).json();
 

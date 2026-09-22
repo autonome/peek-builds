@@ -5426,12 +5426,22 @@ export function registerTileIpcHandlers(): void {
   // `current: true`. The now-dead key is dropped here, in the main process,
   // rather than left for the renderer to clean up: whatever the panel does
   // next, no later sync runs with a key the server will refuse.
+  //
+  // `current` is set from the requesting key's own device id, independent of
+  // whether THIS call performed the revoke — a retry against an
+  // already-revoked own device (lost response, two tabs both firing revoke)
+  // comes back `{ revoked: false, current: true }`, not `revoked: true`. The
+  // local key must still go: the device is revoked server-side either way,
+  // and only `current` tells us it's ours. Gating on `result.revoked` too
+  // would leave a dead key on disk for exactly the retry case this exists to
+  // handle. A different device's revoke (or a failed/errored call, which
+  // throws before `result` exists) never has `current: true`.
   registerTrustedSyncIpc<{ token: string; deviceId: string }>(
     'tile:sync:revoke-device',
     { requiresConfig: true },
     async (args, config) => {
       const result = await revokeDevice(config.serverUrl, config.apiKey, args.deviceId);
-      if (result.revoked && result.current) {
+      if (result.current) {
         clearSyncCredentials();
       }
       return result;
