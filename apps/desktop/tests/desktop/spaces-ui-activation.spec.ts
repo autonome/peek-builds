@@ -21,9 +21,22 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { waitForPanelCommandsLoaded } from '../helpers/window-utils';
 
 let app: DesktopApp;
 let bgWindow: Page;
+
+// How the core opens the command palette (same options
+// cmd-enter-runs-suggestion.spec.ts uses).
+const PANEL_OPEN_OPTS = {
+  modal: true,
+  width: 600,
+  height: 50,
+  frame: false,
+  transparent: true,
+  alwaysOnTop: true,
+  center: true,
+};
 
 async function runCommand(name: string, search = ''): Promise<any> {
   return bgWindow.evaluate(
@@ -164,6 +177,83 @@ test.describe('spaces ui activation @desktop', () => {
     await switchTo(alpha, alphaId, null, 'first');
     await switchTo(beta, betaId, alphaId, 'second');
     await switchTo(alpha, alphaId, betaId, 'third');
+
+    await runCommand('close space');
+  });
+
+  test('`switch space` typed into the command palette works twice in a row', async () => {
+    // The path the report came from: the palette, not a bare publish. The
+    // palette stays in an "executing" state until the command's result
+    // arrives on its result topic and keeps its window alive (hidden)
+    // between invocations, so a second run exercises state the bare-publish
+    // test above never touches.
+    const one = 'ui-palette-one';
+    const two = 'ui-palette-two';
+    const oneId = await spaceTagId(one);
+    const twoId = await spaceTagId(two);
+
+    const runFromPalette = async (name: string) => {
+      const openResult = await bgWindow.evaluate(async (opts) => {
+        return await (window as unknown as { app: any }).app.window.open('peek://cmd/panel.html', opts);
+      }, PANEL_OPEN_OPTS);
+      expect(openResult?.success, `palette open failed: ${JSON.stringify(openResult)}`).toBe(true);
+      const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+      await cmdWindow.waitForSelector('input', { timeout: 5000 });
+      await waitForPanelCommandsLoaded(cmdWindow, 10000);
+      await cmdWindow.waitForFunction(
+        () => !!(window as any)._cmdState?.commands?.['switch space'],
+        undefined,
+        { timeout: 10000 },
+      );
+      await cmdWindow.fill('input', `switch space ${name}`);
+      await cmdWindow.waitForFunction(
+        () => {
+          const s = (window as any)._cmdState;
+          return s?.matches?.[s.matchIndex] === 'switch space';
+        },
+        undefined,
+        { timeout: 10000 },
+      );
+      await cmdWindow.keyboard.press('Enter');
+    };
+
+    await runFromPalette(one);
+    await expect
+      .poll(async () => (await windowsInSpace(oneId)).length, {
+        timeout: 15000,
+        message: `palette run 1: no window entered space "${one}"`,
+      })
+      .toBeGreaterThan(0);
+    const panelPage = await app.getWindow('spaces/panel.html', 15000);
+    await expect(panelPage.locator('#panel-name')).toHaveText(one, { timeout: 15000 });
+
+    // The screen border must settle to ONE window. The pre-fix defect was a
+    // self-sustaining loop — a new border every ~100 ms, each dismissing the
+    // previous — that also dismissed the palette on its next open; a border
+    // count that keeps changing across a short window is that loop.
+    const borderCount = () =>
+      app.windows().filter((p) => !p.isClosed() && p.url().includes('spaces/border.html')).length;
+    const samples: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      samples.push(borderCount());
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(
+      samples.every((n) => n <= 1),
+      `more than one screen border was open at once (samples over 1.5 s: ${samples.join(',')})`,
+    ).toBe(true);
+
+    await runFromPalette(two);
+    await expect
+      .poll(async () => (await windowsInSpace(twoId)).length, {
+        timeout: 15000,
+        message: `palette run 2: no window entered space "${two}" — the second palette invocation did nothing`,
+      })
+      .toBeGreaterThan(0);
+    await expect
+      .poll(async () => (await windowsInSpace(oneId)).length, { timeout: 15000 })
+      .toBe(0);
+    await expect(panelPage.locator('#panel-name')).toHaveText(two, { timeout: 15000 });
 
     await runCommand('close space');
   });

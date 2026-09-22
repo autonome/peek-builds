@@ -14,7 +14,15 @@ const registry = new Map<WindowId, WindowOpenPayload>();
 // params is stored by reference — legacy consumers mutate it in place (params.currentUrl, params.x, ...).
 export function setWindowOpenPayload(id: WindowId, source: string, params: Record<string, unknown>): void {
   registry.set(id, { source, params });
-  wmLog('open-registry-set', { id, source, key: typeof params.key === 'string' ? params.key : undefined });
+  wmLog('open-registry-set', {
+    id,
+    source,
+    key: typeof params.key === 'string' ? params.key : undefined,
+    role: typeof params.role === 'string' ? params.role : undefined,
+    // The URL as opened, query string dropped: enough to tell one feature
+    // window from another (border vs panel vs home) in a trace.
+    address: typeof params.address === 'string' ? params.address.split('?')[0] : undefined,
+  });
 }
 
 export function getWindowOpenPayload(id: WindowId): WindowOpenPayload | undefined {

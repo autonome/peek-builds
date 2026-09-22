@@ -30,30 +30,69 @@ const resolveSpaceBorderColor = resolveVividColor;
 // The border is a feature-owned overlay window showing a colored border
 // around the screen when a space is active.
 
-let borderWindowId = null;
+// The border has exactly one window at a time, tracked as an explicit state
+// rather than a bare window id:
+//
+//   closed  --showBorder()-->  opening  --open resolved-->  open
+//   open    --hideBorder() / window gone-->  closed
+//
+// `opening` is the state that matters. `showBorder()` is called from several
+// places at once — `enterWorkspace()` directly, and `updateBorderVisibility()`
+// on every `window:focused` / `window:closed` event — and `api.window.open`
+// takes tens of milliseconds to resolve. With only an id to check, every call
+// arriving before the first open resolved saw "no border" and opened another
+// one. That is not just wasteful: the border is a transient overlay, and the
+// window kernel dismisses a transient when a sibling window appears
+// (`window-kernel.ts selectTransientAutoclose`; a border is exempt only once
+// its click-through flag has landed). Each extra border dismissed the one
+// before it, the dismissal's `window:closed` re-ran `updateBorderVisibility()`,
+// which opened yet another border — a self-sustaining loop of one new border
+// every ~100 ms that also dismissed every transient window opened meanwhile,
+// the command palette included, so every command after the first workspace
+// switch appeared to do nothing (specs/spaces-workspace-switch-regressions.md,
+// symptom 3). While `opening`, a show only records the latest color/name to
+// apply when the open resolves, and a hide only records that the window
+// should be closed as soon as it exists.
+const border = {
+  state: 'closed',   // 'closed' | 'opening' | 'open'
+  windowId: null,
+  pendingUpdate: null, // { color, name } received while opening
+  closeRequested: false,
+};
 let borderHideTimer = null;
 const BORDER_HIDE_DELAY_MS = 600;
 
 async function showBorder(color, name) {
   const safeColor = resolveSpaceBorderColor(color, activeSpaceId);
 
-  // If border window exists, just update it
-  if (borderWindowId) {
+  if (border.state === 'opening') {
+    border.pendingUpdate = { color: safeColor, name };
+    border.closeRequested = false;
+    return;
+  }
+
+  if (border.state === 'open') {
     try {
-      const exists = await api.window.exists(borderWindowId);
+      const exists = await api.window.exists(border.windowId);
       if (exists?.exists) {
-        // Update color and name via message
         api.pubsub.publish('spaces:border-update', { color: safeColor, name });
         return;
       }
     } catch { /* window gone */ }
-    borderWindowId = null;
+    // Closed from outside (the kernel dismissed it, or the user closed it).
+    border.state = 'closed';
+    border.windowId = null;
   }
 
-  // Create border overlay window
+  border.state = 'opening';
+  border.pendingUpdate = null;
+  border.closeRequested = false;
   try {
     const displayResult = await api.screen.getPrimaryDisplay();
-    if (!displayResult.success) return;
+    if (!displayResult.success) {
+      border.state = 'closed';
+      return;
+    }
     const { bounds } = displayResult.data;
 
     const borderHtml = `peek://spaces/border.html?color=${encodeURIComponent(safeColor)}&name=${encodeURIComponent(name)}`;
@@ -73,23 +112,45 @@ async function showBorder(color, name) {
       persist: false,
     });
 
-    if (result?.id) {
-      borderWindowId = result.id;
-      await api.window.setIgnoreMouseEvents(borderWindowId, true, true);
-      await api.window.setVisibleOnAllWorkspaces(borderWindowId, true);
+    if (!result?.id) {
+      border.state = 'closed';
+      return;
+    }
+    border.windowId = result.id;
+    border.state = 'open';
+    if (border.closeRequested) {
+      hideBorder();
+      return;
+    }
+    await api.window.setIgnoreMouseEvents(border.windowId, true, true);
+    await api.window.setVisibleOnAllWorkspaces(border.windowId, true);
+    if (border.pendingUpdate) {
+      api.pubsub.publish('spaces:border-update', border.pendingUpdate);
+      border.pendingUpdate = null;
     }
   } catch (err) {
     console.error('[ext:spaces] Failed to create border window:', err);
+    border.state = 'closed';
+    border.windowId = null;
   }
 }
 
 function hideBorder() {
-  if (borderWindowId) {
-    try {
-      api.window.close(borderWindowId);
-    } catch { /* ignore */ }
-    borderWindowId = null;
+  if (border.state === 'opening') {
+    // Honored by showBorder() the moment the open resolves.
+    border.closeRequested = true;
+    border.pendingUpdate = null;
+    return;
   }
+  if (border.windowId) {
+    try {
+      api.window.close(border.windowId);
+    } catch { /* ignore */ }
+  }
+  border.state = 'closed';
+  border.windowId = null;
+  border.pendingUpdate = null;
+  border.closeRequested = false;
 }
 
 function scheduleHideBorder() {
