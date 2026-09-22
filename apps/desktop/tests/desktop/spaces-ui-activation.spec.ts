@@ -124,27 +124,71 @@ test.describe('spaces ui activation @desktop', () => {
     const name = 'ui-enter-space';
     const tagId = await spaceTagId(name);
 
-    // Back to the spaces list (the click above browsed into the item list).
-    await browsePage.evaluate(() => (window as unknown as { showSpaces: () => Promise<void> }).showSpaces());
+    // The browse page above belonged to the default workspace, so activating
+    // a space from it swept it along with the rest of the default
+    // (docs/design/window-rules.md "Workspace membership"). Open a fresh one
+    // — it belongs to the space that is active now and is swept in turn.
+    if (browsePage.isClosed()) {
+      await app.evaluateMain!((_e: unknown) => {
+        (globalThis as any).__peek_test.publishCmdExecute('open spaces');
+      });
+      await expect
+        .poll(
+          () =>
+            app
+              .windows()
+              .filter((p) => !p.isClosed() && p.url().includes('spaces/home.html') && !p.url().includes('spaceId='))
+              .length,
+          { timeout: 15000 },
+        )
+        .toBeGreaterThan(0);
+      browsePage = app
+        .windows()
+        .filter((p) => !p.isClosed() && p.url().includes('spaces/home.html') && !p.url().includes('spaceId='))[0];
+      await browsePage.waitForLoadState('domcontentloaded');
+    } else {
+      // Back to the spaces list (the click above browsed into the item list).
+      await browsePage.evaluate(() => (window as unknown as { showSpaces: () => Promise<void> }).showSpaces());
+    }
     const card = browsePage.locator(`peek-card.space-card[data-tag-id="${tagId}"]`);
     await expect(card).toHaveCount(1, { timeout: 15000 });
 
-    // Select the card the way the keyboard path does (`grid-nav.js
-    // updateSelection` reads `state.selectedIndex`), then press Enter.
-    const index = await browsePage.evaluate((id: string) => {
+    // Select the card the way the keyboard path does: `grid-nav.js
+    // updateSelection` sets `state.selectedIndex` AND focuses that card, so
+    // Enter lands on the card itself. One Enter must mean one activation —
+    // the focused card handles it (`peek-card` emits `card-click`) and the
+    // document-level grid handler must not activate the selection a second
+    // time (a double `switch space` raced two opens of the same space).
+    // (Playwright's own `locator.focus()` does not reach the card's inner
+    // focusable element behind its shadow root — focus the card the way the
+    // page does, through the element's own `focus()`.)
+    const index = await browsePage.evaluate(async (id: string) => {
       const cards = Array.from(document.querySelectorAll('peek-card.space-card'));
       const i = cards.findIndex((c) => (c as HTMLElement).dataset.tagId === id);
       (window as unknown as { _spacesState: { selectedIndex: number } })._spacesState.selectedIndex = i;
+      await (cards[i] as HTMLElement & { focus: () => Promise<void> }).focus();
       return i;
     }, tagId);
     expect(index).toBeGreaterThanOrEqual(0);
-    await browsePage.locator('body').press('Enter');
+    const focusedTag = await browsePage.evaluate(() => {
+      const host = document.activeElement as HTMLElement | null;
+      return host?.dataset?.tagId ?? `${host?.tagName ?? 'none'}`;
+    });
+    expect(focusedTag, 'focusing the card did not move keyboard focus onto it').toBe(tagId);
+    await browsePage.keyboard.press('Enter');
 
     const panelPage = await app.getWindow('spaces/panel.html', 15000);
     await expect(panelPage.locator('#panel-name'), 'Enter never activated the selected space').toHaveText(name, {
       timeout: 15000,
     });
     await expect.poll(async () => (await windowsInSpace(tagId)).length, { timeout: 15000 }).toBeGreaterThan(0);
+    // Exactly one activation: a space with no saved session opens one empty
+    // group on entry, so a second window here means Enter switched twice.
+    await new Promise((r) => setTimeout(r, 750));
+    expect(
+      (await windowsInSpace(tagId)).length,
+      'one Enter activated the space more than once (two concurrent switches, two empty groups)',
+    ).toBe(1);
   });
 
   test('`switch space` works on the second and third invocation, not just the first', async () => {
