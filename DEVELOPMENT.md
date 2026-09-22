@@ -593,6 +593,25 @@ tag on the remote and push the same local tag again
 (`git push tangled :refs/tags/v0.1.0`, then `git push tangled v0.1.0`); that
 overwrites the R2 objects and replaces the tag's text file.
 
+Downloads are served from the bucket's `r2.dev` address, which Cloudflare
+rate-limits and documents as development-only. Moving to a custom domain means
+changing the `R2_PUBLIC_URL` secret, which breaks every link already published.
+
+### CI runner behaviour
+
+- Tangled builds a pull request by replaying its commits onto the target
+  branch, one at a time, rather than merging. A branch that merged `main` into
+  itself can replay with a conflict that `git merge-tree` does not report,
+  because an early commit edits lines `main` has since deleted. Keep a branch
+  headed for a tangled pull request linear on `main`: rebase, never merge.
+- Nothing persists between runs. The workspace is a tmpfs and the container is
+  removed with its volumes, so every run re-downloads the Electron runtime;
+  there is no cache to configure.
+- Retrying a run from the pipelines page re-runs only that pipeline's own
+  workflows. A workflow that never ran on a commit can still be started by name
+  with a logged-in POST to
+  `/<owner>/<repo>/pipelines/<pipeline id>/workflow/<workflow>.yml/retry`.
+
 ## Claude Code Permissions
 
 All package.json scripts are pre-approved via wildcard permissions in `.claude/settings.local.json`:
