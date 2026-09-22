@@ -388,28 +388,61 @@ const DEFAULT_WORKSPACE_SNAPSHOT_KEY = 'default';
 let defaultSpaceId = null;
 let defaultSpaceReady = null;
 
+// Roles a window can carry and still be user content that belongs to a
+// workspace — the window kernel's own content set (`window-kernel.ts
+// CONTENT_ROLES`): pages, their popups, and feature pages like the Spaces
+// browse-all list. Dedicated chrome (the palette, overlays, the switcher,
+// the workspace panel) and background pages carry a different role or none
+// at all, so they're left alone without a name-list of URLs to skip.
+const WORKSPACE_CONTENT_ROLES = new Set(['content', 'child-content', 'workspace']);
+
 /**
- * First launch only: whatever windows the general session restore already
- * opened, before this feature ever ran, become the default workspace's
- * membership from here on — the default is a real space from the start, not
- * one adopted piecemeal window-by-window later. Adopts only content windows
- * (`params.role === 'content'`, the same role `features/windows/windows.js
- * loadWindows()` treats as user content) — dedicated chrome (the palette,
- * overlays, the switcher, the workspace panel) and background pages carry a
- * different role or none at all, so they're left alone without a name-list
- * of URLs to skip.
+ * Declare the active workspace as the mode every content window opened from
+ * now on is born with when its opener passes no `spaceMode` of its own —
+ * the command palette, a page's popup, a declarative `window` command such
+ * as `open spaces`, a restored snapshot row that predates tagging. This is
+ * the one mechanism behind "every window belongs to exactly one workspace"
+ * (docs/design/window-rules.md "Workspace membership"): the main process
+ * stamps the mode at open time through `ipc.ts inheritedModeForNewWindow`,
+ * which is what lets the per-workspace sweep in
+ * `closeCurrentWorkspaceWindows()` find the window on the next switch and
+ * the session projection save it under this workspace's row. Declared
+ * BEFORE a workspace's snapshot is restored (see `enterWorkspace()`), so a
+ * restored window that carries no saved mode lands in the workspace being
+ * entered, never the one being left.
+ */
+async function declareActiveWorkspaceForNewWindows(spaceId, spaceName, color) {
+  try {
+    await api.context.setDefault('mode', 'space', { spaceId, spaceName, color });
+  } catch (err) {
+    console.error('[ext:spaces] Failed to declare the active workspace for new windows:', err);
+  }
+}
+
+/**
+ * Whatever content windows are already open when this feature wakes belong
+ * to the default workspace from here on — the default is a real space from
+ * the start, not one adopted piecemeal window-by-window later. Runs on every
+ * wake, not only the first launch: a window opened before the feature woke
+ * (or restored from a snapshot row saved before tagging existed) carries no
+ * workspace, or only the URL-detected `page`/`default` placeholder, and would
+ * otherwise never be swept. A window that already belongs to a space or a
+ * group keeps that membership. Only windows on screen are adopted: a hidden
+ * one (the pre-warmed settings singleton, a helper page) is not something
+ * the user has open in this workspace.
  */
 async function adoptOpenWindowsIntoDefault(tag, spaceName) {
   try {
     const listResult = await api.window.list();
     if (!listResult?.success || !Array.isArray(listResult.windows)) return;
     for (const w of listResult.windows) {
-      if (!w?.id || w.params?.role !== 'content') continue;
+      if (!w?.id || !w.visible || !WORKSPACE_CONTENT_ROLES.has(w.params?.role)) continue;
       const modeResult = await api.context.get('mode', w.id);
-      if (modeResult?.success && modeResult.data?.value) continue; // already has a mode of its own
+      const mode = modeResult?.success ? modeResult.data?.value : null;
+      if (mode === 'space' || mode === 'group') continue; // already has a membership of its own
       await api.context.setMode('space', {
         windowId: w.id,
-        metadata: { spaceId: tag.id, spaceName, color: tag.color }
+        metadata: { spaceId: tag.id, spaceName, color: tag.color, url: modeResult?.data?.metadata?.url }
       });
     }
   } catch (err) {
@@ -423,16 +456,15 @@ async function bootstrapDefaultSpace() {
     console.error('[ext:spaces] Failed to get/create the default workspace tag');
     return;
   }
-  const { tag, created } = tagResult.data;
+  const { tag } = tagResult.data;
 
   defaultSpaceId = tag.id;
   activeSpaceId = tag.id;
   activeSpaceName = getSpaceDisplayName(tag);
   activeSpaceColor = tag.color;
 
-  if (created) {
-    await adoptOpenWindowsIntoDefault(tag, activeSpaceName);
-  }
+  await declareActiveWorkspaceForNewWindows(tag.id, activeSpaceName, tag.color);
+  await adoptOpenWindowsIntoDefault(tag, activeSpaceName);
 }
 
 // ===== Session Management =====
@@ -468,6 +500,14 @@ function workspaceSnapshotKey(tagId) {
  */
 async function enterWorkspace(tag, spaceName) {
   const isDefault = tag.id === defaultSpaceId;
+  // The default shows no border, so its windows carry the tag's own color;
+  // a named workspace's windows carry the resolved accent the border shows.
+  const windowColor = isDefault ? tag.color : resolveSpaceBorderColor(tag.color, tag.id);
+
+  // First, before anything is restored or opened: every window born from
+  // here on belongs to the workspace being entered (see
+  // declareActiveWorkspaceForNewWindows()).
+  await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
 
   const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
   // `restored` counts the windows that actually opened — not `total`, the
@@ -483,7 +523,7 @@ async function enterWorkspace(tag, spaceName) {
       role: 'workspace',
       width: 1024,
       height: 768,
-      spaceMode: { spaceId: tag.id, spaceName, color: tag.color },
+      spaceMode: { spaceId: tag.id, spaceName, color: windowColor },
     });
   }
 
@@ -714,6 +754,12 @@ const initCommands = () => {
   // "close space"
   api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
+    if (!result?.success) {
+      // The panel's Close control has no result surface of its own, so a
+      // refused close (e.g. the default already active) would otherwise be
+      // indistinguishable from a click that never arrived.
+      console.warn('[ext:spaces] close space refused:', result?.error, 'active:', activeSpaceName);
+    }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }

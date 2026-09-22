@@ -2865,6 +2865,33 @@ export function getContextEntry(key: string, windowId: number | null = null): Co
   return stateMap.get(key) ?? null;
 }
 
+// Context defaults for windows born from now on: a per-key value that the
+// window-open path stamps onto every new content window whose opener declared
+// no value of its own (`ipc.ts inheritedModeForNewWindow`). In-memory only —
+// the feature that owns a key re-declares it whenever its state changes (the
+// Spaces feature sets 'mode' to the active workspace on every switch), and a
+// fresh process starts with none. Generic on purpose: main never learns what
+// a workspace is, only that new windows default to this entry.
+export interface ContextDefault {
+  value: unknown;
+  metadata: Record<string, unknown>;
+}
+
+const contextDefaults = new Map<string, ContextDefault>();
+
+export function setContextDefault(key: string, entry: ContextDefault | null): void {
+  if (entry === null) {
+    contextDefaults.delete(key);
+    return;
+  }
+  contextDefaults.set(key, { value: entry.value, metadata: { ...entry.metadata } });
+}
+
+export function getContextDefault(key: string): ContextDefault | null {
+  const entry = contextDefaults.get(key);
+  return entry ? { value: entry.value, metadata: { ...entry.metadata } } : null;
+}
+
 /**
  * Query context history
  */

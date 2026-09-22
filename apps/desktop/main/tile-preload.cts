@@ -1728,6 +1728,8 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:context:get', { token: tileToken, key, windowId }),
     set: (key: string, value: unknown, metadata?: Record<string, unknown>, windowId?: number | null) =>
       ipcRenderer.invoke('tile:context:set', { token: tileToken, key, value, metadata, windowId }),
+    setDefault: (key: string, value: unknown, metadata?: Record<string, unknown>) =>
+      ipcRenderer.invoke('tile:context:set-default', { token: tileToken, key, value, metadata }),
     history: (key: string, limit?: number) =>
       ipcRenderer.invoke('tile:context:history', { token: tileToken, key, limit }),
     snapshot: (windowId?: number | null) =>
@@ -1743,6 +1745,14 @@ function buildAPI(): Record<string, unknown> {
       contextStrict.get(key as string, (windowId ?? null) as number | null),
     set: (key: unknown, value: unknown, metadata: unknown, windowId: unknown) =>
       contextStrict.set(key as string, value, metadata as Record<string, unknown> | undefined, (windowId ?? null) as number | null),
+    /**
+     * Declare the value every window opened from now on inherits for `key`
+     * when its opener sets none (a `null` value clears it). Applies to
+     * content windows only, whatever route opens them — see
+     * `ipc.ts inheritedModeForNewWindow`.
+     */
+    setDefault: (key: unknown, value: unknown, metadata: unknown) =>
+      contextStrict.setDefault(key as string, value, metadata as Record<string, unknown> | undefined),
     history: (key: unknown, limit: unknown) =>
       contextStrict.history(key as string, limit as number | undefined),
     snapshot: (windowId: unknown) =>

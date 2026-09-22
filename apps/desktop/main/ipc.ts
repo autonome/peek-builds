@@ -24,6 +24,7 @@ import {
   // Context operations
   addContextEntry,
   getContextEntry,
+  getContextDefault,
   queryContextHistory,
   getContextSnapshot,
   cleanupWindowContext,
@@ -107,7 +108,7 @@ import {
   kernelShowRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow, isNonParentRole } from './window-kernel.js';
+import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
   TRANSIENT_ROLES,
@@ -2143,6 +2144,19 @@ export function wireHybridContentEvents(
                 DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background-tab loadURL failed:`, err);
               });
             }
+            // A popup is a child page of its host: it inherits the host's
+            // space/group mode, else the declared default for new content
+            // windows — this path never reaches `windowOpenHandler`, so it
+            // has to stamp the mode itself or the popup belongs to no
+            // workspace.
+            const popupMode = inheritedModeForNewWindow('child-content', hostWindowId, false);
+            if (popupMode) {
+              addContextEntry('mode', popupMode.value, {
+                windowId: baseWin.id,
+                source,
+                metadata: { ...popupMode.metadata, url: popupUrl },
+              });
+            }
             publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
             return view.webContents;
           } catch (e) {
@@ -2586,6 +2600,57 @@ export function installHybridNavbarActionRouting(): void {
   });
 
   DEBUG && console.log('[hybrid-page-host] navbar action routing installed');
+}
+
+/**
+ * The mode a new window inherits when its opener passed no explicit
+ * `spaceMode`/`groupMode`: the opener's own space/group membership (window
+ * lineage) first, else the declared default for new windows
+ * (`datastore.ts getContextDefault('mode')`). The Spaces feature declares
+ * that default as the active workspace before it restores or opens anything
+ * in it, so every content window opened while a workspace is active — from
+ * the command palette, a page's own popup, a declarative `window` command,
+ * a restore of a snapshot row that predates tagging — belongs to that
+ * workspace and is swept when it is left (`docs/design/window-rules.md`
+ * "Workspace membership"). Only content windows (`CONTENT_ROLES`) take the
+ * default: satellites, quick-views and feature chrome belong to no workspace.
+ *
+ * Every window-construction path stamps its mode through this one function:
+ * the page-host and BrowserWindow branches of `windowOpenHandler`, and the
+ * popup adoption in `wireHybridContentEvents`, which never reaches the
+ * handler. Tagging at open time (rather than a feature-side sweep of
+ * `window:opened`) is what lets the page read its own mode at load and lets
+ * the session projection save a window under its workspace from the first
+ * autosave.
+ *
+ * `hidden` — the window is born unshown (`show: false`): a pre-warmed
+ * singleton like settings, a helper page, a snapshot row being restored.
+ * Such a window is not on screen, so it takes no workspace default (it
+ * would be swept and saved as if it were content the user had open); a
+ * restored row carries its own saved mode instead.
+ */
+function inheritedModeForNewWindow(
+  role: string,
+  openerWindowId: number | null,
+  hidden: boolean,
+): { value: string; metadata: Record<string, unknown> } | null {
+  if (openerWindowId != null) {
+    const openerContext = getContextEntry('mode', openerWindowId);
+    if (
+      openerContext &&
+      (openerContext.value === 'space' || openerContext.value === 'group') &&
+      openerContext.metadata
+    ) {
+      return {
+        value: openerContext.value,
+        metadata: { ...(openerContext.metadata as Record<string, unknown>), inheritedFrom: openerWindowId },
+      };
+    }
+  }
+  if (hidden || !CONTENT_ROLES.has(role)) return null;
+  const fallback = getContextDefault('mode');
+  if (!fallback || typeof fallback.value !== 'string') return null;
+  return { value: fallback.value, metadata: { ...fallback.metadata } };
 }
 
 // Exported reference to the window-open handler so other IPC surfaces (like tile
@@ -3294,6 +3359,25 @@ export function registerWindowHandlers(): void {
             source: msg.source,
             metadata: { spaceId, spaceName, color, url },
           });
+        } else {
+          // Same inheritance as the BrowserWindow branch: the opener's own
+          // space/group mode, else the declared default for new content
+          // windows. Without this, a page opened from the command palette
+          // (or any caller that passes no `spaceMode`) belonged to no
+          // workspace and survived every workspace switch.
+          const pageHostRole = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
+            isWebPage,
+            parentWindowId: isRealParent ? openerWindow!.id : null,
+          });
+          const callingWin = windowFromWebContents(ev.sender);
+          const inherited = inheritedModeForNewWindow(pageHostRole, callingWin?.id ?? null, options.show === false);
+          if (inherited) {
+            addContextEntry('mode', inherited.value, {
+              windowId: baseWin.id,
+              source: msg.source,
+              metadata: { ...inherited.metadata, url },
+            });
+          }
         }
 
         publish(getSystemAddress(), 'window:opened', {
@@ -3659,39 +3743,20 @@ export function registerWindowHandlers(): void {
         });
         DEBUG && console.log('Inherited group mode for window:', win.id, 'group:', groupName);
       } else {
-        // No explicit mode option — check if opener is in space or group mode and inherit.
-        let openerModeValue: string | null = null;
-        let openerMetadata: Record<string, unknown> | null = null;
-        let openerWindowId: number | null = null;
+        // No explicit mode option — inherit the opener's space/group mode, or
+        // the declared default for new content windows (the active workspace).
         const callingWin = windowFromWebContents(ev.sender);
-        if (callingWin) {
-          const openerContext = getContextEntry('mode', callingWin.id);
-          if (
-            openerContext &&
-            (openerContext.value === 'space' || openerContext.value === 'group') &&
-            openerContext.metadata
-          ) {
-            openerModeValue = openerContext.value as string;
-            openerMetadata = openerContext.metadata as Record<string, unknown>;
-            openerWindowId = openerContext.windowId as number;
-          }
-        }
+        const inherited = inheritedModeForNewWindow(role, callingWin?.id ?? null, options.show === false);
 
-        if (openerModeValue && openerMetadata) {
-          // Inherit mode from opener (window lineage)
-          addContextEntry('mode', openerModeValue, {
+        if (inherited) {
+          addContextEntry('mode', inherited.value, {
             windowId: win.id,
             source: msg.source,
-            metadata: {
-              ...openerMetadata,
-              url: modeUrl,
-              inheritedFrom: openerWindowId
-            }
+            metadata: { ...inherited.metadata, url: modeUrl }
           });
-          DEBUG && console.log(`Inherited ${openerModeValue} mode from opener`);
+          DEBUG && console.log(`Inherited ${inherited.value} mode for window:`, win.id);
         } else {
-          // No mode inheritance — only explicit spaceMode/groupMode option or direct
-          // opener lineage propagates mode. Do NOT fall back to
+          // No mode inheritance and no declared default. Do NOT fall back to
           // lastFocusedVisibleWindowId, as that causes mode leakage to unrelated
           // windows (external app opens, peeks, slides, etc.)
           const detectedMode = detectModeFromUrl(modeUrl);

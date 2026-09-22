@@ -438,6 +438,13 @@ interface TileContext {
   windowsWithValue(key: string, value: unknown): Promise<{ success: boolean; data?: number[]; error?: string }>;
 
   /**
+   * Declare the value every content window opened from now on inherits for
+   * `key` when its opener sets none; a `null` value clears it. Gated like a
+   * write to `key` (so `mode` needs `modes: true`).
+   */
+  setDefault(key: string, value: unknown, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
+
+  /**
    * Get window ids in a space.
    * Requires `context.queryWindows: true`.
    */
