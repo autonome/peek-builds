@@ -252,6 +252,67 @@ test.describe('Permission Prompt @desktop', () => {
     await closeWindow(winId);
   });
 
+  test('replay: a pending request the overlay renderer never received surfaces on the next handoff', async () => {
+    // pubsub keeps no history, so a `page:permission-request` published before
+    // the overlay renderer subscribed reached nobody and the prompt stayed
+    // invisible until window close auto-denied it. Every `page-overlay:active`
+    // handoff now carries the window's still-pending requests, so the next
+    // handoff recovers it. A REAL host is required here: fake hosts
+    // (makeFakeHybridWindow) fail on Linux for an unrelated reason.
+    const { winId, wcId } = await openRealHybridPage('perm-replay');
+
+    await startGeoRequest(wcId, '__permGeoReplay');
+    await expect.poll(() => promptPresent()).toBe(true);
+    const requestId = (await promptState())!.requestId;
+    expect(requestId).toBeTruthy();
+
+    // Wipe the renderer's queue and its settled-id tombstones. That is exactly
+    // the state a fresh overlay renderer starts in — the publish already
+    // happened and it was not there to hear it — while the backend still holds
+    // the deferred Chromium callback.
+    await app.evaluateMain!(() => {
+      const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+        resetPermissionPromptsForTests(): Promise<boolean>;
+      };
+      return b.resetPermissionPromptsForTests();
+    });
+    const wiped = (await promptState())!;
+    expect(wiped.present).toBe(false);
+    expect(wiped.queuedCount).toBe(0);
+    expect(await pendingCount()).toBe(1);
+
+    // `page-overlay:ready` is what a freshly-loaded overlay renderer publishes.
+    // It reaches main's wireOverlayReady subscriber, which re-sends the active
+    // handoff — so the path under test is the production one, not a test-only
+    // shortcut.
+    await publishOverlayTopic(app, 'page-overlay:ready', {});
+
+    await expect.poll(() => promptPresent()).toBe(true);
+    const replayed = (await promptState())!;
+    expect(replayed.requestId).toBe(requestId);
+    expect(replayed.queuedCount).toBe(1);
+
+    // A second handoff must not duplicate: enqueue dedups on requestId.
+    await publishOverlayTopic(app, 'page-overlay:ready', {});
+    await expect.poll(async () => (await promptState())?.queuedCount).toBe(1);
+    expect((await promptState())!.requestId).toBe(requestId);
+
+    // The replayed prompt is the real thing — answering it resolves the
+    // deferred callback that has been waiting in the backend all along.
+    expect(await clickPrompt(false)).toBe(true);
+    await expect.poll(() => promptPresent()).toBe(false);
+    expect(await geoResult('__permGeoReplay')).toMatch(/^denied:/);
+    await expect.poll(() => pendingCount()).toBe(0);
+
+    // Nothing left to replay: the entry is gone from the backend, and the
+    // settled-id tombstone would refuse it even if a stale listing arrived.
+    await publishOverlayTopic(app, 'page-overlay:ready', {});
+    await expect.poll(async () => (await promptState())?.queuedCount).toBe(0);
+    expect(await promptPresent()).toBe(false);
+
+    await closeWindow(winId);
+  });
+
   test('Allow path: geolocation proceeds (result is NOT PERMISSION_DENIED)', async () => {
     // Allowing geolocation makes Chromium run the REAL navigator.geolocation
     // lookup. On a macOS host with Location Services enabled that surfaces the

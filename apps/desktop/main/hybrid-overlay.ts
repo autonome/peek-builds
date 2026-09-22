@@ -63,6 +63,9 @@ import {
 import { __setEditableFocusForWcForTest } from './hybrid-editable-focus.js';
 import {
   denyPendingRequestsForWindow,
+  // Handoff replay → the window's still-pending prompts ride every
+  // `page-overlay:active` (see sendActiveHandoff)
+  pendingPermissionRequestsForWindow,
   _pendingRequestCountForTests,
   _resetForTests as _resetPermissionHandlerForTests,
 } from './permission-handler.js';
@@ -438,6 +441,16 @@ function sendActiveHandoff(id: number | null): void {
     // content window and the chrome lives in the surrounding margin.
     bounds,
     gutters: OVERLAY_GUTTERS,
+    // Still-pending web-permission requests for this window, in the same
+    // payload shape as the live `page:permission-request` publish. Pubsub keeps
+    // no history, so a request published before the overlay renderer subscribed
+    // — at startup, or after the renderer was re-created — reached nobody and
+    // stayed invisible until window close auto-denied it. Riding the handoff
+    // makes it reappear at the next attachment change, with no extra topic,
+    // subscription, timer or poll: the handoff IS the lifecycle signal. The
+    // renderer's reconcile is additive only (overlay.js), so this can never
+    // take down a prompt it is already showing.
+    pendingPermissions: pendingPermissionRequestsForWindow(id),
   });
 }
 
@@ -559,6 +572,11 @@ function wireAppActiveGate(): void {
  * deleted `retarget()` used), so a re-minted overlay always ends up painted
  * correctly no matter how the load and the subscribe interleaved. No poll, no
  * retry, no timer, no second re-send on another lifecycle event.
+ *
+ * The re-sent handoff also REPLAYS the window's outstanding web-permission
+ * requests (`pendingPermissions`, see `sendActiveHandoff`), so a prompt whose
+ * `page:permission-request` publish landed before this renderer subscribed
+ * becomes visible here instead of waiting for window close to auto-deny it.
  */
 function wireOverlayReady(): void {
   subscribe(getSystemAddress(), 'page-overlay:ready', () => {

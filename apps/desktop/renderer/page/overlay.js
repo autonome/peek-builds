@@ -23,7 +23,12 @@
  *                             registered — closes the first-load handoff race,
  *                             see the publish site at the bottom of this file)
  *   main → overlay (active handoff + content events):
- *     - page-overlay:active   {windowId,url,title,canGoBack,canGoForward,loading}|null (directed)
+ *     - page-overlay:active   {windowId,url,title,canGoBack,canGoForward,loading,
+ *                             pendingPermissions[]}|null (directed). The
+ *                             pendingPermissions array carries the window's
+ *                             still-unanswered web-permission requests, so a
+ *                             prompt this renderer never received (published
+ *                             before it subscribed) surfaces at the next handoff.
  *     - page:title-updated    {windowId,url,title}
  *     - page:favicon          {windowId,url,favicon}
  *     - page:loading          {windowId,loading}
@@ -377,6 +382,16 @@ api.subscribe('page-overlay:active', (msg) => {
   navbar.loading = false;
   hideFindBar();
   paintFromSnapshot(msg);
+  // Recover any request main still holds pending for this window that this
+  // renderer never received — the publish predates our subscription, or a
+  // previous overlay renderer got it and this one started empty. Purely
+  // ADDITIVE: the reconcile never removes a queued entry, because the handoff
+  // listing can lag a response we have already sent, and because queued entries
+  // need not have a backend entry at all. Removal stays with
+  // `page:permission-resolved` and `respond()`.
+  if (Array.isArray(msg.pendingPermissions)) {
+    for (const pending of msg.pendingPermissions) enqueuePermissionRequest(pending);
+  }
   // Re-evaluate the permission queue for the newly-active window: a request
   // that arrived while this window was in the background surfaces now; a
   // prompt belonging to the previously-active window is taken down (but stays
@@ -1156,8 +1171,26 @@ api.subscribe('page:show-navbar', (msg) => {
 // announces it resolved by another path — window close / hybrid teardown —
 // via `page:permission-resolved {requestId}` (permission-handler.ts). Both
 // are deterministic pubsub signals; no timers.
+//
+// Requests also arrive a SECOND way: every `page-overlay:active` handoff
+// carries `pendingPermissions`, the window's still-unanswered requests as main
+// sees them. Pubsub keeps no history, so a request published before this
+// renderer subscribed — at startup, or after a previous overlay renderer was
+// replaced — reached nobody, and the prompt stayed invisible until window close
+// auto-denied it. Reconciling the handoff's listing recovers exactly those.
+// The reconcile is ADDITIVE ONLY. It never drops a queued entry, for two
+// reasons: the listing can be older than a response already sent from here, and
+// a queued entry need not correspond to a backend entry at all. What keeps an
+// already-answered request from coming back is `settledPermissionIds`, the
+// tombstone set every enqueue is filtered through.
 
 const permissionQueue = [];
+// Every requestId this renderer has seen settled — answered here in `respond()`
+// or announced resolved by main. It is the tombstone set the handoff replay is
+// filtered through, so a listing taken before main saw our response cannot
+// resurrect an answered request. Ids are never removed: a settled request never
+// becomes pending again (main mints a fresh id for a fresh request).
+const settledPermissionIds = new Set();
 let activePermissionPrompt = null; // { req, wrap, badgeEl, resolved }
 
 function originForFavicon(origin) {
@@ -1329,6 +1362,9 @@ function renderActivePermissionPrompt() {
     if (!activePermissionPrompt || activePermissionPrompt.resolved) return;
     if (activePermissionPrompt.wrap !== wrap) return; // stale prompt closure
     activePermissionPrompt.resolved = true;
+    // Tombstone before publishing: a handoff arriving between this response and
+    // main's removal of the pending entry would otherwise replay it back in.
+    settledPermissionIds.add(req.requestId);
     api.publish('page:permission-response', {
       requestId: req.requestId,
       allowed,
@@ -1398,15 +1434,31 @@ function updatePendingBadge() {
   }
 }
 
-api.subscribe('page:permission-request', (msg) => {
-  if (!msg || !msg.requestId) return;
+/**
+ * Queue one request, from either source: the live `page:permission-request`
+ * publish, or the `pendingPermissions` list replayed on a handoff. Returns
+ * whether it was actually enqueued. Does NOT re-render — callers batch a single
+ * `syncPermissionPrompt()` afterwards.
+ */
+function enqueuePermissionRequest(msg) {
+  if (!msg || !msg.requestId) return false;
   // A request with no windowId can never surface (no window to become active)
   // — and main denies those before publishing, so just guard.
-  if (msg.windowId == null) return;
+  if (msg.windowId == null) return false;
   // Dedup: if the same requestId is already queued (duplicate publish from a
-  // re-entrant transition), ignore it.
-  if (permissionQueue.some((r) => r.requestId === msg.requestId)) return;
+  // re-entrant transition, or a replay of a request already showing), ignore it.
+  if (permissionQueue.some((r) => r.requestId === msg.requestId)) return false;
+  // Already answered here. A handoff's listing is a snapshot taken in main
+  // BEFORE it necessarily processed our `page:permission-response`, so without
+  // this guard the very next handoff would put an answered request back in the
+  // queue and re-show a prompt the user just dismissed.
+  if (settledPermissionIds.has(msg.requestId)) return false;
   permissionQueue.push(msg);
+  return true;
+}
+
+api.subscribe('page:permission-request', (msg) => {
+  enqueuePermissionRequest(msg);
   syncPermissionPrompt();
 });
 
@@ -1415,6 +1467,9 @@ api.subscribe('page:permission-request', (msg) => {
 // stale prompt for a request whose Chromium callback is already settled.
 api.subscribe('page:permission-resolved', (msg) => {
   if (!msg || !msg.requestId) return;
+  // Record it whether or not it was queued: an id resolved while we had nothing
+  // queued for it must still be refused by a later handoff replay.
+  settledPermissionIds.add(msg.requestId);
   if (removeFromPermissionQueue(msg.requestId)) {
     syncPermissionPrompt();
   }
@@ -1426,6 +1481,7 @@ if (typeof window !== 'undefined') {
   window.__permissionPromptQueueForTests = () => permissionQueue.map((r) => ({ ...r }));
   window.__resetPermissionPromptsForTests = () => {
     permissionQueue.length = 0;
+    settledPermissionIds.clear();
     renderActivePermissionPrompt();
   };
   // Read the overlay's live maximize state for the active window — the flag the
