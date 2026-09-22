@@ -235,11 +235,6 @@ const init = async () => {
         currentItemTitle = result.data.title || null;
         hasExplicitSource = true;
         debug && console.log('[editor] Loaded item from datastore:', itemIdParam);
-
-        // Set context to editor mode
-        if (api?.context?.setMode) {
-          api.context.setMode('editor', { metadata: { itemId: itemIdParam } });
-        }
       } else {
         console.error('[editor] Failed to load item:', result.error);
       }
@@ -752,11 +747,6 @@ const createDeferredNoteItem = async (content) => {
         api.pubsub.publish('editor:changed', { action: 'add', itemId: currentItemId });
       }
 
-      // Set context to editor mode
-      if (api?.context?.setMode) {
-        api.context.setMode('editor', { metadata: { itemId: currentItemId } });
-      }
-
       // Update URL with itemId so session restore can reopen this document.
       // Without this, session save captures the bare URL (no itemId) and
       // restore opens a blank editor instead of the saved document.
@@ -839,11 +829,6 @@ const cleanup = () => {
 
   // Reset deferred state
   deferredNewNote = false;
-
-  // Reset context when leaving editor
-  if (currentItemId && api?.context?.setMode) {
-    api.context.setMode('default');
-  }
 
   if (editorLayout) {
     editorLayout.destroy();

@@ -42,6 +42,15 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+async function publishEvent(topic: string, payload: unknown): Promise<void> {
+  await bgWindow.evaluate(
+    (arg: { topic: string; payload: unknown }) => {
+      (window as unknown as { app: any }).app.pubsub.publish(arg.topic, arg.payload);
+    },
+    { topic, payload },
+  );
+}
+
 async function spaceTagId(name: string): Promise<string> {
   const id = await bgWindow.evaluate(async (tagName: string) => {
     const r = await (window as unknown as { app: any }).app.datastore.getOrCreateTag(tagName);
@@ -384,6 +393,76 @@ test.describe('workspace membership: every window opened in a workspace belongs 
       })
       .toBe(false);
     await expect.poll(async () => (await windowsInSpace(zetaId)).length, { timeout: 15000 }).toBeGreaterThan(0);
+
+    await runCommand('close space');
+  });
+
+  test('an editor window that loads a real item keeps its workspace membership and is still swept on switch', async () => {
+    // `features/editor/home.js` used to call `api.context.setMode('editor',
+    // …)` once an editor window attached to a real datastore item (loading
+    // one by itemId, or a blank note getting its first content) — clobbering
+    // the SAME `mode` context key `closeCurrentWorkspaceWindows()` reads for
+    // workspace membership (`'space'`/`'group'`), since it is a raw
+    // unconditional overwrite (`tile-preload.cts` `setMode` →
+    // `contextStrict.set('mode', …)`) with none of the protection
+    // `updateModeForNavigation` (`datastore.ts`) gives space/group against a
+    // page-mode overwrite. A window that loaded an item this way kept its
+    // window open forever, excluded from every workspace's session save too.
+    const theta = 'lock-theta';
+    const iota = 'lock-iota';
+    const thetaId = await spaceTagId(theta);
+    const iotaId = await spaceTagId(iota);
+
+    const itemResult = await bgWindow.evaluate(async () => {
+      const api = (window as unknown as { app: any }).app;
+      const r = await api.datastore.addItem('text', {
+        content: 'mode-clobber probe',
+        metadata: JSON.stringify({ title: 'mode-clobber probe' }),
+      });
+      return { ok: !!r?.success, itemId: r?.data?.id ?? null, error: r?.error };
+    });
+    expect(itemResult.ok, `seeding the mode-clobber-probe item failed: ${itemResult.error}`).toBe(true);
+    const itemId = itemResult.itemId as string;
+
+    const openResult = await runCommand('open space', theta);
+    expect(openResult?.success, `open space "${theta}" failed: ${openResult?.error}`).toBe(true);
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(theta, { timeout: 15000 });
+
+    const before = new Set(await liveWindowIds());
+    await publishEvent('editor:open', { itemId });
+    let editorId: number | null = null;
+    await expect
+      .poll(
+        async () => {
+          const now = await liveWindowIds();
+          editorId = now.find((id) => !before.has(id)) ?? null;
+          return editorId !== null;
+        },
+        { timeout: 15000, message: 'opening the mode-clobber-probe item never opened a window' },
+      )
+      .toBe(true);
+
+    // The editor's own item-load path runs asynchronously after the window
+    // opens (`item-loaded` phase in its boot trace, observed ~235ms after
+    // open in a live run) — wait it out before checking membership, so this
+    // doesn't race a poll that returns true before the stomp lands.
+    await new Promise((r) => setTimeout(r, 1500));
+    await expect
+      .poll(async () => (await windowsInSpace(thetaId)).includes(editorId as number), {
+        timeout: 15000,
+        message: 'an editor window that loaded a real item lost its workspace membership',
+      })
+      .toBe(true);
+
+    const switchResult = await runCommand('switch space', iota);
+    expect(switchResult?.success, `switch space "${iota}" failed: ${switchResult?.error}`).toBe(true);
+    await expect
+      .poll(async () => (await liveWindowIds()).includes(editorId as number), {
+        timeout: 15000,
+        message: 'the item-loaded editor window survived the switch away from theta',
+      })
+      .toBe(false);
 
     await runCommand('close space');
   });
