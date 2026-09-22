@@ -464,7 +464,25 @@ function enrolmentExchangeRateLimited(requesterIp) {
   }
   attempts.push(now);
   enrolmentExchangeAttemptsByIp.set(ip, attempts);
+  pruneEnrolmentExchangeAttempts(now);
   return false;
+}
+
+// Every distinct caller IP gets its own key in enrolmentExchangeAttemptsByIp
+// and nothing else ever deletes one, so without this sweep the map grows for
+// the life of the process. Opportunistic, like pruneEnrolmentCodes above:
+// swept on every call rather than on a timer, since there's no background
+// scheduler in this file. Drops a key entirely once its window has emptied
+// out, rather than leaving a stale empty array sitting in the map forever.
+function pruneEnrolmentExchangeAttempts(now) {
+  for (const [ip, attempts] of enrolmentExchangeAttemptsByIp) {
+    const live = attempts.filter((t) => now - t < ENROLMENT_EXCHANGE_WINDOW_MS);
+    if (live.length === 0) {
+      enrolmentExchangeAttemptsByIp.delete(ip);
+    } else if (live.length !== attempts.length) {
+      enrolmentExchangeAttemptsByIp.set(ip, live);
+    }
+  }
 }
 
 // Enrolment codes are short-lived and single-use, so a spent or expired row
@@ -549,14 +567,19 @@ function exchangeEnrolmentCode(code, label, requesterIp) {
     throw new Error("Enrolment code expired");
   }
 
+  const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
+  // Mint the device before burning the code: if createDevice() throws (e.g.
+  // the owning user row was deleted), the code must stay usable for a retry
+  // rather than being permanently spent with no device to show for it.
+  const device = createDevice(row.user_id, deviceLabel);
+
   db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
     new Date().toISOString(),
     row.id,
   ]);
   pruneEnrolmentCodes(db);
 
-  const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
-  return createDevice(row.user_id, deviceLabel);
+  return device;
 }
 
 /**

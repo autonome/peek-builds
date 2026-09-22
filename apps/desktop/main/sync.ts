@@ -341,6 +341,22 @@ interface FetchOptions {
   method?: string;
   body?: unknown;
   timeoutMs?: number;
+  /** Throw the server's raw `{ error }` message on failure, unwrapped, instead
+   * of serverFetch's generic `Server error <status>: <body>` wrapping. For
+   * unauthenticated calls (like /enrol) whose error text is shown directly to
+   * the person entering a code, rather than logged for diagnosis. */
+  unwrapErrorMessage?: boolean;
+}
+
+/** Best-effort extraction of the server's `{ error: "..." }` JSON body into a
+ * plain message. Returns undefined if the body isn't JSON or has no `error`
+ * field, so the caller can fall back to the generic wrapping. */
+function parseJsonErrorMessage(text: string): string | undefined {
+  try {
+    return (JSON.parse(text) as { error?: string }).error;
+  } catch {
+    return undefined;
+  }
 }
 
 // Default per-request budget. A hung single write (item push, tag push, event
@@ -441,7 +457,7 @@ const MAX_ITEMS_PER_BATCH = 250;
  */
 async function serverFetch<T>(
   serverUrl: string,
-  apiKey: string,
+  apiKey: string | null,
   path: string,
   options: FetchOptions = {}
 ): Promise<T> {
@@ -449,15 +465,20 @@ async function serverFetch<T>(
   const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   let response: Response;
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
+      'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
+      'X-Peek-Client': 'desktop',
+    };
+    // apiKey is null for the one unauthenticated call, /enrol — a brand-new
+    // device has no key yet, only the enrolment code it's trading in.
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
     response = await fetch(url, {
       method: options.method || 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
-        'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
-        'X-Peek-Client': 'desktop',
-      },
+      headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -474,6 +495,9 @@ async function serverFetch<T>(
 
   if (!response.ok) {
     const error = await response.text();
+    if (options.unwrapErrorMessage) {
+      throw new Error(parseJsonErrorMessage(error) || `Server error ${response.status}`);
+    }
     throw new Error(`Server error ${response.status}: ${error}`);
   }
 
@@ -2288,38 +2312,29 @@ export async function createEnrolmentCode(
 
 /**
  * Trade an enrolment code for this device's own key. Unauthenticated on the
- * wire (this device has no key yet), so this posts to /enrol directly rather
- * than through serverFetch()'s apiKey-bearing header, and unwraps the
- * server's `{ error }` body into a plain message instead of serverFetch's
- * generic `Server error <status>: <body>` wrapping — the message is shown to
- * the person entering the code (expired/used/unknown code, or rate limiting).
+ * wire (this device has no key yet), so this goes through serverFetch() with
+ * a null apiKey rather than duplicating its fetch/timeout handling — which
+ * also means this call gets the same X-Peek-Datastore-Version /
+ * X-Peek-Protocol-Version compatibility check every other sync call enforces,
+ * instead of silently minting a key against a version-incompatible server.
+ * `unwrapErrorMessage` swaps serverFetch's generic `Server error <status>:
+ * <body>` wrapping for the server's raw `{ error }` message, which is shown
+ * directly to the person entering the code (expired/used/unknown code, or
+ * rate limiting).
  */
 export async function exchangeEnrolmentCode(
   serverUrl: string,
   code: string,
   label?: string
 ): Promise<{ deviceId: string; userId: string; label: string; apiKey: string }> {
-  const url = `${serverUrl.replace(/\/$/, '')}/enrol`;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, label }),
-      signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError') {
-      throw new Error(`Request to /enrol timed out after ${DEFAULT_FETCH_TIMEOUT_MS}ms`);
-    }
-    throw error;
-  }
-
-  const body = await response.json().catch(() => ({} as Record<string, unknown>));
-  if (!response.ok) {
-    throw new Error((body as { error?: string }).error || `Server error ${response.status}`);
-  }
-  return (body as { device: { deviceId: string; userId: string; label: string; apiKey: string } }).device;
+  const response = await serverFetch<{
+    device: { deviceId: string; userId: string; label: string; apiKey: string };
+  }>(serverUrl, null, '/enrol', {
+    method: 'POST',
+    body: { code, label },
+    unwrapErrorMessage: true,
+  });
+  return response.device;
 }
 
 // ==================== Full Bidirectional Sync ====================

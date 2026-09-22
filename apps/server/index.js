@@ -1247,15 +1247,21 @@ app.post("/devices/enrolment-codes", (c) => {
 
 // Best-effort caller IP for per-caller rate limiting (used by the
 // unauthenticated /enrol route below). Prefers X-Forwarded-For, since the
-// server typically sits behind Railway's proxy, and falls back to the
-// underlying socket via @hono/node-server's conninfo helper for a direct
-// connection. Neither is available when a test drives the app in-process
-// (no real socket), so this degrades to a shared "unknown" bucket there —
-// fine, since no test exercises per-IP separation.
+// server sits behind exactly one trusted hop (Railway's edge proxy), which
+// appends the connecting client's address as the LAST entry — any earlier
+// entries were supplied by the client itself and are not trustworthy for
+// rate-limit bucketing. Falls back to the underlying socket via
+// @hono/node-server's conninfo helper for a direct connection. Neither is
+// available when a test drives the app in-process (no real socket), so this
+// degrades to a shared "unknown" bucket there — fine, since no test
+// exercises per-IP separation.
 function requesterIp(c) {
   const forwarded = c.req.header("x-forwarded-for");
   if (forwarded) {
-    return forwarded.split(",")[0].trim();
+    const hops = forwarded.split(",").map((hop) => hop.trim()).filter(Boolean);
+    if (hops.length > 0) {
+      return hops[hops.length - 1];
+    }
   }
   try {
     return getConnInfo(c).remote.address || "unknown";
