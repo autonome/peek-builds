@@ -12,7 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
-import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from './url-completion.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
 
@@ -1325,18 +1325,15 @@ function triggerUrlGhost(text) {
 function currentGhostCompletion(anchor) {
   if (!urlGhostSuggestion) return null;
   const c = urlCompletionAtGranularity(urlGhostSuggestion.url, urlGhostGranularity);
-  const t = (anchor || '').trim();
-  if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return c;
-  return null;
+  return inlineCompletionFor(c, anchor);
 }
 
 /** First granularity whose completion forward-extends `anchor`; 'full' if none. */
 function initialGhostGranularity(anchor) {
   if (!urlGhostSuggestion) return 'host';
-  const t = (anchor || '').trim();
   for (const g of URL_GRANULARITY_ORDER) {
     const c = urlCompletionAtGranularity(urlGhostSuggestion.url, g);
-    if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return g;
+    if (inlineCompletionFor(c, anchor) !== null) return g;
   }
   return 'full';
 }
@@ -1367,9 +1364,8 @@ function applyGhostSelection(anchor) {
   if (!commandInput) return;
   const completion = currentGhostCompletion(anchor);
   if (!completion) return;
-  const t = (anchor || '').trim();
   commandInput.value = completion;
-  commandInput.setSelectionRange(t.length, completion.length, 'backward');
+  commandInput.setSelectionRange(anchor.length, completion.length, 'backward');
   updateCommandUI();
   syncCommandTextScroll();
 }
@@ -1628,11 +1624,10 @@ function syncCommandTextScroll() {
 function appendUrlGhost(typed) {
   const completion = currentGhostCompletion(typed);
   if (!completion) return;
-  const t = (typed || '').trim();
   const commandText = document.getElementById('command-text');
   const ghostSpan = document.createElement('span');
   ghostSpan.className = 'cmd-inline-selection';
-  ghostSpan.textContent = completion.substring(t.length);
+  ghostSpan.textContent = completion.substring(typed.length);
   commandText.appendChild(ghostSpan);
 }
 

@@ -70,3 +70,20 @@ export function urlCompletionAtGranularity(storedUrl, granularity) {
   // 'full' — scheme + leading www stripped, path + query + fragment kept.
   return urlMatchable(storedUrl);
 }
+
+/**
+ * `completion` when it is a forward prefix-completion of `anchor`, else null.
+ * Leading or trailing whitespace on `anchor` disqualifies it: whitespace at
+ * either end means the user has moved past extending a URL (a trailing space
+ * ends the word; a leading space isn't a URL start), and the overlay's
+ * highlighted-suffix offset must equal the native input's fill offset — an
+ * anchor trimmed in one place and not the other is exactly how the two drift.
+ * `anchor` is used verbatim here and is NEVER trimmed.
+ */
+export function inlineCompletionFor(completion, anchor) {
+  if (!anchor) return null;
+  if (anchor !== anchor.trim()) return null;
+  if (!completion || completion.length <= anchor.length) return null;
+  if (!completion.toLowerCase().startsWith(anchor.toLowerCase())) return null;
+  return completion;
+}

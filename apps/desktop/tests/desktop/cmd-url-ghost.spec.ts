@@ -1227,3 +1227,118 @@ test.describe('cmd URL ghost Camp-1 selected-text reject @desktop', () => {
     await closePanel(panelId);
   });
 });
+
+// Standalone describe (its own app/panel): a trailing space in the typed text
+// means the user is not extending a URL — the ghost must not fill the input
+// or render a highlighted suffix, even though the query still resolves (it
+// still feeds the Visited lane). Peek item c761a520.
+test.describe('cmd URL ghost trailing space @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  const SEED_URL = 'https://tangledspace.example.com/burrito/peek';
+  const SEED_MATCHABLE = 'tangledspace.example.com/burrito/peek';
+  const TYPE_PREFIX = 'tangled ';
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  async function closePanel(panelId: number) {
+    if (!panelId) return;
+    try {
+      await bgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, panelId);
+    } catch { /* may already be closed */ }
+  }
+
+  // Wait until the URL ghost suggestion is populated in panel state.
+  async function waitForGhost(cmdWindow: Page): Promise<void> {
+    await cmdWindow.waitForFunction(
+      (matchable: string) => {
+        const s = (window as any)._cmdState;
+        return !!s && !!s.urlGhostSuggestion && s.urlGhostSuggestion.matchable === matchable;
+      },
+      SEED_MATCHABLE,
+      { timeout: 8000 }
+    );
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-ghost-trailing-space'));
+    const navResult = await bgWindow.evaluate(async (u: string) => {
+      return await (window as any).app.datastore.trackNavigation(u, {
+        source: 'window',
+        windowType: 'main',
+      });
+    }, SEED_URL);
+    expect(navResult.success).toBe(true);
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('typing a trailing space suppresses the ghost fill and keeps the space', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.fill('input', TYPE_PREFIX);
+    await waitForGhost(cmdWindow);
+
+    // The fill/highlight is suppressed: the input still holds exactly what was
+    // typed (trailing space included), nothing is selected, and #command-text
+    // has no highlighted-suffix span.
+    const shownState = await cmdWindow.evaluate(() => {
+      const input = document.getElementById('command-input') as HTMLInputElement | null;
+      const commandText = document.getElementById('command-text');
+      return {
+        value: input?.value,
+        selectionStart: input?.selectionStart,
+        selectionEnd: input?.selectionEnd,
+        hasInlineSpan: !!commandText?.querySelector('.cmd-inline-selection'),
+      };
+    });
+    expect(shownState.value).toBe(TYPE_PREFIX);
+    expect(shownState.selectionStart).toBe(shownState.selectionEnd);
+    expect(shownState.hasInlineSpan).toBe(false);
+
+    // Typing on: "tangled p" matches no seeded URL, so the ghost clears.
+    await cmdWindow.keyboard.type('p');
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && !s.urlGhostSuggestion;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    const finalValue = await cmdWindow.evaluate(() => {
+      const input = document.getElementById('command-input') as HTMLInputElement | null;
+      return input?.value;
+    });
+    expect(finalValue).toBe('tangled p');
+
+    await closePanel(panelId);
+  });
+});

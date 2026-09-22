@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'url-completion.js');
-const { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } = await import(modulePath);
+const { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor } = await import(modulePath);
 
 describe('urlMatchable', () => {
   it('strips https:// and a leading www.', () => {
@@ -81,5 +81,29 @@ describe('urlCompletionAtGranularity', () => {
       assert.ok(len >= prev, `granularity ${g} shorter than previous`);
       prev = len;
     }
+  });
+});
+
+describe('inlineCompletionFor', () => {
+  it('returns the completion for a plain prefix', () => {
+    assert.equal(inlineCompletionFor('tangled.org', 'tangled'), 'tangled.org');
+  });
+  it('returns the completion for a case-insensitive prefix', () => {
+    assert.equal(inlineCompletionFor('Tangled.org', 'tANGled'), 'Tangled.org');
+  });
+  it('returns null when the anchor has a trailing space', () => {
+    assert.equal(inlineCompletionFor('tangled.org', 'tangled '), null);
+  });
+  it('returns null when the anchor has a leading space', () => {
+    assert.equal(inlineCompletionFor('tangled.org', ' tangled'), null);
+  });
+  it('returns null for an empty anchor', () => {
+    assert.equal(inlineCompletionFor('tangled.org', ''), null);
+  });
+  it('returns null when the anchor equals the completion', () => {
+    assert.equal(inlineCompletionFor('tangled.org', 'tangled.org'), null);
+  });
+  it('returns null for a non-prefix substring match', () => {
+    assert.equal(inlineCompletionFor('app.fastmail.com', 'fast'), null);
   });
 });
