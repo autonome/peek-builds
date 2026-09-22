@@ -233,3 +233,4 @@ npm run test:api:prod       # Test against production (needs PEEK_PROD_KEY, PEEK
 - `PORT` - Server port (default: 3000)
 - `DATA_DIR` - Data directory for SQLite databases (default: `./data`)
 - `API_KEY` - Legacy single-user API key (auto-migrates to multi-user system)
+- `TRUSTED_PROXY_HOPS` - Reverse-proxy hops in front of the server that append to `X-Forwarded-For` (default: `1`, matching a Railway deployment). Set to `0` when self-hosting with no reverse proxy; otherwise a client can forge the header and choose its own `/enrol` rate-limit bucket

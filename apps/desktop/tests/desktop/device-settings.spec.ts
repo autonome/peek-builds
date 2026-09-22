@@ -5,12 +5,13 @@ import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 
 // Exercises the Settings > Devices panel (renderDevicesSettings() in
-// apps/desktop/renderer/settings/settings.js) against a stub HTTP server
-// standing in for the sync server's account-holder /devices routes
-// (apps/server/index.js GET/PATCH/DELETE /devices). The panel is driven
-// through the real api.sync.{getConfig,setConfig,listDevices,renameDevice,
-// revokeDevice} IPC surface — no server process, no sync.ts unit-test-style
-// in-process fetch stub, since this is the renderer UI, not sync.ts itself.
+// apps/desktop/renderer/settings/settings.js) and the Sync panel's
+// enrolment-code entry against a stub HTTP server standing in for the sync
+// server's account-holder routes (apps/server/index.js GET/PATCH/DELETE
+// /devices, POST /devices/enrolment-codes, POST /enrol). The panels are
+// driven through the real api.sync.* IPC surface — no server process, no
+// sync.ts unit-test-style in-process fetch stub, since this is the renderer
+// UI, not sync.ts itself.
 
 interface StubDevice {
   id: string;
@@ -20,30 +21,81 @@ interface StubDevice {
   revoked_at: string | null;
 }
 
-/** A minimal in-memory /devices server: GET list, PATCH rename, DELETE revoke. */
+// Which stub device each bearer key belongs to — the real server marks the
+// requesting device `current` in GET /devices and on a self-revoke, and this
+// is what lets the stub do the same.
+const STUB_KEY = 'stub-test-key';
+const ENROLLED_KEY = 'enrolled-key';
+const STUB_CODE = 'ABCD2345';
+const DEVICE_FOR_KEY: Record<string, string> = {
+  [STUB_KEY]: 'dev-laptop',
+  [ENROLLED_KEY]: 'dev-new',
+};
+
+/** A minimal in-memory sync-server stub: GET list, PATCH rename, DELETE
+ * revoke (with `current`), POST enrolment code (always STUB_CODE), and POST
+ * /enrol (trades STUB_CODE for ENROLLED_KEY and adds the new device). */
 function startDeviceStubServer(devices: StubDevice[]): Promise<{ server: http.Server; url: string }> {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url || '/', 'http://stub.invalid');
       res.setHeader('Content-Type', 'application/json');
+      const bearer = (req.headers.authorization || '').replace(/^Bearer /, '');
+      const requestingDeviceId = DEVICE_FOR_KEY[bearer];
+
+      const readJsonBody = (): Promise<Record<string, string>> =>
+        new Promise((done) => {
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => done(body ? JSON.parse(body) : {}));
+        });
 
       if (req.method === 'GET' && url.pathname === '/devices') {
-        res.end(JSON.stringify({ devices }));
+        res.end(JSON.stringify({
+          devices: devices.map((d) => ({ ...d, current: d.id === requestingDeviceId })),
+        }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/devices/enrolment-codes') {
+        res.end(JSON.stringify({
+          code: STUB_CODE,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/enrol') {
+        readJsonBody().then((parsed) => {
+          if (parsed.code !== STUB_CODE) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid enrolment code' }));
+            return;
+          }
+          const label = parsed.label || 'New device';
+          devices.push({
+            id: 'dev-new',
+            label,
+            created_at: new Date().toISOString(),
+            last_seen_at: null,
+            revoked_at: null,
+          });
+          res.end(JSON.stringify({
+            device: { deviceId: 'dev-new', userId: 'stub-user', label, apiKey: ENROLLED_KEY },
+          }));
+        });
         return;
       }
 
       const deviceMatch = url.pathname.match(/^\/devices\/([^/]+)$/);
       if (req.method === 'PATCH' && deviceMatch) {
-        let body = '';
-        req.on('data', (chunk) => { body += chunk; });
-        req.on('end', () => {
+        readJsonBody().then((parsed) => {
           const device = devices.find((d) => d.id === deviceMatch[1]);
           if (!device) {
             res.writeHead(404);
             res.end(JSON.stringify({ error: 'not found' }));
             return;
           }
-          const parsed = body ? JSON.parse(body) : {};
           if (!parsed.label) {
             res.writeHead(400);
             res.end(JSON.stringify({ error: 'label is required' }));
@@ -63,7 +115,7 @@ function startDeviceStubServer(devices: StubDevice[]): Promise<{ server: http.Se
           return;
         }
         device.revoked_at = new Date().toISOString();
-        res.end(JSON.stringify({ revoked: true }));
+        res.end(JSON.stringify({ revoked: true, current: device.id === requestingDeviceId }));
         return;
       }
 
@@ -111,7 +163,7 @@ test.describe('Device Settings Panel @desktop', () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  test('lists devices, renames one, and revoking removes access', async () => {
+  test('lists, renames, revokes (including itself), mints a code and enrols with it', async () => {
     const settingsWindow = await app.getWindow('settings/settings.html');
     expect(settingsWindow).toBeTruthy();
     await settingsWindow.waitForSelector('.settings-layout', { timeout: 5000 });
@@ -129,7 +181,7 @@ test.describe('Device Settings Panel @desktop', () => {
     await serverUrlInput.press('Tab');
 
     const apiKeyInput = syncSection.locator('.form-group:has(label:text-is("API Key")) input');
-    await apiKeyInput.fill('stub-test-key');
+    await apiKeyInput.fill(STUB_KEY);
     await apiKeyInput.press('Tab');
 
     // The Sync panel's own status line flips once setConfig's IPC round trip
@@ -147,23 +199,32 @@ test.describe('Device Settings Panel @desktop', () => {
     await expect(laptopCard).toBeVisible();
     await expect(phoneCard).toBeVisible();
     await expect(laptopCard).toContainText('Laptop');
-    await expect(laptopCard).toContainText('Active');
+    // The laptop is the device whose key this install is using — the server
+    // says so (`current`), and the panel names it instead of "Active".
+    await expect(laptopCard).toContainText('This device');
+    await expect(laptopCard).toHaveAttribute('data-current', 'true');
     await expect(phoneCard).toContainText('Phone');
+    await expect(phoneCard).toContainText('Active');
     await expect(phoneCard).toContainText('never'); // last_seen_at: null
 
     // The <peek-card>/<peek-input>/<peek-button> custom elements actually
-    // upgraded (shadow root attached) — proves settings-importmap.json +
-    // settings-components.js resolved under the page's strict
+    // upgraded (shadow root attached) — proves the inline importmap (allowed
+    // by its CSP hash) + settings-components.js resolved under the page's
     // `script-src 'self'` CSP, not just that light-DOM text survived.
     await expect
       .poll(() => laptopCard.evaluate((el) => !!(el as unknown as { shadowRoot: unknown }).shadowRoot))
       .toBe(true);
 
-    // The "add a device" card mints a single-use enrolment code via its one
-    // "Create code" button (api.sync.createEnrolmentCode()).
+    // --- mint an enrolment code ---
+    // The "add a device" card mints a single-use enrolment code via its
+    // "Create code" button (api.sync.createEnrolmentCode()) and shows it
+    // with its expiry.
     await expect(settingsWindow.locator('.devices-panel')).toContainText('Add a device');
-    const addDeviceButtons = settingsWindow.locator('.devices-panel peek-card').first().locator('peek-button');
-    await expect(addDeviceButtons).toHaveCount(1);
+    await settingsWindow.locator('[data-role="add-device-button"]').click();
+    const codeDisplay = settingsWindow.locator('[data-role="enrolment-code-display"]');
+    await expect(codeDisplay).toBeVisible();
+    await expect(codeDisplay).toContainText(STUB_CODE);
+    await expect(codeDisplay).toContainText('expires');
 
     // --- rename ---
     const renameInput = laptopCard.locator('[data-role="rename-input"]');
@@ -180,5 +241,48 @@ test.describe('Device Settings Panel @desktop', () => {
     // Revoked devices lose their rename/revoke controls — nothing left to act on.
     await expect(phoneCard.locator('[data-role="revoke-button"]')).toHaveCount(0);
     expect(devices.find((d) => d.id === 'dev-phone')?.revoked_at).toBeTruthy();
+
+    // --- revoking this very device disconnects it, and says so ---
+    // The server allows it and answers `current: true`; the main process
+    // drops the now-dead key, the panel explains instead of reloading into a
+    // 401, and the Sync panel's API Key field no longer shows the dead key.
+    let selfRevokePrompt = '';
+    settingsWindow.once('dialog', (dialog) => {
+      selfRevokePrompt = dialog.message();
+      dialog.accept();
+    });
+    await laptopCard.locator('[data-role="revoke-button"]').click();
+    await expect(settingsWindow.locator('.devices-panel-status')).toContainText("This device's key was revoked");
+    // The confirm names the consequence rather than reading like any other revoke.
+    expect(selfRevokePrompt).toContain('the device you are using right now');
+    await expect(settingsWindow.locator('[data-device-id]')).toHaveCount(0);
+    expect(devices.find((d) => d.id === 'dev-laptop')?.revoked_at).toBeTruthy();
+
+    await settingsWindow.click('[data-section="sync"]');
+    await settingsWindow.waitForSelector('#section-sync.active');
+    await expect(apiKeyInput).toHaveValue('');
+    await expect(syncSection.getByText('Status: Not configured')).toBeVisible();
+
+    // --- enrol with the code, from the Sync panel ---
+    // Trades the code minted above for this install's own key (api.sync.enrol
+    // → POST /enrol), stored exactly where a pasted key goes.
+    const enrolLabelInput = syncSection.locator('[data-role="enrol-label-input"]');
+    await enrolLabelInput.evaluate((el: any, value: string) => { el.value = value; }, 'Re-enrolled laptop');
+    const enrolCodeInput = syncSection.locator('[data-role="enrol-code-input"]');
+    await enrolCodeInput.evaluate((el: any, value: string) => { el.value = value; }, STUB_CODE);
+    await syncSection.locator('[data-role="enrol-button"]').click();
+    await expect(syncSection.locator('[data-role="enrol-status"]')).toContainText('now has its own key');
+    await expect(apiKeyInput).toHaveValue(ENROLLED_KEY);
+    await expect(syncSection.getByText('Status: Configured')).toBeVisible();
+    expect(devices.find((d) => d.id === 'dev-new')?.label).toBe('Re-enrolled laptop');
+
+    // --- the Devices panel works again on the new key ---
+    await settingsWindow.click('[data-section="devices"]');
+    await settingsWindow.waitForSelector('#section-devices.active');
+    const newCard = settingsWindow.locator('[data-device-id="dev-new"]');
+    await expect(newCard).toBeVisible();
+    await expect(newCard).toContainText('Re-enrolled laptop');
+    await expect(newCard).toContainText('This device');
+    await expect(settingsWindow.locator('[data-device-id="dev-laptop"]')).toContainText('Revoked');
   });
 });

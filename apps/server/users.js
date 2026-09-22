@@ -439,58 +439,89 @@ function normalizeEnrolmentCode(code) {
   return String(code).trim().toUpperCase();
 }
 
-// exchangeEnrolmentCode is the one route in this module reachable without a
-// key (a brand-new device has none yet to prove it), which makes it the one
-// guessable by brute force despite the code's short expiry. This in-memory
-// attempt window caps how many exchanges can be spent guessing, independent
-// of which code is tried. It resets on restart — fine, since a real code
-// only ever lives for minutes anyway. Keyed by requester IP (rather than one
-// shared counter) so a single caller flooding the endpoint with garbage
-// codes can only pin their own bucket, not 429 every other caller sharing
-// the server.
-const ENROLMENT_EXCHANGE_WINDOW_MS = 60 * 1000;
-const ENROLMENT_EXCHANGE_MAX_ATTEMPTS = 10;
-let enrolmentExchangeAttemptsByIp = new Map();
+// In-memory sliding-window attempt counter, one bucket per key. Backs both
+// enrolment limiters below. State lives only in this process and resets on
+// restart — fine, since an enrolment code only lives for minutes anyway.
+//
+// Every distinct key gets its own bucket and nothing else ever deletes one,
+// so without a sweep the map grows for the life of the process. The sweep
+// runs at most once per window (not on every attempt — a full-map walk per
+// request is wasted work when nothing has aged out yet) and drops a bucket
+// entirely once its window has emptied, rather than leaving a stale empty
+// array in the map forever. No timer: this file has no background scheduler.
+function createAttemptWindow(windowMs, maxAttempts) {
+  const attemptsByKey = new Map();
+  let lastPruneAt = 0;
 
-function enrolmentExchangeRateLimited(requesterIp) {
-  const ip = requesterIp || "unknown";
-  const now = Date.now();
-  const attempts = (enrolmentExchangeAttemptsByIp.get(ip) || []).filter(
-    (t) => now - t < ENROLMENT_EXCHANGE_WINDOW_MS
-  );
-  if (attempts.length >= ENROLMENT_EXCHANGE_MAX_ATTEMPTS) {
-    enrolmentExchangeAttemptsByIp.set(ip, attempts);
-    return true;
+  function prune(now) {
+    for (const [key, attempts] of attemptsByKey) {
+      const live = attempts.filter((t) => now - t < windowMs);
+      if (live.length === 0) {
+        attemptsByKey.delete(key);
+      } else if (live.length !== attempts.length) {
+        attemptsByKey.set(key, live);
+      }
+    }
+    lastPruneAt = now;
   }
-  attempts.push(now);
-  enrolmentExchangeAttemptsByIp.set(ip, attempts);
-  pruneEnrolmentExchangeAttempts(now);
-  return false;
+
+  return {
+    /** Record one attempt for `key`; true if it exceeded the cap. */
+    limited(key) {
+      const now = Date.now();
+      if (now - lastPruneAt >= windowMs) {
+        prune(now);
+      }
+      const attempts = (attemptsByKey.get(key) || []).filter((t) => now - t < windowMs);
+      if (attempts.length >= maxAttempts) {
+        attemptsByKey.set(key, attempts);
+        return true;
+      }
+      attempts.push(now);
+      attemptsByKey.set(key, attempts);
+      return false;
+    },
+  };
 }
 
-// Every distinct caller IP gets its own key in enrolmentExchangeAttemptsByIp
-// and nothing else ever deletes one, so without this sweep the map grows for
-// the life of the process. Opportunistic, like pruneEnrolmentCodes above:
-// swept on every call rather than on a timer, since there's no background
-// scheduler in this file. Drops a key entirely once its window has emptied
-// out, rather than leaving a stale empty array sitting in the map forever.
-function pruneEnrolmentExchangeAttempts(now) {
-  for (const [ip, attempts] of enrolmentExchangeAttemptsByIp) {
-    const live = attempts.filter((t) => now - t < ENROLMENT_EXCHANGE_WINDOW_MS);
-    if (live.length === 0) {
-      enrolmentExchangeAttemptsByIp.delete(ip);
-    } else if (live.length !== attempts.length) {
-      enrolmentExchangeAttemptsByIp.set(ip, live);
-    }
-  }
+// exchangeEnrolmentCode is the one route in this module reachable without a
+// key (a brand-new device has none yet to prove it), which makes it the one
+// guessable by brute force despite the code's short expiry. This window caps
+// how many exchanges can be spent guessing, independent of which code is
+// tried. Keyed by requester IP (rather than one shared counter) so a single
+// caller flooding the endpoint with garbage codes can only pin their own
+// bucket, not 429 every other caller sharing the server.
+const ENROLMENT_EXCHANGE_WINDOW_MS = 60 * 1000;
+const ENROLMENT_EXCHANGE_MAX_ATTEMPTS = 10;
+const enrolmentExchangeAttempts = createAttemptWindow(
+  ENROLMENT_EXCHANGE_WINDOW_MS,
+  ENROLMENT_EXCHANGE_MAX_ATTEMPTS
+);
+
+// Minting is authenticated, so this is not a guessing guard — it stops one
+// account (or one stuck client) from turning "Create code" into an unbounded
+// write loop. Each mint also replaces the account's previous unused code
+// (see createEnrolmentCode), so a legitimate person never needs more than a
+// few per minute.
+const ENROLMENT_MINT_WINDOW_MS = 60 * 1000;
+const ENROLMENT_MINT_MAX_ATTEMPTS = 10;
+const enrolmentMintAttempts = createAttemptWindow(
+  ENROLMENT_MINT_WINDOW_MS,
+  ENROLMENT_MINT_MAX_ATTEMPTS
+);
+
+function tooManyAttemptsError(message) {
+  const err = new Error(message);
+  err.status = 429;
+  return err;
 }
 
 // Enrolment codes are short-lived and single-use, so a spent or expired row
 // has no further purpose — nothing ever reads one again. Rows would
 // otherwise accumulate forever since nothing else deletes them. Swept
-// opportunistically (on every mint and every exchange, like this file's
-// other short-lived-state paths) rather than on a timer, since there's no
-// background scheduler in this process.
+// opportunistically (on every mint and every exchange — both rare, and the
+// table never holds more than a handful of rows) rather than on a timer,
+// since there's no background scheduler in this process.
 function pruneEnrolmentCodes(db) {
   db.run("DELETE FROM enrolment_codes WHERE used_at IS NOT NULL OR expires_at < ?", [
     new Date().toISOString(),
@@ -502,10 +533,19 @@ function pruneEnrolmentCodes(db) {
  * that is already signed in). The raw code is returned ONCE and never
  * stored (only its hash) — matches the device/grant key pattern.
  *
+ * An account has at most one redeemable code at a time: minting replaces
+ * any unused one, since the person only ever sees the newest code and an
+ * older one they can no longer read off a screen should not stay live.
+ * Rate-limited per account (throws with `status: 429` over the cap).
+ *
  * @param {string} userId
  * @returns {{ code: string, expiresAt: string }}
  */
 function createEnrolmentCode(userId) {
+  if (enrolmentMintAttempts.limited(userId)) {
+    throw tooManyAttemptsError("Too many enrolment codes requested, try again shortly");
+  }
+
   const db = getSystemDb();
 
   const user = db.get("SELECT id FROM users WHERE id = ?", [userId]);
@@ -514,6 +554,7 @@ function createEnrolmentCode(userId) {
   }
 
   pruneEnrolmentCodes(db);
+  db.run("DELETE FROM enrolment_codes WHERE user_id = ? AND used_at IS NULL", [userId]);
 
   const code = generateEnrolmentCode();
   const codeHash = hashApiKey(code);
@@ -538,14 +579,16 @@ function createEnrolmentCode(userId) {
  *
  * @param {string} code
  * @param {string} [label] - Label for the new device; defaults if omitted
- * @param {string} [requesterIp] - Caller's IP, for the per-caller rate limit
+ * @param {string|null} [requesterIp] - Caller's IP, for the per-caller rate
+ *   limit. Null when the caller's address cannot be determined (see
+ *   index.js requesterIp) — then no limit applies, because the only other
+ *   option is one bucket shared by every caller, where a single flood (or
+ *   ten honest typos) locks every other device out of enrolling.
  * @returns {{ deviceId: string, userId: string, label: string, apiKey: string }}
  */
 function exchangeEnrolmentCode(code, label, requesterIp) {
-  if (enrolmentExchangeRateLimited(requesterIp)) {
-    const err = new Error("Too many enrolment attempts, try again shortly");
-    err.status = 429;
-    throw err;
+  if (requesterIp && enrolmentExchangeAttempts.limited(requesterIp)) {
+    throw tooManyAttemptsError("Too many enrolment attempts, try again shortly");
   }
   if (!code || !String(code).trim()) {
     throw new Error("Enrolment code is required");

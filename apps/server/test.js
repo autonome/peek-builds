@@ -3677,9 +3677,23 @@ describe("Account-Holder Device Routes Tests", () => {
     assert.strictEqual(res.status, 200);
     const json = await res.json();
     assert.strictEqual(json.revoked, true, "revoking the requesting device's own key is allowed");
+    assert.strictEqual(json.current, true, "the response says the caller just revoked its own key");
 
     const next = await app.request("/devices", { headers: headersFor(deviceA) });
     assert.strictEqual(next.status, 401, "the same key must be rejected on its next use");
+  });
+
+  it("marks only the requesting device as current, in the list and on revoke", async () => {
+    const list = await (await app.request("/devices", { headers: headersFor(deviceA) })).json();
+    const current = list.devices.filter((d) => d.current).map((d) => d.id);
+    assert.deepStrictEqual(current, [deviceA.deviceId]);
+
+    const res = await app.request(`/devices/${deviceB.deviceId}`, {
+      method: "DELETE",
+      headers: headersFor(deviceA),
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).current, false, "revoking another device is not a self-revoke");
   });
 });
 
@@ -3711,11 +3725,26 @@ describe("Enrolment Code Routes Tests", () => {
     return { "Content-Type": "application/json", Authorization: `Bearer ${device.apiKey}` };
   }
 
+  // /enrol is rate-limited per caller IP. In-process requests have no
+  // socket, so the IP comes from X-Forwarded-For — one trusted hop, the
+  // default TRUSTED_PROXY_HOPS in index.js — exactly as it would behind the
+  // hosted deployment's proxy. Each test gets its own address so the
+  // per-IP window never carries over between them.
+  const ENROL_IP = "203.0.113.10";
+  function enrolHeaders(ip = ENROL_IP) {
+    return { "Content-Type": "application/json", "X-Forwarded-For": ip };
+  }
+
+  function mintCode() {
+    return app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) });
+  }
+
+  function enrol(body, ip) {
+    return app.request("/enrol", { method: "POST", headers: enrolHeaders(ip), body: JSON.stringify(body) });
+  }
+
   it("creates an enrolment code for the authenticated account", async () => {
-    const res = await app.request("/devices/enrolment-codes", {
-      method: "POST",
-      headers: headersFor(deviceA),
-    });
+    const res = await mintCode();
     assert.strictEqual(res.status, 200);
     const json = await res.json();
     assert.strictEqual(typeof json.code, "string");
@@ -3724,15 +3753,9 @@ describe("Enrolment Code Routes Tests", () => {
   });
 
   it("exchanges a valid code for a new device key, unauthenticated", async () => {
-    const created = await (
-      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
-    ).json();
+    const created = await (await mintCode()).json();
 
-    const res = await app.request("/enrol", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: created.code, label: "new laptop" }),
-    });
+    const res = await enrol({ code: created.code, label: "new laptop" });
     assert.strictEqual(res.status, 200);
     const json = await res.json();
     assert.strictEqual(json.device.label, "new laptop");
@@ -3741,28 +3764,16 @@ describe("Enrolment Code Routes Tests", () => {
   });
 
   it("refuses to reuse an already-exchanged code", async () => {
-    const created = await (
-      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
-    ).json();
-    const first = await app.request("/enrol", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: created.code }),
-    });
+    const created = await (await mintCode()).json();
+    const first = await enrol({ code: created.code });
     assert.strictEqual(first.status, 200);
 
-    const second = await app.request("/enrol", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: created.code }),
-    });
+    const second = await enrol({ code: created.code });
     assert.strictEqual(second.status, 400);
   });
 
   it("refuses an expired code", async () => {
-    const created = await (
-      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
-    ).json();
+    const created = await (await mintCode()).json();
 
     const db = users.getSystemDb();
     db.run("UPDATE enrolment_codes SET expires_at = ? WHERE code_hash = ?", [
@@ -3770,34 +3781,67 @@ describe("Enrolment Code Routes Tests", () => {
       users.hashApiKey(created.code),
     ]);
 
-    const res = await app.request("/enrol", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: created.code }),
-    });
+    const res = await enrol({ code: created.code });
     assert.strictEqual(res.status, 400);
   });
 
   it("refuses an unknown code", async () => {
-    const res = await app.request("/enrol", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: "NOTAREALCODE" }),
-    });
+    const res = await enrol({ code: "NOTAREALCODE" });
     assert.strictEqual(res.status, 400);
   });
 
+  it("minting a new code invalidates the account's previous unused one", async () => {
+    const older = await (await mintCode()).json();
+    const newer = await (await mintCode()).json();
+    assert.notStrictEqual(older.code, newer.code);
+
+    const stale = await enrol({ code: older.code });
+    assert.strictEqual(stale.status, 400, "the code the person can no longer see must not stay live");
+
+    const fresh = await enrol({ code: newer.code });
+    assert.strictEqual(fresh.status, 200, "the newest code is the one that works");
+  });
+
+  it("throttles code minting per account", async () => {
+    // The first ten in a minute succeed; the eleventh is refused with 429.
+    for (let i = 0; i < 10; i++) {
+      assert.strictEqual((await mintCode()).status, 200, `mint ${i + 1} within the cap`);
+    }
+    const res = await mintCode();
+    assert.strictEqual(res.status, 429);
+    assert.match((await res.json()).error, /too many/i);
+  });
+
+  it("throttles exchange attempts per caller IP without touching other callers", async () => {
+    const guesser = "198.51.100.7";
+    for (let i = 0; i < 10; i++) {
+      assert.strictEqual((await enrol({ code: "WRONGCODE" }, guesser)).status, 400, `guess ${i + 1} within the cap`);
+    }
+    const blocked = await enrol({ code: "WRONGCODE" }, guesser);
+    assert.strictEqual(blocked.status, 429);
+
+    // A different caller, right after, still gets a normal answer — the
+    // guesser pinned only their own bucket.
+    const created = await (await mintCode()).json();
+    const other = await enrol({ code: created.code }, "198.51.100.8");
+    assert.strictEqual(other.status, 200);
+  });
+
+  it("only trusts the X-Forwarded-For entry the proxy appended", async () => {
+    // Two entries: the client wrote the first, the (single trusted) proxy
+    // appended the second. Bucketing must follow the second, so a client
+    // rewriting the first entry on every request still shares one bucket.
+    for (let i = 0; i < 10; i++) {
+      const spoofed = `10.0.0.${i}, 192.0.2.44`;
+      assert.strictEqual((await enrol({ code: "WRONGCODE" }, spoofed)).status, 400);
+    }
+    const blocked = await enrol({ code: "WRONGCODE" }, "10.0.0.99, 192.0.2.44");
+    assert.strictEqual(blocked.status, 429, "changing the client-written entry must not escape the bucket");
+  });
+
   it("the minted key authenticates on the real routes", async () => {
-    const created = await (
-      await app.request("/devices/enrolment-codes", { method: "POST", headers: headersFor(deviceA) })
-    ).json();
-    const exchanged = await (
-      await app.request("/enrol", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: created.code }),
-      })
-    ).json();
+    const created = await (await mintCode()).json();
+    const exchanged = await (await enrol({ code: created.code })).json();
 
     const res = await app.request("/devices", {
       headers: { Authorization: `Bearer ${exchanged.device.apiKey}` },

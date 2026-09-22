@@ -37,6 +37,7 @@ import {
   getSyncConfig as getProfileSyncConfig,
   updateLastSyncTime,
   enableSync,
+  disableSync,
 } from './profiles.js';
 import { publish, getSystemAddress } from './pubsub.js';
 
@@ -343,8 +344,8 @@ interface FetchOptions {
   timeoutMs?: number;
   /** Throw the server's raw `{ error }` message on failure, unwrapped, instead
    * of serverFetch's generic `Server error <status>: <body>` wrapping. For
-   * unauthenticated calls (like /enrol) whose error text is shown directly to
-   * the person entering a code, rather than logged for diagnosis. */
+   * calls whose error text is shown directly to a person (the Devices panel,
+   * the enrolment-code entry) rather than logged for diagnosis. */
   unwrapErrorMessage?: boolean;
 }
 
@@ -457,28 +458,41 @@ const MAX_ITEMS_PER_BATCH = 250;
  */
 async function serverFetch<T>(
   serverUrl: string,
-  apiKey: string | null,
+  apiKey: string,
   path: string,
   options: FetchOptions = {}
+): Promise<T> {
+  return serverRequest<T>(serverUrl, path, options, { Authorization: `Bearer ${apiKey}` });
+}
+
+/**
+ * The request core under serverFetch(): version headers on the way out, the
+ * timeout budget, error unwrapping, and the server's version-header check on
+ * the way back. Carries no credential of its own — serverFetch() adds the
+ * bearer header, and the one unauthenticated call (exchangeEnrolmentCode(),
+ * for a device that has no key yet) calls this directly with none. Kept
+ * separate so that call doesn't cost every authenticated caller a nullable
+ * apiKey.
+ */
+async function serverRequest<T>(
+  serverUrl: string,
+  path: string,
+  options: FetchOptions = {},
+  extraHeaders: Record<string, string> = {}
 ): Promise<T> {
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
   const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   let response: Response;
   try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
-      'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
-      'X-Peek-Client': 'desktop',
-    };
-    // apiKey is null for the one unauthenticated call, /enrol — a brand-new
-    // device has no key yet, only the enrolment code it's trading in.
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
     response = await fetch(url, {
       method: options.method || 'GET',
-      headers,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
+        'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
+        'X-Peek-Client': 'desktop',
+        ...extraHeaders,
+      },
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -2232,23 +2246,30 @@ function saveSyncServerConfig(serverUrl: string): void {
 // Distinct from item/tag/event sync above: this is CRUD on the account's own
 // device-key rows, not datastore content. No pull/push/merge — the server is
 // the only copy, so every call here goes straight through serverFetch().
+// Every error here is shown to the person in the Devices panel as-is, so
+// each call asks for the server's own message rather than the generic
+// `Server error <status>: <body>` wrapping.
 
 /** One row from the server's `devices` table. Timestamps are the server's
  * own ISO strings (or null when not yet set/revoked) — displayed as-is via
  * `new Date(...).toLocaleString()`, not converted to desktop's unix-ms
- * convention the way item timestamps are. */
+ * convention the way item timestamps are. `current` marks the device whose
+ * key made the request — i.e. this install. */
 export interface SyncDevice {
   id: string;
   label: string;
   created_at: string;
   last_seen_at: string | null;
   revoked_at: string | null;
+  current: boolean;
 }
 
 /** List the account's own devices (no key material — the server never
  * returns any). */
 export async function listDevices(serverUrl: string, apiKey: string): Promise<SyncDevice[]> {
-  const response = await serverFetch<{ devices: SyncDevice[] }>(serverUrl, apiKey, '/devices');
+  const response = await serverFetch<{ devices: SyncDevice[] }>(serverUrl, apiKey, '/devices', {
+    unwrapErrorMessage: true,
+  });
   return response.devices;
 }
 
@@ -2263,26 +2284,36 @@ export async function renameDevice(
     serverUrl,
     apiKey,
     `/devices/${encodeURIComponent(deviceId)}`,
-    { method: 'PATCH', body: { label } }
+    { method: 'PATCH', body: { label }, unwrapErrorMessage: true }
   );
   return response.device;
 }
 
 /** Revoke one of the account's own devices. Revoking the device the caller is
  * currently using is allowed by the server — this same apiKey then gets 401
- * on its next request (see the server route's own comment). */
+ * on its next request (see the server route's own comment) — and the server
+ * says so with `current: true`, so the caller can forget the key
+ * (clearSyncCredentials()) instead of failing every sync from then on. */
 export async function revokeDevice(
   serverUrl: string,
   apiKey: string,
   deviceId: string
-): Promise<boolean> {
-  const response = await serverFetch<{ revoked: boolean }>(
+): Promise<{ revoked: boolean; current: boolean }> {
+  const response = await serverFetch<{ revoked: boolean; current?: boolean }>(
     serverUrl,
     apiKey,
     `/devices/${encodeURIComponent(deviceId)}`,
-    { method: 'DELETE' }
+    { method: 'DELETE', unwrapErrorMessage: true }
   );
-  return response.revoked;
+  return { revoked: response.revoked, current: response.current === true };
+}
+
+/** Forget the active profile's stored device key, turning sync off for it
+ * until a new key is pasted or enrolled. setSyncConfig() cannot do this — it
+ * treats an empty apiKey as "leave it alone" — and a revoked key left in
+ * place would make every later sync fail with a bare 401. */
+export function clearSyncCredentials(): void {
+  disableSync(getActiveProfile().id);
 }
 
 // ==================== Enrolment codes (mint a device key without pasting one) ====================
@@ -2306,30 +2337,30 @@ export async function createEnrolmentCode(
     serverUrl,
     apiKey,
     '/devices/enrolment-codes',
-    { method: 'POST' }
+    { method: 'POST', unwrapErrorMessage: true }
   );
 }
 
 /**
  * Trade an enrolment code for this device's own key. Unauthenticated on the
- * wire (this device has no key yet), so this goes through serverFetch() with
- * a null apiKey rather than duplicating its fetch/timeout handling — which
- * also means this call gets the same X-Peek-Datastore-Version /
- * X-Peek-Protocol-Version compatibility check every other sync call enforces,
- * instead of silently minting a key against a version-incompatible server.
- * `unwrapErrorMessage` swaps serverFetch's generic `Server error <status>:
- * <body>` wrapping for the server's raw `{ error }` message, which is shown
- * directly to the person entering the code (expired/used/unknown code, or
- * rate limiting).
+ * wire (this device has no key yet), so this is the one call that goes
+ * through serverRequest() directly, with no bearer header, rather than
+ * serverFetch() — and still gets the same X-Peek-Datastore-Version /
+ * X-Peek-Protocol-Version compatibility check every other sync call
+ * enforces, instead of silently minting a key against a
+ * version-incompatible server. `unwrapErrorMessage` swaps the generic
+ * `Server error <status>: <body>` wrapping for the server's raw `{ error }`
+ * message, which is shown directly to the person entering the code
+ * (expired/used/unknown code, or rate limiting).
  */
 export async function exchangeEnrolmentCode(
   serverUrl: string,
   code: string,
   label?: string
 ): Promise<{ deviceId: string; userId: string; label: string; apiKey: string }> {
-  const response = await serverFetch<{
+  const response = await serverRequest<{
     device: { deviceId: string; userId: string; label: string; apiKey: string };
-  }>(serverUrl, null, '/enrol', {
+  }>(serverUrl, '/enrol', {
     method: 'POST',
     body: { code, label },
     unwrapErrorMessage: true,

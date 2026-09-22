@@ -181,6 +181,7 @@ import {
   listDevices,
   renameDevice,
   revokeDevice,
+  clearSyncCredentials,
   createEnrolmentCode,
   exchangeEnrolmentCode,
 } from './sync.js';
@@ -5242,136 +5243,100 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:sync:list-devices / rename-device / revoke-device ─────────
+  // ── tile:sync:list-devices / rename-device / revoke-device /
+  //    create-enrolment-code / enrol ─────────────────────────────────
   //
   // Settings UI consumes these via api.sync.{listDevices,renameDevice,
-  // revokeDevice} — the account-holder device panel. trustedBuiltin only,
-  // same reasoning as the rest of the sync surface: network + server creds.
-
-  registerTileIpc('tile:sync:list-devices', { mode: 'handle' }, async (event, args: {
-    token: string;
-  }, _grant) => {
-    if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'sync', 'tile:sync:list-devices', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:sync:list-devices' };
-    }
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-      const devices = await listDevices(config.serverUrl, config.apiKey);
-      return { success: true, data: devices };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  registerTileIpc('tile:sync:rename-device', { mode: 'handle' }, async (event, args: {
-    token: string;
-    deviceId: string;
-    label: string;
-  }, _grant) => {
-    if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'sync', 'tile:sync:rename-device', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:sync:rename-device' };
-    }
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-      const device = await renameDevice(config.serverUrl, config.apiKey, args.deviceId, args.label);
-      return { success: true, data: device };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  registerTileIpc('tile:sync:revoke-device', { mode: 'handle' }, async (event, args: {
-    token: string;
-    deviceId: string;
-  }, _grant) => {
-    if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'sync', 'tile:sync:revoke-device', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:sync:revoke-device' };
-    }
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-      const revoked = await revokeDevice(config.serverUrl, config.apiKey, args.deviceId);
-      return { success: true, data: { revoked } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // ── tile:sync:create-enrolment-code / enrol ─────────────────────────
+  // revokeDevice,createEnrolmentCode,enrol}. The first four are the Devices
+  // panel (account-holder device management, plus its "Add a device" code
+  // minting) and run against this install's own configured serverUrl/apiKey.
+  // `enrol` is the Sync panel's code-entry alternative to pasting a key — a
+  // brand-new device has no apiKey yet, so it takes serverUrl from the caller
+  // and needs no config. All trustedBuiltin only, same reasoning as the rest
+  // of the sync surface: network + server creds.
   //
-  // Settings UI consumes these via api.sync.{createEnrolmentCode,enrol} —
-  // create-enrolment-code is the Devices panel's "Add a device" button
-  // (uses this device's own configured serverUrl/apiKey); enrol is the Sync
-  // panel's code-entry alternative to pasting a key (a brand-new device has
-  // no apiKey yet, so it takes serverUrl from the caller instead of
-  // getSyncConfig()). Both trustedBuiltin only, same reasoning as the rest
-  // of the sync surface.
+  // Every handler here has the same shape — token check, trustedBuiltin
+  // check, optional "is sync configured" check, run, wrap errors — so it is
+  // written once. A not-configured result carries `notConfigured: true` so
+  // the panel can show guidance instead of an error, without a second IPC
+  // round trip just to read the config first.
 
-  registerTileIpc('tile:sync:create-enrolment-code', { mode: 'handle' }, async (event, args: {
-    token: string;
-  }, _grant) => {
-    if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'sync', 'tile:sync:create-enrolment-code', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:sync:create-enrolment-code' };
-    }
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+  type SyncSettings = ReturnType<typeof getSyncConfig>;
+
+  function registerTrustedSyncIpc<TArgs extends { token: string }>(
+    channel: string,
+    options: { requiresConfig: boolean },
+    run: (args: TArgs, config: SyncSettings) => Promise<unknown>,
+  ): void {
+    registerTileIpc(channel, { mode: 'handle' }, async (event, args: TArgs, _grant) => {
+      if (!args?.token) return { success: false, error: 'Invalid token' };
+      const grant = _grant;
+      if (!grant.trustedBuiltin) {
+        handleViolation(grant, 'sync', channel, 'trustedBuiltin required', args.token);
+        return { success: false, error: `trustedBuiltin required for ${channel}` };
       }
-      const result = await createEnrolmentCode(config.serverUrl, config.apiKey);
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+      try {
+        const config = getSyncConfig();
+        if (options.requiresConfig && (!config.serverUrl || !config.apiKey)) {
+          return {
+            success: false,
+            notConfigured: true,
+            error: 'Sync not configured. Set serverUrl and apiKey first.',
+          };
+        }
+        return { success: true, data: await run(args, config) };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
+      }
+    });
+  }
 
-  registerTileIpc('tile:sync:enrol', { mode: 'handle' }, async (event, args: {
-    token: string;
-    serverUrl: string;
-    code: string;
-    label?: string;
-  }, _grant) => {
-    if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'sync', 'tile:sync:enrol', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:sync:enrol' };
-    }
-    if (!args.serverUrl || !args.code) {
-      return { success: false, error: 'Server URL and code are required' };
-    }
-    try {
-      const device = await exchangeEnrolmentCode(args.serverUrl, args.code, args.label);
-      return { success: true, data: device };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  registerTrustedSyncIpc<{ token: string }>(
+    'tile:sync:list-devices',
+    { requiresConfig: true },
+    (_args, config) => listDevices(config.serverUrl, config.apiKey),
+  );
+
+  registerTrustedSyncIpc<{ token: string; deviceId: string; label: string }>(
+    'tile:sync:rename-device',
+    { requiresConfig: true },
+    (args, config) => renameDevice(config.serverUrl, config.apiKey, args.deviceId, args.label),
+  );
+
+  // Revoking the device this install is signed in as is allowed (the server
+  // decides — it knows which key made the request) and comes back with
+  // `current: true`. The now-dead key is dropped here, in the main process,
+  // rather than left for the renderer to clean up: whatever the panel does
+  // next, no later sync runs with a key the server will refuse.
+  registerTrustedSyncIpc<{ token: string; deviceId: string }>(
+    'tile:sync:revoke-device',
+    { requiresConfig: true },
+    async (args, config) => {
+      const result = await revokeDevice(config.serverUrl, config.apiKey, args.deviceId);
+      if (result.revoked && result.current) {
+        clearSyncCredentials();
+      }
+      return result;
+    },
+  );
+
+  registerTrustedSyncIpc<{ token: string }>(
+    'tile:sync:create-enrolment-code',
+    { requiresConfig: true },
+    (_args, config) => createEnrolmentCode(config.serverUrl, config.apiKey),
+  );
+
+  registerTrustedSyncIpc<{ token: string; serverUrl: string; code: string; label?: string }>(
+    'tile:sync:enrol',
+    { requiresConfig: false },
+    async (args) => {
+      if (!args.serverUrl || !args.code) {
+        throw new Error('Server URL and code are required');
+      }
+      return exchangeEnrolmentCode(args.serverUrl, args.code, args.label);
+    },
+  );
 
   // ── tile:profiles:* ──────────────────────────────────────────────
   //

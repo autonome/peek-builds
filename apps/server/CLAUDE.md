@@ -97,6 +97,7 @@ asking" is correct; "I can't read logs" is not.
 | `PORT` | `3000` | HTTP port |
 | `DATA_DIR` | `./data` | SQLite + blob storage root |
 | `API_KEY` | — | Legacy single-user key (auto-migrates) |
+| `TRUSTED_PROXY_HOPS` | `1` | Reverse-proxy hops appending to `X-Forwarded-For` (Railway: 1). Set `0` when self-hosting with no proxy, or clients can pick their own `/enrol` rate-limit bucket |
 
 For test scripts, copy `apps/server/.env.example` to `.env` and fill in:
 - `PEEK_LOCAL_KEY` — local dev API key

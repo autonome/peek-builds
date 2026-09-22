@@ -28,6 +28,37 @@ function createAuthMiddleware(config) {
 }
 
 /**
+ * Paths a user/device credential must never authenticate — either because
+ * they are public or because they carry their own, different gate. Shared by
+ * both middlewares below so a route added here is skipped identically in
+ * single-user and multi-user mode; the two used to carry separate copies of
+ * this list, with nothing keeping them in step.
+ *
+ * - `/` — health check, always public.
+ * - `/admin/*` — its own ADMIN_TOKEN gate (see index.js), independent of
+ *   user/device keys.
+ * - `/mcp/*` — its own grant-credential gate (see createMcpAuthMiddleware).
+ *   A device key is unscoped by nature and carries no readonly bit, so
+ *   letting it authenticate here would make every phone install a
+ *   whole-store MCP key. The trailing slash matters: the skip must cover
+ *   exactly what `app.use("/mcp/*", …)` covers, or a future path like
+ *   /mcp-admin would skip this gate without gaining another.
+ * - `/enrol` — its own code-based gate: a brand-new device has no key yet,
+ *   only an enrolment code (see users.exchangeEnrolmentCode).
+ *
+ * @param {string} path - `c.req.path`
+ * @returns {boolean}
+ */
+function isPublicPath(path) {
+  return (
+    path === "/" ||
+    path.startsWith("/admin") ||
+    path.startsWith("/mcp/") ||
+    path === "/enrol"
+  );
+}
+
+/**
  * Single-user authentication middleware.
  * - If token is configured, requires Bearer token auth
  * - If no token, allows all authenticated requests
@@ -39,30 +70,7 @@ function singleUserMiddleware(singleUser) {
   const { userId, token } = singleUser;
 
   return async (c, next) => {
-    // Health check is always public
-    if (c.req.path === "/") {
-      return next();
-    }
-
-    // /admin/* has its own ADMIN_TOKEN gate (see adminMiddleware) — never
-    // authenticate it with a user/device credential.
-    if (c.req.path.startsWith("/admin")) {
-      return next();
-    }
-
-    // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
-    // — a device/user credential does not carry a scope or a readonly bit, so
-    // it must never authenticate an MCP route. The trailing slash matters: the
-    // skip must cover exactly what `app.use("/mcp/*", …)` covers, or a future
-    // path like /mcp-admin would skip this gate without gaining another.
-    if (c.req.path.startsWith("/mcp/")) {
-      return next();
-    }
-
-    // POST /enrol has its own code-based gate, not a user/device credential
-    // — a brand-new device has no key yet, only an enrolment code (see
-    // users.exchangeEnrolmentCode).
-    if (c.req.path === "/enrol") {
+    if (isPublicPath(c.req.path)) {
       return next();
     }
 
@@ -96,31 +104,7 @@ function singleUserMiddleware(singleUser) {
  */
 function multiUserMiddleware() {
   return async (c, next) => {
-    // Health check is public
-    if (c.req.path === "/") {
-      return next();
-    }
-
-    // /admin/* has its own ADMIN_TOKEN gate (see adminMiddleware) — never
-    // authenticate it with a user/device credential.
-    if (c.req.path.startsWith("/admin")) {
-      return next();
-    }
-
-    // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
-    // — a device key is unscoped by nature, and letting it authenticate here
-    // would make every phone install a whole-store MCP key. The trailing slash
-    // matters: the skip must cover exactly what `app.use("/mcp/*", …)` covers,
-    // or a future path like /mcp-admin would skip this gate without gaining
-    // another.
-    if (c.req.path.startsWith("/mcp/")) {
-      return next();
-    }
-
-    // POST /enrol has its own code-based gate, not a user/device credential
-    // — a brand-new device has no key yet, only an enrolment code (see
-    // users.exchangeEnrolmentCode).
-    if (c.req.path === "/enrol") {
+    if (isPublicPath(c.req.path)) {
       return next();
     }
 

@@ -1183,9 +1183,16 @@ app.delete("/profiles/:profileId", (c) => {
 // the ADMIN_TOKEN-gated /admin/devices below, which can act on any user.
 
 // GET /devices - list the authenticated account's own devices (no key material).
+// `current` marks the device whose key made this request, so a client can tell
+// the person which row is the one they are using — revoking it is allowed
+// (see DELETE below) but cuts off the client doing the revoking.
 app.get("/devices", (c) => {
   const userId = c.get("userId");
-  return c.json({ devices: users.listDevices(userId) });
+  const requestingDeviceId = c.get("deviceId");
+  const devices = users
+    .listDevices(userId)
+    .map((device) => ({ ...device, current: device.id === requestingDeviceId }));
+  return c.json({ devices });
 });
 
 // PATCH /devices/:deviceId  { label }  -> rename one of the caller's own devices.
@@ -1209,13 +1216,14 @@ app.patch("/devices/:deviceId", async (c) => {
 // down mid-request — only a bearer key re-checked on every request — so
 // revoking-self succeeds here and the SAME key is rejected starting with its
 // next use (resolveDevice returns { revoked: true }, multiUserMiddleware
-// turns that into 401).
+// turns that into 401). `current: true` in the response tells the client it
+// just revoked its own key, so it can drop it instead of retrying with it.
 app.delete("/devices/:deviceId", (c) => {
   const userId = c.get("userId");
   const deviceId = c.req.param("deviceId");
   try {
     const revoked = users.revokeDevice(userId, deviceId);
-    return c.json({ revoked });
+    return c.json({ revoked, current: deviceId === c.get("deviceId") });
   } catch (e) {
     return c.json({ error: e.message }, 400);
   }
@@ -1234,39 +1242,52 @@ app.delete("/devices/:deviceId", (c) => {
 // POST /devices/enrolment-codes -> { code, expiresAt }
 // No body: the account holder isn't naming their own device, they're
 // pre-authorizing the next one — the new device supplies its own label at
-// exchange time.
+// exchange time. Replaces the account's previous unused code, and is
+// rate-limited per account (429) — see users.createEnrolmentCode.
 app.post("/devices/enrolment-codes", (c) => {
   const userId = c.get("userId");
   try {
     const { code, expiresAt } = users.createEnrolmentCode(userId);
     return c.json({ code, expiresAt });
   } catch (e) {
-    return c.json({ error: e.message }, 400);
+    return c.json({ error: e.message }, e.status || 400);
   }
 });
 
+// How many reverse-proxy hops sit in front of this server and append the
+// connecting address to X-Forwarded-For. The hosted deployment (Railway)
+// has exactly one, hence the default. A self-hosted install with no proxy
+// must set TRUSTED_PROXY_HOPS=0: with nothing appending to the header, every
+// entry in it was written by the client, who could otherwise pick their own
+// rate-limit bucket. Anything unparseable counts as 0 — the header is then
+// ignored and the socket address is used, which never trusts the client.
+const TRUSTED_PROXY_HOPS = Math.max(
+  0,
+  parseInt(process.env.TRUSTED_PROXY_HOPS ?? "1", 10) || 0
+);
+
 // Best-effort caller IP for per-caller rate limiting (used by the
-// unauthenticated /enrol route below). Prefers X-Forwarded-For, since the
-// server sits behind exactly one trusted hop (Railway's edge proxy), which
-// appends the connecting client's address as the LAST entry — any earlier
-// entries were supplied by the client itself and are not trustworthy for
-// rate-limit bucketing. Falls back to the underlying socket via
-// @hono/node-server's conninfo helper for a direct connection. Neither is
-// available when a test drives the app in-process (no real socket), so this
-// degrades to a shared "unknown" bucket there — fine, since no test
-// exercises per-IP separation.
+// unauthenticated /enrol route below). With N trusted hops, the Nth entry
+// from the end of X-Forwarded-For is the address the outermost trusted proxy
+// saw connecting — everything before it was supplied by the client and is
+// not trustworthy for bucketing. Falls back to the underlying socket via
+// @hono/node-server's conninfo helper (a direct connection, or a header too
+// short for the configured hops). Returns null when neither is available —
+// a test driving the app in-process has no real socket — and the caller then
+// applies no per-IP limit at all (see users.exchangeEnrolmentCode for why
+// that beats one shared bucket).
 function requesterIp(c) {
   const forwarded = c.req.header("x-forwarded-for");
-  if (forwarded) {
+  if (forwarded && TRUSTED_PROXY_HOPS > 0) {
     const hops = forwarded.split(",").map((hop) => hop.trim()).filter(Boolean);
-    if (hops.length > 0) {
-      return hops[hops.length - 1];
+    if (hops.length >= TRUSTED_PROXY_HOPS) {
+      return hops[hops.length - TRUSTED_PROXY_HOPS];
     }
   }
   try {
-    return getConnInfo(c).remote.address || "unknown";
+    return getConnInfo(c).remote.address || null;
   } catch (e) {
-    return "unknown";
+    return null;
   }
 }
 

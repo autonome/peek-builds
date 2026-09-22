@@ -56,6 +56,24 @@ const createInput = (label, value, onChange, options = {}) => {
   return group;
 };
 
+// Helper: run one async action behind a button, showing `busyLabel` on it and
+// keeping it disabled until the action settles — so a slow server round trip
+// can't be double-clicked into two requests, and the label always comes back
+// even when the action throws. Errors propagate to the caller, which decides
+// where to show them. Works for a plain <button> and a <peek-button> alike
+// (both expose `disabled` and `textContent`).
+const runWithBusyButton = async (btn, busyLabel, action) => {
+  const idleLabel = btn.textContent;
+  btn.textContent = busyLabel;
+  btn.disabled = true;
+  try {
+    return await action();
+  } finally {
+    btn.textContent = idleLabel;
+    btn.disabled = false;
+  }
+};
+
 // Helper: Create checkbox
 const createCheckbox = (label, value, onChange, options = {}) => {
   const group = document.createElement('div');
@@ -2188,26 +2206,27 @@ const renderSyncSettings = async () => {
   enrolStatus.textContent = "Enter this device's server URL above and a code from an already-enrolled device to get its own key.";
   enrolGroup.appendChild(enrolStatus);
 
+  const showEnrolError = (message) => {
+    enrolStatus.textContent = message;
+    enrolStatus.style.color = 'var(--error-text, #dc2626)';
+  };
+
   enrolBtn.addEventListener('click', async () => {
     const code = (enrolInput.value || '').trim();
     const label = (enrolLabelInput.value || '').trim();
     if (!config.serverUrl) {
-      enrolStatus.textContent = 'Enter a server URL above first.';
-      enrolStatus.style.color = 'var(--error-text, #dc2626)';
+      showEnrolError('Enter a server URL above first.');
       return;
     }
     if (!code) {
-      enrolStatus.textContent = 'Enter a code first.';
-      enrolStatus.style.color = 'var(--error-text, #dc2626)';
+      showEnrolError('Enter a code first.');
       return;
     }
-    enrolBtn.disabled = true;
-    enrolBtn.textContent = 'Enrolling…';
     try {
-      const result = await api.sync.enrol(config.serverUrl, code, label || undefined);
+      const result = await runWithBusyButton(enrolBtn, 'Enrolling…', () =>
+        api.sync.enrol(config.serverUrl, code, label || undefined));
       if (!result.success) {
-        enrolStatus.textContent = result.error || 'Failed to enroll';
-        enrolStatus.style.color = 'var(--error-text, #dc2626)';
+        showEnrolError(result.error || 'Failed to enroll');
         return;
       }
       const newKey = result.data?.apiKey || '';
@@ -2220,11 +2239,7 @@ const renderSyncSettings = async () => {
       enrolStatus.style.color = '';
       updateStatus();
     } catch (err) {
-      enrolStatus.textContent = err.message || 'Failed to enroll';
-      enrolStatus.style.color = 'var(--error-text, #dc2626)';
-    } finally {
-      enrolBtn.disabled = false;
-      enrolBtn.textContent = 'Enroll';
+      showEnrolError(err.message || 'Failed to enroll');
     }
   });
 
@@ -2331,6 +2346,25 @@ const renderSyncSettings = async () => {
 
   // Initial status update
   await updateStatus();
+
+  // Re-read the stored config into this panel's inputs and status. The
+  // Devices panel changes the stored key from outside this closure — a
+  // device revoking itself drops it (tile:sync:revoke-device) — and without
+  // this the field would keep showing a key the server now refuses. Exposed
+  // on window like _refreshDevicesList / _refreshPermissionsList.
+  window._refreshSyncConfig = async () => {
+    try {
+      const configResult = await api.sync.getConfig();
+      if (configResult.success && configResult.data) {
+        config = { ...config, ...configResult.data };
+        serverUrlGroup.querySelector('input').value = config.serverUrl || '';
+        apiKeyInput.value = config.apiKey || '';
+      }
+    } catch (err) {
+      console.error('[settings] Failed to reload sync config:', err);
+    }
+    await updateStatus();
+  };
 
   // Reflects one `sync:progress` entry in the live status line. A run
   // finishing or failing leaves its own message showing (dropping the "Now:"
@@ -2882,15 +2916,16 @@ const renderDevicesSettings = async () => {
   addDeviceBtn.setAttribute('variant', 'primary');
   addDeviceBtn.setAttribute('size', 'sm');
   addDeviceBtn.textContent = 'Create code';
+  const showCodeError = (message) => {
+    codeDisplay.textContent = `Failed to create code: ${message}`;
+    codeDisplay.style.color = 'var(--error-text, #dc2626)';
+    codeDisplay.style.display = '';
+  };
   addDeviceBtn.addEventListener('click', async () => {
-    addDeviceBtn.textContent = 'Creating…';
-    addDeviceBtn.disabled = true;
     try {
-      const result = await api.sync.createEnrolmentCode();
+      const result = await runWithBusyButton(addDeviceBtn, 'Creating…', () => api.sync.createEnrolmentCode());
       if (!result.success) {
-        codeDisplay.textContent = `Failed to create code: ${result.error}`;
-        codeDisplay.style.color = 'var(--error-text, #dc2626)';
-        codeDisplay.style.display = '';
+        showCodeError(result.error);
         return;
       }
       const { code, expiresAt } = result.data || {};
@@ -2898,9 +2933,8 @@ const renderDevicesSettings = async () => {
       codeDisplay.textContent = `Code: ${code} — expires ${expires}`;
       codeDisplay.style.color = '';
       codeDisplay.style.display = '';
-    } finally {
-      addDeviceBtn.textContent = 'Create code';
-      addDeviceBtn.disabled = false;
+    } catch (err) {
+      showCodeError(err.message || String(err));
     }
   });
   newDeviceFooter.appendChild(addDeviceBtn);
@@ -2936,7 +2970,12 @@ const renderDevicesSettings = async () => {
     badge.style.cssText = device.revoked_at
       ? 'font-size: 12px; color: var(--text-tertiary);'
       : 'font-size: 12px; color: var(--accent-primary);';
-    badge.textContent = device.revoked_at ? 'Revoked' : 'Active';
+    // `current` is the server's word for "the key that made this request" —
+    // i.e. this install. Named, since revoking it disconnects this very app.
+    badge.textContent = device.revoked_at ? 'Revoked' : device.current ? 'This device' : 'Active';
+    if (device.current) {
+      card.dataset.current = 'true';
+    }
     header.appendChild(badge);
     card.appendChild(header);
 
@@ -2974,7 +3013,7 @@ const renderDevicesSettings = async () => {
           alert('Device name cannot be empty');
           return;
         }
-        const result = await api.sync.renameDevice(device.id, label);
+        const result = await runWithBusyButton(renameBtn, 'Renaming…', () => api.sync.renameDevice(device.id, label));
         if (!result.success) {
           alert(`Failed to rename device: ${result.error}`);
           return;
@@ -2989,10 +3028,27 @@ const renderDevicesSettings = async () => {
       revokeBtn.setAttribute('size', 'sm');
       revokeBtn.textContent = 'Revoke';
       revokeBtn.addEventListener('click', async () => {
-        if (!confirm(`Revoke "${device.label || 'this device'}"? It will lose sync access immediately.`)) return;
-        const result = await api.sync.revokeDevice(device.id);
+        const name = device.label || 'this device';
+        const prompt = device.current
+          ? `Revoke "${name}" — the device you are using right now? Sync on this computer stops ` +
+            'until you enroll again with a code from another device.'
+          : `Revoke "${name}"? It will lose sync access immediately.`;
+        if (!confirm(prompt)) return;
+        const result = await runWithBusyButton(revokeBtn, 'Revoking…', () => api.sync.revokeDevice(device.id));
         if (!result.success) {
           alert(`Failed to revoke device: ${result.error}`);
+          return;
+        }
+        if (result.data?.current) {
+          // This install just revoked its own key. The main process has
+          // already dropped the stored key (tile:sync:revoke-device), so
+          // reloading the list here would only 401 — say what happened
+          // instead, and bring the Sync panel's fields in line.
+          listContainer.innerHTML = '';
+          statusLine.textContent =
+            "This device's key was revoked and removed from the Sync panel. To reconnect, " +
+            'enroll again from the Sync panel with a code created on another device.';
+          if (window._refreshSyncConfig) await window._refreshSyncConfig();
           return;
         }
         await loadDevices();
@@ -3009,15 +3065,13 @@ const renderDevicesSettings = async () => {
     listContainer.innerHTML = '';
     statusLine.textContent = '';
 
-    const configResult = await api.sync.getConfig();
-    if (!configResult.success || !configResult.data?.serverUrl || !configResult.data?.apiKey) {
-      statusLine.textContent = 'Configure sync (Server URL and API Key, above) to manage devices.';
-      return;
-    }
-
+    // One round trip: the handler checks the config itself and says so with
+    // `notConfigured` rather than making this read the config first.
     const result = await api.sync.listDevices();
     if (!result.success) {
-      statusLine.textContent = `Failed to load devices: ${result.error}`;
+      statusLine.textContent = result.notConfigured
+        ? 'Configure sync (Server URL and API Key, above) to manage devices.'
+        : `Failed to load devices: ${result.error}`;
       return;
     }
 
