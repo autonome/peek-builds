@@ -1,6 +1,6 @@
 ---
 enabled: true
-touches: [apps/server/users.js, apps/server/auth.js, apps/server/index.js, apps/server/test.js]
+touches: [apps/server/users.js, apps/server/auth.js, apps/server/index.js, apps/server/test.js, apps/desktop/main/sync.test.ts]
 depends-on: []
 ---
 
@@ -84,18 +84,33 @@ list.
   test above is what closes that gap; make sure it actually exercises `multiUserMiddleware()` or
   `resolveDevice()` post-cutover, not just the deleted code path's absence.
 
+`apps/desktop/main/sync.test.ts` — the desktop sync suites boot the real server app in-process
+and authenticate through it. Their shared `setup()` helper builds the credential with
+`users.createUser(userId)` and hands that `apiKey` to `profiles.enableSync(...)`: a users-table
+key, which only ever authenticated through the fallback this spec removes. With the fallback gone
+every request in those suites answers `401 Unauthorized` (35 failures across the event-watermark,
+progress-log, tag-metadata, IPC entry-point, bulk-pull-timeout, version-bump and batch-push
+describes). Change `setup()` to keep the `createUser(userId)` call (the user row must exist) and
+then mint the credential with `users.createDevice(userId, 'sync-test').apiKey`, the same way
+`apps/server/test.js`'s route tests do post-cutover. Extend the `let users: {...}` type
+declaration near the top of the file to include `createDevice(userId: string, label: string):
+{ apiKey: string }`. No assertion changes; the suites are about sync, not auth.
+
 ## Verify
 
-The repo gate only runs desktop unit tests, which don't cover `apps/server`. Run the server suite
-directly and record pass/fail counts in the handoff's `**Result**` section:
+Both suites must be green. The repo gate covers the desktop side (`sync.test.ts` compiles into
+`dist/main/` and runs under the electron runner); the server side is not in the gate, so run it
+directly too. Record all counts in the handoff's `**Result**` section:
 
 ```
+yarn workspace @peek/desktop build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test apps/desktop/dist/main/*.test.js && NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js
 yarn server:test
 ```
 
-Done when it passes with: the inverted legacy-key-rejected test, `migrateLegacyKeysToDevices`'s
-tests adjusted and passing, `regenerateApiKey`'s tests removed, and no other server test newly
-failing.
+Done when the electron runner reports `fail 0` (3311 tests as of `af107d97`; before the
+`sync.test.ts` change it reports 35 failures, all `Server error 401`), and the server suite passes
+with: the inverted legacy-key-rejected test, `migrateLegacyKeysToDevices`'s tests adjusted and
+passing, `regenerateApiKey`'s tests removed, and no other server test newly failing.
 
 ## Working rules
 
