@@ -120,12 +120,19 @@ function cancelHideTimer() {
 
 let panelWindowId = null;
 
-async function showPanel(spaceName) {
+/**
+ * Show the panel for the active workspace, or update the one already open.
+ * `color` is the workspace's accent — the same resolved color the screen
+ * border uses — and travels both ways the panel learns its workspace: the
+ * URL on creation and `spaces:panel-update` on a later switch, so the panel
+ * is themed on every switch, not only the first (`panel.js applyAccent`).
+ */
+async function showPanel(spaceName, color) {
   if (panelWindowId) {
     try {
       const exists = await api.window.exists(panelWindowId);
       if (exists?.exists) {
-        api.pubsub.publish('spaces:panel-update', { spaceName });
+        api.pubsub.publish('spaces:panel-update', { spaceName, color });
         return;
       }
     } catch { /* window gone */ }
@@ -140,7 +147,7 @@ async function showPanel(spaceName) {
     const height = 112;
     const margin = 16;
 
-    const panelHtml = `peek://spaces/panel.html?spaceName=${encodeURIComponent(spaceName)}`;
+    const panelHtml = `peek://spaces/panel.html?spaceName=${encodeURIComponent(spaceName)}&color=${encodeURIComponent(color || '')}`;
     const result = await api.window.open(panelHtml, {
       // Chrome, not content: excluded from the Windows switcher by role
       // (features/windows/windows.js loadWindows()'s CHROME_ROLES filter).
@@ -434,8 +441,8 @@ async function enterWorkspace(tag, spaceName) {
     // Show or update the workspace panel — it stays open across a switch
     // (closeCurrentWorkspaceWindows() below keeps it alive when the target
     // isn't the default; showPanel() reuses an already-open one instead of
-    // recreating it).
-    showPanel(spaceName);
+    // recreating it), themed with the same accent as the border.
+    showPanel(spaceName, borderColor);
   }
 }
 
@@ -557,6 +564,16 @@ async function closeSpace() {
 
 async function switchSpace(targetName) {
   if (!targetName) return { success: false, error: 'Usage: switch space <name>' };
+  await defaultSpaceReady;
+  // Switching to the workspace that is already active is a no-op: re-entering
+  // it would save, close and reopen its own windows for no visible change.
+  // The Spaces UI's card click and the panel's switch control both come
+  // through here, so this is where that churn is avoided; `open space` keeps
+  // its re-enter semantics.
+  if (activeSpaceId && activeSpaceName &&
+      toSpaceTagName(targetName.trim()) === toSpaceTagName(activeSpaceName)) {
+    return { success: true, spaceId: activeSpaceId, spaceName: activeSpaceName, unchanged: true };
+  }
   // Entering any workspace already closes whichever one is active — switching
   // is just entering a different target (see openSpace()).
   return openSpace(targetName);
@@ -727,6 +744,20 @@ const init = async () => {
   console.log('[ext:spaces] init');
 
   initCommands();
+
+  // Wake topic (manifest `lazyEvents`): this tile is lazy and normally wakes
+  // only on a `cmd:execute:*` command, but `open spaces` is a declarative
+  // `window` command — the lazy-dispatch hook (`main/tile-lazy.ts
+  // handleCommandDispatch`) turns it into a `window:reopen-request` and never
+  // delivers a `cmd:execute:open spaces`, so opening the Spaces UI alone
+  // could not wake this tile, and the default workspace's tag did not exist
+  // until some other command ran. The Spaces UI (`home.js init()`) publishes
+  // this topic instead; being woken by it is the whole effect — `init` below
+  // already bootstraps the default, so the handler only has to exist and
+  // let the publish resolve once the bootstrap is done.
+  api.pubsub.subscribe('spaces:ensure-default', async () => {
+    await defaultSpaceReady;
+  });
 
   // Fire-and-forget: resolves activeSpaceId to the default workspace.
   // Every command handler above awaits this before touching activeSpaceId,

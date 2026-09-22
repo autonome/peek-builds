@@ -10,7 +10,8 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "lazy": true,
+      "lazyEvents": ["spaces:ensure-default"]
     },
     {
       "id": "home",

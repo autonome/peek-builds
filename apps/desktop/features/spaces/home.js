@@ -736,9 +736,24 @@ const createSpaceCard = (space) => {
   footer.textContent = `${count} ${count === 1 ? 'page' : 'pages'}`;
   card.appendChild(footer);
 
-  card.addEventListener('card-click', () => showItems(space));
+  card.addEventListener('card-click', () => activateSpace(space));
 
   return card;
+};
+
+/**
+ * Click or Enter on a space card: enter that workspace AND browse its items.
+ * Activation goes through the same `switch space` command the palette and
+ * the workspace panel use — one path into `background.js openSpace()`, not a
+ * parallel one. `grid-nav.js activateSelected()` implements Enter as a
+ * `.click()` on the selected card, so both gestures land here.
+ */
+const activateSpace = (space) => {
+  api.pubsub.publish('cmd:execute:switch space', {
+    search: getSpaceDisplayName(space),
+    params: [getSpaceDisplayName(space)],
+  });
+  return showItems(space);
 };
 
 /**
@@ -884,6 +899,15 @@ const init = async () => {
   });
 
   setupCreateSpace();
+
+  // Make sure the default workspace exists before the list renders for the
+  // first time. The tag is created by the feature's lazy background tile
+  // (`background.js bootstrapDefaultSpace()`), and this page is opened by a
+  // declarative `window` command that cannot wake it (see the
+  // `spaces:ensure-default` subscriber in background.js). Published after
+  // the live query above is subscribed: the datastore announces the new tag
+  // as `tag:created`, which re-renders the list through that query.
+  api.pubsub.publish('spaces:ensure-default', {});
 
   showSpaces();
 };

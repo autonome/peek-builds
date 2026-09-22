@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, getContextEntry, normalizeUrl } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, getContextEntry, cleanupWindowContext, normalizeUrl } from './datastore.js';
 import { seedOnboardingIfNeeded } from './onboarding-seed.js';
 import { installDebugFlagsPersistence } from './debug-flag-store.js';
 import { migrateMcpConfigLocation } from './mcp-config.js';
@@ -405,6 +405,14 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
     // linger to be matched by a later reuse/dedup scan.
     if (wmId != null) removeWindowOpenPayload(wmId);
   }
+  // Drop the window's context entries (mode, pin, …) for the same reason:
+  // `getWindowsMatchingContext` (`tile:context:windows-in-space`) walks the
+  // in-memory context map by window id, so a closed window whose entries
+  // lingered would still count as a member of its workspace — the spaces
+  // feature's close sweep and its "windows in this space" queries would keep
+  // reporting a window that no longer exists. After (a) above, which is the
+  // last reader of this window's mode entry.
+  cleanupWindowContext(windowId);
   try {
     publish('system', 'window:removed', { id: windowId });
   } catch (publishErr) {

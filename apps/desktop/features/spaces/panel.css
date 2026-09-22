@@ -8,13 +8,19 @@ html, body {
   font: 13px -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* `--panel-accent` is the active workspace's color, set on the document
+   element by panel.js applyAccent() on creation and on every switch. */
 peek-card.panel {
   display: block;
   width: 100%;
   height: 100%;
+  border-left: 4px solid var(--panel-accent, transparent);
 }
 
 .panel-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
   font-size: 13px;
   color: var(--peek-text-primary, #1d1d1f);
@@ -22,6 +28,15 @@ peek-card.panel {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 8px;
+}
+
+.panel-name::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--panel-accent, #999);
 }
 
 .panel-controls {

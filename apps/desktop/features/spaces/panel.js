@@ -16,6 +16,7 @@ const api = window.app;
 
 const params = new URLSearchParams(window.location.search);
 let currentSpaceName = params.get('spaceName') || '';
+let currentColor = params.get('color') || '';
 
 const nameEl = () => document.getElementById('panel-name');
 const selectEl = () => document.querySelector('peek-select.panel-switch');
@@ -24,6 +25,20 @@ const closeEl = () => document.querySelector('peek-button.panel-close');
 function renderName() {
   const el = nameEl();
   if (el) el.textContent = currentSpaceName || 'Workspace';
+}
+
+/**
+ * Theme the panel to the active workspace's accent color — the resolved
+ * color `background.js showPanel()` passes (the same one the screen border
+ * uses), read by `panel.css` through the `--panel-accent` custom property.
+ */
+function applyAccent() {
+  const root = document.documentElement;
+  if (currentColor) {
+    root.style.setProperty('--panel-accent', currentColor);
+  } else {
+    root.style.removeProperty('--panel-accent');
+  }
 }
 
 async function loadSwitchOptions() {
@@ -42,6 +57,7 @@ async function loadSwitchOptions() {
 
 async function init() {
   renderName();
+  applyAccent();
   await loadSwitchOptions();
 
   selectEl()?.addEventListener('change', (e) => {
@@ -59,7 +75,9 @@ async function init() {
   api.pubsub.subscribe('spaces:panel-update', (msg) => {
     if (msg?.spaceName) {
       currentSpaceName = msg.spaceName;
+      currentColor = msg.color || '';
       renderName();
+      applyAccent();
       loadSwitchOptions();
     }
   });

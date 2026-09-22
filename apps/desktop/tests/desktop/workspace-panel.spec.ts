@@ -55,6 +55,31 @@ test.describe('workspace panel: global HUD window @desktop', () => {
     const first = 'panel-spec-first';
     const second = 'panel-spec-second';
 
+    // Give the two workspaces distinct, already-vivid colors (chroma above
+    // `resolveVividColor`'s threshold, so `openSpace` keeps them as-is): the
+    // panel must be themed to whichever workspace is active, and a second
+    // switch must re-theme it — not leave the first workspace's color behind.
+    const firstColor = '#ff3b30';
+    const secondColor = '#007aff';
+    await bgWindow.evaluate(
+      async (arg: { name: string; color: string }) => {
+        const api = (window as unknown as { app: any }).app;
+        const r = await api.datastore.getOrCreateTag(`space:${arg.name}`);
+        await api.datastore.updateTagColor(r.data.tag.id, arg.color);
+      },
+      { name: first, color: firstColor },
+    );
+    await bgWindow.evaluate(
+      async (arg: { name: string; color: string }) => {
+        const api = (window as unknown as { app: any }).app;
+        const r = await api.datastore.getOrCreateTag(`space:${arg.name}`);
+        await api.datastore.updateTagColor(r.data.tag.id, arg.color);
+      },
+      { name: second, color: secondColor },
+    );
+    const panelAccent = (page: Page) =>
+      page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--panel-accent').trim());
+
     const openResult = await runCommand('open space', first);
     expect(openResult?.success, `open space "${first}" failed: ${openResult?.error}`).toBe(true);
 
@@ -63,6 +88,9 @@ test.describe('workspace panel: global HUD window @desktop', () => {
     const panelInfo = await panelPage.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
     expect(panelInfo?.error).toBeUndefined();
     const panelWindowId = panelInfo.id as number;
+    await expect
+      .poll(() => panelAccent(panelPage), { timeout: 15000, message: 'the panel is not themed to the first workspace' })
+      .toBe(firstColor);
 
     // Switching workspaces updates the SAME panel window in place — the
     // point of `keepPanel`, not a close/reopen the test would otherwise be
@@ -76,6 +104,12 @@ test.describe('workspace panel: global HUD window @desktop', () => {
       infoAfterSwitch.id,
       'the panel was closed and reopened on switch instead of updated in place',
     ).toBe(panelWindowId);
+    await expect
+      .poll(() => panelAccent(panelPage), {
+        timeout: 15000,
+        message: 'the panel kept the first workspace\'s color after switching to the second',
+      })
+      .toBe(secondColor);
 
     // Closing the workspace from the panel's own control follows the same
     // path as `closeSpace()` — both the workspace content and the panel
