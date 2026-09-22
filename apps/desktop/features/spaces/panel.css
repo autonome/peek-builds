@@ -45,7 +45,15 @@ peek-card.panel {
   gap: 8px;
 }
 
+/* `<peek-select class="panel-switch">` runs in the component's default
+   'native' mode: a real `<select>`, so its OPEN dropdown is rendered by
+   macOS itself and cannot be styled — no background wash, no per-item
+   swatch, same ceiling a native Electron `Menu`/`MenuItem` would hit. Only
+   its CLOSED control is DOM the component draws (`appearance: none`), so
+   that's what gets themed here, the same way the corner panel itself uses
+   the accent as a border, not a background. */
 .panel-switch {
   flex: 1;
   min-width: 0;
+  --peek-select-border: var(--panel-accent, var(--theme-border, #e0e0e0));
 }

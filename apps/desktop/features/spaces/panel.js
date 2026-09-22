@@ -51,7 +51,12 @@ async function loadSwitchOptions() {
     .map((tag) => getSpaceDisplayName(tag))
     .filter((name) => name && name !== currentSpaceName)
     .map((name) => ({ value: name, label: name }));
-  select.options = [{ value: '', label: 'Switch to…', disabled: true }, ...options];
+  // `<peek-select>` already renders its own disabled "Switch to…" placeholder
+  // option (from the `placeholder` attribute set in panel.html) whenever its
+  // value is empty — adding one here too used to double it up in the native
+  // dropdown (two `value=""` options, one of which lost its selected/check
+  // state to the other). Just supply the real choices.
+  select.options = options;
   select.value = '';
 }
 
