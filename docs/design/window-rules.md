@@ -225,18 +225,24 @@ scoped to one, is itself evidence for the global-HUD reading.
   ordinary window of its workspace exactly as an unpinned one would; only the workspace panel
   itself, being dedicated chrome rather than user content, is excluded from the switcher, by role,
   the same way other chrome already is. Pin state is recorded as part of the window's own saved
-  state, not tracked separately or specially recreated: a workspace-scoped pin is a field on that
-  window's entry within its own workspace's saved session (`main/session.ts
-  saveSpaceWorkspaces` / `serializeSpaceWorkspaces`), restored with the rest of that workspace's
-  windows when it is re-entered; a cross-workspace pin is recorded in session state that is not
-  scoped to any one workspace, so it is restored regardless of which workspace becomes active.
-  `features/spaces/background.js closeSpace()` closes every window `api.context.getWindowsInSpace`
-  reports for the outgoing workspace — a global HUD window must not be one of them (either because
-  membership in a space's window set already excludes anything scoped "across workspaces," or
-  because `closeSpace()` gains an explicit skip; which of the two is a step-3 implementation
-  choice, not a design one). A workspace-pinned window that has no cross-workspace claim is closed
-  by that same sweep like any other window in the workspace, and comes back from the workspace's
-  saved session — with its pin and badge intact — the next time that workspace is entered.
+  state, not tracked separately or specially recreated: a workspace is a named session snapshot
+  (`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, keyed by workspace id — the
+  same functions the app's own boot/quit snapshot uses), and pin scope is a field of the window's
+  own context row (`context.pinScope`), carried on its descriptor in whichever snapshot it is
+  saved into (`main/session-projection.ts serializeSession`). A workspace-scoped pin is therefore
+  part of that workspace's own saved snapshot, restored with the rest of that workspace's windows
+  when it is re-entered. A cross-workspace pin is excluded from every NAMED workspace's snapshot —
+  `features/spaces/background.js closeCurrentWorkspaceWindows()` saves the outgoing workspace with
+  `excludeGlobalPins: true` — so it is never scoped to any one workspace's saved state; it survives
+  a relaunch instead as part of the ordinary `'default'` snapshot the app's autosave/before-quit/
+  manual save always writes, unfiltered, and a live restore into any workspace skips a
+  cross-workspace-pinned descriptor outright (it is assumed still open, since leaving a workspace
+  never closes one). `features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
+  closes every window `api.context.getWindowsInSpace` reports for the outgoing workspace, skipping
+  one pinned across every workspace by an explicit check on its 'pin' context entry. A
+  workspace-pinned window that has no cross-workspace claim is closed by that same sweep like any
+  other window in the workspace, and comes back from the workspace's saved snapshot — with its pin
+  and badge intact — the next time that workspace is entered.
 - **Multi-display.** Anchored to the display it opened on; it does not follow the cursor. Nothing
   pins to a display over time in this design, and nothing in the kernel today relocates a window's
   bounds without a user action (`bounds` changes only through an

@@ -113,7 +113,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, saveGlobalPinnedWindows, restoreGlobalPinnedWindows, readGlobalPinnedWindowsForTest } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -182,12 +182,6 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * tests/desktop/session-restore-focus.spec.ts.
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
-  /** Force-save the cross-workspace ("global HUD") pin list. See session.ts saveGlobalPinnedWindows. */
-  forceSaveGlobalPins: () => saveGlobalPinnedWindows(),
-  /** Force-restore the cross-workspace pin list, bypassing the boot-only call site. */
-  forceRestoreGlobalPins: () => restoreGlobalPinnedWindows(),
-  /** Read the persisted cross-workspace pin list directly. */
-  getGlobalPinsForTest: () => readGlobalPinnedWindowsForTest(),
   // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
   // is kernel state (`pendingColdStartFocus`), spent by `AppActivated`. Drive it
   // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
@@ -1513,15 +1507,11 @@ const onReady = async () => {
         notifySessionRestoreDone();
       }
 
-      // Reopen every globally-pinned ("global HUD") window, independent of
-      // whether a general session snapshot exists — a global HUD window is
-      // not scoped to one workspace, so its persistence does not depend on
-      // _sessionRestorePending above. See session.ts restoreGlobalPinnedWindows.
-      if (!isTestProfile()) {
-        restoreGlobalPinnedWindows().catch((err) => {
-          console.error('[session] Failed to restore global pins:', err);
-        });
-      }
+      // A globally-pinned ("global HUD") window is not scoped to one
+      // workspace, but it is not a separate persisted list either — it rides
+      // in the same 'default' snapshot as any other window (`serializeSession`
+      // only excludes it from a NAMED workspace's row) and comes back with
+      // everything else in the boot restore above.
 
       // Start periodic autosave timer (Phase 3)
       const autosaveInterval = (typeof prefsMsg.prefs.sessionAutosaveInterval === 'number')

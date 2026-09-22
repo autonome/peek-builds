@@ -224,7 +224,8 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
       .toBe(0);
 
     // Re-entering the same workspace restores it — pinned, from the saved
-    // workspace row (session.ts serializeSpaceWorkspaces `pinned` field).
+    // workspace snapshot's own `context.pinScope` field
+    // (session-projection.ts serializeSession).
     const reopenResult = await runCommand('open space', spaceName);
     expect(reopenResult?.success).toBe(true);
     const page = await app.getWindow('spaces/home.html', 15000);

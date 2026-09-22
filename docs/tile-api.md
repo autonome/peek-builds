@@ -261,7 +261,8 @@ See `tile-features-strict.test.ts` for full gate matrix.
 
 | Surface | Description |
 |---|---|
-| `api.session.saveSpaceWorkspaces()` | Persist space window layouts |
+| `api.session.saveWorkspaceSnapshot(key, opts?)` | Persist the current window layout under a named workspace key |
+| `api.session.restoreWorkspaceSnapshot(key)` | Reopen a named workspace's saved window layout |
 
 ---
 

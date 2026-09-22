@@ -4087,25 +4087,69 @@ export function registerTileIpcHandlers(): void {
     );
   });
 
-  // ── tile:session:save-space-workspaces ────────────────────────────
+  // ── tile:session:save-workspace-snapshot / restore-workspace-snapshot ──
   //
-  // Persist the per-space window-layout snapshot. Used by
-  // features/spaces and features/groups. Gated by the new `session`
-  // capability.
-  registerTileIpc('tile:session:save-space-workspaces', { mode: 'handle' }, async (event, args: {
+  // Persist/reopen a named workspace's window layout through the general
+  // session-snapshot pipeline (`main/session.ts saveSessionSnapshot` /
+  // `restoreSessionSnapshot`, keyed by workspace id — the same functions the
+  // app's own boot/quit snapshot uses, requirement 1/2 of
+  // `specs/workspace-session-snapshot.md`). Used by features/spaces and
+  // features/groups. Gated by the `session` capability.
+  registerTileIpc('tile:session:save-workspace-snapshot', { mode: 'handle' }, async (event, args: {
     token: string;
+    key: string;
+    excludeGlobalPins?: boolean;
   }, _grant) => {
     const grant = _grant;
-    const check = checkSessionAllowed(grant, 'save-space-workspaces');
+    const check = checkSessionAllowed(grant, 'save-workspace-snapshot');
     if (!check.ok) {
-      handleViolation(grant, 'session', 'session:save-space-workspaces', check.error, args.token);
+      handleViolation(grant, 'session', 'session:save-workspace-snapshot', check.error, args.token);
       return { success: false, error: check.error };
+    }
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
     }
 
     try {
-      const { saveSpaceWorkspaces } = await import('./session.js');
-      saveSpaceWorkspaces();
+      const { saveSessionSnapshot } = await import('./session.js');
+      // A deliberate, caller-requested save always writes, the same as the
+      // trustedBuiltin `tile:session:save` handler below — a workspace switch
+      // is not opportunistic autosave, and this path also needs to work
+      // under the test profile the desktop specs run in.
+      saveSessionSnapshot('workspace-switch', {
+        key: args.key,
+        excludeGlobalPins: args.excludeGlobalPins === true,
+        _forceForTest: true,
+      });
       return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:session:restore-workspace-snapshot', { mode: 'handle' }, async (event, args: {
+    token: string;
+    key: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkSessionAllowed(grant, 'restore-workspace-snapshot');
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:restore-workspace-snapshot', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+
+    try {
+      const { restoreSessionSnapshot } = await import('./session.js');
+      // `{}` (restoreSession unset) — the general "restore session on
+      // launch" preference is a boot-time setting; the user just explicitly
+      // asked to enter this workspace, so it always restores. `isColdStart`
+      // is false: this is a live in-app switch, never the app's own boot.
+      const result = await restoreSessionSnapshot({}, undefined, true, false, args.key);
+      return { success: true, ...result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

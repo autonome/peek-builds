@@ -233,7 +233,7 @@ const createMockApi = () => {
       setKey: async (key, value) => record('settings.setKey', key, value)
     },
     session: {
-      saveSpaceWorkspaces: async () => record('session.saveSpaceWorkspaces')
+      saveWorkspaceSnapshot: async (key) => record('session.saveWorkspaceSnapshot', key)
     }
   };
 };
@@ -276,9 +276,9 @@ const closeGroup = async (suspendedGroups, api, activeGroupId, activeGroupName, 
   if (!groupId) {
     return { success: false, error: 'No active group to close' };
   }
-  // Save workspace layouts before hiding
-  if (api.session?.saveSpaceWorkspaces) {
-    await api.session.saveSpaceWorkspaces();
+  // Save workspace layout before hiding
+  if (api.session?.saveWorkspaceSnapshot) {
+    await api.session.saveWorkspaceSnapshot(groupId);
   }
   const result = await api.context.getWindowsInSpace(groupId);
   if (!result.success || !result.data || result.data.length === 0) {
@@ -810,8 +810,8 @@ describe('closeGroup', () => {
 
     await closeGroup(suspended, api, null, null, 'grp-1', 'Work');
 
-    assert.ok(api.calls['session.saveSpaceWorkspaces']);
-    assert.equal(api.calls['session.saveSpaceWorkspaces'].length, 1);
+    assert.ok(api.calls['session.saveWorkspaceSnapshot']);
+    assert.equal(api.calls['session.saveWorkspaceSnapshot'].length, 1);
   });
 
   it('clears active group when closing the active group', async () => {

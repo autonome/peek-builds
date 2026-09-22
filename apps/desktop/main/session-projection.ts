@@ -63,7 +63,15 @@ import type { State, WindowId, WindowRecord } from './window-kernel.js';
 export interface SessionSnapshot {
   version: 1;
   createdAt: number;
-  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle';
+  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle' | 'workspace-switch';
+  /**
+   * Which workspace this snapshot belongs to — `'default'` for the startup/
+   * quit snapshot, or a workspace id for a named workspace's saved-and-closed
+   * session (`main/session.ts saveSessionSnapshot`'s `key` option). Entering a
+   * workspace and booting the app are the same restore call with a different
+   * key; this field is what tells two on-disk snapshots apart.
+   */
+  workspaceKey: string;
   windows: WindowDescriptor[];
 }
 
@@ -157,6 +165,18 @@ export interface SerializeSessionInput {
    * `keyWindow` read here would mark every saved descriptor `focused: false`.
    */
   topmostContentWindowId: WindowId | null;
+  /** Which workspace this save is for — see `SessionSnapshot.workspaceKey`. */
+  workspaceKey: string;
+  /**
+   * True for an explicit workspace-leave save (`workspaceKey !== 'default'`):
+   * a window pinned across every workspace is not scoped to the workspace
+   * being left, so it is excluded from this snapshot the same way it is
+   * excluded from the leave's window-close sweep (`docs/design/window-rules.md`
+   * "Persistent windows" — "Workspace interaction"). `false` for the ordinary
+   * app-level save (autosave/before-quit/manual), which keeps recording
+   * whatever is on screen the way it always has.
+   */
+  excludeGlobalPins?: boolean;
 }
 
 export interface SessionProjection {
@@ -422,6 +442,17 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       continue;
     }
 
+    // Skip feature chrome opened with the explicit `persist: false` option —
+    // e.g. the spaces feature's workspace panel and screen border
+    // (`features/spaces/background.js` `showPanel()` / `showBorder()`). This
+    // is a role-independent, explicit marker (not a URL match) precisely
+    // because a role-based rule (like the overlay skip below) can change
+    // for reasons that have nothing to do with persistence.
+    if (w.params.persist === false) {
+      notices.push({ level: 'debug', message: `[session:save] Skipping non-persist window ${w.nativeId}` });
+      continue;
+    }
+
     // Skip overlay-role / overlay-flagged windows. Overlays (Windows
     // switcher, find-bar, peek-card, etc.) are transient UI surfaces
     // that should not auto-restore on launch. Restoring an overlay
@@ -467,6 +498,34 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
 
     // Capture context state for this window
     const windowContext = input.getContext(w.nativeId);
+
+    // A window pinned across every workspace is excluded from a workspace's
+    // own leave-save (and, symmetrically, from that workspace's restore —
+    // `session.ts restoreSessionSnapshot` skips it there) — see
+    // `SerializeSessionInput.excludeGlobalPins`.
+    if (input.excludeGlobalPins && windowContext?.pinScope === 'global') {
+      notices.push({ level: 'debug', message: `[session:save] Excluding cross-workspace pin ${w.nativeId} from workspace "${input.workspaceKey}"` });
+      continue;
+    }
+
+    // A NAMED workspace's snapshot is scoped to the windows that identify as
+    // belonging to it — a window whose saved context row names a DIFFERENT
+    // space/group, or none at all (e.g. a baseline window opened before any
+    // workspace command ran), is not this workspace's to save. `spaceId` /
+    // `groupId` are the two metadata keys `features/spaces/background.js` and
+    // `features/groups/home.js` set via `context.setMode('space' | 'group', {
+    // metadata })` — the only two callers of a NAMED (non-'default') key
+    // today. The `'default'` key stays unfiltered (every ordinary
+    // autosave/before-quit/manual save has always captured whatever is on
+    // screen, regardless of context) — see the module header.
+    if (input.workspaceKey !== 'default') {
+      const metadata = windowContext?.modeMetadata as Record<string, unknown> | undefined;
+      const belongsToWorkspace = metadata?.spaceId === input.workspaceKey || metadata?.groupId === input.workspaceKey;
+      if (!belongsToWorkspace) {
+        notices.push({ level: 'debug', message: `[session:save] Excluding window ${w.nativeId} not scoped to workspace "${input.workspaceKey}"` });
+        continue;
+      }
+    }
 
     const sanitized = sanitizeParams(mirrorPlacementIntent(w.params));
     // The pass-through above can carry a STALE `params.maximized` for a
@@ -564,169 +623,10 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       version: 1,
       createdAt: input.createdAt,
       reason: input.reason,
+      workspaceKey: input.workspaceKey,
       windows: filteredDescriptors,
     },
     windowCount: preFilterCount,
     notices,
   };
-}
-
-// ============================================================================
-// Space-workspace projection (§5 step 11 task 9)
-//
-// `saveSpaceWorkspaces` is a SECOND, entirely separate save path from the
-// session snapshot above — it writes one `workspace:<spaceId>` row per space,
-// read by `features/spaces/background.js` (openSpace) and
-// `features/groups/home.js` (layout sort) via `api.settings.get`. It had its
-// own copy of the same four defects `serializeSession` already fixed for the
-// main snapshot: an OS-only liveness guard that drops every hybrid page-host
-// (`getLiveWindow` is null for a BaseWindow — since the canvas removal that is
-// EVERY web page window), a fabricated z-order, a live `win.isFocused()` read,
-// and a presenter-sourced rect instead of the restorable-geometry rule. Same
-// fix, same shape: a pure projection over the kernel `State` plus the
-// same hybrid-aware read-phase rows `serializeSession` consumes.
-// ============================================================================
-
-/**
- * One window entry inside a per-space workspace snapshot. On-disk contract —
- * see the module header. Unchanged by this projection: only where each VALUE
- * comes from changed (machine reads now, not a second OS read).
- */
-export interface SpaceWorkspaceWindowEntry {
-  url: string;
-  bounds: Electron.Rectangle;
-  /**
-   * TRUE STACK POSITION — the window's index in the kernel's single order
-   * (bottom → top), the exact source `serializeSession` reads for
-   * `stackIndex` above. Deliberately not focus recency: `features/groups
-   * /home.js` sorts its layout on this field, and stack position — not
-   * "which window was used most recently" — is what a layout sort means by
-   * z-order. 0 for a window the kernel has no position for, mirroring the
-   * pre-projection `zOrderMap.get(id) ?? 0` default (this field, unlike
-   * `stackIndex`, has always been a required number in the row, never
-   * absent).
-   */
-  zOrder: number;
-  focused: boolean;
-  /**
-   * Present and `true` only for a workspace-pinned window (pin scope
-   * 'workspace' — see `docs/design/window-rules.md` "Persistent windows:
-   * workspace-pinned and global HUD"); absent for an unpinned one, matching
-   * the optional-field convention the rest of this entry already follows.
-   * `openSpace()` (`features/spaces/background.js`) reads it back to reopen
-   * the window pinned. A cross-workspace pin never appears here — it is not
-   * scoped to this space, so it rides in `saveGlobalPinnedWindows` instead.
-   */
-  pinned?: true;
-}
-
-/** The persisted per-space snapshot — on-disk contract, see the module header. */
-export interface SpaceWorkspaceSnapshot {
-  version: 1;
-  spaceId: string;
-  spaceName: string;
-  createdAt: number;
-  windows: SpaceWorkspaceWindowEntry[];
-}
-
-export interface SerializeSpaceWorkspacesInput {
-  /** The kernel's state — same snapshot `serializeSession` reads. */
-  snapshot: State;
-  /**
-   * Same read-phase rows `serializeSession` consumes (`session.ts
-   * buildSessionSaveWindows`) — `destroyed`/`url` already resolved the hybrid
-   * fallback, so a hybrid page-host reaches this projection the same way it
-   * reaches `serializeSession`, with no second `getLiveWindow`-only guard to
-   * drop it.
-   */
-  windows: readonly SessionSaveWindow[];
-  /** `window-presenter.ts getWindowPresentation` for a native id. */
-  getPresentation: (nativeId: number) => SessionSavePresentation | null;
-  /** The saved per-window context row (`datastore.ts getContextEntry('mode', id)`). */
-  getContext: (nativeId: number) => WindowContext | undefined;
-  /** Injected clock (`Date.now()` at the call site) — one stamp for the whole call. */
-  createdAt: number;
-  /** Same kernel order `serializeSession` reads — see `SerializeSessionInput.kernelOrder`. */
-  kernelOrder: readonly WindowId[];
-  /** Same topmost-content-window fact `serializeSession` reads — see `SerializeSessionInput.topmostContentWindowId`. */
-  topmostContentWindowId: WindowId | null;
-}
-
-/**
- * Project machine state into per-space workspace snapshots. Pure — see the
- * module header. Groups every SPACE-mode window (per its saved context row)
- * by `spaceId`, a verbatim carry-over of the pre-extraction loop's grouping;
- * only the per-window FACTS changed source:
- *   - liveness   → `w.destroyed` (hybrid-aware, from the shared read phase),
- *                  not a `getLiveWindow`-only guard
- *   - `visible`  → `WindowRecord.visible`, same NO-RECORD FALLBACK = true rule
- *                  as `serializeSession`, not a second OS read
- *   - `bounds`   → `restorableBoundsFromRecord`, not the live presenter rect
- *   - `zOrder`   → TRUE STACK POSITION (position in `kernelOrder`), not a
- *                  `getAllLiveWindows()` enumeration approximation
- *   - `focused`  → `topmostContentWindowId`, not `win.isFocused()`
- */
-export function serializeSpaceWorkspaces(input: SerializeSpaceWorkspacesInput): Map<string, SpaceWorkspaceSnapshot> {
-  const recordsById = new Map<WindowId, WindowRecord>();
-  for (const rec of input.snapshot.order) recordsById.set(rec.id, rec);
-
-  // Same kernel-order lookup `serializeSession` builds for `stackIndex`/`zOrder`.
-  const kernelOrderIndexById = new Map<WindowId, number>();
-  input.kernelOrder.forEach((id, index) => kernelOrderIndexById.set(id, index));
-
-  const spaceWindows = new Map<string, { spaceName: string; windows: SpaceWorkspaceWindowEntry[] }>();
-
-  for (const w of input.windows) {
-    // No live BrowserWindow AND no hybrid entry — nothing to save (mirrors
-    // the destroyed branch of the shared read phase).
-    if (w.destroyed) continue;
-
-    const rec = w.machineId != null ? recordsById.get(w.machineId) : undefined;
-    // Machine-authoritative visibility (same rule as `serializeSession`): no
-    // record means the window retired mid-pass, and erring toward saving is
-    // the safe direction.
-    const visible = rec ? rec.visible : true;
-    if (!visible) continue;
-
-    // The background page is never in space mode, but skip it the same way
-    // the main snapshot does — cheap and matches the pre-extraction loop.
-    if (w.url.includes('peek://app/background.html')) continue;
-
-    const context = input.getContext(w.nativeId);
-    if (!context || context.mode !== 'space') continue;
-
-    const metadata = context.modeMetadata as Record<string, unknown> | null;
-    const spaceId = metadata?.spaceId as string | undefined;
-    const spaceName = metadata?.spaceName as string | undefined;
-    if (!spaceId) continue;
-
-    // The window presenter owns the canonical user-facing URL (the
-    // page-host's two-layer URL shape lives there, not here) — same call
-    // `serializeSession` makes, and it already resolves a hybrid id.
-    const presentation = input.getPresentation(w.nativeId);
-    if (!presentation) continue;
-
-    if (!spaceWindows.has(spaceId)) {
-      spaceWindows.set(spaceId, { spaceName: spaceName || '', windows: [] });
-    }
-    spaceWindows.get(spaceId)!.windows.push({
-      url: presentation.address,
-      bounds: restorableBoundsFromRecord(rec) ?? presentation.bounds,
-      zOrder: w.machineId != null ? (kernelOrderIndexById.get(w.machineId) ?? 0) : 0,
-      focused: w.machineId != null && w.machineId === input.topmostContentWindowId,
-      ...(context.pinScope === 'workspace' ? { pinned: true as const } : {}),
-    });
-  }
-
-  const result = new Map<string, SpaceWorkspaceSnapshot>();
-  for (const [spaceId, space] of spaceWindows) {
-    result.set(spaceId, {
-      version: 1,
-      spaceId,
-      spaceName: space.spaceName,
-      createdAt: input.createdAt,
-      windows: space.windows,
-    });
-  }
-  return result;
 }

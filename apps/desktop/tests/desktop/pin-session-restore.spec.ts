@@ -1,20 +1,18 @@
 /**
  * Pin mechanism — pin state survives session save/restore, both scopes.
  *
- * A workspace-scoped pin is a field on the window's entry within its own
- * workspace's saved session (`main/session.ts saveSpaceWorkspaces` /
- * `serializeSpaceWorkspaces`'s `pinned` field); a cross-workspace pin is in
- * session state that is not scoped to one workspace
- * (`saveGlobalPinnedWindows` / `restoreGlobalPinnedWindows`, featureId
- * `window-pins`), restored regardless of which workspace is active. See
- * docs/design/window-rules.md "Persistent windows: workspace-pinned and
- * global HUD", "Workspace interaction".
- *
- * Drives the SAME `forceSaveSession()` bridge the existing
- * space-workspace-page-host.spec.ts uses (it calls saveSpaceWorkspaces() and,
- * after this change, saveGlobalPinnedWindows() too — no new save-side test
- * surface needed) plus a dedicated `forceRestoreGlobalPins()` /
- * `getGlobalPinsForTest()` bridge for the boot-only global-pin restore path.
+ * Pin scope is a field of the window's own context row (`pinScope`), carried
+ * on the window's descriptor in whichever session snapshot it is saved into
+ * (`main/session-projection.ts serializeSession`) — there is no separate
+ * persisted pin list for either scope. A workspace-scoped pin rides in that
+ * workspace's own saved snapshot (`snapshot:<workspaceKey>`, written by
+ * `api.session.saveWorkspaceSnapshot`) and restores with the rest of that
+ * workspace's windows. A cross-workspace pin rides in the ordinary
+ * `'default'` snapshot the app's own autosave/before-quit/manual save always
+ * writes (unfiltered — a workspace-leave save is the only thing that ever
+ * excludes it), so it survives a save + restore cycle the same way any other
+ * window does. See docs/design/window-rules.md "Persistent windows:
+ * workspace-pinned and global HUD", "Workspace interaction".
  *
  * Run with:
  *   yarn test:grep "pin session restore"
@@ -67,7 +65,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
     if (app) await app.close();
   });
 
-  test('a workspace-scoped pin is written into that workspace\'s saved row', async () => {
+  test('a workspace-scoped pin is written into that workspace\'s saved snapshot', async () => {
     const spaceName = 'pin-restore-spec-workspace';
     const windowId = await openAndPin(spaceName, 'to this workspace');
 
@@ -79,19 +77,23 @@ test.describe('pin session restore: both scopes @desktop', () => {
     }, spaceName);
     expect(spaceId).toBeTruthy();
 
-    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
+    const saveResult = await bgWindow.evaluate(
+      async (key: string) => await (window as unknown as { app: any }).app.session.saveWorkspaceSnapshot(key, { excludeGlobalPins: true }),
+      spaceId as string,
+    );
+    expect(saveResult?.success).toBe(true);
 
     const read = await bgWindow.evaluate(
       async (key: string) =>
-        await (window as unknown as { app: any }).app.settings.getExtKey('space-workspaces', key),
-      `workspace:${spaceId}`,
+        await (window as unknown as { app: any }).app.settings.getExtKey('session', key),
+      `snapshot:${spaceId}`,
     );
     expect(read?.success).toBe(true);
     const row = typeof read.data === 'string' ? JSON.parse(read.data) : read.data;
-    expect(row?.windows?.length, 'the saved workspace row has no windows').toBeGreaterThan(0);
+    expect(row?.windows?.length, 'the saved workspace snapshot has no windows').toBeGreaterThan(0);
     expect(
-      row.windows.every((w: { pinned?: boolean }) => w.pinned === true),
-      'the pinned window is not recorded as pinned in its own workspace\'s saved row',
+      row.windows.every((w: { context?: { pinScope?: string } }) => w.context?.pinScope === 'workspace'),
+      'the pinned window is not recorded as workspace-pinned in its own workspace\'s saved snapshot',
     ).toBe(true);
 
     // Left open, this window's url still matches every later test's
@@ -104,16 +106,20 @@ test.describe('pin session restore: both scopes @desktop', () => {
     );
   });
 
-  test('a cross-workspace pin is written into the not-workspace-scoped pin list', async () => {
+  test('a cross-workspace pin rides in the ordinary session snapshot', async () => {
     const windowId = await openAndPin('pin-restore-spec-global', 'across workspaces');
 
     await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
 
-    const entries = (await app.evaluateMain!(
-      (() => (globalThis as any).__peek_test.getGlobalPinsForTest()) as any,
-    )) as { url: string }[];
-    expect(Array.isArray(entries), 'the global pin list did not persist').toBe(true);
-    expect(entries.length, 'no globally-pinned windows were saved').toBeGreaterThan(0);
+    const read = await bgWindow.evaluate(
+      async () => await (window as unknown as { app: any }).app.settings.getExtKey('session', 'snapshot'),
+    );
+    expect(read?.success).toBe(true);
+    const row = typeof read.data === 'string' ? JSON.parse(read.data) : read.data;
+    const entries = (row?.windows ?? []).filter(
+      (w: { context?: { pinScope?: string } }) => w.context?.pinScope === 'global',
+    );
+    expect(entries.length, 'no globally-pinned windows were saved in the default snapshot').toBeGreaterThan(0);
 
     await bgWindow.evaluate(
       async (id: number) => (window as unknown as { app: any }).app.window.close(id),
@@ -121,7 +127,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
     );
   });
 
-  test('restoring the global pin list reopens a globally-pinned window, pinned', async () => {
+  test('restoring the default snapshot reopens a globally-pinned window, pinned', async () => {
     const windowId = await openAndPin('pin-restore-spec-global-restore', 'across workspaces');
     await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
 
@@ -137,7 +143,11 @@ test.describe('pin session restore: both scopes @desktop', () => {
       })
       .toBe(0);
 
-    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceRestoreGlobalPins()) as any);
+    // Restore the default snapshot at cold start — a live in-session restore
+    // deliberately skips a globally-pinned descriptor (it is assumed already
+    // open, since a workspace switch never closes one); only a cold-start
+    // restore reopens it, exactly as boot would.
+    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceColdStartRestoreSession()) as any);
 
     const page = await app.getWindow('spaces/home.html', 15000);
     const info = await page.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
@@ -150,7 +160,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
     );
     expect(
       (pinEntry as { value?: string } | null)?.value,
-      'the window restored from the global pin list is not recorded as pinned',
+      'the window restored from the default snapshot is not recorded as pinned',
     ).toBe('global');
     await expect(page.locator('.pin-badge')).toHaveAttribute('data-scope', 'global');
   });

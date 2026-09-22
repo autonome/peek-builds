@@ -441,7 +441,7 @@ const closeGroup = async (groupId = null, groupName = null) => {
   if (!groupId) return { success: false, error: 'No active group to close' };
 
   try {
-    if (api.session?.saveSpaceWorkspaces) await api.session.saveSpaceWorkspaces();
+    await api.session.saveWorkspaceSnapshot(groupId);
   } catch {
   }
 
@@ -653,9 +653,7 @@ const saveToGroup = async (groupName) => {
   console.log(`[ext:groups] Saved ${savedCount} URLs to group "${groupName}"`);
 
   try {
-    if (api.session?.saveSpaceWorkspaces) {
-      await api.session.saveSpaceWorkspaces();
-    }
+    await api.session.saveWorkspaceSnapshot(tagId);
   } catch {
   }
 
@@ -715,11 +713,11 @@ const openGroup = async (groupName) => {
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
   try {
-    // `workspace:<id>` rows are written by `session.ts saveSpaceWorkspaces()`
-    // under featureId `space-workspaces` — never under the `spaces` tile's own
-    // namespace, which this used to read and which nothing writes.
+    // `snapshot:<id>` rows are written by `session.ts saveSessionSnapshot()`
+    // under featureId `session`, keyed by workspace id — the same general
+    // session-snapshot pipeline the app's own boot/quit save uses.
     const wsResult = api.settings.getExtKey
-      ? await api.settings.getExtKey('space-workspaces', 'workspace:' + tag.id)
+      ? await api.settings.getExtKey('session', 'snapshot:' + tag.id)
       : { success: false };
     if (wsResult.success && wsResult.data) {
       const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;

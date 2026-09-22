@@ -1,39 +1,30 @@
 /**
- * Space workspaces — a page host in space mode must reach the persisted row.
+ * Space workspaces — a page host in space mode must reach its saved snapshot.
  *
- * Behavioral cover for the `saveSpaceWorkspaces` hybrid blind spot (fix
- * `cd55a4e4`, §5 step 11 task 9). `saveSpaceWorkspaces` is a SECOND save path,
- * separate from the session snapshot: it writes one `workspace:<spaceId>` row
- * into `feature_settings` under featureId `space-workspaces`, and
- * `features/spaces/background.js openSpace` reopens a space from it. Its
- * liveness guard used to be `BrowserWindow.fromId`-backed, so it dropped every
- * hybrid page-host — a `BaseWindow` — before any decision was made. Since the
- * canvas removal every web page window IS a hybrid page-host, so a saved space
- * workspace held only internal tiles and the user's pages were gone.
+ * A workspace is a named session snapshot: leaving one saves the current
+ * windows through `main/session.ts saveSessionSnapshot()` under the
+ * workspace's own key (`main/session-projection.ts serializeSession`,
+ * featureId `session`, row `snapshot:<workspaceKey>`), and entering one
+ * restores it through the SAME `restoreSessionSnapshot()` the app's own
+ * boot/quit restore uses. There is no second, space-specific save path or
+ * `space-workspaces` table.
  *
  * WHY AN E2E AND NOT (ONLY) A UNIT. `main/session-projection.test.ts` already
- * unit-covers `serializeSpaceWorkspaces` — including the hybrid case — but that
- * test hands the projection a row with `destroyed: false` already resolved. The
- * defect was never IN the pure projection; it was in the read phase feeding it
- * (`session.ts buildSessionSaveWindows`, which resolves a hybrid host through
- * the hybrid registry instead of `getLiveWindow`) and in `saveSpaceWorkspaces`
- * calling it at all. Re-introducing the pre-fix `getLiveWindow`-only liveness
- * guard at that call site leaves every one of the 62 unit tests green and fails
- * this spec. So: read → project → WRITE, end to end, against the real row.
+ * unit-covers `serializeSession`'s hybrid handling, but that test hands the
+ * projection a row with `destroyed: false` already resolved. The historical
+ * defect this spec guards (fix `cd55a4e4`) was never IN the pure projection;
+ * it was in the read phase feeding it (`session.ts buildSessionSaveWindows`,
+ * which resolves a hybrid host through the hybrid registry instead of
+ * `getLiveWindow`). So: read → project → WRITE, end to end, against the real
+ * row.
  *
  * DOES NOT SKIP ITSELF. The hybrid suite carries ~134 conditional
  * `test.skip(!(await hybridBridgePresent(app)), …)` calls; if the bridge fails
- * to install, those blocks evaporate and the run still reports green. This spec
- * uses no bridge, and it ASSERTS that the window it opened is a hybrid
- * page-host rather than skipping when it isn't — if page hosts ever stop being
- * BaseWindows, this must fail loudly, because that is precisely the condition
- * the regression needs.
- *
- * THE RESTORE HALF lives here too (third test, remaining-work item 9): the
- * writer above and both readers disagreed on the featureId — `openSpace` read
- * its own `spaces` namespace, which nothing writes — so a space always opened
- * the home UI instead of the user's windows. The readers were repointed at
- * `space-workspaces` (no migration: the rows on disk never moved).
+ * to install, those blocks evaporate and the run still reports green. This
+ * spec uses no bridge, and it ASSERTS that the window it opened is a hybrid
+ * page-host rather than skipping when it isn't — if page hosts ever stop
+ * being BaseWindows, this must fail loudly, because that is precisely the
+ * condition the regression needs.
  *
  * Network-free: content is served by a local loopback server.
  * Focus-free: hybrid hosts are headless (opacity 0, never shown).
@@ -47,10 +38,9 @@ import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import http from 'http';
 
-interface SpaceWorkspaceRow {
+interface SessionSnapshotRow {
   version?: number;
-  spaceId?: string;
-  spaceName?: string;
+  workspaceKey?: string;
   windows?: { url?: string; bounds?: unknown; zOrder?: number; focused?: boolean }[];
 }
 
@@ -84,18 +74,18 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     if (app) await app.close();
   });
 
-  test('a page host opened in space mode is present in the persisted workspace:<tagId> row', async () => {
+  test('a page host opened in space mode is present in its workspace\'s saved snapshot', async () => {
     // A space's id is a TAG id (features/spaces `openSpace` does
-    // `getOrCreateTag` then keys the row on `tag.id`), so mint a real one
-    // rather than a synthetic string — the row key under test is literally
-    // `workspace:<tagId>`.
+    // `getOrCreateTag` then keys the snapshot on `tag.id`), so mint a real
+    // one rather than a synthetic string — the row key under test is
+    // literally `snapshot:<tagId>`.
     const spaceId = await bgWindow.evaluate(async () => {
       const r = await (window as unknown as { app: any }).app.datastore.getOrCreateTag(
         'space-workspace-page-host-spec',
       );
       return (r?.data?.tag?.id ?? null) as string | null;
     });
-    expect(spaceId, 'could not mint the space tag that keys the workspace row').toBeTruthy();
+    expect(spaceId, 'could not mint the space tag that keys the workspace snapshot').toBeTruthy();
 
     // Open a real page host through the production window-open path.
     const url = `http://127.0.0.1:${serverPort}/space-page`;
@@ -138,41 +128,32 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     );
     expect(ctx?.success).toBe(true);
 
-    // The save path under test. `saveSessionSnapshot` ends by calling
-    // `saveSpaceWorkspaces()` (session.ts, "Also save per-space workspace
-    // snapshots"), so the existing `forceSaveSession` bridge drives BOTH save
-    // paths — no new main-process surface needed for this spec.
-    //
-    // Deliberately NOT driven through `api.session.saveSpaceWorkspaces()`, the
-    // entry point features/spaces + features/groups use. That method used to be
-    // missing entirely — `main/tile-preload.cts` assigned `api.session` TWICE
-    // and the later trustedBuiltin-only `{save, restoreInteractive,
-    // reopenLastClosed}` object clobbered the capability-gated
-    // `{saveSpaceWorkspaces}` one. That clobber is fixed (the namespace is now
-    // one assignment, gated per method) and the next test asserts the surface;
-    // this test keeps driving the main-process save directly, because that is
-    // the path the failing-first evidence for the hybrid blind spot covered.
-    await app.evaluateMain!((() =>
-      (globalThis as any).__peek_test.forceSaveSession()) as any);
+    // The save path under test — the same keyed save `closeCurrentWorkspaceWindows()`
+    // drives on a real workspace switch.
+    const saveResult = await bgWindow.evaluate(
+      async (key: string) => await (window as unknown as { app: any }).app.session.saveWorkspaceSnapshot(key),
+      spaceId as string,
+    );
+    expect(saveResult?.success).toBe(true);
 
-    // Now inspect what was actually PERSISTED: the `workspace:<tagId>` row in
-    // `feature_settings` under featureId `space-workspaces`, read back through
-    // the foreign-settings surface — the same row, same key, that
-    // `openSpace` restores a space from.
+    // Now inspect what was actually PERSISTED: the `snapshot:<tagId>` row in
+    // `feature_settings` under featureId `session`, read back through the
+    // foreign-settings surface — the same row, same key, that `openSpace`
+    // restores a space from.
     const read = await bgWindow.evaluate(
       async (key: string) =>
-        await (window as unknown as { app: any }).app.settings.getExtKey('space-workspaces', key),
-      `workspace:${spaceId}`,
+        await (window as unknown as { app: any }).app.settings.getExtKey('session', key),
+      `snapshot:${spaceId}`,
     );
     expect(read?.success).toBe(true);
 
     const rowValue = read.data;
-    const row: SpaceWorkspaceRow | null =
+    const row: SessionSnapshotRow | null =
       typeof rowValue === 'string' ? JSON.parse(rowValue) : (rowValue ?? null);
 
     expect(
       row,
-      `no workspace:${spaceId} row was written at all — every window in the ` +
+      `no snapshot:${spaceId} row was written at all — every window in the ` +
         'space was dropped before the write phase (the pre-cd55a4e4 symptom ' +
         'when the space holds only page hosts)',
     ).toBeTruthy();
@@ -180,15 +161,14 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     const savedUrls = (row!.windows ?? []).map((w) => w.url);
     expect(
       savedUrls,
-      'the page host is missing from its own space workspace — saveSpaceWorkspaces ' +
+      'the page host is missing from its own workspace snapshot — the save ' +
         'dropped a hybrid page-host (BaseWindow) from the persisted row',
     ).toContain(url);
 
     // The row is a usable restore source, not just a non-empty array.
     const entry = row!.windows!.find((w) => w.url === url)!;
     expect(row!.version).toBe(1);
-    expect(row!.spaceId).toBe(spaceId);
-    expect(row!.spaceName).toBe('Page Host Space');
+    expect(row!.workspaceKey).toBe(spaceId);
     expect(typeof entry.zOrder).toBe('number');
     expect(entry.bounds).toEqual(
       expect.objectContaining({
@@ -203,19 +183,8 @@ test.describe('space workspaces persist page hosts @desktop', () => {
   test('openSpace reopens the saved windows instead of falling back to the spaces home UI', async () => {
     // The RESTORE half, end to end, through the entry point a user actually
     // hits: the `open space <name>` command handled by
-    // `features/spaces/background.js openSpace`.
-    //
-    // The defect this covers is a namespace mismatch, not a projection bug.
-    // `session.ts saveSpaceWorkspaces()` writes `workspace:<spaceId>` under
-    // featureId `space-workspaces`; `openSpace` used to read it with
-    // `api.settings.get(...)`, which `tile:settings:get` scopes to
-    // `WHERE featureId = grant.tileId` — `spaces`, a namespace nothing ever
-    // writes. So the read always returned null, `restored` stayed false, and
-    // the space opened the home UI with the user's windows nowhere.
-    //
-    // DOES NOT SKIP ITSELF (see the file header): every precondition — the
-    // space tag, the hybrid page host, the persisted row — is asserted, so a
-    // broken setup fails loudly instead of quietly retiring the cover.
+    // `features/spaces/background.js openSpace`, which now restores through
+    // the same `restoreSessionSnapshot()` the app's own boot restore uses.
     const spaceName = 'space-restore-spec';
     const spaceId = await bgWindow.evaluate(async (name: string) => {
       // `openSpace` machine-tags the space itself (`toSpaceTagName` →
@@ -226,7 +195,7 @@ test.describe('space workspaces persist page hosts @desktop', () => {
       );
       return (r?.data?.tag?.id ?? null) as string | null;
     }, spaceName);
-    expect(spaceId, 'could not mint the space tag that keys the workspace row').toBeTruthy();
+    expect(spaceId, 'could not mint the space tag that keys the workspace snapshot').toBeTruthy();
 
     const url = `http://127.0.0.1:${serverPort}/restore-page`;
     const opened = await bgWindow.evaluate(
@@ -260,21 +229,24 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     );
     expect(ctx?.success).toBe(true);
 
-    await app.evaluateMain!((() =>
-      (globalThis as any).__peek_test.forceSaveSession()) as any);
+    const saveResult = await bgWindow.evaluate(
+      async (key: string) => await (window as unknown as { app: any }).app.session.saveWorkspaceSnapshot(key),
+      spaceId as string,
+    );
+    expect(saveResult?.success).toBe(true);
 
     // Precondition, asserted: the row this test restores FROM actually exists.
     // Without it a green restore assertion would prove nothing.
     const saved = await bgWindow.evaluate(
       async (key: string) =>
-        await (window as unknown as { app: any }).app.settings.getExtKey('space-workspaces', key),
-      `workspace:${spaceId}`,
+        await (window as unknown as { app: any }).app.settings.getExtKey('session', key),
+      `snapshot:${spaceId}`,
     );
-    const savedRow: SpaceWorkspaceRow | null =
+    const savedRow: SessionSnapshotRow | null =
       typeof saved?.data === 'string' ? JSON.parse(saved.data) : (saved?.data ?? null);
     expect(
       (savedRow?.windows ?? []).map((w) => w.url),
-      `the workspace:${spaceId} row does not hold the page host — the save half ` +
+      `the snapshot:${spaceId} row does not hold the page host — the save half ` +
         'broke, so the restore half cannot be under test here',
     ).toContain(url);
 
@@ -318,9 +290,8 @@ test.describe('space workspaces persist page hosts @desktop', () => {
       .poll(() => app.windows().filter((p) => p.url().includes('/restore-page')).length, {
         timeout: 20000,
         message:
-          'openSpace did not reopen the saved page host — it read the workspace row ' +
-          'from its own `spaces` namespace, where saveSpaceWorkspaces never writes, ' +
-          'so `restored` stayed false',
+          'openSpace did not reopen the saved page host — restoreWorkspaceSnapshot ' +
+          'never found a snapshot at this workspace\'s key',
       })
       .toBeGreaterThan(0);
 
@@ -328,25 +299,23 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     expect(
       app.windows().map((p) => p.url()).filter((u) => u.includes('spaces/home.html')),
       'openSpace opened the spaces home UI — the no-saved-state fallback fired ' +
-        'even though a workspace row exists for this space',
+        'even though a workspace snapshot exists for this space',
     ).toEqual([]);
   });
 
-  test('api.session exposes saveSpaceWorkspaces alongside the trustedBuiltin methods', async () => {
-    // `main/tile-preload.cts` assigned `api.session` twice; the second
-    // assignment (trustedBuiltin `save` / `restoreInteractive` /
-    // `reopenLastClosed`) replaced the first (capability-gated
-    // `saveSpaceWorkspaces`) wholesale, so `saveSpaceWorkspaces` existed on no
-    // tile at all. Every caller guards with `api.session?.saveSpaceWorkspaces`,
-    // so `features/spaces/background.js closeSpace` and `features/groups/home.js`
-    // silently no-op'd instead of throwing — the reason this defect survived.
-    // The namespace is now assigned once with per-method gating; assert all four
-    // are present so a future re-assignment fails here rather than going quiet.
+  test('api.session exposes saveWorkspaceSnapshot and restoreWorkspaceSnapshot alongside the trustedBuiltin methods', async () => {
+    // `main/tile-preload.cts` assigns `api.session` exactly once, with
+    // per-method gating (a prior bug reassigned it a second time and the
+    // trustedBuiltin object clobbered the capability-gated one — every
+    // caller guards with `api.session?.<method>`, so the clobber was
+    // silent). Assert all four surfaces are present so a future
+    // re-assignment fails here rather than going quiet.
     const shape = await bgWindow.evaluate(() => {
       const session = (window as unknown as { app: any }).app?.session;
       return {
         present: !!session,
-        saveSpaceWorkspaces: typeof session?.saveSpaceWorkspaces,
+        saveWorkspaceSnapshot: typeof session?.saveWorkspaceSnapshot,
+        restoreWorkspaceSnapshot: typeof session?.restoreWorkspaceSnapshot,
         save: typeof session?.save,
         restoreInteractive: typeof session?.restoreInteractive,
         reopenLastClosed: typeof session?.reopenLastClosed,
@@ -355,10 +324,11 @@ test.describe('space workspaces persist page hosts @desktop', () => {
 
     expect(shape.present, 'api.session is missing from window.app entirely').toBe(true);
     expect(
-      shape.saveSpaceWorkspaces,
-      'api.session.saveSpaceWorkspaces is missing — api.session was assigned ' +
+      shape.saveWorkspaceSnapshot,
+      'api.session.saveWorkspaceSnapshot is missing — api.session was assigned ' +
         'twice again and the trustedBuiltin object clobbered the capability-gated one',
     ).toBe('function');
+    expect(shape.restoreWorkspaceSnapshot).toBe('function');
     expect(
       shape.save,
       'api.session.save is missing — the trustedBuiltin session methods were dropped',

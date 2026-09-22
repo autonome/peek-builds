@@ -1,7 +1,7 @@
 /**
  * Unit tests for strict `tile:session:*` capability enforcement.
  *
- * Covers `checkSessionAllowed` used by `tile:session:save-space-workspaces`.
+ * Covers `checkSessionAllowed` used by `tile:session:save-workspace-snapshot`.
  * The `session` capability is declared as a boolean — no sub-flags
  * for now, so all session ops require the same grant.
  */
@@ -19,7 +19,7 @@ function makeGrant(caps: TileCapabilities, builtin = false): CapabilityGrant {
 
 describe('checkSessionAllowed — grant presence', () => {
   it('rejects when grant is null (invalid token)', () => {
-    const result = checkSessionAllowed(null, 'save-space-workspaces');
+    const result = checkSessionAllowed(null, 'save-workspace-snapshot');
     assert.strictEqual(result.ok, false);
     if (!result.ok) {
       assert.match(result.error, /invalid token/i);
@@ -28,7 +28,7 @@ describe('checkSessionAllowed — grant presence', () => {
 
   it('rejects when grant has no session capability', () => {
     const grant = makeGrant({ pubsub: { scopes: ['self'] } });
-    const result = checkSessionAllowed(grant, 'save-space-workspaces');
+    const result = checkSessionAllowed(grant, 'save-workspace-snapshot');
     assert.strictEqual(result.ok, false);
     if (!result.ok) {
       assert.match(result.error, /session capability not granted/i);
@@ -41,15 +41,21 @@ describe('checkSessionAllowed — grant presence', () => {
       capabilities: { session: false as unknown as boolean },
       denied: [],
     };
-    const result = checkSessionAllowed(grant, 'save-space-workspaces');
+    const result = checkSessionAllowed(grant, 'save-workspace-snapshot');
     assert.strictEqual(result.ok, false);
   });
 });
 
 describe('checkSessionAllowed — session: true', () => {
-  it('allows save-space-workspaces when session is true', () => {
+  it('allows save-workspace-snapshot when session is true', () => {
     const grant = makeGrant({ session: true });
-    const result = checkSessionAllowed(grant, 'save-space-workspaces');
+    const result = checkSessionAllowed(grant, 'save-workspace-snapshot');
+    assert.strictEqual(result.ok, true);
+  });
+
+  it('allows restore-workspace-snapshot when session is true', () => {
+    const grant = makeGrant({ session: true });
+    const result = checkSessionAllowed(grant, 'restore-workspace-snapshot');
     assert.strictEqual(result.ok, true);
   });
 });

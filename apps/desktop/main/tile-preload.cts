@@ -2138,34 +2138,45 @@ function buildAPI(): Record<string, unknown> {
   //
   // This is the ONLY place `api.session` is assigned. It used to be
   // written twice (here, and again next to `api.nav` further down); the
-  // second assignment silently clobbered the first, so
-  // `saveSpaceWorkspaces` never existed on any tile and every caller —
-  // which all guard with `api.session?.saveSpaceWorkspaces` — no-op'd
-  // instead of throwing. Add new session methods to this object; never
-  // re-assign `api.session`.
+  // second assignment silently clobbered the first, so a capability-gated
+  // method never existed on any tile and every caller — which all guard
+  // with `api.session?.<method>` — no-op'd instead of throwing. Add new
+  // session methods to this object; never re-assign `api.session`.
   //
   // The methods do NOT share a gate:
-  //   - `saveSpaceWorkspaces` requires the `session` capability. Used by
-  //     features/spaces and features/groups to persist per-space window
-  //     layouts.
+  //   - `saveWorkspaceSnapshot` / `restoreWorkspaceSnapshot` require the
+  //     `session` capability. Used by features/spaces and features/groups to
+  //     persist/reopen a named workspace's window layout through the general
+  //     session-snapshot pipeline (`main/session.ts`, keyed by workspace id).
   //   - `save` / `restoreInteractive` / `reopenLastClosed` are
   //     trustedBuiltin only, consumed by the core background renderer
   //     (renderer/index.js).
   // Keep them that way: a non-trusted tile with the capability must get
-  // only `saveSpaceWorkspaces`, and a trusted renderer without the
-  // capability must still not reach `saveSpaceWorkspaces`.
+  // only the workspace-snapshot methods, and a trusted renderer without the
+  // capability must still not reach them.
   function hasSessionCapability(): boolean {
     return grantedCapabilities?.session === true;
   }
 
   api.session = {
     // Capability-gated.
-    saveSpaceWorkspaces: () => {
+    saveWorkspaceSnapshot: (key: string, opts?: { excludeGlobalPins?: boolean }) => {
       if (!hasSessionCapability()) {
-        return Promise.reject(new Error('[tile-preload] api.session.saveSpaceWorkspaces requires the session capability'));
+        return Promise.reject(new Error('[tile-preload] api.session.saveWorkspaceSnapshot requires the session capability'));
       }
-      return ipcRenderer.invoke('tile:session:save-space-workspaces', {
+      return ipcRenderer.invoke('tile:session:save-workspace-snapshot', {
         token: tileToken,
+        key,
+        excludeGlobalPins: opts?.excludeGlobalPins === true,
+      });
+    },
+    restoreWorkspaceSnapshot: (key: string) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.restoreWorkspaceSnapshot requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:restore-workspace-snapshot', {
+        token: tileToken,
+        key,
       });
     },
     // trustedBuiltin only.
@@ -2551,10 +2562,11 @@ function buildAPI(): Record<string, unknown> {
   // ── Session ───────────────────────────────────────────────────────────
   //
   // `api.session` (trustedBuiltin `save` / `restoreInteractive` /
-  // `reopenLastClosed` PLUS the capability-gated `saveSpaceWorkspaces`)
-  // is assigned ONCE, up with the other capability-gated namespaces —
-  // search for "Session (mixed gating". Assigning it a second time here
-  // is what dropped `saveSpaceWorkspaces` from every tile; don't.
+  // `reopenLastClosed` PLUS the capability-gated `saveWorkspaceSnapshot` /
+  // `restoreWorkspaceSnapshot`) is assigned ONCE, up with the other
+  // capability-gated namespaces — search for "Session (mixed gating".
+  // Assigning it a second time here is what dropped the capability-gated
+  // methods from every tile before; don't.
 
   // ── Debug flags (trustedBuiltin only) ─────────────────────────────────
   //

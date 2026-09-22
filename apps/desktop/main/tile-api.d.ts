@@ -601,10 +601,19 @@ interface TileIzui {
 
 interface TileSession {
   /**
-   * Persist space window layouts.
+   * Persist the current window layout under a named workspace key, through
+   * the general session-snapshot pipeline. `excludeGlobalPins` drops any
+   * window pinned across every workspace from the saved row — set by a
+   * workspace-leave save (`docs/design/window-rules.md` "Persistent
+   * windows"). Requires `session` capability.
+   */
+  saveWorkspaceSnapshot(key: string, opts?: { excludeGlobalPins?: boolean }): Promise<{ success: boolean; error?: string }>;
+  /**
+   * Reopen a named workspace's saved window layout through the same
+   * session-restore pipeline the app's own boot/quit snapshot uses.
    * Requires `session` capability.
    */
-  saveSpaceWorkspaces(): Promise<{ success: boolean; error?: string }>;
+  restoreWorkspaceSnapshot(key: string): Promise<{ success: boolean; restored?: number; failed?: number; total?: number; error?: string }>;
   /** Save the full session. Requires trustedBuiltin. */
   save(): Promise<{ success: boolean; error?: string }>;
   /** Restore the saved session interactively. Requires trustedBuiltin. */

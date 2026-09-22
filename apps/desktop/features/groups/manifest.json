@@ -50,7 +50,8 @@
       "queryWindows": true
     },
     "commands": true,
-    "settings": { "readForeign": ["space-workspaces"] },
+    "settings": { "readForeign": ["session"] },
+    "session": true,
     "rules": true
   },
   "commands": [

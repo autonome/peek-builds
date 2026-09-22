@@ -68,6 +68,9 @@ async function showBorder(color, name) {
       focusable: false,
       skipTaskbar: true,
       alwaysOnTop: true,
+      // Feature chrome, never part of any snapshot — explicit, not a
+      // consequence of `role: 'overlay'` (session-projection.ts serializeSession).
+      persist: false,
     });
 
     if (result?.id) {
@@ -157,10 +160,12 @@ async function showPanel(spaceName) {
       skipTaskbar: true,
       // Born already pinned across every workspace — the existing pin
       // mechanism (window-kernel.ts Pinned layer + the 'pin' context key),
-      // set at open time the same way a restored globally-pinned window is
-      // (session.ts restoreGlobalPinnedWindows).
+      // set at open time the same way a restored globally-pinned window is.
       alwaysOnTop: true,
       pinScope: 'global',
+      // Feature chrome, never part of any snapshot — explicit (requirement 4,
+      // specs/workspace-session-snapshot.md), not inferred from role.
+      persist: false,
     });
 
     if (result?.id) {
@@ -362,53 +367,22 @@ async function bootstrapDefaultSpace() {
  * target (Goal, handoff.md: "leaving...reopens the default workspace's
  * saved session").
  *
- * A workspace with no saved session opens one new empty group (a single
- * window) so the user has somewhere to start — except the default: its
- * empty state is genuinely empty, since it is what is left when nothing
- * else is active, not a workspace being entered for the first time.
+ * A workspace is a named session snapshot: entering it restores that
+ * snapshot through the same `restoreSessionSnapshot` pipeline the app's own
+ * boot/quit restore uses, keyed by this workspace's tag id
+ * (`api.session.restoreWorkspaceSnapshot`) — nav history, scroll, focus and
+ * z-order all come back the same way they do across a quit/relaunch, since
+ * it is literally the same restore. A workspace with no saved snapshot opens
+ * one new empty group (a single window) so the user has somewhere to start —
+ * except the default: its empty state is genuinely empty, since it is what
+ * is left when nothing else is active, not a workspace being entered for the
+ * first time.
  */
 async function enterWorkspace(tag, spaceName) {
   const isDefault = tag.id === defaultSpaceId;
 
-  // The row lives under featureId `space-workspaces`, NOT under this tile's own
-  // `spaces` namespace: `session.ts saveSpaceWorkspaces()` is the sole writer of
-  // `workspace:<spaceId>` and it hardcodes that featureId. Reading it with
-  // `api.settings.get` scoped the query to `WHERE featureId = 'spaces'`, where
-  // nothing is ever written, so this always came back null and every space fell
-  // through to the empty-group branch below. Declared in manifest.json as
-  // `settings.readForeign: ["space-workspaces"]`.
-  const wsResult = await api.settings.getExtKey('space-workspaces', 'workspace:' + tag.id);
-  let restored = false;
-  if (!wsResult.error && wsResult.value) {
-    const snapshot = typeof wsResult.value === 'string' ? JSON.parse(wsResult.value) : wsResult.value;
-    if (snapshot.version === 1 && Array.isArray(snapshot.windows) && snapshot.windows.length > 0) {
-      // Restore saved windows
-      for (const w of snapshot.windows) {
-        if (!w.url) continue;
-        const result = await api.window.open(w.url, {
-          role: 'content',
-          spaceMode: { spaceId: tag.id, spaceName, color: tag.color },
-          // A workspace-pinned window (w.pinned, see session.ts
-          // serializeSpaceWorkspaces) restores at the Pinned layer directly,
-          // and carries its pin scope from the moment it opens (ipc.ts
-          // windowOpenHandler's `pinScope` option, set before loadURL, the
-          // same way `spaceMode` is) — layer is set at open time
-          // (window-kernel.ts), so restoring it unpinned and pinning it
-          // after the fact would mean a second close+reopen right after
-          // this one.
-          ...(w.pinned ? { alwaysOnTop: true, pinScope: 'workspace' } : {}),
-          ...(w.bounds || {}),
-        });
-        if (result?.id) {
-          await api.context.setMode('space', {
-            windowId: result.id,
-            metadata: { spaceId: tag.id, spaceName, color: tag.color }
-          });
-        }
-      }
-      restored = true;
-    }
-  }
+  const restoreResult = await api.session.restoreWorkspaceSnapshot(tag.id);
+  const restored = !!restoreResult?.success && (restoreResult.total ?? 0) > 0;
 
   if (!restored && !isDefault) {
     // No saved state, and this isn't the default — open one empty group.
@@ -445,16 +419,20 @@ async function enterWorkspace(tag, spaceName) {
  * Save and close whatever workspace is active now — the default included.
  * Shared by entering a different workspace and by leaving to the default;
  * the two differ only in whether the panel survives the transition.
+ *
+ * The save is the same `saveSessionSnapshot` the app's own quit/autosave
+ * uses, keyed by the outgoing workspace's tag id and excluding any window
+ * pinned across every workspace — it is not scoped to the workspace being
+ * left, so it is excluded from both this save and the close sweep below
+ * (`docs/design/window-rules.md` "Persistent windows").
  */
 async function closeCurrentWorkspaceWindows(options = {}) {
   if (!activeSpaceId) return;
 
   try {
-    if (api.session?.saveSpaceWorkspaces) {
-      await api.session.saveSpaceWorkspaces();
-    }
+    await api.session.saveWorkspaceSnapshot(activeSpaceId, { excludeGlobalPins: true });
   } catch (err) {
-    console.error('[ext:spaces] Failed to save workspace layouts on close:', err);
+    console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
 
   // Get all windows in the active space and close them — except one pinned

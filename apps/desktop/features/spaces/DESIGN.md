@@ -202,9 +202,11 @@ SQL migration: `ALTER TABLE extension_settings RENAME TO feature_settings`, rena
 
 Every workspace is named, and there is one named default workspace: what is open when no other
 workspace is active. It is a real space — a `space:default` tag plus its own saved window
-session, written and read through the exact same `space-workspaces` row (`workspace:<tagId>`)
-every named workspace uses — not an implicit "no space" state layered on top of the mechanism
-above. `features/spaces/background.js` resolves it once per profile through the same
+session, written and read through the exact same session-snapshot pipeline
+(`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, row `snapshot:<tagId>` under
+featureId `session`) every named workspace uses, keyed by workspace id rather than a
+`space-workspaces`-specific table — not an implicit "no space" state layered on top of the
+mechanism above. `features/spaces/background.js` resolves it once per profile through the same
 `getOrCreateTag()` every other space goes through; nothing about the default lives in a separate
 table or a separate code path.
 

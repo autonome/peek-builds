@@ -156,7 +156,7 @@ describe('trustedBuiltin bypasses enforcement helpers', () => {
   });
 
   it('checkSessionAllowed returns ok', () => {
-    assert.strictEqual(checkSessionAllowed(grant, 'save-space-workspaces').ok, true);
+    assert.strictEqual(checkSessionAllowed(grant, 'save-workspace-snapshot').ok, true);
   });
 
   it('checkEscapeAllowed returns ok', () => {
@@ -252,7 +252,7 @@ describe('non-trustedBuiltin grants remain gated (regression)', () => {
 
   it('checkSessionAllowed still rejects without session capability', () => {
     const plain = makeEmptyGrant({});
-    assert.strictEqual(checkSessionAllowed(plain, 'save-space-workspaces').ok, false);
+    assert.strictEqual(checkSessionAllowed(plain, 'save-workspace-snapshot').ok, false);
   });
 
   it('checkSettingsForeignAllowed still enforces readForeign allowlist', () => {

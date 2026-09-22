@@ -22,7 +22,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, serializeSpaceWorkspaces, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
+import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -375,15 +375,15 @@ export function buildRestoreBoundsOptions(
 }
 
 /**
- * Read phase shared by both save paths (`saveSessionSnapshot` and
- * `saveSpaceWorkspaces`): gather the one thing the window-state machine does
- * NOT hold for a registered window — is the native handle gone, and what raw
- * URL does the early-skip filter match `background.html` against.
+ * Read phase for `saveSessionSnapshot`: gather the one thing the
+ * window-state machine does NOT hold for a registered window — is the native
+ * handle gone, and what raw URL does the early-skip filter match
+ * `background.html` against.
  *
  * Hybrid page-hosts are BaseWindows, so `getLiveWindow` (BrowserWindow.fromId)
  * returns null for them; they live in the hybrid registry instead. Detecting
  * them up-front (via `winData.params.hybridPageHost`) is what makes a hybrid
- * window reach EITHER save path rather than silently vanishing behind a
+ * window reach the save path rather than silently vanishing behind a
  * BrowserWindow-only `if (!win) continue` guard.
  */
 function buildSessionSaveWindows(
@@ -460,10 +460,9 @@ function readKernelOrderFacts(): { kernelState: State; kernelOrder: WindowId[]; 
 }
 
 /**
- * Read a window's saved context row (mode, spaceId/spaceName, …) for the save
- * projections. Shared by `serializeSession`'s `getContext` and
- * `serializeSpaceWorkspaces`'s `getContext` — same lookup, same "no row / read
- * failed" → `undefined` contract.
+ * Read a window's saved context row (mode, spaceId/spaceName, pinScope, …)
+ * for `serializeSession`'s `getContext` — "no row / read failed" →
+ * `undefined`.
  */
 function readSaveContext(nativeId: number): WindowContext | undefined {
   try {
@@ -489,12 +488,42 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
 }
 
 /**
+ * The one workspace that boot restores and that the ordinary autosave/
+ * before-quit/manual save writes to — see `session.ts`'s module doc and
+ * `SessionSnapshot.workspaceKey`.
+ */
+const DEFAULT_WORKSPACE_KEY = 'default';
+
+/**
+ * Resolve the `feature_settings` row key for a workspace's snapshot/metadata.
+ *
+ * The default workspace keeps the literal legacy names (`snapshot` /
+ * `metadata`) it has always used — an existing profile's boot snapshot reads
+ * back with no migration. A named workspace gets its own row, suffixed by its
+ * key, so every workspace's snapshot lives in the SAME shape/table, just
+ * parameterized (requirement 2: no second `space-workspaces` table).
+ */
+function snapshotRowKey(workspaceKey: string): string {
+  return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'snapshot' : `snapshot:${workspaceKey}`;
+}
+function metadataRowKey(workspaceKey: string): string {
+  return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'metadata' : `metadata:${workspaceKey}`;
+}
+
+/**
  * Save a snapshot of all visible user windows to the datastore.
  *
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
  * Uses node:sqlite synchronous APIs via getDb().
+ *
+ * `opts.key` names which workspace this save is for (default: the app-level
+ * `'default'` workspace — the ordinary autosave/before-quit/manual save,
+ * unfiltered, exactly as before this workspace concept existed).
+ * `features/spaces/background.js`'s explicit workspace-leave save passes the
+ * outgoing workspace's own id and `excludeGlobalPins: true` — see
+ * `docs/design/window-rules.md` "Persistent windows".
  */
-export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean; _forceForTest?: boolean }): void {
+export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean; _forceForTest?: boolean; key?: string; excludeGlobalPins?: boolean }): void {
   // Skip save in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
   if (isTestProfile() && !opts?._forceForTest) return;
@@ -523,6 +552,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   }
 
   const registeredWindows = getAllWindows();
+  const workspaceKey = opts?.key ?? DEFAULT_WORKSPACE_KEY;
 
   // ── Read ────────────────────────────────────────────────────────────────
   // Gather ONLY what the kernel does not hold: per window, is the native
@@ -548,6 +578,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     forceForTest: opts?._forceForTest,
     kernelOrder,
     topmostContentWindowId,
+    workspaceKey,
+    excludeGlobalPins: opts?.excludeGlobalPins === true,
   });
 
   // The projection decided what to log; this replays it at the levels the
@@ -562,19 +594,21 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   DEBUG && console.log(`[session] Captured ${snapshot.windows.length} window(s) (${projection.windowCount - snapshot.windows.length} filtered)`);
 
   // ── Write ───────────────────────────────────────────────────────────────
+  const snapshotKey = snapshotRowKey(workspaceKey);
+  const metaKey = metadataRowKey(workspaceKey);
   try {
     // Write snapshot to feature_settings table
     db.prepare(`
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-      VALUES (?, 'session', 'snapshot', ?, ?)
-    `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
+      VALUES (?, 'session', ?, ?, ?)
+    `).run(`session-${snapshotKey}`, snapshotKey, JSON.stringify(snapshot), Date.now());
 
     // Read existing metadata to preserve crashCount and restoreCount
     let existingMetadata: Partial<SessionMetadata> = {};
     try {
       const metaRow = db.prepare(
-        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
-      ).get() as { value: string } | undefined;
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+      ).get(metaKey) as { value: string } | undefined;
       if (metaRow?.value) {
         existingMetadata = JSON.parse(metaRow.value);
       }
@@ -599,8 +633,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     };
     db.prepare(`
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-      VALUES (?, 'session', 'metadata', ?, ?)
-    `).run('session-metadata', JSON.stringify(metadata), Date.now());
+      VALUES (?, 'session', ?, ?, ?)
+    `).run(`session-${metaKey}`, metaKey, JSON.stringify(metadata), Date.now());
 
     DEBUG && console.log(`[session] Session snapshot saved successfully`);
 
@@ -656,12 +690,6 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
         return isWeb || (isPeek && !isBg);
       }).length} open window(s) to closed window stack`);
     }
-
-    // Also save per-space workspace snapshots (for space layout restore)
-    saveSpaceWorkspaces();
-
-    // Also save cross-workspace ("global HUD") pins — see saveGlobalPinnedWindows.
-    saveGlobalPinnedWindows();
   } catch (error) {
     console.error('[session] Failed to save session snapshot:', error);
   }
@@ -874,6 +902,11 @@ export async function restoreSessionSnapshot(
   // restore keeps honoring appFocused so a switched-away user isn't yanked back.
   // See planRestoreFocus() in window-kernel-executor.ts.
   isColdStart: boolean = false,
+  // Which workspace's saved snapshot to restore — see `SessionSnapshot
+  // .workspaceKey`. Boot restore (entry.ts) and a live workspace switch
+  // (features/spaces/background.js) are the SAME call with a different key;
+  // only the key changes, one code path either way.
+  key: string = DEFAULT_WORKSPACE_KEY,
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
@@ -916,53 +949,61 @@ export async function restoreSessionSnapshot(
     return result;
   }
 
-  // Check crash detection — show dialog or skip restore.
-  // Use the pre-read crashState (captured before markSessionDirty) if provided,
-  // otherwise fall back to reading current metadata (for manual restore calls).
-  try {
-    let wasCleanShutdown = true;
-    let crashCount = 0;
+  // Check crash detection — show dialog or skip restore. Crash recovery is a
+  // boot-only concept (the dialog is about whether the APP crashed, not
+  // whether a workspace switch happened), so it only runs for the default
+  // workspace's own row — a live workspace switch (key !== 'default') always
+  // proceeds straight to restore.
+  if (key === DEFAULT_WORKSPACE_KEY) {
+    // Use the pre-read crashState (captured before markSessionDirty) if
+    // provided, otherwise fall back to reading current metadata (for manual
+    // restore calls).
+    try {
+      let wasCleanShutdown = true;
+      let crashCount = 0;
 
-    if (crashState) {
-      // Use pre-read state (startup path — read before markSessionDirty contaminated it)
-      wasCleanShutdown = crashState.cleanShutdown;
-      crashCount = crashState.crashCount;
-    } else {
-      // Fallback: read current metadata (manual restore path)
-      const metaRow = db.prepare(
-        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
-      ).get() as { value: string } | undefined;
-      if (metaRow?.value) {
-        const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
-        wasCleanShutdown = metadata.cleanShutdown !== false;
-        crashCount = metadata.crashCount ?? 0;
+      if (crashState) {
+        // Use pre-read state (startup path — read before markSessionDirty contaminated it)
+        wasCleanShutdown = crashState.cleanShutdown;
+        crashCount = crashState.crashCount;
+      } else {
+        // Fallback: read current metadata (manual restore path)
+        const metaRow = db.prepare(
+          `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
+        ).get() as { value: string } | undefined;
+        if (metaRow?.value) {
+          const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
+          wasCleanShutdown = metadata.cleanShutdown !== false;
+          crashCount = metadata.crashCount ?? 0;
+        }
       }
-    }
 
-    DEBUG && console.log(`[session] Crash state: wasCleanShutdown=${wasCleanShutdown}, crashCount=${crashCount}`);
-    if (!wasCleanShutdown && crashCount > 0) {
-      // Only show crash dialog after repeated crashes (crashCount > 0).
-      // A single unclean shutdown (e.g. Ctrl+C via yarn, power loss) just
-      // silently restores — the crash dialog is for crash loops.
-      const shouldRestore = await showCrashRecoveryDialog(crashCount);
-      if (!shouldRestore) {
-        DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
-        return result;
+      DEBUG && console.log(`[session] Crash state: wasCleanShutdown=${wasCleanShutdown}, crashCount=${crashCount}`);
+      if (!wasCleanShutdown && crashCount > 0) {
+        // Only show crash dialog after repeated crashes (crashCount > 0).
+        // A single unclean shutdown (e.g. Ctrl+C via yarn, power loss) just
+        // silently restores — the crash dialog is for crash loops.
+        const shouldRestore = await showCrashRecoveryDialog(crashCount);
+        if (!shouldRestore) {
+          DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
+          return result;
+        }
       }
+    } catch {
+      // Continue with restore if metadata check fails
     }
-  } catch {
-    // Continue with restore if metadata check fails
   }
 
   // Read the snapshot
+  const snapshotKey = snapshotRowKey(key);
   let snapshot: SessionSnapshot;
   try {
     const row = db.prepare(
-      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
-    ).get() as { value: string } | undefined;
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotKey) as { value: string } | undefined;
 
     if (!row?.value) {
-      DEBUG && console.log('[session] No snapshot found');
+      DEBUG && console.log(`[session] No snapshot found for workspace "${key}"`);
       return result;
     }
 
@@ -998,6 +1039,16 @@ export async function restoreSessionSnapshot(
     const overlayFlag = (descriptor.params as Record<string, unknown> | undefined)?.overlay;
     if (role === 'overlay' || overlayFlag === true) {
       DEBUG && console.log(`[session] Skipping stale overlay window in snapshot: ${descriptor.url || '(empty)'}`);
+      return false;
+    }
+    // A window pinned across every workspace is never closed by a workspace
+    // switch (see `serializeSession`'s `excludeGlobalPins`), so it is still
+    // open at this point in any restore that ISN'T a cold boot — reopening it
+    // here would duplicate it. At cold start nothing is open yet, so a
+    // globally-pinned descriptor (present because the ordinary
+    // autosave/before-quit save never excludes it) restores normally.
+    if (!isColdStart && descriptor.context?.pinScope === 'global') {
+      DEBUG && console.log(`[session] Skipping already-open cross-workspace pin: ${descriptor.url || '(empty)'}`);
       return false;
     }
     return true;
@@ -1184,6 +1235,19 @@ export async function restoreSessionSnapshot(
       // Ensure the window key is set for deduplication
       if (descriptor.key) {
         options.key = descriptor.key;
+      }
+
+      // A pinned window (workspace-scoped or global) restores directly onto
+      // the Pinned layer, the same way `features/spaces/background.js
+      // enterWorkspace()`'s own reopen loop used to for a workspace-scoped
+      // pin — layer is set at open time (window-kernel.ts), so restoring
+      // unpinned and pinning after the fact would mean a second close+reopen
+      // right after this one. The context row itself is re-applied below
+      // alongside `mode`, so the badge/closeSpace()/save-side projections
+      // read the SAME pin scope right after restore as before it.
+      if (descriptor.context?.pinScope) {
+        options.alwaysOnTop = true;
+        options.pinScope = descriptor.context.pinScope;
       }
 
       // Open window via the in-process window-open handler. The handler
@@ -1652,207 +1716,6 @@ export function updateAutosaveInterval(intervalMinutes: number): void {
   if (intervalMinutes !== _autosaveIntervalMinutes) {
     DEBUG && console.log(`[session] Autosave interval changed: ${_autosaveIntervalMinutes} -> ${intervalMinutes}`);
     startAutosaveTimer(intervalMinutes);
-  }
-}
-
-/**
- * Save per-space workspace snapshots to feature_settings.
- *
- * Groups windows by their space mode context and writes a layout snapshot
- * for each space. Used by openGroup() to restore window positions.
- * Synchronous (safe for before-quit handler).
- */
-export function saveSpaceWorkspaces(): void {
-  let db;
-  try {
-    db = getDb();
-  } catch {
-    return;
-  }
-
-  // ── Read ────────────────────────────────────────────────────────────────
-  // Same read phase as `saveSessionSnapshot`: the kernel snapshot for every
-  // window-management fact, plus per-window liveness/raw-URL (the two things
-  // the kernel does not hold), plus the kernel's order/focus facts (see
-  // `readKernelOrderFacts`). This is what fixes the hybrid blind spot —
-  // `buildSessionSaveWindows` resolves a hybrid page-host's URL from the
-  // hybrid registry instead of the `getLiveWindow`-only guard this loop used
-  // to have, so a hybrid window reaches the projection below at all.
-  const registeredWindows = getAllWindows();
-  const saveWindows = buildSessionSaveWindows(registeredWindows);
-  const { kernelState, kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
-
-  // ── Project ─────────────────────────────────────────────────────────────
-  // The pure projection owns the space-grouping decision: which windows are
-  // in space mode, the restorable rect, TRUE STACK POSITION (not focus
-  // recency), and `focused` off the kernel's topmost content window (not OS
-  // focus).
-  const spaceSnapshots = serializeSpaceWorkspaces({
-    snapshot: kernelState,
-    windows: saveWindows,
-    getPresentation: (nativeId) => getWindowPresentation(nativeId),
-    getContext: readSaveContext,
-    createdAt: Date.now(),
-    kernelOrder,
-    topmostContentWindowId,
-  });
-
-  // ── Write ───────────────────────────────────────────────────────────────
-  const upsert = db.prepare(`
-    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-    VALUES (?, 'space-workspaces', ?, ?, ?)
-  `);
-
-  for (const [spaceId, snapshot] of spaceSnapshots) {
-    const key = `workspace:${spaceId}`;
-    upsert.run(`space-workspaces:${key}`, key, JSON.stringify(snapshot), Date.now());
-  }
-
-  DEBUG && console.log(`[session] Saved workspace snapshots for ${spaceSnapshots.size} space(s)`);
-}
-
-/** One entry of the persisted cross-workspace pin list — see `saveGlobalPinnedWindows`. */
-export interface GlobalPinEntry {
-  url: string;
-  bounds: Electron.Rectangle | null;
-}
-
-/**
- * Save the set of currently globally-pinned windows ("global HUD" scope, per
- * `docs/design/window-rules.md` "Persistent windows: workspace-pinned and
- * global HUD") to feature_settings, independent of any one workspace's saved
- * session — restored regardless of which workspace is active, unlike a
- * workspace-scoped pin (which rides in `saveSpaceWorkspaces`'s per-space row).
- *
- * Recomputed fresh from live context state every call, the same way
- * `saveSpaceWorkspaces` recomputes its snapshot from the kernel + context
- * rather than maintaining a second mutable list in memory — the 'pin'
- * context entry (see `readSaveContext`) is the one source of truth for which
- * windows are pinned and at what scope.
- *
- * Synchronous (safe for before-quit handler), same contract as
- * `saveSpaceWorkspaces`.
- */
-export function saveGlobalPinnedWindows(): void {
-  let db;
-  try {
-    db = getDb();
-  } catch {
-    return;
-  }
-
-  const entries: GlobalPinEntry[] = [];
-  for (const [nativeId] of getAllWindows()) {
-    let pinScope: string | null = null;
-    try {
-      const pinEntry = getContextEntry('pin', nativeId);
-      pinScope = (pinEntry?.value as string) || null;
-    } catch {
-      continue;
-    }
-    if (pinScope !== 'global') continue;
-
-    const presentation = getWindowPresentation(nativeId);
-    if (!presentation) continue;
-    entries.push({ url: presentation.address, bounds: presentation.bounds || null });
-  }
-
-  try {
-    db.prepare(`
-      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-      VALUES (?, 'window-pins', 'global-pins', ?, ?)
-    `).run('window-pins:global-pins', JSON.stringify(entries), Date.now());
-    DEBUG && console.log(`[session] Saved ${entries.length} globally-pinned window(s)`);
-  } catch (error) {
-    console.error('[session] Failed to save global pins:', error);
-  }
-}
-
-/**
- * Reopen every globally-pinned window recorded by `saveGlobalPinnedWindows`,
- * pinned across every workspace — called once at boot (see `entry.ts`), as a
- * sibling of `restoreSessionSnapshot` rather than nested inside it, since a
- * global HUD window's persistence is NOT scoped to whether a general session
- * snapshot exists at all.
- *
- * Each reopened window is re-marked with the 'pin' context entry so it reads
- * back as pinned (badge, `closeSpace()` skip) exactly like a window pinned
- * interactively in the same run.
- */
-export async function restoreGlobalPinnedWindows(): Promise<void> {
-  let db;
-  try {
-    db = getDb();
-  } catch {
-    return;
-  }
-
-  let entries: GlobalPinEntry[] = [];
-  try {
-    const row = db.prepare(
-      `SELECT value FROM feature_settings WHERE featureId = 'window-pins' AND key = 'global-pins'`
-    ).get() as { value: string } | undefined;
-    if (row?.value) entries = JSON.parse(row.value);
-  } catch (error) {
-    console.error('[session] Failed to read global pins:', error);
-    return;
-  }
-  if (!Array.isArray(entries) || entries.length === 0) return;
-
-  const bgWin = getBackgroundWindow();
-  if (!invokeWindowOpen || !bgWin) {
-    console.error('[session] invokeWindowOpen or bgWindow not ready — cannot restore global pins');
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry?.url) continue;
-    const options: Record<string, unknown> = {
-      alwaysOnTop: true,
-      // Set before loadURL, main-process side (ipc.ts windowOpenHandler),
-      // the same way `spaceMode` is — the reopened window's own tile reads
-      // its own pin state at init time with no context:changed race to lose.
-      pinScope: 'global',
-      trackingSource: 'pin',
-      trackingSourceId: 'global',
-    };
-    if (entry.bounds) {
-      options.x = entry.bounds.x;
-      options.y = entry.bounds.y;
-      options.width = entry.bounds.width;
-      options.height = entry.bounds.height;
-    }
-    try {
-      const openResult = await invokeWindowOpen(
-        { sender: bgWin.webContents },
-        { source: WEB_CORE_ADDRESS, url: entry.url, options },
-      ) as { success: boolean; id?: number };
-      if (!openResult?.success) {
-        console.error('[session] Failed to restore globally pinned window:', entry.url);
-      }
-    } catch (error) {
-      console.error('[session] Failed to restore globally pinned window:', entry.url, error);
-    }
-  }
-}
-
-/** Read the persisted cross-workspace pin list directly, for specs. */
-export function readGlobalPinnedWindowsForTest(): GlobalPinEntry[] {
-  let db;
-  try {
-    db = getDb();
-  } catch {
-    return [];
-  }
-  try {
-    const row = db.prepare(
-      `SELECT value FROM feature_settings WHERE featureId = 'window-pins' AND key = 'global-pins'`
-    ).get() as { value: string } | undefined;
-    if (!row?.value) return [];
-    const entries = JSON.parse(row.value);
-    return Array.isArray(entries) ? entries : [];
-  } catch {
-    return [];
   }
 }
 

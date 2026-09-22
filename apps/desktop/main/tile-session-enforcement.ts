@@ -9,10 +9,12 @@
  * these checks can be unit-tested without pulling in `tile-ipc`'s
  * Electron dependencies.
  *
- * Current surface is minimal: the only exposed op is
- * `saveSpaceWorkspaces`, used by features/spaces and features/groups
- * to persist the per-space window layout. The capability is declared
- * as `session: true` in the manifest (boolean only; no sub-flags yet).
+ * Current surface: `save-workspace-snapshot` and `restore-workspace-snapshot`,
+ * used by features/spaces and features/groups to persist/reopen a named
+ * workspace's window layout through the general session-snapshot pipeline
+ * (`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, keyed by
+ * workspace id). The capability is declared as `session: true` in the
+ * manifest (boolean only; no sub-flags yet).
  */
 
 import type { CapabilityGrant } from './tile-manifest.js';
@@ -21,11 +23,14 @@ import type { CapabilityGrant } from './tile-manifest.js';
  * Which session operation is being checked. Matches the
  * `tile:session:*` IPC channel suffix.
  *
- * - `save-space-workspaces` — persist the current per-space window
- *   layout. Used when features/groups or features/spaces modifies the
- *   layout and wants it saved before the next space switch.
+ * - `save-workspace-snapshot` — persist the current window layout under a
+ *   named workspace key. Used when features/groups or features/spaces
+ *   modifies the layout and wants it saved before the next space switch.
+ * - `restore-workspace-snapshot` — reopen a named workspace's saved layout
+ *   through the same session-restore pipeline the app's own boot/quit
+ *   snapshot uses. Used by features/spaces when entering a workspace.
  */
-export type SessionOp = 'save-space-workspaces';
+export type SessionOp = 'save-workspace-snapshot' | 'restore-workspace-snapshot';
 
 export type SessionCheckResult =
   | { ok: true }
@@ -53,7 +58,8 @@ export function checkSessionAllowed(
   if (!sc) return { ok: false, error: 'session capability not granted' };
 
   switch (op) {
-    case 'save-space-workspaces': {
+    case 'save-workspace-snapshot':
+    case 'restore-workspace-snapshot': {
       return { ok: true };
     }
 

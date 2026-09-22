@@ -66,8 +66,7 @@
  * dedicated tests against HAND-WRITTEN literal values, never a restatement of
  * the lookup — see the standalone pin after the on-disk-shape describe block,
  * `'focused is the kernel's topmost content window, not the dead snapshot.front
- * field'`, the SAVE → RESTORE round trip, and their `serializeSpaceWorkspaces`
- * counterparts.
+ * field'`, and the SAVE → RESTORE round trip.
  */
 
 import { describe, it } from 'node:test';
@@ -75,7 +74,6 @@ import * as assert from 'node:assert';
 
 import {
   serializeSession,
-  serializeSpaceWorkspaces,
   restorableBoundsFromRecord,
   readPreMaxBounds,
   readStackIndex,
@@ -83,7 +81,6 @@ import {
   sanitizeParams,
   mirrorPlacementIntent,
   type SerializeSessionInput,
-  type SerializeSpaceWorkspacesInput,
   type SessionSaveWindow,
   type SessionSavePresentation,
 } from './session-projection.js';
@@ -227,8 +224,12 @@ interface World {
   /** What `getNativeWindowFor(front)?.id` answered — the oracle's `lastFocusedId`. */
   frontNativeId?: number | null;
   registeredTileIds?: string[];
-  reason?: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle';
+  reason?: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle' | 'workspace-switch';
   forceForTest?: boolean;
+  /** Feeds `SerializeSessionInput.workspaceKey` — defaults to `'default'`. */
+  workspaceKey?: string;
+  /** Feeds `SerializeSessionInput.excludeGlobalPins`. */
+  excludeGlobalPins?: boolean;
 }
 
 const CREATED_AT = 1_700_000_000_000;
@@ -363,6 +364,7 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
       version: 1,
       createdAt: CREATED_AT,
       reason,
+      workspaceKey: world.workspaceKey ?? 'default',
       windows: filteredDescriptors,
     },
     windowCount: preFilterCount,
@@ -450,18 +452,9 @@ function inputFor(world: World): SerializeSessionInput {
     forceForTest: world.forceForTest,
     kernelOrder: kernelOrderOf(world),
     topmostContentWindowId: world.front == null ? null : wid(world.front),
+    workspaceKey: world.workspaceKey ?? 'default',
+    excludeGlobalPins: world.excludeGlobalPins,
   };
-}
-
-/**
- * `serializeSpaceWorkspaces` reads the exact same read-phase rows and machine
- * snapshot `serializeSession` does — reuse `inputFor`'s conversion so a
- * hybrid-shaped fixture (see `contentFixture`'s `hybridPageHost` override
- * below) exercises the real save-path row shape rather than a bespoke one.
- */
-function spaceInputFor(world: World, createdAt = CREATED_AT): SerializeSpaceWorkspacesInput {
-  const { snapshot, windows, getPresentation, getContext, kernelOrder, topmostContentWindowId } = inputFor(world);
-  return { snapshot, windows, getPresentation, getContext, createdAt, kernelOrder, topmostContentWindowId };
 }
 
 function assertSameOnDiskShape(world: World, label: string): void {
@@ -1146,11 +1139,12 @@ describe('session-projection — empty state and the snapshot envelope', () => {
       version: 1,
       createdAt: CREATED_AT,
       reason: 'before-quit',
+      workspaceKey: 'default',
       windows: [],
     });
     assert.strictEqual(projection.windowCount, 0);
     assert.deepStrictEqual(projection.notices, []);
-    assert.strictEqual(JSON.stringify(projection.snapshot), `{"version":1,"createdAt":${CREATED_AT},"reason":"before-quit","windows":[]}`);
+    assert.strictEqual(JSON.stringify(projection.snapshot), `{"version":1,"createdAt":${CREATED_AT},"reason":"before-quit","workspaceKey":"default","windows":[]}`);
   });
 
   it('projects an empty snapshot when every window is skipped', () => {
@@ -1228,153 +1222,110 @@ describe('session-projection — the extracted pure helpers', () => {
 });
 
 /**
- * `serializeSpaceWorkspaces` — the second, entirely separate save path
- * (`session.ts saveSpaceWorkspaces`, writes `workspace:<spaceId>` rows read by
- * `features/spaces/background.js` and `features/groups/home.js`). §5 step 11
- * task 9: this had its own copy of the four defects `serializeSession` already
- * fixed for the main snapshot. The first test below is the LOAD-BEARING one —
- * it pins the live bug (every hybrid page-host silently dropped) that
- * motivated this whole task.
+ * Workspace-keyed snapshots (spec `workspace-session-snapshot.md`, requirement
+ * 2 and 3): the fields a workspace needs beyond a plain snapshot are just
+ * fields of the ONE projection's input/output — a `workspaceKey` on the
+ * written snapshot, and an explicit `excludeGlobalPins` flag a workspace-leave
+ * save sets so a window pinned across every workspace is never written into
+ * (or, symmetrically, restored from) a NAMED workspace's own row.
  */
-describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived fields (§5 step 11 task 9)', () => {
-  const SPACE_CONTEXT = (spaceId: string, spaceName = 'My Space'): WindowContext => ({
-    mode: 'space',
-    modeMetadata: { spaceId, spaceName },
-  });
-
-  it('LOAD-BEARING: a hybrid page-host in space mode reaches its workspace snapshot', () => {
-    // The exact row `buildSessionSaveWindows` (session.ts) now produces for a
-    // BaseWindow-backed hybrid page-host: `hybridPageHost: true` in params, a
-    // URL resolved from the hybrid registry (never `getLiveWindow`). Before
-    // the fix, the pre-extraction loop's `if (!win) continue` guard
-    // (`getLiveWindow` is `BrowserWindow.fromId`-backed, always null for a
-    // hybrid BaseWindow) dropped this row before a decision was ever made —
-    // every hybrid page-host in space mode was silently missing from the
-    // saved workspace. Since the canvas removal, every web page window IS a
-    // hybrid page-host, so this was total, not partial, data loss.
+describe('serializeSession — workspace-keyed snapshots', () => {
+  it('the written snapshot carries the workspaceKey it was asked to save under', () => {
     const world: World = {
-      fixtures: [contentFixture(501, 'w501', {
-        params: { ...CONTENT_PARAMS, hybridPageHost: true },
-        rawUrl: 'https://example.com/hybrid-page',
-        address: 'https://example.com/hybrid-page',
-        context: SPACE_CONTEXT('space-1'),
-      })],
-      records: [makeRecord('w501')],
+      fixtures: [contentFixture(1, 'w1')],
+      records: [makeRecord('w1')],
+      workspaceKey: 'space-42',
     };
-
-    const result = serializeSpaceWorkspaces(spaceInputFor(world));
-    const space = result.get('space-1');
-    assert.ok(space, "the hybrid window's space must be present in the result");
-    assert.strictEqual(space!.windows.length, 1);
-    assert.strictEqual(space!.windows[0].url, 'https://example.com/hybrid-page');
+    const result = serializeSession(inputFor(world));
+    assert.strictEqual(result.snapshot.workspaceKey, 'space-42');
   });
 
-  it('a destroyed/absent window (no live BrowserWindow, no hybrid entry) is excluded', () => {
+  it('defaults workspaceKey to "default" when the caller names no workspace', () => {
+    const world: World = { fixtures: [contentFixture(1, 'w1')], records: [makeRecord('w1')] };
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.workspaceKey, 'default');
+  });
+
+  it('excludeGlobalPins drops a cross-workspace-pinned window from a named workspace\'s save', () => {
     const world: World = {
-      fixtures: [contentFixture(1, 'w1', { destroyed: true, context: SPACE_CONTEXT('space-1') })],
+      fixtures: [
+        contentFixture(1, 'w1', { context: { mode: 'space', modeMetadata: { spaceId: 'space-42' }, pinScope: 'global' } }),
+        contentFixture(2, 'w2', {
+          context: { mode: 'space', modeMetadata: { spaceId: 'space-42' } },
+          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
+        }),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2')],
+      workspaceKey: 'space-42',
+      excludeGlobalPins: true,
+    };
+    const urls = serializeSession(inputFor(world)).snapshot.windows.map((w) => w.url);
+    assert.deepStrictEqual(urls, ['https://example.com/w2']);
+  });
+
+  it('excludeGlobalPins is a no-op for a window pinned only to this workspace', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { context: { mode: 'space', modeMetadata: { spaceId: 'space-42' }, pinScope: 'workspace' } })],
+      records: [makeRecord('w1')],
+      workspaceKey: 'space-42',
+      excludeGlobalPins: true,
+    };
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
+  });
+
+  it('without excludeGlobalPins, a cross-workspace pin rides in the default snapshot like any other window', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { context: { mode: null, modeMetadata: null, pinScope: 'global' } })],
       records: [makeRecord('w1')],
     };
-    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
   });
 
-  it('a window with no saved space context is excluded', () => {
+  it('a named workspace\'s save excludes a window that does not name it in its own context metadata', () => {
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1', { context: { mode: 'space', modeMetadata: { spaceId: 'space-OTHER' } } }),
+        contentFixture(2, 'w2', {
+          context: { mode: 'space', modeMetadata: { spaceId: 'space-42' } },
+          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
+        }),
+        contentFixture(3, 'w3', {
+          rawUrl: 'https://example.com/w3', address: 'https://example.com/w3',
+        }),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2'), makeRecord('w3')],
+      workspaceKey: 'space-42',
+    };
+    const urls = serializeSession(inputFor(world)).snapshot.windows.map((w) => w.url);
+    assert.deepStrictEqual(
+      urls,
+      ['https://example.com/w2'],
+      'only the window whose own context names this workspace belongs in its saved snapshot',
+    );
+  });
+
+  it('a named workspace\'s save also matches on groupId (features/groups/home.js uses "group" mode)', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { context: { mode: 'group', modeMetadata: { groupId: 'tag-9' } } })],
+      records: [makeRecord('w1')],
+      workspaceKey: 'tag-9',
+    };
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
+  });
+
+  it('the default workspace\'s save stays unfiltered by context metadata (today\'s behavior)', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1')],
       records: [makeRecord('w1')],
     };
-    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
   });
 
-  it('an invisible window is excluded (machine-authoritative visibility, same rule as serializeSession)', () => {
+  it('a window opened with persist:false (feature chrome, e.g. the workspace panel) is never saved', () => {
     const world: World = {
-      fixtures: [contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') })],
-      records: [makeRecord('w1', { visible: false })],
+      fixtures: [contentFixture(1, 'w1', { params: { ...CONTENT_PARAMS, persist: false } })],
+      records: [makeRecord('w1')],
     };
-    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
-  });
-
-  it('zOrder is a position in the kernel\'s single order — a background open sits below the key window', () => {
-    // w2 was shown without ever being activated; w1 is the key window. The
-    // kernel has one order and nothing else orders windows, so `zOrder` here
-    // is the same position `stackIndex` reads for the main session snapshot
-    // (`serializeSession`). `stackOrder` below names the OPPOSITE order on
-    // the OLD machine's dead field — the literal values asserted below only
-    // come out right if `zOrder` reads `kernelOrder`, proving there is
-    // nothing left for the two facts to disagree about.
-    const world: World = {
-      fixtures: [
-        contentFixture(1, 'w1', {
-          context: SPACE_CONTEXT('space-1'),
-        }),
-        contentFixture(2, 'w2', {
-          context: SPACE_CONTEXT('space-1'),
-          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
-        }),
-      ],
-      records: [makeRecord('w1'), makeRecord('w2')],
-      kernelOrder: ['w2', 'w1'],
-      stackOrder: ['w1', 'w2'],
-    };
-    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
-    const w1 = windows.find((w) => w.url === 'https://example.com/')!;
-    const w2 = windows.find((w) => w.url === 'https://example.com/w2')!;
-    assert.strictEqual(w1.zOrder, 1, 'w1 (key window) sits on top of the saved stack');
-    assert.strictEqual(w2.zOrder, 0, 'w2 (background open) sits below it in the same single order');
-  });
-
-  it('focused follows the kernel\'s topmost content window, not OS/live focus or the dead snapshot.front field', () => {
-    const world: World = {
-      fixtures: [
-        contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') }),
-        contentFixture(2, 'w2', {
-          context: SPACE_CONTEXT('space-1'),
-          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
-        }),
-      ],
-      records: [makeRecord('w1'), makeRecord('w2')],
-      front: 'w2',
-      // Deliberately the OTHER window on the OLD machine's dead `front`
-      // field — proves `focused` follows `topmostContentWindowId`, not
-      // `StateSnapshot.front`.
-      legacyFront: 'w1',
-      frontNativeId: 2,
-    };
-    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
-    const w1 = windows.find((w) => w.url === 'https://example.com/')!;
-    const w2 = windows.find((w) => w.url === 'https://example.com/w2')!;
-    assert.strictEqual(w1.focused, false);
-    assert.strictEqual(w2.focused, true);
-  });
-
-  it('bounds come from restorableBoundsFromRecord (fullscreen stash), not the live presenter rect', () => {
-    const world: World = {
-      fixtures: [contentFixture(1, 'w1', {
-        context: SPACE_CONTEXT('space-1'),
-        liveBounds: { x: 0, y: 0, width: 1, height: 1 },
-      })],
-      records: [makeRecord('w1', {
-        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
-        fsMode: { name: 'fullscreen', preBounds: { x: 10, y: 20, width: 300, height: 400 } },
-      })],
-    };
-    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
-    assert.deepStrictEqual(windows[0].bounds, { x: 10, y: 20, width: 300, height: 400 });
-  });
-
-  it('groups multiple windows under their own spaceId, keyed by spaceName from the context row', () => {
-    const world: World = {
-      fixtures: [
-        contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1', 'Alpha') }),
-        contentFixture(2, 'w2', {
-          context: SPACE_CONTEXT('space-2', 'Beta'),
-          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
-        }),
-      ],
-      records: [makeRecord('w1'), makeRecord('w2')],
-    };
-    const result = serializeSpaceWorkspaces(spaceInputFor(world));
-    assert.strictEqual(result.size, 2);
-    assert.strictEqual(result.get('space-1')!.spaceName, 'Alpha');
-    assert.strictEqual(result.get('space-2')!.spaceName, 'Beta');
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 0);
   });
 });
+
