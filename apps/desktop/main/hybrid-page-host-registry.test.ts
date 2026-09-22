@@ -20,6 +20,7 @@ import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { BaseWindow, WebContents } from 'electron';
 import {
   _resetForTests,
@@ -442,8 +443,12 @@ describe('hybrid-page-host-registry: content-WC reverse lookup', () => {
 // ============================================================================
 
 function repoRoot(): string {
-  // The unit suite runs from the repo root via test:unit / test:desktop:electron.
-  return process.cwd();
+  // Resolved from this compiled file's own location (dist/main/…), not
+  // process.cwd() — cwd varies with the directory the suite is invoked from
+  // (repo root vs. apps/desktop), which used to double the apps/desktop
+  // path segment.
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(__dirname, '..', '..', '..', '..');
 }
 
 describe('window-open registration: chain popup declares its opener as machine parent', () => {
