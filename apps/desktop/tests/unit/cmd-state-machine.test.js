@@ -252,11 +252,13 @@ describe('selectedRow / autoSelectableRow', () => {
 // derives the row via selectedRow(), but panel.js's openSelectedUrlResult resolved
 // its row from raw `state.matchIndex - state.matches.length` instead — the two
 // readers only agreed while matchIndex happened to be 0. RESULTS_OPEN --Escape-->
-// TYPING does not reset matchIndex (that transition's actions are just
-// ['updateResults']; computeMatches only resets matchIndex on INPUT), so a stale
-// non-zero matchIndex disagreed with the row TYPING re-highlights (always row 0
-// for a pure url lane — see autoSelectableRow). This test mirrors panel.js's
-// openSelectedUrlResult action to pin that both readers resolve the SAME row.
+// TYPING does not reset matchIndex (computeMatches only resets it on INPUT), so a
+// stale non-zero matchIndex disagreed with the row TYPING re-highlights (always
+// row 0 for a pure url lane — see autoSelectableRow). Escape now also dismisses
+// the list, so the stale index is carried past it by a following INPUT — which
+// reopens the list without resetting matchIndex under the stubbed computeMatches.
+// This test mirrors panel.js's openSelectedUrlResult action to pin that both
+// readers resolve the SAME row.
 describe('Regression: openSelectedUrlResult resolves through selectedRow, not raw matchIndex', () => {
   it('after Escape leaves matchIndex stale, Enter opens the row selectedRow highlights', () => {
     let resolvedRow = null;
@@ -278,12 +280,18 @@ describe('Regression: openSelectedUrlResult resolves through selectedRow, not ra
     machine.dispatch(Events.ARROW_DOWN);
     assert.equal(data.matchIndex, 1);
 
-    // Escape back to TYPING. matchIndex is NOT reset by this transition.
+    // Escape back to TYPING. matchIndex is NOT reset by this transition, and the
+    // list is dismissed on the way (staged Escape).
     machine.dispatch(Events.ESCAPE);
     assert.equal(machine.getState(), States.TYPING);
     assert.equal(data.matchIndex, 1, 'matchIndex is stale at 1 -- this is the bug setup');
+    assert.equal(resultsListOpen(machine.getState(), data), false, 'Escape dismissed the list');
 
-    // The list stays open (total 2 > 1) and re-highlights row 0 in TYPING.
+    // Typing again reopens the list. The stubbed computeMatches does no work, so
+    // matchIndex stays stale at 1 while TYPING re-highlights row 0.
+    machine.dispatch(Events.INPUT, { value: 'x' });
+    assert.equal(data.matchIndex, 1, 'matchIndex is still stale after the reopen');
+
     const highlighted = selectedRow(machine.getState(), data);
     assert.equal(highlighted, 0, 'row 0 is what actually renders as selected after Escape');
 
@@ -1176,6 +1184,89 @@ describe('Escape layering', () => {
     assert.equal(shutdownCalls.length, 1);
     assert.equal(shutdownCalls[0]?.kernelCloses, undefined);
   });
+
+  // One press peels one layer. A visible dropdown is its own layer above the
+  // typed text: the press that hides it must leave the text alone.
+  it('staged Escape: dropdown, then text, then close', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    const data = machine.getMutableData();
+    data.typed = 'ta';
+    data.matches = ['tags', 'tag'];
+
+    assert.equal(resultsListOpen(States.TYPING, data), true, 'two matches auto-open the list in TYPING');
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.TYPING);
+    assert.equal(resultsListOpen(machine.getState(), machine.getData()), false, 'first Escape dismisses the list');
+    assert.equal(data.typed, 'ta', 'the typed text survives the first Escape');
+    assert.ok(machine._actionLog.includes('dropInlineGhost'), 'the inline ghost is taken away with the list');
+    assert.ok(!machine._actionLog.includes('clearInput'), 'the first Escape must not clear the input');
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.IDLE);
+    assert.equal(data.typed, '');
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.CLOSING);
+  });
+
+  it('staged Escape from RESULTS_OPEN keeps the list closed in TYPING', () => {
+    const machine = makeMachine();
+    machine.setState(States.RESULTS_OPEN);
+    const data = machine.getMutableData();
+    data.typed = 'ta';
+    data.matches = ['tags', 'tag', 'settings'];
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.TYPING);
+    assert.equal(resultsListOpen(machine.getState(), machine.getData()), false,
+      'TYPING must not re-derive the list as open just because the total is above 1');
+    assert.equal(data.typed, 'ta');
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.IDLE);
+  });
+
+  it('dismissed list reopens on new input and on ArrowDown', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    const data = machine.getMutableData();
+    data.typed = 'ta';
+    data.matches = ['tags', 'tag'];
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(resultsListOpen(machine.getState(), machine.getData()), false);
+
+    machine.dispatch(Events.INPUT, { value: 'tag' });
+    assert.equal(resultsListOpen(machine.getState(), machine.getData()), true, 'new text reopens the list');
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(resultsListOpen(machine.getState(), machine.getData()), false);
+
+    machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(machine.getState(), States.RESULTS_OPEN);
+    assert.equal(machine.getData().resultsDismissed, false, 'ArrowDown is the explicit reopen gesture');
+  });
+
+  it('no dropdown: Escape clears, then closes', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    const data = machine.getMutableData();
+    data.typed = 'tags';
+    data.matches = ['tags']; // total 1 — below the auto-open threshold
+
+    assert.equal(resultsListOpen(States.TYPING, data), false);
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.IDLE);
+
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.CLOSING);
+  });
+
+  // The empty-input degenerate case (one Escape closes) is covered by
+  // 'IDLE + Escape -> CLOSING' in the IDLE transitions describe.
 });
 
 // ===== Invariant Enforcement =====
@@ -1220,10 +1311,12 @@ describe('Machine reset', () => {
     machine.getMutableData().chainContext = { data: 'x' };
     machine.getMutableData().chainStack = [{ data: 'x' }];
     machine.getMutableData().outputItems = [1, 2, 3];
+    machine.getMutableData().resultsDismissed = true;
 
     machine.reset();
 
     assert.equal(machine.getState(), States.IDLE);
+    assert.equal(machine.getData().resultsDismissed, false);
     assert.equal(machine.getData().typed, '');
     assert.equal(machine.getData().chainContext, null);
     assert.equal(machine.getData().chainStack.length, 0);

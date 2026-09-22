@@ -32,6 +32,7 @@ export function resultsListOpen(currentState, data) {
   if (total === 0) return false;
   if (isChain) return true;
   if (currentState === States.RESULTS_OPEN) return true;
+  if (data.resultsDismissed) return false; // Escape peeled the auto-opened list off
   return total > 1; // auto-open in TYPING/IDLE
 }
 
@@ -173,6 +174,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
 
     // UI flags
     urlMatches: [],   // url-history items matching typed text (parallel lane)
+    // Escape hid the auto-opened list for the current text; owned by this module.
+    resultsDismissed: false,
 
     // Pref mirror, synced by the panel from prefs (see config.js prefs.enterRunsInlineSuggestion).
     // Lives in `data` so the derivation functions stay pure — they never read config.
@@ -213,6 +216,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     hasAnyResults: () => (data.matches.length + (data.urlMatches?.length || 0)) > 0,
     selectedIsUrlResult: () => data.matchIndex >= data.matches.length && data.matchIndex < (data.matches.length + (data.urlMatches?.length || 0)),
     hasParamSuggestions: () => data.paramSuggestions.length > 0,
+    resultsVisible: () => resultsListOpen(currentState, data),
     commandHasParams: (payload) => {
       const cmdName = payload?.commandName || data.matches[data.matchIndex];
       const cmd = cmdName && data.commands[cmdName];
@@ -319,8 +323,25 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     if (logger) logger('cmd:sm', ...args);
   }
 
+  // ===== Machine-Internal Actions =====
+  // Actions that write machine-owned data rather than driving the DOM. They are
+  // looked up BEFORE the injected `actions`, because the test harness proxies
+  // every action name and would otherwise shadow them.
+  const internalActions = {
+    dismissResults() { data.resultsDismissed = true; },
+    undismissResults() { data.resultsDismissed = false; },
+  };
+
   // ===== Action Runner =====
   function runAction(name, payload) {
+    const internal = internalActions[name];
+    if (internal) {
+      try {
+        internal(payload, data);
+      } catch (err) {
+        log('error', `Internal action "${name}" threw:`, err);
+      }
+    }
     const fn = actions[name];
     if (fn) {
       try {
@@ -389,7 +410,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         {
           guard: 'inputNonEmpty',
           target: States.TYPING,
-          actions: ['setTyped', 'computeMatches', 'updateGhostText', 'updateResults'],
+          actions: ['undismissResults', 'setTyped', 'computeMatches', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.ARROW_DOWN]: [
@@ -462,6 +483,13 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         // `search` explicitly if they want one).
       ],
       [Events.ESCAPE]: [
+        // Escape peels one layer per press. Visible dropdown first — hide it and
+        // keep the typed text; only a later press clears the text, then closes.
+        {
+          guard: 'resultsVisible',
+          target: States.TYPING,
+          actions: ['dismissResults', 'dropInlineGhost', 'updateGhostText', 'updateResults'],
+        },
         { guard: 'textNonEmpty', target: States.IDLE, actions: ['clearInput', 'clearMatches', 'updateGhostText', 'updateResults'] },
         { target: States.CLOSING, actions: ['shutdown'] },
       ],
@@ -571,7 +599,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         { target: States.CLOSING, actions: ['openClickedUrlResult', 'clearInput', 'shutdown'] },
       ],
       [Events.ESCAPE]: [
-        { target: States.TYPING, actions: ['updateResults'] },
+        // Back to TYPING with the list staying shut — TYPING would otherwise
+        // re-derive it as open whenever the combined lane total is above 1.
+        { target: States.TYPING, actions: ['dismissResults', 'dropInlineGhost', 'updateGhostText', 'updateResults'] },
       ],
       [Events.VISIBILITY_HIDDEN]: [
         { target: States.CLOSING, actions: ['shutdown'] },
@@ -962,6 +992,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
   // ===== Invariant Enforcement =====
 
   function enforceInvariants() {
+    // A dismissed list only survives inside TYPING. Leaving TYPING at all —
+    // ArrowDown to RESULTS_OPEN, the clear to IDLE, param mode, execution —
+    // means the next arrival re-derives visibility from scratch.
+    if (currentState !== States.TYPING) data.resultsDismissed = false;
+
     // Bound matchIndex against the COMBINED command + url-history total
     const totalResults = data.matches.length + (data.urlMatches?.length || 0);
     if (totalResults === 0) {
@@ -1052,6 +1087,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       data.originalTyped = '';
       data.matches = [];
       data.urlMatches = [];
+      data.resultsDismissed = false;
       data.matchIndex = 0;
       data.outputItems = [];
       data.outputItemIndex = 0;

@@ -193,6 +193,7 @@ Each transition is defined as: `(CurrentState, Event) -> (NextState, Actions, Gu
 | `Enter` | typed is URL | CLOSING | Open URL, record frecency, shutdown |
 | `Enter` | user committed to command | EXECUTING | Build context, call `execute()` |
 | `Enter` | no match, text non-empty | CLOSING | Open search view, shutdown |
+| `Escape` | results visible | TYPING | Dismiss list, keep text (drop the inline ghost) |
 | `Escape` | text non-empty | IDLE | Clear input and matches |
 | `Escape` | text empty | CLOSING | Call `shutdown()` |
 | `input` (typed matches `cmdName + space`, cmd has params) | -- | PARAM_MODE | Enter param mode while typing continues |
@@ -208,7 +209,7 @@ Each transition is defined as: `(CurrentState, Event) -> (NextState, Actions, Gu
 | `Tab` | no params | RESULTS_OPEN | Cycle through matches |
 | `Enter` | user committed | EXECUTING | Execute selected command |
 | `click` (result item) | -- | EXECUTING | Set matchIndex, execute command |
-| `Escape` | -- | TYPING | Hide results (`showResults=false`) |
+| `Escape` | -- | TYPING | Dismiss list, keep text |
 
 #### From PARAM_MODE
 
@@ -349,7 +350,7 @@ The state machine must maintain these invariants at all times:
 5. **matchIndex in bounds**: `matchIndex` must be `>= 0` and `< matches.length` (or 0 when matches is empty).
 6. **paramIndex in bounds**: `paramIndex` must be `>= -1` and `< paramSuggestions.length`.
 7. **outputItemIndex in bounds**: When in output selection mode, `outputItemIndex >= 0` and `< outputItems.length`.
-8. **Escape layering order**: Escape always exits the innermost active mode first: paramMode -> outputSelection -> chainMode -> showResults -> clearText -> close.
+8. **Escape layering order**: Escape always exits the innermost active mode first: paramMode -> outputSelection -> chainMode -> visible results -> clearText -> close. One press peels exactly one layer — a visible dropdown is dismissed with the typed text left intact.
 
 ---
 
@@ -377,6 +378,7 @@ Each test verifies a single transition fires correctly:
 - [ ] TYPING + Enter with URL -> CLOSING (URL opened)
 - [ ] TYPING + Enter with committed command -> EXECUTING
 - [ ] TYPING + Enter with no match -> CLOSING (search opened)
+- [ ] TYPING + Escape with a visible dropdown -> TYPING (list dismissed, text kept)
 - [ ] TYPING + Escape with text -> IDLE (text cleared)
 - [ ] TYPING + Escape with empty text -> CLOSING
 - [ ] TYPING + typed `cmdName + space` (cmd has params) -> PARAM_MODE (auto-enter)
@@ -390,7 +392,7 @@ Each test verifies a single transition fires correctly:
 - [ ] RESULTS_OPEN + Tab -> RESULTS_OPEN or PARAM_MODE
 - [ ] RESULTS_OPEN + Enter -> EXECUTING
 - [ ] RESULTS_OPEN + click item -> EXECUTING
-- [ ] RESULTS_OPEN + Escape -> TYPING (results hidden)
+- [ ] RESULTS_OPEN + Escape -> TYPING (results hidden, and they stay hidden)
 
 **PARAM_MODE transitions:**
 - [ ] PARAM_MODE + input (still matches cmd) -> PARAM_MODE (suggestions updated)

@@ -2025,6 +2025,26 @@ function actionHandlers() {
       clearUrlGhost();
     },
 
+    // First Escape press: take the inline ghost away while keeping everything
+    // the user actually typed. applyGhostSelection may have overwritten the
+    // input with a completion and selected its suffix, so the input's value has
+    // to be put back to state.typed — otherwise the press leaves a filled-in URL
+    // on screen that no dropdown or ghost explains.
+    dropInlineGhost() {
+      clearUrlGhost();
+      const input = commandInput();
+      if (input) {
+        input.value = state.typed || '';
+        const end = input.value.length;
+        try {
+          input.setSelectionRange(end, end);
+        } catch {
+          // Inputs that don't support a text selection range (none today) —
+          // the value is already correct, which is the part that matters.
+        }
+      }
+    },
+
     computeMatches(payload) {
       const typed = payload?.value || state.typed;
       if (typed) {

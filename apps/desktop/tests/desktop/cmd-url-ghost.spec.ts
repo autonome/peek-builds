@@ -1483,3 +1483,143 @@ test.describe('cmd URL loopback default scheme @desktop', () => {
     await closePanel(panelId);
   });
 });
+
+/**
+ * Staged Escape: one press peels one layer. With a visible Visited dropdown the
+ * first press hides the list and leaves the typed text (and the caret) exactly
+ * as the user left it — the ghost fill is dropped, so no completed URL is left
+ * sitting in the input with nothing on screen to explain it. The second press
+ * clears the text, the third closes the panel.
+ *
+ * The waits below cross the Playwright-to-renderer process boundary: the test
+ * process cannot observe the panel's FSM or DOM except by polling an evaluate,
+ * which is what every test in this file already does. Each one waits on a
+ * deterministic end state (an FSM state name, the results element's `visible`
+ * class, an input value), never on elapsed time.
+ */
+test.describe('cmd URL staged Escape @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  const SEED_URLS = [
+    'https://stagedescape.example.com/alpha',
+    'https://stagedescape.example.com/beta',
+  ];
+  const TYPED = 'stagedesc';
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  async function closePanel(panelId: number) {
+    if (!panelId) return;
+    try {
+      await bgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, panelId);
+    } catch { /* may already be closed */ }
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-staged-escape'));
+    for (const url of SEED_URLS) {
+      const navResult = await bgWindow.evaluate(async (u: string) => {
+        return await (window as any).app.datastore.trackNavigation(u, {
+          source: 'window',
+          windowType: 'main',
+        });
+      }, url);
+      expect(navResult.success).toBe(true);
+    }
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('staged Escape: dropdown, then text, then panel', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.fill('input', TYPED);
+
+    // Both seeded urls land in the parallel lane and no command matches, so the
+    // list auto-opens. The ghost may have filled the input with the completion.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && s.matches.length === 0 && s.urlMatches.length >= 2;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+    await cmdWindow.waitForFunction(
+      () => !!document.getElementById('results')?.classList.contains('visible'),
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // Escape 1: the list goes away, the typed text stays, the caret collapses.
+    await cmdWindow.keyboard.press('Escape');
+    await cmdWindow.waitForFunction(
+      () => !document.getElementById('results')?.classList.contains('visible'),
+      undefined,
+      { timeout: 8000 }
+    );
+
+    const afterFirst = await cmdWindow.evaluate(() => {
+      const input = document.getElementById('command-input') as HTMLInputElement | null;
+      return {
+        currentState: (window as any)._cmdState?.currentState,
+        value: input?.value,
+        selectionStart: input?.selectionStart,
+        selectionEnd: input?.selectionEnd,
+      };
+    });
+    expect(afterFirst.currentState).toBe('TYPING');
+    expect(afterFirst.value).toBe(TYPED);
+    expect(afterFirst.selectionStart).toBe(afterFirst.selectionEnd);
+
+    // Escape 2: the text clears.
+    await cmdWindow.keyboard.press('Escape');
+    await cmdWindow.waitForFunction(
+      () => {
+        const input = document.getElementById('command-input') as HTMLInputElement | null;
+        return input?.value === '' && (window as any)._cmdState?.currentState === 'IDLE';
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // Escape 3: the panel closes. keepLive hides rather than destroys it, so the
+    // page stays evaluable.
+    await cmdWindow.keyboard.press('Escape');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'CLOSING',
+      undefined,
+      { timeout: 8000 }
+    );
+
+    await closePanel(panelId);
+  });
+});
