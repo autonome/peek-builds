@@ -384,12 +384,14 @@ export function syncBuiltinFeatures(
 
   // Scan disk for current builtins
   const onDiskIds = new Set<string>();
+  const onDiskPaths = new Set<string>();
   if (fs.existsSync(featuresDir)) {
     const entries = fs.readdirSync(featuresDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const manifestPath = path.join(featuresDir, entry.name, 'manifest.json');
       if (!fs.existsSync(manifestPath)) continue;
+      onDiskPaths.add(path.join(featuresDir, entry.name));
 
       try {
         const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
@@ -430,8 +432,9 @@ export function syncBuiltinFeatures(
           }
         }
         // If existing but not builtin source type, don't touch it
-      } catch {
-        // Skip unparseable manifests
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[feature-installer] Failed to scan ${entry.name}:`, message);
       }
     }
   }
@@ -439,7 +442,7 @@ export function syncBuiltinFeatures(
   // Remove builtins no longer on disk
   const builtinEntries = registry.listFeatures({ sourceType: 'builtin' });
   for (const entry of builtinEntries) {
-    if (!onDiskIds.has(entry.id)) {
+    if (!onDiskIds.has(entry.id) && !onDiskPaths.has(entry.path)) {
       registry.unregisterFeature(entry.id);
       result.removed.push(entry.id);
     }
