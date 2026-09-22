@@ -22,9 +22,16 @@ let activeSpaceId = null;
 let activeSpaceName = null;
 let activeSpaceColor = null;
 
+// ===== Active Theme (for the vivid-color fallback palette) =====
+// Set from api.theme.getInfo() at init and kept live via api.theme.onChange()
+// — this document has the theme capability and IPC access config.js
+// deliberately doesn't (see resolveVividColor's doc comment), so this is
+// where the live theme id is read and threaded through.
+let activeThemeId = 'peek';
+
 // ===== Vivid Colors (for border when tag color is too pale) =====
-// Uses shared resolveVividColor from config.js
-const resolveSpaceBorderColor = resolveVividColor;
+// Uses shared resolveVividColor from config.js, pinned to the active theme.
+const resolveSpaceBorderColor = (color, spaceId) => resolveVividColor(color, spaceId, activeThemeId);
 
 // ===== Screen Border =====
 // The border is a feature-owned overlay window showing a colored border
@@ -603,7 +610,7 @@ async function openSpace(spaceName) {
   const tag = tagResult.data.tag;
 
   // Resolve vivid color for spaces with default/grey color and persist it
-  const vividColor = resolveVividColor(tag.color, tag.id);
+  const vividColor = resolveVividColor(tag.color, tag.id, activeThemeId);
   if (vividColor !== tag.color) {
     tag.color = vividColor;
     await api.datastore.updateTagColor(tag.id, vividColor);
@@ -872,6 +879,18 @@ const init = async () => {
   // (see apps/desktop/CLAUDE.md "CRITICAL init-ordering rule for lazy tile
   // authors") — registration itself stays synchronous.
   defaultSpaceReady = bootstrapDefaultSpace();
+
+  // Track the active theme, live, for the vivid-color fallback palette.
+  // `activeThemeId` starts at its 'peek' default and is only ever read by
+  // color resolution, so there's nothing here to gate behind an awaited
+  // promise the way `defaultSpaceReady` is — a border shown before the
+  // first getInfo() resolves just uses that default.
+  api.theme.onChange?.((info) => {
+    if (info?.kind === 'theme' && info.themeId) activeThemeId = info.themeId;
+  });
+  api.theme.getInfo().then((info) => {
+    if (info?.themeId) activeThemeId = info.themeId;
+  }).catch(() => {});
 
   // Subscribe to item:created for auto-tagging
   api.pubsub.subscribe('item:created', handleItemCreated);

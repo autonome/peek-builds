@@ -82,7 +82,8 @@
       "manage": true
     },
     "commands": true,
-    "session": true
+    "session": true,
+    "theme": true
   },
   "commands": [
     {
