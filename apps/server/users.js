@@ -444,21 +444,39 @@ function normalizeEnrolmentCode(code) {
 // guessable by brute force despite the code's short expiry. This in-memory
 // attempt window caps how many exchanges can be spent guessing, independent
 // of which code is tried. It resets on restart — fine, since a real code
-// only ever lives for minutes anyway.
+// only ever lives for minutes anyway. Keyed by requester IP (rather than one
+// shared counter) so a single caller flooding the endpoint with garbage
+// codes can only pin their own bucket, not 429 every other caller sharing
+// the server.
 const ENROLMENT_EXCHANGE_WINDOW_MS = 60 * 1000;
 const ENROLMENT_EXCHANGE_MAX_ATTEMPTS = 10;
-let enrolmentExchangeAttempts = [];
+let enrolmentExchangeAttemptsByIp = new Map();
 
-function enrolmentExchangeRateLimited() {
+function enrolmentExchangeRateLimited(requesterIp) {
+  const ip = requesterIp || "unknown";
   const now = Date.now();
-  enrolmentExchangeAttempts = enrolmentExchangeAttempts.filter(
+  const attempts = (enrolmentExchangeAttemptsByIp.get(ip) || []).filter(
     (t) => now - t < ENROLMENT_EXCHANGE_WINDOW_MS
   );
-  if (enrolmentExchangeAttempts.length >= ENROLMENT_EXCHANGE_MAX_ATTEMPTS) {
+  if (attempts.length >= ENROLMENT_EXCHANGE_MAX_ATTEMPTS) {
+    enrolmentExchangeAttemptsByIp.set(ip, attempts);
     return true;
   }
-  enrolmentExchangeAttempts.push(now);
+  attempts.push(now);
+  enrolmentExchangeAttemptsByIp.set(ip, attempts);
   return false;
+}
+
+// Enrolment codes are short-lived and single-use, so a spent or expired row
+// has no further purpose — nothing ever reads one again. Rows would
+// otherwise accumulate forever since nothing else deletes them. Swept
+// opportunistically (on every mint and every exchange, like this file's
+// other short-lived-state paths) rather than on a timer, since there's no
+// background scheduler in this process.
+function pruneEnrolmentCodes(db) {
+  db.run("DELETE FROM enrolment_codes WHERE used_at IS NOT NULL OR expires_at < ?", [
+    new Date().toISOString(),
+  ]);
 }
 
 /**
@@ -476,6 +494,8 @@ function createEnrolmentCode(userId) {
   if (!user) {
     throw new Error(`User '${userId}' does not exist`);
   }
+
+  pruneEnrolmentCodes(db);
 
   const code = generateEnrolmentCode();
   const codeHash = hashApiKey(code);
@@ -500,10 +520,11 @@ function createEnrolmentCode(userId) {
  *
  * @param {string} code
  * @param {string} [label] - Label for the new device; defaults if omitted
+ * @param {string} [requesterIp] - Caller's IP, for the per-caller rate limit
  * @returns {{ deviceId: string, userId: string, label: string, apiKey: string }}
  */
-function exchangeEnrolmentCode(code, label) {
-  if (enrolmentExchangeRateLimited()) {
+function exchangeEnrolmentCode(code, label, requesterIp) {
+  if (enrolmentExchangeRateLimited(requesterIp)) {
     const err = new Error("Too many enrolment attempts, try again shortly");
     err.status = 429;
     throw err;
@@ -532,6 +553,7 @@ function exchangeEnrolmentCode(code, label) {
     new Date().toISOString(),
     row.id,
   ]);
+  pruneEnrolmentCodes(db);
 
   const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
   return createDevice(row.user_id, deviceLabel);

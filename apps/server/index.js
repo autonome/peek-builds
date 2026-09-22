@@ -1,5 +1,6 @@
 const { Hono } = require("hono");
 const { serve } = require("@hono/node-server");
+const { getConnInfo } = require("@hono/node-server/conninfo");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -1244,11 +1245,30 @@ app.post("/devices/enrolment-codes", (c) => {
   }
 });
 
+// Best-effort caller IP for per-caller rate limiting (used by the
+// unauthenticated /enrol route below). Prefers X-Forwarded-For, since the
+// server typically sits behind Railway's proxy, and falls back to the
+// underlying socket via @hono/node-server's conninfo helper for a direct
+// connection. Neither is available when a test drives the app in-process
+// (no real socket), so this degrades to a shared "unknown" bucket there —
+// fine, since no test exercises per-IP separation.
+function requesterIp(c) {
+  const forwarded = c.req.header("x-forwarded-for");
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  try {
+    return getConnInfo(c).remote.address || "unknown";
+  } catch (e) {
+    return "unknown";
+  }
+}
+
 // POST /enrol  { code, label? } -> { device }
 // Unauthenticated: a brand-new device holds only the code, not a key yet.
 // The raw apiKey on the returned device is returned ONCE, same as
 // POST /admin/devices. See users.exchangeEnrolmentCode for the guessing
-// protection (rate-limited) and expiry/reuse checks.
+// protection (rate-limited per caller IP) and expiry/reuse checks.
 app.post("/enrol", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { code, label } = body;
@@ -1256,7 +1276,7 @@ app.post("/enrol", async (c) => {
     return c.json({ error: "code is required" }, 400);
   }
   try {
-    const device = users.exchangeEnrolmentCode(code, label);
+    const device = users.exchangeEnrolmentCode(code, label, requesterIp(c));
     return c.json({ device });
   } catch (e) {
     return c.json({ error: e.message }, e.status || 400);

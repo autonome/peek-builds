@@ -159,11 +159,11 @@ test.describe('Device Settings Panel @desktop', () => {
       .poll(() => laptopCard.evaluate((el) => !!(el as unknown as { shadowRoot: unknown }).shadowRoot))
       .toBe(true);
 
-    // The "add a device" spot exists and is inert — no button that does
-    // anything, per the mint-flow decision still being open (8415f3de step 3).
+    // The "add a device" card mints a single-use enrolment code via its one
+    // "Create code" button (api.sync.createEnrolmentCode()).
     await expect(settingsWindow.locator('.devices-panel')).toContainText('Add a device');
     const addDeviceButtons = settingsWindow.locator('.devices-panel peek-card').first().locator('peek-button');
-    await expect(addDeviceButtons).toHaveCount(0);
+    await expect(addDeviceButtons).toHaveCount(1);
 
     // --- rename ---
     const renameInput = laptopCard.locator('[data-role="rename-input"]');

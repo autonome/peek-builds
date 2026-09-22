@@ -2159,30 +2159,26 @@ const renderSyncSettings = async () => {
   enrolLabel.textContent = 'Enrolment Code';
   enrolGroup.appendChild(enrolLabel);
 
+  const enrolLabelInput = document.createElement('peek-input');
+  enrolLabelInput.dataset.role = 'enrol-label-input';
+  enrolLabelInput.placeholder = 'Device name (optional)';
+  enrolLabelInput.style.cssText = 'margin-bottom: 8px;';
+  enrolGroup.appendChild(enrolLabelInput);
+
   const enrolWrapper = document.createElement('div');
   enrolWrapper.style.cssText = 'display: flex; gap: 8px;';
 
-  const enrolInput = document.createElement('input');
-  enrolInput.type = 'text';
+  const enrolInput = document.createElement('peek-input');
   enrolInput.dataset.role = 'enrol-code-input';
   enrolInput.placeholder = 'Code from another device';
   enrolInput.style.cssText = 'flex: 1;';
   enrolWrapper.appendChild(enrolInput);
 
-  const enrolBtn = document.createElement('button');
-  enrolBtn.type = 'button';
+  const enrolBtn = document.createElement('peek-button');
   enrolBtn.dataset.role = 'enrol-button';
+  enrolBtn.setAttribute('variant', 'secondary');
+  enrolBtn.setAttribute('size', 'sm');
   enrolBtn.textContent = 'Enroll';
-  enrolBtn.style.cssText = `
-    padding: 6px 12px;
-    font-size: 12px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    min-width: 60px;
-  `;
   enrolWrapper.appendChild(enrolBtn);
   enrolGroup.appendChild(enrolWrapper);
 
@@ -2194,6 +2190,7 @@ const renderSyncSettings = async () => {
 
   enrolBtn.addEventListener('click', async () => {
     const code = (enrolInput.value || '').trim();
+    const label = (enrolLabelInput.value || '').trim();
     if (!config.serverUrl) {
       enrolStatus.textContent = 'Enter a server URL above first.';
       enrolStatus.style.color = 'var(--error-text, #dc2626)';
@@ -2207,7 +2204,7 @@ const renderSyncSettings = async () => {
     enrolBtn.disabled = true;
     enrolBtn.textContent = 'Enrolling…';
     try {
-      const result = await api.sync.enrol(config.serverUrl, code);
+      const result = await api.sync.enrol(config.serverUrl, code, label || undefined);
       if (!result.success) {
         enrolStatus.textContent = result.error || 'Failed to enroll';
         enrolStatus.style.color = 'var(--error-text, #dc2626)';
@@ -2218,6 +2215,7 @@ const renderSyncSettings = async () => {
       apiKeyInput.value = newKey;
       await api.sync.setConfig({ apiKey: newKey });
       enrolInput.value = '';
+      enrolLabelInput.value = '';
       enrolStatus.textContent = 'Enrolled — this device now has its own key.';
       enrolStatus.style.color = '';
       updateStatus();
@@ -2853,11 +2851,9 @@ const renderSyncSettings = async () => {
 // off the same serverUrl/apiKey the Sync panel above configures). Uses the
 // shared <peek-*> component library rather than this file's hand-rolled
 // style — see apps/desktop/CLAUDE.md "the <peek-*> component system is the
-// DEFAULT". Minting a key for a NEW device is intentionally not wired up
-// here: it waits on an account-holder decision about how a fresh device
-// gets its first key (peek 8415f3de step 3) — see the placeholder card
-// below, which names the gap rather than offering a button that does
-// nothing.
+// DEFAULT". The "Add a device" card mints a single-use enrolment code via
+// api.sync.createEnrolmentCode() (server route: POST /devices/enrolment-codes),
+// which a new device exchanges for its own key at POST /enrol.
 const renderDevicesSettings = async () => {
   const container = document.createElement('div');
   container.className = 'devices-panel';
