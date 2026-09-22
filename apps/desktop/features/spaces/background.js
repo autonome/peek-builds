@@ -71,6 +71,7 @@ const BORDER_HIDE_DELAY_MS = 600;
 
 async function showBorder(color, name) {
   const safeColor = resolveSpaceBorderColor(color, activeSpaceId);
+  cancelHideTimer();
 
   if (border.state === 'opening') {
     border.pendingUpdate = { color: safeColor, name };
@@ -173,90 +174,6 @@ function cancelHideTimer() {
   if (borderHideTimer) {
     clearTimeout(borderHideTimer);
     borderHideTimer = null;
-  }
-}
-
-// ===== Workspace Panel =====
-// A global HUD window (docs/design/window-rules.md "The workspace panel"):
-// names the active workspace and offers close/switch controls. Opened
-// already pinned across workspaces — the one case where a window is pinned
-// by a feature rather than by the user — so it survives closeSpace()'s sweep
-// the same way any other globally-pinned window does, and gets no unpin
-// control. Unlike the border, it must stay open and merely update across a
-// workspace switch rather than closing and reopening (switchSpace() passes
-// `keepPanel: true` to closeSpace() for exactly this reason).
-
-let panelWindowId = null;
-
-/**
- * Show the panel for the active workspace, or update the one already open.
- * `color` is the workspace's accent — the same resolved color the screen
- * border uses — and travels both ways the panel learns its workspace: the
- * URL on creation and `spaces:panel-update` on a later switch, so the panel
- * is themed on every switch, not only the first (`panel.js applyAccent`).
- */
-async function showPanel(spaceName, color) {
-  if (panelWindowId) {
-    try {
-      const exists = await api.window.exists(panelWindowId);
-      if (exists?.exists) {
-        api.pubsub.publish('spaces:panel-update', { spaceName, color });
-        return;
-      }
-    } catch { /* window gone */ }
-    panelWindowId = null;
-  }
-
-  try {
-    const displayResult = await api.screen.getPrimaryDisplay();
-    if (!displayResult.success) return;
-    const { bounds } = displayResult.data;
-    const width = 260;
-    const height = 112;
-    const margin = 16;
-
-    const panelHtml = `peek://spaces/panel.html?spaceName=${encodeURIComponent(spaceName)}&color=${encodeURIComponent(color || '')}`;
-    const result = await api.window.open(panelHtml, {
-      // Chrome, not content: excluded from the Windows switcher by role
-      // (features/windows/windows.js loadWindows()'s CHROME_ROLES filter).
-      // Deliberately NOT 'overlay' — that's one of izui-roles.ts's
-      // TRANSIENT_ROLES, whose OS-Space-follow and blur-sweep treatment is
-      // for short-lived chrome (the border, the palette); the panel is
-      // pinned and must persist for the life of the workspace instead of
-      // being dismissed on a focus change.
-      role: 'panel',
-      x: bounds.x + bounds.width - width - margin,
-      y: bounds.y + bounds.height - height - margin,
-      width,
-      height,
-      resizable: false,
-      frame: false,
-      transparent: true,
-      skipTaskbar: true,
-      // Born already pinned across every workspace — the existing pin
-      // mechanism (window-kernel.ts Pinned layer + the 'pin' context key),
-      // set at open time the same way a restored globally-pinned window is.
-      alwaysOnTop: true,
-      pinScope: 'global',
-      // Feature chrome, never part of any snapshot — explicit (requirement 4,
-      // specs/workspace-session-snapshot.md), not inferred from role.
-      persist: false,
-    });
-
-    if (result?.id) {
-      panelWindowId = result.id;
-    }
-  } catch (err) {
-    console.error('[ext:spaces] Failed to create workspace panel window:', err);
-  }
-}
-
-function hidePanel() {
-  if (panelWindowId) {
-    try {
-      api.window.close(panelWindowId);
-    } catch { /* ignore */ }
-    panelWindowId = null;
   }
 }
 
@@ -399,7 +316,7 @@ let defaultSpaceReady = null;
 // workspace — the window kernel's own content set (`window-kernel.ts
 // CONTENT_ROLES`): pages, their popups, and feature pages like the Spaces
 // browse-all list. Dedicated chrome (the palette, overlays, the switcher,
-// the workspace panel) and background pages carry a different role or none
+// the border) and background pages carry a different role or none
 // at all, so they're left alone without a name-list of URLs to skip.
 const WORKSPACE_CONTENT_ROLES = new Set(['content', 'child-content', 'workspace']);
 
@@ -546,18 +463,12 @@ async function enterWorkspace(tag, spaceName) {
   } else {
     const borderColor = resolveSpaceBorderColor(tag.color, tag.id);
     showBorder(borderColor, spaceName);
-    // Show or update the workspace panel — it stays open across a switch
-    // (closeCurrentWorkspaceWindows() below keeps it alive when the target
-    // isn't the default; showPanel() reuses an already-open one instead of
-    // recreating it), themed with the same accent as the border.
-    showPanel(spaceName, borderColor);
   }
 }
 
 /**
  * Save and close whatever workspace is active now — the default included.
- * Shared by entering a different workspace and by leaving to the default;
- * the two differ only in whether the panel survives the transition.
+ * Shared by entering a different workspace and by leaving to the default.
  *
  * The save is the same `saveSessionSnapshot` the app's own quit/autosave
  * uses, keyed by the outgoing workspace's snapshot key (see
@@ -568,7 +479,7 @@ async function enterWorkspace(tag, spaceName) {
  * below too (`docs/design/window-rules.md` "Persistent windows") — while the
  * default workspace's row holds everything on screen.
  */
-async function closeCurrentWorkspaceWindows(options = {}) {
+async function closeCurrentWorkspaceWindows() {
   if (!activeSpaceId) return;
 
   try {
@@ -594,8 +505,6 @@ async function closeCurrentWorkspaceWindows(options = {}) {
       }
     }
   }
-
-  if (!options.keepPanel) hidePanel();
 }
 
 async function openSpace(spaceName) {
@@ -617,12 +526,9 @@ async function openSpace(spaceName) {
   }
 
   const displayName = getSpaceDisplayName(tag);
-  const enteringDefault = tag.id === defaultSpaceId;
 
   // Entering a workspace saves the current workspace's windows — the
-  // default included — and closes them (Goal, handoff.md). The panel
-  // carries through the switch unless we're landing on the default, which
-  // shows no chrome at all.
+  // default included — and closes them (Goal, handoff.md).
   //
   // The main process saves the ACTIVE workspace's row on its own schedule
   // (autosave, quit, and ~500ms after any window closes). Between the save
@@ -638,7 +544,7 @@ async function openSpace(spaceName) {
     console.error('[ext:spaces] Failed to mark the workspace switch as in progress:', err);
   }
   try {
-    await closeCurrentWorkspaceWindows({ keepPanel: !enteringDefault });
+    await closeCurrentWorkspaceWindows();
     await enterWorkspace(tag, displayName);
   } finally {
     try {
@@ -675,7 +581,7 @@ async function switchSpace(targetName) {
   await defaultSpaceReady;
   // Switching to the workspace that is already active is a no-op: re-entering
   // it would save, close and reopen its own windows for no visible change.
-  // The Spaces UI's card click and the panel's switch control both come
+  // The Spaces UI's card click and the `switch space` command both come
   // through here, so this is where that churn is avoided; `open space` keeps
   // its re-enter semantics.
   if (activeSpaceId && activeSpaceName &&
@@ -762,7 +668,7 @@ const initCommands = () => {
   api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
     if (!result?.success) {
-      // The panel's Close control has no result surface of its own, so a
+      // A command invocation has no result surface of its own, so a
       // refused close (e.g. the default already active) would otherwise be
       // indistinguishable from a click that never arrived.
       console.warn('[ext:spaces] close space refused:', result?.error, 'active:', activeSpaceName);
@@ -916,7 +822,6 @@ const uninit = () => {
   uninitCommands();
   cancelHideTimer();
   hideBorder();
-  hidePanel();
 };
 
 export default {

@@ -136,8 +136,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
 
     const openResult = await runCommand('open space', alpha);
     expect(openResult?.success, `open space "${alpha}" failed: ${openResult?.error}`).toBe(true);
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name')).toHaveText(alpha, { timeout: 15000 });
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(alpha, { timeout: 15000 });
 
     const pageId = await openPageLikeThePalette('https://example.com/lock-palette-opened-in-alpha');
     await expect
@@ -158,22 +158,23 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     await expect.poll(async () => (await windowsInSpace(betaId)).length, { timeout: 15000 }).toBeGreaterThan(0);
   });
 
-  test('Close on the panel closes a palette-opened page along with the workspace', async () => {
+  test('`close space` closes a palette-opened page along with the workspace', async () => {
     // beta is active from the test above.
     const beta = 'lock-beta';
     const betaId = await spaceTagId(beta);
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name')).toHaveText(beta, { timeout: 15000 });
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(beta, { timeout: 15000 });
 
     const pageId = await openPageLikeThePalette('https://example.com/lock-palette-opened-in-beta');
     await expect.poll(async () => (await windowsInSpace(betaId)).includes(pageId), { timeout: 15000 }).toBe(true);
 
-    await panelPage.locator('.panel-close').click();
-    await expect.poll(() => panelPage.isClosed(), { timeout: 15000, message: 'Close did not close the panel' }).toBe(true);
+    const closeResult = await runCommand('close space');
+    expect(closeResult?.success, `close space failed: ${closeResult?.error}`).toBe(true);
+    await expect.poll(() => borderPage.isClosed(), { timeout: 15000, message: 'close space did not close the border' }).toBe(true);
     await expect
       .poll(async () => (await liveWindowIds()).includes(pageId), {
         timeout: 15000,
-        message: 'Close returned to the default but left the palette-opened page open',
+        message: 'close space returned to the default but left the palette-opened page open',
       })
       .toBe(false);
     await expect.poll(async () => (await windowsInSpace(betaId)).length, { timeout: 15000 }).toBe(0);
@@ -211,8 +212,25 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     // the click; the item list renders in the SAME page, so open it from a
     // fresh browse page if this one is swept as part of the default.
     await card.click();
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name')).toHaveText(gamma, { timeout: 15000 });
+    // Re-fetch on each poll attempt rather than hold one page handle: the
+    // border (role 'overlay', a TRANSIENT_ROLE) can flicker closed/reopened
+    // by focus churn, which would otherwise throw "Target page ... has been
+    // closed" instead of retrying.
+    let borderLabel = '';
+    await expect
+      .poll(
+        async () => {
+          try {
+            const page = await app.getWindow('spaces/border.html', 15000);
+            borderLabel = await page.locator('#label').textContent() ?? '';
+          } catch {
+            borderLabel = '';
+          }
+          return borderLabel;
+        },
+        { timeout: 15000, message: 'the border never named the entered space' },
+      )
+      .toBe(gamma);
 
     let itemsPage: Page = browsePage;
     if (browsePage.isClosed()) {
@@ -233,23 +251,40 @@ test.describe('workspace membership: every window opened in a workspace belongs 
       }, { timeout: 15000, message: 'clicking the item card opened no window' })
       .toBe(true);
 
-    // The panel is themed with the border's color — the resolved accent.
-    // The window opened from the item list must carry that same color, not
-    // the tag's raw grey; nothing about the accent may depend on whether the
-    // space was switched to before the window was opened.
-    const panelAccent = await panelPage.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--panel-accent').trim(),
-    );
-    expect(panelAccent, 'the panel shows no resolved accent for gamma').not.toBe('');
-    expect(panelAccent).not.toBe('#999');
+    // The border shows the resolved accent. The window opened from the item
+    // list must carry that same color, not the tag's raw grey; nothing about
+    // the accent may depend on whether the space was switched to before the
+    // window was opened. Re-fetch the border page here rather than reuse the
+    // handle from above: unlike the removed panel, the border carries role
+    // 'overlay' (a TRANSIENT_ROLE) and can flicker closed/reopened by focus
+    // churn from the item window that was just opened — a stale handle would
+    // throw "Target page ... has been closed" instead of retrying.
+    let borderAccent = '';
+    await expect
+      .poll(
+        async () => {
+          try {
+            const page = await app.getWindow('spaces/border.html', 15000);
+            borderAccent = await page.evaluate(() =>
+              getComputedStyle(document.documentElement).getPropertyValue('--color').trim(),
+            );
+          } catch {
+            borderAccent = '';
+          }
+          return borderAccent;
+        },
+        { timeout: 15000, message: 'the border never settled on a resolved accent for gamma' },
+      )
+      .not.toBe('');
+    expect(borderAccent).not.toBe('#999');
     await expect
       .poll(() => windowModeColor(itemWindowId as number), {
         timeout: 15000,
         message: 'the window opened from gamma\'s item list does not carry gamma\'s resolved accent',
       })
-      .toBe(panelAccent);
+      .toBe(borderAccent);
     for (const id of await windowsInSpace(gammaId)) {
-      expect(await windowModeColor(id), `window ${id} in gamma carries a different color`).toBe(panelAccent);
+      expect(await windowModeColor(id), `window ${id} in gamma carries a different color`).toBe(borderAccent);
     }
 
     // A window opened by any other route while gamma is active carries the
@@ -261,7 +296,7 @@ test.describe('workspace membership: every window opened in a workspace belongs 
         timeout: 15000,
         message: 'a page opened from the palette inside gamma does not carry gamma\'s accent',
       })
-      .toBe(panelAccent);
+      .toBe(borderAccent);
 
     await runCommand('close space');
   });

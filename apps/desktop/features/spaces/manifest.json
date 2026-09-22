@@ -29,15 +29,6 @@
       "frame": false,
       "focusable": false,
       "alwaysOnTop": true
-    },
-    {
-      "id": "panel",
-      "url": "panel.html",
-      "role": "overlay",
-      "transparent": true,
-      "frame": false,
-      "skipTaskbar": true,
-      "title": "Workspace"
     }
   ],
   "capabilities": {

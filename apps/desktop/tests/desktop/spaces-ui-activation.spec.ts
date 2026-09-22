@@ -111,10 +111,10 @@ test.describe('spaces ui activation @desktop', () => {
 
     await card.click();
 
-    // Activation is observable two ways: the workspace panel names the space,
+    // Activation is observable two ways: the border's label names the space,
     // and a window now carries that space's mode.
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name'), 'the panel never named the clicked space').toHaveText(name, {
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label'), 'the border never named the clicked space').toHaveText(name, {
       timeout: 15000,
     });
     await expect.poll(async () => (await windowsInSpace(tagId)).length, { timeout: 15000 }).toBeGreaterThan(0);
@@ -177,8 +177,8 @@ test.describe('spaces ui activation @desktop', () => {
     expect(focusedTag, 'focusing the card did not move keyboard focus onto it').toBe(tagId);
     await browsePage.keyboard.press('Enter');
 
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name'), 'Enter never activated the selected space').toHaveText(name, {
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label'), 'Enter never activated the selected space').toHaveText(name, {
       timeout: 15000,
     });
     await expect.poll(async () => (await windowsInSpace(tagId)).length, { timeout: 15000 }).toBeGreaterThan(0);
@@ -214,8 +214,8 @@ test.describe('spaces ui activation @desktop', () => {
           })
           .toBe(0);
       }
-      const panelPage = await app.getWindow('spaces/panel.html', 15000);
-      await expect(panelPage.locator('#panel-name')).toHaveText(name, { timeout: 15000 });
+      const borderPage = await app.getWindow('spaces/border.html', 15000);
+      await expect(borderPage.locator('#label')).toHaveText(name, { timeout: 15000 });
     };
 
     await switchTo(alpha, alphaId, null, 'first');
@@ -268,8 +268,8 @@ test.describe('spaces ui activation @desktop', () => {
         message: `palette run 1: no window entered space "${one}"`,
       })
       .toBeGreaterThan(0);
-    const panelPage = await app.getWindow('spaces/panel.html', 15000);
-    await expect(panelPage.locator('#panel-name')).toHaveText(one, { timeout: 15000 });
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(one, { timeout: 15000 });
 
     // The screen border must settle to ONE window. The pre-fix defect was a
     // self-sustaining loop — a new border every ~100 ms, each dismissing the
@@ -297,7 +297,7 @@ test.describe('spaces ui activation @desktop', () => {
     await expect
       .poll(async () => (await windowsInSpace(oneId)).length, { timeout: 15000 })
       .toBe(0);
-    await expect(panelPage.locator('#panel-name')).toHaveText(two, { timeout: 15000 });
+    await expect(borderPage.locator('#label')).toHaveText(two, { timeout: 15000 });
 
     await runCommand('close space');
   });

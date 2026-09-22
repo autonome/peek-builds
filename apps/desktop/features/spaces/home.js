@@ -743,10 +743,10 @@ const createSpaceCard = (space) => {
 
 /**
  * Click or Enter on a space card: enter that workspace AND browse its items.
- * Activation goes through the same `switch space` command the palette and
- * the workspace panel use — one path into `background.js openSpace()`, not a
- * parallel one. `grid-nav.js activateSelected()` implements Enter as a
- * `.click()` on the selected card, so both gestures land here.
+ * Activation goes through the same `switch space` command the palette
+ * uses — one path into `background.js openSpace()`, not a parallel one.
+ * `grid-nav.js activateSelected()` implements Enter as a `.click()` on the
+ * selected card, so both gestures land here.
  */
 const activateSpace = (space) => {
   api.pubsub.publish('cmd:execute:switch space', {

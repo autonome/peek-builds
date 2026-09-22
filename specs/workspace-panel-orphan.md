@@ -1,8 +1,15 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/features/spaces/**, apps/desktop/main/session.ts, apps/desktop/main/session.test.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, apps/desktop/main/entry.ts, apps/desktop/tests/desktop/*.spec.ts]
 depends-on: [workspace-session-snapshot]
 ---
+
+# Superseded: the workspace panel was removed
+
+The workspace panel this spec describes (`apps/desktop/features/spaces/panel.html`) was removed
+entirely — track `spaces-indicator-redesign`. The active-workspace indicator is now the border's
+right-edge accent and name label (`apps/desktop/features/spaces/border.html`) only; there is no
+panel window and nothing left to orphan. Kept for history; disabled above rather than deleted.
 
 # Workspace panel is never persisted and never comes back orphaned
 
