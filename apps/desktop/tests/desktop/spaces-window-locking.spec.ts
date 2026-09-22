@@ -340,4 +340,51 @@ test.describe('workspace membership: every window opened in a workspace belongs 
       ).toBe(copies);
     }
   });
+
+  test('an editor window opened in a workspace is swept on switch, like any other content window', async () => {
+    const epsilon = 'lock-epsilon';
+    const zeta = 'lock-zeta';
+    const epsilonId = await spaceTagId(epsilon);
+    const zetaId = await spaceTagId(zeta);
+
+    const openResult = await runCommand('open space', epsilon);
+    expect(openResult?.success, `open space "${epsilon}" failed: ${openResult?.error}`).toBe(true);
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(epsilon, { timeout: 15000 });
+
+    const before = new Set(await liveWindowIds());
+    const editorResult = await runCommand('editor');
+    expect(editorResult, `"editor" command failed: ${JSON.stringify(editorResult)}`).not.toHaveProperty('error');
+
+    let editorId: number | null = null;
+    await expect
+      .poll(
+        async () => {
+          const now = await liveWindowIds();
+          editorId = now.find((id) => !before.has(id)) ?? null;
+          return editorId !== null;
+        },
+        { timeout: 15000, message: 'the "editor" command never opened a new window' },
+      )
+      .toBe(true);
+
+    await expect
+      .poll(async () => (await windowsInSpace(epsilonId)).includes(editorId as number), {
+        timeout: 15000,
+        message: 'an editor window opened while epsilon was active does not belong to epsilon',
+      })
+      .toBe(true);
+
+    const switchResult = await runCommand('switch space', zeta);
+    expect(switchResult?.success, `switch space "${zeta}" failed: ${switchResult?.error}`).toBe(true);
+    await expect
+      .poll(async () => (await liveWindowIds()).includes(editorId as number), {
+        timeout: 15000,
+        message: 'the editor window opened in epsilon survived the switch away from it',
+      })
+      .toBe(false);
+    await expect.poll(async () => (await windowsInSpace(zetaId)).length, { timeout: 15000 }).toBeGreaterThan(0);
+
+    await runCommand('close space');
+  });
 });
