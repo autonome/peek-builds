@@ -2,10 +2,15 @@
   "worktrees": ".worktrees",
   "base": "main",
   "install": "yarn install",
-  "verify": "yarn test:desktop:electron",
+  "verify": "yarn workspace @peek/desktop build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test apps/desktop/dist/main/*.test.js && NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js",
   "namespace": {
     "PROFILE": "{track}",
     "PEEK_PROFILE": "{track}",
     "TMPDIR": "{worktree}/.tmp"
+  },
+  "specWatch": {
+    "specs": "specs",
+    "maxLive": 3,
+    "maxRounds": 1
   }
 }
