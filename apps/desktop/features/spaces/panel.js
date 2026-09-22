@@ -72,6 +72,10 @@ async function init() {
   });
 
   closeEl()?.addEventListener('click', () => {
+    // Logged (renderer.log) so a hand check of the Close control can tell a
+    // click that never reached this listener from a command that ran and
+    // failed — see the "close space" handler's failure log in background.js.
+    console.log('[ext:spaces] panel: Close clicked, requesting close space');
     api.pubsub.publish('cmd:execute:close space', {});
   });
 
