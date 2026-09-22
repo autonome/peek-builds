@@ -186,6 +186,55 @@ describe('setup.js default destination (user scope)', () => {
   });
 });
 
+describe('setup.js allow-list destination (settings.local.json)', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('project scope (--mcp-json): allow entries land in <cwd>/.claude/settings.local.json', () => {
+    const { projDir, dbPath } = makeTmpProject();
+    tmpDirs.push(projDir);
+
+    runSetup(projDir, dbPath);
+
+    const allowPath = join(projDir, '.claude', 'settings.local.json');
+    assert.ok(existsSync(allowPath), '.claude/settings.local.json should be written');
+    const parsed = JSON.parse(readFileSync(allowPath, 'utf-8'));
+    assert.ok(Array.isArray(parsed.permissions.allow), 'permissions.allow should be an array');
+    assert.ok(parsed.permissions.allow.some((e) => e.startsWith('mcp__peek__')),
+      'should contain mcp__peek__* allow entries');
+  });
+
+  it('user scope (default dest): allow entries land in $HOME/.claude/settings.local.json, not the flat $HOME/settings.local.json', () => {
+    const home = mkdtempSync(join(tmpdir(), 'peek-setup-home-'));
+    tmpDirs.push(home);
+    const dbPath = join(home, 'db.sqlite');
+    writeFileSync(dbPath, '');
+
+    execFileSync(process.execPath, [SETUP_JS, '--scope', 'globaltag'], {
+      cwd: home,
+      env: { ...process.env, HOME: home, PEEK_DB_PATH: dbPath },
+    });
+
+    // This is the real Claude Code user-scope settings.local.json path —
+    // the flat ~/settings.local.json sibling the old code computed is a file
+    // the client never reads, so entries written there had no effect.
+    const allowPath = join(home, '.claude', 'settings.local.json');
+    assert.ok(existsSync(allowPath), '~/.claude/settings.local.json should be written');
+    const parsed = JSON.parse(readFileSync(allowPath, 'utf-8'));
+    assert.ok(parsed.permissions.allow.some((e) => e.startsWith('mcp__peek__')),
+      'should contain mcp__peek__* allow entries');
+
+    // The dead location must NOT be written.
+    assert.ok(!existsSync(join(home, 'settings.local.json')),
+      'the flat ~/settings.local.json (never read by Claude Code) must not be created');
+  });
+});
+
 describe('scaffolded skill — tag model', () => {
   let tmpDirs = [];
 
