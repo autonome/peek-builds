@@ -168,7 +168,12 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   reopenLastClosedWindow,
   getClosedWindowStack,
   getClosedWindowCount,
-  /** Force-save current session snapshot (bypasses test-profile + isVisible guards). */
+  /**
+   * Force-save current session snapshot (bypasses test-profile + isVisible
+   * guards). Saves the ACTIVE workspace's row, the same as any ambient save
+   * (`session.ts` "Active workspace") — the default's unless a spec has run
+   * `open space`.
+   */
   forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
   /** Force-restore session snapshot (bypasses test-profile guard). */
   forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
@@ -1487,11 +1492,19 @@ const onReady = async () => {
           // planRestoreFocus() in window-kernel-executor.ts.
           const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState, false, true);
           DEBUG && console.log(`[session] Restore result:`, restoreResult);
-          if (restoreResult.restored === 0) {
+          // A window pinned across every workspace ("global HUD") comes back
+          // at boot whether or not the session does — it rides in the same
+          // default snapshot, and `restoreSessionSnapshot` restores those
+          // descriptors even when the restoreSession pref is off or the user
+          // declines the crash-recovery dialog. They are a standing fixture,
+          // not the previous session: if they are ALL that came back, the
+          // user still gets the startup feature, as before.
+          if (restoreResult.restored - restoreResult.globalPinsRestored === 0) {
             _sessionRestorePending = false;
-            // Nothing restored (user declined, or snapshot was empty).
-            // The startup feature was suppressed, so open it now.
-            DEBUG && console.log('[session] No windows restored, opening startup feature');
+            // Nothing (beyond global pins) restored — user declined, pref off,
+            // or snapshot was empty. The startup feature was suppressed, so
+            // open it now.
+            DEBUG && console.log('[session] No session windows restored, opening startup feature');
             publish(systemAddress, 'session:open-startup', {});
           }
         } catch (err) {
@@ -1506,12 +1519,6 @@ const onReady = async () => {
         // No session restore pending — signal immediately
         notifySessionRestoreDone();
       }
-
-      // A globally-pinned ("global HUD") window is not scoped to one
-      // workspace, but it is not a separate persisted list either — it rides
-      // in the same 'default' snapshot as any other window (`serializeSession`
-      // only excludes it from a NAMED workspace's row) and comes back with
-      // everything else in the boot restore above.
 
       // Start periodic autosave timer (Phase 3)
       const autosaveInterval = (typeof prefsMsg.prefs.sessionAutosaveInterval === 'number')

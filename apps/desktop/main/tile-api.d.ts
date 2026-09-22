@@ -601,19 +601,35 @@ interface TileIzui {
 
 interface TileSession {
   /**
-   * Persist the current window layout under a named workspace key, through
-   * the general session-snapshot pipeline. `excludeGlobalPins` drops any
-   * window pinned across every workspace from the saved row — set by a
-   * workspace-leave save (`docs/design/window-rules.md` "Persistent
-   * windows"). Requires `session` capability.
-   */
-  saveWorkspaceSnapshot(key: string, opts?: { excludeGlobalPins?: boolean }): Promise<{ success: boolean; error?: string }>;
-  /**
-   * Reopen a named workspace's saved window layout through the same
-   * session-restore pipeline the app's own boot/quit snapshot uses.
+   * Persist the current window layout under a workspace key, through the
+   * general session-snapshot pipeline. A named key saves only the windows
+   * whose context names that workspace, never one pinned across every
+   * workspace (`docs/design/window-rules.md` "Persistent windows"); the
+   * default workspace's key (`'default'`) saves everything on screen.
    * Requires `session` capability.
    */
+  saveWorkspaceSnapshot(key: string): Promise<{ success: boolean; error?: string }>;
+  /**
+   * Reopen a workspace's saved window layout through the same
+   * session-restore pipeline the app's own boot/quit snapshot uses.
+   * `restored` is the number of windows that actually opened; `total` the
+   * number the snapshot asked for. Requires `session` capability.
+   */
   restoreWorkspaceSnapshot(key: string): Promise<{ success: boolean; restored?: number; failed?: number; total?: number; error?: string }>;
+  /**
+   * Suppress the app's own ambient session saves (autosave, before-quit,
+   * window-lifecycle) until `setActiveWorkspace` is next called. Bracket a
+   * workspace switch (save → close → restore) with these two so no ambient
+   * save records a half-switched, empty workspace. Requires `session`
+   * capability.
+   */
+  beginWorkspaceSwitch(): Promise<{ success: boolean; error?: string }>;
+  /**
+   * Name the workspace that is now active — the one the app's ambient saves
+   * write from here on — and end any switch begun by `beginWorkspaceSwitch`.
+   * Requires `session` capability.
+   */
+  setActiveWorkspace(key: string): Promise<{ success: boolean; error?: string }>;
   /**
    * Read a named workspace's saved window bounds/z-order without restoring
    * anything — a narrow, workspace-scoped read (never the default workspace's

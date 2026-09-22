@@ -22,7 +22,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
+import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -39,7 +39,7 @@ export type { WindowContext, WindowDescriptor };
 // in here). Re-exported from their historical home so every existing importer
 // — and the on-disk contract they describe — is untouched.
 export type { SessionSnapshot } from './session-projection.js';
-export { mirrorPlacementIntent } from './session-projection.js';
+export { mirrorPlacementIntent, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 
 // Staged session restore: the first N windows (by stack position = zOrder
 // desc, with the saved-focused window hoisted to the front) restore EAGERLY —
@@ -463,53 +463,90 @@ function readKernelOrderFacts(): { kernelState: State; kernelOrder: WindowId[]; 
  * Read a window's saved context row (mode, spaceId/spaceName, pinScope, …)
  * for `serializeSession`'s `getContext` — "no row / read failed" →
  * `undefined`.
+ *
+ * `mode` and `pin` are independent context keys, read independently: a window
+ * pinned across every workspace without ever having been assigned to a
+ * space/group (`features/spaces/background.js setPinState()` sets only the
+ * 'pin' key for a global pin) has a pin scope and no mode row, and must still
+ * read back as pinned — otherwise it is written into a named workspace's row
+ * it does not belong to, restored twice on a workspace switch, and comes back
+ * unpinned after a relaunch.
  */
 function readSaveContext(nativeId: number): WindowContext | undefined {
+  let modeEntry: ReturnType<typeof getContextEntry> = null;
+  let pinScope: string | null = null;
   try {
-    const modeEntry = getContextEntry('mode', nativeId);
-    if (modeEntry) {
-      let pinScope: string | null = null;
-      try {
-        const pinEntry = getContextEntry('pin', nativeId);
-        pinScope = (pinEntry?.value as string) || null;
-      } catch {
-        // Pin context not available, treat as unpinned
-      }
-      return {
-        mode: modeEntry.value as string,
-        modeMetadata: (modeEntry.metadata as Record<string, unknown>) || null,
-        pinScope,
-      };
-    }
+    modeEntry = getContextEntry('mode', nativeId);
   } catch {
-    // Context not available, skip
+    // Context not available, treat as no mode
   }
-  return undefined;
+  try {
+    const pinEntry = getContextEntry('pin', nativeId);
+    pinScope = (pinEntry?.value as string) || null;
+  } catch {
+    // Pin context not available, treat as unpinned
+  }
+  if (!modeEntry && !pinScope) return undefined;
+  return {
+    mode: modeEntry ? (modeEntry.value as string) : null,
+    modeMetadata: modeEntry ? ((modeEntry.metadata as Record<string, unknown>) || null) : null,
+    pinScope,
+  };
 }
 
 /**
- * The one workspace that boot restores and that the ordinary autosave/
- * before-quit/manual save writes to — see `session.ts`'s module doc and
- * `SessionSnapshot.workspaceKey`. Exported so other main-process modules
- * (e.g. `tile-ipc.ts`) that need to recognize or exclude the default
- * workspace's own row reuse this literal instead of re-declaring `'default'`.
- */
-export const DEFAULT_WORKSPACE_KEY = 'default';
-
-/**
- * Resolve the `feature_settings` row key for a workspace's snapshot/metadata.
+ * Resolve the `feature_settings` row key for a workspace's snapshot.
  *
- * The default workspace keeps the literal legacy names (`snapshot` /
- * `metadata`) it has always used — an existing profile's boot snapshot reads
- * back with no migration. A named workspace gets its own row, suffixed by its
- * key, so every workspace's snapshot lives in the SAME shape/table, just
- * parameterized (requirement 2: no second `space-workspaces` table).
+ * The default workspace keeps the literal legacy name (`snapshot`) it has
+ * always used — an existing profile's boot snapshot reads back with no
+ * migration. A named workspace gets its own row, suffixed by its key, so every
+ * workspace's snapshot lives in the SAME shape/table, just parameterized
+ * (requirement 2: no second `space-workspaces` table). Crash bookkeeping (the
+ * `metadata` row: `cleanShutdown`, `crashCount`, …) is about the APP, not a
+ * workspace, so there is one such row and no per-workspace variant of it.
  */
 function snapshotRowKey(workspaceKey: string): string {
   return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'snapshot' : `snapshot:${workspaceKey}`;
 }
-function metadataRowKey(workspaceKey: string): string {
-  return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'metadata' : `metadata:${workspaceKey}`;
+
+// ============================================================================
+// Active workspace
+//
+// Which workspace's row an AMBIENT save (autosave, before-quit, the debounced
+// window-lifecycle save, the manual save command) writes. The spaces feature
+// owns the notion of "the active workspace" (`features/spaces/background.js
+// activeSpaceId`); it reports every change here through
+// `tile:session:set-active-workspace` so that quitting while a named
+// workspace is active saves THAT workspace's row — not the default
+// workspace's, which would silently replace the default's saved session with
+// another workspace's windows.
+//
+// A workspace switch (save the outgoing workspace → close its windows →
+// restore the target) is a window during which no ambient save may run: the
+// outgoing workspace's windows are gone and the target's are not open yet, so
+// a save keyed to either would record an empty workspace. The 500ms debounced
+// window-lifecycle save (`main.ts scheduleSnapshotOnClose`) is triggered by
+// exactly the close sweep in the middle of that sequence. The feature brackets
+// the switch with `tile:session:begin-workspace-switch` and
+// `tile:session:set-active-workspace`; ambient saves are refused in between.
+// ============================================================================
+
+let _activeWorkspaceKey: string = DEFAULT_WORKSPACE_KEY;
+let _workspaceSwitchInFlight = false;
+
+/** Suppress ambient saves until `setActiveWorkspaceKey` names the new workspace. */
+export function beginWorkspaceSwitch(): void {
+  _workspaceSwitchInFlight = true;
+}
+
+/** Record which workspace is active (ending any in-flight switch). */
+export function setActiveWorkspaceKey(key: string): void {
+  _activeWorkspaceKey = key;
+  _workspaceSwitchInFlight = false;
+}
+
+export function getActiveWorkspaceKey(): string {
+  return _activeWorkspaceKey;
 }
 
 /**
@@ -518,17 +555,32 @@ function metadataRowKey(workspaceKey: string): string {
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
  * Uses node:sqlite synchronous APIs via getDb().
  *
- * `opts.key` names which workspace this save is for (default: the app-level
- * `'default'` workspace — the ordinary autosave/before-quit/manual save,
- * unfiltered, exactly as before this workspace concept existed).
- * `features/spaces/background.js`'s explicit workspace-leave save passes the
- * outgoing workspace's own id and `excludeGlobalPins: true` — see
- * `docs/design/window-rules.md` "Persistent windows".
+ * `opts.key` names which workspace this save is for. Left unset (every
+ * ambient save: autosave, before-quit, window-lifecycle, manual), the save
+ * goes to the ACTIVE workspace's row — see "Active workspace" above. The
+ * explicit workspace-leave save (`features/spaces/background.js
+ * closeCurrentWorkspaceWindows()`, through `tile:session:save-workspace-
+ * snapshot`) passes the outgoing workspace's key. Which windows a key saves
+ * is decided by the key alone in `serializeSession` — a named key saves its
+ * own windows minus any pinned across every workspace; the default key saves
+ * everything on screen — and a save under a named key also refreshes the
+ * default row's record of the windows pinned across every workspace, so a
+ * pin created while a named workspace is active survives a relaunch (see
+ * `refreshGlobalPinsInDefaultSnapshot`).
+ *
+ * `opts.allowInTestProfile` lets a deliberate, user-initiated save (a
+ * workspace switch) run under the test profile the desktop specs use; it
+ * bypasses nothing else. `opts._forceForTest` is the test-only escape hatch:
+ * it ALSO bypasses the mid-restore guard and the invisible-window filter, and
+ * only test bridges may pass it.
  */
-export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean; _forceForTest?: boolean; key?: string; excludeGlobalPins?: boolean }): void {
-  // Skip save in test environments unless _forceForTest is set (used by
-  // session-restore Playwright specs that drive save+restore directly).
-  if (isTestProfile() && !opts?._forceForTest) return;
+export function saveSessionSnapshot(
+  reason: SessionSnapshot['reason'],
+  opts?: { cleanShutdown?: boolean; _forceForTest?: boolean; allowInTestProfile?: boolean; key?: string },
+): void {
+  // Skip save in test environments unless the caller says otherwise (test
+  // bridges via _forceForTest; a real workspace switch via allowInTestProfile).
+  if (isTestProfile() && !opts?._forceForTest && !opts?.allowInTestProfile) return;
 
   // Guard 1: Restore-complete flag.
   // If a restore is in flight (flag=false), any save is a no-op. The snapshot
@@ -539,6 +591,14 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // specs that need direct save control.
   if (!_restoreComplete && !opts?._forceForTest) {
     console.warn(`[session] Refusing to save snapshot (reason: ${reason}): restore still in flight. Snapshot preserved.`);
+    return;
+  }
+
+  // Guard 2: Workspace switch in flight — see "Active workspace" above. Only
+  // an ambient save (no explicit key) is refused; the switch's own explicit
+  // save of the outgoing workspace carries a key.
+  if (opts?.key == null && _workspaceSwitchInFlight) {
+    console.warn(`[session] Refusing to save snapshot (reason: ${reason}): workspace switch in flight. Snapshot preserved.`);
     return;
   }
 
@@ -554,7 +614,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   }
 
   const registeredWindows = getAllWindows();
-  const workspaceKey = opts?.key ?? DEFAULT_WORKSPACE_KEY;
+  const workspaceKey = opts?.key ?? _activeWorkspaceKey;
 
   // ── Read ────────────────────────────────────────────────────────────────
   // Gather ONLY what the kernel does not hold: per window, is the native
@@ -569,20 +629,20 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // The pure projection owns every window decision: the skip rules, the
   // restorable rect, maximize + its flat preMax bag, stack position, the
   // focused descriptor, and the empty-URL guard.
-  const projection = serializeSession({
+  const createdAt = Date.now();
+  const projectionInput = {
     snapshot: kernelState,
     windows: saveWindows,
-    getPresentation: (nativeId) => getWindowPresentation(nativeId),
+    getPresentation: (nativeId: number) => getWindowPresentation(nativeId),
     getContext: readSaveContext,
     registeredTileIds: getRegisteredTileIds(),
     reason,
-    createdAt: Date.now(),
+    createdAt,
     forceForTest: opts?._forceForTest,
     kernelOrder,
     topmostContentWindowId,
-    workspaceKey,
-    excludeGlobalPins: opts?.excludeGlobalPins === true,
-  });
+  };
+  const projection = serializeSession({ ...projectionInput, workspaceKey });
 
   // The projection decided what to log; this replays it at the levels the
   // save path has always used, in the same order.
@@ -597,7 +657,6 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
 
   // ── Write ───────────────────────────────────────────────────────────────
   const snapshotKey = snapshotRowKey(workspaceKey);
-  const metaKey = metadataRowKey(workspaceKey);
   try {
     // Write snapshot to feature_settings table
     db.prepare(`
@@ -605,12 +664,31 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       VALUES (?, 'session', ?, ?, ?)
     `).run(`session-${snapshotKey}`, snapshotKey, JSON.stringify(snapshot), Date.now());
 
-    // Read existing metadata to preserve crashCount and restoreCount
+    // A save under a NAMED key left every window pinned across all workspaces
+    // out of that row (they are not the workspace's to save). Their home is
+    // the default workspace's row, which boot restores — refresh its record of
+    // them now, so a pin created while this workspace is active is not lost
+    // if the app quits before the default workspace is next active.
+    if (workspaceKey !== DEFAULT_WORKSPACE_KEY) {
+      const unfiltered = serializeSession({ ...projectionInput, workspaceKey: DEFAULT_WORKSPACE_KEY });
+      refreshGlobalPinsInDefaultSnapshot(
+        db,
+        unfiltered.snapshot.windows.filter((d) => d.context?.pinScope === 'global'),
+        reason,
+        createdAt,
+      );
+    }
+
+    // Read existing metadata to preserve crashCount and restoreCount. The
+    // metadata row is app-level (one row, never per workspace): it carries the
+    // crash bookkeeping `markSessionDirty` / `readSessionCrashState` read at
+    // boot, and a quit while a named workspace is active must still record
+    // `cleanShutdown` where boot looks for it.
     let existingMetadata: Partial<SessionMetadata> = {};
     try {
       const metaRow = db.prepare(
-        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
-      ).get(metaKey) as { value: string } | undefined;
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
+      ).get() as { value: string } | undefined;
       if (metaRow?.value) {
         existingMetadata = JSON.parse(metaRow.value);
       }
@@ -635,8 +713,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     };
     db.prepare(`
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-      VALUES (?, 'session', ?, ?, ?)
-    `).run(`session-${metaKey}`, metaKey, JSON.stringify(metadata), Date.now());
+      VALUES (?, 'session', 'metadata', ?, ?)
+    `).run('session-metadata', JSON.stringify(metadata), Date.now());
 
     DEBUG && console.log(`[session] Session snapshot saved successfully`);
 
@@ -694,6 +772,54 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     }
   } catch (error) {
     console.error('[session] Failed to save session snapshot:', error);
+  }
+}
+
+/**
+ * Replace the default workspace's saved record of the windows pinned across
+ * every workspace with the given descriptors, leaving the rest of that row
+ * untouched. Called from a save under a NAMED key (see `saveSessionSnapshot`):
+ * such a save never writes those pins into its own row, and the default row is
+ * the one boot restores, so it is where a pin has to be for it to survive a
+ * relaunch that happens while some other workspace is active.
+ *
+ * With no default row on disk yet, one is created holding only the pins — an
+ * empty pin set then writes nothing, so a profile that never pinned anything
+ * never gains a default row it did not have.
+ */
+function refreshGlobalPinsInDefaultSnapshot(
+  db: ReturnType<typeof getDb>,
+  globalPins: WindowDescriptor[],
+  reason: SessionSnapshot['reason'],
+  createdAt: number,
+): void {
+  const rowKey = snapshotRowKey(DEFAULT_WORKSPACE_KEY);
+  try {
+    let existing: SessionSnapshot | null = null;
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(rowKey) as { value: string } | undefined;
+    if (row?.value) {
+      const parsed = JSON.parse(row.value) as SessionSnapshot;
+      if (parsed?.version === 1 && Array.isArray(parsed.windows)) existing = parsed;
+    }
+    if (!existing && globalPins.length === 0) return;
+
+    const kept = (existing?.windows ?? []).filter((d) => d.context?.pinScope !== 'global');
+    const merged: SessionSnapshot = {
+      version: 1,
+      createdAt: existing?.createdAt ?? createdAt,
+      reason: existing?.reason ?? reason,
+      workspaceKey: DEFAULT_WORKSPACE_KEY,
+      windows: [...kept, ...globalPins],
+    };
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES (?, 'session', ?, ?, ?)
+    `).run(`session-${rowKey}`, rowKey, JSON.stringify(merged), Date.now());
+    DEBUG && console.log(`[session] Refreshed ${globalPins.length} cross-workspace pin(s) in the default workspace's snapshot`);
+  } catch (error) {
+    console.error('[session] Failed to refresh cross-workspace pins in the default snapshot:', error);
   }
 }
 
@@ -895,14 +1021,20 @@ export function readSessionCrashState(): { cleanShutdown: boolean; crashCount: n
 export async function restoreSessionSnapshot(
   prefs: Record<string, unknown>,
   crashState?: { cleanShutdown: boolean; crashCount: number },
-  _forceForTest?: boolean,
+  // Run under the test profile too. Set by the test bridges (entry.ts
+  // `__peek_test.forceRestoreSession` / `forceColdStartRestoreSession`) and by
+  // the workspace-switch caller (a real, user-initiated restore the desktop
+  // specs drive end to end). This is the ONLY thing it bypasses.
+  allowInTestProfile?: boolean,
   // COLD START signal — true ONLY for the app's boot restore (entry.ts). Kept
-  // SEPARATE from `_forceForTest` (which is true for BOTH in-app
+  // SEPARATE from `allowInTestProfile` (which is true for BOTH in-app
   // forceRestoreSession AND test specs, so it cannot distinguish boot from an
   // in-session restore). At cold start the focused descriptor is activated even
   // if the macOS startup dance transiently flipped appFocused false; in-session
   // restore keeps honoring appFocused so a switched-away user isn't yanked back.
-  // See planRestoreFocus() in window-kernel-executor.ts.
+  // See planRestoreFocus() in window-kernel-executor.ts. Crash recovery (the
+  // dialog, the crash-loop skip) and the `restoreSession` preference are also
+  // cold-start-only concerns — see below.
   isColdStart: boolean = false,
   // Which workspace's saved snapshot to restore — see `SessionSnapshot
   // .workspaceKey`. Boot restore (entry.ts) and a live workspace switch
@@ -916,13 +1048,25 @@ export async function restoreSessionSnapshot(
   // pre-existing interactive "Restore Previous Session" path,
   // `tile:session:restore-interactive` — so `!isColdStart` alone can't tell
   // them apart). A workspace switch never closes a globally-pinned window
-  // (see `serializeSession`'s `excludeGlobalPins`), so it's still open at
-  // restore time and reopening it would duplicate it; interactive restore
+  // (`features/spaces/background.js closeCurrentWorkspaceWindows()`), so it's
+  // still open at restore time and reopening it would duplicate it; interactive restore
   // has no such guarantee — the user may have closed that window first and
   // the restore dialog explicitly offers to bring it back.
   isWorkspaceSwitch: boolean = false,
-): Promise<{ restored: number; failed: number; total: number }> {
-  const result = { restored: 0, failed: 0, total: 0 };
+): Promise<{ restored: number; failed: number; total: number; globalPinsRestored: number }> {
+  // `globalPinsRestored` counts, out of `restored`, the windows pinned across
+  // every workspace. Boot (entry.ts) reads it to tell "the user's session came
+  // back" from "only the pins did" — the latter still opens the startup
+  // feature, the same as when pins were restored by their own boot call.
+  const result = { restored: 0, failed: 0, total: 0, globalPinsRestored: 0 };
+  // Cold-start-only: when the user asked NOT to restore the session (the
+  // `restoreSession` preference, or declining the crash-recovery dialog), the
+  // windows pinned across every workspace still come back — a global HUD
+  // window is not "the previous session", it is a standing fixture, and it has
+  // always been restored at boot independent of the session snapshot. It
+  // lives in the same default-workspace row, so this is the same restore
+  // narrowed to those descriptors rather than a second persisted list.
+  let globalPinsOnly = false;
 
   // Reset drift-detection counters for this restore pass. Tests read them
   // afterward to verify the app-active gate held — see counter
@@ -934,9 +1078,10 @@ export async function restoreSessionSnapshot(
   // window manager.
   kernelArmColdStartFocus(null);
 
-  // Skip restore in test environments unless _forceForTest is set (used by
-  // session-restore Playwright specs that drive save+restore directly).
-  if (isTestProfile() && !_forceForTest) {
+  // Skip restore in test environments unless the caller says otherwise (used
+  // by session-restore Playwright specs that drive save+restore directly, and
+  // by the workspace-switch caller).
+  if (isTestProfile() && !allowInTestProfile) {
     DEBUG && console.log('[session] Skipping session restore in test profile');
     return result;
   }
@@ -944,7 +1089,8 @@ export async function restoreSessionSnapshot(
   // Check restoreSession pref
   if (prefs.restoreSession === false) {
     DEBUG && console.log('[session] Session restore disabled by pref');
-    return result;
+    if (!isColdStart) return result;
+    globalPinsOnly = true;
   }
 
   // Mark restore as in-flight. Any saveSessionSnapshot call from this point
@@ -963,15 +1109,16 @@ export async function restoreSessionSnapshot(
     return result;
   }
 
-  // Check crash detection — show dialog or skip restore. Crash recovery is a
-  // boot-only concept (the dialog is about whether the APP crashed, not
-  // whether a workspace switch happened), so it only runs for the default
-  // workspace's own row — a live workspace switch (key !== 'default') always
-  // proceeds straight to restore.
-  if (key === DEFAULT_WORKSPACE_KEY) {
+  // Check crash detection — show dialog or narrow the restore. Crash recovery
+  // is a boot-only concept (the dialog asks whether the APP crashed last
+  // time), so it runs only at cold start. Neither a live workspace switch
+  // (`features/spaces/background.js` — including returning to the default
+  // workspace, which restores the same default row boot does) nor the
+  // interactive "Restore Previous Session" command is a boot, and neither
+  // may raise it.
+  if (isColdStart && !globalPinsOnly) {
     // Use the pre-read crashState (captured before markSessionDirty) if
-    // provided, otherwise fall back to reading current metadata (for manual
-    // restore calls).
+    // provided, otherwise fall back to reading current metadata.
     try {
       let wasCleanShutdown = true;
       let crashCount = 0;
@@ -981,7 +1128,7 @@ export async function restoreSessionSnapshot(
         wasCleanShutdown = crashState.cleanShutdown;
         crashCount = crashState.crashCount;
       } else {
-        // Fallback: read current metadata (manual restore path)
+        // Fallback: read current metadata
         const metaRow = db.prepare(
           `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
         ).get() as { value: string } | undefined;
@@ -999,8 +1146,8 @@ export async function restoreSessionSnapshot(
         // silently restores — the crash dialog is for crash loops.
         const shouldRestore = await showCrashRecoveryDialog(crashCount);
         if (!shouldRestore) {
-          DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
-          return result;
+          DEBUG && console.log('[session] User chose to start fresh (or too many crashes) — restoring only cross-workspace pins');
+          globalPinsOnly = true;
         }
       }
     } catch {
@@ -1056,8 +1203,9 @@ export async function restoreSessionSnapshot(
       return false;
     }
     // A window pinned across every workspace is never closed by a workspace
-    // switch (see `serializeSession`'s `excludeGlobalPins`), so it is still
-    // open at this point in a workspace-switch restore — reopening it here
+    // switch (`features/spaces/background.js closeCurrentWorkspaceWindows()`
+    // skips it), so it is still open at this point in a workspace-switch
+    // restore — reopening it here
     // would duplicate it. This is narrower than "any non-cold-start restore":
     // the pre-existing interactive "Restore Previous Session" path
     // (`tile:session:restore-interactive`) is ALSO non-cold-start but carries
@@ -1068,6 +1216,11 @@ export async function restoreSessionSnapshot(
     // restore, interactive restore) restores it normally, same as cold start.
     if (isWorkspaceSwitch && descriptor.context?.pinScope === 'global') {
       DEBUG && console.log(`[session] Skipping already-open cross-workspace pin: ${descriptor.url || '(empty)'}`);
+      return false;
+    }
+    // The user declined the session itself (see `globalPinsOnly`): only the
+    // windows pinned across every workspace come back.
+    if (globalPinsOnly && descriptor.context?.pinScope !== 'global') {
       return false;
     }
     return true;
@@ -1304,6 +1457,7 @@ export async function restoreSessionSnapshot(
 
       if (ok) {
         result.restored++;
+        if (descriptor.context?.pinScope === 'global') result.globalPinsRestored++;
         if (openResult.id != null) {
           restoredWindows.push({ id: openResult.id, stackIndex: readStackIndex(descriptor) });
         }
@@ -1642,8 +1796,12 @@ export async function restoreSessionSnapshot(
     // Non-critical
   }
 
-  // Update session metadata with restore info and reset crashCount
-  try {
+  // Update session metadata with restore info and reset crashCount. Not when
+  // the user declined the session and only the cross-workspace pins came back
+  // (`globalPinsOnly`): that was not a restore of the session, and resetting
+  // the crash count there would let a crash loop escape the dialog's
+  // escalation.
+  if (!globalPinsOnly) try {
     const metaRow = db.prepare(
       `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
@@ -1772,13 +1930,15 @@ export function getSessionSnapshotInfo(): { windowCount: number; savedAt: number
  * its windows, without restoring anything — used by `features/groups/home.js
  * openGroup()` to reopen a group's windows in their last-saved layout.
  *
- * Deliberately refuses `DEFAULT_WORKSPACE_KEY`: this is a narrow read of one
- * workspace's own row, not a general foreign-settings read. Widening it to
- * the default key would hand a feature tile the app's own last-quit window
- * list — exactly what routing this through the general
- * `tile:settings:get-foreign` surface (gated only per-featureId, not
- * per-key) would have exposed. Returns `null` for the default key, a
- * missing/invalid snapshot, or a read error.
+ * Refuses `DEFAULT_WORKSPACE_KEY`: this is a narrow read of one workspace's
+ * own row, not a general foreign-settings read. Widening it to the default
+ * key would hand a feature tile the app's own last-quit window list — exactly
+ * what routing this through the general `tile:settings:get-foreign` surface
+ * (gated only per-featureId, not per-key) would have exposed. The rule is
+ * ENFORCED in `tile-session-enforcement.ts checkSessionAllowed` (given the
+ * key), alongside every other session capability check; the guard here is
+ * defense in depth for a direct main-process caller. Returns `null` for the
+ * default key, a missing/invalid snapshot, or a read error.
  */
 export function getWorkspaceSnapshotWindowInfo(
   key: string,

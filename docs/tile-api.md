@@ -261,9 +261,11 @@ See `tile-features-strict.test.ts` for full gate matrix.
 
 | Surface | Description |
 |---|---|
-| `api.session.saveWorkspaceSnapshot(key, opts?)` | Persist the current window layout under a named workspace key |
-| `api.session.restoreWorkspaceSnapshot(key)` | Reopen a named workspace's saved window layout |
+| `api.session.saveWorkspaceSnapshot(key)` | Persist the current window layout under a workspace key (a named key saves that workspace's own windows, never a cross-workspace pin; `default` saves everything) |
+| `api.session.restoreWorkspaceSnapshot(key)` | Reopen a workspace's saved window layout |
 | `api.session.getWorkspaceSnapshotInfo(key)` | Read a named workspace's saved window bounds/z-order without restoring anything (refuses the default workspace's own key) |
+| `api.session.beginWorkspaceSwitch()` | Suspend the app's ambient session saves until `setActiveWorkspace` — bracket a save → close → restore switch |
+| `api.session.setActiveWorkspace(key)` | Name the active workspace, whose row the app's ambient saves (autosave, quit, window-lifecycle) write from now on; ends a switch |
 
 ---
 

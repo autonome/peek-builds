@@ -2145,10 +2145,12 @@ function buildAPI(): Record<string, unknown> {
   //
   // The methods do NOT share a gate:
   //   - `saveWorkspaceSnapshot` / `restoreWorkspaceSnapshot` /
-  //     `getWorkspaceSnapshotInfo` require the `session` capability. Used by
+  //     `getWorkspaceSnapshotInfo` / `beginWorkspaceSwitch` /
+  //     `setActiveWorkspace` require the `session` capability. Used by
   //     features/spaces and features/groups to persist/reopen/inspect a
   //     named workspace's window layout through the general session-snapshot
-  //     pipeline (`main/session.ts`, keyed by workspace id).
+  //     pipeline (`main/session.ts`, keyed by workspace id), and to tell the
+  //     main process which workspace is active.
   //   - `save` / `restoreInteractive` / `reopenLastClosed` are
   //     trustedBuiltin only, consumed by the core background renderer
   //     (renderer/index.js).
@@ -2161,15 +2163,26 @@ function buildAPI(): Record<string, unknown> {
 
   api.session = {
     // Capability-gated.
-    saveWorkspaceSnapshot: (key: string, opts?: { excludeGlobalPins?: boolean }) => {
+    saveWorkspaceSnapshot: (key: string) => {
       if (!hasSessionCapability()) {
         return Promise.reject(new Error('[tile-preload] api.session.saveWorkspaceSnapshot requires the session capability'));
       }
       return ipcRenderer.invoke('tile:session:save-workspace-snapshot', {
         token: tileToken,
         key,
-        excludeGlobalPins: opts?.excludeGlobalPins === true,
       });
+    },
+    beginWorkspaceSwitch: () => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.beginWorkspaceSwitch requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:begin-workspace-switch', { token: tileToken });
+    },
+    setActiveWorkspace: (key: string) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.setActiveWorkspace requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:set-active-workspace', { token: tileToken, key });
     },
     restoreWorkspaceSnapshot: (key: string) => {
       if (!hasSessionCapability()) {

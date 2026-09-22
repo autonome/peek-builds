@@ -402,7 +402,11 @@ async function enterWorkspace(tag, spaceName) {
   const isDefault = tag.id === defaultSpaceId;
 
   const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
-  const restored = !!restoreResult?.success && (restoreResult.total ?? 0) > 0;
+  // `restored` counts the windows that actually opened — not `total`, the
+  // number the snapshot asked for, which is set before any open is attempted.
+  // A workspace whose saved windows all failed to open has nothing on screen
+  // and needs the empty-group fallback below just like one never saved.
+  const restored = !!restoreResult?.success && (restoreResult.restored ?? 0) > 0;
 
   if (!restored && !isDefault) {
     // No saved state, and this isn't the default — open one empty group.
@@ -442,16 +446,18 @@ async function enterWorkspace(tag, spaceName) {
  *
  * The save is the same `saveSessionSnapshot` the app's own quit/autosave
  * uses, keyed by the outgoing workspace's snapshot key (see
- * `workspaceSnapshotKey()`) and excluding any window pinned across every
- * workspace — it is not scoped to the workspace being left, so it is
- * excluded from both this save and the close sweep below
- * (`docs/design/window-rules.md` "Persistent windows").
+ * `workspaceSnapshotKey()`). Which windows that key saves is decided by the
+ * key alone on the main-process side: a named workspace's row holds its own
+ * windows and never one pinned across every workspace — that window is not
+ * scoped to the workspace being left, so it is left out of the close sweep
+ * below too (`docs/design/window-rules.md` "Persistent windows") — while the
+ * default workspace's row holds everything on screen.
  */
 async function closeCurrentWorkspaceWindows(options = {}) {
   if (!activeSpaceId) return;
 
   try {
-    await api.session.saveWorkspaceSnapshot(workspaceSnapshotKey(activeSpaceId), { excludeGlobalPins: true });
+    await api.session.saveWorkspaceSnapshot(workspaceSnapshotKey(activeSpaceId));
   } catch (err) {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
@@ -502,8 +508,30 @@ async function openSpace(spaceName) {
   // default included — and closes them (Goal, handoff.md). The panel
   // carries through the switch unless we're landing on the default, which
   // shows no chrome at all.
-  await closeCurrentWorkspaceWindows({ keepPanel: !enteringDefault });
-  await enterWorkspace(tag, displayName);
+  //
+  // The main process saves the ACTIVE workspace's row on its own schedule
+  // (autosave, quit, and ~500ms after any window closes). Between the save
+  // below and the restore that follows it, the outgoing workspace's windows
+  // are closed and the target's are not open yet, so any such save would
+  // record an empty workspace — the switch is bracketed so none runs, and the
+  // main process learns which workspace is active once the switch is done
+  // (`main/session.ts` "Active workspace"). The bracket always closes, even
+  // if the switch fails part-way, so ambient saves never stay suspended.
+  try {
+    await api.session.beginWorkspaceSwitch();
+  } catch (err) {
+    console.error('[ext:spaces] Failed to mark the workspace switch as in progress:', err);
+  }
+  try {
+    await closeCurrentWorkspaceWindows({ keepPanel: !enteringDefault });
+    await enterWorkspace(tag, displayName);
+  } finally {
+    try {
+      await api.session.setActiveWorkspace(workspaceSnapshotKey(activeSpaceId));
+    } catch (err) {
+      console.error('[ext:spaces] Failed to report the active workspace:', err);
+    }
+  }
 
   console.log(`[ext:spaces] Opened space "${displayName}"`);
   return { success: true, spaceId: tag.id, spaceName: displayName };

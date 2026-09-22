@@ -57,6 +57,16 @@ import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import type { State, WindowId, WindowRecord } from './window-kernel.js';
 
 /**
+ * The key of the default workspace — the one workspace boot restores and the
+ * one whose row keeps the literal legacy names (`snapshot` / `metadata`) in
+ * `feature_settings`. Every other workspace is keyed by its own id. Declared
+ * here, in the Electron-free half of the session code, so the pure projection,
+ * `session.ts`, and the capability-enforcement module
+ * (`tile-session-enforcement.ts`) all read the same literal.
+ */
+export const DEFAULT_WORKSPACE_KEY = 'default';
+
+/**
  * The persisted session. `version`/`createdAt`/`reason`/`windows` and their
  * order are the on-disk contract — see the module header.
  */
@@ -165,18 +175,14 @@ export interface SerializeSessionInput {
    * `keyWindow` read here would mark every saved descriptor `focused: false`.
    */
   topmostContentWindowId: WindowId | null;
-  /** Which workspace this save is for — see `SessionSnapshot.workspaceKey`. */
-  workspaceKey: string;
   /**
-   * True for an explicit workspace-leave save (`workspaceKey !== 'default'`):
-   * a window pinned across every workspace is not scoped to the workspace
-   * being left, so it is excluded from this snapshot the same way it is
-   * excluded from the leave's window-close sweep (`docs/design/window-rules.md`
-   * "Persistent windows" — "Workspace interaction"). `false` for the ordinary
-   * app-level save (autosave/before-quit/manual), which keeps recording
-   * whatever is on screen the way it always has.
+   * Which workspace this save is for — see `SessionSnapshot.workspaceKey`.
+   * Decides two filters below, both derived from the key alone (no separate
+   * flag a caller could get wrong): a NAMED key saves only the windows whose
+   * context names that workspace, and never a window pinned across every
+   * workspace; the default key saves everything on screen, unfiltered.
    */
-  excludeGlobalPins?: boolean;
+  workspaceKey: string;
 }
 
 export interface SessionProjection {
@@ -499,15 +505,6 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     // Capture context state for this window
     const windowContext = input.getContext(w.nativeId);
 
-    // A window pinned across every workspace is excluded from a workspace's
-    // own leave-save (and, symmetrically, from that workspace's restore —
-    // `session.ts restoreSessionSnapshot` skips it there) — see
-    // `SerializeSessionInput.excludeGlobalPins`.
-    if (input.excludeGlobalPins && windowContext?.pinScope === 'global') {
-      notices.push({ level: 'debug', message: `[session:save] Excluding cross-workspace pin ${w.nativeId} from workspace "${input.workspaceKey}"` });
-      continue;
-    }
-
     // A NAMED workspace's snapshot is scoped to the windows that identify as
     // belonging to it — a window whose saved context row names a DIFFERENT
     // space/group, or none at all (e.g. a baseline window opened before any
@@ -518,7 +515,20 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     // today. The `'default'` key stays unfiltered (every ordinary
     // autosave/before-quit/manual save has always captured whatever is on
     // screen, regardless of context) — see the module header.
-    if (input.workspaceKey !== 'default') {
+    //
+    // A window pinned across every workspace is likewise never written into a
+    // NAMED workspace's row: it is not scoped to that workspace (leaving the
+    // workspace does not close it — `features/spaces/background.js
+    // closeCurrentWorkspaceWindows()`), and a workspace restore skips such a
+    // descriptor anyway (`session.ts restoreSessionSnapshot`). Its home is the
+    // default workspace's row, which `session.ts saveSessionSnapshot` keeps
+    // current from any save (`docs/design/window-rules.md` "Persistent
+    // windows" — "Workspace interaction").
+    if (input.workspaceKey !== DEFAULT_WORKSPACE_KEY) {
+      if (windowContext?.pinScope === 'global') {
+        notices.push({ level: 'debug', message: `[session:save] Excluding cross-workspace pin ${w.nativeId} from workspace "${input.workspaceKey}"` });
+        continue;
+      }
       const metadata = windowContext?.modeMetadata as Record<string, unknown> | undefined;
       const belongsToWorkspace = metadata?.spaceId === input.workspaceKey || metadata?.groupId === input.workspaceKey;
       if (!belongsToWorkspace) {

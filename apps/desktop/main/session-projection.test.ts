@@ -228,8 +228,6 @@ interface World {
   forceForTest?: boolean;
   /** Feeds `SerializeSessionInput.workspaceKey` — defaults to `'default'`. */
   workspaceKey?: string;
-  /** Feeds `SerializeSessionInput.excludeGlobalPins`. */
-  excludeGlobalPins?: boolean;
 }
 
 const CREATED_AT = 1_700_000_000_000;
@@ -453,7 +451,6 @@ function inputFor(world: World): SerializeSessionInput {
     kernelOrder: kernelOrderOf(world),
     topmostContentWindowId: world.front == null ? null : wid(world.front),
     workspaceKey: world.workspaceKey ?? 'default',
-    excludeGlobalPins: world.excludeGlobalPins,
   };
 }
 
@@ -1223,11 +1220,12 @@ describe('session-projection — the extracted pure helpers', () => {
 
 /**
  * Workspace-keyed snapshots (spec `workspace-session-snapshot.md`, requirement
- * 2 and 3): the fields a workspace needs beyond a plain snapshot are just
- * fields of the ONE projection's input/output — a `workspaceKey` on the
- * written snapshot, and an explicit `excludeGlobalPins` flag a workspace-leave
- * save sets so a window pinned across every workspace is never written into
- * (or, symmetrically, restored from) a NAMED workspace's own row.
+ * 2 and 3): the one field a workspace needs beyond a plain snapshot is the
+ * `workspaceKey` on the written snapshot. Everything a NAMED key filters is
+ * derived from the key alone — its own windows only, and never a window
+ * pinned across every workspace (which is not the workspace's to save and is
+ * skipped by a workspace restore anyway) — so no caller can get a separate
+ * flag wrong. The default key saves everything on screen, unfiltered.
  */
 describe('serializeSession — workspace-keyed snapshots', () => {
   it('the written snapshot carries the workspaceKey it was asked to save under', () => {
@@ -1245,7 +1243,7 @@ describe('serializeSession — workspace-keyed snapshots', () => {
     assert.strictEqual(serializeSession(inputFor(world)).snapshot.workspaceKey, 'default');
   });
 
-  it('excludeGlobalPins drops a cross-workspace-pinned window from a named workspace\'s save', () => {
+  it('a named workspace\'s save never includes a window pinned across every workspace, even one whose context names that workspace', () => {
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', { context: { mode: 'space', modeMetadata: { spaceId: 'space-42' }, pinScope: 'global' } }),
@@ -1256,28 +1254,41 @@ describe('serializeSession — workspace-keyed snapshots', () => {
       ],
       records: [makeRecord('w1'), makeRecord('w2')],
       workspaceKey: 'space-42',
-      excludeGlobalPins: true,
     };
     const urls = serializeSession(inputFor(world)).snapshot.windows.map((w) => w.url);
     assert.deepStrictEqual(urls, ['https://example.com/w2']);
   });
 
-  it('excludeGlobalPins is a no-op for a window pinned only to this workspace', () => {
+  it('a window pinned only to this workspace is saved in its own workspace\'s row', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', { context: { mode: 'space', modeMetadata: { spaceId: 'space-42' }, pinScope: 'workspace' } })],
       records: [makeRecord('w1')],
       workspaceKey: 'space-42',
-      excludeGlobalPins: true,
     };
     assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
   });
 
-  it('without excludeGlobalPins, a cross-workspace pin rides in the default snapshot like any other window', () => {
+  it('the default workspace\'s save includes a cross-workspace pin like any other window — with or without a mode row', () => {
+    // No mode row at all: a plain window pinned globally without ever being
+    // assigned to a space/group (`features/spaces/background.js setPinState()`
+    // sets only the 'pin' key for a global pin). `session.ts readSaveContext`
+    // yields exactly this shape for it.
     const world: World = {
       fixtures: [contentFixture(1, 'w1', { context: { mode: null, modeMetadata: null, pinScope: 'global' } })],
       records: [makeRecord('w1')],
     };
-    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 1);
+    const windows = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(windows.length, 1);
+    assert.strictEqual(windows[0].context?.pinScope, 'global');
+  });
+
+  it('a cross-workspace pin with no mode row is still kept out of a named workspace\'s save', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { context: { mode: null, modeMetadata: null, pinScope: 'global' } })],
+      records: [makeRecord('w1')],
+      workspaceKey: 'space-42',
+    };
+    assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 0);
   });
 
   it('a named workspace\'s save excludes a window that does not name it in its own context metadata', () => {

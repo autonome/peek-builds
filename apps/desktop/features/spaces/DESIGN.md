@@ -203,12 +203,17 @@ SQL migration: `ALTER TABLE extension_settings RENAME TO feature_settings`, rena
 Every workspace is named, and there is one named default workspace: what is open when no other
 workspace is active. It is a real space — a `space:default` tag plus its own saved window
 session, written and read through the exact same session-snapshot pipeline
-(`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, row `snapshot:<tagId>` under
-featureId `session`) every named workspace uses, keyed by workspace id rather than a
-`space-workspaces`-specific table — not an implicit "no space" state layered on top of the
-mechanism above. `features/spaces/background.js` resolves it once per profile through the same
-`getOrCreateTag()` every other space goes through; nothing about the default lives in a separate
-table or a separate code path.
+(`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`) every named workspace uses,
+keyed by workspace rather than a `space-workspaces`-specific table — not an implicit "no space"
+state layered on top of the mechanism above. Its key is the literal `default`, which maps to the
+`snapshot` row under featureId `session` — the very row the app's own boot restore and quit save
+have always used, so the default workspace IS the startup session; a named workspace's key is its
+tag id, row `snapshot:<tagId>`. The main process saves the ACTIVE workspace's row on its own
+schedule (autosave, quit, after a window closes), and `features/spaces/background.js` reports each
+change of active workspace to it (`api.session.setActiveWorkspace`), so quitting inside a named
+workspace saves that workspace, not the default. `background.js` resolves the default once per
+profile through the same `getOrCreateTag()` every other space goes through; nothing about the
+default lives in a separate table or a separate code path.
 
 Display name: the tag strips to `"default"` the same way any space tag with no `displayName`
 metadata does — no special-cased label.

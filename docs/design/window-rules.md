@@ -232,12 +232,17 @@ scoped to one, is itself evidence for the global-HUD reading.
   saved into (`main/session-projection.ts serializeSession`). A workspace-scoped pin is therefore
   part of that workspace's own saved snapshot, restored with the rest of that workspace's windows
   when it is re-entered. A cross-workspace pin is excluded from every NAMED workspace's snapshot —
-  `features/spaces/background.js closeCurrentWorkspaceWindows()` saves the outgoing workspace with
-  `excludeGlobalPins: true` — so it is never scoped to any one workspace's saved state; it survives
-  a relaunch instead as part of the ordinary `'default'` snapshot the app's autosave/before-quit/
-  manual save always writes, unfiltered, and a live restore into any workspace skips a
-  cross-workspace-pinned descriptor outright (it is assumed still open, since leaving a workspace
-  never closes one). `features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
+  `serializeSession` derives that from the key alone, so no caller has to ask for it — and is never
+  scoped to any one workspace's saved state; its home is the default workspace's snapshot, the row
+  boot restores. A save of the default workspace records it there like any other window; a save
+  under a named key (a workspace switch, or the app's own autosave/quit save while a named workspace
+  is active — ambient saves write the ACTIVE workspace's row, which the spaces feature reports
+  through `api.session.setActiveWorkspace`) refreshes the default row's record of every
+  cross-workspace pin without touching the rest of that row, so a pin made in a named workspace
+  survives a relaunch too. At boot the pins come back even when the session itself does not (the
+  restore-session preference off, or the crash-recovery dialog declined). A live restore into any
+  workspace skips a cross-workspace-pinned descriptor outright (it is assumed still open, since
+  leaving a workspace never closes one). `features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
   closes every window `api.context.getWindowsInSpace` reports for the outgoing workspace, skipping
   one pinned across every workspace by an explicit check on its 'pin' context entry. A
   workspace-pinned window that has no cross-workspace claim is closed by that same sweep like any

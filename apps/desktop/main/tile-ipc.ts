@@ -4098,7 +4098,6 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:session:save-workspace-snapshot', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
-    excludeGlobalPins?: boolean;
   }, _grant) => {
     const grant = _grant;
     const check = checkSessionAllowed(grant, 'save-workspace-snapshot');
@@ -4112,20 +4111,54 @@ export function registerTileIpcHandlers(): void {
 
     try {
       const { saveSessionSnapshot } = await import('./session.js');
-      // A deliberate, caller-requested save always writes, the same as the
-      // trustedBuiltin `tile:session:save` handler below — a workspace switch
-      // is not opportunistic autosave, and this path also needs to work
-      // under the test profile the desktop specs run in.
-      saveSessionSnapshot('workspace-switch', {
-        key: args.key,
-        excludeGlobalPins: args.excludeGlobalPins === true,
-        _forceForTest: true,
-      });
+      // A deliberate, user-initiated save: it runs under the test profile the
+      // desktop specs drive real workspace switches in (`allowInTestProfile`),
+      // and nothing more — the mid-restore guard and the invisible-window
+      // filter stay in force, the same as for any production save.
+      saveSessionSnapshot('workspace-switch', { key: args.key, allowInTestProfile: true });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
     }
+  });
+
+  // The spaces feature owns "which workspace is active" and reports it here so
+  // the app's own ambient saves (autosave, before-quit, window-lifecycle) write
+  // the active workspace's row — see `main/session.ts` "Active workspace".
+  // `begin-workspace-switch` brackets the save → close → restore sequence of a
+  // switch, during which no ambient save may run; `set-active-workspace` names
+  // the workspace that is now active and ends the bracket.
+  registerTileIpc('tile:session:begin-workspace-switch', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkSessionAllowed(grant, 'begin-workspace-switch');
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:begin-workspace-switch', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    const { beginWorkspaceSwitch } = await import('./session.js');
+    beginWorkspaceSwitch();
+    return { success: true };
+  });
+
+  registerTileIpc('tile:session:set-active-workspace', { mode: 'handle' }, async (event, args: {
+    token: string;
+    key: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkSessionAllowed(grant, 'set-active-workspace');
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:set-active-workspace', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+    const { setActiveWorkspaceKey } = await import('./session.js');
+    setActiveWorkspaceKey(args.key);
+    return { success: true };
   });
 
   registerTileIpc('tile:session:restore-workspace-snapshot', { mode: 'handle' }, async (event, args: {
@@ -4146,8 +4179,11 @@ export function registerTileIpcHandlers(): void {
       const { restoreSessionSnapshot } = await import('./session.js');
       // `{}` (restoreSession unset) — the general "restore session on
       // launch" preference is a boot-time setting; the user just explicitly
-      // asked to enter this workspace, so it always restores. `isColdStart`
-      // is false: this is a live in-app switch, never the app's own boot.
+      // asked to enter this workspace, so it always restores. The third
+      // argument lets this real, user-initiated restore run under the test
+      // profile the desktop specs drive workspace switches in (it bypasses
+      // nothing else). `isColdStart` is false: this is a live in-app switch,
+      // never the app's own boot — so no crash-recovery dialog either.
       // `isWorkspaceSwitch: true` is what lets `restoreSessionSnapshot` skip
       // an already-open globally-pinned window here without also skipping it
       // on the unrelated interactive "Restore Previous Session" path (which
@@ -4166,19 +4202,21 @@ export function registerTileIpcHandlers(): void {
   // `tile-session-enforcement.ts`'s `get-workspace-snapshot-info` doc for
   // why: `tile:settings:get-foreign` allowlists per-featureId, not per-key,
   // so a `readForeign: ["session"]` grant would also expose the app's own
-  // default-workspace snapshot and crash-recovery metadata).
+  // default-workspace snapshot and crash-recovery metadata). The default
+  // workspace's own key is refused by `checkSessionAllowed` itself, which is
+  // given the key for exactly that rule.
   registerTileIpc('tile:session:get-workspace-snapshot-info', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
   }, _grant) => {
     const grant = _grant;
-    const check = checkSessionAllowed(grant, 'get-workspace-snapshot-info');
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+    const check = checkSessionAllowed(grant, 'get-workspace-snapshot-info', { key: args.key });
     if (!check.ok) {
       handleViolation(grant, 'session', 'session:get-workspace-snapshot-info', check.error, args.token);
       return { success: false, error: check.error };
-    }
-    if (typeof args.key !== 'string' || !args.key) {
-      return { success: false, error: 'key is required' };
     }
 
     try {

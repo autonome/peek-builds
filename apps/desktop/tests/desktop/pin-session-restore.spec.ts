@@ -7,12 +7,14 @@
  * persisted pin list for either scope. A workspace-scoped pin rides in that
  * workspace's own saved snapshot (`snapshot:<workspaceKey>`, written by
  * `api.session.saveWorkspaceSnapshot`) and restores with the rest of that
- * workspace's windows. A cross-workspace pin rides in the ordinary
- * `'default'` snapshot the app's own autosave/before-quit/manual save always
- * writes (unfiltered — a workspace-leave save is the only thing that ever
- * excludes it), so it survives a save + restore cycle the same way any other
- * window does. See docs/design/window-rules.md "Persistent windows:
- * workspace-pinned and global HUD", "Workspace interaction".
+ * workspace's windows. A cross-workspace pin lives in the default workspace's
+ * snapshot (the row boot restores): a save of the default workspace records
+ * it like any other window, and a save under a NAMED key — which never
+ * includes it in that workspace's own row — refreshes the default row's
+ * record of it instead (`main/session.ts saveSessionSnapshot`), so it
+ * survives a relaunch whichever workspace was active at quit. See
+ * docs/design/window-rules.md "Persistent windows: workspace-pinned and global
+ * HUD", "Workspace interaction".
  *
  * Run with:
  *   yarn test:grep "pin session restore"
@@ -78,7 +80,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
     expect(spaceId).toBeTruthy();
 
     const saveResult = await bgWindow.evaluate(
-      async (key: string) => await (window as unknown as { app: any }).app.session.saveWorkspaceSnapshot(key, { excludeGlobalPins: true }),
+      async (key: string) => await (window as unknown as { app: any }).app.session.saveWorkspaceSnapshot(key),
       spaceId as string,
     );
     expect(saveResult?.success).toBe(true);
@@ -106,9 +108,13 @@ test.describe('pin session restore: both scopes @desktop', () => {
     );
   });
 
-  test('a cross-workspace pin rides in the ordinary session snapshot', async () => {
+  test('a cross-workspace pin is recorded in the default workspace\'s snapshot even when saved while a named workspace is active', async () => {
     const windowId = await openAndPin('pin-restore-spec-global', 'across workspaces');
 
+    // `open space` above made a NAMED workspace the active one, so this
+    // ambient save writes THAT workspace's row — and refreshes the default
+    // row's record of every cross-workspace pin, which is what the read below
+    // checks. Quitting while a named workspace is active must not lose a pin.
     await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
 
     const read = await bgWindow.evaluate(
