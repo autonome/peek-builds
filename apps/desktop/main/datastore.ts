@@ -33,6 +33,7 @@ import { DEBUG } from './config.js';
 import { DATASTORE_VERSION } from '../version.js';
 import { addDeviceMetadata } from './device.js';
 import { publish, getSystemAddress } from './pubsub.js';
+import { migrateHud } from './migrate-hud.js';
 
 // Load canonical schema for validation
 // Path is relative to compiled JS in apps/desktop/dist/main/
@@ -501,6 +502,7 @@ export function initDatabase(dbPath: string): Db {
   migrateItemSyncErrorColumns();
   migrateEventPushedAtColumn();
   migrateTagsUniqueIndex();
+  migrateHud();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
