@@ -2146,6 +2146,92 @@ const renderSyncSettings = async () => {
 
   configSection.appendChild(apiKeyGroup);
 
+  // Enroll with a code — an alternative to pasting an existing key: a code
+  // minted by an already-enrolled device's Settings → Devices → "Add a
+  // device" button, traded here for this device's own key via POST /enrol.
+  // The exchanged key is stored exactly where a pasted key goes (setConfig
+  // below, same apiKeyInput/config.apiKey the field above writes to).
+  const enrolGroup = document.createElement('div');
+  enrolGroup.className = 'form-group';
+  enrolGroup.dataset.role = 'enrol-group';
+
+  const enrolLabel = document.createElement('label');
+  enrolLabel.textContent = 'Enrolment Code';
+  enrolGroup.appendChild(enrolLabel);
+
+  const enrolWrapper = document.createElement('div');
+  enrolWrapper.style.cssText = 'display: flex; gap: 8px;';
+
+  const enrolInput = document.createElement('input');
+  enrolInput.type = 'text';
+  enrolInput.dataset.role = 'enrol-code-input';
+  enrolInput.placeholder = 'Code from another device';
+  enrolInput.style.cssText = 'flex: 1;';
+  enrolWrapper.appendChild(enrolInput);
+
+  const enrolBtn = document.createElement('button');
+  enrolBtn.type = 'button';
+  enrolBtn.dataset.role = 'enrol-button';
+  enrolBtn.textContent = 'Enroll';
+  enrolBtn.style.cssText = `
+    padding: 6px 12px;
+    font-size: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    min-width: 60px;
+  `;
+  enrolWrapper.appendChild(enrolBtn);
+  enrolGroup.appendChild(enrolWrapper);
+
+  const enrolStatus = document.createElement('div');
+  enrolStatus.className = 'help-text';
+  enrolStatus.dataset.role = 'enrol-status';
+  enrolStatus.textContent = "Enter this device's server URL above and a code from an already-enrolled device to get its own key.";
+  enrolGroup.appendChild(enrolStatus);
+
+  enrolBtn.addEventListener('click', async () => {
+    const code = (enrolInput.value || '').trim();
+    if (!config.serverUrl) {
+      enrolStatus.textContent = 'Enter a server URL above first.';
+      enrolStatus.style.color = 'var(--error-text, #dc2626)';
+      return;
+    }
+    if (!code) {
+      enrolStatus.textContent = 'Enter a code first.';
+      enrolStatus.style.color = 'var(--error-text, #dc2626)';
+      return;
+    }
+    enrolBtn.disabled = true;
+    enrolBtn.textContent = 'Enrolling…';
+    try {
+      const result = await api.sync.enrol(config.serverUrl, code);
+      if (!result.success) {
+        enrolStatus.textContent = result.error || 'Failed to enroll';
+        enrolStatus.style.color = 'var(--error-text, #dc2626)';
+        return;
+      }
+      const newKey = result.data?.apiKey || '';
+      config.apiKey = newKey;
+      apiKeyInput.value = newKey;
+      await api.sync.setConfig({ apiKey: newKey });
+      enrolInput.value = '';
+      enrolStatus.textContent = 'Enrolled — this device now has its own key.';
+      enrolStatus.style.color = '';
+      updateStatus();
+    } catch (err) {
+      enrolStatus.textContent = err.message || 'Failed to enroll';
+      enrolStatus.style.color = 'var(--error-text, #dc2626)';
+    } finally {
+      enrolBtn.disabled = false;
+      enrolBtn.textContent = 'Enroll';
+    }
+  });
+
+  configSection.appendChild(enrolGroup);
+
   // Auto-sync checkbox
   const autoSyncCheckbox = createCheckbox('Auto-sync', config.autoSync, async (val) => {
     config.autoSync = val;
@@ -2784,9 +2870,45 @@ const renderDevicesSettings = async () => {
   const newDeviceBody = document.createElement('p');
   newDeviceBody.style.cssText = 'margin: 0; color: var(--text-tertiary); font-size: 13px;';
   newDeviceBody.textContent =
-    'Minting a key for a new device from this panel is not available yet. Until then, ' +
-    'enroll a new device the way this one was enrolled.';
+    "Create a one-time code, then enter it — along with this server's URL — on the new " +
+    "device's Sync panel.";
   newDeviceCard.appendChild(newDeviceBody);
+
+  const codeDisplay = document.createElement('p');
+  codeDisplay.dataset.role = 'enrolment-code-display';
+  codeDisplay.style.cssText = 'margin: 8px 0 0; font-family: monospace; font-size: 14px; color: var(--text-primary); display: none;';
+  newDeviceCard.appendChild(codeDisplay);
+
+  const newDeviceFooter = document.createElement('div');
+  newDeviceFooter.slot = 'footer';
+  const addDeviceBtn = document.createElement('peek-button');
+  addDeviceBtn.dataset.role = 'add-device-button';
+  addDeviceBtn.setAttribute('variant', 'primary');
+  addDeviceBtn.setAttribute('size', 'sm');
+  addDeviceBtn.textContent = 'Create code';
+  addDeviceBtn.addEventListener('click', async () => {
+    addDeviceBtn.textContent = 'Creating…';
+    addDeviceBtn.disabled = true;
+    try {
+      const result = await api.sync.createEnrolmentCode();
+      if (!result.success) {
+        codeDisplay.textContent = `Failed to create code: ${result.error}`;
+        codeDisplay.style.color = 'var(--error-text, #dc2626)';
+        codeDisplay.style.display = '';
+        return;
+      }
+      const { code, expiresAt } = result.data || {};
+      const expires = expiresAt ? new Date(expiresAt).toLocaleString() : 'unknown';
+      codeDisplay.textContent = `Code: ${code} — expires ${expires}`;
+      codeDisplay.style.color = '';
+      codeDisplay.style.display = '';
+    } finally {
+      addDeviceBtn.textContent = 'Create code';
+      addDeviceBtn.disabled = false;
+    }
+  });
+  newDeviceFooter.appendChild(addDeviceBtn);
+  newDeviceCard.appendChild(newDeviceFooter);
   container.appendChild(newDeviceCard);
 
   const statusLine = document.createElement('p');

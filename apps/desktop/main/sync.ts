@@ -2261,6 +2261,67 @@ export async function revokeDevice(
   return response.revoked;
 }
 
+// ==================== Enrolment codes (mint a device key without pasting one) ====================
+//
+// Talks to the server's apps/server/index.js POST /devices/enrolment-codes
+// (authenticated, minted by an already-signed-in device from the Devices
+// panel's "Add a device") and POST /enrol (unauthenticated — a brand-new
+// device has no key yet, only the code). See apps/server/users.js
+// createEnrolmentCode()/exchangeEnrolmentCode() for the code's shape: short,
+// expires in minutes, works once, and never itself a key — exchanging it
+// always mints a fresh device credential.
+
+/** Mint a one-time enrolment code for the account this device is already
+ * signed into. Shown once in the Devices panel with its expiry; the new
+ * device trades it for its own key via exchangeEnrolmentCode() below. */
+export async function createEnrolmentCode(
+  serverUrl: string,
+  apiKey: string
+): Promise<{ code: string; expiresAt: string }> {
+  return serverFetch<{ code: string; expiresAt: string }>(
+    serverUrl,
+    apiKey,
+    '/devices/enrolment-codes',
+    { method: 'POST' }
+  );
+}
+
+/**
+ * Trade an enrolment code for this device's own key. Unauthenticated on the
+ * wire (this device has no key yet), so this posts to /enrol directly rather
+ * than through serverFetch()'s apiKey-bearing header, and unwraps the
+ * server's `{ error }` body into a plain message instead of serverFetch's
+ * generic `Server error <status>: <body>` wrapping — the message is shown to
+ * the person entering the code (expired/used/unknown code, or rate limiting).
+ */
+export async function exchangeEnrolmentCode(
+  serverUrl: string,
+  code: string,
+  label?: string
+): Promise<{ deviceId: string; userId: string; label: string; apiKey: string }> {
+  const url = `${serverUrl.replace(/\/$/, '')}/enrol`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, label }),
+      signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`Request to /enrol timed out after ${DEFAULT_FETCH_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  }
+
+  const body = await response.json().catch(() => ({} as Record<string, unknown>));
+  if (!response.ok) {
+    throw new Error((body as { error?: string }).error || `Server error ${response.status}`);
+  }
+  return (body as { device: { deviceId: string; userId: string; label: string; apiKey: string } }).device;
+}
+
 // ==================== Full Bidirectional Sync ====================
 
 // Module-level error state — surfaced in getSyncStatus so the settings

@@ -2068,6 +2068,12 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:sync:rename-device', { token: tileToken, deviceId, label }),
     revokeDevice: (deviceId: string) =>
       ipcRenderer.invoke('tile:sync:revoke-device', { token: tileToken, deviceId }),
+    // "Add a device": mint a one-time code for this (already-enrolled)
+    // account, and trade a code (from another device) for this device's
+    // own key. See main/sync.ts createEnrolmentCode()/exchangeEnrolmentCode().
+    createEnrolmentCode: () => ipcRenderer.invoke('tile:sync:create-enrolment-code', { token: tileToken }),
+    enrol: (serverUrl: string, code: string, label?: string) =>
+      ipcRenderer.invoke('tile:sync:enrol', { token: tileToken, serverUrl, code, label }),
   };
 
   // ── Ad blocker ────────────────────────────────────────────────────

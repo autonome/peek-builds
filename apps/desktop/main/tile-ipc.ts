@@ -181,6 +181,8 @@ import {
   listDevices,
   renameDevice,
   revokeDevice,
+  createEnrolmentCode,
+  exchangeEnrolmentCode,
 } from './sync.js';
 import {
   listProfiles,
@@ -5309,6 +5311,62 @@ export function registerTileIpcHandlers(): void {
       }
       const revoked = await revokeDevice(config.serverUrl, config.apiKey, args.deviceId);
       return { success: true, data: { revoked } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:sync:create-enrolment-code / enrol ─────────────────────────
+  //
+  // Settings UI consumes these via api.sync.{createEnrolmentCode,enrol} —
+  // create-enrolment-code is the Devices panel's "Add a device" button
+  // (uses this device's own configured serverUrl/apiKey); enrol is the Sync
+  // panel's code-entry alternative to pasting a key (a brand-new device has
+  // no apiKey yet, so it takes serverUrl from the caller instead of
+  // getSyncConfig()). Both trustedBuiltin only, same reasoning as the rest
+  // of the sync surface.
+
+  registerTileIpc('tile:sync:create-enrolment-code', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:create-enrolment-code', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:create-enrolment-code' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+      const result = await createEnrolmentCode(config.serverUrl, config.apiKey);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:enrol', { mode: 'handle' }, async (event, args: {
+    token: string;
+    serverUrl: string;
+    code: string;
+    label?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:enrol', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:enrol' };
+    }
+    if (!args.serverUrl || !args.code) {
+      return { success: false, error: 'Server URL and code are required' };
+    }
+    try {
+      const device = await exchangeEnrolmentCode(args.serverUrl, args.code, args.label);
+      return { success: true, data: device };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
