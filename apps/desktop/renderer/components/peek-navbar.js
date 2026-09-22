@@ -40,7 +40,7 @@ import { PeekElement, sharedStyles } from './base.js';
 // (/apps/desktop/renderer/components/ → ../cmd/ → renderer/cmd/). A custom-scheme
 // importmap prefix (peek://cmd/) is NOT remapped by Chromium, so a relative
 // specifier is the portable one. Leaf module — no DOM/electron deps.
-import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from '../cmd/url-completion.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, withDefaultScheme } from '../cmd/url-completion.js';
 
 // Debounce before firing a frecency query for the typed text. The generation
 // counter (not this delay) is the staleness-correctness mechanism.
@@ -324,14 +324,14 @@ export class PeekNavbar extends PeekElement {
   }
 
   /**
-   * Normalize a URL input, adding https:// if needed
+   * Normalize a URL input, adding a default scheme if needed — http:// for a
+   * loopback host, https:// for everything else.
    */
   _normalizeUrl(input) {
     const trimmed = input.trim();
     if (!trimmed) return null;
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    if (trimmed.includes('.') && !trimmed.includes(' ')) return 'https://' + trimmed;
-    return 'https://' + trimmed;
+    return withDefaultScheme(trimmed);
   }
 
   /**

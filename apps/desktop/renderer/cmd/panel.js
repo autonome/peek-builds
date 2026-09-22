@@ -12,7 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
-import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor } from './url-completion.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
 
@@ -1227,10 +1227,9 @@ function getValidURL(str) {
 
   if (!hasValidProtocol) {
     const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
-    const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
 
-    if (isDomainPattern || isLocalhost) {
-      const urlWithProtocol = 'https://' + str;
+    if (isDomainPattern || isLoopbackAddress(str)) {
+      const urlWithProtocol = withDefaultScheme(str);
       try {
         new URL(urlWithProtocol);
         return { valid: true, url: urlWithProtocol };
@@ -2461,11 +2460,13 @@ function actionHandlers() {
       if (!urlGhostSuggestion) return;
       // Open the CURRENT completion, not the full stored URL: at 'full' (or if
       // somehow unshown) open the exact stored URL; otherwise synthesize a clean
-      // https origin/path from the granularity completion (kills tracking query).
+      // origin/path from the granularity completion (kills tracking query). The
+      // completion is scheme-less, so the default scheme is re-added — http for
+      // loopback, https otherwise.
       const completion = currentGhostCompletion(state.typed);
       const url = (urlGhostGranularity === 'full' || !completion)
         ? urlGhostSuggestion.url
-        : 'https://' + completion;
+        : withDefaultScheme(completion);
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);

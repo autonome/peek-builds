@@ -72,6 +72,57 @@ export function urlCompletionAtGranularity(storedUrl, granularity) {
 }
 
 /**
+ * True when the host part of scheme-less `text` is a loopback address.
+ *
+ * The host part is everything before the first `/`, `?` or `#`, with an
+ * optional `:<digits>` port removed. A bracketed IPv6 host (`[::1]`, or
+ * `[::1]:8080`) is taken whole, brackets included.
+ *
+ * Loopback means, case-insensitively: `localhost`, any `*.localhost`,
+ * `127.0.0.1`, or `[::1]`. Nothing else counts — no other `127.x` address, no
+ * RFC1918 LAN address, and no bare `::1` without brackets. Empty text, or text
+ * containing whitespace, is not a host at all.
+ */
+export function isLoopbackAddress(text) {
+  if (!text) return false;
+  if (/\s/.test(text)) return false;
+
+  // Host part: everything before the first path/query/fragment delimiter.
+  let host = text.split(/[/?#]/, 1)[0];
+  if (!host) return false;
+
+  // Bracketed IPv6 keeps its brackets; the port sits after the closing one.
+  if (host.startsWith('[')) {
+    const close = host.indexOf(']');
+    if (close === -1) return false;
+    const rest = host.slice(close + 1);
+    if (rest && !/^:\d+$/.test(rest)) return false;
+    host = host.slice(0, close + 1);
+  } else {
+    host = host.replace(/:\d+$/, '');
+  }
+
+  const h = host.toLowerCase();
+  return h === 'localhost' || h.endsWith('.localhost') || h === '127.0.0.1' || h === '[::1]';
+}
+
+/**
+ * `text` with a default scheme added when it has none.
+ *
+ * Loopback hosts get `http://`: local dev servers are almost always http-only,
+ * so `https://localhost:3000` simply fails to load — and the unreachable URL is
+ * still written to history, leaving rows that can never be opened. Public hosts
+ * keep the `https://` default.
+ *
+ * An explicit `scheme://` the user typed is returned untouched. This helper
+ * neither trims nor validates; callers keep doing both.
+ */
+export function withDefaultScheme(text) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text;
+  return (isLoopbackAddress(text) ? 'http://' : 'https://') + text;
+}
+
+/**
  * `completion` when it is a forward prefix-completion of `anchor`, else null.
  * Leading or trailing whitespace on `anchor` disqualifies it: whitespace at
  * either end means the user has moved past extending a URL (a trailing space

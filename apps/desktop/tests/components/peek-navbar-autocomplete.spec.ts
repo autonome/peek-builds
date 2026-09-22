@@ -241,4 +241,41 @@ test.describe('peek-navbar URL autocomplete @components', () => {
     expect(open.suggestions).toBe(0);
     expect(open.ghost).toBe(false);
   });
+
+  test('Enter on a loopback address emits navigate with http', async () => {
+    // Not typeUrl(): it waits for suggestions, and the HISTORY fixture has no
+    // localhost row, so nothing would ever arrive. Clear and focus the input
+    // the same way, then type straight into it.
+    async function typeBare(text: string) {
+      await page.evaluate(() => {
+        const nb = document.getElementById('navbar') as any;
+        nb._closeDropdown();
+        nb.inputElement.value = '';
+        nb._typedAnchor = '';
+        nb.inputElement.focus();
+      });
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      await page.keyboard.type(text);
+    }
+
+    await page.evaluate(() => ((window as any).__navEvents = []));
+
+    await typeBare('localhost:3000');
+    await page.keyboard.press('Enter');
+    let events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://localhost:3000');
+
+    await typeBare('127.0.0.1:8080');
+    await page.keyboard.press('Enter');
+    events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://127.0.0.1:8080');
+
+    // An explicitly typed scheme is kept verbatim.
+    await typeBare('http://127.0.0.1:8080');
+    await page.keyboard.press('Enter');
+    events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://127.0.0.1:8080');
+  });
 });

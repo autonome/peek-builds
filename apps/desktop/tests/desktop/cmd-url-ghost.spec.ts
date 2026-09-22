@@ -1342,3 +1342,109 @@ test.describe('cmd URL ghost trailing space @desktop', () => {
     await closePanel(panelId);
   });
 });
+
+test.describe('cmd URL loopback default scheme @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  async function closePanel(panelId: number) {
+    if (!panelId) return;
+    try {
+      await bgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, panelId);
+    } catch { /* may already be closed */ }
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-loopback'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('typing a loopback address and Enter opens http, not https', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    // Nothing listens on port 3000, but the hybrid open path still builds the
+    // window and publishes `window:opened` when the first load fails — see the
+    // comment on 'pressing Enter on ghost suggestion opens the host-level URL'.
+    await bgWindow.evaluate(() => {
+      (window as any).__loopbackWindowUrl = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && msg.url.includes('localhost:3000')) {
+          (window as any).__loopbackWindowUrl = msg.url;
+        }
+      });
+    });
+
+    await cmdWindow.fill('input', 'localhost:3000');
+    await cmdWindow.keyboard.press('Enter');
+
+    // The signal is the `window:opened` publish itself, recorded by the
+    // subscription above — a state transition the open path already emits,
+    // not a timing guess. This is the same idiom the ghost-Enter test uses;
+    // Playwright offers no way to await a renderer-side pubsub delivery
+    // directly, so the recorded value is polled.
+    await bgWindow.waitForFunction(
+      () => (window as any).__loopbackWindowUrl !== null,
+      undefined,
+      { timeout: 10000 }
+    );
+
+    const openedUrl: string = await bgWindow.evaluate(() => (window as any).__loopbackWindowUrl);
+    expect(openedUrl.startsWith('http://localhost:3000')).toBe(true);
+
+    // The history item written for the navigation carries the same scheme, so
+    // no unreachable https://localhost row is left behind.
+    const urlItems = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.queryItems({ type: 'url' });
+    });
+    // queryItems answers { success, data: [...] } and a url item keeps its URL
+    // in `content` — same unwrapping as history-unified.spec.ts.
+    expect(urlItems.success).toBe(true);
+    const urls: string[] = (urlItems.data || [])
+      .map((it: { content?: string }) => it.content)
+      .filter((u: string | undefined): u is string => !!u);
+    expect(urls.some((u) => u.startsWith('http://localhost:3000'))).toBe(true);
+    expect(urls.some((u) => u.startsWith('https://localhost'))).toBe(false);
+
+    const openedWindow = await bgWindow.evaluate(async () => {
+      const list = await (window as any).app.window.list();
+      return list.windows?.find((w: { url?: string }) => w.url && w.url.includes('localhost:3000')) || null;
+    });
+    if (openedWindow?.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          await (window as any).app.window.close(id);
+        }, openedWindow.id);
+      } catch { /* may already be closed */ }
+    }
+
+    await closePanel(panelId);
+  });
+});
