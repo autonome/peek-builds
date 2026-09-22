@@ -51,7 +51,10 @@ const SERVER_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.
 const FAKE_SERVER_URL = 'http://fake-sync-test-server';
 
 let serverApp: { request: (path: string, init?: RequestInit) => Promise<Response> };
-let users: { createUser: (userId: string) => { userId: string; apiKey: string } };
+let users: {
+  createUser: (userId: string) => { userId: string; apiKey: string };
+  createDevice: (userId: string, label: string) => { apiKey: string };
+};
 let datastore: typeof import('./datastore.js');
 let profiles: typeof import('./profiles.js');
 let sync: typeof import('./sync.js');
@@ -105,7 +108,8 @@ describe('Event push watermark — cross-run stranding regression', () => {
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `evtwm-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     let failedOnce = false;
@@ -538,7 +542,8 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `progresslog-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     let eventChunkFailedOnce = false;
@@ -1143,7 +1148,8 @@ describe('Tag metadata sync — push/pull/merge', () => {
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `tagwm-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     let failedOnce = false;
@@ -1381,7 +1387,8 @@ describe('IPC entry points — tile:sync:push / tile:sync:pull must run all thre
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `ipcsync-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
@@ -1556,7 +1563,8 @@ describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `timeout-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     return { apiKey };
@@ -1807,7 +1815,8 @@ describe('Datastore-version-bump reset must keep item identity (duplicate-row re
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `dsver-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     installRealServerFetch();
@@ -2037,7 +2046,8 @@ describe('Batched item push — one request per chunk, not per item', () => {
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `batch-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     const posts: string[] = [];
@@ -2171,7 +2181,8 @@ describe('An item the server permanently rejects is parked until it changes', ()
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `park-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
@@ -2314,7 +2325,8 @@ describe('Paged pulls — the client follows the server cursor', () => {
     const activeProfile = profiles.getActiveProfile();
 
     const userId = `paging-${name}-${crypto.randomUUID()}`;
-    const { apiKey } = users.createUser(userId);
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
     profiles.enableSync(activeProfile.id, apiKey, 'default');
 
     const stub: PullStub = { requestedPaths: [] };
