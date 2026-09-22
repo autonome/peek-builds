@@ -751,6 +751,29 @@ describe('RESULTS_OPEN transitions', () => {
     machine.dispatch(Events.ARROW_DOWN);
     assert.equal(machine.getData().matchIndex, 3, 'matchIndex should advance to the second url row');
   });
+
+  it('RESULTS_OPEN + Shift+Tab -> RESULTS_OPEN (cycles in place, never param mode)', () => {
+    machine.getMutableData().commands = {
+      tags: { name: 'tags' }, tag: { name: 'tag' }, settings: { name: 'settings', params: [{ type: 'text' }] },
+    };
+    machine.getMutableData().typed = 'settings';
+    machine.getMutableData().matchIndex = 2;
+
+    machine._actionLog.length = 0;
+    const result = machine.dispatch(Events.SHIFT_TAB);
+
+    assert.equal(result.handled, true);
+    assert.equal(machine.getState(), States.RESULTS_OPEN);
+    assert.ok(machine._actionLog.includes('shiftTabCycleInResults'));
+    assert.ok(machine._actionLog.includes('renderResults'));
+  });
+
+  it('RESULTS_OPEN + Shift+Tab with no matches -> not handled', () => {
+    machine.getMutableData().matches = [];
+    const result = machine.dispatch(Events.SHIFT_TAB);
+    assert.equal(result.handled, false);
+    assert.equal(machine.getState(), States.RESULTS_OPEN);
+  });
 });
 
 // ===== PARAM_MODE Transitions =====

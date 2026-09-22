@@ -1440,6 +1440,7 @@ async function enterUrlMode() {
   log('cmd:panel', 'URL mode: loaded', urlModeItems.length, 'frecency URLs');
 
   // Show results immediately
+  state.matchIndex = 0;
   renderUrlResults(urlModeItems);
 }
 
@@ -1470,6 +1471,7 @@ async function filterUrlModeItems(text) {
     urlModeItems = await queryUrlsByFrecency(text, 20);
   }
 
+  state.matchIndex = 0;
   renderUrlResults(urlModeItems);
 }
 
@@ -1535,7 +1537,6 @@ function renderUrlResults(items) {
 
   // Update match state for keyboard navigation
   state.matches = items.map((_, i) => `__url_${i}`);
-  state.matchIndex = 0;
 
   updateWindowSize();
 }
@@ -2207,6 +2208,26 @@ function actionHandlers() {
       }
     },
 
+    shiftTabCycleInResults() {
+      const input = commandInput();
+      const currentMatch = state.matches[state.matchIndex];
+      const currentValue = (input ? input.value : state.typed).trim();
+
+      const alreadyCompleted = currentValue === currentMatch ||
+                                currentValue.startsWith(currentMatch + ' ');
+
+      if (alreadyCompleted && state.matches.length > 1) {
+        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
+      }
+
+      const match = state.matches[state.matchIndex];
+      state.typed = match + ' ';
+      if (input) {
+        input.value = state.typed;
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    },
+
     enterParamMode(payload) {
       const cmdName = payload?.paramCommandName || state.matches[state.matchIndex];
       const cmd = cmdName && state.commands[cmdName];
@@ -2799,9 +2820,13 @@ async function render() {
       }
       if (e.key === 'Tab') {
         e.preventDefault();
-        // Tab cycles forward through results in URL mode
+        // Tab cycles through results in URL mode; Shift+Tab reverses
         if (urlModeItems.length > 0) {
-          state.matchIndex = (state.matchIndex + 1) % urlModeItems.length;
+          if (e.shiftKey) {
+            state.matchIndex = (state.matchIndex - 1 + urlModeItems.length) % urlModeItems.length;
+          } else {
+            state.matchIndex = (state.matchIndex + 1) % urlModeItems.length;
+          }
           renderUrlResults(urlModeItems);
         }
         return;

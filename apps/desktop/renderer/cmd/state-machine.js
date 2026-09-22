@@ -532,6 +532,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['tabCycleInResults', 'updateGhostText', 'renderResults'],
         },
       ],
+      [Events.SHIFT_TAB]: [
+        { guard: 'hasMatches', target: States.RESULTS_OPEN,
+          actions: ['shiftTabCycleInResults', 'updateGhostText', 'renderResults'] },
+      ],
       [Events.ENTER]: [
         { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
