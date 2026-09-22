@@ -135,6 +135,19 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
 }
 
 /**
+ * Whether a descriptor carries the panel role or the no-persist property and
+ * should be dropped from restore even if an older snapshot recorded it —
+ * same defense-in-depth as the overlay-role skip beside it in session.ts.
+ * Identical to the no-persist clause in session.ts restoreSessionSnapshot's
+ * validWindows filter (specs/workspace-panel-orphan.md requirement 4).
+ */
+function isSkippedAsNoPersist(descriptor: WindowDescriptor): boolean {
+  const role = descriptor.params?.role;
+  const persistFlag = descriptor.params?.persist;
+  return role === 'panel' || persistFlag === false;
+}
+
+/**
  * Sanitize params to only include serializable values.
  * Identical to session.ts sanitizeParams.
  */
@@ -1684,6 +1697,49 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(validWindows[0].url, 'https://valid1.com');
       assert.strictEqual(validWindows[1].url, 'https://valid2.com');
       assert.strictEqual(validWindows[2].url, 'http://localhost:3000');
+    });
+
+    it('drops an orphaned panel-role descriptor from an old snapshot on restore', () => {
+      // specs/workspace-panel-orphan.md requirement 4: a snapshot saved
+      // before the no-persist skip existed can still hold a `role: 'panel'`
+      // entry (the workspace panel, features/spaces/background.js
+      // showPanel()). Restore must not reopen it.
+      const snapshot: SessionSnapshot = {
+        version: 1,
+        createdAt: Date.now(),
+        reason: 'before-quit',
+        windows: [
+          makeDescriptor({ url: 'https://valid1.com' }),
+          makeDescriptor({
+            url: 'peek://spaces/panel.html?spaceName=old-space',
+            params: { role: 'panel', pinScope: 'global', alwaysOnTop: true },
+          }),
+        ],
+      };
+
+      const validWindows = snapshot.windows.filter(d => isValidDescriptor(d) && !isSkippedAsNoPersist(d));
+      assert.strictEqual(validWindows.length, 1, 'the orphaned panel window should not survive restore');
+      assert.strictEqual(validWindows[0].url, 'https://valid1.com');
+    });
+
+    it('drops a persist:false descriptor from an old snapshot even without the panel role', () => {
+      // The no-persist skip is keyed on the property too, not just the
+      // panel role — e.g. the border window (showBorder(), role: 'overlay')
+      // already hits the overlay clause, but any other feature chrome
+      // marked persist:false must be caught even under a different role.
+      const snapshot: SessionSnapshot = {
+        version: 1,
+        createdAt: Date.now(),
+        reason: 'before-quit',
+        windows: [
+          makeDescriptor({ url: 'https://valid1.com' }),
+          makeDescriptor({ url: 'peek://spaces/border.html', params: { persist: false } }),
+        ],
+      };
+
+      const validWindows = snapshot.windows.filter(d => isValidDescriptor(d) && !isSkippedAsNoPersist(d));
+      assert.strictEqual(validWindows.length, 1, 'the persist:false window should not survive restore');
+      assert.strictEqual(validWindows[0].url, 'https://valid1.com');
     });
 
     it('empty snapshot returns no windows to restore — triggers startup feature', () => {

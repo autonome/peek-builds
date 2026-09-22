@@ -14,9 +14,10 @@
  *   yarn test:grep "workspace panel"
  */
 
-import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp, launchDesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { waitForExtensionsReady } from '../helpers/window-utils';
 
 let app: DesktopApp;
 let bgWindow: Page;
@@ -118,5 +119,83 @@ test.describe('workspace panel: global HUD window @desktop', () => {
     await expect(switcherWindow.locator(`peek-card[data-window-id="${panelWindowId}"]`)).toHaveCount(0);
 
     await runCommand('close space');
+  });
+
+  // Requirement 5 (specs/workspace-panel-orphan.md): quit while a named
+  // workspace is active, relaunch, and confirm the panel does not come back
+  // orphaned. This must drive the REAL boot path — `entry.ts`'s own boot
+  // call to `restoreSessionSnapshot` — not a test bridge. The other tests
+  // above launch through `createPerDescribeApp`, whose profile is prefixed
+  // `test-` so `isTestProfile()` (main/config.ts) is true and
+  // `restoreSessionSnapshot` (main/session.ts) skips boot restore entirely
+  // (`if (isTestProfile() && !allowInTestProfile) return;`) — exactly the
+  // path this requirement needs exercised for real. So this test launches
+  // its own instance directly under a `tmp-`-prefixed profile instead:
+  // `isEphemeralProfile()` is true for that prefix too (still skips the
+  // single-instance lock), but `isTestProfile()` is false, so the boot call
+  // takes the same branch a real user's relaunch does. Same technique
+  // `session-restore-coldstart.spec.ts` uses for the same reason.
+  test('quit inside a named workspace, relaunch: no orphaned panel at boot, exactly one after entering a workspace', async () => {
+    const profile = 'tmp-workspace-panel-orphan-relaunch';
+    const spaceName = 'panel-relaunch-orphan';
+
+    const runOn = async (page: Page, name: string, search = ''): Promise<any> => {
+      return page.evaluate(
+        async (arg: { name: string; search: string }) => {
+          const api = (window as unknown as { app: any }).app;
+          return await new Promise((resolve) => {
+            const resultTopic = `cmd:execute:${arg.name}:result:${Date.now()}:${Math.random()}`;
+            api.subscribe(resultTopic, (r: unknown) => resolve(r));
+            api.publish(`cmd:execute:${arg.name}`, {
+              search: arg.search,
+              params: [],
+              expectResult: true,
+              resultTopic,
+            });
+            setTimeout(() => resolve({ error: `timeout waiting for ${arg.name}` }), 20000);
+          });
+        },
+        { name, search },
+      );
+    };
+
+    const panelWindowCount = async (page: Page): Promise<number> => {
+      const list = await page.evaluate(async () => (window as unknown as { app: any }).app.window.list());
+      return ((list?.windows || []) as Array<{ params?: { role?: string } }>)
+        .filter((w) => w?.params?.role === 'panel').length;
+    };
+
+    let relaunchApp = await launchDesktopApp(profile);
+    let bg = await relaunchApp.getBackgroundWindow();
+    await waitForExtensionsReady(bg);
+
+    const openResult = await runOn(bg, 'open space', spaceName);
+    expect(openResult?.success, `open space "${spaceName}" failed: ${openResult?.error}`).toBe(true);
+    await relaunchApp.getWindow('spaces/panel.html', 15000);
+    expect(await panelWindowCount(bg), 'exactly one panel while the workspace is active, before quitting').toBe(1);
+
+    // Quit inside the named workspace — the save path persists the panel's
+    // no-persist property, not the panel itself (requirement 2).
+    await relaunchApp.close();
+
+    // Relaunch the SAME profile: real cold boot, real restoreSessionSnapshot.
+    relaunchApp = await launchDesktopApp(profile);
+    bg = await relaunchApp.getBackgroundWindow();
+    await waitForExtensionsReady(bg);
+
+    expect(
+      await panelWindowCount(bg),
+      'boot into the default workspace must not reopen an orphaned panel',
+    ).toBe(0);
+
+    const reopenResult = await runOn(bg, 'open space', spaceName);
+    expect(reopenResult?.success, `open space "${spaceName}" failed on relaunch: ${reopenResult?.error}`).toBe(true);
+    await relaunchApp.getWindow('spaces/panel.html', 15000);
+    expect(
+      await panelWindowCount(bg),
+      'entering a workspace after relaunch creates exactly one panel',
+    ).toBe(1);
+
+    await relaunchApp.close();
   });
 });

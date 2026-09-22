@@ -1202,6 +1202,18 @@ export async function restoreSessionSnapshot(
       DEBUG && console.log(`[session] Skipping stale overlay window in snapshot: ${descriptor.url || '(empty)'}`);
       return false;
     }
+    // Defense in depth, same reasoning as the overlay skip above: drop any
+    // no-persist descriptor that snuck into an older snapshot saved before
+    // the save-side filter (`session-projection.ts serializeSession()`)
+    // excluded it — the workspace panel (`role: 'panel'`) and anything else
+    // opened with `persist: false` (`features/spaces/background.js`
+    // `showPanel()`/`showBorder()`). Restoring one reopens an orphaned copy
+    // nothing owns (specs/workspace-panel-orphan.md requirement 4).
+    const persistFlag = (descriptor.params as Record<string, unknown> | undefined)?.persist;
+    if (role === 'panel' || persistFlag === false) {
+      DEBUG && console.log(`[session] Skipping stale no-persist window in snapshot: ${descriptor.url || '(empty)'}`);
+      return false;
+    }
     // A window pinned across every workspace is never closed by a workspace
     // switch (`features/spaces/background.js closeCurrentWorkspaceWindows()`
     // skips it), so it is still open at this point in a workspace-switch
