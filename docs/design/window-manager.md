@@ -787,6 +787,21 @@ Measured after the fix: the spec 5/5 three runs in a row, two of them with the r
 (`native-focus-arrived id=<anchor>` before `hybrid:first-frame`), the dismissal riding the
 `WindowContentOrderable` transition.
 
+**Returning to the default space duplicates the browse-all Spaces window, open (found
+2026-09-22).** Found while fixing `spaces-workspace-switch-regressions`; not one of that spec's
+four symptoms and not fixed there. The default space's row saves every window on screen when a
+switch away happens, but the switch-back window sweep in `apps/desktop/features/spaces/
+background.js` closes only windows tagged `mode=default`, so a previously-open browse-all Spaces
+window (which carries no `mode` tag) survives the sweep and a fresh one opens alongside it on
+return.
+
+**A single border flicker when the workspace panel first appears, open (found 2026-09-22).**
+Found by trace during the same track — not a symptom of it, not a loop (see the switch-space
+defect above for the loop this resembles). Opening the workspace panel (role `panel`) immediately
+dismisses the screen border (role `overlay`, a transient) — an `effect-close effect=DismissWindow`
+on the border right after the panel's `open-registry-set` — and `updateBorderVisibility()`
+recreates the border on the next focus event. One extra open/close, not a storm.
+
 ### First macOS evidence for this branch, 2026-08-17
 
 The branch was written and measured entirely on Linux, which can observe none of the focus,
