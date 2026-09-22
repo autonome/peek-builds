@@ -20,21 +20,36 @@ const SETUP_JS = join(__dirname, 'setup.js');
 const GITIGNORE_BEGIN = '# >>> peek-mcp-init (auto-managed) >>>';
 const GITIGNORE_END = '# <<< peek-mcp-init (auto-managed) <<<';
 
-// Create a temp dir with a stub db file that findDbPath() will accept.
+// Create a temp dir with a stub db file that findDbPath() will accept, plus an
+// empty home dir inside it. The home lives under projDir, so every existing
+// tmpDirs.push(projDir) already cleans it up.
 function makeTmpProject() {
   const projDir = mkdtempSync(join(tmpdir(), 'peek-setup-'));
   const dbPath = join(projDir, 'db.sqlite');
   writeFileSync(dbPath, '');
-  return { projDir, dbPath };
+  const home = join(projDir, 'home');
+  mkdirSync(home);
+  return { projDir, dbPath, home };
 }
 
+// Every setup.js spawn in this file sets HOME to a temp dir. Refresh mode and
+// the default destination both read and write join(homedir(), '.claude.json'),
+// so a spawn that inherits the invoking shell's HOME finds the developer's
+// real user-scope Peek entry, rewrites it, and breaks their MCP connection.
+function isolatedEnv(home, overrides) {
+  mkdirSync(home, { recursive: true });
+  return { ...process.env, HOME: home, ...overrides };
+}
+
+// The three helpers below derive HOME from projDir rather than taking it as an
+// argument, so every existing caller keeps its signature and none can forget it.
 function runSetup(projDir, dbPath, extraArgs) {
   const args = [SETUP_JS, '--scope', 'testscope', '--mcp-json'];
   if (extraArgs) args.push(...extraArgs);
   try {
     execFileSync(process.execPath, args, {
       cwd: projDir,
-      env: { ...process.env, PEEK_DB_PATH: dbPath },
+      env: isolatedEnv(join(projDir, 'home'), { PEEK_DB_PATH: dbPath }),
     });
   } catch (err) {
     const msg = err.stderr ? err.stderr.toString() : String(err);
@@ -49,7 +64,7 @@ function scaffoldProject(extraArgs) {
   try {
     execFileSync(process.execPath, args, {
       cwd: projDir,
-      env: { ...process.env, PEEK_DB_PATH: dbPath },
+      env: isolatedEnv(join(projDir, 'home'), { PEEK_DB_PATH: dbPath }),
     });
   } catch (err) {
     const msg = err.stderr ? err.stderr.toString() : String(err);
@@ -62,7 +77,7 @@ function scaffoldProject(extraArgs) {
 function runRefresh(projDir, dbPath) {
   execFileSync(process.execPath, [SETUP_JS], {
     cwd: projDir,
-    env: { ...process.env, PEEK_DB_PATH: dbPath },
+    env: isolatedEnv(join(projDir, 'home'), { PEEK_DB_PATH: dbPath }),
   });
 }
 
@@ -679,5 +694,81 @@ describe('setup.js --remote', () => {
 
     const skill = readFileSync(join(projDir, '.claude', 'skills', 'peek.md'), 'utf-8');
     assert.ok(!/localId/.test(skill), 'local scaffold must not carry the remote paragraph');
+  });
+});
+
+describe('setup.test.js helpers — HOME isolation', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Every helper in this file spawns setup.js with its own temp HOME. Refresh
+  // mode and the default destination both read and write
+  // join(homedir(), '.claude.json'), so a helper that inherits the invoking
+  // shell's HOME rewrites the developer's real user-scope Peek entry — a
+  // passing suite that breaks the machine it ran on. This test stands in for
+  // that machine: the sentinel home carries a user-scope remote Peek install,
+  // it is what the helpers would inherit, and nothing may touch it.
+  it('no helper spawn reads or writes the inherited HOME', () => {
+    const sentinelHome = mkdtempSync(join(tmpdir(), 'peek-setup-sentinel-home-'));
+    tmpDirs.push(sentinelHome);
+
+    const sentinelClaudeJson = join(sentinelHome, '.claude.json');
+    writeFileSync(sentinelClaudeJson, JSON.stringify({
+      sentinel: true,
+      mcpServers: {
+        peek: {
+          command: 'node',
+          args: ['/sentinel/server.js'],
+          env: {
+            PEEK_MCP_SCOPE_TAG: 'sentinel',
+            PEEK_MCP_REMOTE_URL: 'https://sentinel.example.invalid',
+          },
+        },
+      },
+    }, null, 2) + '\n');
+    const sentinelBytes = readFileSync(sentinelClaudeJson);
+
+    const savedHome = process.env.HOME;
+    try {
+      process.env.HOME = sentinelHome;
+
+      const fresh = makeTmpProject();
+      tmpDirs.push(fresh.projDir);
+      runSetup(fresh.projDir, fresh.dbPath);
+
+      const scaffolded = scaffoldProject(['--scope', 'isolated', '--writes']);
+      tmpDirs.push(scaffolded.projDir);
+      runRefresh(scaffolded.projDir, scaffolded.dbPath);
+
+      const bare = makeTmpProject();
+      tmpDirs.push(bare.projDir);
+      let threw = false;
+      try {
+        runRefresh(bare.projDir, bare.dbPath);
+      } catch {
+        threw = true;
+      }
+      assert.ok(threw,
+        'a bare refresh must exit non-zero rather than find the install in the inherited HOME');
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+
+    assert.deepStrictEqual(
+      readFileSync(sentinelClaudeJson),
+      sentinelBytes,
+      'the inherited HOME .claude.json must be byte-identical after every helper spawn',
+    );
+    assert.deepStrictEqual(
+      readdirSync(sentinelHome),
+      ['.claude.json'],
+      'no helper spawn may create anything else in the inherited HOME',
+    );
   });
 });
