@@ -368,6 +368,11 @@ let hasFocusedSearchInput = false; // Focus the search field once, after the ini
 // from the list response on every load and kept current by the
 // `tile:state-changed` subscription, so the DevTools button tracks the tile
 // without waiting for a re-render.
+//
+// The seed keys on the feature id and the subscription keys on the lifecycle
+// message's tile id. Those are the same string for every feature that ships
+// today; a feature whose tile id diverged from its feature id would seed and
+// update under two different keys and its button would stop tracking.
 const liveEntriesByFeature = new Map();
 // The DevTools button of each rendered card, so a state change can toggle one
 // button instead of re-rendering the list.
