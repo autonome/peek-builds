@@ -342,4 +342,8 @@ const init = async () => {
   api.pubsub.publish('timer:request-state', {});
 };
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
