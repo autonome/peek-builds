@@ -246,8 +246,14 @@ const init = async () => {
     // tile-spawning FIRST press doesn't run against the bundled defaults (where
     // only item 0 is enabled). See settingsLoaded.
     await settingsLoaded;
+    // Resolve the key against the SAVED settings, not `currentSettings`. An
+    // address edit writes the row and then publishes peeks:settings-changed,
+    // whose reinit() reloads asynchronously; a press landing before that reload
+    // finished opened the old address. See peeks-address-edit-while-open.spec.ts
+    // "hotkey pressed before settings-changed arrives".
+    const saved = await loadSettings();
     const keyNum = String(msg?.args?.[0] ?? '');
-    const item = (currentSettings.items || []).find(i => String(i.keyNum) === keyNum && i.enabled);
+    const item = (saved.items || []).find(i => String(i.keyNum) === keyNum && i.enabled);
     if (!item) {
       console.warn('[ext:peeks] cli:peek-open — no enabled item with keyNum=' + keyNum);
       return;
