@@ -79,7 +79,7 @@ export interface FeatureListEntry extends FeatureRegistryEntry {
   openCommand?: FeatureOpenCommand;
   /**
    * Per-session load failure from `tile-loader.ts`, joined in from
-   * `feature-startup.ts`'s in-memory map — NEVER persisted to
+   * `feature-load-errors.ts`'s in-memory map — NEVER persisted to
    * registry.json (see module header). Absent when the feature loaded
    * cleanly, or hasn't been attempted yet.
    */
