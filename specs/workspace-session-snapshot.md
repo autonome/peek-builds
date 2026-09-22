@@ -1,8 +1,15 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/features/spaces/**, apps/desktop/features/groups/home.js, apps/desktop/main/session.ts, apps/desktop/main/session.test.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, apps/desktop/main/session-save-filter.ts, apps/desktop/main/entry.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/main/tile-api.d.ts, apps/desktop/main/tile-session-enforcement.ts, apps/desktop/main/ipc.ts, apps/desktop/main/main.ts, apps/desktop/tests/desktop/*.spec.ts, docs/design/window-rules.md]
 depends-on: []
 ---
+
+**Disabled 2026-09-22:** the migration this spec describes already landed on
+`main` through direct commits (`1e5b795e`, `058216ab`, `11cfd7cd`) rather than
+the tracked spec-watch flow — `apps/desktop/features/spaces/background.js`
+already calls `restoreSessionSnapshot()`/`saveSessionSnapshot()`, not the old
+per-space save path. Disabled so a spec-watch tick doesn't start it as new work
+against code that already satisfies it.
 
 # Workspaces save and restore through the session snapshot pipeline
 
