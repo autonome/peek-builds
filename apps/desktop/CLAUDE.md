@@ -45,27 +45,12 @@ port for Electron/AppKit vocabulary and fails on a new one. Full rule and its ra
 
 ## Testing
 
-> **ASK BEFORE RUNNING THE FULL GATE, UNLESS `PEEK_GATE_UNATTENDED=1` IS SET.**
+> The full gate (`yarn test:desktop:electron` and its `:bg`/`:x`/`:source` variants, or an
+> equivalent all-runner Playwright run) may be run at any time, on the agent's own
+> initiative — to confirm green before landing, because a handoff says to, or for any other
+> reason. Run it as needed rather than asking first.
 >
-> On a workstation, `yarn test:desktop:electron` (and its `:bg`/`:x`/`:source` variants, or
-> an equivalent all-runner Playwright run) must never be launched on the agent's own
-> initiative — not to "confirm green" before landing, not because a handoff says to, not for
-> any reason. It is expensive: it pins the CPU, makes the machine run hot, and pops up
-> crash/app windows that intrude on whatever the user is doing. State that the change needs
-> the gate, ask, and wait for an explicit yes.
->
-> A dedicated dev server has none of those costs — no one is sitting in front of it, and
-> heat and stray windows are nobody's problem. There, the gate may run whenever a change
-> warrants it, without asking. Set `PEEK_GATE_UNATTENDED=1` in that environment's shell
-> profile to say so. The signal is an explicit environment variable rather than something
-> inferred, because every available inference is wrong somewhere: a Linux workstation on
-> Wayland sets no `DISPLAY`, an agent reaching a laptop over SSH sees no graphical session
-> either, and hostnames do not belong in a repository.
->
-> When the variable is unset, the asking rule applies in full — unset is the safe default,
-> not an unknown to guess at.
->
-> Fast single-test iteration (`yarn test:grep`) never needs to ask, in any environment.
+> Fast single-test iteration (`yarn test:grep`) never needs to ask either, in any environment.
 
 Main-process `console.log` output does not reach a `yarn test:grep` run's captured output. Only
 lines containing the literal `[wm]` do, through `tests/fixtures/desktop-app.ts forwardWmLines`. To
