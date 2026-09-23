@@ -49,15 +49,15 @@
  *
  * Removes:
  *  - every window entry whose URL starts with `peek://hud/` or
- *    `peek://ext/hud/` from the session snapshot (`feature_settings`
- *    featureId='session', key='snapshot'), every per-workspace snapshot row
- *    (`feature_settings` featureId='space-workspaces'), and the closed-window
- *    stack (`feature_settings` featureId='session', key='closed-window-stack');
+ *    `peek://ext/hud/` from all session snapshots (`feature_settings`
+ *    featureId='session', key='snapshot' or `snapshot:<workspaceKey>`), legacy
+ *    per-workspace snapshot rows (`featureId='space-workspaces'`), and the
+ *    closed-window stack (`featureId='session', key='closed-window-stack');
  *  - every `feature_settings` row with featureId in ('hud', 'hud-widget',
  *    'hud-overlay');
  *  - the `manifest_cache` row for featureId='hud';
- *  - any `context_history` row keyed literally by one of those same ids
- *    (defensive — see inventory above).
+ *  - any `context_history` row keyed by, sourced from, or carrying URL
+ *    metadata for one of those HUD ids (defensive — see inventory above).
  *
  * Temporary: delete this file, its registration in `datastore.ts`, and its
  * test once a release has shipped it. Peek item `a9970bfb`.
@@ -73,6 +73,15 @@ const HUD_FEATURE_IDS = ['hud', 'hud-widget', 'hud-overlay'];
 
 function isHudUrl(url: unknown): boolean {
   return typeof url === 'string' && HUD_URL_PREFIXES.some(prefix => url.startsWith(prefix));
+}
+
+function containsHudUrl(value: unknown): boolean {
+  if (isHudUrl(value)) return true;
+  if (Array.isArray(value)) return value.some(containsHudUrl);
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(containsHudUrl);
+  }
+  return false;
 }
 
 /**
@@ -96,20 +105,21 @@ export function migrateHud(database: Db = getDb()): void {
     | undefined;
   if (migrationRecord?.status === 'complete') return;
 
-  // Session snapshot — feature_settings featureId='session', key='snapshot'
-  // (main/session.ts saveSessionSnapshot()).
-  const snapshotRow = database
-    .prepare(`SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`)
-    .get() as { value: string } | undefined;
-  if (snapshotRow?.value) {
+  // Session snapshots — the default workspace uses key='snapshot'; named
+  // workspaces use key='snapshot:<workspaceKey>' (main/session.ts
+  // saveSessionSnapshot()).
+  const sessionSnapshotRows = database
+    .prepare(`SELECT id, value FROM feature_settings WHERE featureId = 'session' AND (key = 'snapshot' OR key LIKE 'snapshot:%')`)
+    .all() as { id: string; value: string }[];
+  for (const row of sessionSnapshotRows) {
     try {
-      const snapshot = JSON.parse(snapshotRow.value);
+      const snapshot = JSON.parse(row.value);
       const { windows, changed } = withoutHudWindows(snapshot.windows);
       if (changed) {
         snapshot.windows = windows;
         database
-          .prepare(`UPDATE feature_settings SET value = ?, updatedAt = ? WHERE featureId = 'session' AND key = 'snapshot'`)
-          .run(JSON.stringify(snapshot), now());
+          .prepare(`UPDATE feature_settings SET value = ?, updatedAt = ? WHERE id = ?`)
+          .run(JSON.stringify(snapshot), now(), row.id);
       }
     } catch {
       // Malformed snapshot JSON — leave it for session.ts's own guards.
@@ -135,8 +145,8 @@ export function migrateHud(database: Db = getDb()): void {
     }
   }
 
-  // Per-workspace snapshot rows — feature_settings featureId='space-workspaces',
-  // one row per space (main/session.ts saveSpaceWorkspaces()).
+  // Legacy per-workspace snapshot rows — retained for profiles created before
+  // named workspaces moved to session/snapshot:<workspaceKey> rows.
   const workspaceRows = database
     .prepare(`SELECT id, value FROM feature_settings WHERE featureId = 'space-workspaces'`)
     .all() as { id: string; value: string }[];
@@ -164,9 +174,26 @@ export function migrateHud(database: Db = getDb()): void {
   // Builtin-feature enabled/disabled entry for 'hud'.
   database.prepare(`DELETE FROM manifest_cache WHERE featureId = ?`).run('hud');
 
-  // Context entries keyed by a HUD tile id — defensive, see header comment.
-  for (const key of HUD_FEATURE_IDS) {
-    database.prepare(`DELETE FROM context_history WHERE key = ?`).run(key);
+  // Context entries keyed by or written by a HUD tile id. HUD itself never
+  // wrote context, so these are defensive. Also remove rows whose structured
+  // metadata identifies a HUD URL (the only persisted URL association the
+  // generic context table can carry; it has no window-to-URL foreign key).
+  const contextRows = database
+    .prepare(`SELECT id, key, source, metadata FROM context_history`)
+    .all() as { id: string; key: string; source: string; metadata: string }[];
+  const deleteContext = database.prepare(`DELETE FROM context_history WHERE id = ?`);
+  for (const row of contextRows) {
+    const hudKey = HUD_FEATURE_IDS.includes(row.key);
+    const hudSource = HUD_FEATURE_IDS.some(id =>
+      row.source === id || row.source === `peek://${id}/background` || row.source.startsWith(`peek://${id}/`)
+    );
+    let hudMetadata = false;
+    try {
+      hudMetadata = containsHudUrl(JSON.parse(row.metadata || '{}'));
+    } catch {
+      // Malformed metadata has no safely identifiable HUD association.
+    }
+    if (hudKey || hudSource || hudMetadata) deleteContext.run(row.id);
   }
 
   database
