@@ -466,4 +466,59 @@ test.describe('workspace membership: every window opened in a workspace belongs 
 
     await runCommand('close space');
   });
+
+  // `closeCurrentWorkspaceWindows()` sweeps every live window whose
+  // `params.role` is in `WORKSPACE_CONTENT_ROLES`, not the windows
+  // `getWindowsInSpace()` reports as carrying this workspace's `mode` tag —
+  // the same distinction the mode-clobber test above exercises through a
+  // real feature's overwrite. This test corrupts the tag directly and
+  // proves the switch still closes the window despite it, which the old
+  // tag-membership check could not have done.
+  test('a window whose workspace mode tag is corrupted or missing is still swept on switch', async () => {
+    const eta = 'lock-eta';
+    const kappa = 'lock-kappa';
+    const etaId = await spaceTagId(eta);
+    const kappaId = await spaceTagId(kappa);
+
+    const openResult = await runCommand('open space', eta);
+    expect(openResult?.success, `open space "${eta}" failed: ${openResult?.error}`).toBe(true);
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(eta, { timeout: 15000 });
+
+    const pageId = await openPageLikeThePalette('https://example.com/lock-eta-corrupted-tag');
+    await expect
+      .poll(async () => (await windowsInSpace(etaId)).includes(pageId), {
+        timeout: 15000,
+        message: 'a page opened from the palette while eta was active does not belong to eta',
+      })
+      .toBe(true);
+
+    // Corrupt the window's membership tag directly — the same raw
+    // `context.set('mode', …)` overwrite an unrelated feature made in the
+    // mode-clobber test above, applied here on purpose rather than as a side
+    // effect of loading an item.
+    await bgWindow.evaluate(async (id: number) => {
+      const api = (window as unknown as { app: any }).app;
+      await api.context.set('mode', 'page', {}, id);
+    }, pageId);
+    const corrupted = await bgWindow.evaluate(async (id: number) => {
+      const api = (window as unknown as { app: any }).app;
+      return await api.context.get('mode', id);
+    }, pageId);
+    expect(
+      corrupted?.data?.value === 'space' && corrupted?.data?.metadata?.spaceId === etaId,
+      'the tag corruption did not take — the window still reads as a member of eta',
+    ).toBe(false);
+
+    const switchResult = await runCommand('switch space', kappa);
+    expect(switchResult?.success, `switch space "${kappa}" failed: ${switchResult?.error}`).toBe(true);
+    await expect
+      .poll(async () => (await liveWindowIds()).includes(pageId), {
+        timeout: 15000,
+        message: 'a window with a corrupted workspace tag survived the switch away from eta',
+      })
+      .toBe(false);
+
+    await runCommand('close space');
+  });
 });

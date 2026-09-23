@@ -472,12 +472,24 @@ async function enterWorkspace(tag, spaceName) {
  *
  * The save is the same `saveSessionSnapshot` the app's own quit/autosave
  * uses, keyed by the outgoing workspace's snapshot key (see
- * `workspaceSnapshotKey()`). Which windows that key saves is decided by the
- * key alone on the main-process side: a named workspace's row holds its own
- * windows and never one pinned across every workspace — that window is not
- * scoped to the workspace being left, so it is left out of the close sweep
- * below too (`docs/design/window-rules.md` "Persistent windows") — while the
- * default workspace's row holds everything on screen.
+ * `workspaceSnapshotKey()`).
+ *
+ * Closing mirrors quit the same way: quit never asks a window to prove it
+ * belongs to the session before destroying it — it closes everything, because
+ * the app's own design guarantees only one workspace's content windows are
+ * ever open at a time. This sweep closes every live content window
+ * (`WORKSPACE_CONTENT_ROLES`, same set `adoptOpenWindowsIntoDefault()` reads)
+ * on that same guarantee, rather than asking `getWindowsInSpace()` which
+ * windows carry this space's `mode` tag — a live tag can lag or be
+ * overwritten by an unrelated feature (e.g. a tile clobbering the shared
+ * `mode` context key), and a window that failed that check before was a
+ * window that silently outlived every future switch. A window pinned across
+ * every workspace (a global HUD window) is the one exception — it is not
+ * scoped to the workspace being left, so it is left out of the sweep
+ * (`docs/design/window-rules.md` "Persistent windows"). A workspace-pinned
+ * window has no such claim and closes normally; it comes back — pinned,
+ * badge intact — from the saved workspace row on re-entry (see
+ * `enterWorkspace()`).
  */
 async function closeCurrentWorkspaceWindows() {
   if (!activeSpaceId) return;
@@ -488,21 +500,15 @@ async function closeCurrentWorkspaceWindows() {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
 
-  // Get all windows in the active space and close them — except one pinned
-  // across every workspace (a global HUD window): it is not scoped to this
-  // space in the first place, so leaving must not sweep it. A
-  // workspace-pinned window has no such claim and closes normally; it comes
-  // back — pinned, badge intact — from the saved workspace row on re-entry
-  // (see enterWorkspace()).
-  const result = await api.context.getWindowsInSpace(activeSpaceId);
-  if (result.success && result.data) {
-    for (const windowId of result.data) {
-      try {
-        const pinResult = await api.context.get('pin', windowId);
-        if (pinResult?.data?.value === 'global') continue;
-        await api.window.close(windowId);
-      } catch {
-      }
+  const listResult = await api.window.list();
+  if (!listResult?.success || !Array.isArray(listResult.windows)) return;
+  for (const w of listResult.windows) {
+    if (!w?.id || !WORKSPACE_CONTENT_ROLES.has(w.params?.role)) continue;
+    try {
+      const pinResult = await api.context.get('pin', w.id);
+      if (pinResult?.data?.value === 'global') continue;
+      await api.window.close(w.id);
+    } catch {
     }
   }
 }
