@@ -169,6 +169,55 @@ test.describe('peek-navbar URL autocomplete @components', () => {
     expect(state.selDir).toBe('backward');
   });
 
+  test('Backspace rejects the ghost and the follow-up query leaves it rejected', async () => {
+    // Settle signal: the component nulls _ghostTimer on every exit path of the
+    // debounced callback, so this waits on a real state transition, not a sleep.
+    // waitForFunction is only the poll across the Playwright/renderer process
+    // boundary — the state itself is set deterministically by the component.
+    const ghostQuerySettled = () =>
+      page.waitForFunction(
+        () => (document.getElementById('navbar') as any)._ghostTimer === null,
+        { timeout: 5000 },
+      );
+
+    await typeUrl('git');
+    const armed = await page.evaluate(() => {
+      const input = (document.getElementById('navbar') as any).inputElement;
+      return { value: input.value, selStart: input.selectionStart, selEnd: input.selectionEnd };
+    });
+    expect(armed.value).toBe('github.com');
+    expect(armed.selStart).toBe(3);
+    expect(armed.selEnd).toBe('github.com'.length);
+
+    // Backspace deletes the natively-selected suffix. The query that follows
+    // must refresh the dropdown without putting the same ghost back.
+    await page.keyboard.press('Backspace');
+    await ghostQuerySettled();
+    const rejected = await page.evaluate(() => {
+      const nb = document.getElementById('navbar') as any;
+      return {
+        value: nb.inputElement.value,
+        selStart: nb.inputElement.selectionStart,
+        selEnd: nb.inputElement.selectionEnd,
+        ghost: !!nb._ghost,
+      };
+    });
+    expect(rejected.value).toBe('git');
+    expect(rejected.selStart).toBe(rejected.selEnd);
+    expect(rejected.ghost).toBe(false);
+
+    // The next inserted character re-arms it through the normal path.
+    await page.keyboard.type('h');
+    await ghostQuerySettled();
+    const rearmed = await page.evaluate(() => {
+      const input = (document.getElementById('navbar') as any).inputElement;
+      return { value: input.value, selStart: input.selectionStart, selEnd: input.selectionEnd };
+    });
+    expect(rearmed.value).toBe('github.com');
+    expect(rearmed.selStart).toBe(4); // typed "gith"
+    expect(rearmed.selEnd).toBe('github.com'.length);
+  });
+
   test('dropdown lists URL-history matches', async () => {
     await typeUrl('git');
     const rows = await page.evaluate(() => {
