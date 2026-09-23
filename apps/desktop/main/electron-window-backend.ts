@@ -39,7 +39,6 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
-import { cmdPanelDiag } from './cmd-panel-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization, hideProvokesFocusReassignment } from './window-kernel-executor.js';
@@ -217,7 +216,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
-      cmdPanelDiag('app did-become-active');
       const askedFor = getKernelExecutor().getState().pendingColdStartFocus;
       kernelAppActivated();
       // Armed only for a window the activation really can put in front.
@@ -226,7 +224,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.activationFocusTarget = askedRecord !== undefined && askedRecord.visible ? askedFor : null;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
-      cmdPanelDiag('app did-resign-active');
       this.activationFocusTarget = null;
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
@@ -982,28 +979,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!win) return;
     try {
       if (win.isDestroyed()) return;
-      cmdPanelDiag(
-        `setDesktopMembership id=${id} membership=${membership} step=visible-true appActive=${getAppActive()}`,
-      );
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
       if (membership === 'anchor' && !win.isDestroyed()) {
-        cmdPanelDiag(
-          `setDesktopMembership id=${id} membership=${membership} step=visible-false-anchor appActive=${getAppActive()}`,
-        );
         win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
-      }
-      if (!win.isDestroyed()) {
-        // One-shot: catch whatever focus/activation event lands on this window next,
-        // to see whether/when anything re-anchors it after the fact. `NativeWindow`
-        // only exposes `on`, so the handler removes itself on first fire.
-        let firedOnce = false;
-        win.on('focus', () => {
-          if (firedOnce) return;
-          firedOnce = true;
-          cmdPanelDiag(
-            `post-setDesktopMembership win-focus id=${id} membership=${membership} appActive=${getAppActive()}`,
-          );
-        });
       }
     } catch {
       /* Spaces write against a torn-down window — the machine already recorded intent */

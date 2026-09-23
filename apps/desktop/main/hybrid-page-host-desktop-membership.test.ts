@@ -75,11 +75,7 @@ describe('hybrid page-host content windows get macOS Spaces/desktop-membership a
       'through kernelSetDesktopMembership() so window-kernel.ts stays the single decider',
     );
     // Matches only the real function-call statement (first arg followed by
-    // a comma, then the second arg) — the cmdPanelDiag() log line just above
-    // it in source contains the literal text
-    // "kernelSetDesktopMembership(hybrid)" as a human-readable label inside
-    // a template string, which has no comma before its closing paren and so
-    // does not match this pattern.
+    // a comma, then the second arg).
     const callSite = block.match(/kernelSetDesktopMembership\(\s*(\w+)\s*,\s*[^)]*\)/);
     assert.ok(callSite, 'kernelSetDesktopMembership(id, membership) call statement not found');
     // Must be keyed on the window's own machine-minted registration id
