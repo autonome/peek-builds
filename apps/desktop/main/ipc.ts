@@ -110,6 +110,7 @@ import {
 } from './window-kernel-dispatch.js';
 import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
+import { cmdPanelDiag } from './cmd-panel-diag.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -1064,6 +1065,9 @@ function assembleHybridPageHost(
   // BEFORE the caller's `loadURL`/show, matching the anchor pair's
   // precedes-load/show requirement.
   if (!isHeadless()) {
+    cmdPanelDiag(
+      `kernelSetDesktopMembership(hybrid) role=${role} membership=${desktopMembershipForRole(role)} windowId=${hostMachineId} url=${url}`,
+    );
     kernelSetDesktopMembership(hostMachineId, desktopMembershipForRole(role));
   }
 
@@ -3676,6 +3680,9 @@ export function registerWindowHandlers(): void {
         // directly (`desktopMembershipForRole`, `izui-roles.ts`): every role
         // wants to either follow the user or stay anchored regardless of
         // platform.
+        cmdPanelDiag(
+          `kernelSetDesktopMembership role=${role} membership=${desktopMembershipForRole(role)} windowId=${machineWindowId} url=${url}`,
+        );
         kernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role));
       }
 
