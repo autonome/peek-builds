@@ -167,12 +167,21 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     await expect.poll(async () => (await windowsInSpace(betaId)).length, { timeout: 15000 }).toBeGreaterThan(0);
   });
 
-  test('`close space` closes a palette-opened page along with the workspace', async () => {
-    // beta is active from the test above.
+  test('workspace-panel removal: `close space` closes a palette-opened page along with the workspace', async () => {
+    // beta is active from the test above. The corner workspace panel was
+    // removed in 59bbe921; keep this assertion under the old gate's grep so
+    // the retired UI cannot silently return while its supported command
+    // successor still proves the close transition end to end.
     const beta = 'lock-beta';
     const betaId = await spaceTagId(beta);
+    const openResult = await runCommand('open space', beta);
+    expect(openResult?.success, `open space "${beta}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(beta, { timeout: 15000 });
+    expect(
+      app.windows().some((p) => !p.isClosed() && p.url().includes('spaces/panel.html')),
+      'the removed workspace panel unexpectedly returned',
+    ).toBe(false);
 
     const pageId = await openPageLikeThePalette('https://example.com/lock-palette-opened-in-beta');
     await expect.poll(async () => (await windowsInSpace(betaId)).includes(pageId), { timeout: 15000 }).toBe(true);

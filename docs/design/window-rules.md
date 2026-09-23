@@ -316,8 +316,8 @@ workspace being entered, never the one being left.
 Two kinds of window take no default, on purpose:
 
 - **Not content** — satellites (palette, switcher, overlay), quick-views (peeks, slides), and
-  feature chrome (the screen border, the workspace panel). They belong to no workspace and are
-  never swept by one; the panel and border are closed by the feature itself.
+  feature chrome (the screen border). They belong to no workspace and are never swept by one;
+  the border is closed by the feature itself.
 - **Not on screen** — a window born unshown (`show: false`): the pre-warmed settings singleton, a
   helper page, a snapshot row mid-restore. It is not something the user has open in this
   workspace; sweeping it, or saving it as workspace content, would be wrong. A restored row
