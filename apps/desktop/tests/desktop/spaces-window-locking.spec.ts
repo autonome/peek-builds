@@ -521,4 +521,76 @@ test.describe('workspace membership: every window opened in a workspace belongs 
 
     await runCommand('close space');
   });
+
+  // The Esc window switcher (`peek://windows/windows.html` `loadWindows()`)
+  // calls this SAME `api.window.list({ includeInternal: true })`, and the
+  // main-process handler it resolves to (`tile:window:list`,
+  // `main/tile-ipc.ts`) applies no space/workspace filtering of its own — it
+  // just lists whatever is still alive. Before this file's sweep fix that
+  // meant the switcher could show a window from a workspace already left;
+  // this proves the sweep is enough on its own — with every content window
+  // from the outgoing workspace closed on switch, there is nothing left for
+  // the switcher to leak.
+  test('the Esc window switcher list never carries a window from a workspace already left', async () => {
+    const mu = 'lock-mu';
+    const nu = 'lock-nu';
+    await spaceTagId(mu);
+    await spaceTagId(nu);
+
+    const openResult = await runCommand('open space', mu);
+    expect(openResult?.success, `open space "${mu}" failed: ${openResult?.error}`).toBe(true);
+    const borderPage = await app.getWindow('spaces/border.html', 15000);
+    await expect(borderPage.locator('#label')).toHaveText(mu, { timeout: 15000 });
+
+    const muPageId = await openPageLikeThePalette('https://example.com/lock-mu-switcher-page');
+    const before = new Set(await liveWindowIds());
+    const editorResult = await runCommand('editor');
+    expect(editorResult, `"editor" command failed: ${JSON.stringify(editorResult)}`).not.toHaveProperty('error');
+    let muEditorId: number | null = null;
+    await expect
+      .poll(
+        async () => {
+          const now = await liveWindowIds();
+          muEditorId = now.find((id) => !before.has(id)) ?? null;
+          return muEditorId !== null;
+        },
+        { timeout: 15000, message: 'the "editor" command never opened a new window in mu' },
+      )
+      .toBe(true);
+    const muSecondPageId = await openPageLikeThePalette('https://example.com/lock-mu-switcher-second');
+
+    const muWindowIds = [muPageId, muEditorId as number, muSecondPageId];
+    for (const id of muWindowIds) {
+      await expect.poll(async () => (await liveWindowIds()).includes(id), { timeout: 15000 }).toBe(true);
+    }
+
+    const switchResult = await runCommand('switch space', nu);
+    expect(switchResult?.success, `switch space "${nu}" failed: ${switchResult?.error}`).toBe(true);
+    await expect
+      .poll(
+        async () => {
+          const ids = await liveWindowIds();
+          return muWindowIds.some((id) => ids.includes(id));
+        },
+        { timeout: 15000, message: 'a window opened in mu survived the switch to nu' },
+      )
+      .toBe(false);
+
+    await openPageLikeThePalette('https://example.com/lock-nu-switcher-page');
+
+    // The exact call `windows.js loadWindows()` makes.
+    const switcherList = await bgWindow.evaluate(
+      async () => await (window as unknown as { app: any }).app.window.list({ includeInternal: true }),
+    );
+    expect(switcherList?.success).toBe(true);
+    const switcherIds = ((switcherList?.windows ?? []) as Array<{ id: number }>).map((w) => w.id);
+    for (const id of muWindowIds) {
+      expect(
+        switcherIds.includes(id),
+        `the Esc switcher's window list still carries window ${id} from "${mu}" after switching to "${nu}"`,
+      ).toBe(false);
+    }
+
+    await runCommand('close space');
+  });
 });
