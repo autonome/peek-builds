@@ -13,6 +13,11 @@
  * actually shows with another app frontmost are unobservable headless, so the
  * assertions read the kernel's own record — `State` and the applied-transition
  * timeline (`window-kernel-executor.ts timelineForTests`).
+ *
+ * This runs on macOS only — off darwin the app counts as active the moment any
+ * window takes OS focus, so the inactive-app premise cannot hold; Linux keeps
+ * its coverage of the decision through the `window-kernel-executor.ts
+ * planRaise()` unit tests named above.
  */
 
 import * as http from 'http';
@@ -48,6 +53,18 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
   });
 
   test('the kernel keeps the page window on screen and never hides the app', async () => {
+    // Off darwin `main/main.ts` feeds `kernelAppActivated()` from
+    // `browser-window-focus`, so any Peek window taking OS focus marks the app
+    // active — under Xvfb/openbox the palette is focused the moment it maps,
+    // which flips `appActive` back to true right after
+    // `setAppFocusedForTest(false)`. Key-without-activation is a macOS-only
+    // model (docs/design/window-rules.md G1) and is not observable elsewhere,
+    // and every assertion below assumes the app stayed inactive.
+    test.skip(
+      process.platform !== 'darwin',
+      'key-without-activation is macOS-only; off darwin browser-window-focus marks the app active',
+    );
+
     const url = `http://127.0.0.1:${serverPort}/`;
 
     // The app is not frontmost: the same `AppResigned` the backend feeds from

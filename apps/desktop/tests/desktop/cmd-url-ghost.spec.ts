@@ -34,6 +34,21 @@ async function waitForPanelReady(cmdWindow: Page): Promise<void> {
   );
 }
 
+/**
+ * Every panel open here passes `key`, which is what makes main/ipc.ts
+ * windowOpenHandler reuse the existing (keepLive-hidden) panel instead of
+ * building a second one. Without it each open creates a fresh window while
+ * getWindow keeps returning the first, stale, hidden panel. Assert the reuse
+ * directly at each open, so a regression fails here with a clear message
+ * instead of as an eight-second ghost-state timeout further down the test.
+ */
+async function expectSinglePanel(app: DesktopApp): Promise<void> {
+  const panels = app
+    .windows()
+    .filter((page) => !page.isClosed() && page.url().includes('cmd/panel.html'));
+  expect(panels.length, 'exactly one live cmd panel window (keyed reuse)').toBe(1);
+}
+
 test.describe('cmd URL ghost-text completion @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
@@ -100,6 +115,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -116,6 +132,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
 
     // Type the prefix — should trigger URL ghost after debounce
     await cmdWindow.fill('input', TYPE_PREFIX);
@@ -182,6 +199,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
   test('titled history URL still shows ghost and is not mirrored into the command registry', async () => {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -198,6 +216,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
 
     // Type the prefix that the seeded title contains — should still trigger the ghost.
@@ -263,6 +282,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
   test('pressing Tab expands the ghost through granularity stop-points', async () => {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -279,6 +299,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
 
     // Type prefix and wait for the ghost suggestion to populate.
@@ -373,6 +394,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -389,6 +411,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
 
     // Type prefix and wait for ghost suggestion to be populated in state
@@ -470,6 +493,7 @@ test.describe('cmd URL history Visited lane @desktop', () => {
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -486,6 +510,7 @@ test.describe('cmd URL history Visited lane @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
@@ -790,6 +815,7 @@ test.describe('cmd URL history substring match @desktop', () => {
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -806,6 +832,7 @@ test.describe('cmd URL history substring match @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
@@ -939,6 +966,7 @@ test.describe('cmd URL history substring match, auto-opened lane @desktop', () =
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -955,6 +983,7 @@ test.describe('cmd URL history substring match, auto-opened lane @desktop', () =
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
@@ -1109,6 +1138,7 @@ test.describe('cmd URL ghost Camp-1 selected-text reject @desktop', () => {
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -1125,6 +1155,7 @@ test.describe('cmd URL ghost Camp-1 selected-text reject @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
@@ -1243,6 +1274,7 @@ test.describe('cmd URL ghost trailing space @desktop', () => {
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -1259,6 +1291,7 @@ test.describe('cmd URL ghost trailing space @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
@@ -1350,6 +1383,7 @@ test.describe('cmd URL loopback default scheme @desktop', () => {
   async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
+        key: 'peek://cmd/panel.html',
         modal: true,
         width: 600,
         height: 400,
@@ -1366,6 +1400,7 @@ test.describe('cmd URL loopback default scheme @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
+    await expectSinglePanel(app);
     await waitForPanelReady(cmdWindow);
     return { cmdWindow, panelId: openResult.id };
   }
