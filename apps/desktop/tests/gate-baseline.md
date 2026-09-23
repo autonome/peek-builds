@@ -603,3 +603,50 @@ the slide opening that address 22 seconds later. `PeekInput._handleChange()` now
 the inner input's `change` as a composed event. The two new desktop specs drive the field
 with real keyboard input and blur; the pre-existing options-save spec dispatched a
 synthetic composed `change`, which is why it passed on the broken code.
+
+### Twelfth macOS gate run — 2026-09-23
+
+`yarn test:desktop:electron:bg` on `track/spaces-switch-cleanup`, macOS arm64, packaged. Exit 1.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3311 | 0 | — |
+| node unit | 774 | 0 | — |
+| desktop | 476 | 1 | 21 |
+| desktop-serial | 35 | 5 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Six failures total, all in the `desktop` and `desktop-serial` Playwright projects; main-process unit
+and node unit are clean. Both unit runners were separately re-verified at 3311/3311 and 774/774
+passing with 0 failures, run twice on this track — once before rebasing onto `main`, once after.
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `device-settings.spec.ts:166` | Device Settings Panel — lists, renames, revokes (including itself), mints a code and enrols with it | pre-existing — fails identically in isolation (`yarn test:grep`), unrelated feature area (device enrolment dialog text assertion: `Expected substring: "the device you are using right now" / Received string: ""`) |
+| `desktop-serial/cmd-url-window-reuse.spec.ts:82` | opening an already-open URL via cmd reuses the window instead of duplicating | pre-existing — reproducible (not flaky) on a second isolated run against the same packaged build; times out waiting for the `window:opened` pubsub event after a cmd-panel-driven URL open, though the window itself is created (`open-registry-set ... role=content`) |
+| `desktop-serial/external-url.spec.ts:25` | cmd panel detects and opens domain without protocol (youtube.com) | pre-existing — same `window:opened`-wait timeout pattern as the reuse test above |
+| `desktop-serial/external-url.spec.ts:89` | cmd panel opens URL with http protocol | pre-existing — same pattern |
+| `desktop-serial/external-url.spec.ts:164` | cmd panel opens URL with https protocol | pre-existing — same pattern |
+| `desktop-serial/external-url.spec.ts:227` | cmd panel opens localhost URLs | pre-existing — same pattern |
+
+This track's diff touches only `apps/desktop/features/spaces/background.js`
+`closeCurrentWorkspaceWindows()`, `apps/desktop/features/editor/home.js`, and the spec files added
+alongside them — `git diff --stat main..track/spaces-switch-cleanup` shows nothing in `main/ipc.ts`,
+the cmd UI, or the window-open/`window:opened`-publish path. The shared root cause across the four
+`external-url` failures and the one `cmd-url-window-reuse` failure is the cmd panel's "type a URL,
+press Enter" open path never firing, or never matching, the `window:opened` listener the tests wait
+on — a mechanism entirely outside this diff. The verdict also rests on static reachability:
+`closeCurrentWorkspaceWindows()` is only invoked from `openSpace()`, a user-triggered workspace
+switch, and none of these five tests trigger one.
+
+One thing is NOT established and should not be read as settled:
+
+- **None of the five cmd-panel failures have been A/B'd against `main` on the same packaged build.**
+  The verdict rests on static reachability plus confirmed non-flaky reproducibility (a second
+  isolated run against the same build reproduces all five identically), not on reverting this
+  track's changes and re-running the identical specs against the identical binary — which is what
+  would close the question outright.
+
+This track's own `workspace membership` (8 tests) and `spaces ui activation` (5 tests) describe
+blocks were green throughout the gate — neither appears in the failing set above.
