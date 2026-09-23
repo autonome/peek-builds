@@ -12,6 +12,7 @@ import { headlessActivationPolicy } from './headless-policy.js';
 import { app, BaseWindow, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
+import { readBuildInfo, formatBuildInfoLogLine, UNIDENTIFIED_BUILD_LOG_LINE } from './build-info.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -861,6 +862,16 @@ if (profileIsLegit(process.env.PROFILE)) {
 }
 
 DEBUG && console.log('PROFILE', PROFILE, app.isPackaged ? (isDevPackagedBuild() ? '(dev-packaged)' : '(packaged)') : '(source)');
+
+// Which source this bundle was built from. Only a packaged app carries the
+// stamp (scripts/electron-after-pack.cjs writes it), and the line is logged
+// unconditionally rather than behind DEBUG — the whole point is that a build
+// in someone's hands can say what it is. A packaged app with no readable
+// stamp says so instead of staying silent.
+if (app.isPackaged) {
+  const buildInfo = readBuildInfo(process.resourcesPath);
+  console.log(buildInfo ? formatBuildInfoLogLine(buildInfo) : UNIDENTIFIED_BUILD_LOG_LINE);
+}
 
 // Set profile in backend config
 setProfile(PROFILE);
