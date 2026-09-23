@@ -1808,6 +1808,10 @@ const addTag = async (tag) => {
     // Re-render detail view tags
     renderCurrentTags(tags);
     renderAvailableTags(tags);
+
+    // Re-render sidebar so a tag's first use (or an updated count) shows
+    // up immediately, as removeTag() already does.
+    renderTagSidebar();
   } else {
     console.error('[tags] Failed to add tag:', result.error);
   }
@@ -1858,15 +1862,13 @@ const addNewTag = async (tagName) => {
     state.tags.unshift(tag); // Add to beginning (most recent)
   }
 
-  // Add tag to item
+  // Add tag to item — also re-renders the sidebar now, so no separate
+  // renderTagSidebar() call is needed here.
   await addTag(tag);
 
   // Clear input — addTag's renderAvailableTags re-runs without a query
   // because we wipe the input value here before the input event fires.
   document.querySelector('.new-tag-input').value = '';
-
-  // Re-render sidebar to show new tag
-  renderTagSidebar();
 };
 
 /**
