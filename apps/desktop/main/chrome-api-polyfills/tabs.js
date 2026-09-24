@@ -26,6 +26,7 @@
 
 import { webContents as _wc, shell as _shell } from 'electron';
 import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
+import { openExternalIfWebUrl } from './_external-url.js';
 
 const API = 'tabs';
 const DEBUG = !!process.env.DEBUG;
@@ -42,6 +43,20 @@ function getExtensionId(event) {
   const url = event.sender.getURL();
   const match = url.match(/^chrome-extension:\/\/([^/]+)/);
   return match ? match[1] : 'unknown';
+}
+
+/**
+ * The scheme of a URL, for a log line that must not carry the rest of it.
+ * @param {unknown} url
+ * @returns {string}
+ */
+function schemeOf(url) {
+  if (typeof url !== 'string') return 'none';
+  try {
+    return new URL(url).protocol;
+  } catch {
+    return 'unparsable';
+  }
 }
 
 /**
@@ -145,14 +160,20 @@ export function setupMainProcess(session, { ipcMain }) {
   // In the BG SW context, chrome.tabs.create should open a new Peek page.
   // We open it via shell/default browser through a main-process IPC relay.
   // The popup-context version is handled by peek-permissions.js (window.open).
-  registerHandler(ipcMain, API, 'create', async (_event, createProperties) => {
+  registerHandler(ipcMain, API, 'create', async (event, createProperties) => {
     const url = (createProperties && createProperties.url) || 'about:blank';
     DEBUG && console.log(`[tabs] create: opening ${url}`);
-    // Use Electron's shell.openExternal to route HTTP(S) URLs to Peek.
+    // Only http(s) reaches the OS. Anything else — a custom protocol that would
+    // re-enter Peek outside the tile path, file:, javascript:, data:, and the
+    // 'about:blank' default, which has nothing to open — is refused.
     // chrome.tabs.create in an extension BG SW is typically used for OAuth
     // fork flows and similar redirects that should open as Peek page tiles.
     try {
-      await _shell.openExternal(url);
+      if (!openExternalIfWebUrl(_shell, url)) {
+        console.warn(
+          `[tabs] create: refused non-web URL from extension ${getExtensionId(event)} (scheme: ${schemeOf(url)})`
+        );
+      }
     } catch (err) {
       DEBUG && console.warn('[tabs] create: openExternal failed:', err);
     }
