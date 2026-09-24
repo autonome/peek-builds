@@ -520,10 +520,19 @@ const SIDE_TASK_REOPEN_STRIP = new Set([
  * close its non-activating window and open the same page again as an ordinary
  * window at the same bounds, shown without focus. A window built as a panel
  * can neither activate the app nor stay on one desktop, and Electron fixes
- * both at construction, so the replacement is a new window. The open waits
- * for the old host's terminal `close` so a keyed page never dedups against
- * the window being torn down. Driven by the kernel's `ReopenAsOrdinaryWindow`
- * effect through the Electron backend.
+ * both at construction, so the replacement is a new window.
+ *
+ * The replacement opens BEFORE the old host closes. The kernel registers a
+ * fresh window directly under the key window, so with the panel host still
+ * key the replacement is the topmost remaining window when the host goes:
+ * the successor raise the close provokes (window-rules.md F7, the app-active
+ * case of G13 step 5e) lands on the reopened page, not on whatever the app
+ * had in front before the side task. When key was already lost (the click-
+ * away case) the close provokes no raise and the replacement, registered on
+ * top, sits behind the other app. The open carries `trackingSource: 'reopen'`
+ * so the URL dedup in `windowOpenHandler` does not hand back the host being
+ * torn down. Driven by the kernel's `ReopenAsOrdinaryWindow` effect through
+ * the Electron backend.
  */
 export function reopenWindowAsOrdinary(osWindowId: number): void {
   const info = getWindowInfo(osWindowId);
@@ -553,14 +562,20 @@ export function reopenWindowAsOrdinary(osWindowId: number): void {
   options.show = false;
   // The page was already visited when the side task opened it.
   options.skipTracking = true;
+  // Names this open as the reopen so the URL dedup in `windowOpenHandler`
+  // does not reuse the host that is about to close.
+  options.trackingSource = 'reopen';
   const source = info.source;
   wmLog('side-task-reopen', { id: osWindowId, url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
-  hybrid.baseWin.once('close', () => {
-    void invokeWindowOpen!({ sender: bgWin.webContents }, { source, url, options }).catch((err) => {
+  const open = invokeWindowOpen({ sender: bgWin.webContents }, { source, url, options });
+  void open
+    .catch((err) => {
       console.error('[side-task-reopen] invokeWindowOpen failed:', err);
+    })
+    .then(() => closeOrHideWindow(osWindowId))
+    .catch((err) => {
+      console.error('[side-task-reopen] close of the panel host failed:', err);
     });
-  });
-  void closeOrHideWindow(osWindowId);
 }
 
 /**

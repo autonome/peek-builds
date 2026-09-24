@@ -96,8 +96,12 @@ inactive, or the app becomes active, the kernel replaces it
 (`window-kernel.ts isSideTask()`, effect `ReopenAsOrdinaryWindow`) with an
 ordinary window showing the same page at the same bounds — activating,
 anchored to the desktop the user is on, shown without focus
-(`ipc.ts reopenWindowAsOrdinary()`). The page reloads in the new window; scroll,
-form input and back history do not survive the reopen.
+(`ipc.ts reopenWindowAsOrdinary()`). The replacement opens before the old
+window closes: a fresh window registers directly under the key window, so when
+the side task ended because the app activated (step 5e) the close's successor
+raise (F7) lands on the replacement rather than on whatever the app had in
+front before. The page reloads in the new window; scroll, form input and back
+history do not survive the reopen.
 
 A page opened while the app is inactive with nobody typing into the app — a
 command-line open — is not a side task. It takes no key; it is held above other

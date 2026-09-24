@@ -212,6 +212,24 @@ export class WindowKernelExecutor {
     } finally {
       this.pumping = false;
     }
+    this.runEffectsAfterBatch();
+  }
+
+  // Effects that come back into the kernel with commands of their own (the
+  // reopen opens a window through the ordinary open path, which registers it
+  // and then asks for its show). A command is decided against the state of the
+  // moment it is issued, while an event raised mid-batch only lands once the
+  // batch reaches it — so such an effect run inside the batch would have its
+  // second command judged before its first one had landed. They wait here
+  // until the batch has drained, and each then re-enters the pump as a batch
+  // of its own.
+  private readonly effectsAfterBatch: Effect[] = [];
+
+  private runEffectsAfterBatch(): void {
+    let effect: Effect | undefined;
+    while ((effect = this.effectsAfterBatch.shift()) !== undefined) {
+      this.runEffect(effect);
+    }
   }
 
   private apply(event: Event): void {
@@ -390,6 +408,10 @@ export class WindowKernelExecutor {
     for (const effect of effects) {
       if (effect.type === 'SetStacking') {
         stackingEffects.push(effect);
+        continue;
+      }
+      if (effect.type === 'ReopenAsOrdinaryWindow') {
+        this.effectsAfterBatch.push(effect);
         continue;
       }
       this.runEffect(effect);
