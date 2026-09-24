@@ -216,7 +216,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
-      wmLog('diag-app-event', { event: 'did-become-active' });
       const askedFor = getKernelExecutor().getState().pendingColdStartFocus;
       kernelAppActivated();
       // Armed only for a window the activation really can put in front.
@@ -225,7 +224,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.activationFocusTarget = askedRecord !== undefined && askedRecord.visible ? askedFor : null;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
-      wmLog('diag-app-event', { event: 'did-resign-active' });
       this.activationFocusTarget = null;
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
@@ -238,10 +236,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         const coordinator = getIzuiCoordinator();
         if (coordinator.isWithinOverlayExitCooldown() || coordinator.isWithinOverlayEntryCooldown()) {
           DEBUG && console.log('[wm-backend] app-resign settle suppressed (izui overlay cooldown)');
-          wmLog('diag-app-resign-settle', { suppressed: true });
           return;
         }
-        wmLog('diag-app-resign-settle', { suppressed: false });
         kernelAppResignSettled();
       }, APP_RESIGN_SETTLE_MS);
     });
@@ -560,11 +556,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   private reorderToTop(id: WindowId, win: NativeWindow): void {
     try {
       if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
-      wmLog('diag-focus-call', {
-        method: 'win.moveTop',
-        id,
-        stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-      });
       win.moveTop();
     } catch {
       /* moveTop unsupported on some platforms, or torn down mid-raise — a no-op */
@@ -594,11 +585,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // raise of a non-panel.
     if (intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin') {
       try {
-        wmLog('diag-focus-call', {
-          method: 'app.focus',
-          id,
-          stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-        });
         app.focus({ steal: true });
       } catch {
         /* activation refused by the OS — the window calls below still run */
@@ -612,11 +598,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           this.reorderToTop(id, win);
           if (plan === 'take-key' && !isHeadless()) {
             try {
-              wmLog('diag-focus-call', {
-                method: 'win.focus',
-                id,
-                stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-              });
               win.focus();
             } catch {
               /* window gone mid-raise */
@@ -630,11 +611,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           this.armSelfCausedFocus(id, opSeq);
-          wmLog('diag-focus-call', {
-            method: 'rendererWC.focus',
-            id,
-            stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-          });
           rendererWC.focus();
         } catch {
           /* wc gone mid-raise */
@@ -650,11 +626,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.reorderToTop(id, win);
         if (plan === 'take-key' && !isHeadless()) {
           try {
-            wmLog('diag-focus-call', {
-              method: 'win.focus',
-              id,
-              stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-            });
             win.focus();
           } catch {
             /* window gone mid-raise */
@@ -666,11 +637,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         if (!isHeadless()) {
           try {
             this.armSelfCausedFocus(id, opSeq);
-            wmLog('diag-focus-call', {
-              method: 'win.focus',
-              id,
-              stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-            });
             win.focus();
           } catch {
             /* window gone mid-raise */
@@ -685,11 +651,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const wc = this.windows.get(id)?.rendererWC;
     if (!wc || wc.isDestroyed()) return;
     this.armSelfCausedFocus(id, opSeq);
-    wmLog('diag-focus-call', {
-      method: 'wc.focus',
-      id,
-      stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-    });
     wc.focus();
   }
 
@@ -920,11 +881,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // branch: `showInactive()` below takes no focus at all (see
         // `pendingSelfCausedFocus`).
         this.armSelfCausedFocus(id, opSeq);
-        wmLog('diag-focus-call', {
-          method: 'win.show',
-          id,
-          stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-        });
         win.show();
       } catch {
         /* show unsupported in some envs */
@@ -996,14 +952,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (win.isDestroyed()) return;
       if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
       if (level === 'pinned') win.setAlwaysOnTop(true, 'floating');
-      else {
-        wmLog('diag-focus-call', {
-          method: 'win.moveTop',
-          id,
-          stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-        });
-        win.moveTop();
-      }
+      else win.moveTop();
     } catch {
       /* moveTop/setAlwaysOnTop unsupported on some platforms / torn-down window — a no-op */
     }
@@ -1025,11 +974,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // `false`, with different options — because a bare `false` call leaves the
   // window on whichever Space it was created from, not the user's active one.
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
-    wmLog('diag-setDesktopMembership', {
-      id,
-      membership,
-      stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
-    });
     if (process.platform !== 'darwin') return;
     const win = this.windows.get(id)?.win;
     if (!win) return;
