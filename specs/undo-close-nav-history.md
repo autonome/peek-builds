@@ -1,7 +1,7 @@
 ---
 enabled: true
 touches: [apps/desktop/main/main.ts, apps/desktop/main/ipc.ts, apps/desktop/tests/desktop/undo-close-nav-history.spec.ts]
-depends-on: [nav-history-model]
+depends-on: [nav-history-model, remove-find-window-by-url]
 ---
 
 # Undo-close keeps a page-host window's back/forward trail
