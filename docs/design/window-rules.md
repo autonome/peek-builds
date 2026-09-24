@@ -48,7 +48,7 @@ Each term is followed by the name the code uses for it.
 
 ## Gestures — what the user does and must see
 
-- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. A page asked for from a panel that holds key over another app is a side task: it is built non-activating, takes key and content focus at once, and the app stays in the background. An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward either, and the other app keeps key. Both are held above other apps until the app activates, which returns every held window to ordinary stacking and puts the most recently held or set-aside one in front. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
+- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background. A page asked for from that panel is an ordinary application window: its user-intent raise activates the app and gives the page key and content focus at once. An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward, and the other app keeps key. It is held above other apps until the app activates, which returns it to ordinary stacking. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
 - **G2 escape-is-one-change.** Escape does exactly one thing per press: content that consumes it changes only that content; otherwise the one key window hides or closes; with nothing to hide, the Escape fallback window opens.
 - **G3 hide-returns.** When a transient hides, key returns to its prior window: a window of the app if the app was active when it opened, the other app if not. No window that was not in use comes forward.
 - **G4 transient-opens-every-time.** A transient opened over an application window shows above that window and key, on every open, and stays until dismissed or the app deactivates.
@@ -63,30 +63,29 @@ Each term is followed by the name the code uses for it.
 
 ### Opening a page from another app: which app holds OS focus at each step
 
-The purpose of G1 is that a page can be opened as a side task without leaving
-the task in the other app. The page has everything a frontmost window has —
-key, content focus, the close shortcut, Escape — except that the app never
-becomes the active app. Ending the side task leaves the user exactly where
-they were before pressing the panel hotkey. The other app stays the active app
-at every step.
+G1 lets the panel itself take typing without leaving the task in the other app.
+Opening a page from it crosses into an ordinary application window: the page's
+raise carries user intent, activates Peek, and gives the page key and content
+focus without another click. From then on it follows ordinary window and app
+focus rules.
 
 | Step | The user | Active app | Typing goes to | On screen |
 |---|---|---|---|---|
 | 1 | works in the other app | other app | other app | — |
 | 2 | presses the panel hotkey | other app | the panel (user intent, F6) | panel above the other app |
-| 3 | enters a URL | other app | the page, at once and without a click | panel gone; page above the other app, key and content-focused |
-| 4 | reads, types, scrolls in the page | other app | the page | unchanged |
-| 5a | presses Escape | other app | other app | page is set aside: it leaves the screen, stays open, and comes back on screen when the app next becomes active (`window-escape.ts SIDE_TASK_ESCAPE`, `'hide'`; `'close'` ends it instead) |
-| 5b | presses the close shortcut | other app | other app | page closes |
-| 5c | clicks the other app | other app | other app | page stays on screen, no longer key |
+| 3 | enters a URL | Peek | the page, at once and without a click | panel gone; page is key and content-focused on the current desktop |
+| 4 | reads, types, scrolls in the page | Peek | the page | unchanged |
+| 5a | presses Escape or the close shortcut | Peek | Peek's next eligible window, if any | the page follows the ordinary Escape or close rule |
+| 5b | clicks the other app | other app | other app | the page remains an ordinary window on the desktop where it opened |
+| 5c | switches desktops | whichever app is active there | that app | the page stays on the desktop where it opened and does not follow the user |
 
-A page is a side task (`izui-roles.ts pageOpensAsSideTask()`) when it is opened
-to show while one of the app's panels holds key over another app — the user is
-already typing into the app, so handing key to the page takes nothing from the
-other app. Only a non-activating window can hold key in an inactive app, and
-that is fixed when a window is built, so a side task is built as a panel and
-stays one: clicking it never brings the app forward; the app comes forward
-only through the app switcher or the dock.
+`izui-roles.ts pageOpensAsSideTask()` identifies this open only so the raise is
+marked as user-intended; it does not declare a special window type. Electron
+pins a panel window to every desktop at construction, and
+`setVisibleOnAllWorkspaces(false)` cannot clear that membership. A
+non-activating side-task page confined to one desktop is therefore not
+buildable in Electron without a native addon, so the page is an ordinary,
+activating window instead.
 
 A page opened while the app is inactive with nobody typing into the app — a
 command-line open — is not a side task. It takes no key; it is held above other
@@ -97,14 +96,11 @@ is inactive provokes no platform-chosen focus, so none is expected after it
 left standing swallows the click, leaves no key window, and sends the next
 Escape to the Escape fallback window.
 
-Limits and checking notes for a side task:
+Checking notes for opens while another app is active:
 
-- It cannot go fullscreen. `ipc.ts createHybridHostBaseWindow()` sets
-  `fullscreenable: false` for every panel-type host, and a fullscreen
-  non-activating panel is untested on macOS.
 - A content page that came up in the background as the app's only window still
   closes on Escape (`window-escape.ts escapeClosePolicy()`,
-  `openedInBackground`); `SIDE_TASK_ESCAPE` does not reach that case.
+  `openedInBackground`).
 - macOS restacks an ordinary-level window of a non-active app behind the active
   app's frontmost window about 20ms after it is shown, and Electron reports that
   as `hide` while `isVisible()` stays true. The floating level is exempt, which

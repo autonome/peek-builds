@@ -3,16 +3,16 @@
  *
  * The palette is a panel: it takes typing while the app stays in the
  * background (docs/design/window-rules.md G1). A page opened from it in that
- * state must stay on screen, and the palette's close must not take the app off
- * screen with it.
+ * state must stay on screen as an ordinary window, and the palette's close
+ * must not take the app off screen with it.
  *
  * This pins the kernel's half only: with the app inactive the page record is
  * shown and stays visible, no `HideApp` is issued when the palette goes away,
- * the native window reports visible, the page takes key as a side task without
- * the app activating, and Escape takes it off screen without closing it. Real OS focus and what the display
- * actually shows with another app frontmost are unobservable headless, so the
- * assertions read the kernel's own record — `State` and the applied-transition
- * timeline (`window-kernel-executor.ts timelineForTests`).
+ * the native window reports visible, and the page's ordinary-window raise
+ * carries user intent. Real OS focus, activation, and what the display actually
+ * shows with another app frontmost are unobservable headless, so the assertions
+ * read the kernel's own record — `State` and the applied-transition timeline
+ * (`window-kernel-executor.ts timelineForTests`).
  *
  * This runs on macOS only — off darwin the app counts as active the moment any
  * window takes OS focus, so the inactive-app premise cannot hold; Linux keeps
@@ -142,12 +142,10 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
       return (globalThis as any).__peek_test.kernelStateForTest();
     })) as {
       appActive: boolean;
-      key: string | null;
       order: Array<{
         id: string;
         visible: boolean;
         pendingHidden?: boolean;
-        heldAboveOtherApps?: boolean;
         nonActivating?: boolean;
       }>;
     };
@@ -178,30 +176,13 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(nativeVisible).toBe(true);
 
     // The palette held key over the other app when the page was asked for, so
-    // the page is a side task (docs/design/window-rules.md G1): built
-    // non-activating, raised with the user's intent, and handed key — all with
-    // the app still inactive. It is held above other apps until the app next
-    // becomes active, so it does not stay above every app for good. The native
-    // level is not asserted — the executor does not realize the hold headless.
+    // the page's ordinary-window raise carries the user's intent. On macOS that
+    // raise activates Peek and hands content focus to the page. Headless cannot
+    // observe OS activation, but it does expose both the ordinary window record
+    // and the intent sent to the backend.
     const effectsFor = (lines: string[], effect: string) =>
       lines.filter((l) => l.includes(`${effect}(${pageWmId})`));
-    expect(page!.nonActivating, timeline.join('\n')).toBe(true);
+    expect(page!.nonActivating, timeline.join('\n')).toBe(false);
     expect(effectsFor(timeline, 'RaiseWindow')[0], timeline.join('\n')).toContain(`RaiseWindow(${pageWmId}):user`);
-    expect(state.key, timeline.join('\n')).toBe(pageWmId);
-    expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
-    expect(effectsFor(timeline, 'HoldAboveOtherApps').length, timeline.join('\n')).toBe(1);
-
-    // Escape on the side task takes it off screen and leaves it open
-    // (`window-escape.ts SIDE_TASK_ESCAPE`), with the app still inactive.
-    await app.evaluateMain!((async (_e: unknown, id: number) => {
-      await (globalThis as any).__peekHybridOverlayTest.runHybridEscape(id);
-    }) as any, opened.id);
-    await expect.poll(async () => {
-      const s = (await app.evaluateMain!((_e: unknown) => {
-        return (globalThis as any).__peek_test.kernelStateForTest();
-      })) as { appActive: boolean; order: Array<{ id: string; visible: boolean }> };
-      const rec = s.order.find((w) => w.id === pageWmId);
-      return rec === undefined ? 'closed' : `${rec.visible ? 'visible' : 'hidden'}:${s.appActive ? 'active' : 'inactive'}`;
-    }, { timeout: 5000 }).toBe('hidden:inactive');
   });
 });
