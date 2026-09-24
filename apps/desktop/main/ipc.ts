@@ -885,6 +885,10 @@ function assembleHybridPageHost(
   // session restore then raises the last-focused BrowserWindow (e.g.
   // Settings) instead of the web page the user left in front.
   const onHybridHostFocus = () => {
+    wmLog('diag-onHybridHostFocus', {
+      id: baseWin.id,
+      stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
+    });
     // Deferred session restore: the first genuine activation of a
     // restoreBlank window releases its deferred content load.
     // `claimHybridDeferredLoad` is the once-guard (returns the URL

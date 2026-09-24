@@ -136,6 +136,12 @@ export function showHybridHost(
   // quick-views and headless shows where no OS focus event will ever fire. `intent` here is
   // purely the returned description of what was asked for — nothing here touches Electron.
   const id = getWindowIdFor(baseWin);
+  wmLog('diag-showHybridHost', {
+    id,
+    inactive: opts?.inactive === true,
+    nonActivating: opts?.nonActivating === true,
+    stack: new Error().stack?.split('\n').slice(2, 8).join(' <- '),
+  });
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
