@@ -3303,11 +3303,13 @@ export function registerWindowHandlers(): void {
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
     if (usePageHost) {
-      // A page requested while the user is typing into a panel over another
-      // app carries the user intent of that keystroke. Its ordinary-window
-      // raise therefore activates Peek and reaches the page with content focus
-      // (window-rules.md G1 and F6).
+      // A side task (`izui-roles.ts pageOpensAsSideTask()`) is built as a
+      // panel, the one window type that can hold key in an inactive app, and
+      // its open carries the user intent of the keystroke that asked for it,
+      // so the raise reaches it (window-rules.md F6) with content focus and
+      // without the app coming forward.
       if (pageOpensAsSideTask(isKeyHeldWhileAppInactive(), options)) {
+        options.type = 'panel';
         options.activation = 'user';
         wmLog('page-opens-as-side-task', { url: String(url) });
       }
