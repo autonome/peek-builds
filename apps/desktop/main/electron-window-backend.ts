@@ -9,8 +9,8 @@
 // A machine-initiated operation must not feed its own side effect back in as
 // fresh OS evidence.
 
-import { app, BrowserWindow, globalShortcut, screen, systemPreferences, webContents } from 'electron';
-import type { WebContents } from 'electron';
+import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
 import {
@@ -190,10 +190,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private escGrabRegistered = false;
 
-  // diag-poll: last serialized per-window snapshot, so the tick only logs a
-  // window whose Spaces/top/focus state actually moved since the last one.
-  private readonly diagPollLastSnapshot = new Map<WindowId, string>();
-
   private readonly escGrabHandler = (): void => {
     // Reaches the same decision the before-input-event path does, so a stale
     // grab is harmless.
@@ -250,7 +246,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }, APP_RESIGN_SETTLE_MS);
     });
     this.attachSpaceChangeListener();
-    this.startDiagPoll();
   }
 
   // The notification's `userInfo` is empty, so there is nothing to name the
@@ -263,62 +258,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         wmLog('space-changed');
       },
     );
-  }
-
-  // Temporary diagnostic for the cmd-panel focus-steal repro: polls every
-  // live, visible window's Spaces/top/focus state once a second, so a drift
-  // that never fires a native event still shows up in the log.
-  private startDiagPoll(): void {
-    if (process.platform !== 'darwin') return;
-    setInterval(() => {
-      let anyFocused = false;
-      for (const [id, entry] of this.windows) {
-        const { win, kind } = entry;
-        try {
-          if (win.isDestroyed()) continue;
-          if (!win.isVisible()) continue;
-          let visibleOnAllWorkspaces: boolean | null = null;
-          let alwaysOnTop: boolean | null = null;
-          let focused: boolean | null = null;
-          try {
-            visibleOnAllWorkspaces = (
-              win as unknown as { isVisibleOnAllWorkspaces(): boolean }
-            ).isVisibleOnAllWorkspaces();
-          } catch {
-            /* native read failed */
-          }
-          try {
-            alwaysOnTop = (win as unknown as { isAlwaysOnTop(): boolean }).isAlwaysOnTop();
-          } catch {
-            /* native read failed */
-          }
-          try {
-            focused = win.isFocused();
-          } catch {
-            /* native read failed */
-          }
-          if (focused) anyFocused = true;
-          const snapshot = JSON.stringify([visibleOnAllWorkspaces, alwaysOnTop, focused]);
-          if (this.diagPollLastSnapshot.get(id) === snapshot) continue;
-          this.diagPollLastSnapshot.set(id, snapshot);
-          wmLog('diag-poll', {
-            id,
-            kind,
-            isVisibleOnAllWorkspaces: visibleOnAllWorkspaces,
-            isAlwaysOnTop: alwaysOnTop,
-            isFocused: focused,
-          });
-        } catch {
-          /* window gone mid-poll */
-        }
-      }
-      try {
-        const appFocused = BrowserWindow.getFocusedWindow()?.id ?? null;
-        wmLog('diag-poll', { appFocused, anyFocused });
-      } catch {
-        /* native read failed */
-      }
-    }, 1000);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1099,21 +1038,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
       if (membership === 'anchor' && !win.isDestroyed()) {
         win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
-        const readVisibleOnAllWorkspaces = (): boolean =>
-          (win as unknown as { isVisibleOnAllWorkspaces(): boolean }).isVisibleOnAllWorkspaces();
-        try {
-          wmLog('diag-membership-readback', { id, isVisibleOnAllWorkspaces: readVisibleOnAllWorkspaces() });
-        } catch {
-          /* native read failed */
-        }
-        setTimeout(() => {
-          try {
-            if (win.isDestroyed()) return;
-            wmLog('diag-membership-readback', { id, isVisibleOnAllWorkspaces: readVisibleOnAllWorkspaces() });
-          } catch {
-            /* native read failed */
-          }
-        }, 300);
       }
     } catch {
       /* Spaces write against a torn-down window — the machine already recorded intent */
