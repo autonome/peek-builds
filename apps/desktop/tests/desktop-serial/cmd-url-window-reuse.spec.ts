@@ -71,7 +71,14 @@ test.describe('Cmd URL window reuse @desktop', () => {
     const cmdWindow = await livePanelPage(excludePanel);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await cmdWindow.fill('input', text);
-    await cmdWindow.keyboard.press('Enter');
+    // Keydown only, not `press`. The panel executes on Enter keydown
+    // (renderer/cmd/panel.js commandInput 'keydown'); opening the URL moves
+    // focus to the content window, and that focus change dismisses the panel
+    // (the `[wm]` transient sweep logs `effect-close effect=DismissWindow` for
+    // the panel) within a few ms. `press` = keydown + keyup, so the keyup
+    // could be dispatched to an already-closed page ("Target page, context or
+    // browser has been closed"). Nothing in the panel listens for Enter keyup.
+    await cmdWindow.keyboard.down('Enter');
     // Wait for the panel to leave TYPING — the Enter has been handled and the
     // URL-open dispatched. Tolerate the panel already having closed (terminal).
     try {
