@@ -268,6 +268,19 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     return true;
   },
   /**
+   * Test-only: the counterpart of `focusHybridWindowForTest` — emits the REAL
+   * `'blur'` event on the host BaseWindow, the event Electron fires when the
+   * user clicks another app. The backend's deferred-blur settle then reports
+   * the key window as having lost focus, since no window is focused headless.
+   * See tests/desktop/cmd-url-unfocused.spec.ts.
+   */
+  blurHybridWindowForTest: (windowId: number): boolean => {
+    const entry = getHybridWindow(windowId);
+    if (!entry || entry.baseWin.isDestroyed()) return false;
+    (entry.baseWin as unknown as { emit(name: string): boolean }).emit('blur');
+    return true;
+  },
+  /**
    * Test-only: the kernel's applied-order transition timeline
    * (`window-kernel-executor.ts timelineForTests`). The overlay bridge exposes
    * the same log as `kernelTimeline()`; this is the reach for specs that do not

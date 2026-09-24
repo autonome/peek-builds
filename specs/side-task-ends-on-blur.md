@@ -98,9 +98,7 @@ above every app after the user leaves it" citing G13.
 - `hybridShowIntent()` / `showHybridHost()`. Their `nonActivating` flag is keyed on the quick-view
   role and disagrees with the machine record for a side task; out of scope here, note it on the
   item.
-- The diag commits on this branch (`04b128d5`, `7fb2cf85`, and the diag poll in
-  `electron-window-backend.ts startDiagPoll()`) are reverted before landing, as the track handoff
-  says.
+- The diag tracing from earlier on this branch is already reverted (`e2a50a83`, `579f75cc`).
 
 ## Tests to change
 

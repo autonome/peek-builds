@@ -9,10 +9,11 @@
  * This pins the kernel's half only: with the app inactive the page record is
  * shown and stays visible, no `HideApp` is issued when the palette goes away,
  * the native window reports visible, the page takes key as a side task without
- * the app activating, and Escape takes it off screen without closing it. Real OS focus and what the display
- * actually shows with another app frontmost are unobservable headless, so the
- * assertions read the kernel's own record — `State` and the applied-transition
- * timeline (`window-kernel-executor.ts timelineForTests`).
+ * the app activating, losing key ends the side task and reopens the page as an
+ * ordinary window on one desktop (G13), and Escape closes it. Real OS focus and
+ * what the display actually shows with another app frontmost are unobservable
+ * headless, so the assertions read the kernel's own record — `State` and the
+ * applied-transition timeline (`window-kernel-executor.ts timelineForTests`).
  *
  * This runs on macOS only — off darwin the app counts as active the moment any
  * window takes OS focus, so the inactive-app premise cannot hold; Linux keeps
@@ -191,17 +192,67 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
     expect(effectsFor(timeline, 'HoldAboveOtherApps').length, timeline.join('\n')).toBe(1);
 
-    // Escape on the side task takes it off screen and leaves it open
-    // (`window-escape.ts SIDE_TASK_ESCAPE`), with the app still inactive.
+    // The side task ends when the page loses key with the app still inactive
+    // (window-rules.md G13): the user clicked the other app. The real `blur`
+    // on the host is what the OS would fire; the backend's settle turns it
+    // into the key window losing focus. The kernel then asks for the page to
+    // be reopened as an ordinary window, and the backend replaces the panel
+    // host with a new one at the same address, shown without focus.
+    type KernelState = {
+      appActive: boolean;
+      key: string | null;
+      order: Array<{ id: string; kind?: string; role?: string; visible: boolean; nonActivating?: boolean; heldAboveOtherApps?: boolean }>;
+    };
+    const readState = async (): Promise<KernelState> =>
+      (await app.evaluateMain!((_e: unknown) => (globalThis as any).__peek_test.kernelStateForTest())) as KernelState;
+    const blurred = await app.evaluateMain!(((_e: unknown, id: number) => {
+      return (globalThis as any).__peek_test.blurHybridWindowForTest(id);
+    }) as any, opened.id);
+    expect(blurred).toBe(true);
+    await expect.poll(async () => {
+      const s = await readState();
+      const old = s.order.find((w) => w.id === pageWmId);
+      const fresh = s.order.find((w) => w.id !== pageWmId && w.kind === 'page-host' && w.role === 'content' && w.visible);
+      return `${old === undefined ? 'old-closed' : 'old-present'}:${fresh === undefined ? 'no-reopen' : 'reopened'}`;
+    }, { timeout: 10000 }).toBe('old-closed:reopened');
+    const afterBlur = await readState();
+    const reopened = afterBlur.order.find((w) => w.id !== pageWmId && w.kind === 'page-host' && w.role === 'content' && w.visible)!;
+    expect(reopened.nonActivating === true, 'the reopened window is still non-activating').toBe(false);
+    expect(reopened.heldAboveOtherApps === true, 'the reopened window is held above other apps').toBe(false);
+    expect(afterBlur.key, 'the reopened window took key').not.toBe(reopened.id);
+    expect(afterBlur.appActive, 'the reopen activated the app').toBe(false);
+    const timelineAfterBlur = ((await app.evaluateMain!((_e: unknown) => {
+      return (globalThis as any).__peek_test.kernelTimelineForTest();
+    })) as string[]).slice(baselineLen);
+    expect(effectsFor(timelineAfterBlur, 'ReopenAsOrdinaryWindow').length, timelineAfterBlur.join('\n')).toBe(1);
+    expect(timelineAfterBlur.filter((l) => l.includes('HideApp')), timelineAfterBlur.join('\n')).toEqual([]);
+
+    // Exactly one window shows the page, with a new native id, and it is an
+    // ordinary window: on one desktop, not floating.
+    const listAfter = await bgWindow.evaluate(async () => (window as any).app.window.list());
+    const showing = (listAfter.windows ?? []).filter((w: { url?: string }) => w.url && w.url.includes(url));
+    expect(showing.length, JSON.stringify(listAfter.windows)).toBe(1);
+    expect(showing[0].id).not.toBe(opened.id);
+    const nativeAfter = await app.evaluateMain!((({ BaseWindow }: any, id: number) => {
+      const win = BaseWindow.getAllWindows().find((w: any) => w.id === id);
+      return win ? { visible: win.isVisible(), allDesktops: win.isVisibleOnAllWorkspaces(), floating: win.isAlwaysOnTop() } : null;
+    }) as any, showing[0].id);
+    expect(nativeAfter).toEqual({ visible: true, allDesktops: false, floating: false });
+
+    // Escape on a page taking Escape while the app is inactive closes it,
+    // with the app still inactive, and a closed window is not reopened.
+    const reopenedWmId = reopened.id;
     await app.evaluateMain!((async (_e: unknown, id: number) => {
       await (globalThis as any).__peekHybridOverlayTest.runHybridEscape(id);
-    }) as any, opened.id);
+    }) as any, showing[0].id);
     await expect.poll(async () => {
-      const s = (await app.evaluateMain!((_e: unknown) => {
-        return (globalThis as any).__peek_test.kernelStateForTest();
-      })) as { appActive: boolean; order: Array<{ id: string; visible: boolean }> };
-      const rec = s.order.find((w) => w.id === pageWmId);
-      return rec === undefined ? 'closed' : `${rec.visible ? 'visible' : 'hidden'}:${s.appActive ? 'active' : 'inactive'}`;
-    }, { timeout: 5000 }).toBe('hidden:inactive');
+      const s = await readState();
+      const rec = s.order.find((w) => w.id === reopenedWmId);
+      return rec === undefined ? `closed:${s.appActive ? 'active' : 'inactive'}` : `${rec.visible ? 'visible' : 'hidden'}`;
+    }, { timeout: 5000 }).toBe('closed:inactive');
+    const afterEscape = ((await app.evaluateMain!((_e: unknown) => {
+      return (globalThis as any).__peek_test.kernelTimelineForTest();
+    })) as string[]).slice(baselineLen);
+    expect(afterEscape.filter((l) => l.includes(`ReopenAsOrdinaryWindow(${reopenedWmId})`)), afterEscape.join('\n')).toEqual([]);
   });
 });

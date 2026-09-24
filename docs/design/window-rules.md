@@ -48,7 +48,7 @@ Each term is followed by the name the code uses for it.
 
 ## Gestures — what the user does and must see
 
-- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. A page asked for from a panel that holds key over another app is a side task: it is built non-activating, takes key and content focus at once, and the app stays in the background. An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward either, and the other app keeps key. Both are held above other apps until the app activates, which returns every held window to ordinary stacking and puts the most recently held or set-aside one in front. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
+- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. A page asked for from a panel that holds key over another app is a side task: it is built non-activating, takes key and content focus at once, and the app stays in the background; it lasts exactly as long as it holds key with the app inactive (G13). An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward either, and the other app keeps key. Both are held above other apps until the app activates or the side task ends, which returns every held window to ordinary stacking and puts the most recently held one in front. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
 - **G2 escape-is-one-change.** Escape does exactly one thing per press: content that consumes it changes only that content; otherwise the one key window hides or closes; with nothing to hide, the Escape fallback window opens.
 - **G3 hide-returns.** When a transient hides, key returns to its prior window: a window of the app if the app was active when it opened, the other app if not. No window that was not in use comes forward.
 - **G4 transient-opens-every-time.** A transient opened over an application window shows above that window and key, on every open, and stays until dismissed or the app deactivates.
@@ -60,6 +60,7 @@ Each term is followed by the name the code uses for it.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
+- **G13 side-task-ends.** A side task ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Its non-activating window is then replaced by an ordinary application window showing the same page at the same bounds: shown without focus, belonging to the desktop the user is on, not held above other apps, frontmost among the app's windows behind the active app. The other app keeps focus throughout. Escape on a side task closes it; a side task that hides or closes is not replaced.
 
 ### Opening a page from another app: which app holds OS focus at each step
 
@@ -76,17 +77,27 @@ at every step.
 | 2 | presses the panel hotkey | other app | the panel (user intent, F6) | panel above the other app |
 | 3 | enters a URL | other app | the page, at once and without a click | panel gone; page above the other app, key and content-focused |
 | 4 | reads, types, scrolls in the page | other app | the page | unchanged |
-| 5a | presses Escape | other app | other app | page is set aside: it leaves the screen, stays open, and comes back on screen when the app next becomes active (`window-escape.ts SIDE_TASK_ESCAPE`, `'hide'`; `'close'` ends it instead) |
+| 5a | presses Escape | other app | other app | page closes |
 | 5b | presses the close shortcut | other app | other app | page closes |
-| 5c | clicks the other app | other app | other app | page stays on screen, no longer key |
+| 5c | clicks the other app | other app | other app | the side task ends (G13): the page is reopened as an ordinary window on this desktop, behind the other app, frontmost among the app's windows, not key |
+| 5d | switches desktop | other app | other app | same as 5c: the page stays on the desktop it was on when it lost key |
+| 5e | brings the app forward | this app | the page | the side task ends (G13): the page is reopened as an ordinary window and is the front window |
 
 A page is a side task (`izui-roles.ts pageOpensAsSideTask()`) when it is opened
 to show while one of the app's panels holds key over another app — the user is
 already typing into the app, so handing key to the page takes nothing from the
 other app. Only a non-activating window can hold key in an inactive app, and
-that is fixed when a window is built, so a side task is built as a panel and
-stays one: clicking it never brings the app forward; the app comes forward
-only through the app switcher or the dock.
+that is fixed when a window is built, so a side task is built as a panel. A
+panel is also pinned to every desktop for good: Electron adds the all-desktops
+flag to a panel on every set and no call clears it
+(`electron_ns_panel.mm setCollectionBehavior:`). So a side task must not
+outlive the typing that made it: the moment it stops being key with the app
+inactive, or the app becomes active, the kernel replaces it
+(`window-kernel.ts isSideTask()`, effect `ReopenAsOrdinaryWindow`) with an
+ordinary window showing the same page at the same bounds — activating,
+anchored to the desktop the user is on, shown without focus
+(`ipc.ts reopenWindowAsOrdinary()`). The page reloads in the new window; scroll,
+form input and back history do not survive the reopen.
 
 A page opened while the app is inactive with nobody typing into the app — a
 command-line open — is not a side task. It takes no key; it is held above other
@@ -124,7 +135,7 @@ Limits and checking notes for a side task:
 - **F3 confirmation-drives-nothing.** The OS report confirming an asked-for focus causes no further focus change and no dismissal.
 - **F4 raise-means-key.** A window the manager focuses ends up key and accepting input; if it was already key it is only brought to the front.
 - **F5 raise-needs-a-surface.** A focus command lands only on a window that is visible and not pending hidden; on any other record it does nothing.
-- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent: such a focus never activates the app, never moves key, and never takes content focus — a content focus that accompanies a raise follows the raise's own fate, so it never reaches the window on its own once the raise is masked — and on an unpinned page-hosting application window it holds that window above other apps instead (G1) until the app activates or the window leaves the screen. A user-intent focus on a non-activating page-hosting window leaves the app inactive as well, so it holds that window the same way.
+- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent: such a focus never activates the app, never moves key, and never takes content focus — a content focus that accompanies a raise follows the raise's own fate, so it never reaches the window on its own once the raise is masked — and on an unpinned page-hosting application window it holds that window above other apps instead (G1) until the app activates or the window leaves the screen. A user-intent focus on a non-activating page-hosting window leaves the app inactive as well, so it holds that window the same way, until the side task ends (G13).
 - **F7 hide-returns-key.** When the key window hides or closes, key goes to its prior window if that window is still visible; if that window is gone, to the topmost visible application window; if nothing in the app was key before it, nothing is focused.
 - **F8 dismissal-keeps-the-app.** A dismissal never deactivates the app: if the app was frontmost it stays frontmost, with no key window when nothing visible remains. Focus is never handed to another app by a dismissal.
 
@@ -345,6 +356,7 @@ restored the saved copy beside the one that never left (`specs/spaces-window-loc
 | Failure (`window-manager.md` → "Open kernel defects", `window-manager-macos-signoff.md`) | Rule |
 |---|---|
 | Palette from another app (Opt+Space) is on screen but dead; typing and Escape go to the other app | G1, F6 |
+| Page opened from the palette over another app shows on every desktop and stays above every app after the user leaves it | G13 |
 | Closing that palette raises the settings window | G3, F7 |
 | Reopened palette flashes open/closed for hundreds of cycles | V2, F5 |
 | One Escape issues two closes; the late one kills the reopened palette | G2, V6 |
