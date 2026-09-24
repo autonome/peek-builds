@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, getContextEntry, cleanupWindowContext, normalizeUrl } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, getContextEntry, cleanupWindowContext } from './datastore.js';
 import { seedOnboardingIfNeeded } from './onboarding-seed.js';
 import { installDebugFlagsPersistence } from './debug-flag-store.js';
 import { migrateMcpConfigLocation } from './mcp-config.js';
@@ -1609,43 +1609,6 @@ export function findWindowsByKey(source: string, key: string): { id: number; win
       // (The old Map deleted "stale" entries here, which for a hybrid was a
       // live-entry deletion bug; the machine record retires on WINDOW_CLOSED.)
       DEBUG && console.log('findWindowsByKey: id', id, 'has no live BrowserWindow — skipping');
-    }
-  }
-  return found;
-}
-
-/**
- * Find the page-host windows that have the given URL loaded (by address param),
- * candidates for reuse as for `findWindowsByKey`.
- * Only searches for http/https URLs. Only matches page-host windows (canvas pages
- * with role 'content' or 'child-content'), NOT peeks, slides, modals, or other
- * non-page-host window types.
- */
-export function findWindowsByUrl(url: string): { id: number; window: BrowserWindow; data: unknown }[] {
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return [];
-  const found: { id: number; window: BrowserWindow; data: unknown }[] = [];
-
-  // Normalize the target once. Match registry addresses on their normalized
-  // form too, so a re-open of the SAME page that differs only in trailing
-  // slash, default port, or query-param order (e.g. `http://x/` vs `http://x`)
-  // is recognized as already-open instead of spawning a duplicate window.
-  // Reuses datastore's canonical `normalizeUrl` — the same helper `findUrlItem`
-  // uses — so window dedupe and item lookup agree on URL identity.
-  const normalizedTarget = normalizeUrl(url);
-
-  for (const [id, win] of machineRegistryEntries()) {
-    const address = win.params && typeof win.params.address === 'string'
-      ? (win.params.address as string)
-      : null;
-    if (address && normalizeUrl(address) === normalizedTarget) {
-      // Only match page-host windows (canvas pages), not peeks, slides, modals, etc.
-      const role = win.params.role;
-      if (role !== 'content' && role !== 'child-content') continue;
-
-      const browserWindow = getLiveWindow(id);
-      if (browserWindow) {
-        found.push({ id, window: browserWindow, data: win });
-      }
     }
   }
   return found;

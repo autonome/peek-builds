@@ -3,7 +3,7 @@
  *
  * Tests that:
  * - Opening an http/https URL creates a window and returns success
- * - Opening the same URL twice reuses the existing window (findWindowsByUrl)
+ * - Opening the same URL twice reuses the existing window (findHybridWindowsByUrl)
  * - Opening two different URLs creates two separate windows
  * - Key-based window reuse still works alongside URL-based reuse
  *

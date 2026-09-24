@@ -45,7 +45,6 @@ import {
   getWindowInfo,
   removeWindow,
   findWindowsByKey,
-  findWindowsByUrl,
   getAllWindows,
   validateThemeCSS,
   popClosedWindow,
@@ -3273,19 +3272,19 @@ export function registerWindowHandlers(): void {
     options.transient = windowIsTransient(keyHeldWhileAppInactive, options);
     if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key && !opensTransient) {
       // P1.4a hybrid dedup (by url): same rationale as the key path above —
-      // BaseWindow page-hosts are invisible to findWindowsByUrl. Reuse an
-      // existing hybrid window loading the same url (focus its baseWin,
-      // reload it fresh like the canvas path, return its id) instead of
-      // spawning a duplicate — only one the kernel admits for reuse here
-      // (rule 5); one on another desktop stays, and a new one opens here.
+      // BaseWindow page-hosts are invisible to the BrowserWindow.fromId
+      // lookups. Reuse an existing hybrid window loading the same url (focus
+      // its baseWin, reload it fresh, return its id) instead of spawning a
+      // duplicate — only one the kernel admits for reuse here (rule 5); one
+      // on another desktop stays, and a new one opens here.
       {
         const existingHybridByUrl = pickReusableHere(findHybridWindowsByUrl(url), (e) => e.baseWin);
         if (existingHybridByUrl) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
           try {
-            // Parity with the canvas url-reuse below: honor the stored
-            // Placement intent so a reused window stranded on a now-disconnected
-            // display (or a 'centered' window) is rescued/re-centered.
+            // Honor the stored Placement intent so a reused window stranded on
+            // a now-disconnected display (or a 'centered' window) is
+            // rescued/re-centered.
             const hybridInfo = getWindowInfo(existingHybridByUrl.windowId);
             applyPlacementOnReuse(
               existingHybridByUrl.baseWin as unknown as BrowserWindow,
@@ -3310,7 +3309,8 @@ export function registerWindowHandlers(): void {
               kernelShowRequested(reusedId, true, reuseShowActivation(options));
             }
           }
-          // Reload so content is fresh (mirrors the canvas path's reload).
+          // Reload so content is fresh (the page may have navigated away or
+          // the content may be stale from session restore).
           try {
             existingHybridByUrl.contentWC.reload();
           } catch (e) {
@@ -3318,40 +3318,6 @@ export function registerWindowHandlers(): void {
           }
           return { success: true, id: existingHybridByUrl.windowId, reused: true };
         }
-      }
-
-      const existingByUrl = pickReusableHere(findWindowsByUrl(url), (w) => w.window);
-      if (existingByUrl) {
-        DEBUG && console.log('Reusing existing window with same URL:', url);
-        {
-          // Display-change safety: read the stored `Placement` intent and
-          // let `computePlacement` decide whether to reposition. The
-          // stranded-rescue path inside the pure module replaces the
-          // historical `isWindowAccessibleNow` check.
-          const existingData = existingByUrl.data as { params: { placement?: Placement } };
-          applyPlacementOnReuse(
-            existingByUrl.window,
-            existingData.params.placement,
-            'url-reuse',
-          );
-        }
-        // Machine show intent (§5 step 6A-4) —
-        // see the keepLive-reuse block above: the backend's WINDOW_SHOWN
-        // echo replaces the hand-dispatched mirror that used to cover
-        // headless (where the old gate skipped the show seam entirely).
-        // Focus rides the same dispatch since §5 step 8e — see the
-        // keepLive-reuse block above (WINDOW_SHOWN {focused:true} → front
-        // assertion → RAISE_WINDOW), so the old headless-gated imperative
-        // focus() is gone.
-        showWindowHeadlessSafe(existingByUrl.window, { active: true, ...reuseShowActivation(options) });
-        // Reload the page so content is fresh (the webview may have navigated
-        // away or the content may be stale from session restore).
-        try {
-          publish('system', 'page:reload', { windowId: existingByUrl.id });
-        } catch (e) {
-          DEBUG && console.log('Failed to send reload to reused window:', e);
-        }
-        return { success: true, id: existingByUrl.id, reused: true };
       }
     }
 
@@ -3629,8 +3595,8 @@ export function registerWindowHandlers(): void {
     // re-attachment, content→chrome event mediation, the shared overlay, and
     // popup routing.
     //
-    // Window-reuse/dedup IS handled — just not here. The canvas dedup checks
-    // earlier in this handler (findWindowsByUrl / findWindowsByKey) resolve via
+    // Window-reuse/dedup IS handled — just not here. The canvas dedup check
+    // earlier in this handler (findWindowsByKey) resolves via
     // getLiveWindow == BrowserWindow.fromId, which cannot find a BaseWindow. So
     // P1.4a added a PARALLEL dedup against the hybrid registry at the top of
     // this handler (findHybridWindowsByKey / findHybridWindowsByUrl), which
