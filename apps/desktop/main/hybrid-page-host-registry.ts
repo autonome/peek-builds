@@ -55,28 +55,33 @@ export function hasHybridPainted(windowId: number): boolean {
 // hybrid-overlay.ts (initHybridOverlay), which routes it into
 // permission-handler's `denyPendingRequestsForWindow` so a hybrid host
 // closing with a permission prompt open denies (and resolves) its deferred
-// Chromium callbacks. One-way dependency: this pure module never imports the
-// consumer.
-let windowClosedListener: ((windowId: number) => void) | null = null;
+// Chromium callbacks. Fan-out: any number of listeners may register. One-way
+// dependency: this pure module never imports a consumer.
+const windowClosedListeners = new Set<(windowId: number) => void>();
 
 /**
  * Register a callback invoked when a hybrid window is closed/unregistered.
- * Pass null to unregister (e.g. on teardown). May fire more than once for the
- * same windowId (the 'closed' event and an explicit unregister can both run) —
- * consumers must be idempotent.
+ * Returns an unsubscribe function that removes this listener; calling it
+ * more than once is a no-op. May fire more than once for the same windowId
+ * (the 'closed' event and an explicit unregister can both run) — consumers
+ * must be idempotent.
  */
 export function registerHybridWindowClosedListener(
-  fn: ((windowId: number) => void) | null,
-): void {
-  windowClosedListener = fn;
+  fn: (windowId: number) => void,
+): () => void {
+  windowClosedListeners.add(fn);
+  return () => {
+    windowClosedListeners.delete(fn);
+  };
 }
 
 function notifyWindowClosed(windowId: number): void {
-  if (!windowClosedListener) return;
-  try {
-    windowClosedListener(windowId);
-  } catch {
-    /* listener must never break teardown */
+  for (const listener of [...windowClosedListeners]) {
+    try {
+      listener(windowId);
+    } catch {
+      /* listener must never break teardown */
+    }
   }
 }
 
@@ -269,7 +274,7 @@ export function registerHybridWindow(
       entries.delete(windowId);
       // Announce the teardown (e.g. deny pending permission prompts). Inside
       // the guard so an entry already dropped by unregisterHybridWindow (which
-      // notifies itself) doesn't double-fire; the listener is idempotent anyway.
+      // notifies itself) doesn't double-fire; the listeners are idempotent anyway.
       notifyWindowClosed(windowId);
     }
   };
@@ -421,4 +426,5 @@ export function findHybridWindowByKey(key: string, source?: string): HybridWindo
 export function _resetForTests(): void {
   entries.clear();
   perHostPainted.clear();
+  windowClosedListeners.clear();
 }

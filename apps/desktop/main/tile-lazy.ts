@@ -43,6 +43,7 @@ import {
 import { type TileManifest, type TileCommand } from './tile-manifest.js';
 import { DEBUG, isDevProfile } from './config.js';
 import * as tileLifecycle from './tile-lifecycle.js';
+import { clearFeatureLoadError, setFeatureLoadError, resetFeatureLoadErrors } from './feature-load-errors.js';
 
 // ─── Launcher Injection (for testability) ───────────────────────────
 
@@ -85,6 +86,7 @@ export function __resetTileLazyStateForTest(): void {
   pendingDispatchesByTile.clear();
   _hookInstalled = false;
   _crashObserverInstalled = false;
+  resetFeatureLoadErrors();
 }
 
 // ─── State ───────────────────────────────────────────────────────────
@@ -320,6 +322,9 @@ export function unregisterLazyTile(tileId: string): void {
   loadingTiles.delete(tileId);
   pendingDispatchesByTile.delete(tileId);
   rebuildDeclaredLazyEventTopics();
+  // A feature disabled mid-session must not keep a red card it can never
+  // clear — re-enable re-arms the tile and the next wake decides again.
+  clearFeatureLoadError(tileId);
 
   DEBUG && console.log(`[tile-lazy] Unregistered lazy tile: ${tileId}`);
 }
@@ -548,8 +553,15 @@ function assertDispatchFsmState(tileId: string, entryId: string, label: string):
  */
 async function ensureTileLoaded(tileId: string): Promise<void> {
   const bgEntry = getBackgroundEntry(tileId) || 'background';
-  await loadLazyTile(tileId);
-  await launcher.waitForTileReady(tileId, bgEntry);
+  try {
+    await loadLazyTile(tileId);
+    await launcher.waitForTileReady(tileId, bgEntry);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    setFeatureLoadError(tileId, message);
+    throw err;
+  }
+  clearFeatureLoadError(tileId);
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 import {
   takePendingRequest,
   denyPendingForWindow,
+  listPendingForWindow,
 } from '../../dist/main/permission-pending.js';
 
 describe('permission-handler: chrome-extension origins', () => {
@@ -286,5 +287,59 @@ describe('permission-pending: denyPendingForWindow', () => {
     assert.deepEqual(denied.sort(), ['boom', 'ok'], 'both requests still resolved');
     assert.deepEqual(resolved.sort(), ['boom', 'ok']);
     assert.equal(map.size, 0);
+  });
+});
+
+// The read-only counterpart: what an overlay handoff carries so a renderer
+// that never received the original `page:permission-request` publish can
+// recover it. Listing must be inert — it is called on every handoff.
+describe('permission-pending: listPendingForWindow', () => {
+  it('returns only that window\'s entries, in insertion order, with no callback', () => {
+    const { map } = makePending([['r1', 10], ['r2', 20], ['r3', 10]]);
+    const listed = listPendingForWindow(map, 10);
+    assert.deepEqual(
+      listed,
+      [
+        { requestId: 'r1', windowId: 10, permission: 'geolocation', origin: 'https://example.com' },
+        { requestId: 'r3', windowId: 10, permission: 'geolocation', origin: 'https://example.com' },
+      ],
+      'FIFO, foreign window excluded, no callback key',
+    );
+    for (const entry of listed) {
+      assert.equal('callback' in entry, false, 'the deferred callback is not exposed');
+    }
+  });
+
+  it('no longer lists an id removed by takePendingRequest', () => {
+    const { map } = makePending([['r1', 10], ['r2', 10]]);
+    takePendingRequest(map, 'r1', () => {});
+    assert.deepEqual(listPendingForWindow(map, 10).map((e) => e.requestId), ['r2']);
+  });
+
+  it('returns [] after denyPendingForWindow for that window', () => {
+    const { map } = makePending([['r1', 10], ['r2', 10], ['r3', 20]]);
+    denyPendingForWindow(map, 10, () => {});
+    assert.deepEqual(listPendingForWindow(map, 10), []);
+    assert.deepEqual(
+      listPendingForWindow(map, 20).map((e) => e.requestId),
+      ['r3'],
+      'the other window is unaffected',
+    );
+  });
+
+  it('calls no callback, publishes nothing, and leaves the map unchanged', () => {
+    const { map, calls } = makePending([['r1', 10], ['r2', 20]]);
+    const resolved = [];
+    listPendingForWindow(map, 10);
+    listPendingForWindow(map, 20);
+    listPendingForWindow(map, 99);
+    assert.equal(calls.length, 0, 'no deferred callback invoked');
+    assert.deepEqual(resolved, [], 'nothing published — listing takes no publishResolved');
+    assert.equal(map.size, 2, 'map size unchanged');
+    assert.ok(map.has('r1') && map.has('r2'));
+  });
+
+  it('an empty map returns []', () => {
+    assert.deepEqual(listPendingForWindow(new Map(), 10), []);
   });
 });

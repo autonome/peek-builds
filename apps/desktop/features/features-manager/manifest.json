@@ -60,7 +60,8 @@
         "app:shutdown",
         "lex:session-changed",
         "core:feature:toggle",
-        "*:settings-changed"
+        "*:settings-changed",
+        "tile:state-changed"
       ]
     },
     "datastore": {

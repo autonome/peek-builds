@@ -20,6 +20,7 @@ import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { BaseWindow, WebContents } from 'electron';
 import {
   _resetForTests,
@@ -30,6 +31,7 @@ import {
   getHybridWindow,
   getHybridWindowByContentWC,
   registerHybridWindow,
+  registerHybridWindowClosedListener,
   markHybridPainted,
   hasHybridPainted,
   unregisterHybridWindow,
@@ -213,6 +215,67 @@ describe('hybrid-page-host-registry: self-cleanup', () => {
     oldBase.emit('closed');
     assert.ok(getHybridWindow(f.id));
     assert.strictEqual(getHybridWindow(f.id)!.url(), 'https://second/');
+  });
+});
+
+describe('hybrid-page-host-registry: closed-listener fan-out', () => {
+  beforeEach(() => {
+    _resetForTests();
+    nextId = 1;
+  });
+
+  it('a registered listener receives the windowId via unregisterHybridWindow and via baseWin closed', () => {
+    const seen: number[] = [];
+    registerHybridWindowClosedListener((windowId) => seen.push(windowId));
+
+    const a = mk({ url: 'https://a/' });
+    unregisterHybridWindow(a.id);
+    assert.deepStrictEqual(seen, [a.id]);
+
+    const b = mk({ url: 'https://b/' });
+    b.baseWin.emit('closed');
+    assert.deepStrictEqual(seen, [a.id, b.id]);
+  });
+
+  it('two registered listeners both receive the closed windowId', () => {
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    registerHybridWindowClosedListener((windowId) => seenA.push(windowId));
+    registerHybridWindowClosedListener((windowId) => seenB.push(windowId));
+
+    const f = mk({ url: 'https://x/' });
+    f.baseWin.emit('closed');
+
+    assert.deepStrictEqual(seenA, [f.id]);
+    assert.deepStrictEqual(seenB, [f.id]);
+  });
+
+  it("calling one listener's unsubscribe stops only that listener; the other still fires", () => {
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    const unsubA = registerHybridWindowClosedListener((windowId) => seenA.push(windowId));
+    registerHybridWindowClosedListener((windowId) => seenB.push(windowId));
+
+    unsubA();
+
+    const f = mk({ url: 'https://x/' });
+    f.baseWin.emit('closed');
+
+    assert.deepStrictEqual(seenA, []);
+    assert.deepStrictEqual(seenB, [f.id]);
+  });
+
+  it('a listener that throws does not prevent a later-registered listener from running', () => {
+    const seenB: number[] = [];
+    registerHybridWindowClosedListener(() => {
+      throw new Error('boom');
+    });
+    registerHybridWindowClosedListener((windowId) => seenB.push(windowId));
+
+    const f = mk({ url: 'https://x/' });
+    assert.doesNotThrow(() => f.baseWin.emit('closed'));
+
+    assert.deepStrictEqual(seenB, [f.id]);
   });
 });
 
@@ -442,8 +505,12 @@ describe('hybrid-page-host-registry: content-WC reverse lookup', () => {
 // ============================================================================
 
 function repoRoot(): string {
-  // The unit suite runs from the repo root via test:unit / test:desktop:electron.
-  return process.cwd();
+  // Resolved from this compiled file's own location (dist/main/…), not
+  // process.cwd() — cwd varies with the directory the suite is invoked from
+  // (repo root vs. apps/desktop), which used to double the apps/desktop
+  // path segment.
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(__dirname, '..', '..', '..', '..');
 }
 
 describe('window-open registration: chain popup declares its opener as machine parent', () => {

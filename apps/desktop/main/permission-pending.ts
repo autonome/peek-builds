@@ -50,6 +50,42 @@ export function takePendingRequest(
   return req;
 }
 
+/** One pending request as the overlay renderer needs to hear about it. */
+export interface PendingPermissionListing {
+  requestId: string;
+  windowId: WindowId;
+  permission: PermissionName;
+  origin: string;
+}
+
+/**
+ * List the pending requests attributed to `windowId`, in the map's insertion
+ * order (FIFO — the order the prompt UI surfaces them in), with the deferred
+ * `callback` dropped so the result is safe to hand across a process boundary.
+ *
+ * READ-ONLY: it does not mutate the map, invoke a callback, or publish. It
+ * exists so an overlay handoff can carry the window's outstanding requests and
+ * a renderer that missed the original `page:permission-request` publish — one
+ * that had not subscribed yet, or replaced an earlier one — can recover them
+ * instead of leaving a prompt invisible until window close auto-denies it.
+ */
+export function listPendingForWindow(
+  pending: Map<string, PendingPermissionRequest>,
+  windowId: WindowId,
+): PendingPermissionListing[] {
+  const listed: PendingPermissionListing[] = [];
+  for (const [requestId, req] of pending) {
+    if (req.windowId !== windowId) continue;
+    listed.push({
+      requestId,
+      windowId,
+      permission: req.permission,
+      origin: req.origin,
+    });
+  }
+  return listed;
+}
+
 /**
  * Deny every pending request attributed to `windowId`: invoke each deferred
  * callback with false, remove it, and publish `page:permission-resolved` for

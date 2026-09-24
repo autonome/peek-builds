@@ -169,6 +169,55 @@ test.describe('peek-navbar URL autocomplete @components', () => {
     expect(state.selDir).toBe('backward');
   });
 
+  test('Backspace rejects the ghost and the follow-up query leaves it rejected', async () => {
+    // Settle signal: the component nulls _ghostTimer on every exit path of the
+    // debounced callback, so this waits on a real state transition, not a sleep.
+    // waitForFunction is only the poll across the Playwright/renderer process
+    // boundary — the state itself is set deterministically by the component.
+    const ghostQuerySettled = () =>
+      page.waitForFunction(
+        () => (document.getElementById('navbar') as any)._ghostTimer === null,
+        { timeout: 5000 },
+      );
+
+    await typeUrl('git');
+    const armed = await page.evaluate(() => {
+      const input = (document.getElementById('navbar') as any).inputElement;
+      return { value: input.value, selStart: input.selectionStart, selEnd: input.selectionEnd };
+    });
+    expect(armed.value).toBe('github.com');
+    expect(armed.selStart).toBe(3);
+    expect(armed.selEnd).toBe('github.com'.length);
+
+    // Backspace deletes the natively-selected suffix. The query that follows
+    // must refresh the dropdown without putting the same ghost back.
+    await page.keyboard.press('Backspace');
+    await ghostQuerySettled();
+    const rejected = await page.evaluate(() => {
+      const nb = document.getElementById('navbar') as any;
+      return {
+        value: nb.inputElement.value,
+        selStart: nb.inputElement.selectionStart,
+        selEnd: nb.inputElement.selectionEnd,
+        ghost: !!nb._ghost,
+      };
+    });
+    expect(rejected.value).toBe('git');
+    expect(rejected.selStart).toBe(rejected.selEnd);
+    expect(rejected.ghost).toBe(false);
+
+    // The next inserted character re-arms it through the normal path.
+    await page.keyboard.type('h');
+    await ghostQuerySettled();
+    const rearmed = await page.evaluate(() => {
+      const input = (document.getElementById('navbar') as any).inputElement;
+      return { value: input.value, selStart: input.selectionStart, selEnd: input.selectionEnd };
+    });
+    expect(rearmed.value).toBe('github.com');
+    expect(rearmed.selStart).toBe(4); // typed "gith"
+    expect(rearmed.selEnd).toBe('github.com'.length);
+  });
+
   test('dropdown lists URL-history matches', async () => {
     await typeUrl('git');
     const rows = await page.evaluate(() => {
@@ -240,5 +289,42 @@ test.describe('peek-navbar URL autocomplete @components', () => {
     });
     expect(open.suggestions).toBe(0);
     expect(open.ghost).toBe(false);
+  });
+
+  test('Enter on a loopback address emits navigate with http', async () => {
+    // Not typeUrl(): it waits for suggestions, and the HISTORY fixture has no
+    // localhost row, so nothing would ever arrive. Clear and focus the input
+    // the same way, then type straight into it.
+    async function typeBare(text: string) {
+      await page.evaluate(() => {
+        const nb = document.getElementById('navbar') as any;
+        nb._closeDropdown();
+        nb.inputElement.value = '';
+        nb._typedAnchor = '';
+        nb.inputElement.focus();
+      });
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      await page.keyboard.type(text);
+    }
+
+    await page.evaluate(() => ((window as any).__navEvents = []));
+
+    await typeBare('localhost:3000');
+    await page.keyboard.press('Enter');
+    let events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://localhost:3000');
+
+    await typeBare('127.0.0.1:8080');
+    await page.keyboard.press('Enter');
+    events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://127.0.0.1:8080');
+
+    // An explicitly typed scheme is kept verbatim.
+    await typeBare('http://127.0.0.1:8080');
+    await page.keyboard.press('Enter');
+    events = await page.evaluate(() => (window as any).__navEvents);
+    expect(events[events.length - 1]).toBe('http://127.0.0.1:8080');
   });
 });

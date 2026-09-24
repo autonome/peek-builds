@@ -12,7 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
-import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from './url-completion.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
 
@@ -1227,10 +1227,9 @@ function getValidURL(str) {
 
   if (!hasValidProtocol) {
     const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
-    const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
 
-    if (isDomainPattern || isLocalhost) {
-      const urlWithProtocol = 'https://' + str;
+    if (isDomainPattern || isLoopbackAddress(str)) {
+      const urlWithProtocol = withDefaultScheme(str);
       try {
         new URL(urlWithProtocol);
         return { valid: true, url: urlWithProtocol };
@@ -1325,18 +1324,15 @@ function triggerUrlGhost(text) {
 function currentGhostCompletion(anchor) {
   if (!urlGhostSuggestion) return null;
   const c = urlCompletionAtGranularity(urlGhostSuggestion.url, urlGhostGranularity);
-  const t = (anchor || '').trim();
-  if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return c;
-  return null;
+  return inlineCompletionFor(c, anchor);
 }
 
 /** First granularity whose completion forward-extends `anchor`; 'full' if none. */
 function initialGhostGranularity(anchor) {
   if (!urlGhostSuggestion) return 'host';
-  const t = (anchor || '').trim();
   for (const g of URL_GRANULARITY_ORDER) {
     const c = urlCompletionAtGranularity(urlGhostSuggestion.url, g);
-    if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return g;
+    if (inlineCompletionFor(c, anchor) !== null) return g;
   }
   return 'full';
 }
@@ -1367,9 +1363,8 @@ function applyGhostSelection(anchor) {
   if (!commandInput) return;
   const completion = currentGhostCompletion(anchor);
   if (!completion) return;
-  const t = (anchor || '').trim();
   commandInput.value = completion;
-  commandInput.setSelectionRange(t.length, completion.length, 'backward');
+  commandInput.setSelectionRange(anchor.length, completion.length, 'backward');
   updateCommandUI();
   syncCommandTextScroll();
 }
@@ -1440,6 +1435,7 @@ async function enterUrlMode() {
   log('cmd:panel', 'URL mode: loaded', urlModeItems.length, 'frecency URLs');
 
   // Show results immediately
+  state.matchIndex = 0;
   renderUrlResults(urlModeItems);
 }
 
@@ -1470,6 +1466,7 @@ async function filterUrlModeItems(text) {
     urlModeItems = await queryUrlsByFrecency(text, 20);
   }
 
+  state.matchIndex = 0;
   renderUrlResults(urlModeItems);
 }
 
@@ -1535,7 +1532,6 @@ function renderUrlResults(items) {
 
   // Update match state for keyboard navigation
   state.matches = items.map((_, i) => `__url_${i}`);
-  state.matchIndex = 0;
 
   updateWindowSize();
 }
@@ -1627,11 +1623,10 @@ function syncCommandTextScroll() {
 function appendUrlGhost(typed) {
   const completion = currentGhostCompletion(typed);
   if (!completion) return;
-  const t = (typed || '').trim();
   const commandText = document.getElementById('command-text');
   const ghostSpan = document.createElement('span');
   ghostSpan.className = 'cmd-inline-selection';
-  ghostSpan.textContent = completion.substring(t.length);
+  ghostSpan.textContent = completion.substring(typed.length);
   commandText.appendChild(ghostSpan);
 }
 
@@ -2030,6 +2025,26 @@ function actionHandlers() {
       clearUrlGhost();
     },
 
+    // First Escape press: take the inline ghost away while keeping everything
+    // the user actually typed. applyGhostSelection may have overwritten the
+    // input with a completion and selected its suffix, so the input's value has
+    // to be put back to state.typed — otherwise the press leaves a filled-in URL
+    // on screen that no dropdown or ghost explains.
+    dropInlineGhost() {
+      clearUrlGhost();
+      const input = commandInput();
+      if (input) {
+        input.value = state.typed || '';
+        const end = input.value.length;
+        try {
+          input.setSelectionRange(end, end);
+        } catch {
+          // Inputs that don't support a text selection range (none today) —
+          // the value is already correct, which is the part that matters.
+        }
+      }
+    },
+
     computeMatches(payload) {
       const typed = payload?.value || state.typed;
       if (typed) {
@@ -2197,6 +2212,26 @@ function actionHandlers() {
 
       if (alreadyCompleted && state.matches.length > 1) {
         state.matchIndex = (state.matchIndex + 1) % state.matches.length;
+      }
+
+      const match = state.matches[state.matchIndex];
+      state.typed = match + ' ';
+      if (input) {
+        input.value = state.typed;
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    },
+
+    shiftTabCycleInResults() {
+      const input = commandInput();
+      const currentMatch = state.matches[state.matchIndex];
+      const currentValue = (input ? input.value : state.typed).trim();
+
+      const alreadyCompleted = currentValue === currentMatch ||
+                                currentValue.startsWith(currentMatch + ' ');
+
+      if (alreadyCompleted && state.matches.length > 1) {
+        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
       }
 
       const match = state.matches[state.matchIndex];
@@ -2445,11 +2480,13 @@ function actionHandlers() {
       if (!urlGhostSuggestion) return;
       // Open the CURRENT completion, not the full stored URL: at 'full' (or if
       // somehow unshown) open the exact stored URL; otherwise synthesize a clean
-      // https origin/path from the granularity completion (kills tracking query).
+      // origin/path from the granularity completion (kills tracking query). The
+      // completion is scheme-less, so the default scheme is re-added — http for
+      // loopback, https otherwise.
       const completion = currentGhostCompletion(state.typed);
       const url = (urlGhostGranularity === 'full' || !completion)
         ? urlGhostSuggestion.url
-        : 'https://' + completion;
+        : withDefaultScheme(completion);
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);
@@ -2799,9 +2836,13 @@ async function render() {
       }
       if (e.key === 'Tab') {
         e.preventDefault();
-        // Tab cycles forward through results in URL mode
+        // Tab cycles through results in URL mode; Shift+Tab reverses
         if (urlModeItems.length > 0) {
-          state.matchIndex = (state.matchIndex + 1) % urlModeItems.length;
+          if (e.shiftKey) {
+            state.matchIndex = (state.matchIndex - 1 + urlModeItems.length) % urlModeItems.length;
+          } else {
+            state.matchIndex = (state.matchIndex + 1) % urlModeItems.length;
+          }
           renderUrlResults(urlModeItems);
         }
         return;

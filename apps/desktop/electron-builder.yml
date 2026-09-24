@@ -15,6 +15,10 @@ electronVersion: "43.0.0" # pin version
 toolsets:
   appimage: "1.0.3"
 
+# Stamps build identity (commit, dirty flag, checkout) into the packaged
+# resources, and CFBundleVersion on macOS. See scripts/electron-after-pack.cjs.
+afterPack: scripts/electron-after-pack.cjs
+
 # Directories
 directories:
   output: out

@@ -490,4 +490,8 @@ api.pubsub.subscribe('tag:item-removed', () => {
   debouncedRefresh();
 });
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

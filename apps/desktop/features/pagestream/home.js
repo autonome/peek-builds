@@ -727,4 +727,8 @@ const init = async () => {
   }, 30000);
 };
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

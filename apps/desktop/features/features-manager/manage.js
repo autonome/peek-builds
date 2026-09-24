@@ -364,6 +364,36 @@ let pendingCapReviewId = null; // Feature ID pending capability review
 let createDirSelected = null;  // Selected directory for feature creation
 let hasFocusedSearchInput = false; // Focus the search field once, after the initial list renders.
 
+// Which tile entries of each feature are running, keyed by feature id. Seeded
+// from the list response on every load and kept current by the
+// `tile:state-changed` subscription, so the DevTools button tracks the tile
+// without waiting for a re-render.
+//
+// The seed keys on the feature id and the subscription keys on the lifecycle
+// message's tile id. Those are the same string for every feature that ships
+// today; a feature whose tile id diverged from its feature id would seed and
+// update under two different keys and its button would stop tracking.
+const liveEntriesByFeature = new Map();
+// The DevTools button of each rendered card, so a state change can toggle one
+// button instead of re-rendering the list.
+const devtoolsButtonsByFeature = new Map();
+
+/** True when at least one of the feature's tile entries is running. */
+function isFeatureRunning(featureId) {
+  const live = liveEntriesByFeature.get(featureId);
+  return !!live && live.size > 0;
+}
+
+/** Sync one card's DevTools button with the feature's running state. */
+function applyDevtoolsState(featureId) {
+  const btn = devtoolsButtonsByFeature.get(featureId);
+  if (!btn) return;
+  const running = isFeatureRunning(featureId);
+  const name = features.find(f => f.id === featureId)?.name || featureId;
+  btn.disabled = !running;
+  btn.title = running ? `Open DevTools for ${name}` : `${name} isn't running`;
+}
+
 // ─── Data loading ───────────────────────────────────────────────────
 
 // Focuses the search field so typing filters immediately on page load.
@@ -415,6 +445,14 @@ async function loadFeatures() {
     // commands, openCommand, and the declared settingsSchema PATH). The
     // schema CONTENTS are still a disk read, so they stay lazy — fetched
     // once, on Options expand, for the one feature the user opened.
+    // Seed the running-entry sets from this response. `liveEntries` is
+    // per-session and IPC-only; a feature the backend didn't report on
+    // simply has no running entries.
+    liveEntriesByFeature.clear();
+    for (const entry of merged) {
+      liveEntriesByFeature.set(entry.id, new Set(entry.liveEntries || []));
+    }
+
     features = merged;
     render();
     updateLastCheckedFooter();
@@ -428,6 +466,10 @@ async function loadFeatures() {
 // ─── Rendering ──────────────────────────────────────────────────────
 
 function render() {
+  // Rebuilt below by createFeatureCard — the old buttons belong to cards
+  // that are about to be discarded.
+  devtoolsButtonsByFeature.clear();
+
   let filtered = features;
 
   if (searchFilter) {
@@ -735,11 +777,22 @@ function createFeatureCard(feature) {
   // to inspect console logs, network, DOM. Uses the new unified
   // `feature-devtools:open` IPC handler which doesn't require a
   // capability token (it's origin-gated to peek:// callers).
+  //
+  // Enabled only while the feature has a running tile entry: pressing it on a
+  // feature that is merely installed used to answer "No active tile found".
+  // The running state comes from the tile lifecycle FSM via `liveEntries` on
+  // the list response, and stays current through `tile:state-changed`.
   const openDevtoolsBtn = document.createElement('peek-button');
   openDevtoolsBtn.size = 'sm';
+  openDevtoolsBtn.className = 'feature-devtools-btn';
   openDevtoolsBtn.textContent = 'DevTools';
+  devtoolsButtonsByFeature.set(feature.id, openDevtoolsBtn);
+  applyDevtoolsState(feature.id);
   openDevtoolsBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
+    // A click on a peek-button's padding still reaches this host listener
+    // even when the inner native button is disabled.
+    if (!isFeatureRunning(feature.id)) return;
     try {
       // Strict path — gated on `features.devtools` capability.
       const result = await api.features.devtoolsOpen(feature.id);
@@ -1554,6 +1607,22 @@ if (hasPeekAPI) {
       loadFeatures();
     });
   }
+
+  // Every tile lifecycle transition is mirrored onto this System topic by
+  // tile-lifecycle.ts. Tracking it keeps the DevTools buttons honest without
+  // a reload — a feature woken by a hotkey or a command enables its button
+  // the moment its tile reaches ready.
+  api.pubsub.subscribe('tile:state-changed', (msg) => {
+    if (!msg || !msg.tileId || !msg.entryId) return;
+    let live = liveEntriesByFeature.get(msg.tileId);
+    if (!live) {
+      live = new Set();
+      liveEntriesByFeature.set(msg.tileId, live);
+    }
+    if (msg.to === 'ready' || msg.to === 'visible') live.add(msg.entryId);
+    else live.delete(msg.entryId);
+    applyDevtoolsState(msg.tileId);
+  });
 }
 
 // ─── Install History ────────────────────────────────────────────────

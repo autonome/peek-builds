@@ -24,12 +24,37 @@ test.describe('Cmd URL window reuse @desktop', () => {
     if (app) await app.close();
   });
 
+  // Resolve the cmd panel page for one cycle from the live window list: a
+  // `cmd/panel.html` page that is NOT closed and is NOT `exclude` (the panel a
+  // previous cycle drove, which may still be tearing down). `app.getWindow`
+  // returns the first URL match without checking `isClosed()`, so on the second
+  // cycle it can hand back the dying first panel — the page then closes under
+  // `fill`/`keyboard.press` ("Target page, context or browser has been closed").
+  // Liveness and distinctness are proven here before the page is driven.
+  const livePanelPage = async (exclude?: Page): Promise<Page> => {
+    const pick = () =>
+      app
+        .windows()
+        .find(p => p.url().includes('cmd/panel.html') && !p.isClosed() && p !== exclude);
+    await expect
+      .poll(() => pick() !== undefined, {
+        timeout: 10000,
+        message: 'a live cmd/panel.html page distinct from the previous cycle\'s',
+      })
+      .toBe(true);
+    const panel = pick()!;
+    expect(panel.isClosed()).toBe(false);
+    return panel;
+  };
+
   // Open the cmd panel, type `text`, press Enter. Synchronizes on the panel's
   // FSM leaving TYPING (it transitions to EXECUTING/CLOSING/IDLE once the URL
   // open IPC has been dispatched) — deterministic, no fixed sleep. Because the
   // reuse-vs-create decision happens synchronously inside the awaited
   // window-open IPC, the window-list state is final by the time this resolves.
-  const openViaCmd = async (text: string) => {
+  // Returns the panel page it drove, so the caller can wait for that exact page
+  // to close before opening the next one.
+  const openViaCmd = async (text: string, excludePanel?: Page): Promise<Page> => {
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
@@ -43,10 +68,17 @@ test.describe('Cmd URL window reuse @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await livePanelPage(excludePanel);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await cmdWindow.fill('input', text);
-    await cmdWindow.keyboard.press('Enter');
+    // Keydown only, not `press`. The panel executes on Enter keydown
+    // (renderer/cmd/panel.js commandInput 'keydown'); opening the URL moves
+    // focus to the content window, and that focus change dismisses the panel
+    // (the `[wm]` transient sweep logs `effect-close effect=DismissWindow` for
+    // the panel) within a few ms. `press` = keydown + keyup, so the keyup
+    // could be dispatched to an already-closed page ("Target page, context or
+    // browser has been closed"). Nothing in the panel listens for Enter keyup.
+    await cmdWindow.keyboard.down('Enter');
     // Wait for the panel to leave TYPING — the Enter has been handled and the
     // URL-open dispatched. Tolerate the panel already having closed (terminal).
     try {
@@ -62,6 +94,7 @@ test.describe('Cmd URL window reuse @desktop', () => {
       // Panel window torn down during the wait — that's a terminal post-execute
       // state, which is exactly what we were waiting for.
     }
+    return cmdWindow;
   };
 
   // Snapshot of live content windows referencing example.com, fetched via the
@@ -103,7 +136,7 @@ test.describe('Cmd URL window reuse @desktop', () => {
     // yields `https://example.com`, while the registry stores the normalized
     // `https://example.com/`. Exact-string matching used to miss this on
     // re-open and spawn a duplicate; the normalized match must not.
-    await openViaCmd('example.com');
+    const firstPanel = await openViaCmd('example.com');
 
     // Deterministic: wait for the first (and only) creation event.
     await bgWindow.waitForFunction(
@@ -122,7 +155,19 @@ test.describe('Cmd URL window reuse @desktop', () => {
     // resolves only after the URL-open IPC has been dispatched and resolved, so
     // the window-list state below is final (the reuse decision is synchronous
     // inside that IPC).
-    await openViaCmd('example.com');
+    //
+    // First wait for the first panel to be gone. Pressing Enter starts its
+    // teardown but does not finish it, and until it finishes the window list
+    // still carries that page. `close` on the page object is the deterministic
+    // teardown signal — the panel is destroyed after executing, not reused.
+    if (!firstPanel.isClosed()) {
+      await firstPanel.waitForEvent('close');
+    }
+    expect(firstPanel.isClosed()).toBe(true);
+
+    // The second cycle must drive a different, live panel page.
+    const secondPanel = await openViaCmd('example.com', firstPanel);
+    expect(secondPanel).not.toBe(firstPanel);
 
     // The creation counter must STILL be 1 — no duplicate window was spawned.
     // This is the core user-observable outcome and the deterministic signal that

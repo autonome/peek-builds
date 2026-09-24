@@ -260,7 +260,7 @@ const TOOLS = [
   },
   {
     name: 'create_item',
-    description: 'Create a new item in Peek. For URLs, set type="url" and provide url. For text notes, set type="text" and provide content. Hashtags inside content (e.g. "#foo") are NOT auto-extracted as tags unless extractHashtags is true — pass tags explicitly in the tags array.',
+    description: 'Create a new item in Peek. For URLs, set type="url" and provide url. For text notes, set type="text" and provide content. Hashtags inside content (e.g. "#foo") are NOT auto-extracted as tags unless extractHashtags is true — pass tags explicitly in the tags array. The returned item is shaped like get_item (no favicon; content windowed with contentLength/contentTruncated) — maxContentLength and contentOffset affect only the response, never what is written.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -271,13 +271,15 @@ const TOOLS = [
         metadata: { type: 'object', description: 'Additional metadata as JSON object' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply' },
         extractHashtags: { type: 'boolean', description: 'When true, parse "#word" patterns out of text-item content and add them as tags. Default false — content is treated as opaque text so issue refs like "#123" or numbered lists like "#3)" do not become tags.' },
+        maxContentLength: { type: 'number', description: 'Max characters of content to return (default 4000). -1 for unlimited.' },
+        contentOffset: { type: 'number', description: 'Character offset into content (default 0). Combine with maxContentLength to page through long items.' },
       },
       required: ['type'],
     },
   },
   {
     name: 'update_item',
-    description: 'Update an existing Peek item (title, content, or metadata).',
+    description: 'Update an existing Peek item (title, content, or metadata). The returned item is shaped like get_item (no favicon; content windowed with contentLength/contentTruncated) — maxContentLength and contentOffset affect only the response, never what is written.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -285,6 +287,8 @@ const TOOLS = [
         title: { type: 'string', description: 'New title' },
         content: { type: 'string', description: 'New content' },
         metadata: { type: 'object', description: 'New metadata (replaces existing)' },
+        maxContentLength: { type: 'number', description: 'Max characters of content to return (default 4000). -1 for unlimited.' },
+        contentOffset: { type: 'number', description: 'Character offset into content (default 0). Combine with maxContentLength to page through long items.' },
       },
       required: ['itemId'],
     },
@@ -361,13 +365,15 @@ const TOOLS = [
   },
   {
     name: 'complete_task',
-    description: 'Mark a task as done and record a completion event. In an unscoped session: adds "done", removes "todo"; "accepted" is ignored. In a session confined to a scope (PEEK_MCP_SCOPE_TAG): bare "todo"/"done" are left alone — with "accepted" false or omitted, adds "<scope>:needs-review" and removes "<scope>:todo"/"wip"/"ready"/"triage", leaving the item in the work queue for its owner to review; only pass "accepted: true" once the task\'s owner has approved the work, which adds "<scope>:done" instead and takes the item out of the queue for good.',
+    description: 'Mark a task as done and record a completion event. In an unscoped session: adds "done", removes "todo"; "accepted" is ignored. In a session confined to a scope (PEEK_MCP_SCOPE_TAG): bare "todo"/"done" are left alone — with "accepted" false or omitted, adds "<scope>:needs-review" and removes "<scope>:todo"/"wip"/"ready"/"triage", leaving the item in the work queue for its owner to review; only pass "accepted: true" once the task\'s owner has approved the work, which adds "<scope>:done" instead and takes the item out of the queue for good. The returned item is shaped like get_item (no favicon; content windowed with contentLength/contentTruncated) — maxContentLength and contentOffset affect only the response, never what is written.',
     inputSchema: {
       type: 'object',
       properties: {
         itemId: { type: 'string', description: 'Item ID' },
         notes: { type: 'string', description: 'Completion notes' },
         accepted: { type: 'boolean', description: 'Scoped sessions only: true once the task\'s owner has approved the work (moves to "<scope>:done" instead of "<scope>:needs-review"). Default false. Ignored unscoped.' },
+        maxContentLength: { type: 'number', description: 'Max characters of content to return (default 4000). -1 for unlimited.' },
+        contentOffset: { type: 'number', description: 'Character offset into content (default 0). Combine with maxContentLength to page through long items.' },
       },
       required: ['itemId'],
     },
@@ -439,13 +445,16 @@ async function handleToolCall(name, args) {
     }
     case 'create_item': {
       validateWriteTags(args.tags);
-      return store.createItem({ ...args, tags: withScopeTag(args.tags) });
+      const { maxContentLength: _omitMax, contentOffset: _omitOffset, ...rest } = args;
+      const result = await store.createItem({ ...rest, tags: withScopeTag(args.tags) });
+      return shapeItemForResponse(result, args);
     }
     case 'update_item': {
       const itemId = await resolveItemIdForMutation(args);
-      const { itemId: _omit, ...rest } = args;
+      const { itemId: _omit, maxContentLength: _omitMax, contentOffset: _omitOffset, ...rest } = args;
       await assertItemInScope(itemId);
-      return store.updateItem(itemId, rest);
+      const result = await store.updateItem(itemId, rest);
+      return shapeItemForResponse(result, args);
     }
     case 'delete_item': {
       // Conservative: exact match OR unambiguous prefix only (mutation
@@ -496,7 +505,8 @@ async function handleToolCall(name, args) {
     case 'complete_task': {
       const itemId = await resolveItemIdForMutation(args);
       await assertItemInScope(itemId);
-      return store.completeTask(itemId, args.notes, args.accepted === true);
+      const result = await store.completeTask(itemId, args.notes, args.accepted === true);
+      return shapeItemForResponse(result, args);
     }
     case 'get_task_context': {
       // Same inline-resolution shape as get_item above.

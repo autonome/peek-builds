@@ -184,33 +184,13 @@ function listUsers() {
 /**
  * Whether a user id names a real, registered user. restore.js checks this
  * before joining userId unsanitized into a filesystem path (getUserBackupDir,
- * db.getProfileDir) — the same shape of check createUser()/regenerateApiKey()
- * already do inline, pulled out here so a caller that only needs the
- * yes/no doesn't have to duplicate the query.
+ * db.getProfileDir) — the same shape of check createUser() already does
+ * inline, pulled out here so a caller that only needs the yes/no doesn't
+ * have to duplicate the query.
  */
 function userExists(userId) {
   const db = getSystemDb();
   return !!db.get("SELECT id FROM users WHERE id = ?", [userId]);
-}
-
-/**
- * Regenerate API key for existing user.
- * Returns new API key (only time it's available).
- */
-function regenerateApiKey(userId) {
-  const db = getSystemDb();
-
-  const existing = db.get("SELECT id FROM users WHERE id = ?", [userId]);
-  if (!existing) {
-    throw new Error(`User '${userId}' does not exist`);
-  }
-
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
-
-  db.run("UPDATE users SET api_key_hash = ? WHERE id = ?", [apiKeyHash, userId]);
-
-  return { userId, apiKey };
 }
 
 /**
@@ -301,8 +281,6 @@ function createDeviceWithKey(userId, label, existingKey) {
  * Returns:
  *   { userId, deviceId, label }            — active device credential
  *   { revoked: true }                      — key matches a REVOKED device (reject)
- *   { userId, deviceId: null, legacy: true } — key matches only the legacy
- *                                              users.api_key_hash (pre-migration safety net)
  *   null                                   — no match (reject)
  *
  * On a successful active-device match, last_seen_at is bumped (cheap audit).
@@ -330,14 +308,6 @@ function resolveDevice(apiKey) {
       device.id,
     ]);
     return { userId: device.user_id, deviceId: device.id, label: device.label };
-  }
-
-  // Pre-migration safety net: key may still live only in the users table
-  // (migrateLegacyKeysToDevices not yet run, or single-user bootstrap). Accept
-  // it but without a device identity.
-  const userId = getUserIdFromApiKey(apiKey);
-  if (userId) {
-    return { userId, deviceId: null, legacy: true };
   }
 
   return null;
@@ -522,10 +492,18 @@ function tooManyAttemptsError(message) {
 // opportunistically (on every mint and every exchange — both rare, and the
 // table never holds more than a handful of rows) rather than on a timer,
 // since there's no background scheduler in this process.
-function pruneEnrolmentCodes(db) {
-  db.run("DELETE FROM enrolment_codes WHERE used_at IS NOT NULL OR expires_at < ?", [
-    new Date().toISOString(),
-  ]);
+//
+// `keepHash`, when given, spares that one code_hash from this sweep even if
+// it now qualifies (used_at just got set). Without it, a duplicate exchange
+// of the code a caller just redeemed — a double-click, a client retrying a
+// dropped response — would find no row at all and get the generic "Invalid
+// enrolment code" instead of the accurate "already used". The spared row is
+// still swept normally on the next unrelated mint or exchange.
+function pruneEnrolmentCodes(db, keepHash) {
+  db.run(
+    "DELETE FROM enrolment_codes WHERE (used_at IS NOT NULL OR expires_at < ?) AND code_hash != ?",
+    [new Date().toISOString(), keepHash || ""]
+  );
 }
 
 /**
@@ -596,31 +574,40 @@ function exchangeEnrolmentCode(code, label, requesterIp) {
 
   const db = getSystemDb();
   const codeHash = hashApiKey(normalizeEnrolmentCode(code));
-  const row = db.get(
-    "SELECT id, user_id, expires_at, used_at FROM enrolment_codes WHERE code_hash = ?",
-    [codeHash]
-  );
-  if (!row) {
-    throw new Error("Invalid enrolment code");
-  }
-  if (row.used_at) {
-    throw new Error("Enrolment code already used");
-  }
-  if (new Date(row.expires_at).getTime() < Date.now()) {
-    throw new Error("Enrolment code expired");
-  }
-
   const deviceLabel = label && String(label).trim() ? String(label).trim() : "New device";
-  // Mint the device before burning the code: if createDevice() throws (e.g.
-  // the owning user row was deleted), the code must stay usable for a retry
-  // rather than being permanently spent with no device to show for it.
-  const device = createDevice(row.user_id, deviceLabel);
 
-  db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
-    new Date().toISOString(),
-    row.id,
-  ]);
-  pruneEnrolmentCodes(db);
+  // The check-mint-mark sequence runs as one transaction so two concurrent
+  // exchanges of the same code can't both pass the used/expired check before
+  // either reaches the UPDATE — re-reading the row inside the transaction
+  // (not just before it) is what actually closes that race.
+  const device = db.transaction(() => {
+    const row = db.get(
+      "SELECT id, user_id, expires_at, used_at FROM enrolment_codes WHERE code_hash = ?",
+      [codeHash]
+    );
+    if (!row) {
+      throw new Error("Invalid enrolment code");
+    }
+    if (row.used_at) {
+      throw new Error("Enrolment code already used");
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      throw new Error("Enrolment code expired");
+    }
+
+    // Mint the device before burning the code: if createDevice() throws (e.g.
+    // the owning user row was deleted), the code must stay usable for a retry
+    // rather than being permanently spent with no device to show for it.
+    const minted = createDevice(row.user_id, deviceLabel);
+
+    db.run("UPDATE enrolment_codes SET used_at = ? WHERE id = ?", [
+      new Date().toISOString(),
+      row.id,
+    ]);
+
+    return minted;
+  });
+  pruneEnrolmentCodes(db, codeHash);
 
   return device;
 }
@@ -974,7 +961,6 @@ module.exports = {
   deleteUser,
   listUsers,
   userExists,
-  regenerateApiKey,
   closeSystemDb,
   // Device management
   createDevice,

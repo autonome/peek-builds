@@ -433,4 +433,94 @@ describe('syncBuiltinFeatures', () => {
     const result = syncBuiltinFeatures(featuresDir, registry);
     assert.deepStrictEqual(result.added, []);
   });
+
+  it('should keep a registered builtin whose manifest is invalid JSON', () => {
+    fs.mkdirSync(path.join(featuresDir, 'theme-broken'), { recursive: true });
+    fs.writeFileSync(path.join(featuresDir, 'theme-broken', 'manifest.json'), '{ not json');
+
+    const registry = new FeatureRegistry(registryDir);
+    registry.loadRegistry();
+
+    registry.registerFeature({
+      id: 'broken',
+      name: 'Broken Feature',
+      path: path.join(featuresDir, 'theme-broken'),
+      source: { type: 'builtin' },
+      grantedCapabilities: {},
+      userApproved: true,
+      installedAt: '2025-01-01T00:00:00.000Z',
+    });
+    registry.saveRegistry();
+
+    const result = syncBuiltinFeatures(featuresDir, registry);
+    assert.deepStrictEqual(result.removed, []);
+    assert.ok(registry.getFeature('broken'));
+  });
+
+  it('should keep a registered builtin whose manifest fails schema validation', () => {
+    writeManifest(path.join(featuresDir, 'badschema'), makeTileManifest('badschema', { tiles: 'nope' }));
+
+    const registry = new FeatureRegistry(registryDir);
+    registry.loadRegistry();
+
+    registry.registerFeature({
+      id: 'badschema',
+      name: 'Bad Schema Feature',
+      path: path.join(featuresDir, 'badschema'),
+      source: { type: 'builtin' },
+      grantedCapabilities: {},
+      userApproved: true,
+      installedAt: '2025-01-01T00:00:00.000Z',
+    });
+    registry.saveRegistry();
+
+    const result = syncBuiltinFeatures(featuresDir, registry);
+    assert.deepStrictEqual(result.removed, []);
+    assert.ok(registry.getFeature('badschema'));
+  });
+
+  it('should keep a registered builtin with a non-tile (v1) manifest', () => {
+    writeManifest(path.join(featuresDir, 'oldstyle'), makeV1Manifest('oldstyle'));
+
+    const registry = new FeatureRegistry(registryDir);
+    registry.loadRegistry();
+
+    registry.registerFeature({
+      id: 'oldstyle',
+      name: 'Old Style Feature',
+      path: path.join(featuresDir, 'oldstyle'),
+      source: { type: 'builtin' },
+      grantedCapabilities: {},
+      userApproved: true,
+      installedAt: '2025-01-01T00:00:00.000Z',
+    });
+    registry.saveRegistry();
+
+    const result = syncBuiltinFeatures(featuresDir, registry);
+    assert.deepStrictEqual(result.removed, []);
+    assert.ok(registry.getFeature('oldstyle'));
+    assert.deepStrictEqual(result.added, []);
+  });
+
+  it('should remove a registered builtin whose directory has no manifest.json', () => {
+    fs.mkdirSync(path.join(featuresDir, 'hollow'), { recursive: true });
+
+    const registry = new FeatureRegistry(registryDir);
+    registry.loadRegistry();
+
+    registry.registerFeature({
+      id: 'hollow',
+      name: 'Hollow Feature',
+      path: path.join(featuresDir, 'hollow'),
+      source: { type: 'builtin' },
+      grantedCapabilities: {},
+      userApproved: true,
+      installedAt: '2025-01-01T00:00:00.000Z',
+    });
+    registry.saveRegistry();
+
+    const result = syncBuiltinFeatures(featuresDir, registry);
+    assert.ok(result.removed.includes('hollow'));
+    assert.strictEqual(registry.getFeature('hollow'), undefined);
+  });
 });

@@ -40,7 +40,7 @@ import { PeekElement, sharedStyles } from './base.js';
 // (/apps/desktop/renderer/components/ → ../cmd/ → renderer/cmd/). A custom-scheme
 // importmap prefix (peek://cmd/) is NOT remapped by Chromium, so a relative
 // specifier is the portable one. Leaf module — no DOM/electron deps.
-import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from '../cmd/url-completion.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, withDefaultScheme } from '../cmd/url-completion.js';
 
 // Debounce before firing a frecency query for the typed text. The generation
 // counter (not this delay) is the staleness-correctness mechanism.
@@ -303,6 +303,7 @@ export class PeekNavbar extends PeekElement {
     this._ghostGeneration = 0;     // staleness guard for async query results
     this._ghostTimer = null;
     this._typedAnchor = '';        // the user's REAL typed text (selection anchor)
+    this._suppressGhost = false;   // set from the input event's type; true while deleting
     /** Optional injectable async query fn `(search) => Promise<items[]>`. When
      * unset, the component queries `window.app.datastore` directly. Used by the
      * component test to feed deterministic history without a live datastore. */
@@ -324,14 +325,14 @@ export class PeekNavbar extends PeekElement {
   }
 
   /**
-   * Normalize a URL input, adding https:// if needed
+   * Normalize a URL input, adding a default scheme if needed — http:// for a
+   * loopback host, https:// for everything else.
    */
   _normalizeUrl(input) {
     const trimmed = input.trim();
     if (!trimmed) return null;
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    if (trimmed.includes('.') && !trimmed.includes(' ')) return 'https://' + trimmed;
-    return 'https://' + trimmed;
+    return withDefaultScheme(trimmed);
   }
 
   /**
@@ -442,12 +443,18 @@ export class PeekNavbar extends PeekElement {
    * Input event: the current input.value IS the user's real typed text — the
    * ghost suffix, being natively selected, was consumed by the keystroke that
    * triggered this event. Record it as the anchor and (re-)query.
+   *
+   * The edit is classified from the event itself (`inputType`), never from
+   * timing: a deletion must not have the ghost it just rejected put back by the
+   * debounced query that follows it. A missing `inputType` counts as an
+   * insertion. The next insertion re-arms the ghost through the normal path.
    */
-  _onUrlInput() {
+  _onUrlInput(e) {
     const input = this.inputElement;
     if (!input) return;
+    const isDeleting = typeof e?.inputType === 'string' && e.inputType.startsWith('delete');
     this._typedAnchor = input.value;
-    this._triggerSuggestions(this._typedAnchor);
+    this._triggerSuggestions(this._typedAnchor, { isDeleting });
   }
 
   _onUrlBlur() {
@@ -460,12 +467,18 @@ export class PeekNavbar extends PeekElement {
    * Debounced frecency query. The generation counter — bumped on every trigger
    * and every clear — is the correctness mechanism: an async result is applied
    * only if no newer trigger/clear happened while it was in flight.
+   *
+   * `isDeleting` classifies the edit that triggered this query. The query still
+   * runs and the dropdown still refreshes while deleting; only the inline ghost
+   * is withheld, so Backspace's rejection sticks. `_ghostTimer` is nulled once
+   * the callback has finished on every exit path — that is the settled signal.
    */
-  _triggerSuggestions(text) {
+  _triggerSuggestions(text, { isDeleting = false } = {}) {
     if (this._ghostTimer) {
       clearTimeout(this._ghostTimer);
       this._ghostTimer = null;
     }
+    this._suppressGhost = isDeleting;
 
     const trimmed = (text || '').trim();
     if (trimmed.length < 2) {
@@ -474,21 +487,35 @@ export class PeekNavbar extends PeekElement {
     }
 
     const generation = ++this._ghostGeneration;
-    this._ghostTimer = setTimeout(async () => {
+    // Retire only THIS timer's handle: a newer trigger may have replaced it
+    // while the query was in flight, and nulling that one would report settled
+    // while a query is still pending.
+    const timer = setTimeout(async () => {
+      const retire = () => { if (this._ghostTimer === timer) this._ghostTimer = null; };
       const items = await this._queryUrls(trimmed);
-      if (generation !== this._ghostGeneration) return; // stale — newer input arrived
+      if (generation !== this._ghostGeneration) {
+        retire(); // stale — newer input arrived
+        return;
+      }
       const input = this.inputElement;
-      if (!input || this.shadowRoot?.activeElement !== input) return; // no longer editing
+      if (!input || this.shadowRoot?.activeElement !== input) {
+        retire(); // no longer editing
+        return;
+      }
 
       this._suggestions = items;
       this._selectedIndex = -1;
       const best = items[0];
-      this._ghost = best ? { url: best.content, matchable: urlMatchable(best.content) } : null;
+      this._ghost = (best && !this._suppressGhost)
+        ? { url: best.content, matchable: urlMatchable(best.content) }
+        : null;
       if (this._ghost) {
         this._ghostGranularity = this._initialGranularity(this._typedAnchor);
         this._applyGhostSelection(this._typedAnchor);
       }
+      retire();
     }, URL_GHOST_DEBOUNCE_MS);
+    this._ghostTimer = timer;
   }
 
   /**

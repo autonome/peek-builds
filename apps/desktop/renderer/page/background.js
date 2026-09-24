@@ -14,6 +14,8 @@
  * this consolidation.
  */
 
+import { isLoopbackAddress, withDefaultScheme } from '../cmd/url-completion.js';
+
 const api = window.app;
 
 /**
@@ -26,10 +28,9 @@ function getValidURL(str) {
 
   if (!hasValidProtocol) {
     const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
-    const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
 
-    if (isDomainPattern || isLocalhost) {
-      const urlWithProtocol = 'https://' + str;
+    if (isDomainPattern || isLoopbackAddress(str)) {
+      const urlWithProtocol = withDefaultScheme(str);
       try {
         new URL(urlWithProtocol);
         return { valid: true, url: urlWithProtocol };

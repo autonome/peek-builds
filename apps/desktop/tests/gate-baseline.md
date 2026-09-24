@@ -48,13 +48,10 @@ suspect, note that it has no path to these two runners at all.
 These reproduced identically across both runs. A change is clean if its failing set is a subset of
 this list plus the intermittent list below.
 
-### desktop (31)
+### desktop (28)
 
 | Spec | Test | Cause |
 |---|---|---|
-| `cmd-url-ghost.spec.ts` | titled history URL still shows ghost and is not mirrored into the command registry | unclassified |
-| `cmd-url-ghost.spec.ts` | ArrowDown to a Visited row then Enter opens that row url | parallel load |
-| `cmd-url-ghost.spec.ts` | Backspace rejects the selected completion, leaving the bare typed text | unclassified |
 | `headless-no-focus-theft.spec.ts` | canvas page-host window does not steal focus after open | headless paint |
 | `headless-no-focus-theft.spec.ts` | page-host window does not paint after open in headless | headless paint |
 | `headless-no-focus-theft.spec.ts` | headless never registers the system-wide Escape global shortcut | headless paint |
@@ -83,6 +80,13 @@ this list plus the intermittent list below.
 | `session-restore-coldstart.spec.ts` | cold-start restore fires the ordered z-order re-assert for every page-host | missing `swift` |
 | `session-restore-page-host.spec.ts` | maximized hybrid page host: maximize state survives save+restore | maximize fidelity |
 | `slides-lazy-wake.spec.ts` | cli:slide-open wakes the lazy tile and opens the slide window | unclassified |
+
+Three `cmd-url-ghost.spec.ts` rows are gone from this table, fixed by
+`specs/cmd-url-linux-failures.md`: every panel open in that spec omitted `key`, so each open built
+a new window while `getWindow` kept returning the first one, hidden by keepLive and holding stale
+ghost state. The opens now pass `key: 'peek://cmd/panel.html'` as production does, the one panel
+is reused and reset on show, and each open asserts that exactly one live panel exists. The table
+header count moves from 31 to 28; the runner totals above are left as recorded.
 
 ### desktop-serial (1)
 

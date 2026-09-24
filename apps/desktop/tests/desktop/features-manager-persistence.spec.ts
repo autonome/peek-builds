@@ -39,8 +39,31 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
   });
 
   test.afterAll(async () => {
+    // The devtools-affordance test attaches detached DevTools. That is not
+    // observable headless, but on a real display it would leak windows into
+    // the rest of the suite.
+    if (app?.evaluateMain) {
+      await app.evaluateMain(((electron: typeof import('electron')) => {
+        for (const wc of electron.webContents.getAllWebContents()) {
+          try {
+            if (wc.isDevToolsOpened()) wc.closeDevTools();
+          } catch {
+            // webContents already gone
+          }
+        }
+      }) as any).catch(() => { /* app already down */ });
+    }
     if (app) await app.close();
   });
+
+  /** Resolve once the `windows` card's DevTools button exists in the manager. */
+  async function waitForWindowsDevtoolsButton(manager: Page): Promise<void> {
+    await manager.waitForFunction(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'windows');
+      return !!card?.querySelector('.feature-devtools-btn');
+    }, { timeout: 15000 });
+  }
 
   // Runs first in this describe, before any other test's button clicks move
   // focus elsewhere — the fix focuses the search field only ONCE (guarded),
@@ -253,5 +276,76 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
       return JSON.parse(row.value).shortcutKeyPrefix;
     });
     expect(persistedPrefix).toBe(newPrefix);
+  });
+
+  // ── DevTools affordance (peek item 621e283f) ──────────────────────────
+  //
+  // `windows` is the subject because windows-lazy-wake.spec.ts already pins
+  // it as non-resident at boot, so "not woken yet" is a fact about the app
+  // rather than an assumption of this file.
+
+  test('devtools affordance is disabled for a lazy feature that has not been woken', async () => {
+    const manager = await openManager(app, bgWindow);
+    await waitForWindowsDevtoolsButton(manager);
+
+    const state = await manager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'windows');
+      const btn = card!.querySelector('.feature-devtools-btn') as any;
+      return { disabled: btn.disabled, title: btn.title };
+    });
+
+    expect(state.disabled).toBe(true);
+    expect(state.title).toContain("isn't running");
+  });
+
+  test('devtools affordance enables after the tile wakes and resolves success on repeated clicks', async () => {
+    const manager = await openManager(app, bgWindow);
+    await waitForWindowsDevtoolsButton(manager);
+
+    // Arm the FSM observer BEFORE waking, so the cold-boot READY transition
+    // can't race ahead. Same deterministic hook windows-lazy-wake.spec uses.
+    const readyPromise = app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.waitForTileState('windows', 'ready', 15000)) as any);
+
+    await app.evaluateMain!(((_e: unknown) => {
+      (globalThis as any).__peek_test.publishCmdExecute('windows');
+    }) as any);
+
+    const transition = (await readyPromise) as { tileId: string; to: string };
+    expect(transition.tileId).toBe('windows');
+    expect(transition.to).toBe('ready');
+
+    // The state transition itself is already awaited above — what remains is
+    // the RENDERER-PROCESS boundary: the `tile:state-changed` publish has to
+    // cross from main into the manager's renderer, and a Playwright client
+    // has no handle on that delivery from outside. The button's own
+    // `disabled` flag IS the post-delivery state, so polling it is reading
+    // the end state rather than guessing at a duration; the 15s is a failure
+    // deadline, not a settle-wait. The manager is never reloaded here, so
+    // only the subscription can flip it.
+    await manager.waitForFunction(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'windows');
+      const btn = card?.querySelector('.feature-devtools-btn') as any;
+      return !!btn && btn.disabled === false;
+    }, { timeout: 15000 });
+
+    // The item reported the "No active tile found" error as intermittent, so
+    // one call proves nothing. Assert the IPC result rather than a visible
+    // DevTools window — detached DevTools is not observable headless.
+    const results = await manager.evaluate(async () => {
+      const out: any[] = [];
+      for (let i = 0; i < 5; i++) {
+        out.push(await (window as any).app.features.devtoolsOpen('windows'));
+      }
+      return out;
+    });
+
+    expect(results).toHaveLength(5);
+    for (const result of results) {
+      expect(result.error).toBeUndefined();
+      expect(result.success).toBe(true);
+    }
   });
 });

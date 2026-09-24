@@ -412,6 +412,39 @@ describe('enrichFeatureEntries — the join', () => {
   it('returns [] for an empty registry', () => {
     assert.deepStrictEqual(enrichFeatureEntries([], [TAGS_ROW]), []);
   });
+
+  it('attaches liveEntries for a feature with a cache row', () => {
+    const live = new Map([['tags', ['background', 'home']]]);
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW], undefined, live);
+    assert.deepStrictEqual(out.liveEntries, ['background', 'home']);
+    // ...and the rest of the enrichment still happens.
+    assert.strictEqual(out.description, 'Tag things');
+  });
+
+  it('attaches liveEntries even with NO cache row', () => {
+    const live = new Map([['broken-manifest', ['background']]]);
+    const [out] = enrichFeatureEntries([entry('broken-manifest')], [], undefined, live);
+    assert.deepStrictEqual(out.liveEntries, ['background']);
+  });
+
+  it('attaches an empty liveEntries for a feature reported as running nothing', () => {
+    const live = new Map([['tags', []]]);
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW], undefined, live);
+    assert.deepStrictEqual(out.liveEntries, []);
+  });
+
+  it('leaves liveEntries absent when the argument is omitted', () => {
+    const [withRow] = enrichFeatureEntries([entry('tags')], [TAGS_ROW]);
+    const [withoutRow] = enrichFeatureEntries([entry('broken-manifest')], []);
+    assert.strictEqual(withRow.liveEntries, undefined);
+    assert.strictEqual(withoutRow.liveEntries, undefined);
+  });
+
+  it('leaves liveEntries undefined when the map has no entry for this feature id', () => {
+    const live = new Map([['some-other-feature', ['background']]]);
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW], undefined, live);
+    assert.strictEqual(out.liveEntries, undefined);
+  });
 });
 
 describe('enrichFeatureEntries — openable count across a realistic builtin set', () => {

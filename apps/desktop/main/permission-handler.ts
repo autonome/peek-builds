@@ -43,10 +43,44 @@ import { DEBUG } from './config.js';
 import {
   takePendingRequest,
   denyPendingForWindow,
+  listPendingForWindow,
   type PendingPermissionRequest,
 } from './permission-pending.js';
 
 const pendingRequests = new Map<string, PendingPermissionRequest>();
+
+/** The `page:permission-request` payload the overlay renderer consumes. */
+interface PermissionRequestPayload {
+  requestId: string;
+  windowId: number;
+  permission: PermissionName;
+  origin: string;
+  label: string;
+}
+
+/**
+ * Build the renderer-facing payload for one pending request. The live publish
+ * below and the replay listing (`pendingPermissionRequestsForWindow`) both go
+ * through here so a replayed prompt can never differ in shape from the one the
+ * renderer would have received first time round.
+ *
+ * `windowId` is the ELECTRON window id — the renderer matches it against its
+ * active-window id. See the boundary note at the publish site.
+ */
+function permissionRequestPayload(
+  requestId: string,
+  nativeWindowId: number,
+  permission: PermissionName,
+  origin: string,
+): PermissionRequestPayload {
+  return {
+    requestId,
+    windowId: nativeWindowId,
+    permission,
+    origin,
+    label: labelFor(permission),
+  };
+}
 
 /**
  * Every path that resolves a pending request announces it here so the
@@ -153,16 +187,14 @@ export function installPermissionHandler(ses: Session): void {
     };
     native.once('closed', onClosed);
 
-    publish('permission-handler', 'page:permission-request', {
-      requestId,
-      // Renderer-facing payloads still speak Electron window ids (the overlay
-      // matches this against its active-window id) — deliberate boundary
-      // until the renderer id-space migrates (window-manager.md §5).
-      windowId: native.id,
-      permission,
-      origin,
-      label: labelFor(permission as PermissionName),
-    });
+    // Renderer-facing payloads still speak Electron window ids (the overlay
+    // matches this against its active-window id) — deliberate boundary until
+    // the renderer id-space migrates (window-manager.md §5).
+    publish(
+      'permission-handler',
+      'page:permission-request',
+      permissionRequestPayload(requestId, native.id, permission as PermissionName, origin),
+    );
   });
 
   // Subscribe to renderer responses. The page-host renderer publishes this
@@ -261,6 +293,32 @@ export function denyPendingRequestsForWindow(windowId: number): void {
       `[permission] window ${windowId} closed, denied ${denied.length} pending request(s)`,
     );
   }
+}
+
+/**
+ * The still-pending permission requests for `nativeWindowId`, each in the
+ * `page:permission-request` payload shape, in the order they arrived.
+ *
+ * This is the replay source for the overlay handoff. `pubsub.ts` keeps no
+ * history, so a request published before the shared overlay renderer
+ * subscribed — at startup, or after the renderer was re-created — was
+ * delivered to nobody and stayed invisible until window close auto-denied it.
+ * `hybrid-overlay.ts sendActiveHandoff` carries this list on every
+ * `page-overlay:active`, so the next handoff surfaces anything missed.
+ *
+ * Read-only: nothing is removed, no callback runs, nothing is published.
+ * Returns `[]` when the id maps to no window.
+ */
+export function pendingPermissionRequestsForWindow(
+  nativeWindowId: number,
+): PermissionRequestPayload[] {
+  // Same Electron-id → WM-id conversion, and same reason, as
+  // `denyPendingRequestsForWindow` above.
+  const wmId = getWindowIdFor(nativeWindowId);
+  if (wmId == null) return [];
+  return listPendingForWindow(pendingRequests, wmId).map((entry) =>
+    permissionRequestPayload(entry.requestId, nativeWindowId, entry.permission, entry.origin),
+  );
 }
 
 /**

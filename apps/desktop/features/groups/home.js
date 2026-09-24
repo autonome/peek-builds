@@ -1875,4 +1875,8 @@ const createAddressCard = (address) => {
 };
 
 // Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

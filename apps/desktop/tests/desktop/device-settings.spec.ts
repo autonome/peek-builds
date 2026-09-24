@@ -26,11 +26,22 @@ interface StubDevice {
 // is what lets the stub do the same.
 const STUB_KEY = 'stub-test-key';
 const ENROLLED_KEY = 'enrolled-key';
+const ALREADY_REVOKED_KEY = 'already-revoked-key';
 const STUB_CODE = 'ABCD2345';
 const DEVICE_FOR_KEY: Record<string, string> = {
   [STUB_KEY]: 'dev-laptop',
   [ENROLLED_KEY]: 'dev-new',
+  [ALREADY_REVOKED_KEY]: 'dev-tablet',
 };
+
+// dev-tablet models a device the real server has already revoked through
+// some other path (a dropped response, two tabs both firing revoke) by the
+// time THIS client's revoke call lands — the retry case
+// tile-ipc.ts's tile:sync:revoke-device handler exists to handle. The stub
+// answers its DELETE with `{revoked:false, current:true}` without touching
+// revoked_at, so GET keeps listing it as active (this client never saw the
+// other revoke) and the revoke button stays clickable.
+const ALREADY_REVOKED_ON_SERVER = new Set(['dev-tablet']);
 
 /** A minimal in-memory sync-server stub: GET list, PATCH rename, DELETE
  * revoke (with `current`), POST enrolment code (always STUB_CODE), and POST
@@ -114,8 +125,14 @@ function startDeviceStubServer(devices: StubDevice[]): Promise<{ server: http.Se
           res.end(JSON.stringify({ error: 'not found' }));
           return;
         }
-        device.revoked_at = new Date().toISOString();
-        res.end(JSON.stringify({ revoked: true, current: device.id === requestingDeviceId }));
+        const alreadyRevokedElsewhere = ALREADY_REVOKED_ON_SERVER.has(device.id);
+        if (!alreadyRevokedElsewhere) {
+          device.revoked_at = new Date().toISOString();
+        }
+        res.end(JSON.stringify({
+          revoked: !alreadyRevokedElsewhere,
+          current: device.id === requestingDeviceId,
+        }));
         return;
       }
 
@@ -151,6 +168,13 @@ test.describe('Device Settings Panel @desktop', () => {
         id: 'dev-phone',
         label: 'Phone',
         created_at: '2026-01-05T00:00:00.000Z',
+        last_seen_at: null,
+        revoked_at: null,
+      },
+      {
+        id: 'dev-tablet',
+        label: 'Tablet',
+        created_at: '2026-01-10T00:00:00.000Z',
         last_seen_at: null,
         revoked_at: null,
       },
@@ -284,5 +308,42 @@ test.describe('Device Settings Panel @desktop', () => {
     await expect(newCard).toContainText('Re-enrolled laptop');
     await expect(newCard).toContainText('This device');
     await expect(settingsWindow.locator('[data-device-id="dev-laptop"]')).toContainText('Revoked');
+  });
+
+  test('retrying a self-revoke on an already-revoked device still clears the local key', async () => {
+    const settingsWindow = await app.getWindow('settings/settings.html');
+    await settingsWindow.waitForSelector('.settings-layout', { timeout: 5000 });
+
+    // Point this device at dev-tablet, which the stub always answers a
+    // revoke for as `{revoked:false, current:true}` — see
+    // ALREADY_REVOKED_ON_SERVER above.
+    await settingsWindow.click('[data-section="sync"]');
+    await settingsWindow.waitForSelector('#section-sync.active');
+    const syncSection = settingsWindow.locator('#section-sync');
+    const serverUrlInput = syncSection.locator('.form-group:has(label:text-is("Server URL")) input');
+    await serverUrlInput.fill(serverUrl);
+    await serverUrlInput.press('Tab');
+    const apiKeyInput = syncSection.locator('.form-group:has(label:text-is("API Key")) input');
+    await apiKeyInput.fill(ALREADY_REVOKED_KEY);
+    await apiKeyInput.press('Tab');
+    await expect(syncSection.getByText('Status: Configured')).toBeVisible();
+
+    await settingsWindow.click('[data-section="devices"]');
+    await settingsWindow.waitForSelector('#section-devices.active');
+    const tabletCard = settingsWindow.locator('[data-device-id="dev-tablet"]');
+    await expect(tabletCard).toBeVisible();
+    await expect(tabletCard).toContainText('This device');
+
+    // The DELETE response carries `revoked:false` (someone/something else
+    // already revoked it) but `current:true` — tile-ipc.ts's revoke-device
+    // handler must still drop the local key on `current` alone.
+    settingsWindow.once('dialog', (dialog) => dialog.accept());
+    await tabletCard.locator('[data-role="revoke-button"]').click();
+    await expect(settingsWindow.locator('.devices-panel-status')).toContainText("This device's key was revoked");
+
+    await settingsWindow.click('[data-section="sync"]');
+    await settingsWindow.waitForSelector('#section-sync.active');
+    await expect(apiKeyInput).toHaveValue('');
+    await expect(syncSection.getByText('Status: Not configured')).toBeVisible();
   });
 });

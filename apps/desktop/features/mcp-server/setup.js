@@ -204,12 +204,14 @@ function writeJsonFile(path, data) {
   renameSync(tmp, path);
 }
 
-// settings.local.json sibling of the chosen main settings file.
-function allowSettingsPath(mainPath, isMcpJson) {
-  // .mcp.json sits at <cwd>/.mcp.json — local settings goes in <cwd>/.claude/.
-  if (isMcpJson) return join(dirname(mainPath), '.claude', 'settings.local.json');
-  // Default dest is ~/.claude.json (user scope) — sibling settings.local.json.
-  return join(dirname(mainPath), 'settings.local.json');
+// settings.local.json sibling of the chosen main settings file. Both scopes
+// land in the same <dirname(mainPath)>/.claude/ subfolder: project scope's
+// .mcp.json sits at <cwd>/.mcp.json, sibling <cwd>/.claude/; user scope's
+// default dest is ~/.claude.json, sibling ~/.claude/ — the real folder
+// Claude Code reads user-scope settings.local.json from (not a flat
+// ~/settings.local.json, which the client never reads).
+function allowSettingsPath(mainPath) {
+  return join(dirname(mainPath), '.claude', 'settings.local.json');
 }
 
 // Render the skill body with scope substitution. In remote mode, splices
@@ -570,7 +572,7 @@ function main() {
   }
 
   if (opts.allow) {
-    const allowPath = allowSettingsPath(settingsPath, isMcpJson);
+    const allowPath = allowSettingsPath(settingsPath);
     const result = mergeAllowEntries(allowPath, allowList({ writes: opts.writes }));
     if (result.skipped) {
       process.stderr.write(`Allowlist entries already present in ${allowPath}.\n`);
