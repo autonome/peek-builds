@@ -1,19 +1,24 @@
 /**
  * Todo Extension Background Script
  *
- * Two cmd-panel commands:
+ * Three cmd-panel commands:
  *   - `todo {text} [#tag …]`  — creates a text item, auto-tags with `todo`
  *     plus any inline `#tag` words.
- *   - `done {match}`          — finds the first `todo`-tagged item whose
- *     title/content contains `match` (case-insensitive), swaps the `todo`
- *     tag for `done`, records a `done` item event.
+ *   - `todos`                 — lists the outstanding `todo`-tagged items,
+ *     newest first, as `item` output the panel turns into a selection list.
+ *   - `done {match}`          — marks one `todo`-tagged item done: the item
+ *     picked from the panel's suggestion list when there is one, otherwise
+ *     the first whose title/content contains `match` (case-insensitive).
+ *     Swaps the `todo` tag for `done`, records a `done` item event.
  *
- * Lazy-loaded: tile boots on first `cmd:execute:todo` / `cmd:execute:done`.
+ * Lazy-loaded: tile boots on first `cmd:execute:todo` / `cmd:execute:todos` /
+ * `cmd:execute:done`.
  *
  * Runs in isolated extension process (peek://todo/background.html).
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
+import { matchTodos, pickDoneTarget, todosListResult } from './todo-items.js';
 
 const api = window.app;
 
@@ -109,9 +114,27 @@ const handleTodo = async (rawArgs) => {
   };
 };
 
-const handleDone = async (rawArgs) => {
+const handleTodos = async () => {
+  const todoTag = await ensureTag(TODO_TAG);
+  if (!todoTag) {
+    return { output: 'Failed to query todos', mimeType: 'text/plain' };
+  }
+
+  const itemsResult = await api.datastore.getItemsByTag(todoTag.id);
+  if (!itemsResult.success) {
+    console.error('[ext:todo] getItemsByTag failed:', itemsResult.error);
+    return { output: 'Failed to query todos', mimeType: 'text/plain' };
+  }
+
+  return todosListResult(itemsResult.data);
+};
+
+const handleDone = async (rawArgs, selectedItem) => {
   const match = (rawArgs || '').trim();
-  if (!match) {
+  // A row picked in the panel's suggestion list carries the whole item, so
+  // there is nothing left for the user to type.
+  const picked = selectedItem && typeof selectedItem === 'object' && selectedItem.id;
+  if (!match && !picked) {
     return { output: 'Usage: done <text-substring-of-todo>', mimeType: 'text/plain' };
   }
 
@@ -127,18 +150,11 @@ const handleDone = async (rawArgs) => {
     return { output: 'Failed to query todos', mimeType: 'text/plain' };
   }
 
-  const needle = match.toLowerCase();
-  const matches = itemsResult.data.filter(it => {
-    const t = (it.title || '').toLowerCase();
-    const c = (it.content || '').toLowerCase();
-    return t.includes(needle) || c.includes(needle);
-  });
-
-  if (matches.length === 0) {
+  const target = pickDoneTarget(itemsResult.data, { selectedItem, match });
+  if (!target) {
     return { output: `No #todo item matches "${match}"`, mimeType: 'text/plain' };
   }
 
-  const target = matches[0];
   await untagWithName(target.id, TODO_TAG);
   await tagWithName(target.id, DONE_TAG);
 
@@ -151,6 +167,8 @@ const handleDone = async (rawArgs) => {
 
   api.pubsub.publish('todo:done', { id: target.id, title: target.title });
 
+  // Only a text match can be ambiguous — a picked row names its item exactly.
+  const matches = picked ? [] : matchTodos(itemsResult.data, match);
   const overflow = matches.length > 1
     ? ` (${matches.length - 1} other match${matches.length === 2 ? '' : 'es'} skipped)`
     : '';
@@ -170,14 +188,24 @@ const init = async () => {
     }
   });
 
-  api.pubsub.subscribe('cmd:execute:done', async (msg) => {
-    const result = await handleDone(msg.search?.trim() || msg.data?.text || '');
+  api.pubsub.subscribe('cmd:execute:todos', async (msg) => {
+    const result = await handleTodos();
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
   });
 
-  // Manifest declares both commands; no need to publish cmd:register here.
+  api.pubsub.subscribe('cmd:execute:done', async (msg) => {
+    const result = await handleDone(
+      msg.search?.trim() || msg.data?.text || '',
+      msg.selectedItem
+    );
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+
+  // Manifest declares every command; no need to publish cmd:register here.
 };
 
 const uninit = () => {
