@@ -131,10 +131,10 @@ node scripts/check-platform-leak.mjs
 Then one live check on macOS with a person, from this worktree on a fresh profile
 (`yarn kill`, then launch with `PROFILE=agent-side-task-1`). The person performs only the
 gesture, on desktop 2 with another app frontmost: open a URL from the palette, type into the page,
-click the other app, switch to desktop 1 and back, then press cmd+tab to the app. Read the
-`event=diag-poll` lines: the reopened host reports `isVisibleOnAllWorkspaces=false` and
-`isAlwaysOnTop=false` from its first observation, the old host id stops reporting, and
-`isFocused` on the new host stays false until the cmd+tab.
+click the other app, switch to desktop 1 and back, then press cmd+tab to the app. Expected: the
+page stays on desktop 2, drops behind the other app on the click, does not follow across desktops,
+and comes forward on the cmd+tab. The profile's `main.log` shows `event=side-task-reopen` once,
+right after the click.
 
 ## Result
 
