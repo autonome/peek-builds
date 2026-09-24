@@ -20,6 +20,8 @@
     "extends": "apps/desktop/electron-builder.yml"
   },
   "scripts": {
+    "//-- Repo commit checks (.githooks/pre-commit); git may be absent in a deploy image --//": "",
+    "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
     "//-- Development (BACKEND=electron|tauri, defaults to electron) --//": "",
     "dev": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn dev:tauri || yarn dev:electron",
     "dev:electron": "yarn workspace @peek/desktop run dev",
