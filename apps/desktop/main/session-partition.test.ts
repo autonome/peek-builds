@@ -1,13 +1,11 @@
 /**
- * Unit tests for session-partition download helpers
+ * Unit tests for the download save-path helpers.
  *
- * Pure Node tests — no Electron dependency.
- * Tests the resolveUniqueDownloadPath logic that prevents download failures
- * when the target filename already exists on disk.
- *
- * The function is copied here (from session-partition.ts) to avoid pulling
- * in Electron imports. The implementation in session-partition.ts is the
- * authoritative copy — keep in sync if changed.
+ * `resolveUniqueDownloadPath` and `sanitizeDownloadFilename` live in
+ * `download-filename.js`, which imports only node:fs and node:path — so this
+ * runner loads the shipping code directly. `session-partition.ts` imports both
+ * for the will-download handler and cannot be loaded here itself (it imports
+ * electron).
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -16,24 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// ─── Logic under test (mirrored from session-partition.ts) ──────────
-// Must stay in sync with resolveUniqueDownloadPath in session-partition.ts.
-
-function resolveUniqueDownloadPath(desiredPath: string): string {
-  if (!fs.existsSync(desiredPath)) {
-    return desiredPath;
-  }
-  const ext = path.extname(desiredPath);
-  const base = desiredPath.slice(0, desiredPath.length - ext.length);
-  let counter = 1;
-  while (true) {
-    const candidate = `${base}-${counter}${ext}`;
-    if (!fs.existsSync(candidate)) {
-      return candidate;
-    }
-    counter++;
-  }
-}
+import { resolveUniqueDownloadPath, sanitizeDownloadFilename } from './download-filename.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -111,22 +92,6 @@ describe('resolveUniqueDownloadPath', () => {
     assert.strictEqual(result, path.join(tmpDir, 'archive.tar-1.gz'));
   });
 });
-
-// ─── sanitizeDownloadFilename (mirrored from session-partition.ts) ──
-// Must stay in sync with the implementation in session-partition.ts.
-
-function sanitizeDownloadFilename(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  let cleaned = (raw || '').replace(/[\x00-\x1f/\\:*?"<>|]/g, '_').trim();
-  if (cleaned === '' || cleaned === '.' || cleaned === '..') {
-    cleaned = `download-${Date.now()}`;
-  }
-  if (cleaned.length > 200) {
-    const ext = path.extname(cleaned);
-    cleaned = cleaned.slice(0, 200 - ext.length) + ext;
-  }
-  return cleaned;
-}
 
 describe('sanitizeDownloadFilename', () => {
   it('preserves a normal filename', () => {
