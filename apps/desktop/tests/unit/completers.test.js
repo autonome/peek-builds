@@ -1,0 +1,197 @@
+/**
+ * Unit tests for renderer/cmd/completers.js — parameter completion/suggestion providers.
+ *
+ * Covers completeEnum (static values and rich options) and completeTag (frecency-ordered tags
+ * fetched through window.app.datastore, behind a 5-second cache).
+ *
+ * The module reads `window.app` at import time, so the renderer global is stubbed before the
+ * dynamic import. `currentTags` is what the stubbed datastore answers with; because fetchTags()
+ * caches for TAG_CACHE_TTL, every completeTag case calls invalidateCache() after setting it so no
+ * case inherits the previous one's tag list.
+ *
+ * Run via: node --test tests/unit/completers.test.js
+ */
+import { describe, it } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+let currentTags = [];
+
+globalThis.window = {
+  app: {
+    datastore: {
+      getTagsByFrecency: async () => ({ success: true, data: currentTags }),
+    },
+  },
+};
+
+const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'completers.js');
+const { completeEnum, completeTag, invalidateCache } = await import(modulePath);
+
+/** Point the stubbed datastore at a tag list and drop the TTL cache. */
+function useTags(tags) {
+  currentTags = tags;
+  invalidateCache();
+}
+
+describe('completeEnum', () => {
+  const paramDef = { type: 'enum', values: ['red', 'green', 'blue', 'grey'] };
+
+  it('returns all values when partial is empty', () => {
+    const results = completeEnum('', new Set(), paramDef);
+    assert.equal(results.length, 4);
+    assert.deepEqual(results.map(r => r.value), ['red', 'green', 'blue', 'grey']);
+  });
+
+  it('filters by partial match', () => {
+    const results = completeEnum('gr', new Set(), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['green', 'grey']);
+  });
+
+  it('is case-insensitive', () => {
+    const results = completeEnum('GR', new Set(), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['green', 'grey']);
+  });
+
+  it('excludes already-used values', () => {
+    const results = completeEnum('', new Set(['red', 'blue']), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['green', 'grey']);
+  });
+
+  it('combines partial filtering and exclusion', () => {
+    const results = completeEnum('gr', new Set(['green']), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['grey']);
+  });
+
+  it('returns empty when nothing matches', () => {
+    const results = completeEnum('xyz', new Set(), paramDef);
+    assert.equal(results.length, 0);
+  });
+
+  it('returns empty when all excluded', () => {
+    const results = completeEnum('', new Set(['red', 'green', 'blue', 'grey']), paramDef);
+    assert.equal(results.length, 0);
+  });
+
+  describe('with prefix', () => {
+    const prefixed = { type: 'enum', values: ['high', 'medium', 'low'], prefix: '!' };
+
+    it('adds prefix to title and value', () => {
+      const results = completeEnum('', new Set(), prefixed);
+      assert.deepEqual(results.map(r => r.value), ['!high', '!medium', '!low']);
+      assert.deepEqual(results.map(r => r.title), ['!high', '!medium', '!low']);
+    });
+
+    it('strips prefix from partial before matching', () => {
+      const results = completeEnum('!hi', new Set(), prefixed);
+      assert.deepEqual(results.map(r => r.value), ['!high']);
+    });
+
+    it('matches without prefix typed too', () => {
+      const results = completeEnum('hi', new Set(), prefixed);
+      assert.deepEqual(results.map(r => r.value), ['!high']);
+    });
+  });
+
+  describe('with rich options', () => {
+    const richDef = {
+      type: 'enum',
+      options: [
+        { value: 'reader', title: 'Reader view', subtitle: 'Strip page chrome' },
+        { value: 'raw', title: 'Raw view' },
+      ],
+    };
+
+    it('takes title and subtitle from the option, value from opt.value', () => {
+      const results = completeEnum('', new Set(), richDef);
+      assert.deepEqual(results, [
+        { title: 'Reader view', subtitle: 'Strip page chrome', value: 'reader' },
+        { title: 'Raw view', subtitle: '', value: 'raw' },
+      ]);
+    });
+
+    it('matches the partial against opt.value, not the title', () => {
+      const results = completeEnum('ra', new Set(), richDef);
+      assert.deepEqual(results.map(r => r.value), ['raw']);
+    });
+  });
+});
+
+describe('completeTag', () => {
+  const tags = [
+    { name: 'todo', frequency: 12 },
+    { name: 'tools', frequency: 8 },
+    { name: 'reading', frequency: 5 },
+    { name: 'recipe', frequency: 3 },
+    { name: 'reference', frequency: 1 },
+  ];
+  const paramDef = { type: 'tag' };
+
+  it('returns all tags when partial is empty', async () => {
+    useTags(tags);
+    const results = await completeTag('', new Set(), paramDef);
+    assert.equal(results.length, 5);
+  });
+
+  it('filters by partial match', async () => {
+    useTags(tags);
+    const results = await completeTag('to', new Set(), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['todo', 'tools']);
+  });
+
+  it('is case-insensitive', async () => {
+    useTags(tags);
+    const results = await completeTag('RE', new Set(), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['reading', 'recipe', 'reference']);
+  });
+
+  it('excludes already-used tags', async () => {
+    useTags(tags);
+    const results = await completeTag('to', new Set(['todo']), paramDef);
+    assert.deepEqual(results.map(r => r.value), ['tools']);
+  });
+
+  it('includes frequency in subtitle', async () => {
+    useTags(tags);
+    const results = await completeTag('todo', new Set(), paramDef);
+    assert.equal(results[0].subtitle, 'used 12x');
+  });
+
+  it('shows 0x for missing frequency', async () => {
+    useTags([{ name: 'orphan' }]);
+    const results = await completeTag('', new Set(), paramDef);
+    assert.equal(results[0].subtitle, 'used 0x');
+  });
+
+  it('caps at 20 results', async () => {
+    useTags(Array.from({ length: 30 }, (_, i) => ({ name: `tag${i}`, frequency: 0 })));
+    const results = await completeTag('', new Set(), paramDef);
+    assert.equal(results.length, 20);
+  });
+
+  describe('with # prefix', () => {
+    const hashDef = { type: 'tag', prefix: '#' };
+
+    it('adds # prefix to title and value', async () => {
+      useTags(tags);
+      const results = await completeTag('', new Set(), hashDef);
+      assert.equal(results[0].title, '#todo');
+      assert.equal(results[0].value, '#todo');
+    });
+
+    it('strips # from partial before matching', async () => {
+      useTags(tags);
+      const results = await completeTag('#to', new Set(), hashDef);
+      assert.deepEqual(results.map(r => r.value), ['#todo', '#tools']);
+    });
+
+    it('matches without # typed too', async () => {
+      useTags(tags);
+      const results = await completeTag('to', new Set(), hashDef);
+      assert.deepEqual(results.map(r => r.value), ['#todo', '#tools']);
+    });
+  });
+});

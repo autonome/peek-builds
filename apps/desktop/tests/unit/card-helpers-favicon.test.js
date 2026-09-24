@@ -1,133 +1,23 @@
 /**
- * Unit tests for card-helpers.js favicon logic and getItemDisplayInfo().
+ * Unit tests for renderer/lib/card-helpers.js favicon logic and getItemDisplayInfo().
  *
- * Tests the favicon fallback chain and display info computation for all item
- * types. Pure functions are duplicated here since the module depends on
- * DOM APIs (document.createElement) which are unavailable in Node.
+ * Tests the favicon fallback chain and display info computation for all item types.
+ *
+ * The module touches `document` only inside function bodies (createHeaderSlot, createFaviconEl,
+ * createUrlSpan), never at load, so it imports directly under plain node. None of the cases below
+ * call those DOM-building helpers.
  *
  * Run via: node --test tests/unit/card-helpers-favicon.test.js
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-// ---------------------------------------------------------------------------
-// Pure functions extracted from app/lib/card-helpers.js
-// These are duplicated here because the module uses DOM APIs.
-// ---------------------------------------------------------------------------
-
-const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
-
-const TYPE_ICONS = {
-  url:     GLOBE_FAVICON,
-  text:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DD}</text></svg>',
-  tag:     'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">#</text></svg>',
-  tagset:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F3F7}\uFE0F</text></svg>',
-  image:   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F5BC}\uFE0F</text></svg>',
-  entity:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F48E}</text></svg>',
-  feed:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4E1}</text></svg>',
-  series:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DA}</text></svg>',
-  unknown: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>'
-};
-
-const extractTitle = (item, fallback) => {
-  let title = item.title;
-  if (!title && item.metadata) {
-    try {
-      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-      title = meta.title;
-    } catch (e) { /* ignore */ }
-  }
-  return title || fallback || item.uri || item.content || '(untitled)';
-};
-
-const formatUrl = (url) => {
-  if (!url) return '';
-  try {
-    const u = new URL(url);
-    return u.hostname + (u.pathname !== '/' ? u.pathname : '');
-  } catch {
-    return url;
-  }
-};
-
-const extractUrl = (text) => {
-  if (!text) return null;
-  const trimmed = text.trim();
-  if (/^https?:\/\//i.test(trimmed)) {
-    try { new URL(trimmed); return trimmed; } catch (e) { /* fall through */ }
-  }
-  if (/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(trimmed)) {
-    try { new URL('https://' + trimmed); return 'https://' + trimmed; } catch (e) { /* not valid */ }
-  }
-  return null;
-};
-
-const _googleFaviconFallback = (url) => {
-  if (!url) return null;
-  try {
-    const domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname;
-    if (domain) return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-  } catch { /* invalid URL */ }
-  return null;
-};
-
-const getItemDisplayInfo = (item, opts = {}) => {
-  const tags = opts.tags || [];
-  const isAddress = !!item.uri;
-  const itemType = item.type || 'url';
-  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
-
-  let title, subtitle;
-  let faviconUrl = TYPE_ICONS.unknown;
-
-  if (isAddress) {
-    title = extractTitle(item, item.uri);
-    subtitle = formatUrl(item.uri);
-    faviconUrl = item.favicon || opts.favicon || _googleFaviconFallback(item.uri) || TYPE_ICONS.url;
-  } else {
-    if (itemType === 'url') {
-      title = extractTitle(item, item.content);
-      subtitle = formatUrl(item.content);
-      faviconUrl = item.favicon || opts.favicon || _googleFaviconFallback(item.content) || TYPE_ICONS.url;
-    } else if (itemType === 'text') {
-      title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
-      subtitle = noteUrl || '';
-      faviconUrl = TYPE_ICONS.text;
-    } else if (itemType === 'tag') {
-      title = item.title || item.name || 'Tag';
-      const freq = item.frequency || 0;
-      subtitle = `Tag${freq ? ` (used ${freq}×)` : ''}`;
-      faviconUrl = TYPE_ICONS.tag;
-    } else if (itemType === 'tagset') {
-      title = 'Tag Set';
-      subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
-      faviconUrl = TYPE_ICONS.tagset;
-    } else if (itemType === 'image') {
-      title = item.content || 'Image';
-      subtitle = 'Image';
-      faviconUrl = TYPE_ICONS.image;
-    } else if (itemType === 'entity') {
-      title = item.title || item.content || 'Entity';
-      let entityMeta = {};
-      try { entityMeta = JSON.parse(item.metadata || '{}'); } catch {}
-      const entityKind = entityMeta.entityType ? entityMeta.entityType.replace('_', ' ') : 'entity';
-      subtitle = entityKind.charAt(0).toUpperCase() + entityKind.slice(1);
-      faviconUrl = TYPE_ICONS.entity;
-    } else if (itemType === 'feed') {
-      title = item.title || item.content || 'Feed';
-      subtitle = 'Feed';
-      faviconUrl = TYPE_ICONS.feed;
-    } else if (itemType === 'series') {
-      title = item.title || item.content || 'Series';
-      subtitle = 'Series';
-      faviconUrl = TYPE_ICONS.series;
-    }
-  }
-
-  const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
-
-  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl };
-};
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const modulePath = join(__dirname, '..', '..', 'renderer', 'lib', 'card-helpers.js');
+const { GLOBE_FAVICON, TYPE_ICONS, extractUrl, _googleFaviconFallback, getItemDisplayInfo } =
+  await import(modulePath);
 
 // ===========================================================================
 // Tests: _googleFaviconFallback
@@ -189,6 +79,10 @@ describe('_googleFaviconFallback', () => {
 describe('getItemDisplayInfo favicon fallback chain', () => {
 
   describe('URL items (non-address)', () => {
+    it('the url type icon is the globe favicon', () => {
+      assert.equal(TYPE_ICONS.url, GLOBE_FAVICON);
+    });
+
     it('uses item.favicon when present', () => {
       const item = { type: 'url', content: 'https://example.com', favicon: 'https://example.com/icon.png' };
       const info = getItemDisplayInfo(item);
@@ -285,6 +179,12 @@ describe('getItemDisplayInfo favicon fallback chain', () => {
       const info = getItemDisplayInfo(item);
       assert.equal(info.faviconUrl, TYPE_ICONS.series);
     });
+
+    it('event items use TYPE_ICONS.event', () => {
+      const item = { type: 'event', title: 'Launch party' };
+      const info = getItemDisplayInfo(item);
+      assert.equal(info.faviconUrl, TYPE_ICONS.event);
+    });
   });
 });
 
@@ -374,6 +274,21 @@ describe('getItemDisplayInfo title extraction', () => {
     const info = getItemDisplayInfo(item);
     assert.equal(info.subtitle, 'Named entity');
   });
+
+  it('event subtitle is the localized start time from metadata', () => {
+    const startsAt = '2026-03-04T17:30:00.000Z';
+    const item = { type: 'event', title: 'Launch party', metadata: JSON.stringify({ startsAt }) };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.title, 'Launch party');
+    assert.equal(info.subtitle, new Date(startsAt).toLocaleString());
+  });
+
+  it('event subtitle falls back to "Event" without a start time', () => {
+    const item = { type: 'event', content: 'Standup' };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.title, 'Standup');
+    assert.equal(info.subtitle, 'Event');
+  });
 });
 
 // ===========================================================================
@@ -409,6 +324,24 @@ describe('getItemDisplayInfo itemUrl', () => {
     const item = { type: 'image', content: 'photo.jpg' };
     const info = getItemDisplayInfo(item);
     assert.equal(info.itemUrl, null);
+  });
+});
+
+// ===========================================================================
+// Tests: getItemDisplayInfo — thumbnailHash
+// ===========================================================================
+
+describe('getItemDisplayInfo thumbnailHash', () => {
+  it('passes item.thumbnail through', () => {
+    const item = { type: 'url', content: 'https://example.com', thumbnail: 'abc123' };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.thumbnailHash, 'abc123');
+  });
+
+  it('is null when the item has no thumbnail', () => {
+    const item = { type: 'url', content: 'https://example.com' };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.thumbnailHash, null);
   });
 });
 
