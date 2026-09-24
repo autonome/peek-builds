@@ -1049,34 +1049,6 @@ function assembleHybridPageHost(
     // above for the native NSPanel construction option.
     nonActivating: windowNonActivating(options),
   });
-  // macOS Spaces intent by role (§5 step 10 — machine-owned), same feed the
-  // BrowserWindow branch performs right after ITS registration (below,
-  // `windowOpenHandler`'s non-hybrid tail) — see that call site's comment
-  // for the full membership semantics. This BaseWindow + WebContentsView
-  // host is the OTHER window kind the machine tracks (`kind: 'page-host'`)
-  // and was missing this feed entirely: every content window opened as a
-  // web page (any http/https/file/new-tab URL, including one opened from
-  // the cmd panel) routes through this function and got NO Spaces/desktop-
-  // membership anchoring on any path, fresh-open or key-reuse, regardless
-  // of which app was frontmost at open time — not a focus-timing gap, a
-  // structural omission. Symptom: such a window stays visible over every
-  // other app (stuck in the backend's "follow every desktop" state) until
-  // some UNRELATED later event coincidentally narrows it (e.g. the user
-  // focusing Peek causes a different window to raise/anchor and the OS
-  // reshuffles Space visibility as a side effect) — see peek `f46a44ad`.
-  // Sits AFTER registration (the kernel needs the record to exist) and
-  // BEFORE the caller's `loadURL`/show, matching the anchor pair's
-  // precedes-load/show requirement.
-  if (!isHeadless()) {
-    wmLog('diag-setDesktopMembership-hybrid', {
-      role,
-      membership: desktopMembershipForRole(role),
-      windowId: hostMachineId,
-      url,
-    });
-    kernelSetDesktopMembership(hostMachineId, desktopMembershipForRole(role));
-  }
-
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
   // (session.ts restoreSessionSnapshot) both thread a maximized window's
   // saved state through as open-time options: `maximized: true` plus
