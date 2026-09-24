@@ -6,17 +6,18 @@ Implement the current authority at `specs/bake-off-labeling.md`: one lazy built-
 
 ## Current state
 
-Complete and verified. The lazy built-in tile now provides the shared search/URL picker, date-driven task clustering, verbatim entity-span labelling, command-routing/refusal cases, and native JSON exports. The Playwright coverage exercises all three workflows and calls each payload builder through the tile test hook.
+Complete and verified. The lazy built-in tile now provides the shared search/URL picker, date-driven task clustering, verbatim entity-span labelling, multi-call command-routing/refusal cases, and native JSON exports. The Playwright coverage exercises all three workflows, including range-reload reconciliation and a two-call routing payload, and calls each payload builder through the tile test hook.
 
 ## Resume Here
 
-The implementation is complete. Next step: `/land`.
+The independent-review findings are fixed. Next step: `/land`.
 
 ## Decisions
 
 - Pasted URLs reuse an exact matching URL item when one exists; otherwise the picker creates an in-memory candidate with a stable `url:<url>` ID. It does not mutate the datastore.
 - Export uses the current strict tile API signature, `dialogs.save(content, { filename, mimeType })`.
 - Tile-internal payload builders are ES module exports and are also exposed through `window.__bakeOffLabelingTest`, matching the renderer-side Playwright hook pattern.
+- Reloading a task date range keeps task-group names but removes assignments to items no longer in the loaded candidate set. This preserves useful labels while guaranteeing self-contained exports.
 
 ## Key files & symbols
 
@@ -36,11 +37,11 @@ The implementation is complete. Next step: `/land`.
 
 **Result**
 
-Implemented the complete bake-off labelling workspace in `apps/desktop/features/bake-off-labeling/` and added `apps/desktop/tests/desktop/bake-off-labeling.spec.ts`.
+The command-routing editor now accumulates multiple expected MCP calls per case, and task range reloads remove stale assignments so exports cannot contain dangling item IDs. Regression coverage verifies a two-call routing payload and range-reload reconciliation.
 
 Verification:
 - `yarn workspace @peek/desktop build` — passed
 - `yarn test:grep 'bake-off labeling'` — 1 passed
 - The prohibited full Electron gate was not run.
 
-Ready to land.
+No person decision is required; ready to land.

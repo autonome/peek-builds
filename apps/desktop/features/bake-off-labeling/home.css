@@ -59,6 +59,7 @@ textarea {
 .routing-form { display: grid; gap: 12px; }
 .refusal { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 9px !important; }
 .case-list { display: grid; gap: 10px; }
+.pending-call { padding: 7px 9px; border-left: 3px solid var(--theme-accent, #667eea); overflow-wrap: anywhere; }
 .case-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty { color: var(--theme-text-secondary, #667085); padding: 22px; text-align: center; }
 @media (max-width: 760px) { .entity-layout { grid-template-columns: 1fr; } header { align-items: flex-start; } }

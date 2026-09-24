@@ -53,6 +53,16 @@ test.describe('bake-off labeling @desktop', () => {
       ],
     });
 
+    await tile.evaluate(() => {
+      (window as any).__bakeOffLabelingTest.replaceRangeTaskItems([
+        { id: 'note-1', type: 'text', title: 'Loose note', content: 'Not part of a task', createdAt: 11 },
+      ]);
+    });
+    const reloadedTaskPayload = await tile.evaluate(() => (window as any).__bakeOffLabelingTest.buildTaskPayload());
+    expect(reloadedTaskPayload.tasks).toEqual([{ id: expect.any(String), label: 'Research', itemIds: [] }]);
+    expect(reloadedTaskPayload.unassignedItemIds).toEqual(['note-1']);
+    expect(reloadedTaskPayload.items.map((item: { id: string }) => item.id)).toEqual(['note-1']);
+
     await tile.locator('peek-button-group-item[value="entities"]').click();
     await tile.evaluate(() => {
       (window as any).__bakeOffLabelingTest.setEntityItems([
@@ -86,9 +96,14 @@ test.describe('bake-off labeling @desktop', () => {
     });
 
     await tile.locator('peek-button-group-item[value="routing"]').click();
-    await tile.locator('#utterance').fill('Show my recent notes');
+    await tile.locator('#utterance').fill('Find my recent notes and open the first result');
     await tile.locator('#toolSelect').locator('select').selectOption('list_items');
     await tile.locator('#toolArgs').fill('{"type":"text"}');
+    await tile.locator('#addCallButton').click();
+    await tile.locator('#toolSelect').locator('select').selectOption('get_item');
+    await tile.locator('#toolArgs').fill('{"id":"first-result"}');
+    await tile.locator('#addCallButton').click();
+    await expect(tile.locator('.pending-call')).toHaveCount(2);
     await tile.locator('#addCaseButton').click();
 
     await tile.locator('#utterance').fill('Book me a flight');
@@ -102,7 +117,14 @@ test.describe('bake-off labeling @desktop', () => {
     expect(routingPayload).toEqual({
       generatedAt: expect.any(String),
       cases: [
-        { utterance: 'Show my recent notes', expectedCalls: [{ tool: 'list_items', args: { type: 'text' } }], refusal: false },
+        {
+          utterance: 'Find my recent notes and open the first result',
+          expectedCalls: [
+            { tool: 'list_items', args: { type: 'text' } },
+            { tool: 'get_item', args: { id: 'first-result' } },
+          ],
+          refusal: false,
+        },
         { utterance: 'Book me a flight', expectedCalls: [], refusal: true },
       ],
     });

@@ -9,6 +9,7 @@ const state = {
   entityItems: new Map(),
   activeEntityId: null,
   entities: new Map(),
+  pendingRoutingCalls: [],
   routingCases: [],
 };
 
@@ -203,6 +204,16 @@ function createPicker(host, workflow) {
   });
 }
 
+function replaceRangeTaskItems(items) {
+  state.taskItems = new Map(items.map((item) => {
+    const normalized = normalizedItem(item);
+    return [normalized.id, normalized];
+  }));
+  const loadedIds = new Set(state.taskItems.keys());
+  for (const task of state.tasks) task.itemIds = task.itemIds.filter((id) => loadedIds.has(id));
+  state.selectedTaskItemIds = new Set([...state.selectedTaskItemIds].filter((id) => loadedIds.has(id)));
+}
+
 async function loadRange() {
   const range = readRange();
   const status = $('#rangeStatus');
@@ -219,15 +230,12 @@ async function loadRange() {
       const result = await api.datastore.getItem(id);
       return result?.success && result.data ? normalizedItem(result.data, { lastVisitAt: latestVisits.get(id) }) : null;
     }));
-    state.taskItems.clear();
-    for (const item of visitedItems) if (item) state.taskItems.set(item.id, item);
+    const loadedItems = visitedItems.filter(Boolean);
     for (const note of asArray(notesResponse)) {
       const createdAt = Number(note.createdAt || 0);
-      if (createdAt >= range.since && createdAt <= range.until) {
-        const item = normalizedItem(note);
-        state.taskItems.set(item.id, item);
-      }
+      if (createdAt >= range.since && createdAt <= range.until) loadedItems.push(note);
     }
+    replaceRangeTaskItems(loadedItems);
     state.selectedTaskItemIds.clear();
     renderTaskItems();
     status.textContent = `${state.taskItems.size} candidate${state.taskItems.size === 1 ? '' : 's'}`;
@@ -327,15 +335,51 @@ function renderEntitySpans() {
   }
 }
 
+function renderPendingRoutingCalls() {
+  const host = $('#pendingCalls');
+  host.innerHTML = '';
+  for (const [index, call] of state.pendingRoutingCalls.entries()) {
+    const row = document.createElement('div');
+    row.className = 'pending-call';
+    row.textContent = `${index + 1}. ${call.tool} ${JSON.stringify(call.args)}`;
+    host.append(row);
+  }
+}
+
 function setRefusal(checked) {
   const tool = $('#toolSelect');
   const args = $('#toolArgs');
   tool.disabled = checked;
   args.disabled = checked;
+  $('#addCallButton').disabled = checked;
   if (checked) {
     tool.value = '';
     args.value = '';
+    state.pendingRoutingCalls = [];
+    renderPendingRoutingCalls();
   } else if (!args.value) args.value = '{}';
+}
+
+function addRoutingCall() {
+  const error = $('#routingError');
+  error.textContent = '';
+  const tool = $('#toolSelect').value;
+  if (!tool) {
+    error.textContent = 'Choose a tool to add.';
+    return false;
+  }
+  try {
+    const args = JSON.parse($('#toolArgs').value || '{}');
+    if (!args || Array.isArray(args) || typeof args !== 'object') throw new Error();
+    state.pendingRoutingCalls.push({ tool, args });
+  } catch {
+    error.textContent = 'Arguments must be a JSON object.';
+    return false;
+  }
+  $('#toolSelect').value = '';
+  $('#toolArgs').value = '{}';
+  renderPendingRoutingCalls();
+  return true;
 }
 
 function addRoutingCase() {
@@ -347,29 +391,21 @@ function addRoutingCase() {
     error.textContent = 'Enter an utterance.';
     return;
   }
-  let expectedCalls = [];
-  if (!refusal) {
-    const tool = $('#toolSelect').value;
-    if (!tool) {
-      error.textContent = 'Choose a tool or mark this as a refusal.';
-      return;
-    }
-    try {
-      const args = JSON.parse($('#toolArgs').value || '{}');
-      if (!args || Array.isArray(args) || typeof args !== 'object') throw new Error();
-      expectedCalls = [{ tool, args }];
-    } catch {
-      error.textContent = 'Arguments must be a JSON object.';
-      return;
-    }
+  if (!refusal && !state.pendingRoutingCalls.length) {
+    error.textContent = 'Add at least one expected call or mark this as a refusal.';
+    return;
   }
+  const expectedCalls = refusal ? [] : state.pendingRoutingCalls.map((call) => ({ tool: call.tool, args: structuredClone(call.args) }));
   state.routingCases.push({ utterance, expectedCalls, refusal });
+  state.pendingRoutingCalls = [];
   $('#utterance').value = '';
   $('#refusalToggle').checked = false;
   $('#toolSelect').disabled = false;
   $('#toolArgs').disabled = false;
+  $('#addCallButton').disabled = false;
   $('#toolSelect').value = '';
   $('#toolArgs').value = '{}';
+  renderPendingRoutingCalls();
   renderRoutingCases();
 }
 
@@ -393,12 +429,18 @@ function renderRoutingCases() {
 }
 
 export function buildTaskPayload(source = state) {
-  const assigned = new Set(source.tasks.flatMap((task) => task.itemIds));
+  const itemIds = new Set(source.taskItems.keys());
+  const tasks = source.tasks.map((task) => ({
+    id: task.id,
+    label: task.label,
+    itemIds: task.itemIds.filter((id) => itemIds.has(id)),
+  }));
+  const assigned = new Set(tasks.flatMap((task) => task.itemIds));
   return {
     generatedAt: new Date().toISOString(),
     range: { since: source.range.since, until: source.range.until },
-    tasks: source.tasks.map((task) => ({ id: task.id, label: task.label, itemIds: [...task.itemIds] })),
-    unassignedItemIds: [...source.taskItems.keys()].filter((id) => !assigned.has(id)),
+    tasks,
+    unassignedItemIds: [...itemIds].filter((id) => !assigned.has(id)),
     items: [...source.taskItems.values()].map((item) => normalizedItem(item)),
   };
 }
@@ -452,6 +494,10 @@ function installTestHook() {
       renderTaskItems();
       renderTaskGroups();
     },
+    replaceRangeTaskItems(items) {
+      replaceRangeTaskItems(items);
+      renderTaskItems();
+    },
     setEntityItems(items) {
       state.entityItems = new Map(items.map((item) => [String(item.id), normalizedItem(item)]));
       state.entities = new Map(items.map((item) => [String(item.id), []]));
@@ -476,11 +522,13 @@ async function init() {
   $('#unassignTaskButton').addEventListener('click', unassignSelected);
   $('#tagEntityButton').addEventListener('click', tagSelectedEntity);
   $('#refusalToggle').addEventListener('change', (event) => setRefusal(event.detail.checked));
+  $('#addCallButton').addEventListener('click', addRoutingCall);
   $('#addCaseButton').addEventListener('click', addRoutingCase);
   $('#exportButton').addEventListener('click', exportCurrent);
   $('#taskToolbar').target = $('#taskGrid');
   renderTaskItems();
   renderEntityItems();
+  renderPendingRoutingCalls();
   renderRoutingCases();
   installTestHook();
   document.body.dataset.ready = 'true';

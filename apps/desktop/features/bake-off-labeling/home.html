@@ -90,6 +90,8 @@
             <label>Utterance <textarea id="utterance" rows="3" placeholder="What might someone ask Peek?"></textarea></label>
             <label>Expected tool <peek-select id="toolSelect" placeholder="Choose an MCP tool"></peek-select></label>
             <label>Arguments (JSON) <textarea id="toolArgs" rows="5">{}</textarea></label>
+            <peek-button id="addCallButton" variant="secondary">Add expected call</peek-button>
+            <div id="pendingCalls" aria-label="Expected calls for this case"></div>
             <label class="refusal"><peek-switch id="refusalToggle"></peek-switch> No matching tool (refusal)</label>
             <div id="routingError" class="error" role="alert"></div>
             <peek-button id="addCaseButton">Add case</peek-button>
