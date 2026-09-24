@@ -565,6 +565,14 @@ export class WindowKernelExecutor {
         this.backend.pinAlwaysOnTop(effect.id, false);
         return;
       }
+      case 'ReopenAsOrdinaryWindow': {
+        // Not headless-gated: the reopen is a close plus an open through the
+        // ordinary window path, both of which headless already handles, and
+        // the spec that pins this rule reads the reopened record.
+        wmLog('effect-reopen-as-ordinary', { id: effect.id });
+        this.backend.reopenAsOrdinaryWindow(effect.id);
+        return;
+      }
       case 'AttachOverlayTo': {
         // No headless gate — this only asks the backend to frame `hostId`; the visibility that
         // follows is gated by its own `ShowWindow`/`RaiseWindow` effects.

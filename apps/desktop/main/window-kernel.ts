@@ -170,7 +170,7 @@ export type Event =
       appLifetime?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
-  | { type: 'WindowHidden'; id: WindowId; opSeq?: number; returnsOnActivation?: true }
+  | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
   | { type: 'WindowClosed'; id: WindowId }
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
   | { type: 'OsFocusLost'; id: WindowId }
@@ -217,10 +217,7 @@ export type Event =
 export type Command =
   | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
-  // `returnsOnActivation`: the window is set aside, not dismissed — it comes
-  // back on screen when the app next becomes active. Honored only while the
-  // app is inactive; with the app active a hide is a plain hide.
-  | { type: 'HideWindow'; id: WindowId; expectedVersion: number; returnsOnActivation?: true }
+  | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
   // The keepLive branch point: hide if keepLive, else close. Decided in `decide`, never `evolve`.
   | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number }
   // Carries the intrinsic properties; `decide` produces a `WindowRegistered` event.
@@ -309,6 +306,13 @@ export type Effect =
   // Return a held window to ordinary stacking — the same window, only its
   // stacking changes. Emitted when `heldAboveOtherApps` goes from true to not-true.
   | { type: 'ReleaseFromAboveOtherApps'; id: WindowId }
+  // A side task has ended (`isSideTask` went from true to false with the
+  // window still on screen): replace its non-activating window with an
+  // ordinary one showing the same page at the same bounds, shown without
+  // focus and belonging to the desktop the user is on. One intention; the
+  // close-and-reopen it takes on a platform that fixes a window's type at
+  // construction is the backend's business.
+  | { type: 'ReopenAsOrdinaryWindow'; id: WindowId }
   | { type: 'FocusContent'; id: WindowId }
   | { type: 'AttachOverlayTo'; overlayId: WindowId; hostId: WindowId | null };
 
@@ -653,10 +657,6 @@ export function evolve(state: State, ev: Event): State {
               visible: false,
               ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
               ...(w.heldAboveOtherApps === true ? { heldAboveOtherApps: false } : {}),
-              // A window set aside while the app is inactive rides the same
-              // mark as one the app-resign sweep hid: `AppActivated` re-shows
-              // every record carrying it (`appBlurRevealAdmits`).
-              ...(ev.returnsOnActivation === true && state.appActive === false ? { hiddenByAppBlur: true } : {}),
             }
           : w,
       );
@@ -665,13 +665,10 @@ export function evolve(state: State, ev: Event): State {
           ? successorOnHide({ ...state, order }, target!)
           : null;
       const opSeq = successor !== null ? state.opSeqCounter + 1 : state.opSeqCounter;
-      // A window set aside comes back in front on the activation that re-shows it.
-      const setAside = ev.returnsOnActivation === true && state.appActive === false && target !== undefined;
       return {
         ...state,
         order: successor !== null ? order.map((w) => (w.id === successor.id ? { ...w, lastOpSeq: opSeq } : w)) : order,
         opSeqCounter: opSeq,
-        ...(setAside ? { pendingColdStartFocus: ev.id } : {}),
         ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
         version: state.version + 1,
       };
@@ -1634,6 +1631,18 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     else if (!isHeld && wasHeld) effects.push({ type: 'ReleaseFromAboveOtherApps', id: nextRecord.id });
   }
 
+  // Side task ends: a structural diff of `isSideTask` per record. Only a
+  // window still on screen is reopened — one that hid or closed in this very
+  // transition (Escape, a close request) has nothing left to reopen, and a
+  // record that left `next.order` is not visited at all.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) continue;
+    if (!isSideTask(prev, prevRecord) || isSideTask(next, nextRecord)) continue;
+    if (!nextRecord.visible || nextRecord.pendingHidden === true) continue;
+    effects.push({ type: 'ReopenAsOrdinaryWindow', id: nextRecord.id });
+  }
+
   // SetStacking: a minimal replay, not a re-assert of everything eligible. The
   // native primitive is move-to-top, so a window whose index didn't change can
   // still end up wrong once a different window moves past it — the unit that
@@ -1905,9 +1914,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':
-      return {
-        events: [{ type: 'WindowHidden', id: cmd.id, ...(cmd.returnsOnActivation === true ? { returnsOnActivation: true } : {}) }],
-      };
+      return { events: [{ type: 'WindowHidden', id: cmd.id }] };
     case 'CloseOrHideWindow': {
       // Refusal first: a record whose lifetime is the app's own rejects the
       // command outright — neither hidden nor closed, and no cascade runs.
@@ -2236,6 +2243,22 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
 // quick-view owns its own on-blur policy.
 export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
   return record.kind === 'page-host' && record.layer === BASE_LAYER && isContentWindow(record);
+}
+
+// A side task: a page the user works in, built non-activating so it could take
+// key while the app was inactive, and holding key that way right now
+// (window-rules.md G1, G13). It ends the moment it stops being key with the
+// app still inactive, or the app becomes active; `react` diffs this predicate
+// across the transition and asks for the window to be reopened as an ordinary one.
+export function isSideTask(state: State, record: WindowRecord): boolean {
+  return (
+    !state.appActive &&
+    state.key === record.id &&
+    record.visible &&
+    record.nonActivating === true &&
+    record.kind === 'page-host' &&
+    isContentWindow(record)
+  );
 }
 
 export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {

@@ -77,6 +77,9 @@ class NoopKernelBackend implements WindowBackend {
   pinAlwaysOnTop(id: WindowId, on: boolean): void {
     recordEffect('pinAlwaysOnTop', id, on);
   }
+  reopenAsOrdinaryWindow(id: WindowId): void {
+    recordEffect('reopenAsOrdinaryWindow', id);
+  }
   destroyAllContentGuests(): Promise<void> {
     recordEffect('destroyAllContentGuests');
     return Promise.resolve();
