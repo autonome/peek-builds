@@ -50,63 +50,6 @@ export const SYSTEM_WINDOW_URLS = [
 ];
 
 // ============================================================================
-// URL extraction
-// ============================================================================
-
-/**
- * Extract the real URL from a page container URL.
- * Page containers use peek://app/page/index.html?url=<actual-url>
- * Returns the actual URL, or the original URL if not a container.
- *
- * @param {string} url - The possibly-rewritten peek:// URL
- * @returns {string} The actual URL
- */
-export function extractRealUrl(url) {
-  if (url.startsWith('peek://app/page')) {
-    try {
-      const parsed = new URL(url);
-      const actualUrl = parsed.searchParams.get('url');
-      if (actualUrl) {
-        return actualUrl;
-      }
-    } catch {
-      // If URL parsing fails, keep the original
-    }
-  }
-  return url;
-}
-
-/**
- * Extract webview bounds from a canvas page container URL.
- * Canvas pages encode the visible webview position/size in URL params.
- * Returns null if the URL is not a canvas page or params are missing.
- *
- * @param {string} url - The peek:// container URL
- * @returns {{ x: number, y: number, width: number, height: number } | null}
- */
-export function extractCanvasBounds(url) {
-  if (!url.startsWith('peek://app/page')) return null;
-  try {
-    const parsed = new URL(url);
-    const x = parsed.searchParams.get('x');
-    const y = parsed.searchParams.get('y');
-    const width = parsed.searchParams.get('width');
-    const height = parsed.searchParams.get('height');
-    if (x && y && width && height) {
-      return {
-        x: parseInt(x, 10),
-        y: parseInt(y, 10),
-        width: parseInt(width, 10),
-        height: parseInt(height, 10),
-      };
-    }
-  } catch {
-    // If URL parsing fails, skip
-  }
-  return null;
-}
-
-// ============================================================================
 // Parameter sanitization
 // ============================================================================
 

@@ -64,51 +64,6 @@ interface SessionMetadata {
 // ============================================================================
 
 /**
- * Extract the real URL from a page container URL.
- * Identical to session.ts extractRealUrl.
- */
-function extractRealUrl(url: string): string {
-  if (url.startsWith('peek://app/page')) {
-    try {
-      const parsed = new URL(url);
-      const actualUrl = parsed.searchParams.get('url');
-      if (actualUrl) {
-        return actualUrl;
-      }
-    } catch {
-      // If URL parsing fails, keep the original
-    }
-  }
-  return url;
-}
-
-/**
- * Extract webview bounds from a canvas page container URL.
- * Identical to session.ts extractCanvasBounds.
- */
-function extractCanvasBounds(url: string): { x: number; y: number; width: number; height: number } | null {
-  if (!url.startsWith('peek://app/page')) return null;
-  try {
-    const parsed = new URL(url);
-    const x = parsed.searchParams.get('x');
-    const y = parsed.searchParams.get('y');
-    const width = parsed.searchParams.get('width');
-    const height = parsed.searchParams.get('height');
-    if (x && y && width && height) {
-      return {
-        x: parseInt(x, 10),
-        y: parseInt(y, 10),
-        width: parseInt(width, 10),
-        height: parseInt(height, 10),
-      };
-    }
-  } catch {
-    // If URL parsing fails, skip
-  }
-  return null;
-}
-
-/**
  * Validate that a window descriptor is valid for restore.
  * Identical to session.ts isValidDescriptor.
  */
@@ -425,93 +380,6 @@ describe('Session Integration Tests', () => {
   beforeEach(() => {
     // Fresh in-memory database for each test — complete isolation
     db = createTestDb();
-  });
-
-  // ========================================================================
-  // extractRealUrl tests
-  // ========================================================================
-
-  describe('extractRealUrl', () => {
-    it('returns the actual URL from a canvas page container', () => {
-      const containerUrl = 'peek://app/page/index.html?url=https%3A%2F%2Fgithub.com%2Ftest&x=100&y=200&width=800&height=600';
-      const result = extractRealUrl(containerUrl);
-      assert.strictEqual(result, 'https://github.com/test');
-    });
-
-    it('returns the original URL when not a page container', () => {
-      const normalUrl = 'https://example.com/page';
-      assert.strictEqual(extractRealUrl(normalUrl), 'https://example.com/page');
-    });
-
-    it('returns the original URL when page container has no url param', () => {
-      const noUrlParam = 'peek://app/page/index.html?x=100&y=200';
-      assert.strictEqual(extractRealUrl(noUrlParam), 'peek://app/page/index.html?x=100&y=200');
-    });
-
-    it('handles encoded special characters in the actual URL', () => {
-      const encoded = 'peek://app/page/index.html?url=https%3A%2F%2Fexample.com%2Fsearch%3Fq%3Dhello%26lang%3Den';
-      assert.strictEqual(extractRealUrl(encoded), 'https://example.com/search?q=hello&lang=en');
-    });
-  });
-
-  // ========================================================================
-  // extractCanvasBounds tests
-  //
-  // BUG #3 THIS CATCHES: Canvas page bounds were saved as the fullscreen
-  // BrowserWindow bounds instead of the webview bounds from URL params.
-  // Without this extraction, restored windows would be fullscreen instead
-  // of their actual visible size/position.
-  // ========================================================================
-
-  describe('extractCanvasBounds', () => {
-    it('extracts x/y/width/height from canvas page URL', () => {
-      // BUG #3: If we used window.getBounds() for canvas pages instead of URL params,
-      // we'd get fullscreen bounds (0, 0, 1920, 1080) instead of the real webview bounds.
-      const canvasUrl = 'peek://app/page/index.html?url=https%3A%2F%2Fexample.com&x=150&y=200&width=800&height=600';
-      const bounds = extractCanvasBounds(canvasUrl);
-      assert.deepStrictEqual(bounds, { x: 150, y: 200, width: 800, height: 600 });
-    });
-
-    it('returns null for non-page URLs', () => {
-      assert.strictEqual(extractCanvasBounds('https://example.com'), null);
-      assert.strictEqual(extractCanvasBounds('peek://app/background.html'), null);
-    });
-
-    it('returns null when bounds params are missing', () => {
-      const partialUrl = 'peek://app/page/index.html?url=https%3A%2F%2Fexample.com&x=100';
-      assert.strictEqual(extractCanvasBounds(partialUrl), null);
-    });
-
-    it('returns null when only some bounds params present', () => {
-      const partial = 'peek://app/page/index.html?url=https%3A%2F%2Fexample.com&x=100&y=200&width=800';
-      assert.strictEqual(extractCanvasBounds(partial), null);
-    });
-
-    it('correctly parses integer bounds (not strings)', () => {
-      const url = 'peek://app/page/index.html?url=test&x=0&y=0&width=1024&height=768';
-      const bounds = extractCanvasBounds(url);
-      assert.ok(bounds);
-      assert.strictEqual(typeof bounds!.x, 'number');
-      assert.strictEqual(typeof bounds!.width, 'number');
-      assert.strictEqual(bounds!.width, 1024);
-    });
-
-    it('proves canvas bounds differ from typical fullscreen bounds', () => {
-      // This is the exact scenario of BUG #3:
-      // Canvas BrowserWindow is fullscreen (e.g. 1920x1080 at 0,0)
-      // But the webview inside is only 800x600 at some offset.
-      // If we save the BrowserWindow bounds, restore creates a fullscreen window.
-      const canvasUrl = 'peek://app/page/index.html?url=https%3A%2F%2Fexample.com&x=200&y=150&width=800&height=600';
-      const fakeBrowserWindowBounds = { x: 0, y: 0, width: 1920, height: 1080 };
-      const canvasBounds = extractCanvasBounds(canvasUrl);
-      const actualBounds = canvasBounds || fakeBrowserWindowBounds;
-
-      // The actual bounds should NOT be the fullscreen bounds
-      assert.notDeepStrictEqual(actualBounds, fakeBrowserWindowBounds,
-        'Canvas page bounds should come from URL params, not BrowserWindow.getBounds()');
-      assert.strictEqual(actualBounds.width, 800, 'Width should be 800, not 1920');
-      assert.strictEqual(actualBounds.height, 600, 'Height should be 600, not 1080');
-    });
   });
 
   // ========================================================================
@@ -1071,8 +939,9 @@ describe('Session Integration Tests', () => {
 
     it('preserves canvas page bounds (not fullscreen) through save/load', () => {
       // BUG #3: Canvas bounds must survive the round-trip.
-      // The save logic uses extractCanvasBounds to get webview bounds,
-      // not BrowserWindow.getBounds(). We verify those webview bounds persist.
+      // Bounds passed into the descriptor are opaque data to saveSnapshot/readSnapshot —
+      // whatever webview bounds a caller stores must come back unchanged, not get
+      // replaced by the window's own fullscreen bounds.
       const webviewBounds = { x: 200, y: 150, width: 800, height: 600 };
       const snapshot: SessionSnapshot = {
         version: 1,
@@ -1654,17 +1523,6 @@ describe('Session Integration Tests', () => {
       assert.deepStrictEqual(win.params, { modal: false });
       assert.strictEqual(win.zOrder, 3);
       assert.strictEqual(win.focused, true);
-    });
-
-    it('canvas page URLs get real URL extracted (not peek://app/page)', () => {
-      // BUG #3 related: The save process should extract the actual URL
-      // from canvas page containers. We verify the extraction logic.
-      const containerUrl = 'peek://app/page/index.html?url=https%3A%2F%2Fgithub.com&x=100&y=100&width=800&height=600';
-      const realUrl = extractRealUrl(containerUrl);
-      assert.strictEqual(realUrl, 'https://github.com',
-        'Canvas page URL should be extracted to the real URL');
-      assert.ok(!realUrl.startsWith('peek://'),
-        'Extracted URL should not be a peek:// URL');
     });
   });
 
