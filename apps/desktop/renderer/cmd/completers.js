@@ -7,6 +7,8 @@
  * - value: text to insert into input
  */
 
+import { findTagByName, filterTaggedItems, toItemSuggestion } from './item-suggestions.js';
+
 const api = window.app;
 
 // ===== Tag Completer =====
@@ -121,19 +123,40 @@ export function completeEnum(partial, exclude, paramDef) {
 
 /**
  * Item completer - searches notes/items with search-as-you-type
+ *
+ * With `tag` set, the suggestions come from the items carrying that tag instead of from a
+ * datastore query, and `itemType` narrows them only when the definition sets it.
+ *
  * @param {string} partial - Current search text
  * @param {Set<string>} exclude - Not used for items
- * @param {Object} paramDef - The param definition {type, itemType}
+ * @param {Object} paramDef - The param definition {type, itemType, tag}
  * @returns {Promise<Array<{title, subtitle, value, _item}>>}
  */
 export async function completeItem(partial, exclude, paramDef) {
+  const searchText = (partial || '').trim();
+
+  if (paramDef.tag) {
+    const tags = await fetchTags();
+    const tag = findTagByName(tags, paramDef.tag);
+    if (!tag) return [];
+
+    const result = await api.datastore.getItemsByTag(tag.id);
+    if (!result.success || !result.data) return [];
+
+    const filterOpts = { search: searchText, limit: 20 };
+    if (paramDef.itemType) {
+      filterOpts.itemType = paramDef.itemType;
+    }
+
+    return filterTaggedItems(result.data, filterOpts).map(toItemSuggestion);
+  }
+
   const queryOpts = {
     type: paramDef.itemType || 'text',
     limit: 20,
     sortBy: 'updated'
   };
 
-  const searchText = (partial || '').trim();
   if (searchText) {
     queryOpts.search = searchText;
   }
@@ -141,24 +164,12 @@ export async function completeItem(partial, exclude, paramDef) {
   const result = await api.datastore.queryItems(queryOpts);
   if (!result.success || !result.data) return [];
 
-  return result.data.map(item => {
-    const content = item.content || '';
-    const firstLine = content.split('\n')[0].replace(/^#+ /, '').trim() || 'Untitled';
-    const title = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
-    const date = item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '';
-
-    return {
-      title,
-      subtitle: date,
-      value: item.id,
-      _item: item
-    };
-  });
+  return result.data.map(toItemSuggestion);
 }
 
 /**
  * Get suggestions for a param definition
- * @param {Object} paramDef - {type, multiple, prefix, values}
+ * @param {Object} paramDef - {type, multiple, prefix, values, itemType, tag}
  * @param {string} partial - Current partial token
  * @param {Set<string>} exclude - Already-used values
  * @returns {Promise<Array<{title, subtitle, value}>>}
