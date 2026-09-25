@@ -235,10 +235,14 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(timelineAfterBlur.filter((l) => l.includes('HideApp')), timelineAfterBlur.join('\n')).toEqual([]);
 
     // Exactly one window shows the page, with a new native id, and it is an
-    // ordinary window: on one desktop, not floating.
-    const listAfter = await bgWindow.evaluate(async () => (window as any).app.window.list());
-    const showing = (listAfter.windows ?? []).filter((w: { url?: string }) => w.url && w.url.includes(url));
-    expect(showing.length, JSON.stringify(listAfter.windows)).toBe(1);
+    // ordinary window: on one desktop, not floating. The list reads each
+    // window's live URL, which the replacement reports once its page loads.
+    const listShowing = async () => {
+      const l = await bgWindow.evaluate(async () => (window as any).app.window.list());
+      return (l.windows ?? []).filter((w: { url?: string }) => w.url && w.url.includes(url)) as Array<{ id: number }>;
+    };
+    await expect.poll(async () => (await listShowing()).length, { timeout: 10000 }).toBe(1);
+    const showing = await listShowing();
     expect(showing[0].id).not.toBe(opened.id);
     const nativeAfter = await app.evaluateMain!((({ BaseWindow }: any, id: number) => {
       const win = BaseWindow.getAllWindows().find((w: any) => w.id === id);

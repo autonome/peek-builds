@@ -654,3 +654,30 @@ One thing is NOT established and should not be read as settled:
 
 This track's own `workspace membership` (8 tests) and `spaces ui activation` (5 tests) describe
 blocks were green throughout the gate — neither appears in the failing set above.
+
+### Thirteenth macOS gate run — 2026-09-25
+
+`yarn test:desktop:electron:bg` on `agent/cmd-panel-focus-regression` rebased onto `main`
+(`1fe79e2d`), macOS arm64, packaged. Exit 1.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3369 | 0 | — |
+| node unit | 826 | 0 | — |
+| desktop | 486 | 3 | 21 |
+| desktop-serial | 34 | 6 | — |
+| components | 66 | 0 | — |
+| editor | 91 | 0 | — |
+
+Nine failures. Five are the twelfth run's cmd-panel set unchanged (`device-settings.spec.ts:190`,
+`desktop-serial/cmd-url-window-reuse.spec.ts:115`, `desktop-serial/external-url.spec.ts:25/89/164/227`;
+line numbers moved with the files). The other four:
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `cmd-url-unfocused.spec.ts:170` | the kernel keeps the page window on screen and never hides the app | this track's own spec: it read the window list before the reopened page had loaded, so the list carried an empty URL. Fixed in the spec by polling the list; the fix passed on the next source run |
+| `command-chaining.spec.ts:365` | escape exits chain mode before closing panel | intermittent — `ERR_FAILED (-2) loading 'peek://cmd/panel.html'`, the signature already recorded for `:54` and `:127` above; passed in isolation on the same source |
+| `desktop-serial/cmd-state-machine.spec.ts:216` | Escape layering: param mode -> clear text -> close | pre-existing — fails 3 of 3 in isolation on this track and 2 of 2 on `main` in the primary checkout, same source build method, same signature (`waitForState('IDLE')` times out after the second Escape). Not previously recorded |
+
+The A/B for the Escape-layering case ran the `desktop-serial` project through
+`scripts/playwright-with-display.sh` from source in both checkouts, not against the packaged build.
