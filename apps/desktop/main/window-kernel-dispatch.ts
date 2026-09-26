@@ -5,7 +5,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { type Command, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { type Command, type DesktopId, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 
@@ -166,6 +166,7 @@ export interface RegisterWindowSpec {
   selfClosesOnBlur?: boolean;
   nonActivating?: boolean;
   appLifetime?: boolean;
+  onEveryDesktop?: boolean;
 }
 
 export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
@@ -186,6 +187,7 @@ export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
+    ...(spec.onEveryDesktop !== undefined ? { onEveryDesktop: spec.onEveryDesktop } : {}),
     expectedVersion: getKernelExecutor().getState().version,
   });
 }
@@ -209,6 +211,10 @@ export function kernelWindowShown(id: WindowId, focused = false, opSeq?: number)
 
 export function kernelWindowHidden(id: WindowId, opSeq?: number): void {
   kernelDispatch({ type: 'WindowHidden', id, opSeq });
+}
+
+export function kernelDesktopChanged(focused: WindowId | null, name?: DesktopId): void {
+  kernelDispatch({ type: 'DesktopChanged', focused, ...(name !== undefined ? { name } : {}) });
 }
 
 export function kernelAppActivated(): void {

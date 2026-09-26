@@ -136,10 +136,11 @@ user there, pull the window here, or flag it as wanting attention; **unverified*
 manager). A side task has a further gap: Electron's window-type documentation lists `'panel'`
 for macOS only (the type definitions omit the list, so this rests on the published docs, not on
 anything checked in this repo), so whether a side task is non-activating on Linux at all is
-**unverified**. No
-Linux machine with a display is available to the project (the dev box has none), so none of the
-Linux behaviour above can be checked yet; `apps/desktop/CLAUDE.md` already lists desktops among
-what Linux runs cannot verify.
+**unverified**. The
+remote Linux dev box runs a virtual X server, so X11 behaviour can be checked there (whether its
+window manager implements EWMH desktops is **unverified**); Wayland cannot be checked on any
+machine the project has. `apps/desktop/CLAUDE.md` lists desktops among what Linux runs do not
+verify today.
 
 Unverified on macOS, each checked by the probe in commit 1 before any rule depends on it:
 
@@ -161,11 +162,13 @@ Unverified on macOS, each checked by the probe in commit 1 before any rule depen
 - `State.desktopCounter: number` — mints the ids.
 - `WindowRecord.desktop?: DesktopId` — the desktop the window was last known to be on. Absent
   until first shown.
-- `WindowRecord.onEveryDesktop?: boolean` — declared at registration, from two sources: the role
-  asks to follow the user (`desktopMembership: 'follow'`), or the backend reports that its
+- `WindowRecord.onEveryDesktop?: boolean` — declared at registration by the backend when its
   platform will keep this window on every desktop whatever is asked (the Electron backend says so
   for panels on macOS). The kernel never infers it from `nonActivating`; that link is Electron's,
-  and stays below the port.
+  and stays below the port. The other source, a role that asks to follow the user
+  (`desktopMembership: 'follow'`), is read from `desktopMembership` rather than copied into the
+  field, because membership is set after registration and can change on key-reuse; the predicate
+  `isOnEveryDesktop(record)` reads both.
 
 One predicate, `onCurrentDesktop(state, record): boolean` — true when `onEveryDesktop`, or when
 `record.desktop === state.desktop`. False means "not known to be here", which covers both "known
@@ -331,8 +334,8 @@ no rule is decided there.
 7. Decision 5 (resign settle).
 8. Decision 6 lands with the parked track.
 9. **Linux on X11**, a separate track, not scheduled: a backend feed of `DesktopChanged` with
-   EWMH desktop numbers and per-window desktops. It needs a Linux machine with a display to
-   verify.
+   EWMH desktop numbers and per-window desktops. Verifiable on the remote Linux dev box's virtual
+   X server, if its window manager implements EWMH desktops.
 
 ## Tests
 

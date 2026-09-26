@@ -102,7 +102,7 @@ function seedSessionMirror(): void {
 export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // Both BaseWindow and BrowserWindow satisfy the backend's structural NativeWindow; the electron
   // typed-overload `on` isn't assignable to the loose `on` shape, so bridge with a single cast here.
-  const { id, decision, initialBounds } = getWindowBackend().registerWindow(spec as unknown as RegisterWindowSpec);
+  const { id, decision, initialBounds, onEveryDesktop } = getWindowBackend().registerWindow(spec as unknown as RegisterWindowSpec);
   // The registry payload rides the registration spec when the caller has it (ipc.ts's window-open
   // handler) — see window-open-registry.ts for why this lives outside the machine record.
   if (spec.source !== undefined && spec.params !== undefined) {
@@ -127,6 +127,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
+    ...(onEveryDesktop ? { onEveryDesktop: true } : {}),
   });
   // pumpShownEvent: the native window was already visible at registration time, which never
   // fires a native 'show' transition — this is the only report the kernel ever gets of it.

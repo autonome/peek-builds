@@ -28,6 +28,12 @@ export const BASE_LAYER = 0;
 
 export type DesktopMembership = 'follow' | 'anchor';
 
+// A desktop, opaque: the backend's own name when its platform gives one,
+// otherwise an id the kernel mints on each reported switch, meaning "the
+// desktop that has been current since that switch". Design:
+// `specs/kernel-desktops.md` → "Kernel state".
+export type DesktopId = string;
+
 export interface WindowRecord {
   id: WindowId;
   kind: WindowKind;
@@ -60,6 +66,16 @@ export interface WindowRecord {
   maximized: boolean;
   preMaxBounds: Rectangle | null;
   desktopMembership?: DesktopMembership;
+  // The desktop this window was last known to be on — a lived fact, absent
+  // until the window is first shown. Stamped by a genuine show, by taking key,
+  // and by a `DesktopChanged` that names it focused; a window on every desktop
+  // keeps the desktop it was first shown on. Read through `onCurrentDesktop`.
+  desktop?: DesktopId;
+  // Declared at registration: the backend reports that its platform keeps this
+  // window on every desktop whatever is asked. The other source, a role that
+  // asks to follow the user, is `desktopMembership === 'follow'`; read both
+  // through `isOnEveryDesktop`.
+  onEveryDesktop?: boolean;
   pendingProjectedBounds: Rectangle | null;
 
   overlayFor?: WindowId;
@@ -112,6 +128,10 @@ export interface State {
   readonly pendingColdStartFocus: WindowId | null;
   readonly pendingSelectionFocus: SelectionFocus | null;
   readonly openedInBackground: boolean;
+  // The desktop the user is on; written only by `DesktopChanged`.
+  readonly desktop: DesktopId;
+  // Mints `desktop` ids for a switch whose backend names no desktop.
+  readonly desktopCounter: number;
 }
 
 export interface SelectionFocus {
@@ -168,8 +188,14 @@ export type Event =
       nonActivating?: boolean;
       // See `WindowRecord.appLifetime` — declared here.
       appLifetime?: boolean;
+      // See `WindowRecord.onEveryDesktop` — declared here, by the backend.
+      onEveryDesktop?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
+  // The user switched desktop. `focused` is the backend's own read, at the
+  // moment of the switch, of which registered window has focus; `name` is the
+  // new desktop's name when the platform gives one. Never writes `key`.
+  | { type: 'DesktopChanged'; focused: WindowId | null; name?: DesktopId }
   | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
   | { type: 'WindowClosed'; id: WindowId }
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
@@ -243,6 +269,8 @@ export type Command =
       nonActivating?: boolean;
       // See `WindowRecord.appLifetime` — declared here.
       appLifetime?: boolean;
+      // See `WindowRecord.onEveryDesktop` — declared here, by the backend.
+      onEveryDesktop?: boolean;
       expectedVersion: number;
     }
   | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number }
@@ -335,7 +363,13 @@ export function initialState(): State {
     pendingSelectionFocus: null,
     // No windows yet, so no session — the first registration decides this.
     openedInBackground: false,
+    desktop: mintedDesktopId(1),
+    desktopCounter: 1,
   };
+}
+
+function mintedDesktopId(n: number): DesktopId {
+  return `desktop-${n}`;
 }
 
 // The next `TeardownRequest.seq` — one per teardown event, monotone, never reused.
@@ -467,6 +501,7 @@ export function evolve(state: State, ev: Event): State {
           ...(existing.bounds !== undefined ? { bounds: existing.bounds } : ev.bounds !== undefined ? { bounds: ev.bounds } : {}),
           // Lived facts — re-registration must not forget an answer already given.
           ...(existing.desktopMembership !== undefined ? { desktopMembership: existing.desktopMembership } : {}),
+          ...(existing.desktop !== undefined ? { desktop: existing.desktop } : {}),
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
           ...(existing.overlayFrame !== undefined ? { overlayFrame: existing.overlayFrame } : {}),
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
@@ -521,6 +556,11 @@ export function evolve(state: State, ev: Event): State {
             : existing.appLifetime !== undefined
               ? { appLifetime: existing.appLifetime }
               : {}),
+          ...(ev.onEveryDesktop !== undefined
+            ? { onEveryDesktop: ev.onEveryDesktop }
+            : existing.onEveryDesktop !== undefined
+              ? { onEveryDesktop: existing.onEveryDesktop }
+              : {}),
         };
         // A reversible hide must never survive into a transient identity it
         // would not have been given: if this merge is what makes the record
@@ -570,6 +610,8 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: ev.selfClosesOnBlur } : {}),
         ...(ev.nonActivating !== undefined ? { nonActivating: ev.nonActivating } : {}),
         ...(ev.appLifetime !== undefined ? { appLifetime: ev.appLifetime } : {}),
+        ...(ev.onEveryDesktop !== undefined ? { onEveryDesktop: ev.onEveryDesktop } : {}),
+        // `desktop` is deliberately NOT seeded: a window is on no desktop until it is first shown.
         // `contentFocused` is deliberately NOT seeded: registration is the moment nothing has been reported yet.
       };
       // Nothing else orders windows. A fresh registration is placed BELOW the
@@ -625,7 +667,9 @@ export function evolve(state: State, ev: Event): State {
             // A genuine show clears a doomed mark too — the OS put the window back, so the teardown did not (yet) happen.
             ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
           });
-          return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq };
+          // A genuine show puts the window on the desktop the user is on; a
+          // window on every desktop keeps the one it was first shown on.
+          return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq, desktop: desktopOnShow(state, w) };
         }),
         opSeqCounter: opSeq,
         version: state.version + 1,
@@ -811,10 +855,12 @@ export function evolve(state: State, ev: Event): State {
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       // Written alongside `key`, only when this report hands key to a different window than whoever held it.
       const takesKey = state.key !== ev.id;
+      // The key window is on the desktop the user is on, unless it is on every desktop.
       const movedRecord = {
         ...record,
         ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
         ...(takesKey ? { priorKey: state.key } : {}),
+        ...(isOnEveryDesktop(record) ? {} : { desktop: state.desktop }),
       };
       const order = [...withoutRecord, movedRecord];
       // Mark this transition's own sweep victims `pendingHidden` here, off the
@@ -1204,6 +1250,25 @@ export function evolve(state: State, ev: Event): State {
       return {
         ...state,
         order: state.order.map((w) => (w.id === ev.id ? { ...w, desktopMembership: ev.membership } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'DesktopChanged': {
+      // A fact, never rejected. `key` is not written: key moves only on the
+      // backend's focus reports. `focused` only makes the one window the user
+      // is looking at known to be here after the switch; an id not in `order`
+      // stamps nothing.
+      const minted = ev.name === undefined;
+      const desktopCounter = minted ? state.desktopCounter + 1 : state.desktopCounter;
+      const desktop = ev.name ?? mintedDesktopId(desktopCounter);
+      return {
+        ...state,
+        order: ev.focused === null
+          ? state.order
+          : state.order.map((w) => (w.id === ev.focused && !isOnEveryDesktop(w) ? { ...w, desktop } : w)),
+        desktop,
+        desktopCounter,
         version: state.version + 1,
       };
     }
@@ -1834,6 +1899,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: cmd.selfClosesOnBlur } : {}),
           ...(cmd.nonActivating !== undefined ? { nonActivating: cmd.nonActivating } : {}),
           ...(cmd.appLifetime !== undefined ? { appLifetime: cmd.appLifetime } : {}),
+          ...(cmd.onEveryDesktop !== undefined ? { onEveryDesktop: cmd.onEveryDesktop } : {}),
         },
       ],
     };
@@ -2042,6 +2108,25 @@ export function keyWindow(state: State): WindowRecord | null {
     return null;
   }
   return state.order.find((w) => w.id === state.key) ?? null;
+}
+
+// A window is on every desktop when the backend declared it so, or when its
+// role asks to follow the user across desktops.
+export function isOnEveryDesktop(record: WindowRecord): boolean {
+  return record.onEveryDesktop === true || record.desktopMembership === 'follow';
+}
+
+// True when the window is known to be on the desktop the user is on. False
+// covers both "known to be elsewhere" and "never shown"; the rules treat them
+// alike, because a wrong guess either way switches the user's desktop.
+export function onCurrentDesktop(state: State, record: WindowRecord): boolean {
+  return isOnEveryDesktop(record) || record.desktop === state.desktop;
+}
+
+// The desktop a genuine show puts a window on.
+function desktopOnShow(state: State, record: WindowRecord): DesktopId {
+  if (isOnEveryDesktop(record) && record.desktop !== undefined) return record.desktop;
+  return state.desktop;
 }
 
 export function windowById(state: State, id: WindowId): WindowRecord | null {
