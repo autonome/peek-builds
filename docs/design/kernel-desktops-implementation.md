@@ -67,19 +67,24 @@ One commit each, order per "Order of work":
    settle) → the timer stays; the overlay transition becomes a kernel fact that makes
    `AppResignSettled` inert in `evolve`.
 6. **`main.ts` devtools-opened / devtools-closed** (`kernelAssertFocus()` on the topmost content
-   window, possibly on another desktop) → retargeted to the host by the parked track; F9 also
-   refuses a machine focus elsewhere. Lands with the parked track.
+   window, possibly on another desktop) → retargeted to the host whose devtools opened or closed by
+   commit `5f888241` of track `close-raises-other-desktop`, cherry-picked here; F9 also refuses a
+   machine focus elsewhere.
 
 Stays outside: `armBlurSettle` (translates Electron's event order into "focus left every window";
 decides no rule).
 
 ## Relationship to `close-raises-other-desktop`
 
-- The spec's F7 supersedes the parked track's transient / application split.
-- The parked track's removal of the successor choice for application-window closes is dropped.
-- The parked track's other changes stay: focusing the reopened window on activation (covered by
-  the spec's close and focus ordering) and the devtools handlers (decision 6).
-- The parked track rebases onto commit 8 below and drops its F7 change.
+- One commit of the parked track carries over: `5f888241` (the devtools-opened / devtools-closed
+  handlers in `main.ts` assert focus on the devtools host, not the topmost content window). It is
+  cherry-picked into this track at commit 12 below (decision 6). Its lines in
+  `docs/design/window-rules.md` and `docs/design/window-rules-audit.md` that describe the parked
+  track's F7 are dropped in favour of the spec's F7 when resolving the pick.
+- Everything else in the parked track is superseded by the spec's F7 and F9 design: its transient /
+  application split, its removal of the successor choice for application-window closes, and its
+  focusing of the reopened window on activation (covered by the spec's close and focus ordering).
+- The parked track is retired once this track lands; it is not rebased.
 
 ## Order of work
 
@@ -178,7 +183,8 @@ helper's reads; if they fail, nothing has yet been built on them.
 9. Decision 2 (URL dedup).
 10. Decision 4 (focus filters).
 11. Decision 5 (resign settle).
-12. Decision 6, with the parked track.
+12. Decision 6: cherry-pick `5f888241` from track `close-raises-other-desktop` (see
+    "Relationship to `close-raises-other-desktop`").
 13. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.
 
 The macOS provider acceptance check runs after commit 4; the rule acceptance check after commit 8.
