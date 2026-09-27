@@ -6,85 +6,110 @@ depends-on: []
 
 # Desktops are kernel state
 
-Peek item `a0ea0c2d`; parked track `close-raises-other-desktop`. Defect on `main`: with another
-app in front and two macOS desktops, a page opened from the palette on desktop 2 can follow the
-user to desktop 1, drop behind the other app, and vanish from desktop 2, because the window kernel
-knows nothing about desktops and every desktop rule in `docs/design/window-rules.md` is decided by
-native-call timing.
+The window kernel holds a model of screens and virtual desktops with real, stable ids, and decides
+every desktop rule in `docs/design/window-rules.md` from that model rather than from the timing of
+native calls. The model names no OS, no window backend and no Electron concept. Each window backend
+fills it through a per-platform desktop provider; a fallback provider, available everywhere, makes
+the app behave as if desktops did not exist. Everything platform-specific is a backend's
+realization, never kernel reasoning.
 
-Design only; each numbered commit under "Order of work" is a separate change. The kernel holds a
-model of screens and desktops with real, stable ids that names no OS, no backend and no Electron
-concept; each window backend (Electron is the first) fills it through a per-platform desktop
-provider, with a fallback provider that reproduces today's behaviour. Everything platform-specific
-below is a backend's realization, never kernel reasoning.
+Implementation notes and history: `docs/design/kernel-desktops-implementation.md`.
 
-## Rules
+The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
-Terms: with several screens, "the desktop the user is on" is the desktop currently shown on the
-screen in question. A window is **here** when its desktop is currently shown on its screen, or it
-is on every desktop.
+## 1. Scope and terms
 
-1. **A window stays on the desktop it was put on.** Nothing the app does on its own moves a window
-   to another desktop or switches the user's desktop; only the user does, by switching desktop or
-   asking for one specific window. Exception: transients (palette, switcher, quick-views, page
-   chrome) appear on the desktop the user is on.
-
-   **The switcher** lists the app's windows from every desktop. Picking one takes the user to that
-   window's desktop. This conflicts with rule 5; accepted, because the pick is explicit.
-2. **A side task's replacement is on the desktop where the page was opened.** A page opened from
-   the palette over another app (a side task, G1/G13) is replaced by an ordinary window when it
-   stops being in use. The replacement is on the side task's opening desktop however the user left
-   it: clicking the other app (5c), switching desktop (5d), or bringing the app forward (5e, where
-   it is also the front window with key). Never on another desktop.
-3. **Switching desktop ends a side task because it takes focus away** (ordinary OS behaviour). A
-   side task ends on loss of focus, so switching away ends it as clicking another app does. A
-   switch on a different screen from the page's does not end it.
-4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if here,
-   else the frontmost page that is here, else nothing (F7 below).
-5. **Opening a URL already open on another desktop opens a new window here**, not the one there.
-   Opening a URL from the palette over another app always opens a new side task; it never reuses
-   an ordinary window. Reason: switching desktop is deliberate, so actions happen there. A future
-   "go to the open window / open one here" cue could revisit this.
-6. **The rules hold on every platform with desktops.** With a provider that reads real desktops,
-   as written. With only the fallback provider, the app sees one desktop per screen and behaves as
-   on `main` (including taking the user to another desktop); see "Platform summary".
-
-## Baseline on `main`
-
-- `electron-window-backend.ts attachSpaceChangeListener` only logs `space-changed` (macOS only);
-  no event reaches the kernel.
-- `window-kernel.ts State` has no desktop. `WindowRecord.desktopMembership` records intent only
-  (`'follow'` / `'anchor'`), set for canvas windows by role (`ipc.ts` window-open handler,
-  `kernelSetDesktopMembership(…, desktopMembershipForRole(role))`) and on key-reuse; page hosts
-  from `ipc.ts assembleHybridPageHost` never get it and land on the desktop current at first show.
-- `ElectronWindowBackend.setDesktopMembership` realizes `'anchor'` as the all-desktops-on-then-off
-  pair, moving the window to the current desktop; no-op off macOS.
-- A side task is a panel (`ipc.ts`, `pageOpensAsSideTask()` branch, `options.type = 'panel'`);
-  Electron keeps panels on all desktops (`electron_ns_panel.mm setCollectionBehavior:`).
-- `isSideTask` reads only `appActive`, `key` and the record; a switch ends a side task only via
-  the `OsFocusLost` from `ElectronWindowBackend.armBlurSettle` → `kernelOsFocusSettled`, so 5c
-  and 5d are indistinguishable.
-- `react` emits `ReopenAsOrdinaryWindow { id }`; `ipc.ts reopenWindowAsOrdinary()` opens the
-  replacement then closes the panel via a promise chain; the replacement lands on the desktop
-  switched to.
-- `successorOnHide()` (`WindowHidden` / `WindowClosed` arms of `evolve`) picks the prior key
-  window, else `topmost(state, isContentWindow)`, ignoring desktops. Raising a window on another
-  desktop switches desktop (`raise-realized id=wm-3` then `space-changed`).
-- Switcher selection (`tile-ipc.ts` → `kernelArmSelectionFocus`) is spent in the `WindowClosed`
-  arm as a `lastFocusAssert`, which carries no user intent.
-- Hybrid URL dedup in the `ipc.ts` window-open handler (`findHybridWindowByUrl` →
-  `kernelShowRequested(reusedId, true)`) runs before the side-task check and reuses a window on
-  any desktop.
-
-## Model: screens and desktops
+In scope: which desktop each app window is on, which desktop the user is on, and every window
+rule that depends on either, on every platform the desktop app runs on.
 
 - **Screen**: a hardware display.
-- **Desktop**: a virtual desktop, belonging to one screen or shared across all screens. Each
-  screen shows exactly one current desktop; with shared desktops all screens have the same one.
+- **Desktop**: a virtual desktop (macOS Space, X11 workspace), belonging to one screen or shared
+  across all screens. Each screen shows exactly one current desktop; with shared desktops all
+  screens show the same one.
+- **The desktop the user is on**: with several screens, the desktop currently shown on the screen
+  in question.
+- **Here**: a window is here when its desktop is currently shown on its screen, or it is on every
+  desktop.
+- **Side task**: a page opened from the palette while another app is in front (`window-rules.md`
+  G1, G13). It ends when it stops being in use and is then replaced by an ordinary window.
+- **Home** (of a side task): the desktop the side task was opened on.
+- **Transient**: the palette, the switcher, quick-views and page chrome.
+- **Every-desktop window**: a window the platform keeps on every desktop regardless of placement
+  (for example a macOS panel). Its home is the desktop it was first shown on.
+- **User intent**: a focus or raise the user asked for by naming one specific window (for example
+  picking it in the switcher). Anything else is machine-caused.
 
-Ids (`ScreenId`, `DesktopId`) are opaque strings chosen below the port, compared only; the kernel
-gives them no meaning (not a display id, not an OS number). Required: stable for the session while
-the thing exists; returning to a desktop yields its previous id.
+## 2. User stories
+
+- As a user with another app in front on desktop 2, when I open a page from the palette and then
+  click the other app, the page stays on desktop 2 behind that app.
+- As a user, when I switch from desktop 2 to desktop 1 while a side task is open, desktop 1 shows
+  no page, and desktop 2 still has it when I return.
+- As a user, when I bring the app forward while a side task is open, that page is the front window
+  and has keyboard focus, on the desktop where I opened it.
+- As a user on desktop 1, when I open a URL that is already open on desktop 2, I get a new window
+  on desktop 1 and am not taken to desktop 2.
+- As a user, when I pick a window from another desktop in the switcher, I am taken to that desktop
+  and the window has keyboard focus.
+- As a user, when I close or hide a window, I stay on the desktop I am on.
+- As a user on a platform where desktops cannot be read, the app keeps working as a
+  desktop-unaware app.
+
+## 3. Rules
+
+1. **A window stays on the desktop it was put on.** Nothing the app does on its own MUST move a
+   window to another desktop or switch the user's desktop; only the user does, by switching desktop
+   or asking for one specific window. Exception: transients MUST appear on the desktop the user is
+   on.
+
+   **The switcher** MUST list the app's windows from every desktop. Picking one MUST take the user
+   to that window's desktop. This conflicts with rule 5 and is accepted, because the pick is
+   explicit.
+2. **A side task's replacement is on the side task's home.** When a side task stops being in use
+   it is replaced by an ordinary window, which MUST be on the home however the user left it:
+   clicking the other app (`window-rules.md` 5c), switching desktop (5d), or bringing the app
+   forward (5e, where the replacement MUST also be the front window with key). It MUST NOT be on
+   another desktop.
+3. **Switching desktop ends a side task because it takes focus away**, as ordinary OS behaviour.
+   A side task ends on loss of focus, so switching away from its home MUST end it as clicking
+   another app does. A switch on a different screen from the side task's MUST NOT end it.
+4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if here,
+   else the frontmost page that is here, else nothing (rule 9).
+5. **Opening a URL already open on another desktop opens a new window here**, not the one there.
+   Opening a URL from the palette over another app MUST always open a new side task; it MUST NOT
+   reuse an ordinary window. Reason: switching desktop is deliberate, so actions happen there.
+6. **The rules hold on every platform with desktops.** With a provider that reads real desktops,
+   rules 1–5 hold as written. With only the fallback provider the app sees one desktop per screen
+   and behaves as a desktop-unaware app; the OS may then take the user to another desktop (see
+   section 6).
+7. **Side-task replacement, relation to `window-rules.md`.** Rule 2 supersedes G13 ("the desktop
+   the user is on") and row 5d ("the desktop it was on when it lost key"), and matches
+   `side-task-ends-on-blur.md`'s live check ("the page stays on desktop 2"). If a platform cannot
+   keep the replacement on the home, the implementation MUST NOT satisfy rule 2 by letting the page
+   follow the user to another desktop.
+8. **F9 stay-on-this-desktop** (new rule under Focus in `window-rules.md`):
+
+   > A focus the manager makes without user intent lands only on a window that is here (on a
+   > desktop some screen currently shows, or on every desktop). A focus with user intent may take
+   > the user to another desktop, because the user named that window; picking a window in the
+   > switcher is such a focus.
+9. **F7 hide-returns-key** (replaces F7 in `window-rules.md`):
+
+   > When the key window hides or closes while the app is active, key goes to its prior window if
+   > that window is visible and here; otherwise to the topmost visible application window that is
+   > here; otherwise the manager focuses nothing, and whatever the OS focuses next arrives
+   > world-caused.
+
+   The kernel MUST choose a successor for application-window closes as well as transient ones.
+
+## 4. Model
+
+### Ids
+
+`ScreenId` and `DesktopId` are opaque strings chosen below the backend port and compared only; the
+kernel gives them no meaning (not a display id, not an OS number). They MUST be stable for the
+session while the thing exists; returning to a desktop MUST yield its previous id. Stability across
+app restarts is not required.
 
 ### Kernel state
 
@@ -92,33 +117,38 @@ the thing exists; returning to a desktop yields its previous id.
 - `State.desktops: readonly DesktopState[]`, `DesktopState = { id: DesktopId; screen: ScreenId |
   null }` (`null` = shared).
 - `WindowRecord.screen?: ScreenId` — last reported screen.
-- `WindowRecord.desktop?: DesktopId` — last reported desktop. For an every-desktop window, its home:
-  the desktop it was first shown on (for a side task, the one it was opened on). Absent until first
-  shown or reported.
+- `WindowRecord.desktop?: DesktopId` — last reported desktop. For an every-desktop window, its home
+  (for a side task, the desktop it was opened on). Absent until first shown or reported.
 - `WindowRecord.onEveryDesktop?: boolean` — the backend's declaration at registration, or set by a
-  placement report. The kernel reads it only as that declaration and never derives it from role or
-  platform. `desktopMembership: 'follow'` is not copied here; `isOnEveryDesktop(record)` reads both.
+  placement report. The kernel MUST read it only as that declaration and MUST NOT derive it from
+  role or platform. `desktopMembership: 'follow'` is not copied into it; `isOnEveryDesktop(record)`
+  reads both.
+- `WindowRecord.replacedBy?: WindowId` — set when another window registers with `replaces` naming
+  this one.
 
 Initial state: no screens, no desktops.
 
-Predicates:
+### Predicates
 
 - `isCurrentDesktop(state, desktop): boolean` — some screen shows it; true when `state.screens` is
   empty.
 - `onCurrentDesktop(state, record): boolean` — `isOnEveryDesktop(record)`, or `record.desktop` is
-  current. False for both "elsewhere" and "never shown". Exception: true for every window before
-  the first layout report.
-- `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring every-desktop. Used by the
-  side-task rule.
+  current. False for both "elsewhere" and "never shown", except that it is true for every window
+  before the first layout report.
+- `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring every-desktop.
+  Used by the side-task rule.
+- `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and
+  here, or hidden. A hidden window is re-shown on the current desktop of its screen; if the OS
+  shows it elsewhere, the following placement report corrects the kernel.
 
 ### Events (facts, never rejected)
 
-- `DesktopLayoutReported { screens: ScreenState[]; desktops: DesktopState[] }` — full layout; sent
-  at start, on screen add/remove/rearrange, and when the provider sees desktops added or removed.
-  Replaces `State.screens` and `State.desktops`. A window whose `desktop` no longer exists keeps
-  the stale id (not here) until its next placement report.
+- `DesktopLayoutReported { screens: ScreenState[]; desktops: DesktopState[] }` — the full layout;
+  sent at start, on screen add/remove/rearrange, and when the provider sees desktops added or
+  removed. Replaces `State.screens` and `State.desktops`. A window whose `desktop` no longer exists
+  keeps the stale id (not here) until its next placement report.
 - `CurrentDesktopChanged { screen: ScreenId; desktop: DesktopId }` — sets that screen's `current`;
-  adds an unknown screen. With shared desktops, one per screen. Never writes `key` (F1: only
+  adds an unknown screen. With shared desktops, one per screen. MUST NOT write `key` (F1: only
   `OsFocusGained` / `OsFocusLost` do).
 - `WindowPlacementReported { id: WindowId; screen: ScreenId | null; desktop: DesktopId | null;
   onEveryDesktop: boolean }` — a registered window's placement. `null` leaves the field unchanged.
@@ -137,22 +167,68 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 ### Effects
 
-- `ReopenAsOrdinaryWindow { id; desktop: DesktopId | null }` — replacement must be on `desktop` (the
-  side task's home); `null` = wherever the backend shows it.
+- `ReopenAsOrdinaryWindow { id; desktop: DesktopId | null }` — the replacement MUST be on
+  `desktop` (the side task's home); `null` = wherever the backend shows it. The port doc
+  (`window-backend.ts reopenAsOrdinaryWindow`) reads "belonging to `desktop`".
 - `ShowDesktop { desktop: DesktopId }` — make `desktop` current on its screen. Emitted only
-  immediately before a user-intent `RaiseWindow` of a window not here. Ignored by a backend that
-  cannot switch desktops.
+  immediately before a user-intent `RaiseWindow` of a window not here. A backend that cannot switch
+  desktops ignores it.
 
-Enforcement: `scripts/check-platform-leak.mjs`. The new kernel names ("screen", "desktop",
-`ScreenId`, `DesktopId`, the three events, two effects, `onEveryDesktop`) are not in `FORBIDDEN`.
-`SCANNED` gains `desktop-provider.ts` and `desktop-provider-fallback.ts`; `FORBIDDEN` gains
-`getMediaSourceId`, `getNativeWindowHandle`, `getAllDisplays`, `getDisplayMatching`. Exempt, as
-the places platform detail belongs: `electron-window-backend.ts`, `desktop-provider-mac.ts`, the
-future X11 provider, and the helper (Swift, not scanned).
+### Kernel behaviour
 
-## Desktop provider (below the port)
+- **Side task ends on a switch.** `isSideTask` includes `homeIsCurrent(state, record)`. A
+  `CurrentDesktopChanged` that takes the home off its screen ends the side task in that transition,
+  and `react`'s diff emits the reopen, `ReopenAsOrdinaryWindow { id, desktop }` carrying the home. If `OsFocusLost` came first, the later switch diffs to
+  nothing: exactly one reopen in either order. A switch on another screen leaves the home current
+  and ends nothing. With the fallback provider the clause is always true. This is needed because a
+  side task the backend declares on every desktop may stay focused across a switch, or its loss of
+  focus may be reported late (Electron backend: macOS panels).
+- **Close and focus ordering.** Registration with `replaces: X` marks X `replacedBy: <new id>`;
+  `react` diffs that into `CloseWindow X`. On X's `WindowClosed`: app active (5e) → the kernel
+  raises the replacement, machine-caused; app inactive (5c, 5d) → no raise. The ordering MUST be
+  decided in the kernel, not by the code that builds the replacement.
+- **Successor on hide or close.** `successorOnHide()` applies `onCurrentDesktop` to both its
+  branches (prior window; topmost application window).
+- **Raise gate.** `react` MUST NOT emit a `RaiseWindow` without user intent for a record that is not
+  here, and MUST NOT emit what the executor would suppress (app inactive, no user intent). The gate
+  lives in `react`, not the executor; `planRaise` keeps only environment concerns (headless,
+  non-activating realization).
+- **Switcher selection.** The raise spent from `pendingSelectionFocus` in the `WindowClosed` arm
+  carries user intent.
+- **Taking the user to a window's desktop.** For a user-intent raise of a window not here, `react`
+  emits `ShowDesktop { desktop: record.desktop }` immediately before `RaiseWindow`. The resulting
+  switch arrives as an ordinary `CurrentDesktopChanged`.
+- **URL reuse.** A window-open reuses an existing window for its URL only if `admitsReuse` holds.
+  The side-task check runs before reuse: a side-task open never reuses.
 
-`apps/desktop/main/desktop-provider.ts`: backend-neutral, naming no Electron type; each backend
+### Platform neutrality
+
+`scripts/check-platform-leak.mjs` enforces the kernel's neutrality. The kernel names ("screen",
+"desktop", `ScreenId`, `DesktopId`, the three events, the two effects, `onEveryDesktop`) are not in
+`FORBIDDEN`. `SCANNED` includes `desktop-provider.ts` and `desktop-provider-fallback.ts`;
+`FORBIDDEN` includes `getMediaSourceId`, `getNativeWindowHandle`, `getAllDisplays`,
+`getDisplayMatching`. Exempt, as the places platform detail belongs: `electron-window-backend.ts`,
+`desktop-provider-mac.ts`, an X11 provider, and the helper (Swift, not scanned).
+
+## 5. Backend contract
+
+### What a backend supplies
+
+For desktops to work under any window backend, the backend MUST supply:
+
+- **Screens**: the screen list and its changes, an opaque `ScreenId` per screen, each window's
+  screen, and the mapping from the provider's display ids to `ScreenId`.
+- **A platform window id per registered window**, derived by the backend for its own windows.
+- **The every-desktop declaration** at registration for windows the platform keeps on every
+  desktop regardless.
+- **A provider**: the platform's (a Node client such as `desktop-provider-mac.ts`, or the helper
+  spawned directly), else the fallback; plus any switch trigger the backend has.
+- **Realizations** of `ReopenAsOrdinaryWindow.desktop` and `ShowDesktop` for its provider's
+  capabilities (section 6).
+
+### Desktop provider interface
+
+`apps/desktop/main/desktop-provider.ts`: backend-neutral, naming no Electron type. Each backend
 owns one provider; the kernel never sees it.
 
 ```ts
@@ -175,85 +251,79 @@ id (macOS `CGDirectDisplayID`; none on X11, whose desktops are shared); the back
 its `ScreenId`s. `DesktopChange` is "layout changed" or "current desktop changed on display D". A
 provider lacking a capability sets the flag false and returns `false` from the call.
 
-Backend algorithm (any backend):
+### Backend algorithm
 
 - At start, on every `DesktopChange` and on each of the backend's own triggers (screen changes, an
   OS switch notification): `layout()` → `DesktopLayoutReported` if changed; one
   `CurrentDesktopChanged` per screen whose current desktop differs; `placements()` for all
   registered windows → one `WindowPlacementReported` per changed placement.
 - After each genuine show and each registration: `placements()` for that window.
-- `ReopenAsOrdinaryWindow`, `ShowDesktop`: see "Side tasks" and "Taking the user to a window's
-  desktop".
+- `ReopenAsOrdinaryWindow` and `ShowDesktop`: section 6.
 
-### What a backend supplies
+### Fail-safe
 
-For desktops to work under any window backend:
+The backend starts the platform provider and MUST switch to the fallback provider, logging
+`desktop-provider fallback reason=<…>` once, when any of these holds: no provider for the platform;
+helper binary absent or fails to start; start handshake unanswered within 1s; private calls
+reported unavailable; any later request times out (250ms), returns malformed data, or the helper
+exits. After switching, the backend sends a fresh `DesktopLayoutReported` and placements from the
+fallback provider, and the app behaves as with the fallback provider for the rest of the session.
+No retry.
 
-- **Screens**: the screen list and its changes, an opaque `ScreenId` per screen, each window's
-  screen, and the mapping from the provider's display ids to `ScreenId`.
-- **A platform window id per registered window**, derived by the backend for its own windows.
-- **The every-desktop declaration** at registration for windows the platform keeps on every
-  desktop regardless.
-- **A provider**: the platform's (a Node client such as `desktop-provider-mac.ts`, or the helper
-  spawned directly), else the fallback; plus any switch trigger the backend has.
-- **Realizations** of `ReopenAsOrdinaryWindow.desktop` and `ShowDesktop` for its provider's
-  capabilities (see "Side tasks").
+### Fallback provider (all platforms)
+
+`desktop-provider-fallback.ts`. Given the backend's screen list: one desktop per screen, id
+`<screenId>/only`, always current. A window's placement is its screen's only desktop; every-desktop
+is the backend's declaration. Both capability flags false. Never sends `CurrentDesktopChanged`, so
+every window is always here and every rule acts as if desktops did not exist.
+
+### Helper protocol
+
+A platform helper is a separate process speaking one JSON object per line on stdin/stdout.
+Requests: `hello` (helper version and which private symbols resolved), `layout`,
+`placements { windows: number[] }`, `place { window, desktop }` (diagnostics only). Every private
+symbol is resolved via `dlsym` at start; a missing symbol is reported "unavailable" in `hello`,
+never a launch failure. Any backend can spawn the helper and speak the protocol (for example a
+Tauri backend from Rust); `desktop-provider-mac.ts` is its Node client.
+
+A helper process is used rather than a Node addon: a crash in a private call closes a pipe (→
+fail-safe) instead of killing the main process; there is no rebuild against Electron's Node ABI;
+the repo already builds Swift helpers (`apps/desktop/tests/helpers/cg-windows.swift`,
+`tools/focus-probes/frontmost-stream.swift`) and no addon; and the protocol is backend-neutral.
+Cost: requests are asynchronous, and any window write comes from another process's connection.
+
+## 6. Platform realizations
 
 ### Electron backend
 
 - Screens: `screen.getAllDisplays()`; `display-added` / `display-removed` /
   `display-metrics-changed` are triggers. `ScreenId` is Electron's display id as a string; on macOS
-  the helper's `CGDirectDisplayID` maps to it (believed equal).
+  the helper's `CGDirectDisplayID` maps to it.
 - A window's screen: `screen.getDisplayMatching(bounds)`.
-- Platform window id: macOS, from `getMediaSourceId()` (`window:<n>:0`, `<n>` believed to be the
-  window server number); X11, `getNativeWindowHandle()`.
+- Platform window id: macOS, from `getMediaSourceId()` (`window:<n>:0`, `<n>` taken as the window
+  server number); X11, `getNativeWindowHandle()`.
 - Every-desktop declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
   reports only where the platform disagrees.
-- macOS switch trigger: `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
+- macOS switch trigger:
+  `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
   the provider supplies which desktop is now current.
 
-**Fail-safe.** The backend starts the platform provider and switches to the fallback provider,
-logging `desktop-provider fallback reason=<…>` once, when any of these holds: no provider for the
-platform; helper binary absent or fails to start; start handshake unanswered within 1s; private
-calls reported unavailable; any later request times out (250ms), returns malformed data, or the
-helper exits. After switching, the backend sends a fresh `DesktopLayoutReported` and placements
-from the fallback provider; the app behaves as on `main` for the rest of the session. No retry.
-
-### Fallback provider (all platforms)
-
-`desktop-provider-fallback.ts`. Given the backend's screen list; one desktop per screen, id
-`<screenId>/only`, always current. A window's placement is its screen's only desktop; every-desktop is the backend's declaration. Both
-capability flags false. Never sends `CurrentDesktopChanged`, so every window is always here and
-every rule acts as on `main`.
-
-### macOS provider: native helper process
+### macOS: native helper, reads
 
 `desktop-provider-mac.ts` plus a Swift CLI helper, `apps/desktop/native/desktop-helper/main.swift`.
 
-**Helper process, not a Node addon**: a crash in a private call closes a pipe (→ fail-safe)
-instead of killing the main process; no rebuild against Electron's Node ABI; the repo has Swift
-helpers (`apps/desktop/tests/helpers/cg-windows.swift`, `tools/focus-probes/frontmost-stream.swift`)
-and no addon build; and any backend can spawn it and speak the protocol (a Tauri backend from
-Rust), `desktop-provider-mac.ts` being its Node client. Cost: async requests, and any window write
-comes from another process's connection.
-
-**Build and packaging.**
+Build and packaging:
 
 - `apps/desktop/scripts/build-desktop-helper.mjs`, run by the desktop `build` script on darwin
   (no-op elsewhere): `swiftc -O`, arm64 (the only packaged mac arch in `electron-builder.yml`), to
   `apps/desktop/dist/native/peek-desktop-helper`.
 - `electron-builder.yml extraResources` → `Contents/Resources/peek-desktop-helper`. Located at
   `process.resourcesPath` when packaged, `dist/native` from source.
-- Without Xcode command-line tools: the script warns, builds nothing; the app runs on the fallback
-  provider.
-- App is unsigned (`identity: null`); if signing is enabled, the helper must be signed too.
+- Without Xcode command-line tools the script warns and builds nothing; the app runs on the
+  fallback provider.
+- The app is unsigned (`identity: null`); if signing is enabled, the helper MUST be signed too.
 
-**Protocol.** One JSON object per line on stdin/stdout. Requests: `hello` (helper version and
-which private symbols resolved), `layout`, `placements { windows: number[] }`, `place { window,
-desktop }` (probe only). Every private symbol is resolved via `dlsym` at start; a missing symbol
-is reported "unavailable" in `hello`, never a launch failure.
-
-**Reads** (window server private calls, as used by yabai, Hammerspoon `hs.spaces`, AltTab):
+Reads (window server private calls, as used by yabai, Hammerspoon `hs.spaces`, AltTab):
 
 - Connection: `CGSMainConnectionID()` (also `SLSMainConnectionID`).
 - Layout: `CGSCopyManagedDisplaySpaces(cid)` → per display: `Display Identifier` (display UUID, or
@@ -267,36 +337,60 @@ is reported "unavailable" in `hello`, never a launch failure.
 - `DesktopId` = the numeric id as a string.
 - Fullscreen desktops are ordinary desktops (a native-fullscreen page lives on its own).
 
-**Naming a window**: its window server number, supplied by the backend. Fallback for a backend
-that cannot derive it: the helper matches the app's windows by owner pid and bounds via public
+Naming a window: its window server number, supplied by the backend. For a backend that cannot
+derive it, the helper matches the app's windows by owner pid and bounds via public
 `CGWindowListCopyWindowInfo`, as `cg-windows.swift` does.
 
-**No writes on macOS.** `CGSMoveWindowsToManagedSpace` (and older `CGSAddWindowsToSpaces` /
-`CGSRemoveWindowsFromSpaces`) and `CGSManagedDisplaySetCurrentSpace` are reported (yabai,
-Hammerspoon) to need the Dock scripting addition, hence SIP partly disabled, since macOS 14.5 —
-not something Peek can ask of users. Both capability flags are false. The probe tries one move
-from the helper on the app's own test window to record the answer; if it works, a later change
-may set `canPlaceWindows` and drop the stand-in.
+### macOS: no writes, and the stand-in window
 
-### Linux X11 provider (separate track, unscheduled)
+`CGSMoveWindowsToManagedSpace` (and older `CGSAddWindowsToSpaces` / `CGSRemoveWindowsFromSpaces`)
+and `CGSManagedDisplaySetCurrentSpace` are reported (yabai, Hammerspoon) to need the Dock scripting
+addition, hence SIP partly disabled, since macOS 14.5 — not something the app can ask of users. The
+macOS provider therefore sets both capability flags false. If the helper's write is shown to work
+(section 7.2, step 4), the provider MAY set `canPlaceWindows`, which makes the stand-in
+unnecessary.
+
+Realizing `ReopenAsOrdinaryWindow.desktop` (the replacement may need to appear on a desktop the
+user has left):
+
+- **With `canPlaceWindows`**: build the replacement hidden, `placeWindow(replacement, desktop)`,
+  show without activation. No stand-in.
+- **Without `canPlaceWindows`** (Electron on macOS): when the side task opens, the backend also
+  shows a stand-in: an ordinary window at the side task's bounds, zero opacity, click-through, on
+  the opening desktop; backend-private, never registered with the kernel, tracking the side task's
+  bounds. At reopen the stand-in becomes the replacement host (opacity restored, input on, page
+  loaded) and registers as `replaces: X`. If the side task closes instead (Escape, close request),
+  the stand-in is destroyed with it.
+- **Fallback provider**: `desktop` is the screen's only desktop; the replacement shows where the OS
+  puts it.
+
+At every reopen the backend reads the stand-in's placement; if not on `desktop`, it logs
+`side-task-standin-misplaced` and proceeds (the page appears where the stand-in is).
+
+Realizing `ShowDesktop` on macOS: a no-op; raising the window makes the OS switch.
+
+### Linux X11
 
 - Reads (EWMH): root `_NET_NUMBER_OF_DESKTOPS`, `_NET_CURRENT_DESKTOP`, `_NET_DESKTOP_NAMES`;
   per-window `_NET_WM_DESKTOP` (`0xFFFFFFFF` = every desktop). Desktops span all monitors →
   reported shared (`screen: null`).
-- Writes: `_NET_WM_DESKTOP` client message moves a window; `_NET_CURRENT_DESKTOP` client message
-  switches desktop. Both capability flags true.
+- Writes: a `_NET_WM_DESKTOP` client message moves a window; a `_NET_CURRENT_DESKTOP` client
+  message switches desktop. Both capability flags true.
 - Windows named by X window id.
-- Packaging: helper process like macOS, built against libX11; root property changes are the
+- Packaging: a helper process like macOS, built against libX11; root property changes are the
   `DesktopChange`.
-- Checkable on the remote Linux dev box's virtual X server.
+- `ShowDesktop` (`canShowDesktops`): the backend switches desktop, then raises.
+- Conformance can be checked under a virtual X server whose window manager implements EWMH
+  desktops.
 
-### Wayland
+### Wayland and fallback
 
 No standard protocol exposes current or per-window workspace to an ordinary app
-(`ext-workspace-v1` is for shells/task bars; support varies). Wayland uses the fallback provider.
-Under XWayland the X11 provider may start and must pass its handshake.
+(`ext-workspace-v1` is for shells and task bars; support varies). Wayland uses the fallback
+provider. Under XWayland the X11 provider may start and MUST pass its handshake. With the fallback
+provider `ShowDesktop` is never emitted.
 
-### Platform summary
+### Platform table
 
 | Fact | macOS | Linux X11 | Wayland / fallback |
 |---|---|---|---|
@@ -308,186 +402,9 @@ Under XWayland the X11 provider may start and must pass its handshake.
 | Put a window on a desktop | no (needs SIP changes, reported) | yes, client message | no |
 | Switch to a desktop | no; raising a window there makes the OS switch | yes, client message | no |
 
-`apps/desktop/CLAUDE.md` lists desktops among what Linux runs do not verify.
+## 7. Conformance
 
-### Unverified
-
-- macOS private reads work on the macOS version in use.
-- macOS reads need no Accessibility or Screen Recording permission and no SIP change.
-- Helper round trip is a few milliseconds.
-- electron-builder signs `extraResources` executables on its own.
-- macOS `DesktopId` is stable for the login session (not needed across restarts).
-- `getMediaSourceId()`'s middle number is the window server window number.
-- Electron's display id equals `CGDirectDisplayID` on macOS.
-- macOS writes need SIP changes since 14.5 (reported by yabai / Hammerspoon).
-- Raising a window on another desktop makes macOS switch, for every backend raise path and with
-  "When switching to an application, switch to a Space with open windows" off.
-- `getNativeWindowHandle()` gives the X window id under XWayland.
-- Which X11 window managers honour EWMH client messages; whether the remote Linux dev box's does
-  EWMH desktops.
-- Wayland: every compositor; whether Electron runs natively or under XWayland; whether X11
-  properties are populated under XWayland.
-- Side tasks on Linux are non-activating (Electron documents `'panel'` for macOS only).
-
-## Side tasks: 5c, 5d, 5e and G13
-
-**Rule.** The replacement belongs to the desktop the side task was opened on. This replaces both
-G13 ("the desktop the user is on") and row 5d ("the desktop it was on when it lost key"), and
-matches `side-task-ends-on-blur.md`'s live check ("the page stays on desktop 2").
-
-**Ending on a switch.** A side task the backend declares on every desktop may stay focused across
-a switch, or its loss of focus may be reported late (Electron backend: macOS panels). `isSideTask`
-gains the clause `homeIsCurrent(state, record)`:
-
-- A `CurrentDesktopChanged` that takes the home off its screen ends the side task in that
-  transition; `react`'s existing diff emits the reopen.
-- If `OsFocusLost` came first, the later switch diffs to nothing. Exactly one reopen either order.
-- A switch on another screen leaves the home current and ends nothing.
-- With the fallback provider the clause is always true.
-
-`ReopenAsOrdinaryWindow { id, desktop }` carries the home. The port doc
-(`window-backend.ts reopenAsOrdinaryWindow`) changes from "belonging to the desktop the user is on"
-to "belonging to `desktop`".
-
-**Realization** (the replacement may need to appear on a desktop the user has left):
-
-- **`canPlaceWindows`** (X11; macOS only if the probe's write succeeds): build the replacement
-  hidden, `placeWindow(replacement, desktop)`, show without activation. No stand-in.
-- **Without `canPlaceWindows` (Electron on macOS, where writes need SIP changes):** when the side
-  task opens, the backend also shows a stand-in: an ordinary window at the panel's bounds, zero
-  opacity, click-through, on the opening desktop; backend-private, never registered with the
-  kernel, tracking the panel's bounds. At
-  reopen the stand-in becomes the replacement host (opacity restored, input on, page loaded) and
-  registers as `replaces: X`. If the side task closes instead (Escape, close request), the stand-in
-  is destroyed with it. Moving the page's view instead of reloading is a later choice.
-- **Fallback provider:** `desktop` is the screen's only desktop; the replacement shows where the OS
-  puts it.
-
-At every reopen the backend reads the stand-in's placement; if not on `desktop`, it logs
-`side-task-standin-misplaced` and proceeds (the page appears where the stand-in is).
-
-**Stop condition.** If the probe shows the stand-in does not keep its desktop, the track stops and
-reports back with the evidence. It never falls back to letting the page follow the user.
-
-**Close and focus ordering in the kernel.** Registration with `replaces: X` marks X `replacedBy:
-<new id>`; `react` diffs that into `CloseWindow X`. On X's `WindowClosed`: app active (5e) → the
-kernel raises the replacement, machine-caused; app inactive (5c, 5d) → no raise. This replaces the
-promise chain in `ipc.ts reopenWindowAsOrdinary()` and the parked track's `takesKey` payload.
-
-## F7, F9 and the raise gate
-
-New rule under Focus:
-
-> **F9 stay-on-this-desktop.** A focus the manager makes without user intent lands only on a
-> window that is here (on a desktop some screen currently shows, or on every desktop). A focus
-> with user intent may take the user to another desktop, because the user named that window;
-> picking a window in the switcher is such a focus.
-
-F7 rewritten (supersedes the parked track's transient / application split):
-
-> **F7 hide-returns-key.** When the key window hides or closes while the app is active, key goes
-> to its prior window if that window is visible and here; otherwise to the topmost visible
-> application window that is here; otherwise the manager focuses nothing, and whatever the OS
-> focuses next arrives world-caused.
-
-- `successorOnHide()` applies `onCurrentDesktop` to both branches. The kernel keeps choosing a
-  successor for application-window closes (the parked track's removal of it is dropped). The
-  parked track's other changes stay: focusing the replacement on activation (covered above) and
-  the devtools handlers.
-- Gate in `react`, not the executor: no `RaiseWindow` without user intent is emitted for a record
-  not here. The switcher selection raise (from `pendingSelectionFocus` in the `WindowClosed` arm)
-  carries user intent. The executor keeps only environment concerns (headless).
-
-## Taking the user to a window's desktop
-
-For a user-intent raise of a window not here, `react` emits `ShowDesktop { desktop:
-record.desktop }` immediately before `RaiseWindow`.
-
-- **`canShowDesktops`** (X11): backend switches desktop, then raises.
-- **macOS:** `ShowDesktop` is a no-op; the raise makes the OS switch. The rule check covers the
-  switcher case.
-- **Fallback:** never emitted.
-
-The resulting switch arrives as an ordinary `CurrentDesktopChanged`.
-
-## Out-of-kernel decisions to move
-
-One commit each, order per "Order of work":
-
-1. **`ipc.ts reopenWindowAsOrdinary()`** (open → close → focus by promise chain) → the `replaces` /
-   `replacedBy` state above; the function keeps only building the replacement.
-2. **`ipc.ts` hybrid URL dedup** → kernel predicate `admitsReuse(state, record)`: visible and here,
-   or hidden (a re-show is expected on the current desktop of its screen; the following placement
-   report corrects the kernel if not, and the rule check watches for it). The side-task check moves
-   ahead of the dedup: a side-task open never reuses.
-3. **`window-kernel-executor.ts` `RaiseWindow` / `planRaise`** → `react` stops emitting what the
-   `'suppressed'` plan (app inactive, no user intent) drops, together with F9; `planRaise` keeps
-   headless and non-activating realization choices.
-4. **`electron-window-backend.ts` focus filters** (`win.on('focus')` drops reports on
-   `pendingStackingFocus`, `pendingHideProvokedFocus`, `activationFocusTarget`) → the kernel
-   records each expectation when it emits the causing effect (stacking replay, hide of the key
-   window, activation with `pendingColdStartFocus`) and classifies the report; the backend reports
-   every focus with its raw cause. `hideProvokesFocusReassignment()` becomes a kernel fact likewise.
-5. **`electron-window-backend.ts appResignSettleTimer`** (reads izui overlay cooldowns, drops the
-   settle) → the timer stays; the overlay transition becomes a kernel fact that makes
-   `AppResignSettled` inert in `evolve`.
-6. **`main.ts` devtools-opened / devtools-closed** (`kernelAssertFocus()` on the topmost content
-   window, possibly on another desktop) → retargeted to the host by the parked track; F9 also
-   refuses a machine focus elsewhere. Lands with the parked track.
-
-Stays outside: `armBlurSettle` (translates Electron's event order into "focus left every window";
-decides no rule).
-
-## Order of work
-
-The macOS helper and its probe come before the kernel reshape because everything rests on the
-helper's reads; if they fail, nothing has yet been built on them.
-
-1. **Landed as `250051ad`** (minted ids, `DesktopChanged`); reshaped by commit 4.
-   - Survives: `DesktopId`; `WindowRecord.desktop`; `WindowRecord.onEveryDesktop` with its
-     registration plumbing (`WindowRegistered` event and `RegisterWindow` command fields,
-     `window-machine.ts registerWindowWithMachine`, `ElectronWindowBackend.registerWindow`
-     returning it for macOS panels); `isOnEveryDesktop`; the provisional stamp on a genuine
-     `WindowShown` (`desktopOnShow`, changed to read the window's screen's current desktop instead
-     of `State.desktop`); the `attachSpaceChangeListener` subscription as switch trigger; the
-     `native-blur` and `os-focus-left-app` log lines; desktop-state tests not depending on minting.
-   - Removed by commit 4: `State.desktop`, `State.desktopCounter`, `mintedDesktopId`,
-     `DesktopChanged` and its `evolve` arm, `kernelDesktopChanged` in `window-kernel-dispatch.ts`,
-     the `focused` read in `attachSpaceChangeListener`, the stamp in the `OsFocusGained` arm, and
-     tests for minting, `name`, `focused` stamping and focus stamping.
-   - Changed by commit 4: `onCurrentDesktop` keeps name and meaning over the new state; the
-     `space-changed` log line prints each screen's current desktop and each window's
-     `id:screen/desktop|*|?:v|h` from the new fields.
-2. **Remove the first probe's hooks**: `installDesktopProbe` and its `probe*` members in
-   `electron-window-backend.ts`, own commit.
-3. **Providers and the macOS helper, no kernel change**: `desktop-provider.ts`,
-   `desktop-provider-fallback.ts`, `main.swift`, `build-desktop-helper.mjs`, the `extraResources`
-   entry, `desktop-provider-mac.ts`, the fail-safe, the `check-platform-leak.mjs` additions, and
-   temporary probe hooks behind `PEEK_DESKTOP_PROBE=1`. The kernel has no desktop events yet, so
-   the probe hooks are the provider's only report sink: they log its reads directly. Then the probe
-   on a real Mac with a person. Stop and report if ids are not stable across returns or the
-   stand-in does not keep its desktop.
-4. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
-   three events, `isCurrentDesktop`, `homeIsCurrent`, reshaped `onCurrentDesktop`,
-   `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend: the report → event loop, fed
-   by whichever provider started. No rule reads the new state; behaviour unchanged on every
-   platform (pinned by the property test).
-5. **Side task ends on a switch** (`isSideTask` clause) and kernel `replaces` / `replacedBy` close
-   and focus ordering (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the
-   switcher's cross-desktop reach under rule 1. Remove probe hooks if still present.
-6. **Replacement on its home desktop**: the stand-in for providers without `canPlaceWindows`, the
-   `placeWindow` path for those with it, the `side-task-standin-misplaced` check.
-7. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
-   raise of a window not here, switcher selection carrying user intent, and decision 3. The parked
-   track rebases onto this and drops its F7 change.
-8. Decision 2 (URL dedup).
-9. Decision 4 (focus filters).
-10. Decision 5 (resign settle).
-11. Decision 6, with the parked track.
-12. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes, verifiable
-    on the remote Linux dev box's virtual X server if its window manager implements EWMH desktops.
-
-## Tests
+### 7.1 Automated tests
 
 Kernel unit tests (`window-kernel.test.ts`), one group per rule:
 
@@ -506,95 +423,103 @@ Kernel unit tests (`window-kernel.test.ts`), one group per rule:
   another screen: no reopen.
 - **5e.** Side task key, `AppActivated`: one reopen; after the old `WindowClosed`, one machine
   `RaiseWindow` of the replacement.
-- **G13.** Escape or close request on a side task: no reopen (existing tests stay).
+- **G13.** Escape or close request on a side task: no reopen.
 - **F7 / F9.** Prior window here: raised. Prior not here: topmost application window here raised.
   None here: no raise, no token. User-intent raise of a window not here: emitted, preceded by
   `ShowDesktop` with its desktop; same for a switcher selection. Machine raise of a window not
   here: not emitted.
-- **Dedup.** `admitsReuse` table; a side-task open never reuses.
+- **URL reuse.** `admitsReuse` table; a side-task open never reuses.
 
 Property test (`window-kernel-properties.test.ts`): over random event sequences whose desktop
 events are only what the fallback provider sends (one layout, placements on each screen's only
-desktop, no `CurrentDesktopChanged`), every effect list equals the one with desktops ignored.
+desktop, no `CurrentDesktopChanged`), every effect list MUST equal the one with desktops ignored.
 
 Provider tests (`desktop-provider.test.ts`, every platform): fallback layout and placements from a
-stubbed backend screen list; macOS provider against a fake helper (node script speaking the protocol) for
-parsing, a shared-desktops layout, and each fail-safe case (binary missing, handshake timeout,
-symbols unavailable, malformed line, request timeout, helper exit), each ending on the fallback
-provider with one `desktop-provider fallback` line. The real helper runs only in the probe.
+stubbed backend screen list; the macOS provider against a fake helper (a Node script speaking the
+protocol) for parsing, a shared-desktops layout, and each fail-safe case (binary missing, handshake
+timeout, symbols unavailable, malformed line, request timeout, helper exit), each ending on the
+fallback provider with one `desktop-provider fallback` line. The real helper runs only in the live
+acceptance check (7.2).
 
 Executor tests (`window-kernel-executor.test.ts`): `sideTaskSetup()` cases for 5c/5d/5e assert
-backend calls in order (reopen with its desktop, close, for 5e one raise); `ShowDesktop` reaches
-the backend before its raise.
+backend calls in order (reopen with its desktop, close, for 5e one raise); `ShowDesktop` reaches the
+backend before its raise.
 
-`cmd-url-unfocused.spec.ts` (darwin-only): keeps its assertions; adds a `CurrentDesktopChanged`
-injection through the executor's test surface for 5d. Cannot see real desktops.
+`cmd-url-unfocused.spec.ts` (darwin-only) keeps its existing assertions and adds a
+`CurrentDesktopChanged` injection through the executor's test surface for 5d. It cannot see real
+desktops.
 
 Static: `node scripts/check-platform-leak.mjs`; `node scripts/check-r2-window-ops.mjs` (native
 window calls stay in the backend; provider files are backend files, added to its allowed set if
 flagged).
 
-## Live checks on macOS (a person does only the gestures)
+### 7.2 Live acceptance: macOS provider
 
-Run from this worktree with `PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktops
-TMPDIR=<worktree>/.tmp`. The agent builds, starts the app, reads `main.log`, and asks the person
-only for the gestures below.
+A person performs only the gestures; the app is built and started in an isolated profile, and
+`main.log` is read to verify each step. A diagnostic mode (`PEEK_DESKTOP_PROBE=1`, no behaviour
+change) logs `desktop-read` with the helper's full layout and every registered window's placement,
+read from the provider directly, on every switch and screen change; Control+Option+Command+1 runs
+the write test.
 
-### The probe, after commit 3
+Precondition, checked in the log: `desktop-provider started name=mac` and a `hello` with every
+private symbol resolved. If the fallback line appears instead, the check stops and the logged
+reason is its outcome.
 
-Hooks (temporary, `PEEK_DESKTOP_PROBE=1`, no behaviour change): on every switch and screen change,
-log `desktop-read` with the helper's full layout and every registered window's placement, read
-from the provider directly (the kernel receives no desktop events before commit 4);
-Control+Option+Command+1 runs the write test.
-
-Precondition, checked by the agent in the log: `desktop-provider started name=mac` and a `hello`
-with every private symbol resolved. If the fallback line appears instead, the probe stops and the
-reason is the result.
-
-Setup: two desktops on the main screen, another app in front on each, the app started on
+Setup: two desktops on the primary screen, another app in front on each, the app started on
 desktop 1. With a second screen, two desktops there too.
 
-| # | Gesture | Verifies |
+| # | Gesture | Passes when |
 |---|---|---|
-| 1 | On desktop 2, open a page from the palette. | Page's window read as on every desktop; layout shows two desktops on the main screen, desktop 2 current. |
+| 1 | On desktop 2, open a page from the palette. | The page's window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
 | 2 | Control+Left, wait two seconds, Control+Right. | Current-desktop reads go 2 → 1 → 2; desktop 2 has the same id both times. |
-| 3 | Say which desktop the page is on now (switch to look, come back to desktop 2). | Helper's read for the page's window (the replacement, after reopen) matches: the Electron-derived window number is the window server's. |
-| 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | Hook shows on desktop 2 a small opaque red test window and an invisible stand-in (as in "Side tasks"), logs both placements, asks the helper to move the red window to desktop 1, logs its placement. Red square on desktop 1 and read as desktop 1 = helper move works. Stand-in read on desktop 2 before and after the switch. |
-| 5 | Still on desktop 1, open Mission Control, say whether desktop 2's thumbnail shows an empty window or frame, close it. | Stand-in leaves no visible trace; agent re-reads its placement. |
+| 3 | Say which desktop the page is on now (switch to look, come back to desktop 2). | The helper's read for the page's window (the replacement, after reopen) matches: the backend-derived window number is the window server's. |
+| 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | On desktop 2 a small opaque red test window and an invisible stand-in (section 6) are shown and both placements logged; the helper is asked to move the red window to desktop 1 and its placement logged. Red square on desktop 1 and read as desktop 1 = helper write works. The stand-in reads as desktop 2 before and after the switch. |
+| 5 | Still on desktop 1, open Mission Control, say whether desktop 2's thumbnail shows an empty window or frame, close it. | The stand-in leaves no visible trace; its placement re-read is still desktop 2. |
 | 6 | Second screen only: click its desktop background, Control+Right, Control+Left. | Only that screen's current desktop changes, and the helper's display id maps to an Electron display; with shared desktops, both screens change together. |
 
-The agent then closes the test windows and the app. Results go into **Result**. The track stops if
-gesture 2 shows ids changing on return, or gestures 4–5 show the stand-in off desktop 2 or visible
-in Mission Control. A failed write at gesture 4 is expected and changes nothing.
+Afterwards the test windows and the app are closed. The macOS provider does not conform if
+step 2 shows ids changing on return, or steps 4–5 show the stand-in off desktop 2 or visible in
+Mission Control. A failed write at step 4 is an expected outcome and does not affect conformance.
 
-### The rule check, after commit 7
+### 7.3 Live acceptance: rules on macOS
 
-1. Desktop 2, other app in front: palette → URL → type in the page → click the other app. Page
+1. Desktop 2, other app in front: palette → URL → type in the page → click the other app. The page
    stays on desktop 2 behind the other app; one `side-task-reopen`.
 2. Same, but switch to desktop 1 instead of clicking. Desktop 1 shows no page; desktop 2 has it.
 3. Same, but cmd+tab to Peek. The page is the front window with key.
 4. After 2, on desktop 1, open the same URL from the palette: a new side task on desktop 1; the
    desktop-2 window untouched; no desktop switch.
-5. Switcher on desktop 1, pick the desktop-2 page: user taken to desktop 2, page has key.
+5. Switcher on desktop 1, pick the desktop-2 page: the user is taken to desktop 2, the page has key.
 6. On desktop 2, close the key page whose prior window is on desktop 1: no desktop switch; key goes
    to a window on desktop 2 or to nothing.
 
-## Done when
+### 7.4 Conforming implementation
 
-Kernel, property, provider and executor tests pass; the `tracks.json` verify and the platform-leak
-check are green; probe answers are recorded in **Result**; the rule check behaves as listed; the
-full gate (`yarn test:desktop:electron`, only with an explicit OK) shows no failure outside
-`apps/desktop/tests/gate-baseline.md`.
+Kernel, property, provider and executor tests pass; the static checks are green; the macOS
+provider passes 7.2; the rules behave as in 7.3; the full desktop test suite shows no failure
+outside `apps/desktop/tests/gate-baseline.md`.
 
-## Result
+## 8. Assumptions (unverified)
 
-**First probe (inferred ids), findings:**
+- macOS private reads work on the macOS version in use.
+- macOS reads need no Accessibility or Screen Recording permission and no SIP change.
+- A helper round trip is a few milliseconds.
+- electron-builder signs `extraResources` executables on its own.
+- A macOS `DesktopId` is stable for the login session.
+- `getMediaSourceId()`'s middle number is the window server window number.
+- Electron's display id equals `CGDirectDisplayID` on macOS.
+- macOS writes need SIP changes since 14.5 (reported by yabai / Hammerspoon).
+- Raising a window on another desktop makes macOS switch, for every backend raise path and with
+  "When switching to an application, switch to a Space with open windows" off.
+- `getNativeWindowHandle()` gives the X window id under XWayland.
+- Which X11 window managers honour EWMH client messages.
+- Wayland: every compositor; whether Electron runs natively or under XWayland; whether X11
+  properties are populated under XWayland.
+- Side tasks on Linux are non-activating (Electron documents `'panel'` for macOS only).
+- The design does not depend on the order in which macOS reports a desktop switch and the loss of
+  focus that goes with it.
 
-- macOS order for a switch away from a side task: `space-changed`, then `native-blur` and
-  `os-focus-left-app` ~20ms later, then `OsFocusLost` and the reopen. The switch always preceded
-  the blur. The design does not depend on this order.
-- Inferred ids fail: every switch minted a new id (two desktops → `desktop-2` … `desktop-15`), so
-  returns were never recognised. Electron exposes no desktop identity on macOS.
-- Behaviour matched `main` (page reopened on desktop 1).
+## 9. Open questions
 
-**Second probe, native helper:** (filled by the implementing track)
+- Whether the replacement host reloads the page or takes over the side task's view.
+- A "go to the open window / open one here" cue could revisit rule 5.
