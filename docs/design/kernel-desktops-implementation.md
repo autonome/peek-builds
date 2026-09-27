@@ -22,24 +22,26 @@ native-call timing.
   from `ipc.ts assembleHybridPageHost` never get it and land on the desktop current at first show.
 - `ElectronWindowBackend.setDesktopMembership` realizes `'anchor'` as the all-desktops-on-then-off
   pair, moving the window to the current desktop; no-op off macOS.
-- A side task is a panel (`ipc.ts`, `pageOpensAsSideTask()` branch, `options.type = 'panel'`);
-  Electron keeps panels on all desktops (`electron_ns_panel.mm setCollectionBehavior:`).
-- `isSideTask` reads only `appActive`, `key` and the record; a switch ends a side task only via the
-  `OsFocusLost` from `ElectronWindowBackend.armBlurSettle` → `kernelOsFocusSettled`, so 5c and 5d
-  are indistinguishable.
+- A transient page-host window is built with `type: 'panel'` (`ipc.ts`, `pageOpensTransient()`
+  branch, `options.type = 'panel'`); Electron keeps such windows on every desktop
+  (`electron_ns_panel.mm setCollectionBehavior:`).
+- `isTransientPageHost` reads only `appActive`, `key` and the record; a desktop switch replaces a
+  transient page-host window only via the `OsFocusLost` from
+  `ElectronWindowBackend.armBlurSettle` → `kernelOsFocusSettled`, so 5c and 5d are
+  indistinguishable.
 - `react` emits `ReopenAsOrdinaryWindow { id }`; `ipc.ts reopenWindowAsOrdinary()` opens the
-  replacement then closes the panel via a promise chain; the replacement lands on the desktop
-  switched to.
+  reopened window then closes the transient page-host window via a promise chain; the reopened
+  window lands on the desktop switched to.
 - `successorOnHide()` (`WindowHidden` / `WindowClosed` arms of `evolve`) picks the prior key window,
   else `topmost(state, isContentWindow)`, ignoring desktops. Raising a window on another desktop
   switches desktop (`raise-realized id=wm-3` then `space-changed`).
 - Switcher selection (`tile-ipc.ts` → `kernelArmSelectionFocus`) is spent in the `WindowClosed` arm
   as a `lastFocusAssert`, which carries no user intent.
 - Hybrid URL dedup in the `ipc.ts` window-open handler (`findHybridWindowByUrl` →
-  `kernelShowRequested(reusedId, true)`) runs before the side-task check and reuses a window on any
-  desktop.
+  `kernelShowRequested(reusedId, true)`) runs before the `pageOpensTransient()` check and reuses a
+  window on any desktop.
 
-Known gap: modal browser windows are also built as panels on macOS (`ipc.ts`,
+Known gap: modal browser windows are also built with `type: 'panel'` on macOS (`ipc.ts`,
 `options.modal === true` branch) but are not `nonActivating`, so the backend does not declare them
 on every desktop. The macOS helper's placement read reports them; revisit before the F9 gate.
 
@@ -48,11 +50,11 @@ on every desktop. The macOS helper's placement read reports them; revisit before
 One commit each, order per "Order of work":
 
 1. **`ipc.ts reopenWindowAsOrdinary()`** (open → close → focus by promise chain) → the `replaces` /
-   `replacedBy` state in the spec; the function keeps only building the replacement. Also replaces
-   the parked track's `takesKey` payload.
-2. **`ipc.ts` hybrid URL dedup** → kernel predicate `admitsReuse(state, record)`; the side-task
-   check moves ahead of the dedup. The rule check watches for a hidden window re-shown off the
-   current desktop.
+   `replacedBy` state in the spec; the function keeps only building the reopened window. Also
+   replaces the parked track's `takesKey` payload.
+2. **`ipc.ts` hybrid URL dedup** → kernel predicate `admitsReuse(state, record)`; the
+   `pageOpensTransient()` check moves ahead of the dedup. The rule check watches for a hidden
+   window re-shown on a desktop that is not current.
 3. **`window-kernel-executor.ts` `RaiseWindow` / `planRaise`** → `react` stops emitting what the
    `'suppressed'` plan (app inactive, no user intent) drops, together with F9; `planRaise` keeps
    headless and non-activating realization choices.
@@ -75,59 +77,111 @@ decides no rule).
 
 - The spec's F7 supersedes the parked track's transient / application split.
 - The parked track's removal of the successor choice for application-window closes is dropped.
-- The parked track's other changes stay: focusing the replacement on activation (covered by the
-  spec's close and focus ordering) and the devtools handlers (decision 6).
-- The parked track rebases onto commit 7 below and drops its F7 change.
+- The parked track's other changes stay: focusing the reopened window on activation (covered by
+  the spec's close and focus ordering) and the devtools handlers (decision 6).
+- The parked track rebases onto commit 8 below and drops its F7 change.
 
 ## Order of work
 
 The macOS helper and its probe come before the kernel reshape because everything rests on the
 helper's reads; if they fail, nothing has yet been built on them.
 
-1. **Landed as `250051ad`** (minted ids, `DesktopChanged`); reshaped by commit 4.
+1. **Landed as `250051ad`** (minted ids, `DesktopChanged`); reshaped by commit 5.
    - Survives: `DesktopId`; `WindowRecord.desktop`; `WindowRecord.onEveryDesktop` with its
      registration plumbing (`WindowRegistered` event and `RegisterWindow` command fields,
      `window-machine.ts registerWindowWithMachine`, `ElectronWindowBackend.registerWindow` returning
-     it for macOS panels); `isOnEveryDesktop`; the provisional stamp on a genuine `WindowShown`
-     (`desktopOnShow`, changed to read the window's screen's current desktop instead of
-     `State.desktop`); the `attachSpaceChangeListener` subscription as switch trigger; the
-     `native-blur` and `os-focus-left-app` log lines; desktop-state tests not depending on minting.
-   - Removed by commit 4: `State.desktop`, `State.desktopCounter`, `mintedDesktopId`,
+     it for windows built with `type: 'panel'` on macOS); `isOnEveryDesktop`; the provisional stamp
+     on a genuine `WindowShown` (`desktopOnShow`, changed to read the window's screen's current
+     desktop instead of `State.desktop`); the `attachSpaceChangeListener` subscription as switch
+     trigger; the `native-blur` and `os-focus-left-app` log lines; desktop-state tests not
+     depending on minting.
+   - Removed by commit 5: `State.desktop`, `State.desktopCounter`, `mintedDesktopId`,
      `DesktopChanged` and its `evolve` arm, `kernelDesktopChanged` in `window-kernel-dispatch.ts`,
      the `focused` read in `attachSpaceChangeListener`, the stamp in the `OsFocusGained` arm, and
      tests for minting, `name`, `focused` stamping and focus stamping.
-   - Changed by commit 4: `onCurrentDesktop` keeps name and meaning over the new state; the
+   - Changed by commit 5: `onCurrentDesktop` keeps name and meaning over the new state; the
      `space-changed` log line prints each screen's current desktop and each window's
      `id:screen/desktop|*|?:v|h` from the new fields.
-2. **Remove the first probe's hooks**: `installDesktopProbe` and its `probe*` members in
+2. **Rename the old identifiers, log lines and prose to the transient-window names**, no behaviour
+   change, own commit. The code and docs carry an older, retired name for the transient page-host
+   window. In the table, `⟨old⟩` stands for that retired two-word term in the case form of the
+   name it sits in: camelCase or PascalCase in identifiers, upper snake case in constants,
+   hyphenated in log lines, file names, profile names and rule labels.
+   `grep -rn -i 'side.\?task' apps/desktop docs specs` lists every occurrence and returns nothing
+   once the step is done.
+
+   | Old | New | Kind |
+   |---|---|---|
+   | `is⟨old⟩` | `isTransientPageHost` | kernel predicate (`window-kernel.ts`) |
+   | `pageOpensAs⟨old⟩` | `pageOpensTransient` | open-time predicate (`izui-roles.ts`) |
+   | `⟨old⟩Setup` | `transientPageHostSetup` | executor test fixture |
+   | `⟨old⟩InFlight` | `transientPageHostHoldingKey` | kernel test fixture |
+   | `⟨old⟩_REOPEN_STRIP` | `TRANSIENT_PAGE_REOPEN_STRIP` | constant (`ipc.ts`) |
+   | `⟨old⟩-reopen` | `transient-page-reopen` | log line, and the `[…]` prefix of two `console.error` lines |
+   | `⟨old⟩-reopen-dropped` | `transient-page-reopen-dropped` | log line |
+   | `page-opens-as-⟨old⟩` | `page-opens-transient` | log line |
+   | `⟨old⟩-standin-misplaced` | `transient-placeholder-misplaced` | planned log line (commit 7); only docs carried the old name |
+   | `G13 ⟨old⟩-ends` | `G13 transient-page-ends` | rule label in `window-rules.md` |
+   | `specs/⟨old⟩-ends-on-blur.md` | `specs/transient-page-ends-on-blur.md` | spec file, moved with `git mv` |
+   | `⟨old⟩Escape` (type), `⟨old⟩_ESCAPE`, `⟨old⟩Escape` (parameter) | `TransientPageEscape`, `TRANSIENT_PAGE_ESCAPE`, `transientPageEscape` | already removed from code; named in the docs' history |
+   | `agent-⟨old⟩-1` | `agent-transient-page-1` | profile name in a live-check recipe |
+   | the retired term in prose | "transient page-host window" for the window; "replaced by the reopened window" for its end | comments, test titles, assertion messages, doc prose |
+
+   Files, with what each carries:
+   - `apps/desktop/main/window-kernel.ts`: `is⟨old⟩` (definition and its use in `react`), comments.
+   - `apps/desktop/main/window-kernel.test.ts`: `is⟨old⟩` import and uses, `⟨old⟩InFlight`,
+     describe and test titles.
+   - `apps/desktop/main/window-kernel-executor.test.ts`: `⟨old⟩Setup` and its comment.
+   - `apps/desktop/main/izui-roles.ts`: `pageOpensAs⟨old⟩` and its comment.
+   - `apps/desktop/main/izui-roles.test.ts`: `pageOpensAs⟨old⟩` import and uses, describe and test
+     titles.
+   - `apps/desktop/main/ipc.ts`: `pageOpensAs⟨old⟩` import and call, `⟨old⟩_REOPEN_STRIP`, the log
+     lines `⟨old⟩-reopen`, `⟨old⟩-reopen-dropped` and `page-opens-as-⟨old⟩`, the `console.error`
+     prefixes, comments on `reopenWindowAsOrdinary()` and in `registerWindowHandlers`.
+   - `apps/desktop/main/window-backend.ts`, `apps/desktop/main/electron-window-backend.ts`,
+     `apps/desktop/main/window-escape.ts`: comments.
+   - `apps/desktop/main/window-escape.test.ts`: one test title.
+   - `apps/desktop/tests/desktop/cmd-url-unfocused.spec.ts`: header and inline comments, one test
+     title, one assertion message.
+   - `docs/design/window-rules.md`: prose, the G13 label, the removed `⟨old⟩_ESCAPE` constant.
+   - `specs/⟨old⟩-ends-on-blur.md`: moved as above; prose, log lines, the three removed Escape
+     names, the profile name.
+   - `specs/cmd-url-linux-failures.md`: prose.
+
+   Verify: the `tracks.json` verify, `node scripts/check-platform-leak.mjs`, and the grep above
+   returning nothing.
+3. **Remove the first probe's hooks**: `installDesktopProbe` and its `probe*` members in
    `electron-window-backend.ts`, own commit.
-3. **Providers and the macOS helper, no kernel change**: `desktop-provider.ts`,
+4. **Providers and the macOS helper, no kernel change**: `desktop-provider.ts`,
    `desktop-provider-fallback.ts`, `main.swift`, `build-desktop-helper.mjs`, the `extraResources`
    entry, `desktop-provider-mac.ts`, the fail-safe, the `check-platform-leak.mjs` additions, and
    temporary probe hooks behind `PEEK_DESKTOP_PROBE=1`. The kernel has no desktop events yet, so the
    probe hooks are the provider's only report sink: they log its reads directly. Then the probe (the
    spec's macOS provider acceptance check) on a real Mac with a person. Stop and report if ids are
-   not stable across returns or the stand-in does not keep its desktop; never fall back to letting
-   the page follow the user.
-4. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
+   not stable across returns or the placeholder window does not keep its desktop; never fall back
+   to letting the page follow the user.
+5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
    three events, `isCurrentDesktop`, `homeIsCurrent`, reshaped `onCurrentDesktop`,
    `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend: the report → event loop, fed by
    whichever provider started. No rule reads the new state; behaviour unchanged on every platform
    (pinned by the property test).
-5. **Side task ends on a switch** (`isSideTask` clause) and kernel `replaces` / `replacedBy` close
-   and focus ordering (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the
-   switcher's cross-desktop reach under rule 1. Remove probe hooks if still present.
-6. **Replacement on its home desktop**: the stand-in for providers without `canPlaceWindows`, the
-   `placeWindow` path for those with it, the `side-task-standin-misplaced` check.
-7. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
-   raise of a window not here, switcher selection carrying user intent, and decision 3.
-8. Decision 2 (URL dedup).
-9. Decision 4 (focus filters).
-10. Decision 5 (resign settle).
-11. Decision 6, with the parked track.
-12. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.
+6. **A desktop switch replaces a transient page-host window** (the `homeIsCurrent` clause of
+   `isTransientPageHost`) and kernel `replaces` / `replacedBy` close and focus ordering
+   (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the switcher's
+   cross-desktop reach under rule 1. Remove probe hooks if still present.
+7. **Reopened window on the desktop the transient page-host window was opened on**: the
+   placeholder window for providers without `canPlaceWindows`, the `placeWindow` path for those
+   with it, the `transient-placeholder-misplaced` check.
+8. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
+   raise of a window not on a current desktop, switcher selection carrying user intent, and
+   decision 3.
+9. Decision 2 (URL dedup).
+10. Decision 4 (focus filters).
+11. Decision 5 (resign settle).
+12. Decision 6, with the parked track.
+13. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.
 
-The macOS provider acceptance check runs after commit 3; the rule acceptance check after commit 7.
+The macOS provider acceptance check runs after commit 4; the rule acceptance check after commit 8.
 
 ## Running the live checks
 
@@ -153,7 +207,7 @@ desktops is unverified. Wayland cannot be checked there.
 
 **First probe (inferred ids):**
 
-- macOS order for a switch away from a side task: `space-changed`, then `native-blur` and
+- macOS order for a switch away from a transient page-host window: `space-changed`, then `native-blur` and
   `os-focus-left-app` ~20ms later, then `OsFocusLost` and the reopen. The switch always preceded the
   blur. The design does not depend on this order.
 - Inferred ids fail: every switch minted a new id (two desktops → `desktop-2` … `desktop-15`), so

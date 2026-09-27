@@ -1,6 +1,6 @@
 ---
 enabled: false
-touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/window-kernel-executor.test.ts, apps/desktop/main/window-kernel-dispatch.ts, apps/desktop/main/window-backend.ts, apps/desktop/main/electron-window-backend.ts, apps/desktop/main/desktop-provider.ts, apps/desktop/main/desktop-provider-fallback.ts, apps/desktop/main/desktop-provider-mac.ts, apps/desktop/main/desktop-provider.test.ts, apps/desktop/native/desktop-helper/main.swift, apps/desktop/scripts/build-desktop-helper.mjs, apps/desktop/electron-builder.yml, apps/desktop/package.json, apps/desktop/main/ipc.ts, apps/desktop/main/main.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/tests/desktop/cmd-url-unfocused.spec.ts, docs/design/window-rules.md, scripts/check-platform-leak.mjs]
+touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/window-kernel-executor.test.ts, apps/desktop/main/window-kernel-dispatch.ts, apps/desktop/main/window-backend.ts, apps/desktop/main/electron-window-backend.ts, apps/desktop/main/desktop-provider.ts, apps/desktop/main/desktop-provider-fallback.ts, apps/desktop/main/desktop-provider-mac.ts, apps/desktop/main/desktop-provider.test.ts, apps/desktop/native/desktop-helper/main.swift, apps/desktop/scripts/build-desktop-helper.mjs, apps/desktop/electron-builder.yml, apps/desktop/package.json, apps/desktop/main/ipc.ts, apps/desktop/main/main.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/tests/desktop/cmd-url-unfocused.spec.ts, apps/desktop/main/izui-roles.ts, apps/desktop/main/izui-roles.test.ts, apps/desktop/main/window-escape.ts, apps/desktop/main/window-escape.test.ts, docs/design/window-rules.md, docs/design/kernel-desktops-implementation.md, specs/transient-page-ends-on-blur.md, specs/cmd-url-linux-failures.md, scripts/check-platform-leak.mjs]
 depends-on: []
 ---
 
@@ -36,23 +36,29 @@ rule that depends on either, on every platform the desktop app runs on.
   a **page-host window**: a window the kernel records with `kind: 'page-host'`
   (`window-kernel.ts WindowKind`), which the handler builds when `usePageHost` holds. **The page**
   is the web content in that window.
-- **Panel window**: a page-host window with a content role (`window-kernel.ts CONTENT_ROLES`)
-  opened with the window-open options `type: 'panel'` and `activation: 'user'`. The window-open
-  handler sets both when `izui-roles.ts pageOpensAsSideTask()` holds: the URL is opened (in
-  practice from the palette) while another app is in front and a Peek window holds key
-  (`window-machine.ts isKeyHeldWhileAppInactive()`), the caller passed no `type`, and `show` is not
-  `false` (`window-rules.md` G1, G13). The kernel records `type: 'panel'` as
-  `WindowRecord.nonActivating`. A panel window floats over the other app and holds key without
-  bringing Peek forward; while it does, `window-kernel.ts isSideTask()` holds for it. When
-  `isSideTask` stops holding with the window still shown (the user clicks another app, switches
-  desktop, or brings Peek forward), the kernel emits `ReopenAsOrdinaryWindow`. Closing it (Escape,
-  a close request) emits nothing.
-- **Reopened window**: the page-host window, opened without `type: 'panel'`, that
-  `ReopenAsOrdinaryWindow` puts in place of a panel window, showing the same page at the same
-  bounds. It registers with `replaces:` naming the panel window.
+- **Transient window**: a window that is closed, hidden or replaced when it loses focus. There are
+  two kinds, defined next: `TRANSIENT_ROLES` windows, which are closed or hidden, and transient
+  page-host windows, which are replaced. `TRANSIENT_ROLES` names only the first kind; where a rule
+  means only that kind it says "`TRANSIENT_ROLES` window", never "transient window".
 - **`TRANSIENT_ROLES` window**: a window whose `role` is in `window-kernel.ts TRANSIENT_ROLES`:
   `palette` (the command palette), `quick-view`, `overlay` (page chrome) and `switcher` (the window
-  switcher).
+  switcher). It is transient by role: losing focus closes or hides it.
+- **Transient page-host window**: a page-host window with a content role
+  (`window-kernel.ts CONTENT_ROLES`) opened over another app with the window-open options
+  `type: 'panel'` and `activation: 'user'`. The window-open handler sets both when
+  `izui-roles.ts pageOpensTransient()` holds: the URL is opened (in practice from the palette)
+  while another app is in front and a Peek window holds key
+  (`window-machine.ts isKeyHeldWhileAppInactive()`), the caller passed no `type`, and `show` is not
+  `false` (`window-rules.md` G1, G13). The kernel records `type: 'panel'` as
+  `WindowRecord.nonActivating`. A transient page-host window floats over the other app and holds
+  key without bringing Peek forward; while it does, `window-kernel.ts isTransientPageHost()` holds
+  for it. When it loses focus with the window still shown (the user clicks another app, switches
+  desktop, or brings Peek forward), `isTransientPageHost` stops holding and the kernel emits
+  `ReopenAsOrdinaryWindow`: the window is replaced by the reopened window. Closing it (Escape, a
+  close request) emits nothing.
+- **Reopened window**: the page-host window, opened without `type: 'panel'`, that
+  `ReopenAsOrdinaryWindow` puts in place of a transient page-host window, showing the same page at
+  the same bounds. It registers with `replaces:` naming the transient page-host window.
 - **`onEveryDesktop` window**: a window for which `isOnEveryDesktop(record)` holds: the platform
   keeps it on every desktop regardless of placement (for example a macOS panel). The app counts it
   as belonging to the desktop it was first shown on.
@@ -62,7 +68,7 @@ rule that depends on either, on every platform the desktop app runs on.
   `RaiseWindow`; on open, `activation: 'user'`): the user asked for it by naming one specific
   window, for example by picking it in the switcher. Anything else is machine-caused.
 - **Placeholder window**: on macOS, an invisible, click-through window the backend opens alongside
-  a panel window, on the same desktop, so that the reopened window can appear on that desktop
+  a transient page-host window, on the same desktop, so that the reopened window can appear on that desktop
   later (section 6). Planned and backend-private; the code has no name for it yet.
 
 ## 2. User stories
@@ -93,21 +99,23 @@ rule that depends on either, on every platform the desktop app runs on.
    **The switcher** MUST list the app's windows from every desktop. Picking one MUST take the user
    to that window's desktop. This conflicts with rule 5 and is accepted, because the pick is
    explicit.
-2. **A panel window is reopened on the desktop it was opened on.** When `isSideTask` stops holding
-   for a panel window, the reopened window MUST be on the desktop the panel window was opened on,
-   however the user left it: clicking the other app (`window-rules.md` 5c), switching desktop (5d),
-   or bringing Peek forward (5e, where the reopened window MUST also be the front window with key).
-   It MUST NOT be on another desktop.
-3. **Switching desktop counts as leaving a panel window, because it takes focus away**, as
-   ordinary OS behaviour. `isSideTask` stops holding when the panel window loses focus, so switching
-   away from the desktop it was opened on MUST reopen it as clicking another app does. A switch on
-   a different screen from the panel window's MUST NOT reopen it.
+2. **A transient page-host window is reopened on the desktop it was opened on.** When
+   `isTransientPageHost` stops holding for a transient page-host window, the reopened window MUST
+   be on the desktop the transient page-host window was opened on, however the user left it:
+   clicking the other app (`window-rules.md` 5c), switching desktop (5d), or bringing Peek forward
+   (5e, where the reopened window MUST also be the front window with key). It MUST NOT be on
+   another desktop.
+3. **Switching desktop counts as leaving a transient page-host window, because it takes focus
+   away**, as ordinary OS behaviour. `isTransientPageHost` stops holding when the transient
+   page-host window loses focus, so switching away from the desktop it was opened on MUST reopen it
+   as clicking another app does. A switch on a different screen from the transient page-host
+   window's MUST NOT reopen it.
 4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if it is on
    a current desktop, else the frontmost page-host window on a current desktop, else nothing
    (rule 9).
 5. **Opening a URL already open on another desktop opens a new page-host window on the desktop the
    user is on**, not the one there. Opening a URL from the palette over another app MUST always
-   open a new panel window; it MUST NOT reuse an existing page-host window. Reason: switching
+   open a new transient page-host window; it MUST NOT reuse an existing page-host window. Reason: switching
    desktop is deliberate, so actions happen there.
 6. **The rules hold on every platform with desktops.** With a provider that reads real desktops,
    rules 1–5 hold as written. With only the fallback provider the app sees one desktop per screen
@@ -115,8 +123,9 @@ rule that depends on either, on every platform the desktop app runs on.
    section 6).
 7. **Reopened window, relation to `window-rules.md`.** Rule 2 supersedes G13 ("the desktop the
    user is on") and row 5d ("the desktop it was on when it lost key"), and matches
-   `side-task-ends-on-blur.md`'s live check ("the page stays on desktop 2"). If a platform cannot
-   keep the reopened window on the desktop the panel window was opened on, the implementation MUST
+   `transient-page-ends-on-blur.md`'s live check ("the page stays on desktop 2"). If a platform
+   cannot keep the reopened window on the desktop the transient page-host window was opened on, the
+   implementation MUST
    NOT satisfy rule 2 by letting the page-host window follow the user to another desktop.
 8. **F9 stay-on-this-desktop** (new rule under Focus in `window-rules.md`):
 
@@ -150,7 +159,7 @@ app restarts is not required.
   null }` (`null` = shared).
 - `WindowRecord.screen?: ScreenId` — last reported screen.
 - `WindowRecord.desktop?: DesktopId` — last reported desktop. For an `onEveryDesktop` window, the
-  desktop it was first shown on (for a panel window, the desktop it was opened on). Absent until
+  desktop it was first shown on (for a transient page-host window, the desktop it was opened on). Absent until
   first shown or reported.
 - `WindowRecord.onEveryDesktop?: boolean` — the backend's declaration at registration, or set by a
   placement report. The kernel MUST read it only as that declaration and MUST NOT derive it from
@@ -169,7 +178,7 @@ Initial state: no screens, no desktops.
   current. False both for a window on a desktop no screen shows and for a window never shown,
   except that it is true for every window before the first layout report.
 - `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring `onEveryDesktop`.
-  Used by the rule for panel windows.
+  Used by the rule for transient page-host windows.
 - `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and on
   a current desktop, or hidden. A hidden window is re-shown on the current desktop of its screen;
   if the OS shows it elsewhere, the following placement report corrects the kernel.
@@ -201,7 +210,7 @@ With the fallback provider the show stamp is the only source and is correct by c
 ### Effects
 
 - `ReopenAsOrdinaryWindow { id; desktop: DesktopId | null }` — the reopened window MUST be on
-  `desktop` (the desktop the panel window was opened on); `null` = wherever the backend shows it.
+  `desktop` (the desktop the transient page-host window was opened on); `null` = wherever the backend shows it.
   The port doc (`window-backend.ts reopenAsOrdinaryWindow`) reads "belonging to `desktop`".
 - `ShowDesktop { desktop: DesktopId }` — make `desktop` current on its screen. Emitted only
   immediately before a user-intent `RaiseWindow` of a window not on a current desktop. A backend
@@ -209,13 +218,13 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 ### Kernel behaviour
 
-- **Leaving by switching desktop.** `isSideTask` includes `homeIsCurrent(state, record)`. A
-  `CurrentDesktopChanged` that takes the desktop a panel window was opened on off its screen makes
-  `isSideTask` false in that transition, and `react`'s diff emits
+- **Leaving by switching desktop.** `isTransientPageHost` includes `homeIsCurrent(state, record)`.
+  A `CurrentDesktopChanged` that takes the desktop a transient page-host window was opened on off
+  its screen makes `isTransientPageHost` false in that transition, and `react`'s diff emits
   `ReopenAsOrdinaryWindow { id, desktop }` carrying that desktop. If `OsFocusLost` came first, the
   later switch diffs to nothing: exactly one `ReopenAsOrdinaryWindow` in either order. A switch on
   another screen leaves that desktop current and reopens nothing. With the fallback provider the
-  clause is always true. This is needed because a panel window the backend declares
+  clause is always true. This is needed because a transient page-host window the backend declares
   `onEveryDesktop` may stay focused across a switch, or its loss of focus may be reported late
   (Electron backend: macOS panels).
 - **Close and focus ordering.** Registration with `replaces: X` marks X `replacedBy: <new id>`;
@@ -234,8 +243,8 @@ With the fallback provider the show stamp is the only source and is correct by c
   desktop, `react` emits `ShowDesktop { desktop: record.desktop }` immediately before
   `RaiseWindow`. The resulting switch arrives as an ordinary `CurrentDesktopChanged`.
 - **URL reuse.** Opening a URL reuses an existing page-host window for that URL only if
-  `admitsReuse` holds. The `pageOpensAsSideTask()` check runs before reuse: an open that makes a
-  panel window never reuses.
+  `admitsReuse` holds. The `pageOpensTransient()` check runs before reuse: an open that makes a
+  transient page-host window never reuses.
 
 ### Platform neutrality
 
@@ -392,18 +401,19 @@ desktop the user has left):
 
 - **With `canPlaceWindows`**: build the reopened window hidden,
   `placeWindow(replacement, desktop)`, show without activation. No placeholder window.
-- **Without `canPlaceWindows`** (Electron on macOS): when a panel window opens, the backend also
-  shows a placeholder window: a window without `type: 'panel'` at the panel window's bounds, zero
-  opacity, click-through, on the desktop the panel window is opened on; backend-private, never
-  registered with the kernel, tracking the panel window's bounds. At `ReopenAsOrdinaryWindow` the
-  placeholder window becomes the reopened window (opacity restored, input on, URL loaded) and
-  registers as `replaces: X`. If the panel window closes instead (Escape, close request), the
-  placeholder window is destroyed with it.
+- **Without `canPlaceWindows`** (Electron on macOS): when a transient page-host window opens, the
+  backend also shows a placeholder window: a window without `type: 'panel'` at the transient
+  page-host window's bounds, zero opacity, click-through, on the desktop the transient page-host
+  window is opened on; backend-private, never registered with the kernel, tracking the transient
+  page-host window's bounds. At `ReopenAsOrdinaryWindow` the placeholder window becomes the
+  reopened window (opacity restored, input on, URL loaded) and registers as `replaces: X`. If the
+  transient page-host window closes instead (Escape, close request), the placeholder window is
+  destroyed with it.
 - **Fallback provider**: `desktop` is the screen's only desktop; the reopened window shows where
   the OS puts it.
 
 At every `ReopenAsOrdinaryWindow` the backend reads the placeholder window's placement; if not on
-`desktop`, it logs `side-task-standin-misplaced` and proceeds (the reopened window appears where
+`desktop`, it logs `transient-placeholder-misplaced` and proceeds (the reopened window appears where
 the placeholder window is).
 
 Realizing `ShowDesktop` on macOS: a no-op; raising the window makes the OS switch.
@@ -455,23 +465,24 @@ Kernel unit tests (`window-kernel.test.ts`), one group per rule:
   `onCurrentDesktop` over {every desktop,
   current on its screen, current on another screen, not current, never shown}; shared desktops
   (`screen: null`) current on every screen.
-- **5c.** Panel window, `OsFocusLost`, app inactive: one `ReopenAsOrdinaryWindow` with
-  `desktop` = the desktop the panel window was opened on; the `replaces` registration takes that
+- **5c.** Transient page-host window, `OsFocusLost`, app inactive: one `ReopenAsOrdinaryWindow`
+  with `desktop` = the desktop the transient page-host window was opened on; the `replaces` registration takes that
   desktop; `CloseWindow` for the old id; no `RaiseWindow`; not key; not held; `appActive` still
   false.
 - **5d, both orders.** `CurrentDesktopChanged` on its screen then `OsFocusLost`, and the reverse:
-  exactly one `ReopenAsOrdinaryWindow`, carrying the desktop the panel window was opened on (not
-  the new current desktop); no `RaiseWindow`. Switch on another screen: no
+  exactly one `ReopenAsOrdinaryWindow`, carrying the desktop the transient page-host window was
+  opened on (not the new current desktop); no `RaiseWindow`. Switch on another screen: no
   `ReopenAsOrdinaryWindow`.
-- **5e.** Panel window is key, `AppActivated`: one `ReopenAsOrdinaryWindow`; after the old
+- **5e.** Transient page-host window is key, `AppActivated`: one `ReopenAsOrdinaryWindow`; after the old
   `WindowClosed`, one machine `RaiseWindow` of the reopened window.
-- **G13.** Escape or close request on a panel window: no `ReopenAsOrdinaryWindow`.
+- **G13.** Escape or close request on a transient page-host window: no `ReopenAsOrdinaryWindow`.
 - **F7 / F9.** Prior window on a current desktop: raised. Prior not on a current desktop: topmost
   application window on a current desktop raised. None on a current desktop: no raise, no token.
   User-intent raise of a window not on a current desktop: emitted, preceded by `ShowDesktop` with
   its desktop; same for a switcher selection. Machine raise of a window not on a current desktop:
   not emitted.
-- **URL reuse.** `admitsReuse` table; an open that makes a panel window never reuses.
+- **URL reuse.** `admitsReuse` table; an open that makes a transient page-host window never
+  reuses.
 
 Property test (`window-kernel-properties.test.ts`): over random event sequences whose desktop
 events are only what the fallback provider sends (one layout, placements on each screen's only
@@ -484,7 +495,7 @@ timeout, symbols unavailable, malformed line, request timeout, helper exit), eac
 fallback provider with one `desktop-provider fallback` line. The real helper runs only in the live
 acceptance check (7.2).
 
-Executor tests (`window-kernel-executor.test.ts`): `sideTaskSetup()` cases for 5c/5d/5e assert
+Executor tests (`window-kernel-executor.test.ts`): `transientPageHostSetup()` cases for 5c/5d/5e assert
 backend calls in order (reopen with its desktop, close, for 5e one raise); `ShowDesktop` reaches
 the backend before its raise.
 
@@ -513,7 +524,7 @@ desktop 1. With a second screen, two desktops there too.
 
 | # | Gesture | Passes when |
 |---|---|---|
-| 1 | On desktop 2, open a URL from the palette. | The panel window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
+| 1 | On desktop 2, open a URL from the palette. | The transient page-host window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
 | 2 | Control+Left, wait two seconds, Control+Right. | Current-desktop reads go 2 → 1 → 2; desktop 2 has the same id both times. |
 | 3 | Say which desktop the page-host window is on now (switch to look, come back to desktop 2). | The helper's read for the page-host window (the reopened window, once there is one) matches: the backend-derived window number is the window server's. |
 | 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | On desktop 2 a small opaque red test window and a placeholder window (section 6) are shown and both placements logged; the helper is asked to move the red window to desktop 1 and its placement logged. Red square on desktop 1 and read as desktop 1 = helper write works. The placeholder window reads as desktop 2 before and after the switch. |
@@ -527,11 +538,13 @@ visible in Mission Control. A failed write at step 4 is an expected outcome and 
 ### 7.3 Live acceptance: rules on macOS
 
 1. Desktop 2, other app in front: open a URL from the palette → type in the page → click the other
-   app. The page-host window stays on desktop 2 behind the other app; one `side-task-reopen`.
+   app. The page-host window stays on desktop 2 behind the other app; one
+   `transient-page-reopen`.
 2. Same, but switch to desktop 1 instead of clicking. Desktop 1 shows no page-host window;
    desktop 2 has it.
 3. Same, but cmd+tab to Peek. The page-host window is the front window with key.
-4. After 2, on desktop 1, open the same URL from the palette: a new panel window on desktop 1; the
+4. After 2, on desktop 1, open the same URL from the palette: a new transient page-host window on
+   desktop 1; the
    desktop-2 page-host window untouched; no desktop switch.
 5. Switcher on desktop 1, pick the desktop-2 page-host window: the user is taken to desktop 2, the
    page-host window has key.
@@ -560,11 +573,13 @@ outside `apps/desktop/tests/gate-baseline.md`.
 - Which X11 window managers honour EWMH client messages.
 - Wayland: every compositor; whether Electron runs natively or under XWayland; whether X11
   properties are populated under XWayland.
-- Panel windows on Linux are non-activating (Electron documents `'panel'` for macOS only).
+- Windows opened with `type: 'panel'` on Linux are non-activating (Electron documents `'panel'`
+  for macOS only).
 - The design does not depend on the order in which macOS reports a desktop switch and the loss of
   focus that goes with it.
 
 ## 9. Open questions
 
-- Whether the reopened window reloads the page or takes over the panel window's view.
+- Whether the reopened window reloads the page or takes over the transient page-host window's
+  view.
 - A "go to the open window / open one on this desktop" cue could revisit rule 5.
