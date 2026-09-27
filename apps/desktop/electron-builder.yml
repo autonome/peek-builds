@@ -79,6 +79,11 @@ files:
   # Exclude development/test directories
   - "!apps/desktop/tests"
   - "!apps/desktop/tests/**"
+  # The desktop helper ships through extraResources, not inside the asar.
+  - "!apps/desktop/dist/native"
+  - "!apps/desktop/dist/native/**"
+  - "!apps/desktop/native"
+  - "!apps/desktop/native/**"
   # MCP server: ship the runtime files only, not its colocated dev artifacts.
   # (the rest of mcp-server/ goes into asar.unpacked — see asarUnpack below)
   - "!apps/desktop/features/mcp-server/*.test.js"
@@ -148,6 +153,12 @@ extraResources:
   # one line: /Applications/Peek.app/Contents/Resources/peek-mcp-init <tag>
   - from: "apps/desktop/scripts/peek-mcp-init"
     to: "peek-mcp-init"
+  # macOS desktop helper (specs/kernel-desktops.md, section 6), built by
+  # apps/desktop/scripts/build-desktop-helper.mjs as part of the desktop build.
+  # Absent where it was not built (no swiftc, other platforms); the app then
+  # uses the fallback desktop provider.
+  - from: "apps/desktop/dist/native/peek-desktop-helper"
+    to: "peek-desktop-helper"
 
 # macOS specific
 mac:

@@ -19,6 +19,10 @@ import {
   type ProviderLayout,
 } from './desktop-provider.js';
 import { FallbackDesktopProvider, type FallbackScreenSource } from './desktop-provider-fallback.js';
+import { MacDesktopProvider, macHelperPath } from './desktop-provider-mac.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function stubScreens(
   screens: string[],
@@ -323,5 +327,212 @@ describe('desktop-provider: fail-safe', () => {
     assert.strictEqual(await h.provider.showDesktop('7'), false);
     assert.strictEqual(reached, false);
     assert.strictEqual(h.fallbackLines().length, 0);
+  });
+});
+
+// ─── macOS provider against a fake helper ────────────────────────────────────
+// A Node script speaking the helper protocol (native/desktop-helper/main.swift header). Its
+// first argument picks the behaviour each case needs.
+
+const FAKE_HELPER = String.raw`
+const mode = process.argv[2];
+const symbols = {
+  CGSMainConnectionID: true,
+  CGSCopyManagedDisplaySpaces: mode !== 'no-symbols',
+  CGSCopySpacesForWindows: true,
+  CGSMoveWindowsToManagedSpace: false,
+};
+const layouts = {
+  separate: {
+    screens: [{ display: '1', current: '3' }, { display: '4', current: '9' }],
+    desktops: [{ id: '3', display: '1' }, { id: '7', display: '1' }, { id: '9', display: '4' }],
+  },
+  shared: {
+    screens: [{ display: null, current: '5' }],
+    desktops: [{ id: '5', display: null }, { id: '6', display: null }],
+  },
+};
+const say = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+let buf = '';
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+  let i;
+  while ((i = buf.indexOf('\n')) >= 0) {
+    const req = JSON.parse(buf.slice(0, i));
+    buf = buf.slice(i + 1);
+    if (req.op === 'hello') {
+      if (mode === 'silent') continue;
+      if (mode === 'exit-at-hello') process.exit(2);
+      say({ id: req.id, ok: true, result: { version: 1, symbols } });
+    } else if (req.op === 'layout') {
+      if (mode === 'slow') continue;
+      if (mode === 'malformed') { process.stdout.write('{not json\n'); continue; }
+      if (mode === 'exit') process.exit(3);
+      say({ id: req.id, ok: true, result: mode === 'shared' ? layouts.shared : layouts.separate });
+    } else if (req.op === 'placements') {
+      say({ id: req.id, ok: true, result: req.windows.map((w) => (
+        w === 100 ? { window: w, display: null, desktop: null, onEveryDesktop: true }
+                  : { window: w, display: '1', desktop: '7', onEveryDesktop: false }
+      )) });
+    } else if (req.op === 'place') {
+      say({ id: req.id, ok: true, result: { attempted: false, desktops: ['7'] } });
+    } else {
+      say({ id: req.id, ok: false, error: 'unknown-op' });
+    }
+  }
+});
+`;
+
+let fakeHelperFile: string | null = null;
+function fakeHelper(): string {
+  if (fakeHelperFile === null) {
+    fakeHelperFile = join(mkdtempSync(join(tmpdir(), 'peek-fake-desktop-helper-')), 'helper.cjs');
+    writeFileSync(fakeHelperFile, FAKE_HELPER);
+  }
+  return fakeHelperFile;
+}
+
+function macHarness(mode: string, timeouts: { handshake?: number; request?: number } = {}) {
+  const mac = new MacDesktopProvider({
+    command: process.execPath,
+    args: [fakeHelper(), mode],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  const lines: string[] = [];
+  const changes: DesktopChange[] = [];
+  const provider = new FailSafeDesktopProvider({
+    primary: mac,
+    fallback: new FallbackDesktopProvider(stubScreens(['1', '2'], { 10: '2' })),
+    log: (line) => lines.push(line),
+    handshakeTimeoutMs: timeouts.handshake ?? 10_000,
+    requestTimeoutMs: timeouts.request ?? 5_000,
+  });
+  const fallbackLines = () => lines.filter((l) => l.startsWith('desktop-provider fallback '));
+  return { mac, provider, lines, changes, fallbackLines, onChange: (c: DesktopChange) => changes.push(c) };
+}
+
+/** Waits until `cond` holds, polling; fails the test after `ms`. */
+async function until(cond: () => boolean, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error('condition not reached');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+const FALLBACK_TWO_SCREENS: ProviderLayout = {
+  screens: [
+    { display: '1', current: '1/only' },
+    { display: '2', current: '2/only' },
+  ],
+  desktops: [
+    { id: '1/only', display: '1' },
+    { id: '2/only', display: '2' },
+  ],
+};
+
+describe('desktop-provider: macOS provider (fake helper)', () => {
+  it('locates the helper in Resources when packaged and in dist/native from source', () => {
+    assert.strictEqual(macHelperPath(true, '/R'), join('/R', 'peek-desktop-helper'));
+    assert.match(macHelperPath(false, '/R'), /dist[/\\]native[/\\]peek-desktop-helper$/);
+  });
+
+  it('starts, parses layout and placements, and keeps the resolved symbols', async () => {
+    const h = macHarness('ok');
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(h.lines, ['desktop-provider started name=mac']);
+    assert.strictEqual(h.mac.hello?.symbols.CGSCopySpacesForWindows, true);
+    assert.deepStrictEqual(await h.provider.layout(), {
+      screens: [
+        { display: '1', current: '3' },
+        { display: '4', current: '9' },
+      ],
+      desktops: [
+        { id: '3', display: '1' },
+        { id: '7', display: '1' },
+        { id: '9', display: '4' },
+      ],
+    });
+    assert.deepStrictEqual(await h.provider.placements([10, 100]), [
+      { window: 10, display: '1', desktop: '7', onEveryDesktop: false },
+      { window: 100, display: null, desktop: null, onEveryDesktop: true },
+    ]);
+    assert.deepStrictEqual(await h.mac.probePlace(10, '3'), { attempted: false, desktops: ['7'] });
+    assert.strictEqual(await h.provider.placeWindow(10, '3'), false);
+    assert.strictEqual(h.provider.onFallback, false);
+    h.provider.stop();
+  });
+
+  it('reports a shared-desktops layout with display null', async () => {
+    const h = macHarness('shared');
+    await h.provider.start(h.onChange);
+    const layout = await h.provider.layout();
+    assert.deepStrictEqual(layout.screens, [{ display: null, current: '5' }]);
+    assert.ok(layout.desktops.every((d) => d.display === null));
+    assert.strictEqual(h.fallbackLines().length, 0);
+    h.provider.stop();
+  });
+
+  it('binary missing: fallback, one line', async () => {
+    const mac = new MacDesktopProvider({ command: join(tmpdir(), 'no-such-peek-desktop-helper') });
+    const lines: string[] = [];
+    const provider = new FailSafeDesktopProvider({
+      primary: mac,
+      fallback: new FallbackDesktopProvider(stubScreens(['1'])),
+      log: (line) => lines.push(line),
+    });
+    await provider.start(() => {});
+    assert.deepStrictEqual(lines, ['desktop-provider fallback reason=start-failed:helper-missing']);
+    assert.strictEqual(provider.name, 'fallback');
+  });
+
+  it('handshake unanswered: fallback after the timeout', async () => {
+    const h = macHarness('silent', { handshake: 1_500 });
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(h.fallbackLines(), ['desktop-provider fallback reason=handshake-timeout']);
+    assert.strictEqual(h.provider.name, 'fallback');
+  });
+
+  it('helper exits during the handshake: fallback with the exit reason', async () => {
+    const h = macHarness('exit-at-hello');
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(h.fallbackLines(), [
+      'desktop-provider fallback reason=start-failed:helper-exit_code=2',
+    ]);
+  });
+
+  it('private symbols unavailable: fallback naming them', async () => {
+    const h = macHarness('no-symbols');
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(h.fallbackLines(), [
+      'desktop-provider fallback reason=start-failed:symbols-unavailable:CGSCopyManagedDisplaySpaces',
+    ]);
+    assert.strictEqual(h.provider.name, 'fallback');
+  });
+
+  it('malformed line: fallback answers the request, one line', async () => {
+    const h = macHarness('malformed');
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_TWO_SCREENS);
+    await flush();
+    assert.deepStrictEqual(h.fallbackLines(), ['desktop-provider fallback reason=malformed-line']);
+    assert.deepStrictEqual(h.changes, [{ kind: 'layout-changed' }]);
+  });
+
+  it('request timeout: fallback answers the request', async () => {
+    const h = macHarness('slow', { request: 200 });
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_TWO_SCREENS);
+    assert.deepStrictEqual(h.fallbackLines(), ['desktop-provider fallback reason=request-timeout:layout']);
+  });
+
+  it('helper exit after start: fallback, backend told to re-read', async () => {
+    const h = macHarness('exit');
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_TWO_SCREENS);
+    await until(() => h.changes.length > 0);
+    assert.deepStrictEqual(h.fallbackLines(), ['desktop-provider fallback reason=helper-exit_code=3']);
+    assert.deepStrictEqual(h.changes, [{ kind: 'layout-changed' }]);
+    assert.strictEqual(h.provider.name, 'fallback');
   });
 });
