@@ -2143,18 +2143,6 @@ export function wireHybridContentEvents(
   // (about:blank, data:, etc.) take the SAME adoption path — see below.
   contentWC.setWindowOpenHandler((details) => {
     const popupUrl = details.url;
-    // DIAG(link-opens-wrong-window): which path handles a page's new-window request.
-    wmLog('diag-popup-request', {
-      opener: hostWindowId,
-      openerWc: contentWC.id,
-      openerUrl: contentWC.isDestroyed() ? null : contentWC.getURL(),
-      url: popupUrl,
-      disposition: details.disposition,
-      features: details.features,
-      frameName: details.frameName,
-      referrer: details.referrer?.url,
-      postBody: !!details.postBody,
-    });
     // javascript: popups are denied outright. A javascript: window.open target
     // executes script in the popup context and has no legitimate popup-window
     // use; adopting it would host attacker-chosen script in a Peek hybrid
@@ -2189,20 +2177,6 @@ export function wireHybridContentEvents(
           // {}) — mint a fresh no-opener host in those cases.
           const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
           const rect = resolvePopupContentRect(ctorOptions);
-          // DIAG(link-opens-wrong-window)
-          wmLog('diag-popup-create-window', {
-            opener: hostWindowId,
-            url: popupUrl,
-            adopt: !!adoptWC,
-            adoptWc: adoptWC ? adoptWC.id : null,
-            adoptWcUrl: adoptWC && !adoptWC.isDestroyed() ? adoptWC.getURL() : null,
-            adoptWcType: adoptWC ? adoptWC.getType() : null,
-            disposition: details.disposition,
-            features: details.features,
-            ctorX: ctorOptions.x, ctorY: ctorOptions.y, ctorW: ctorOptions.width, ctorH: ctorOptions.height,
-            ctorShow: ctorOptions.show === undefined ? undefined : !!ctorOptions.show,
-            rectX: rect.x, rectY: rect.y, rectW: rect.width, rectH: rect.height,
-          });
           const baseWin = createHybridHostBaseWindow(rect);
           constructedHost = baseWin;
           let view: Electron.WebContentsView;
@@ -2285,66 +2259,6 @@ export function wireHybridContentEvents(
             });
           }
           publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
-          // DIAG(link-opens-wrong-window): placement, registration and lifecycle of the popup host.
-          {
-            const b = baseWin.getBounds();
-            const disp = screen.getDisplayMatching(b);
-            const primary = screen.getPrimaryDisplay();
-            const openerHw = getHybridWindow(hostWindowId);
-            const ob = openerHw && !openerHw.baseWin.isDestroyed() ? openerHw.baseWin.getBounds() : null;
-            wmLog('diag-popup-host-built', {
-              popupHost: baseWin.id,
-              opener: hostWindowId,
-              machineId: getWindowIdFor(baseWin.id) ?? null,
-              hybridRegistered: !!getHybridWindow(baseWin.id),
-              contentWc: view.webContents.id,
-              source,
-              mode: popupMode ? String(popupMode.value) : null,
-              x: b.x, y: b.y, w: b.width, h: b.height,
-              display: disp.id, displayPrimary: disp.id === primary.id,
-              openerX: ob?.x, openerY: ob?.y, openerW: ob?.width, openerH: ob?.height,
-              openerDisplay: ob ? screen.getDisplayMatching(ob).id : null,
-              visible: baseWin.isVisible(), focused: baseWin.isFocused(),
-              focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
-            });
-            const pwc = view.webContents;
-            const hostId = baseWin.id;
-            pwc.on('did-start-navigation', (d) => {
-              if (d.isMainFrame) wmLog('diag-popup-nav-start', { popupHost: hostId, url: d.url, sameDoc: d.isSameDocument });
-            });
-            pwc.on('did-redirect-navigation', (d) => {
-              if (d.isMainFrame) wmLog('diag-popup-redirect', { popupHost: hostId, url: d.url });
-            });
-            pwc.on('did-navigate', (_e, u, code) => wmLog('diag-popup-did-navigate', { popupHost: hostId, url: u, code }));
-            pwc.on('did-finish-load', () => wmLog('diag-popup-finish-load', { popupHost: hostId, url: pwc.getURL() }));
-            pwc.on('did-fail-load', (_e, code, desc, u, main) => {
-              if (main) wmLog('diag-popup-fail-load', { popupHost: hostId, code, desc, url: u });
-            });
-            pwc.on('focus', () => wmLog('diag-popup-content-focus', { popupHost: hostId }));
-            pwc.once('destroyed', () => wmLog('diag-popup-content-destroyed', { popupHost: hostId }));
-            baseWin.on('focus', () => wmLog('diag-popup-host-focus', { popupHost: hostId }));
-            baseWin.on('blur', () => wmLog('diag-popup-host-blur', { popupHost: hostId }));
-            baseWin.on('show', () => wmLog('diag-popup-host-show', { popupHost: hostId }));
-            baseWin.on('hide', () => wmLog('diag-popup-host-hide', { popupHost: hostId }));
-            baseWin.on('closed', () => wmLog('diag-popup-host-closed', { popupHost: hostId }));
-            baseWin.on('moved', () => {
-              if (baseWin.isDestroyed()) return;
-              const mb = baseWin.getBounds();
-              wmLog('diag-popup-host-moved', { popupHost: hostId, x: mb.x, y: mb.y, w: mb.width, h: mb.height });
-            });
-            setTimeout(() => {
-              if (baseWin.isDestroyed()) return;
-              const lb = baseWin.getBounds();
-              wmLog('diag-popup-host-1s', {
-                popupHost: hostId,
-                x: lb.x, y: lb.y, w: lb.width, h: lb.height,
-                visible: baseWin.isVisible(), focused: baseWin.isFocused(),
-                focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
-                url: pwc.isDestroyed() ? null : pwc.getURL(),
-                childViews: baseWin.contentView.children.length,
-              });
-            }, 1000);
-          }
           return view.webContents;
         } catch (e) {
           console.error('[hybrid-page-host] popup createWindow host build failed:', e);
@@ -2886,15 +2800,6 @@ export function registerWindowHandlers(): void {
 
     const { url, options } = msg;
 
-    // DIAG(link-opens-wrong-window): the ordinary open path's entry.
-    wmLog('diag-window-open-request', {
-      url: typeof url === 'string' ? url : String(url),
-      source: msg.source,
-      key: options?.key,
-      role: options?.role,
-      activation: options?.activation,
-      senderWc: ev?.sender?.id,
-    });
     // Always log escapeMode for debugging window lifecycle
     console.log(`[window-open] url: ${url}, source: ${msg.source}, escapeMode: ${options?.escapeMode}, key: ${options?.key}, options keys: ${options ? Object.keys(options).join(',') : 'none'}`);
 

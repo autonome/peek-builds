@@ -772,8 +772,6 @@ export function initHybridOverlay(): void {
   // exactly the second decider this refactor removed.
   unsubscribeActive = subscribeOverlayAttachment((hostId) => {
     const win = hostId !== null ? getNativeWindowFor(hostId) : null;
-    // DIAG(link-opens-wrong-window): which host the chrome overlay attaches to.
-    wmLog('diag-overlay-attach', { machineId: hostId === null ? null : String(hostId), osWindow: win ? win.id : null });
     sendActiveHandoff(win ? win.id : null);
   });
 
