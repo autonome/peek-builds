@@ -66,6 +66,10 @@ const SCANNED = [
   `${MAIN}/window-backend.ts`,
   `${MAIN}/window-escape.ts`,
   `${MAIN}/izui-roles.ts`,
+  // The desktop provider port and its fallback: backend-neutral, so any backend can own one.
+  // The platform providers (`desktop-provider-mac.ts`, an X11 one) are backend files, exempt.
+  `${MAIN}/desktop-provider.ts`,
+  `${MAIN}/desktop-provider-fallback.ts`,
 ];
 
 /**
@@ -97,6 +101,12 @@ const FORBIDDEN = [
   'NSWorkspace',
   'LSUIElement',
   'performKeyEquivalent',
+  // Electron lookups a desktop provider would need to name a window or a screen; the backend
+  // derives platform window ids and screen ids and hands them down.
+  'getMediaSourceId',
+  'getNativeWindowHandle',
+  'getAllDisplays',
+  'getDisplayMatching',
   // Electron argument names that only mean something to Electron
   'skipTransformProcessType',
   'visibleOnFullScreen',
