@@ -28,79 +28,111 @@ rule that depends on either, on every platform the desktop app runs on.
   screens show the same one.
 - **The desktop the user is on**: with several screens, the desktop currently shown on the screen
   in question.
-- **Here**: a window is here when its desktop is currently shown on its screen, or it is on every
-  desktop.
-- **Side task**: a page opened from the palette while another app is in front (`window-rules.md`
-  G1, G13). It ends when it stops being in use and is then replaced by an ordinary window.
-- **Home** (of a side task): the desktop the side task was opened on.
-- **Transient**: the palette, the switcher, quick-views and page chrome.
-- **Every-desktop window**: a window the platform keeps on every desktop regardless of placement
-  (for example a macOS panel). Its home is the desktop it was first shown on.
-- **User intent**: a focus or raise the user asked for by naming one specific window (for example
-  picking it in the switcher). Anything else is machine-caused.
+- **Current desktop**: the desktop a screen currently shows (`ScreenState.current`). A window is
+  **on a current desktop** when `onCurrentDesktop(state, record)` holds: its desktop is current on
+  some screen, or it is on every desktop.
+- **Open a URL**: the action of the window-open handler (`ipc.ts registerWindowHandlers`
+  `windowOpenHandler`, reached from tiles through `tile:window:open`). For a web URL its result is
+  a **page-host window**: a window the kernel records with `kind: 'page-host'`
+  (`window-kernel.ts WindowKind`), which the handler builds when `usePageHost` holds. **The page**
+  is the web content in that window.
+- **Panel window**: a page-host window with a content role (`window-kernel.ts CONTENT_ROLES`)
+  opened with the window-open options `type: 'panel'` and `activation: 'user'`. The window-open
+  handler sets both when `izui-roles.ts pageOpensAsSideTask()` holds: the URL is opened (in
+  practice from the palette) while another app is in front and a Peek window holds key
+  (`window-machine.ts isKeyHeldWhileAppInactive()`), the caller passed no `type`, and `show` is not
+  `false` (`window-rules.md` G1, G13). The kernel records `type: 'panel'` as
+  `WindowRecord.nonActivating`. A panel window floats over the other app and holds key without
+  bringing Peek forward; while it does, `window-kernel.ts isSideTask()` holds for it. When
+  `isSideTask` stops holding with the window still shown (the user clicks another app, switches
+  desktop, or brings Peek forward), the kernel emits `ReopenAsOrdinaryWindow`. Closing it (Escape,
+  a close request) emits nothing.
+- **Reopened window**: the page-host window, opened without `type: 'panel'`, that
+  `ReopenAsOrdinaryWindow` puts in place of a panel window, showing the same page at the same
+  bounds. It registers with `replaces:` naming the panel window.
+- **`TRANSIENT_ROLES` window**: a window whose `role` is in `window-kernel.ts TRANSIENT_ROLES`:
+  `palette` (the command palette), `quick-view`, `overlay` (page chrome) and `switcher` (the window
+  switcher).
+- **`onEveryDesktop` window**: a window for which `isOnEveryDesktop(record)` holds: the platform
+  keeps it on every desktop regardless of placement (for example a macOS panel). The app counts it
+  as belonging to the desktop it was first shown on.
+- **Key window**: the window `State.key` names, the one with keyboard focus; "has key" means has
+  keyboard focus.
+- **User intent**: a focus or raise carrying `intent: 'user'` (`FocusRaiseRequested`,
+  `RaiseWindow`; on open, `activation: 'user'`): the user asked for it by naming one specific
+  window, for example by picking it in the switcher. Anything else is machine-caused.
+- **Placeholder window**: on macOS, an invisible, click-through window the backend opens alongside
+  a panel window, on the same desktop, so that the reopened window can appear on that desktop
+  later (section 6). Planned and backend-private; the code has no name for it yet.
 
 ## 2. User stories
 
-- As a user with another app in front on desktop 2, when I open a page from the palette and then
-  click the other app, the page stays on desktop 2 behind that app.
-- As a user, when I switch from desktop 2 to desktop 1 while a side task is open, desktop 1 shows
-  no page, and desktop 2 still has it when I return.
-- As a user, when I bring the app forward while a side task is open, that page is the front window
-  and has keyboard focus, on the desktop where I opened it.
-- As a user on desktop 1, when I open a URL that is already open on desktop 2, I get a new window
-  on desktop 1 and am not taken to desktop 2.
-- As a user, when I pick a window from another desktop in the switcher, I am taken to that desktop
-  and the window has keyboard focus.
-- As a user, when I close or hide a window, I stay on the desktop I am on.
-- As a user on a platform where desktops cannot be read, the app keeps working as a
-  desktop-unaware app.
+- As a user on desktop 2 with another app in front, when I open a URL from the palette and then
+  click that app, then the page-host window stays on desktop 2 behind it.
+- As a user, when I open a URL from the palette over another app on desktop 2 and then switch to
+  desktop 1, then desktop 1 shows what it showed before, and the page-host window is on desktop 2
+  when I return.
+- As a user, when I open a URL from the palette over another app and then bring Peek forward,
+  then that page-host window is the front window with keyboard focus, on the desktop where I
+  opened it.
+- As a user on desktop 1, when I open a URL that is already open on desktop 2, then a new
+  page-host window opens on desktop 1 and I stay on desktop 1.
+- As a user, when I pick a window from another desktop in the switcher, then I am taken to that
+  desktop and the window has keyboard focus.
+- As a user, when I close or hide a window, then I stay on the desktop I am on.
+- As a user on a platform where desktops cannot be read, when I use Peek, then it works as it does
+  on a single desktop.
 
 ## 3. Rules
 
 1. **A window stays on the desktop it was put on.** Nothing the app does on its own MUST move a
    window to another desktop or switch the user's desktop; only the user does, by switching desktop
-   or asking for one specific window. Exception: transients MUST appear on the desktop the user is
-   on.
+   or asking for one specific window. Exception: `TRANSIENT_ROLES` windows MUST appear on the
+   desktop the user is on.
 
    **The switcher** MUST list the app's windows from every desktop. Picking one MUST take the user
    to that window's desktop. This conflicts with rule 5 and is accepted, because the pick is
    explicit.
-2. **A side task's replacement is on the side task's home.** When a side task stops being in use
-   it is replaced by an ordinary window, which MUST be on the home however the user left it:
-   clicking the other app (`window-rules.md` 5c), switching desktop (5d), or bringing the app
-   forward (5e, where the replacement MUST also be the front window with key). It MUST NOT be on
-   another desktop.
-3. **Switching desktop ends a side task because it takes focus away**, as ordinary OS behaviour.
-   A side task ends on loss of focus, so switching away from its home MUST end it as clicking
-   another app does. A switch on a different screen from the side task's MUST NOT end it.
-4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if here,
-   else the frontmost page that is here, else nothing (rule 9).
-5. **Opening a URL already open on another desktop opens a new window here**, not the one there.
-   Opening a URL from the palette over another app MUST always open a new side task; it MUST NOT
-   reuse an ordinary window. Reason: switching desktop is deliberate, so actions happen there.
+2. **A panel window is reopened on the desktop it was opened on.** When `isSideTask` stops holding
+   for a panel window, the reopened window MUST be on the desktop the panel window was opened on,
+   however the user left it: clicking the other app (`window-rules.md` 5c), switching desktop (5d),
+   or bringing Peek forward (5e, where the reopened window MUST also be the front window with key).
+   It MUST NOT be on another desktop.
+3. **Switching desktop counts as leaving a panel window, because it takes focus away**, as
+   ordinary OS behaviour. `isSideTask` stops holding when the panel window loses focus, so switching
+   away from the desktop it was opened on MUST reopen it as clicking another app does. A switch on
+   a different screen from the panel window's MUST NOT reopen it.
+4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if it is on
+   a current desktop, else the frontmost page-host window on a current desktop, else nothing
+   (rule 9).
+5. **Opening a URL already open on another desktop opens a new page-host window on the desktop the
+   user is on**, not the one there. Opening a URL from the palette over another app MUST always
+   open a new panel window; it MUST NOT reuse an existing page-host window. Reason: switching
+   desktop is deliberate, so actions happen there.
 6. **The rules hold on every platform with desktops.** With a provider that reads real desktops,
    rules 1–5 hold as written. With only the fallback provider the app sees one desktop per screen
    and behaves as a desktop-unaware app; the OS may then take the user to another desktop (see
    section 6).
-7. **Side-task replacement, relation to `window-rules.md`.** Rule 2 supersedes G13 ("the desktop
-   the user is on") and row 5d ("the desktop it was on when it lost key"), and matches
+7. **Reopened window, relation to `window-rules.md`.** Rule 2 supersedes G13 ("the desktop the
+   user is on") and row 5d ("the desktop it was on when it lost key"), and matches
    `side-task-ends-on-blur.md`'s live check ("the page stays on desktop 2"). If a platform cannot
-   keep the replacement on the home, the implementation MUST NOT satisfy rule 2 by letting the page
-   follow the user to another desktop.
+   keep the reopened window on the desktop the panel window was opened on, the implementation MUST
+   NOT satisfy rule 2 by letting the page-host window follow the user to another desktop.
 8. **F9 stay-on-this-desktop** (new rule under Focus in `window-rules.md`):
 
-   > A focus the manager makes without user intent lands only on a window that is here (on a
-   > desktop some screen currently shows, or on every desktop). A focus with user intent may take
-   > the user to another desktop, because the user named that window; picking a window in the
-   > switcher is such a focus.
+   > A focus the manager makes without user intent lands only on a window on a current desktop
+   > (its desktop is currently shown on some screen, or it is on every desktop). A focus with user
+   > intent may take the user to another desktop, because the user named that window; picking a
+   > window in the switcher is such a focus.
 9. **F7 hide-returns-key** (replaces F7 in `window-rules.md`):
 
    > When the key window hides or closes while the app is active, key goes to its prior window if
-   > that window is visible and here; otherwise to the topmost visible application window that is
-   > here; otherwise the manager focuses nothing, and whatever the OS focuses next arrives
-   > world-caused.
+   > that window is visible and on a current desktop; otherwise to the topmost visible application
+   > window on a current desktop; otherwise the manager focuses nothing, and whatever the OS focuses
+   > next arrives world-caused.
 
-   The kernel MUST choose a successor for application-window closes as well as transient ones.
+   The kernel MUST choose a successor for closes of application windows as well as of
+   `TRANSIENT_ROLES` windows.
 
 ## 4. Model
 
@@ -117,8 +149,9 @@ app restarts is not required.
 - `State.desktops: readonly DesktopState[]`, `DesktopState = { id: DesktopId; screen: ScreenId |
   null }` (`null` = shared).
 - `WindowRecord.screen?: ScreenId` — last reported screen.
-- `WindowRecord.desktop?: DesktopId` — last reported desktop. For an every-desktop window, its home
-  (for a side task, the desktop it was opened on). Absent until first shown or reported.
+- `WindowRecord.desktop?: DesktopId` — last reported desktop. For an `onEveryDesktop` window, the
+  desktop it was first shown on (for a panel window, the desktop it was opened on). Absent until
+  first shown or reported.
 - `WindowRecord.onEveryDesktop?: boolean` — the backend's declaration at registration, or set by a
   placement report. The kernel MUST read it only as that declaration and MUST NOT derive it from
   role or platform. `desktopMembership: 'follow'` is not copied into it; `isOnEveryDesktop(record)`
@@ -133,26 +166,26 @@ Initial state: no screens, no desktops.
 - `isCurrentDesktop(state, desktop): boolean` — some screen shows it; true when `state.screens` is
   empty.
 - `onCurrentDesktop(state, record): boolean` — `isOnEveryDesktop(record)`, or `record.desktop` is
-  current. False for both "elsewhere" and "never shown", except that it is true for every window
-  before the first layout report.
-- `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring every-desktop.
-  Used by the side-task rule.
-- `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and
-  here, or hidden. A hidden window is re-shown on the current desktop of its screen; if the OS
-  shows it elsewhere, the following placement report corrects the kernel.
+  current. False both for a window on a desktop no screen shows and for a window never shown,
+  except that it is true for every window before the first layout report.
+- `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring `onEveryDesktop`.
+  Used by the rule for panel windows.
+- `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and on
+  a current desktop, or hidden. A hidden window is re-shown on the current desktop of its screen;
+  if the OS shows it elsewhere, the following placement report corrects the kernel.
 
 ### Events (facts, never rejected)
 
 - `DesktopLayoutReported { screens: ScreenState[]; desktops: DesktopState[] }` — the full layout;
   sent at start, on screen add/remove/rearrange, and when the provider sees desktops added or
   removed. Replaces `State.screens` and `State.desktops`. A window whose `desktop` no longer exists
-  keeps the stale id (not here) until its next placement report.
+  keeps the stale id (not on a current desktop) until its next placement report.
 - `CurrentDesktopChanged { screen: ScreenId; desktop: DesktopId }` — sets that screen's `current`;
   adds an unknown screen. With shared desktops, one per screen. MUST NOT write `key` (F1: only
   `OsFocusGained` / `OsFocusLost` do).
 - `WindowPlacementReported { id: WindowId; screen: ScreenId | null; desktop: DesktopId | null;
   onEveryDesktop: boolean }` — a registered window's placement. `null` leaves the field unchanged.
-  For an every-desktop window with a home, `desktop` is ignored.
+  For an `onEveryDesktop` window that already has a desktop, `desktop` is ignored.
 
 Writing `WindowRecord.desktop`:
 
@@ -167,39 +200,42 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 ### Effects
 
-- `ReopenAsOrdinaryWindow { id; desktop: DesktopId | null }` — the replacement MUST be on
-  `desktop` (the side task's home); `null` = wherever the backend shows it. The port doc
-  (`window-backend.ts reopenAsOrdinaryWindow`) reads "belonging to `desktop`".
+- `ReopenAsOrdinaryWindow { id; desktop: DesktopId | null }` — the reopened window MUST be on
+  `desktop` (the desktop the panel window was opened on); `null` = wherever the backend shows it.
+  The port doc (`window-backend.ts reopenAsOrdinaryWindow`) reads "belonging to `desktop`".
 - `ShowDesktop { desktop: DesktopId }` — make `desktop` current on its screen. Emitted only
-  immediately before a user-intent `RaiseWindow` of a window not here. A backend that cannot switch
-  desktops ignores it.
+  immediately before a user-intent `RaiseWindow` of a window not on a current desktop. A backend
+  that cannot switch desktops ignores it.
 
 ### Kernel behaviour
 
-- **Side task ends on a switch.** `isSideTask` includes `homeIsCurrent(state, record)`. A
-  `CurrentDesktopChanged` that takes the home off its screen ends the side task in that transition,
-  and `react`'s diff emits the reopen, `ReopenAsOrdinaryWindow { id, desktop }` carrying the home. If `OsFocusLost` came first, the later switch diffs to
-  nothing: exactly one reopen in either order. A switch on another screen leaves the home current
-  and ends nothing. With the fallback provider the clause is always true. This is needed because a
-  side task the backend declares on every desktop may stay focused across a switch, or its loss of
-  focus may be reported late (Electron backend: macOS panels).
+- **Leaving by switching desktop.** `isSideTask` includes `homeIsCurrent(state, record)`. A
+  `CurrentDesktopChanged` that takes the desktop a panel window was opened on off its screen makes
+  `isSideTask` false in that transition, and `react`'s diff emits
+  `ReopenAsOrdinaryWindow { id, desktop }` carrying that desktop. If `OsFocusLost` came first, the
+  later switch diffs to nothing: exactly one `ReopenAsOrdinaryWindow` in either order. A switch on
+  another screen leaves that desktop current and reopens nothing. With the fallback provider the
+  clause is always true. This is needed because a panel window the backend declares
+  `onEveryDesktop` may stay focused across a switch, or its loss of focus may be reported late
+  (Electron backend: macOS panels).
 - **Close and focus ordering.** Registration with `replaces: X` marks X `replacedBy: <new id>`;
   `react` diffs that into `CloseWindow X`. On X's `WindowClosed`: app active (5e) → the kernel
-  raises the replacement, machine-caused; app inactive (5c, 5d) → no raise. The ordering MUST be
-  decided in the kernel, not by the code that builds the replacement.
+  raises the reopened window, machine-caused; app inactive (5c, 5d) → no raise. The
+  ordering MUST be decided in the kernel, not by the code that builds the reopened window.
 - **Successor on hide or close.** `successorOnHide()` applies `onCurrentDesktop` to both its
   branches (prior window; topmost application window).
-- **Raise gate.** `react` MUST NOT emit a `RaiseWindow` without user intent for a record that is not
-  here, and MUST NOT emit what the executor would suppress (app inactive, no user intent). The gate
-  lives in `react`, not the executor; `planRaise` keeps only environment concerns (headless,
+- **Raise gate.** `react` MUST NOT emit a `RaiseWindow` without user intent for a record that is
+  not on a current desktop, and MUST NOT emit what the executor would suppress (app inactive, no
+  user intent). The gate lives in `react`, not the executor; `planRaise` keeps only environment concerns (headless,
   non-activating realization).
 - **Switcher selection.** The raise spent from `pendingSelectionFocus` in the `WindowClosed` arm
   carries user intent.
-- **Taking the user to a window's desktop.** For a user-intent raise of a window not here, `react`
-  emits `ShowDesktop { desktop: record.desktop }` immediately before `RaiseWindow`. The resulting
-  switch arrives as an ordinary `CurrentDesktopChanged`.
-- **URL reuse.** A window-open reuses an existing window for its URL only if `admitsReuse` holds.
-  The side-task check runs before reuse: a side-task open never reuses.
+- **Taking the user to a window's desktop.** For a user-intent raise of a window not on a current
+  desktop, `react` emits `ShowDesktop { desktop: record.desktop }` immediately before
+  `RaiseWindow`. The resulting switch arrives as an ordinary `CurrentDesktopChanged`.
+- **URL reuse.** Opening a URL reuses an existing page-host window for that URL only if
+  `admitsReuse` holds. The `pageOpensAsSideTask()` check runs before reuse: an open that makes a
+  panel window never reuses.
 
 ### Platform neutrality
 
@@ -219,7 +255,7 @@ For desktops to work under any window backend, the backend MUST supply:
 - **Screens**: the screen list and its changes, an opaque `ScreenId` per screen, each window's
   screen, and the mapping from the provider's display ids to `ScreenId`.
 - **A platform window id per registered window**, derived by the backend for its own windows.
-- **The every-desktop declaration** at registration for windows the platform keeps on every
+- **The `onEveryDesktop` declaration** at registration for windows the platform keeps on every
   desktop regardless.
 - **A provider**: the platform's (a Node client such as `desktop-provider-mac.ts`, or the helper
   spawned directly), else the fallback; plus any switch trigger the backend has.
@@ -273,9 +309,10 @@ No retry.
 ### Fallback provider (all platforms)
 
 `desktop-provider-fallback.ts`. Given the backend's screen list: one desktop per screen, id
-`<screenId>/only`, always current. A window's placement is its screen's only desktop; every-desktop
-is the backend's declaration. Both capability flags false. Never sends `CurrentDesktopChanged`, so
-every window is always here and every rule acts as if desktops did not exist.
+`<screenId>/only`, always current. A window's placement is its screen's only desktop;
+`onEveryDesktop` is the backend's declaration. Both capability flags false. Never sends
+`CurrentDesktopChanged`, so every window is always on a current desktop and every rule acts as if
+desktops did not exist.
 
 ### Helper protocol
 
@@ -302,7 +339,7 @@ Cost: requests are asynchronous, and any window write comes from another process
 - A window's screen: `screen.getDisplayMatching(bounds)`.
 - Platform window id: macOS, from `getMediaSourceId()` (`window:<n>:0`, `<n>` taken as the window
   server number); X11, `getNativeWindowHandle()`.
-- Every-desktop declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
+- `onEveryDesktop` declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
   reports only where the platform disagrees.
 - macOS switch trigger:
   `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
@@ -341,31 +378,33 @@ Naming a window: its window server number, supplied by the backend. For a backen
 derive it, the helper matches the app's windows by owner pid and bounds via public
 `CGWindowListCopyWindowInfo`, as `cg-windows.swift` does.
 
-### macOS: no writes, and the stand-in window
+### macOS: no writes, and the placeholder window
 
 `CGSMoveWindowsToManagedSpace` (and older `CGSAddWindowsToSpaces` / `CGSRemoveWindowsFromSpaces`)
 and `CGSManagedDisplaySetCurrentSpace` are reported (yabai, Hammerspoon) to need the Dock scripting
 addition, hence SIP partly disabled, since macOS 14.5 — not something the app can ask of users. The
 macOS provider therefore sets both capability flags false. If the helper's write is shown to work
-(section 7.2, step 4), the provider MAY set `canPlaceWindows`, which makes the stand-in
+(section 7.2, step 4), the provider MAY set `canPlaceWindows`, which makes the placeholder window
 unnecessary.
 
-Realizing `ReopenAsOrdinaryWindow.desktop` (the replacement may need to appear on a desktop the
-user has left):
+Realizing `ReopenAsOrdinaryWindow.desktop` (the reopened window may need to appear on a
+desktop the user has left):
 
-- **With `canPlaceWindows`**: build the replacement hidden, `placeWindow(replacement, desktop)`,
-  show without activation. No stand-in.
-- **Without `canPlaceWindows`** (Electron on macOS): when the side task opens, the backend also
-  shows a stand-in: an ordinary window at the side task's bounds, zero opacity, click-through, on
-  the opening desktop; backend-private, never registered with the kernel, tracking the side task's
-  bounds. At reopen the stand-in becomes the replacement host (opacity restored, input on, page
-  loaded) and registers as `replaces: X`. If the side task closes instead (Escape, close request),
-  the stand-in is destroyed with it.
-- **Fallback provider**: `desktop` is the screen's only desktop; the replacement shows where the OS
-  puts it.
+- **With `canPlaceWindows`**: build the reopened window hidden,
+  `placeWindow(replacement, desktop)`, show without activation. No placeholder window.
+- **Without `canPlaceWindows`** (Electron on macOS): when a panel window opens, the backend also
+  shows a placeholder window: a window without `type: 'panel'` at the panel window's bounds, zero
+  opacity, click-through, on the desktop the panel window is opened on; backend-private, never
+  registered with the kernel, tracking the panel window's bounds. At `ReopenAsOrdinaryWindow` the
+  placeholder window becomes the reopened window (opacity restored, input on, URL loaded) and
+  registers as `replaces: X`. If the panel window closes instead (Escape, close request), the
+  placeholder window is destroyed with it.
+- **Fallback provider**: `desktop` is the screen's only desktop; the reopened window shows where
+  the OS puts it.
 
-At every reopen the backend reads the stand-in's placement; if not on `desktop`, it logs
-`side-task-standin-misplaced` and proceeds (the page appears where the stand-in is).
+At every `ReopenAsOrdinaryWindow` the backend reads the placeholder window's placement; if not on
+`desktop`, it logs `side-task-standin-misplaced` and proceeds (the reopened window appears where
+the placeholder window is).
 
 Realizing `ShowDesktop` on macOS: a no-op; raising the window makes the OS switch.
 
@@ -398,7 +437,7 @@ provider `ShowDesktop` is never emitted.
 | Desktops, and current per screen | helper, private reads | EWMH root properties (shared) | one per screen |
 | A switch happened | backend trigger (Electron: workspace notification) | root property change | never |
 | A window's desktop | helper, private read | `_NET_WM_DESKTOP` | its screen's only desktop |
-| Every-desktop | backend's own declaration, confirmed by the read | `_NET_WM_DESKTOP` | backend's declaration |
+| `onEveryDesktop` | backend's own declaration, confirmed by the read | `_NET_WM_DESKTOP` | backend's declaration |
 | Put a window on a desktop | no (needs SIP changes, reported) | yes, client message | no |
 | Switch to a desktop | no; raising a window there makes the OS switch | yes, client message | no |
 
@@ -411,24 +450,28 @@ Kernel unit tests (`window-kernel.test.ts`), one group per rule:
 - **Desktop state.** `DesktopLayoutReported` replaces screens and desktops; `CurrentDesktopChanged`
   writes one screen's current desktop, leaves `key` alone, adds an unknown screen;
   `WindowPlacementReported` writes screen and desktop, leaves a field alone on `null`, keeps an
-  every-desktop window's home; a first show stamps provisionally from the window's screen; focus
-  does not stamp; before any report every window is here; `onCurrentDesktop` over {every desktop,
+  `onEveryDesktop` window's first-shown desktop; a first show stamps provisionally from the
+  window's screen; focus does not stamp; before any report every window is on a current desktop;
+  `onCurrentDesktop` over {every desktop,
   current on its screen, current on another screen, not current, never shown}; shared desktops
   (`screen: null`) current on every screen.
-- **5c.** Side task, `OsFocusLost`, app inactive: one `ReopenAsOrdinaryWindow` with `desktop` = the
-  home; the `replaces` registration takes that desktop; `CloseWindow` for the old id; no
-  `RaiseWindow`; not key; not held; `appActive` still false.
+- **5c.** Panel window, `OsFocusLost`, app inactive: one `ReopenAsOrdinaryWindow` with
+  `desktop` = the desktop the panel window was opened on; the `replaces` registration takes that
+  desktop; `CloseWindow` for the old id; no `RaiseWindow`; not key; not held; `appActive` still
+  false.
 - **5d, both orders.** `CurrentDesktopChanged` on its screen then `OsFocusLost`, and the reverse:
-  exactly one reopen, carrying the home (not the new current desktop); no `RaiseWindow`. Switch on
-  another screen: no reopen.
-- **5e.** Side task key, `AppActivated`: one reopen; after the old `WindowClosed`, one machine
-  `RaiseWindow` of the replacement.
-- **G13.** Escape or close request on a side task: no reopen.
-- **F7 / F9.** Prior window here: raised. Prior not here: topmost application window here raised.
-  None here: no raise, no token. User-intent raise of a window not here: emitted, preceded by
-  `ShowDesktop` with its desktop; same for a switcher selection. Machine raise of a window not
-  here: not emitted.
-- **URL reuse.** `admitsReuse` table; a side-task open never reuses.
+  exactly one `ReopenAsOrdinaryWindow`, carrying the desktop the panel window was opened on (not
+  the new current desktop); no `RaiseWindow`. Switch on another screen: no
+  `ReopenAsOrdinaryWindow`.
+- **5e.** Panel window is key, `AppActivated`: one `ReopenAsOrdinaryWindow`; after the old
+  `WindowClosed`, one machine `RaiseWindow` of the reopened window.
+- **G13.** Escape or close request on a panel window: no `ReopenAsOrdinaryWindow`.
+- **F7 / F9.** Prior window on a current desktop: raised. Prior not on a current desktop: topmost
+  application window on a current desktop raised. None on a current desktop: no raise, no token.
+  User-intent raise of a window not on a current desktop: emitted, preceded by `ShowDesktop` with
+  its desktop; same for a switcher selection. Machine raise of a window not on a current desktop:
+  not emitted.
+- **URL reuse.** `admitsReuse` table; an open that makes a panel window never reuses.
 
 Property test (`window-kernel-properties.test.ts`): over random event sequences whose desktop
 events are only what the fallback provider sends (one layout, placements on each screen's only
@@ -442,8 +485,8 @@ fallback provider with one `desktop-provider fallback` line. The real helper run
 acceptance check (7.2).
 
 Executor tests (`window-kernel-executor.test.ts`): `sideTaskSetup()` cases for 5c/5d/5e assert
-backend calls in order (reopen with its desktop, close, for 5e one raise); `ShowDesktop` reaches the
-backend before its raise.
+backend calls in order (reopen with its desktop, close, for 5e one raise); `ShowDesktop` reaches
+the backend before its raise.
 
 `cmd-url-unfocused.spec.ts` (darwin-only) keeps its existing assertions and adds a
 `CurrentDesktopChanged` injection through the executor's test surface for 5d. It cannot see real
@@ -470,28 +513,30 @@ desktop 1. With a second screen, two desktops there too.
 
 | # | Gesture | Passes when |
 |---|---|---|
-| 1 | On desktop 2, open a page from the palette. | The page's window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
+| 1 | On desktop 2, open a URL from the palette. | The panel window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
 | 2 | Control+Left, wait two seconds, Control+Right. | Current-desktop reads go 2 → 1 → 2; desktop 2 has the same id both times. |
-| 3 | Say which desktop the page is on now (switch to look, come back to desktop 2). | The helper's read for the page's window (the replacement, after reopen) matches: the backend-derived window number is the window server's. |
-| 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | On desktop 2 a small opaque red test window and an invisible stand-in (section 6) are shown and both placements logged; the helper is asked to move the red window to desktop 1 and its placement logged. Red square on desktop 1 and read as desktop 1 = helper write works. The stand-in reads as desktop 2 before and after the switch. |
-| 5 | Still on desktop 1, open Mission Control, say whether desktop 2's thumbnail shows an empty window or frame, close it. | The stand-in leaves no visible trace; its placement re-read is still desktop 2. |
+| 3 | Say which desktop the page-host window is on now (switch to look, come back to desktop 2). | The helper's read for the page-host window (the reopened window, once there is one) matches: the backend-derived window number is the window server's. |
+| 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | On desktop 2 a small opaque red test window and a placeholder window (section 6) are shown and both placements logged; the helper is asked to move the red window to desktop 1 and its placement logged. Red square on desktop 1 and read as desktop 1 = helper write works. The placeholder window reads as desktop 2 before and after the switch. |
+| 5 | Still on desktop 1, open Mission Control, say whether desktop 2's thumbnail shows an empty window or frame, close it. | The placeholder window leaves no visible trace; its placement re-read is still desktop 2. |
 | 6 | Second screen only: click its desktop background, Control+Right, Control+Left. | Only that screen's current desktop changes, and the helper's display id maps to an Electron display; with shared desktops, both screens change together. |
 
 Afterwards the test windows and the app are closed. The macOS provider does not conform if
-step 2 shows ids changing on return, or steps 4–5 show the stand-in off desktop 2 or visible in
-Mission Control. A failed write at step 4 is an expected outcome and does not affect conformance.
+step 2 shows ids changing on return, or steps 4–5 show the placeholder window off desktop 2 or
+visible in Mission Control. A failed write at step 4 is an expected outcome and does not affect conformance.
 
 ### 7.3 Live acceptance: rules on macOS
 
-1. Desktop 2, other app in front: palette → URL → type in the page → click the other app. The page
-   stays on desktop 2 behind the other app; one `side-task-reopen`.
-2. Same, but switch to desktop 1 instead of clicking. Desktop 1 shows no page; desktop 2 has it.
-3. Same, but cmd+tab to Peek. The page is the front window with key.
-4. After 2, on desktop 1, open the same URL from the palette: a new side task on desktop 1; the
-   desktop-2 window untouched; no desktop switch.
-5. Switcher on desktop 1, pick the desktop-2 page: the user is taken to desktop 2, the page has key.
-6. On desktop 2, close the key page whose prior window is on desktop 1: no desktop switch; key goes
-   to a window on desktop 2 or to nothing.
+1. Desktop 2, other app in front: open a URL from the palette → type in the page → click the other
+   app. The page-host window stays on desktop 2 behind the other app; one `side-task-reopen`.
+2. Same, but switch to desktop 1 instead of clicking. Desktop 1 shows no page-host window;
+   desktop 2 has it.
+3. Same, but cmd+tab to Peek. The page-host window is the front window with key.
+4. After 2, on desktop 1, open the same URL from the palette: a new panel window on desktop 1; the
+   desktop-2 page-host window untouched; no desktop switch.
+5. Switcher on desktop 1, pick the desktop-2 page-host window: the user is taken to desktop 2, the
+   page-host window has key.
+6. On desktop 2, close the key page-host window whose prior window is on desktop 1: no desktop
+   switch; key goes to a window on desktop 2 or to nothing.
 
 ### 7.4 Conforming implementation
 
@@ -515,11 +560,11 @@ outside `apps/desktop/tests/gate-baseline.md`.
 - Which X11 window managers honour EWMH client messages.
 - Wayland: every compositor; whether Electron runs natively or under XWayland; whether X11
   properties are populated under XWayland.
-- Side tasks on Linux are non-activating (Electron documents `'panel'` for macOS only).
+- Panel windows on Linux are non-activating (Electron documents `'panel'` for macOS only).
 - The design does not depend on the order in which macOS reports a desktop switch and the loss of
   focus that goes with it.
 
 ## 9. Open questions
 
-- Whether the replacement host reloads the page or takes over the side task's view.
-- A "go to the open window / open one here" cue could revisit rule 5.
+- Whether the reopened window reloads the page or takes over the panel window's view.
+- A "go to the open window / open one on this desktop" cue could revisit rule 5.
