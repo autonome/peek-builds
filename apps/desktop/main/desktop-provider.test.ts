@@ -19,7 +19,7 @@ import {
   type ProviderLayout,
 } from './desktop-provider.js';
 import { FallbackDesktopProvider, type FallbackScreenSource } from './desktop-provider-fallback.js';
-import { MacDesktopProvider, macHelperPath } from './desktop-provider-mac.js';
+import { MacDesktopProvider, macHelperPath, windowNumberFromSourceId } from './desktop-provider-mac.js';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -435,6 +435,14 @@ describe('desktop-provider: macOS provider (fake helper)', () => {
   it('locates the helper in Resources when packaged and in dist/native from source', () => {
     assert.strictEqual(macHelperPath(true, '/R'), join('/R', 'peek-desktop-helper'));
     assert.match(macHelperPath(false, '/R'), /dist[/\\]native[/\\]peek-desktop-helper$/);
+  });
+
+  it('reads the window server number out of a capture source id', () => {
+    assert.strictEqual(windowNumberFromSourceId('window:4242:0'), 4242);
+    assert.strictEqual(windowNumberFromSourceId('window:0:0'), null);
+    assert.strictEqual(windowNumberFromSourceId('screen:1:0'), null);
+    assert.strictEqual(windowNumberFromSourceId('window:12'), null);
+    assert.strictEqual(windowNumberFromSourceId(''), null);
   });
 
   it('starts, parses layout and placements, and keeps the resolved symbols', async () => {

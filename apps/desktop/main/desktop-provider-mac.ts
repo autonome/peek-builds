@@ -46,6 +46,18 @@ export function macHelperPath(packaged: boolean, resourcesPath: string): string 
   return join(dirname(fileURLToPath(import.meta.url)), '..', 'native', MAC_HELPER_BINARY);
 }
 
+/**
+ * The window server number inside a desktop-capture source id (`window:<n>:<m>`), which is how
+ * an Electron backend names its windows to this provider. `null` for any other shape and for
+ * `0`, which a window not yet known to the window server reports.
+ */
+export function windowNumberFromSourceId(sourceId: string): PlatformWindowId | null {
+  const match = /^window:(\d+):\d+$/.exec(sourceId);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
 export interface MacProviderOptions {
   /** Executable to spawn: the helper, or (tests) any program speaking its protocol. */
   readonly command: string;
