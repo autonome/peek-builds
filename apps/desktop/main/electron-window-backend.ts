@@ -42,7 +42,7 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
-import { FULLSCREEN_SETTLE_TIMEOUT_MS, isContentWindow, isOnEveryDesktop, topmost, windowById } from './window-kernel.js';
+import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization, hideProvokesFocusReassignment } from './window-kernel-executor.js';
 import {
@@ -63,8 +63,6 @@ import {
   kernelBoundsChanged,
   kernelOverlayAttached,
   kernelCloseOrHideRequested,
-  kernelHideRequested,
-  kernelShowRequested,
 } from './window-kernel-dispatch.js';
 
 function requestGuestDestroy(guest: TeardownGuest): void {
@@ -255,97 +253,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }, APP_RESIGN_SETTLE_MS);
     });
     this.attachSpaceChangeListener();
-    this.installDesktopProbe();
-  }
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Temporary: the U2–U4 desktops probe (`specs/kernel-desktops.md`,
-  // "Unverified on macOS"). Off unless started with PEEK_DESKTOP_PROBE=1, never
-  // headless. Each step is a Control+Option+Command+digit shortcut a person
-  // presses and writes one `[wm] event=probe-…` line; `space-changed` (above)
-  // says whether and when a desktop switch happened. Removed once the answers
-  // are recorded in the spec's Result.
-  //   1  U2: hide the front page now, show it again without focus 3 s later.
-  //   2  U3: show an invisible, click-through ordinary window (the stand-in) here.
-  //   3  U3: make the stand-in visible (red) or invisible again, wherever it is.
-  //   4  U4: show the stand-in without activation, from wherever the user is.
-  //   5  U4 contrast: focus the stand-in, expected to switch desktop.
-  //   0  close the stand-in.
-  // ───────────────────────────────────────────────────────────────────────────
-
-  private probeStandIn: BrowserWindow | null = null;
-  private probeStandInVisible = false;
-
-  private installDesktopProbe(): void {
-    if (process.env.PEEK_DESKTOP_PROBE !== '1' || isHeadless() || process.platform !== 'darwin') return;
-    const bindings: Array<[string, () => void]> = [
-      ['Control+Alt+Command+1', () => this.probeHideAndReshowFrontPage()],
-      ['Control+Alt+Command+2', () => this.probeShowStandIn()],
-      ['Control+Alt+Command+3', () => this.probeToggleStandInVisible()],
-      ['Control+Alt+Command+4', () => this.probeWithStandIn('probe-u4-show-inactive', (w) => w.showInactive())],
-      ['Control+Alt+Command+5', () => this.probeWithStandIn('probe-u4-focus', (w) => w.focus())],
-      ['Control+Alt+Command+0', () => this.probeWithStandIn('probe-standin-closed', (w) => w.destroy())],
-    ];
-    for (const [accelerator, run] of bindings) {
-      wmLog('probe-shortcut', { accelerator, registered: globalShortcut.register(accelerator, run) });
-    }
-  }
-
-  private probeDesktopFields(id: WindowId | null): WmLogFields {
-    const state = getKernelExecutor().getState();
-    const record = id === null ? null : windowById(state, id);
-    return { desktop: state.desktop, windowDesktop: record?.desktop };
-  }
-
-  private probeHideAndReshowFrontPage(): void {
-    const front = topmost(getKernelExecutor().getState(), (r) => isContentWindow(r) && r.visible);
-    if (front === null) {
-      wmLog('probe-u2-no-page');
-      return;
-    }
-    const id = front.id;
-    wmLog('probe-u2-hide', { id, ...this.probeDesktopFields(id) });
-    kernelHideRequested(id);
-    setTimeout(() => {
-      kernelShowRequested(id, false);
-      wmLog('probe-u2-reshow', { id, ...this.probeDesktopFields(id) });
-    }, 3000);
-  }
-
-  private probeShowStandIn(): void {
-    if (this.probeStandIn !== null && !this.probeStandIn.isDestroyed()) this.probeStandIn.destroy();
-    const win = new BrowserWindow({
-      width: 480,
-      height: 320,
-      show: false,
-      frame: false,
-      backgroundColor: '#d02020',
-      skipTaskbar: true,
-      title: 'desktop-probe stand-in',
-    });
-    win.setOpacity(0);
-    win.setIgnoreMouseEvents(true);
-    win.showInactive();
-    this.probeStandIn = win;
-    this.probeStandInVisible = false;
-    wmLog('probe-u3-standin-shown', { osId: win.id, ...this.probeDesktopFields(null) });
-  }
-
-  private probeToggleStandInVisible(): void {
-    this.probeWithStandIn('probe-u3-standin-visible', (w) => {
-      this.probeStandInVisible = !this.probeStandInVisible;
-      w.setOpacity(this.probeStandInVisible ? 1 : 0);
-    });
-  }
-
-  private probeWithStandIn(event: string, run: (win: BrowserWindow) => void): void {
-    const win = this.probeStandIn;
-    if (win === null || win.isDestroyed()) {
-      wmLog('probe-no-standin', { step: event });
-      return;
-    }
-    run(win);
-    wmLog(event, { visible: this.probeStandInVisible, ...this.probeDesktopFields(null) });
   }
 
   // Reports every desktop switch to the kernel as `DesktopChanged`, with this
