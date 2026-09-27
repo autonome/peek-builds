@@ -185,3 +185,88 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
     expect(unregistered).toEqual([]);
   });
 });
+
+/**
+ * Peek item 619befb8: a page's own `window.open(url, undefined, 'noopener')`
+ * (what a Bluesky web client does for an external link) must open a page host
+ * the chrome overlay can frame, like any page opened by URL.
+ *
+ * The opener here is opened through the real open path (`app.window.open`),
+ * so its content view carries the runtime-external preload, as a live page
+ * does. The popup is adopted by the `createWindow` callback in `ipc.ts
+ * wireHybridContentEvents()`. A page host only becomes eligible for the
+ * overlay once its content reports its first composited frame (the preload's
+ * `hybrid:first-frame` IPC → `session.ts installFirstFrameOrderableProducer`
+ * → the kernel's `orderable`); `window-kernel.ts topmostBaseLayerPageHost`
+ * ignores a host that never does, so the overlay never attaches to it and the
+ * window shows as a bare page with no Peek chrome.
+ */
+test.describe('Hybrid page-host popups from a real page @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: import('@playwright/test').Page;
+  let server: import('http').Server;
+  let origin = '';
+
+  test.beforeAll(async () => {
+    const http = await import('http');
+    server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>${req.url}</title><body>${req.url}</body>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as import('net').AddressInfo;
+    origin = `http://127.0.0.1:${addr.port}`;
+    ({ app, bgWindow } = await createPerDescribeApp('hybrid-popups-real-opener'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const orderableFor = (osId: number) =>
+    app.evaluateMain!((_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const d = b.attachDiagnostic() as { pageHosts: Array<{ osId: number | null; orderable: boolean }> };
+      return d.pageHosts.find((h) => h.osId === (arg as any).osId)?.orderable ?? null;
+    }, { osId });
+
+  test('a noopener window.open popup becomes a page host the overlay can frame', async () => {
+    const openerUrl = `${origin}/opener`;
+    const opened = await bgWindow.evaluate(
+      async (u: string) => (window as any).app.window.open(u, { x: 120, y: 120, width: 700, height: 500 }),
+      openerUrl,
+    );
+    expect(opened.success).toBe(true);
+    const openerId = opened.id as number;
+
+    // Control: the opener, opened by URL, reports its first frame.
+    await expect.poll(() => orderableFor(openerId), { timeout: 10000 }).toBe(true);
+
+    const existing = await app.evaluateMain!(() =>
+      (globalThis as any).__peekHybridOverlayTest.hybridIds(),
+    );
+    const targetUrl = `${origin}/target`;
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.evalInHybridContent(
+        (arg as any).id,
+        `window.open(${JSON.stringify((arg as any).url)}, undefined, 'noopener'); true`,
+      );
+    }, { id: openerId, url: targetUrl });
+
+    const popupId = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.waitHybridForUrl((arg as any).url, (arg as any).existing);
+    }, { url: targetUrl, existing });
+    expect(popupId, 'the popup is adopted into a hybrid page host').not.toBeNull();
+
+    await expect
+      .poll(() => orderableFor(popupId as number), {
+        timeout: 10000,
+        message:
+          'the popup host never reported its first composited frame, so the chrome overlay can never attach to it',
+      })
+      .toBe(true);
+  });
+});
