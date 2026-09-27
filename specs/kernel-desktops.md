@@ -1,6 +1,6 @@
 ---
 enabled: false
-touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/window-kernel-executor.test.ts, apps/desktop/main/window-kernel-dispatch.ts, apps/desktop/main/window-backend.ts, apps/desktop/main/electron-window-backend.ts, apps/desktop/main/desktop-provider.ts, apps/desktop/main/desktop-provider-fallback.ts, apps/desktop/main/desktop-provider-mac.ts, apps/desktop/main/desktop-provider.test.ts, apps/desktop/native/desktop-helper/main.swift, apps/desktop/scripts/build-desktop-helper.mjs, apps/desktop/electron-builder.yml, apps/desktop/package.json, apps/desktop/main/ipc.ts, apps/desktop/main/main.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/tests/desktop/cmd-url-unfocused.spec.ts, docs/design/window-rules.md]
+touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/window-kernel-executor.test.ts, apps/desktop/main/window-kernel-dispatch.ts, apps/desktop/main/window-backend.ts, apps/desktop/main/electron-window-backend.ts, apps/desktop/main/desktop-provider.ts, apps/desktop/main/desktop-provider-fallback.ts, apps/desktop/main/desktop-provider-mac.ts, apps/desktop/main/desktop-provider.test.ts, apps/desktop/native/desktop-helper/main.swift, apps/desktop/scripts/build-desktop-helper.mjs, apps/desktop/electron-builder.yml, apps/desktop/package.json, apps/desktop/main/ipc.ts, apps/desktop/main/main.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/tests/desktop/cmd-url-unfocused.spec.ts, docs/design/window-rules.md, scripts/check-platform-leak.mjs]
 depends-on: []
 ---
 
@@ -13,9 +13,10 @@ knows nothing about desktops and every desktop rule in `docs/design/window-rules
 native-call timing.
 
 Design only; each numbered commit under "Order of work" is a separate change. The kernel holds a
-platform-neutral model of screens and desktops with real, stable ids; the Electron backend fills it
-through a per-platform desktop provider, with a fallback provider that reproduces today's
-behaviour.
+model of screens and desktops with real, stable ids that names no OS, no backend and no Electron
+concept; each window backend (Electron is the first) fills it through a per-platform desktop
+provider, with a fallback provider that reproduces today's behaviour. Everything platform-specific
+below is a backend's realization, never kernel reasoning.
 
 ## Rules
 
@@ -81,8 +82,9 @@ is on every desktop.
 - **Desktop**: a virtual desktop, belonging to one screen or shared across all screens. Each
   screen shows exactly one current desktop; with shared desktops all screens have the same one.
 
-Ids (`ScreenId`, `DesktopId`) are opaque provider-chosen strings, compared only. Required: stable
-for the session while the thing exists; returning to a desktop yields its previous id.
+Ids (`ScreenId`, `DesktopId`) are opaque strings chosen below the port, compared only; the kernel
+gives them no meaning (not a display id, not an OS number). Required: stable for the session while
+the thing exists; returning to a desktop yields its previous id.
 
 ### Kernel state
 
@@ -93,10 +95,9 @@ for the session while the thing exists; returning to a desktop yields its previo
 - `WindowRecord.desktop?: DesktopId` — last reported desktop. For an every-desktop window, its home:
   the desktop it was first shown on (for a side task, the one it was opened on). Absent until first
   shown or reported.
-- `WindowRecord.onEveryDesktop?: boolean` — declared at registration by the backend when the
-  platform keeps the window on every desktop regardless (Electron backend: panels on macOS), or set
-  by a placement report. `desktopMembership: 'follow'` is not copied here;
-  `isOnEveryDesktop(record)` reads both.
+- `WindowRecord.onEveryDesktop?: boolean` — the backend's declaration at registration, or set by a
+  placement report. The kernel reads it only as that declaration and never derives it from role or
+  platform. `desktopMembership: 'follow'` is not copied here; `isOnEveryDesktop(record)` reads both.
 
 Initial state: no screens, no desktops.
 
@@ -142,51 +143,74 @@ With the fallback provider the show stamp is the only source and is correct by c
   immediately before a user-intent `RaiseWindow` of a window not here. Ignored by a backend that
   cannot switch desktops.
 
-Platform neutrality: the new names above the port ("screen", "desktop", `ScreenId`, `DesktopId`,
-the three events, two effects, `onEveryDesktop`) are not in `scripts/check-platform-leak.mjs
-FORBIDDEN`. All macOS/X11 names, including private calls, stay in the provider files (not scanned).
+Enforcement: `scripts/check-platform-leak.mjs`. The new kernel names ("screen", "desktop",
+`ScreenId`, `DesktopId`, the three events, two effects, `onEveryDesktop`) are not in `FORBIDDEN`.
+`SCANNED` gains `desktop-provider.ts` and `desktop-provider-fallback.ts`; `FORBIDDEN` gains
+`getMediaSourceId`, `getNativeWindowHandle`, `getAllDisplays`, `getDisplayMatching`. Exempt, as
+the places platform detail belongs: `electron-window-backend.ts`, `desktop-provider-mac.ts`, the
+future X11 provider, and the helper (Swift, not scanned).
 
-## Desktop provider (backend side)
+## Desktop provider (below the port)
 
-`apps/desktop/main/desktop-provider.ts`, owned by the Electron backend; the kernel never sees it.
+`apps/desktop/main/desktop-provider.ts`: backend-neutral, naming no Electron type; each backend
+owns one provider; the kernel never sees it.
 
 ```ts
+type PlatformWindowId = number;  // macOS window server number; X11 window id
 interface DesktopProvider {
   readonly name: string;                       // for logs
   readonly canPlaceWindows: boolean;
   readonly canShowDesktops: boolean;
   start(onChange: (change: DesktopChange) => void): Promise<void>;
-  layout(): Promise<{ screens: ScreenState[]; desktops: DesktopState[] }>;
-  placements(windows: NativeWindowRef[]): Promise<Placement[]>;
-  placeWindow(win: NativeWindowRef, desktop: DesktopId): Promise<boolean>;
+  layout(): Promise<ProviderLayout>;
+  placements(windows: PlatformWindowId[]): Promise<Placement[]>;
+  placeWindow(win: PlatformWindowId, desktop: DesktopId): Promise<boolean>;
   showDesktop(desktop: DesktopId): Promise<boolean>;
   stop(): void;
 }
 ```
 
-`NativeWindowRef` names a window to the platform. `DesktopChange` is "layout changed" or "current
-desktop changed on screen S". A provider lacking a capability sets the flag false and returns
-`false` from the call.
+`ProviderLayout` is `ScreenState[]` / `DesktopState[]` with screens named by the platform's display
+id (macOS `CGDirectDisplayID`; none on X11, whose desktops are shared); the backend maps those to
+its `ScreenId`s. `DesktopChange` is "layout changed" or "current desktop changed on display D". A
+provider lacking a capability sets the flag false and returns `false` from the call.
 
-Backend algorithm:
+Backend algorithm (any backend):
 
-- At start and on every `DesktopChange`: `layout()` → `DesktopLayoutReported` if changed; one
+- At start, on every `DesktopChange` and on each of the backend's own triggers (screen changes, an
+  OS switch notification): `layout()` → `DesktopLayoutReported` if changed; one
   `CurrentDesktopChanged` per screen whose current desktop differs; `placements()` for all
   registered windows → one `WindowPlacementReported` per changed placement.
 - After each genuine show and each registration: `placements()` for that window.
 - `ReopenAsOrdinaryWindow`, `ShowDesktop`: see "Side tasks" and "Taking the user to a window's
   desktop".
 
-Electron facts are used where they exist; the provider supplies only the rest:
+### What a backend supplies
+
+For desktops to work under any window backend:
+
+- **Screens**: the screen list and its changes, an opaque `ScreenId` per screen, each window's
+  screen, and the mapping from the provider's display ids to `ScreenId`.
+- **A platform window id per registered window**, derived by the backend for its own windows.
+- **The every-desktop declaration** at registration for windows the platform keeps on every
+  desktop regardless.
+- **A provider**: the platform's (a Node client such as `desktop-provider-mac.ts`, or the helper
+  spawned directly), else the fallback; plus any switch trigger the backend has.
+- **Realizations** of `ReopenAsOrdinaryWindow.desktop` and `ShowDesktop` for its provider's
+  capabilities (see "Side tasks").
+
+### Electron backend
 
 - Screens: `screen.getAllDisplays()`; `display-added` / `display-removed` /
-  `display-metrics-changed` are a `DesktopChange`.
+  `display-metrics-changed` are triggers. `ScreenId` is Electron's display id as a string; on macOS
+  the helper's `CGDirectDisplayID` maps to it (believed equal).
 - A window's screen: `screen.getDisplayMatching(bounds)`.
-- Every-desktop: the backend's own declaration (`setVisibleOnAllWorkspaces`, macOS panels); the
-  provider reports only where the platform disagrees.
+- Platform window id: macOS, from `getMediaSourceId()` (`window:<n>:0`, `<n>` believed to be the
+  window server number); X11, `getNativeWindowHandle()`.
+- Every-desktop declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
+  reports only where the platform disagrees.
 - macOS switch trigger: `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
   the provider supplies which desktop is now current.
-- `ScreenId` is Electron's display id as a string on every provider.
 
 **Fail-safe.** The backend starts the platform provider and switches to the fallback provider,
 logging `desktop-provider fallback reason=<…>` once, when any of these holds: no provider for the
@@ -197,8 +221,8 @@ from the fallback provider; the app behaves as on `main` for the rest of the ses
 
 ### Fallback provider (all platforms)
 
-`desktop-provider-fallback.ts`. One desktop per screen, id `<screenId>/only`, always current. A
-window's placement is its screen's only desktop; every-desktop is the backend's declaration. Both
+`desktop-provider-fallback.ts`. Given the backend's screen list; one desktop per screen, id
+`<screenId>/only`, always current. A window's placement is its screen's only desktop; every-desktop is the backend's declaration. Both
 capability flags false. Never sends `CurrentDesktopChanged`, so every window is always here and
 every rule acts as on `main`.
 
@@ -209,8 +233,9 @@ every rule acts as on `main`.
 **Helper process, not a Node addon**: a crash in a private call closes a pipe (→ fail-safe)
 instead of killing the main process; no rebuild against Electron's Node ABI; the repo has Swift
 helpers (`apps/desktop/tests/helpers/cg-windows.swift`, `tools/focus-probes/frontmost-stream.swift`)
-and no addon build. Cost: async requests, and any window write comes from another process's
-connection.
+and no addon build; and any backend can spawn it and speak the protocol (a Tauri backend from
+Rust), `desktop-provider-mac.ts` being its Node client. Cost: async requests, and any window write
+comes from another process's connection.
 
 **Build and packaging.**
 
@@ -234,7 +259,7 @@ is reported "unavailable" in `hello`, never a launch failure.
 - Layout: `CGSCopyManagedDisplaySpaces(cid)` → per display: `Display Identifier` (display UUID, or
   `Main` when displays share desktops), `Current Space`, `Spaces`; each desktop has numeric
   `ManagedSpaceID` / `id64`, `uuid`, `type` (0 ordinary, 4 fullscreen app). Display UUID →
-  Electron display id via public `CGGetActiveDisplayList` + `CGDisplayCreateUUIDFromDisplayID`.
+  `CGDirectDisplayID` via public `CGGetActiveDisplayList` + `CGDisplayCreateUUIDFromDisplayID`.
 - Shared desktops: a single `Main` entry with several active displays ("Displays have separate
   Spaces" off) → desktops reported with `screen: null`.
 - A window's desktops: `CGSCopySpacesForWindows(cid, 0x7, [windowNumber])`; more than one id =
@@ -242,9 +267,9 @@ is reported "unavailable" in `hello`, never a launch failure.
 - `DesktopId` = the numeric id as a string.
 - Fullscreen desktops are ordinary desktops (a native-fullscreen page lives on its own).
 
-**Naming a window**: its window server number, taken from `getMediaSourceId()` (`window:<n>:0`,
-`<n>` believed to be that number). Fallback: match the app's windows by owner pid and bounds via
-public `CGWindowListCopyWindowInfo`, as `cg-windows.swift` does.
+**Naming a window**: its window server number, supplied by the backend. Fallback for a backend
+that cannot derive it: the helper matches the app's windows by owner pid and bounds via public
+`CGWindowListCopyWindowInfo`, as `cg-windows.swift` does.
 
 **No writes on macOS.** `CGSMoveWindowsToManagedSpace` (and older `CGSAddWindowsToSpaces` /
 `CGSRemoveWindowsFromSpaces`) and `CGSManagedDisplaySetCurrentSpace` are reported (yabai,
@@ -260,7 +285,7 @@ may set `canPlaceWindows` and drop the stand-in.
   reported shared (`screen: null`).
 - Writes: `_NET_WM_DESKTOP` client message moves a window; `_NET_CURRENT_DESKTOP` client message
   switches desktop. Both capability flags true.
-- Windows named by X window id from `getNativeWindowHandle()`.
+- Windows named by X window id.
 - Packaging: helper process like macOS, built against libX11; root property changes are the
   `DesktopChange`.
 - Checkable on the remote Linux dev box's virtual X server.
@@ -275,9 +300,9 @@ Under XWayland the X11 provider may start and must pass its handshake.
 
 | Fact | macOS | Linux X11 | Wayland / fallback |
 |---|---|---|---|
-| Screens | Electron `screen` | Electron `screen` | Electron `screen` |
+| Screens | backend (Electron: `screen`) | backend | backend |
 | Desktops, and current per screen | helper, private reads | EWMH root properties (shared) | one per screen |
-| A switch happened | Electron's workspace notification | root property change | never |
+| A switch happened | backend trigger (Electron: workspace notification) | root property change | never |
 | A window's desktop | helper, private read | `_NET_WM_DESKTOP` | its screen's only desktop |
 | Every-desktop | backend's own declaration, confirmed by the read | `_NET_WM_DESKTOP` | backend's declaration |
 | Put a window on a desktop | no (needs SIP changes, reported) | yes, client message | no |
@@ -293,6 +318,7 @@ Under XWayland the X11 provider may start and must pass its handshake.
 - electron-builder signs `extraResources` executables on its own.
 - macOS `DesktopId` is stable for the login session (not needed across restarts).
 - `getMediaSourceId()`'s middle number is the window server window number.
+- Electron's display id equals `CGDirectDisplayID` on macOS.
 - macOS writes need SIP changes since 14.5 (reported by yabai / Hammerspoon).
 - Raising a window on another desktop makes macOS switch, for every backend raise path and with
   "When switching to an application, switch to a Space with open windows" off.
@@ -309,9 +335,9 @@ Under XWayland the X11 provider may start and must pass its handshake.
 G13 ("the desktop the user is on") and row 5d ("the desktop it was on when it lost key"), and
 matches `side-task-ends-on-blur.md`'s live check ("the page stays on desktop 2").
 
-**Ending on a switch.** Electron keeps panels on every desktop, so macOS may keep a side task
-focused across a switch or report the loss late. `isSideTask` gains the clause
-`homeIsCurrent(state, record)`:
+**Ending on a switch.** A side task the backend declares on every desktop may stay focused across
+a switch, or its loss of focus may be reported late (Electron backend: macOS panels). `isSideTask`
+gains the clause `homeIsCurrent(state, record)`:
 
 - A `CurrentDesktopChanged` that takes the home off its screen ends the side task in that
   transition; `react`'s existing diff emits the reopen.
@@ -327,9 +353,10 @@ to "belonging to `desktop`".
 
 - **`canPlaceWindows`** (X11; macOS only if the probe's write succeeds): build the replacement
   hidden, `placeWindow(replacement, desktop)`, show without activation. No stand-in.
-- **Without `canPlaceWindows` (macOS):** when the side task opens, the backend also shows a
-  stand-in: an ordinary window at the panel's bounds, zero opacity, click-through, on the opening
-  desktop; backend-private, never registered with the kernel, tracking the panel's bounds. At
+- **Without `canPlaceWindows` (Electron on macOS, where writes need SIP changes):** when the side
+  task opens, the backend also shows a stand-in: an ordinary window at the panel's bounds, zero
+  opacity, click-through, on the opening desktop; backend-private, never registered with the
+  kernel, tracking the panel's bounds. At
   reopen the stand-in becomes the replacement host (opacity restored, input on, page loaded) and
   registers as `replaces: X`. If the side task closes instead (Escape, close request), the stand-in
   is destroyed with it. Moving the page's view instead of reloading is a later choice.
@@ -413,7 +440,10 @@ decides no rule).
 
 ## Order of work
 
-1. **Landed as `250051ad`** (minted ids, `DesktopChanged`); reshaped by commit 3.
+The macOS helper and its probe come before the kernel reshape because everything rests on the
+helper's reads; if they fail, nothing has yet been built on them.
+
+1. **Landed as `250051ad`** (minted ids, `DesktopChanged`); reshaped by commit 4.
    - Survives: `DesktopId`; `WindowRecord.desktop`; `WindowRecord.onEveryDesktop` with its
      registration plumbing (`WindowRegistered` event and `RegisterWindow` command fields,
      `window-machine.ts registerWindowWithMachine`, `ElectronWindowBackend.registerWindow`
@@ -421,24 +451,27 @@ decides no rule).
      `WindowShown` (`desktopOnShow`, changed to read the window's screen's current desktop instead
      of `State.desktop`); the `attachSpaceChangeListener` subscription as switch trigger; the
      `native-blur` and `os-focus-left-app` log lines; desktop-state tests not depending on minting.
-   - Removed by commit 3: `State.desktop`, `State.desktopCounter`, `mintedDesktopId`,
+   - Removed by commit 4: `State.desktop`, `State.desktopCounter`, `mintedDesktopId`,
      `DesktopChanged` and its `evolve` arm, `kernelDesktopChanged` in `window-kernel-dispatch.ts`,
      the `focused` read in `attachSpaceChangeListener`, the stamp in the `OsFocusGained` arm, and
      tests for minting, `name`, `focused` stamping and focus stamping.
-   - Changed by commit 3: `onCurrentDesktop` keeps name and meaning over the new state; the
+   - Changed by commit 4: `onCurrentDesktop` keeps name and meaning over the new state; the
      `space-changed` log line prints each screen's current desktop and each window's
      `id:screen/desktop|*|?:v|h` from the new fields.
 2. **Remove the first probe's hooks**: `installDesktopProbe` and its `probe*` members in
    `electron-window-backend.ts`, own commit.
-3. **Model with the fallback provider only.** Kernel: `State.screens` / `State.desktops`,
-   `WindowRecord.screen`, the three events, `isCurrentDesktop`, `homeIsCurrent`, reshaped
-   `onCurrentDesktop`, `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend:
-   `desktop-provider.ts`, `desktop-provider-fallback.ts`, the report → event loop. No rule reads the
-   new state; behaviour unchanged on every platform (pinned by the property test).
-4. **macOS helper and provider**: `main.swift`, `build-desktop-helper.mjs`, the `extraResources`
-   entry, `desktop-provider-mac.ts`, the fail-safe, temporary probe hooks behind
-   `PEEK_DESKTOP_PROBE=1`. Then the probe on a real Mac with a person. Stop and report if ids are
-   not stable across returns or the stand-in does not keep its desktop.
+3. **Providers and the macOS helper, no kernel change**: `desktop-provider.ts`,
+   `desktop-provider-fallback.ts`, `main.swift`, `build-desktop-helper.mjs`, the `extraResources`
+   entry, `desktop-provider-mac.ts`, the fail-safe, the `check-platform-leak.mjs` additions, and
+   temporary probe hooks behind `PEEK_DESKTOP_PROBE=1`. The kernel has no desktop events yet, so
+   the probe hooks are the provider's only report sink: they log its reads directly. Then the probe
+   on a real Mac with a person. Stop and report if ids are not stable across returns or the
+   stand-in does not keep its desktop.
+4. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
+   three events, `isCurrentDesktop`, `homeIsCurrent`, reshaped `onCurrentDesktop`,
+   `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend: the report → event loop, fed
+   by whichever provider started. No rule reads the new state; behaviour unchanged on every
+   platform (pinned by the property test).
 5. **Side task ends on a switch** (`isSideTask` clause) and kernel `replaces` / `replacedBy` close
    and focus ordering (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the
    switcher's cross-desktop reach under rule 1. Remove probe hooks if still present.
@@ -485,7 +518,7 @@ events are only what the fallback provider sends (one layout, placements on each
 desktop, no `CurrentDesktopChanged`), every effect list equals the one with desktops ignored.
 
 Provider tests (`desktop-provider.test.ts`, every platform): fallback layout and placements from a
-stubbed `screen`; macOS provider against a fake helper (node script speaking the protocol) for
+stubbed backend screen list; macOS provider against a fake helper (node script speaking the protocol) for
 parsing, a shared-desktops layout, and each fail-safe case (binary missing, handshake timeout,
 symbols unavailable, malformed line, request timeout, helper exit), each ending on the fallback
 provider with one `desktop-provider fallback` line. The real helper runs only in the probe.
@@ -507,10 +540,11 @@ Run from this worktree with `PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktop
 TMPDIR=<worktree>/.tmp`. The agent builds, starts the app, reads `main.log`, and asks the person
 only for the gestures below.
 
-### The probe, after commit 4
+### The probe, after commit 3
 
 Hooks (temporary, `PEEK_DESKTOP_PROBE=1`, no behaviour change): on every switch and screen change,
-log `desktop-read` with the helper's full layout and every registered window's placement;
+log `desktop-read` with the helper's full layout and every registered window's placement, read
+from the provider directly (the kernel receives no desktop events before commit 4);
 Control+Option+Command+1 runs the write test.
 
 Precondition, checked by the agent in the log: `desktop-provider started name=mac` and a `hello`
@@ -522,12 +556,12 @@ desktop 1. With a second screen, two desktops there too.
 
 | # | Gesture | Verifies |
 |---|---|---|
-| 1 | On desktop 2, open a page from the palette. | Page reported on every desktop with home = desktop 2's id; layout shows two desktops on the main screen, desktop 2 current. |
+| 1 | On desktop 2, open a page from the palette. | Page's window read as on every desktop; layout shows two desktops on the main screen, desktop 2 current. |
 | 2 | Control+Left, wait two seconds, Control+Right. | Current-desktop reads go 2 → 1 → 2; desktop 2 has the same id both times. |
 | 3 | Say which desktop the page is on now (switch to look, come back to desktop 2). | Helper's read for the page's window (the replacement, after reopen) matches: the Electron-derived window number is the window server's. |
 | 4 | Control+Option+Command+1, switch to desktop 1, say whether a small red square is there. | Hook shows on desktop 2 a small opaque red test window and an invisible stand-in (as in "Side tasks"), logs both placements, asks the helper to move the red window to desktop 1, logs its placement. Red square on desktop 1 and read as desktop 1 = helper move works. Stand-in read on desktop 2 before and after the switch. |
 | 5 | Still on desktop 1, open Mission Control, say whether desktop 2's thumbnail shows an empty window or frame, close it. | Stand-in leaves no visible trace; agent re-reads its placement. |
-| 6 | Second screen only: click its desktop background, Control+Right, Control+Left. | Only that screen's current desktop changes, and its screen id is Electron's display id; with shared desktops, both screens change together. |
+| 6 | Second screen only: click its desktop background, Control+Right, Control+Left. | Only that screen's current desktop changes, and the helper's display id maps to an Electron display; with shared desktops, both screens change together. |
 
 The agent then closes the test windows and the app. Results go into **Result**. The track stops if
 gesture 2 shows ids changing on return, or gestures 4–5 show the stand-in off desktop 2 or visible
