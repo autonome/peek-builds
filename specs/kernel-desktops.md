@@ -292,8 +292,11 @@ interface DesktopProvider {
 ```
 
 `ProviderLayout` is `ScreenState[]` / `DesktopState[]` with screens named by the platform's display
-id (macOS `CGDirectDisplayID`; none on X11, whose desktops are shared); the backend maps those to
-its `ScreenId`s. `DesktopChange` is "layout changed" or "current desktop changed on display D". A
+id, `ProviderDisplayId`, a non-empty string (macOS `CGDirectDisplayID` in decimal); the backend
+maps those to its `ScreenId`s. `display: null` on a screen or desktop means shared across every
+screen (X11 always). `DesktopChange` is `layout-changed`, `current-desktop-changed { display }`, or
+`failed { reason }`. `failed` is how a platform provider reports it can no longer answer (for a
+helper, it exited); only the fail-safe wrapper sees it, and it MUST NOT reach the backend. A
 provider lacking a capability sets the flag false and returns `false` from the call.
 
 ### Backend algorithm
@@ -315,11 +318,36 @@ exits. After switching, the backend sends a fresh `DesktopLayoutReported` and pl
 fallback provider, and the app behaves as with the fallback provider for the rest of the session.
 No retry.
 
+Malformed data is any of:
+
+- a layout that is not `{ screens, desktops }` arrays of the documented shapes (ids non-empty
+  strings, `display` a non-empty string or `null`), or whose screen shows a desktop the layout
+  does not list;
+- placements that do not answer exactly the windows asked, each once, or whose entry has a
+  non-number `window`, a `desktop` other than a non-empty string or `null`, or a non-boolean
+  `onEveryDesktop`;
+- a non-boolean answer to a write;
+- from a helper, a line that is not JSON or answers no pending request.
+
+The wrapper validates every answer; providers pass them through. The failing request is answered
+from the fallback provider, then the backend is told `layout-changed` so it re-reads everything.
+
+Log lines, each `[wm] t=<ms since epoch> <line>`: a good start logs `desktop-provider started
+name=<provider name>`; the switch logs `desktop-provider fallback reason=<reason>` once per session,
+whitespace in `<reason>` replaced by `_`. Reasons: `no-provider`, `handshake-timeout`,
+`start-failed:<cause>` (for example `helper-missing`, `symbols-unavailable:<names>`,
+`helper-exit_code=<n>`), `request-timeout:<op>`, `request-failed:<op>:<cause>`, `malformed:<op>`,
+and a `failed` change's own reason (`helper-exit_code=<n>`, `malformed-line`).
+
 ### Fallback provider (all platforms)
 
-`desktop-provider-fallback.ts`. Given the backend's screen list: one desktop per screen, id
-`<screenId>/only`, always current. A window's placement is its screen's only desktop;
-`onEveryDesktop` is the backend's declaration. Both capability flags false. Never sends
+`desktop-provider-fallback.ts`. The backend feeds it a screen source, read on every request:
+`screens()` (its `ScreenId`s, so the fallback's display ids are the backend's screen ids),
+`windowScreen(win)` and `onEveryDesktop(win)`, because a placement request names windows only by
+platform window id. One desktop per screen, id `<screenId>/only`, always current. A window's
+placement is its screen's only desktop; a window of unknown or vanished screen counts as on the
+first screen; with no screens, `display` and `desktop` are `null`. `onEveryDesktop` is the
+backend's declaration. Both capability flags false. Never sends
 `CurrentDesktopChanged`, so every window is always on a current desktop and every rule acts as if
 desktops did not exist.
 
