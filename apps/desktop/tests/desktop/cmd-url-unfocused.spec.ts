@@ -8,8 +8,8 @@
  *
  * This pins the kernel's half only: with the app inactive the page record is
  * shown and stays visible, no `HideApp` is issued when the palette goes away,
- * the native window reports visible, the page takes key as a side task without
- * the app activating, losing key ends the side task and reopens the page as an
+ * the native window reports visible, the page takes key as a transient page-host window without
+ * the app activating, losing key ends the transient page-host window and reopens the page as an
  * ordinary window on one desktop (G13), and Escape closes it. Real OS focus and
  * what the display actually shows with another app frontmost are unobservable
  * headless, so the assertions read the kernel's own record — `State` and the
@@ -197,7 +197,7 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(nativeVisible).toBe(true);
 
     // The palette held key over the other app when the page was asked for, so
-    // the page is a side task (docs/design/window-rules.md G1): built
+    // the page is a transient page-host window (docs/design/window-rules.md G1): built
     // non-activating, raised with the user's intent, and handed key — all with
     // the app still inactive. It is held above other apps until the app next
     // becomes active, so it does not stay above every app for good. The native
@@ -208,7 +208,7 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
     expect(effectsFor(timeline, 'HoldAboveOtherApps', pageWmId).length, timeline.join('\n')).toBe(1);
 
-    // The side task ends when the page loses key with the app still inactive
+    // The transient page-host window is replaced by the reopened window when the page loses key with the app still inactive
     // (window-rules.md G13): the user clicked the other app. The real `blur`
     // on the host is what the OS would fire; the backend's settle turns it
     // into the key window losing focus. The kernel then asks for the page to
@@ -265,15 +265,15 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(effectsFor(afterEscape, 'ReopenAsOrdinaryWindow', reopenedWmId), afterEscape.join('\n')).toEqual([]);
   });
 
-  test('the app activating while the side task holds key reopens the page as the front window', async () => {
+  test('the app activating while the transient page-host window holds key reopens the page as the front window', async () => {
     const url = `http://127.0.0.1:${serverPort}/activated`;
     const { opened, pageWmId } = await openPageFromPaletteInBackground(url);
 
     const before = await readState();
     expect(before.appActive).toBe(false);
-    expect(before.key, 'the page did not take key as a side task').toBe(pageWmId);
+    expect(before.key, 'the page did not take key as a transient page-host window').toBe(pageWmId);
 
-    // The user brings the app forward (cmd+tab) while the side task holds
+    // The user brings the app forward (cmd+tab) while the transient page-host window holds
     // key: the same `AppActivated` the backend feeds from the OS. The side
     // task ends (window-rules.md G13 step 5e) and the reopened page must be
     // the front window: the replacement opens before the panel host closes,
@@ -306,7 +306,7 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     const timeline = await readTimeline(sinceActivation);
     expect(effectsFor(timeline, 'ReopenAsOrdinaryWindow', pageWmId).length, timeline.join('\n')).toBe(1);
     // The activation itself raises the window it releases from above other
-    // apps (G1), which is the side task about to close. From its close on, the
+    // apps (G1), which is the transient page-host window about to close. From its close on, the
     // only raise is the successor raise, and it lands on the replacement.
     const closeAt = timeline.findIndex((l) => l.includes(`WindowClosed(${pageWmId})`));
     expect(closeAt, timeline.join('\n')).toBeGreaterThan(-1);

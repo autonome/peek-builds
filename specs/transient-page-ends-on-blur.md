@@ -4,20 +4,20 @@ touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel-ex
 depends-on: []
 ---
 
-# A side task ends when it loses key: the page is reopened as an ordinary window
+# A transient page-host window ends when it loses key: the page is reopened as an ordinary window
 
 Peek item `f46a44ad`. A page opened from the command palette while another app is frontmost is a
-side task (`izui-roles.ts pageOpensAsSideTask()`, `docs/design/window-rules.md` G1): built as a
+transient page-host window (`izui-roles.ts pageOpensTransient()`, `docs/design/window-rules.md` G1): built as a
 non-activating window (`type: 'panel'`) so it can take typing without the app coming forward.
 Electron forces every panel-type window onto all desktops and keeps it there
 (`shell/browser/ui/cocoa/electron_ns_panel.mm setCollectionBehavior:` re-adds the all-desktops
 bit on every set), so the page follows the user to every desktop and cannot be anchored. The
-side-task design is kept; what changes is that the side task has an end, and at its end the page
+transient page-host design is kept; what changes is that the transient page-host window has an end, and at its end the page
 becomes an ordinary window on the desktop the user is on.
 
 ## The rule
 
-A side task is a non-activating page-hosting application window (`WindowRecord.kind ===
+A transient page-host window is a non-activating page-hosting application window (`WindowRecord.kind ===
 'page-host'`, a content role, `nonActivating === true`) that holds key while the app is inactive.
 It ends the moment either happens:
 
@@ -25,13 +25,13 @@ It ends the moment either happens:
   palette hotkey again, or switches desktop), or
 - the app becomes active while it is key.
 
-When a side task ends, its window is replaced by an ordinary application window showing the same
+When a transient page-host window ends, its window is replaced by an ordinary application window showing the same
 page at the same bounds: activating, anchored to the desktop it is on, not held above other apps,
 shown without focus, and stacked as the frontmost of the app's windows behind the active app.
 The other app keeps focus throughout. Nothing else about the page changes: it is still open, still
 belongs to its workspace, still closes on a close request whether or not the app is active.
 
-Escape on a side task closes it. There is no set-aside: the page either has key or it is closed,
+Escape on a transient page-host window closes it. There is no set-aside: the page either has key or it is closed,
 the same as any other close of a page, and the other app keeps focus (F8).
 
 The palette is unaffected: it is transient and keepLive, so losing key hides it until the next
@@ -41,8 +41,8 @@ hotkey, and as a transient it follows the user across desktops by design
 ## What changes
 
 **Kernel (`window-kernel.ts`).** One new effect, platform-neutral, one intention:
-`ReopenAsOrdinaryWindow { id }`. `react()` emits it when a record that is a side task (definition
-above; write it as a pure predicate `isSideTask(state, record)` next to
+`ReopenAsOrdinaryWindow { id }`. `react()` emits it when a record that is a transient page-host window (definition
+above; write it as a pure predicate `isTransientPageHost(state, record)` next to
 `admitsHoldAboveOtherApps`) satisfies either end condition across a transition:
 
 - `OsFocusLost` for that window with `state.appActive === false`, or
@@ -57,9 +57,9 @@ executor realizes `ReopenAsOrdinaryWindow` by reading the record's URL, bounds a
 issuing `CloseOrHideWindow` for it, and re-entering the window-open path in
 `ipc.ts registerWindowHandlers` with the same params minus `type`, plus the saved bounds and a
 show-without-focus intent (the spelling today is `show: false`, which `assembleHybridPageHost`
-turns into `showHybridHost(.., { inactive: true })`). `pageOpensAsSideTask()` returns false for the
+turns into `showHybridHost(.., { inactive: true })`). `pageOpensTransient()` returns false for the
 reopen because it declares a `type`-less open that is `show: false`; keep that guard, it is what
-stops the reopen from becoming a side task again. The reopened host is an ordinary `BaseWindow`, so
+stops the reopen from becoming a transient page-host window again. The reopened host is an ordinary `BaseWindow`, so
 AppKit leaves it on the current desktop; no desktop-membership call is needed, and none may be made
 on it while the app is inactive (the "anchor" pair in `electron-window-backend.ts
 setDesktopMembership` flashes the window and moves it to the active desktop).
@@ -70,16 +70,16 @@ accepted: the user has just left the page and the app is inactive, so the reload
 when they return to it within its load time. Moving the `WebContentsView` between hosts would keep
 the state and is the follow-up if the loss shows up in use; nothing in the rule changes for it.
 
-**Escape (`window-escape.ts`).** The side-task branch of `interpretEscape()` issues
-`CloseOrHideWindow`, unconditionally. Delete the old set-aside path outright: the `SideTaskEscape`
-type, the `SIDE_TASK_ESCAPE` constant, the `sideTaskEscape` parameter and every caller that passes
+**Escape (`window-escape.ts`).** The transient page-host branch of `interpretEscape()` issues
+`CloseOrHideWindow`, unconditionally. Delete the old set-aside path outright: the `TransientPageEscape`
+type, the `TRANSIENT_PAGE_ESCAPE` constant, the `transientPageEscape` parameter and every caller that passes
 it, and the `HideWindow` command with `returnsOnActivation: true` that the branch built. If that
 branch was the only producer of `returnsOnActivation`, remove the field from the `HideWindow`
 command and the `WindowHidden` event and the kernel code that reads it; if another producer
 remains, leave the field and say which producer in **Result**.
 
-**Rules doc (`docs/design/window-rules.md`).** Add G13 side-task-ends stating the rule above.
-Amend the last sentence of G1 and of F6 so the hold on a side task lasts until the side task ends,
+**Rules doc (`docs/design/window-rules.md`).** Add G13 transient-page-ends stating the rule above.
+Amend the last sentence of G1 and of F6 so the hold on a transient page-host window lasts until the transient page-host window is replaced by the reopened window,
 not until the app activates. Rewrite the table in "Opening a page from another app": steps 5a
 (Escape: page closes), 5c (click the other app: page reopens as an ordinary window behind the
 other app, on this desktop), and add 5d (switch desktop: same as 5c, the page stays on the desktop
@@ -90,26 +90,26 @@ above every app after the user leaves it" citing G13.
 
 ## What stays
 
-- `pageOpensAsSideTask()`, `windowNonActivating()`, `isKeyHeldWhileAppInactive()` and their tests.
-- The side-task open in `ipc.ts registerWindowHandlers` (`options.type = 'panel'`,
-  `options.activation = 'user'`, the `page-opens-as-side-task` log line).
-- The hold above other apps while the side task is alive (`heldAboveOtherApps`); it ends with the
+- `pageOpensTransient()`, `windowNonActivating()`, `isKeyHeldWhileAppInactive()` and their tests.
+- The transient page-host open in `ipc.ts registerWindowHandlers` (`options.type = 'panel'`,
+  `options.activation = 'user'`, the `page-opens-transient` log line).
+- The hold above other apps while the transient page-host window is alive (`heldAboveOtherApps`); it ends with the
   close.
 - `hybridShowIntent()` / `showHybridHost()`. Their `nonActivating` flag is keyed on the quick-view
-  role and disagrees with the machine record for a side task; out of scope here, note it on the
+  role and disagrees with the machine record for a transient page-host window; out of scope here, note it on the
   item.
 - The diag tracing from earlier on this branch is already reverted (`e2a50a83`, `579f75cc`).
 
 ## Tests to change
 
-- `window-kernel.test.ts`: a table for `ReopenAsOrdinaryWindow`. Emitted: side task loses key with
-  the app inactive; app activates while the side task is key. Not emitted: the palette (kind
-  `browser`) loses key; an ordinary content window loses key with the app inactive; a side task
-  loses key after the app is already active (it was reopened at activation); a hidden side task.
+- `window-kernel.test.ts`: a table for `ReopenAsOrdinaryWindow`. Emitted: transient page-host window loses key with
+  the app inactive; app activates while the transient page-host window is key. Not emitted: the palette (kind
+  `browser`) loses key; an ordinary content window loses key with the app inactive; a transient page-host window
+  loses key after the app is already active (it was reopened at activation); a hidden transient page-host window.
   Exactly one emission per window across the whole transition sequence.
-- `window-escape.test.ts`: the side-task Escape test asserts a `CloseOrHideWindow` command and
+- `window-escape.test.ts`: the transient page-host Escape test asserts a `CloseOrHideWindow` command and
   nothing about a setting; delete any test that existed only to pin the removed constant.
-- `cmd-url-unfocused.spec.ts` (darwin-only): after the existing side-task assertions, inject the
+- `cmd-url-unfocused.spec.ts` (darwin-only): after the existing transient page-host assertions, inject the
   OS focus-lost report for the page through the executor's test surface (the same route the
   spec's Escape injection uses), then assert from the kernel record and timeline: the original
   page id is closed, one new page-host record exists with the same URL, `nonActivating` is false
@@ -129,11 +129,11 @@ node scripts/check-platform-leak.mjs
 ```
 
 Then one live check on macOS with a person, from this worktree on a fresh profile
-(`yarn kill`, then launch with `PROFILE=agent-side-task-1`). The person performs only the
+(`yarn kill`, then launch with `PROFILE=agent-transient-page-1`). The person performs only the
 gesture, on desktop 2 with another app frontmost: open a URL from the palette, type into the page,
 click the other app, switch to desktop 1 and back, then press cmd+tab to the app. Expected: the
 page stays on desktop 2, drops behind the other app on the click, does not follow across desktops,
-and comes forward on the cmd+tab. The profile's `main.log` shows `event=side-task-reopen` once,
+and comes forward on the cmd+tab. The profile's `main.log` shows `event=transient-page-reopen` once,
 right after the click.
 
 ## Result

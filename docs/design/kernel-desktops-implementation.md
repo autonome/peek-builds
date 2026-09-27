@@ -161,11 +161,11 @@ helper's reads; if they fail, nothing has yet been built on them.
    not stable across returns or the placeholder window does not keep its desktop; never fall back
    to letting the page follow the user.
 5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
-   three events, `isCurrentDesktop`, `homeIsCurrent`, reshaped `onCurrentDesktop`,
+   three events, `isCurrentDesktop`, `openedOnCurrentDesktop`, reshaped `onCurrentDesktop`,
    `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend: the report → event loop, fed by
    whichever provider started. No rule reads the new state; behaviour unchanged on every platform
    (pinned by the property test).
-6. **A desktop switch replaces a transient page-host window** (the `homeIsCurrent` clause of
+6. **A desktop switch replaces a transient page-host window** (the `openedOnCurrentDesktop` clause of
    `isTransientPageHost`) and kernel `replaces` / `replacedBy` close and focus ordering
    (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the switcher's
    cross-desktop reach under rule 1. Remove probe hooks if still present.

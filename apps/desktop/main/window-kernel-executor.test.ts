@@ -1707,13 +1707,13 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
   }
 
   /**
-   * The shape a side task has live: a settings-like window on screen, a
+   * The shape a transient page-host window has live: a settings-like window on screen, a
    * palette that held key over the other app, and the page that took key from
    * the palette, which then hid itself. The page's prior key window is the
    * hidden palette, so the close's successor falls through to the topmost
    * content window.
    */
-  function sideTaskSetup(): { exec: WindowKernelExecutor; backend: ReenteringBackend } {
+  function transientPageHostSetup(): { exec: WindowKernelExecutor; backend: ReenteringBackend } {
     const backend = new ReenteringBackend();
     const exec = new WindowKernelExecutor(backend, { headless: false });
     backend.exec = exec;
@@ -1736,7 +1736,7 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
   }
 
   it('the replacement registered and shown from inside the effect is visible afterwards', () => {
-    const { exec, backend } = sideTaskSetup();
+    const { exec, backend } = transientPageHostSetup();
     exec.dispatch({ type: 'AppActivated' });
     assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow').map((c) => c.args[0]), [wid(1)]);
     const replacement = exec.getState().order.find((w) => w.id === wid(2));
@@ -1746,14 +1746,14 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
   });
 
   it('with the app active, the close of the old window hands the raise to the replacement', () => {
-    const { exec, backend } = sideTaskSetup();
+    const { exec, backend } = transientPageHostSetup();
     exec.dispatch({ type: 'AppActivated' });
     const raises = backend.of('raiseWindow').map((c) => c.args[0]);
     assert.strictEqual(raises[raises.length - 1], wid(2));
   });
 
   it('with the app inactive, the close of the old window raises nothing', () => {
-    const { exec, backend } = sideTaskSetup();
+    const { exec, backend } = transientPageHostSetup();
     exec.dispatch({ type: 'OsFocusLost', id: wid(1) });
     assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow').map((c) => c.args[0]), [wid(1)]);
     const replacement = exec.getState().order.find((w) => w.id === wid(2));

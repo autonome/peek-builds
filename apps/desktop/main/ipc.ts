@@ -119,7 +119,7 @@ import {
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   windowNonActivating,
-  pageOpensAsSideTask,
+  pageOpensTransient,
   deriveWindowSurface,
   isSatelliteRegistration,
   classifyWindowRegistration,
@@ -497,8 +497,8 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
 
 // Open options that describe the window being replaced rather than the page:
 // its geometry, its non-activating type, the raise intent of the open that
-// made it a side task, and per-open bookkeeping the handler derives afresh.
-const SIDE_TASK_REOPEN_STRIP = new Set([
+// made it a transient page-host window, and per-open bookkeeping the handler derives afresh.
+const TRANSIENT_PAGE_REOPEN_STRIP = new Set([
   'type',
   'activation',
   'show',
@@ -516,7 +516,7 @@ const SIDE_TASK_REOPEN_STRIP = new Set([
 ]);
 
 /**
- * A side task has ended (`window-kernel.ts isSideTask`, window-rules.md G13):
+ * A transient page-host window has ended (`window-kernel.ts isTransientPageHost`, window-rules.md G13):
  * close its non-activating window and open the same page again as an ordinary
  * window at the same bounds, shown without focus. A window built as a panel
  * can neither activate the app nor stay on one desktop, and Electron fixes
@@ -527,7 +527,7 @@ const SIDE_TASK_REOPEN_STRIP = new Set([
  * key the replacement is the topmost remaining window when the host goes:
  * the successor raise the close provokes (window-rules.md F7, the app-active
  * case of G13 step 5e) lands on the reopened page, not on whatever the app
- * had in front before the side task. When key was already lost (the click-
+ * had in front before the transient page-host window. When key was already lost (the click-
  * away case) the close provokes no raise and the replacement, registered on
  * top, sits behind the other app. The open carries `trackingSource: 'reopen'`
  * so the URL dedup in `windowOpenHandler` does not hand back the host being
@@ -539,7 +539,7 @@ export function reopenWindowAsOrdinary(osWindowId: number): void {
   const hybrid = getHybridWindow(osWindowId);
   const bgWin = getBackgroundWindow();
   if (!info || !hybrid || hybrid.baseWin.isDestroyed() || !invokeWindowOpen || !bgWin) {
-    wmLog('side-task-reopen-dropped', {
+    wmLog('transient-page-reopen-dropped', {
       id: osWindowId,
       hasInfo: info !== undefined,
       hasHybrid: hybrid !== null,
@@ -551,7 +551,7 @@ export function reopenWindowAsOrdinary(osWindowId: number): void {
   const bounds = hybrid.baseWin.getBounds();
   const options: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(info.params)) {
-    if (!SIDE_TASK_REOPEN_STRIP.has(key)) options[key] = value;
+    if (!TRANSIENT_PAGE_REOPEN_STRIP.has(key)) options[key] = value;
   }
   options.x = bounds.x;
   options.y = bounds.y;
@@ -560,21 +560,21 @@ export function reopenWindowAsOrdinary(osWindowId: number): void {
   // Shown without focus: the app is inactive and stays so (window-rules.md G1
   // — a window shown without a focus is never held above other apps).
   options.show = false;
-  // The page was already visited when the side task opened it.
+  // The page was already visited when the transient page-host window opened it.
   options.skipTracking = true;
   // Names this open as the reopen so the URL dedup in `windowOpenHandler`
   // does not reuse the host that is about to close.
   options.trackingSource = 'reopen';
   const source = info.source;
-  wmLog('side-task-reopen', { id: osWindowId, url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+  wmLog('transient-page-reopen', { id: osWindowId, url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
   const open = invokeWindowOpen({ sender: bgWin.webContents }, { source, url, options });
   void open
     .catch((err) => {
-      console.error('[side-task-reopen] invokeWindowOpen failed:', err);
+      console.error('[transient-page-reopen] invokeWindowOpen failed:', err);
     })
     .then(() => closeOrHideWindow(osWindowId))
     .catch((err) => {
-      console.error('[side-task-reopen] close of the panel host failed:', err);
+      console.error('[transient-page-reopen] close of the panel host failed:', err);
     });
 }
 
@@ -3359,15 +3359,15 @@ export function registerWindowHandlers(): void {
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
     if (usePageHost) {
-      // A side task (`izui-roles.ts pageOpensAsSideTask()`) is built as a
+      // A transient page-host window (`izui-roles.ts pageOpensTransient()`) is built as a
       // panel, the one window type that can hold key in an inactive app, and
       // its open carries the user intent of the keystroke that asked for it,
       // so the raise reaches it (window-rules.md F6) with content focus and
       // without the app coming forward.
-      if (pageOpensAsSideTask(isKeyHeldWhileAppInactive(), options)) {
+      if (pageOpensTransient(isKeyHeldWhileAppInactive(), options)) {
         options.type = 'panel';
         options.activation = 'user';
-        wmLog('page-opens-as-side-task', { url: String(url) });
+        wmLog('page-opens-transient', { url: String(url) });
       }
       // Tracks the constructed host across the try so the catch can clean up
       // a construct→register-gap throw (see destroyUnassembledHybridHost).

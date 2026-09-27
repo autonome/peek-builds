@@ -52,7 +52,7 @@ reopen dispatches VISIBILITY_SHOWN (reset → IDLE)"); that reuse never happens 
 
 On darwin the kernel's `appActive` is fed only by `did-become-active` / `did-resign-active`
 (`main/electron-window-backend.ts attachAppListeners()`), and a `type: 'panel'` palette can take key
-without activating the app — the side-task model in `docs/design/window-rules.md` G1, which this
+without activating the app — the transient page-host model in `docs/design/window-rules.md` G1, which this
 test pins. Off darwin, `main/main.ts` falls back to `app.on('browser-window-focus')` →
 `kernelAppActivated()`, so any Peek window gaining OS focus marks the app active. Under
 `scripts/playwright-with-display.sh` openbox focuses the newly mapped palette

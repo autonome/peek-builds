@@ -202,7 +202,7 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
       command: { type: 'CloseOrHideWindow', id: record.id, expectedVersion: state.version },
     };
   }
-  // A window that takes Escape while the app is inactive is a side task over
+  // A window that takes Escape while the app is inactive is a transient page-host window over
   // another app: Escape closes it and leaves the user where they were, whatever
   // its role. The switcher would bring the app forward over the task the user
   // never left. A workspace window is never closed by Escape, here included,

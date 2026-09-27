@@ -21,7 +21,7 @@ import {
   isAppResignSweepEligible,
   holdsAppOnScreen,
   isNonParentRole,
-  isSideTask,
+  isTransientPageHost,
   onCurrentDesktop,
   isOnEveryDesktop,
   windowById,
@@ -7601,7 +7601,7 @@ describe('window-kernel: a user-intent raise is never redundant while the app is
   });
 });
 
-describe('window-kernel: a side task ends when it loses key, and the window is reopened as an ordinary one (window-rules.md G13)', () => {
+describe('window-kernel: a transient page-host window ends when it loses key, and the window is reopened as an ordinary one (window-rules.md G13)', () => {
   const sidePage = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
     type: 'WindowRegistered',
     id,
@@ -7628,9 +7628,9 @@ describe('window-kernel: a side task ends when it loses key, and the window is r
   const record = (state: State, id: WindowId): WindowRecord => state.order.find((w) => w.id === id)!;
   const reopens = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'ReopenAsOrdinaryWindow');
 
-  // A side task in flight: the app inactive, the page shown, raised with user
+  // A transient page-host window in flight: the app inactive, the page shown, raised with user
   // intent from the palette, and confirmed key by the OS.
-  const sideTaskInFlight = (id: WindowId, extra?: Partial<Extract<Event, { type: 'WindowRegistered' }>>): State =>
+  const transientPageHostHoldingKey = (id: WindowId, extra?: Partial<Extract<Event, { type: 'WindowRegistered' }>>): State =>
     fold([
       { type: 'AppResigned' },
       sidePage(id, extra),
@@ -7639,42 +7639,42 @@ describe('window-kernel: a side task ends when it loses key, and the window is r
       { type: 'OsFocusGained', id },
     ]);
 
-  it('the fixture is a side task', () => {
-    const state = sideTaskInFlight(wid(1));
+  it('the fixture is a transient page-host window', () => {
+    const state = transientPageHostHoldingKey(wid(1));
     assert.strictEqual(state.appActive, false);
     assert.strictEqual(state.key, wid(1));
-    assert.strictEqual(isSideTask(state, record(state, wid(1))), true);
+    assert.strictEqual(isTransientPageHost(state, record(state, wid(1))), true);
   });
 
   it('losing key with the app still inactive reopens the page', () => {
-    const before = sideTaskInFlight(wid(1));
+    const before = transientPageHostHoldingKey(wid(1));
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     assert.deepStrictEqual(reopens(after.effects), [{ type: 'ReopenAsOrdinaryWindow', id: wid(1) }]);
     assert.strictEqual(after.state.appActive, false, 'the other app keeps focus');
-    assert.strictEqual(isSideTask(after.state, record(after.state, wid(1))), false);
+    assert.strictEqual(isTransientPageHost(after.state, record(after.state, wid(1))), false);
   });
 
   it('the app activating while the page is key reopens it too', () => {
-    const before = sideTaskInFlight(wid(1));
+    const before = transientPageHostHoldingKey(wid(1));
     const after = foldWithEffects([{ type: 'AppActivated' }], before);
     assert.deepStrictEqual(reopens(after.effects), [{ type: 'ReopenAsOrdinaryWindow', id: wid(1) }]);
   });
 
-  it('key moving to the palette (the hotkey pressed again) ends the side task', () => {
-    const before = fold([palette(wid(9))], sideTaskInFlight(wid(1)));
+  it('key moving to the palette (the hotkey pressed again) ends the transient page-host window', () => {
+    const before = fold([palette(wid(9))], transientPageHostHoldingKey(wid(1)));
     const after = foldWithEffects([{ type: 'WindowShown', id: wid(9) }, { type: 'OsFocusGained', id: wid(9) }], before);
     assert.deepStrictEqual(reopens(after.effects), [{ type: 'ReopenAsOrdinaryWindow', id: wid(1) }]);
   });
 
   it('emits once: a second focus-lost report for the same window reopens nothing', () => {
-    const before = sideTaskInFlight(wid(1));
+    const before = transientPageHostHoldingKey(wid(1));
     const first = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     const second = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }, { type: 'AppActivated' }], first.state);
     assert.strictEqual(reopens(first.effects).length, 1);
     assert.deepStrictEqual(reopens(second.effects), []);
   });
 
-  it('a palette losing key is not a side task and is not reopened', () => {
+  it('a palette losing key is not a transient page-host window and is not reopened', () => {
     const before = fold([
       { type: 'AppResigned' },
       palette(wid(9)),
@@ -7687,15 +7687,15 @@ describe('window-kernel: a side task ends when it loses key, and the window is r
     assert.deepStrictEqual(reopens(after.effects), []);
   });
 
-  it('an ordinary page losing key with the app inactive is not reopened — only a non-activating one is a side task', () => {
-    const before = sideTaskInFlight(wid(1), { nonActivating: undefined });
-    assert.strictEqual(isSideTask(before, record(before, wid(1))), false);
+  it('an ordinary page losing key with the app inactive is not reopened — only a non-activating one is a transient page-host window', () => {
+    const before = transientPageHostHoldingKey(wid(1), { nonActivating: undefined });
+    assert.strictEqual(isTransientPageHost(before, record(before, wid(1))), false);
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     assert.deepStrictEqual(reopens(after.effects), []);
   });
 
-  it('a side task that closes or hides in the same transition is not reopened — Escape and a close request end it outright', () => {
-    const before = sideTaskInFlight(wid(1));
+  it('a transient page-host window that closes or hides in the same transition is not reopened — Escape and a close request end it outright', () => {
+    const before = transientPageHostHoldingKey(wid(1));
     const closed = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], before);
     assert.deepStrictEqual(reopens(closed.effects), []);
     const hidden = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], before);
@@ -7703,7 +7703,7 @@ describe('window-kernel: a side task ends when it loses key, and the window is r
   });
 
   it('losing key after the app is already active reopens nothing — the reopen happened at activation', () => {
-    const before = sideTaskInFlight(wid(1));
+    const before = transientPageHostHoldingKey(wid(1));
     const activated = foldWithEffects([{ type: 'AppActivated' }], before);
     assert.strictEqual(reopens(activated.effects).length, 1);
     const later = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], activated.state);

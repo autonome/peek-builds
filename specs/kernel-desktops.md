@@ -177,7 +177,7 @@ Initial state: no screens, no desktops.
 - `onCurrentDesktop(state, record): boolean` — `isOnEveryDesktop(record)`, or `record.desktop` is
   current. False both for a window on a desktop no screen shows and for a window never shown,
   except that it is true for every window before the first layout report.
-- `homeIsCurrent(state, record): boolean` — `record.desktop` is current, ignoring `onEveryDesktop`.
+- `openedOnCurrentDesktop(state, record): boolean` — `record.desktop` is current, ignoring `onEveryDesktop`.
   Used by the rule for transient page-host windows.
 - `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and on
   a current desktop, or hidden. A hidden window is re-shown on the current desktop of its screen;
@@ -218,7 +218,7 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 ### Kernel behaviour
 
-- **Leaving by switching desktop.** `isTransientPageHost` includes `homeIsCurrent(state, record)`.
+- **Leaving by switching desktop.** `isTransientPageHost` includes `openedOnCurrentDesktop(state, record)`.
   A `CurrentDesktopChanged` that takes the desktop a transient page-host window was opened on off
   its screen makes `isTransientPageHost` false in that transition, and `react`'s diff emits
   `ReopenAsOrdinaryWindow { id, desktop }` carrying that desktop. If `OsFocusLost` came first, the

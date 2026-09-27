@@ -93,7 +93,7 @@ export interface WindowBackend {
   // inactive app's windows where they were shown may answer with a no-op.
   pinAlwaysOnTop(id: WindowId, on: boolean): void;
 
-  // A side task has ended: replace this window with an ordinary one showing
+  // A transient page-host window has ended: replace this window with an ordinary one showing
   // the same page at the same bounds, shown without focus, belonging to the
   // desktop the user is on. The window's id retires with it; the replacement
   // registers as a new window. A backend whose windows can change their

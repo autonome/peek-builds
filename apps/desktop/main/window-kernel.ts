@@ -334,7 +334,7 @@ export type Effect =
   // Return a held window to ordinary stacking — the same window, only its
   // stacking changes. Emitted when `heldAboveOtherApps` goes from true to not-true.
   | { type: 'ReleaseFromAboveOtherApps'; id: WindowId }
-  // A side task has ended (`isSideTask` went from true to false with the
+  // A transient page-host window has ended (`isTransientPageHost` went from true to false with the
   // window still on screen): replace its non-activating window with an
   // ordinary one showing the same page at the same bounds, shown without
   // focus and belonging to the desktop the user is on. One intention; the
@@ -1696,14 +1696,14 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     else if (!isHeld && wasHeld) effects.push({ type: 'ReleaseFromAboveOtherApps', id: nextRecord.id });
   }
 
-  // Side task ends: a structural diff of `isSideTask` per record. Only a
+  // Transient page-host window replaced: a structural diff of `isTransientPageHost` per record. Only a
   // window still on screen is reopened — one that hid or closed in this very
   // transition (Escape, a close request) has nothing left to reopen, and a
   // record that left `next.order` is not visited at all.
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) continue;
-    if (!isSideTask(prev, prevRecord) || isSideTask(next, nextRecord)) continue;
+    if (!isTransientPageHost(prev, prevRecord) || isTransientPageHost(next, nextRecord)) continue;
     if (!nextRecord.visible || nextRecord.pendingHidden === true) continue;
     effects.push({ type: 'ReopenAsOrdinaryWindow', id: nextRecord.id });
   }
@@ -2330,12 +2330,12 @@ export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
   return record.kind === 'page-host' && record.layer === BASE_LAYER && isContentWindow(record);
 }
 
-// A side task: a page the user works in, built non-activating so it could take
+// A transient page-host window: a page the user works in, built non-activating so it could take
 // key while the app was inactive, and holding key that way right now
 // (window-rules.md G1, G13). It ends the moment it stops being key with the
 // app still inactive, or the app becomes active; `react` diffs this predicate
 // across the transition and asks for the window to be reopened as an ordinary one.
-export function isSideTask(state: State, record: WindowRecord): boolean {
+export function isTransientPageHost(state: State, record: WindowRecord): boolean {
   return (
     !state.appActive &&
     state.key === record.id &&

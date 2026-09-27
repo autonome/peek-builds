@@ -227,7 +227,7 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     });
   });
 
-  it('Escape on a page holding key while the app is inactive closes the side task instead of opening the switcher', () => {
+  it('Escape on a page holding key while the app is inactive closes the transient page-host window instead of opening the switcher', () => {
     const sidePage = wid(90);
     const state = fold([{ type: 'AppResigned' }, regHost(sidePage), show(sidePage), focus(sidePage)], loneHost());
     assert.strictEqual(state.appActive, false);
