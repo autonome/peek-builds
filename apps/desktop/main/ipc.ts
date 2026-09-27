@@ -815,6 +815,27 @@ function resolvePopupContentRect(ctorOptions: Electron.BrowserWindowConstructorO
 }
 
 /**
+ * Whether a page's new-window request asks for no opener: `noopener`, or
+ * `noreferrer` (which implies it), in the `window.open` features string.
+ * Boolean features follow the HTML rule: present with no value or `yes` is
+ * true; otherwise the value parses as an integer and is true when non-zero.
+ */
+export function popupRequestsNoOpener(features: string | undefined): boolean {
+  if (!features) return false;
+  for (const raw of features.split(/[\s,]+/)) {
+    if (!raw) continue;
+    const eq = raw.indexOf('=');
+    const name = (eq === -1 ? raw : raw.slice(0, eq)).trim().toLowerCase();
+    if (name !== 'noopener' && name !== 'noreferrer') continue;
+    const value = eq === -1 ? '' : raw.slice(eq + 1).trim().toLowerCase();
+    if (value === '' || value === 'yes') return true;
+    const n = parseInt(value, 10);
+    if (!Number.isNaN(n) && n !== 0) return true;
+  }
+  return false;
+}
+
+/**
  * Leak guard for the hybrid construct→register gap. `createHybridHostBaseWindow`
  * constructs the native BaseWindow, but machine registration happens deep
  * inside `assembleHybridPageHost` (`registerWindowWithMachine`) — so a throw
@@ -2154,6 +2175,207 @@ export function wireHybridContentEvents(
       // opener-wired guest WC is adopted unchanged, so that keeps working —
       // it's just hosted and machine-registered like every other popup.
       const isHttpPopup = popupUrl.startsWith('http://') || popupUrl.startsWith('https://');
+      // Builds the popup's Peek hybrid host. Given Chromium's guest WC
+      // (ctorOptions.webContents) it adopts it; without one it mints a fresh
+      // view carrying the runtime-external preload and loads the URL itself.
+      const buildPopupHost = (ctorOptions: Electron.BrowserWindowConstructorOptions): Electron.WebContents => {
+        // Tracks the constructed host across the try so the catch can clean
+        // up a construct→register-gap throw (see destroyUnassembledHybridHost).
+        let constructedHost: Electron.BaseWindow | null = null;
+        try {
+          // options.webContents is present for window.open / foreground popups
+          // (the OAuth case) and UNDEFINED for background-tab (cmd/ctrl-click,
+          // creation deferred) and for a denied noopener request (called with
+          // {}) — mint a fresh no-opener host in those cases.
+          const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
+          const rect = resolvePopupContentRect(ctorOptions);
+          // DIAG(link-opens-wrong-window)
+          wmLog('diag-popup-create-window', {
+            opener: hostWindowId,
+            url: popupUrl,
+            adopt: !!adoptWC,
+            adoptWc: adoptWC ? adoptWC.id : null,
+            adoptWcUrl: adoptWC && !adoptWC.isDestroyed() ? adoptWC.getURL() : null,
+            adoptWcType: adoptWC ? adoptWC.getType() : null,
+            disposition: details.disposition,
+            features: details.features,
+            ctorX: ctorOptions.x, ctorY: ctorOptions.y, ctorW: ctorOptions.width, ctorH: ctorOptions.height,
+            ctorShow: ctorOptions.show === undefined ? undefined : !!ctorOptions.show,
+            rectX: rect.x, rectY: rect.y, rectW: rect.width, rectH: rect.height,
+          });
+          const baseWin = createHybridHostBaseWindow(rect);
+          constructedHost = baseWin;
+          let view: Electron.WebContentsView;
+          let rtApplied = false;
+          if (adoptWC) {
+            // Adopt Chromium's opener-wired guest WC. preload/webPreferences are
+            // construction-fixed on the WC Chromium already created (inherited
+            // from the opener) — we cannot re-select them here, which is fine for
+            // the OAuth popup case (contextIsolation stays as the opener's).
+            view = new WebContentsView({ webContents: adoptWC });
+          } else {
+            const rtPrefs = getRuntimeExternalWebPrefsForUrl(popupUrl, 'hybrid');
+            rtApplied = !!rtPrefs;
+            view = new WebContentsView({
+              webPreferences: {
+                session: getProfileSession(),
+                contextIsolation: true,
+                devTools: true,
+                ...(rtPrefs
+                  ? {
+                      preload: rtPrefs.preload,
+                      additionalArguments: rtPrefs.additionalArguments,
+                      sandbox: rtPrefs.sandbox,
+                    }
+                  : {}),
+              },
+            });
+          }
+          const placedBounds = baseWin.getBounds();
+          const parentInfo = getWindowInfo(hostWindowId);
+          const source = parentInfo ? parentInfo.source : 'system';
+          assembleHybridPageHost(baseWin, view, {
+            url: popupUrl,
+            // Non-http(s) popups (about:blank, data:, …) skip history
+            // tracking — the pre-adoption default-window path never
+            // tracked them, and an "about:blank" history item is noise.
+            options: isHttpPopup ? {} : { skipTracking: true },
+            source,
+            placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
+            contentX: placedBounds.x,
+            contentY: placedBounds.y,
+            contentW: placedBounds.width,
+            contentH: placedBounds.height,
+            isWebPage: true,
+            openerWindow: null,
+            isRealParent: false,
+            deferContentLoad: false,
+            rtPreloadApplied: rtApplied,
+          });
+          // Navigation ownership splits by case:
+          //  - ADOPTED guest WC (window.open / target=_blank / OAuth popup):
+          //    Chromium created the guest and already wired its navigation to
+          //    details.url, so we must NOT loadURL (that would double-navigate the
+          //    opener-wired WC).
+          //  - FRESH-MINTED WC (background-tab — cmd/ctrl+click — where Chromium
+          //    defers guest creation and hands us NO webContents to adopt, and
+          //    a noopener request, whose Chromium window is denied):
+          //    Chromium does NOT navigate a WC it did not create, so WE own the
+          //    load. Without this the popup opened but its content stayed
+          //    un-navigated — the blank/black window on cmd+click (peek bebfd212).
+          //    Mirrors the fresh-open branch below; a rejected load is swallowed
+          //    (the window is already on screen and wireHybridContentEvents'
+          //    did-fail-load drives the load-error overlay).
+          if (!adoptWC) {
+            view.webContents.loadURL(popupUrl).catch((err) => {
+              DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] fresh popup loadURL failed:`, err);
+            });
+          }
+          // A popup is a child page of its host: it inherits the host's
+          // space/group mode, else the declared default for new content
+          // windows — this path never reaches `windowOpenHandler`, so it
+          // has to stamp the mode itself or the popup belongs to no
+          // workspace.
+          const popupMode = inheritedModeForNewWindow('child-content', hostWindowId, false);
+          if (popupMode) {
+            addContextEntry('mode', popupMode.value, {
+              windowId: baseWin.id,
+              source,
+              metadata: { ...popupMode.metadata, url: popupUrl },
+            });
+          }
+          publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
+          // DIAG(link-opens-wrong-window): placement, registration and lifecycle of the popup host.
+          {
+            const b = baseWin.getBounds();
+            const disp = screen.getDisplayMatching(b);
+            const primary = screen.getPrimaryDisplay();
+            const openerHw = getHybridWindow(hostWindowId);
+            const ob = openerHw && !openerHw.baseWin.isDestroyed() ? openerHw.baseWin.getBounds() : null;
+            wmLog('diag-popup-host-built', {
+              popupHost: baseWin.id,
+              opener: hostWindowId,
+              machineId: getWindowIdFor(baseWin.id) ?? null,
+              hybridRegistered: !!getHybridWindow(baseWin.id),
+              contentWc: view.webContents.id,
+              source,
+              mode: popupMode ? String(popupMode.value) : null,
+              x: b.x, y: b.y, w: b.width, h: b.height,
+              display: disp.id, displayPrimary: disp.id === primary.id,
+              openerX: ob?.x, openerY: ob?.y, openerW: ob?.width, openerH: ob?.height,
+              openerDisplay: ob ? screen.getDisplayMatching(ob).id : null,
+              visible: baseWin.isVisible(), focused: baseWin.isFocused(),
+              focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
+            });
+            const pwc = view.webContents;
+            const hostId = baseWin.id;
+            pwc.on('did-start-navigation', (d) => {
+              if (d.isMainFrame) wmLog('diag-popup-nav-start', { popupHost: hostId, url: d.url, sameDoc: d.isSameDocument });
+            });
+            pwc.on('did-redirect-navigation', (d) => {
+              if (d.isMainFrame) wmLog('diag-popup-redirect', { popupHost: hostId, url: d.url });
+            });
+            pwc.on('did-navigate', (_e, u, code) => wmLog('diag-popup-did-navigate', { popupHost: hostId, url: u, code }));
+            pwc.on('did-finish-load', () => wmLog('diag-popup-finish-load', { popupHost: hostId, url: pwc.getURL() }));
+            pwc.on('did-fail-load', (_e, code, desc, u, main) => {
+              if (main) wmLog('diag-popup-fail-load', { popupHost: hostId, code, desc, url: u });
+            });
+            pwc.on('focus', () => wmLog('diag-popup-content-focus', { popupHost: hostId }));
+            pwc.once('destroyed', () => wmLog('diag-popup-content-destroyed', { popupHost: hostId }));
+            baseWin.on('focus', () => wmLog('diag-popup-host-focus', { popupHost: hostId }));
+            baseWin.on('blur', () => wmLog('diag-popup-host-blur', { popupHost: hostId }));
+            baseWin.on('show', () => wmLog('diag-popup-host-show', { popupHost: hostId }));
+            baseWin.on('hide', () => wmLog('diag-popup-host-hide', { popupHost: hostId }));
+            baseWin.on('closed', () => wmLog('diag-popup-host-closed', { popupHost: hostId }));
+            baseWin.on('moved', () => {
+              if (baseWin.isDestroyed()) return;
+              const mb = baseWin.getBounds();
+              wmLog('diag-popup-host-moved', { popupHost: hostId, x: mb.x, y: mb.y, w: mb.width, h: mb.height });
+            });
+            setTimeout(() => {
+              if (baseWin.isDestroyed()) return;
+              const lb = baseWin.getBounds();
+              wmLog('diag-popup-host-1s', {
+                popupHost: hostId,
+                x: lb.x, y: lb.y, w: lb.width, h: lb.height,
+                visible: baseWin.isVisible(), focused: baseWin.isFocused(),
+                focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
+                url: pwc.isDestroyed() ? null : pwc.getURL(),
+                childViews: baseWin.contentView.children.length,
+              });
+            }, 1000);
+          }
+          return view.webContents;
+        } catch (e) {
+          console.error('[hybrid-page-host] popup createWindow host build failed:', e);
+          // Destroy the partially-built host (through the machine) so a
+          // pre-registration throw can't leak a constructed-never-registered
+          // BaseWindow. Destroying the host does NOT destroy the adopted
+          // guest WC (Electron leaves the main-owned content WC alive), so
+          // the fallback return below still works.
+          destroyUnassembledHybridHost(constructedHost);
+          // Best effort: still hand Chromium the guest WC (if any) so the opener
+          // isn't left with a broken/null handle; it just won't be Peek-hosted.
+          return (ctorOptions as { webContents?: Electron.WebContents }).webContents as Electron.WebContents;
+        }
+      };
+      // A `noopener` request (or `noreferrer`, which implies it) gives the page
+      // no handle on the popup and the popup no opener, so adopting Chromium's
+      // guest buys nothing, and an adopted guest never gets the
+      // runtime-external preload: carrying it through
+      // overrideBrowserWindowOptions.webPreferences does not reach the guest in
+      // Electron 43, and a session-wide preload would run in every frame of the
+      // profile. Without that preload the page never reports its first frame,
+      // so the host never becomes orderable and the chrome overlay never frames
+      // it. So deny Chromium's window and open the URL in a fresh host with the
+      // preload, the same way a background-tab (cmd+click) request is built.
+      // Popups without noopener still take the adoption path below and so
+      // still get no overlay.
+      if (popupRequestsNoOpener(details.features)) {
+        console.log(`[hybrid-page-host] Popup (noopener, fresh host) from window ${hostWindowId}: ${popupUrl}`);
+        buildPopupHost({});
+        return { action: 'deny' };
+      }
       console.log(`[hybrid-page-host] Popup (allow+createWindow) from window ${hostWindowId}: ${popupUrl}`);
       // Option A — native adoption. Return allow+createWindow so Chromium wires a
       // REAL opener relationship: it creates the guest WebContents (window.opener/
@@ -2161,188 +2383,7 @@ export function wireHybridContentEvents(
       // options.webContents. We adopt THAT WC into a Peek hybrid BaseWindow host
       // and return it — no window.opener shim, no postMessage relay. (Retired the
       // old deny + invokeWindowOpen re-route, which produced an opener-less popup.)
-      return {
-        action: 'allow',
-        createWindow: (ctorOptions) => {
-          // Tracks the constructed host across the try so the catch can clean
-          // up a construct→register-gap throw (see destroyUnassembledHybridHost).
-          let constructedHost: Electron.BaseWindow | null = null;
-          try {
-            // options.webContents is present for window.open / foreground popups
-            // (the OAuth case) and UNDEFINED for background-tab (cmd/ctrl-click,
-            // creation deferred) — mint a fresh no-opener host in that case.
-            const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
-            const rect = resolvePopupContentRect(ctorOptions);
-            // DIAG(link-opens-wrong-window)
-            wmLog('diag-popup-create-window', {
-              opener: hostWindowId,
-              url: popupUrl,
-              adopt: !!adoptWC,
-              adoptWc: adoptWC ? adoptWC.id : null,
-              adoptWcUrl: adoptWC && !adoptWC.isDestroyed() ? adoptWC.getURL() : null,
-              adoptWcType: adoptWC ? adoptWC.getType() : null,
-              disposition: details.disposition,
-              features: details.features,
-              ctorX: ctorOptions.x, ctorY: ctorOptions.y, ctorW: ctorOptions.width, ctorH: ctorOptions.height,
-              ctorShow: ctorOptions.show === undefined ? undefined : !!ctorOptions.show,
-              rectX: rect.x, rectY: rect.y, rectW: rect.width, rectH: rect.height,
-            });
-            const baseWin = createHybridHostBaseWindow(rect);
-            constructedHost = baseWin;
-            let view: Electron.WebContentsView;
-            let rtApplied = false;
-            if (adoptWC) {
-              // Adopt Chromium's opener-wired guest WC. preload/webPreferences are
-              // construction-fixed on the WC Chromium already created (inherited
-              // from the opener) — we cannot re-select them here, which is fine for
-              // the OAuth popup case (contextIsolation stays as the opener's).
-              view = new WebContentsView({ webContents: adoptWC });
-            } else {
-              const rtPrefs = getRuntimeExternalWebPrefsForUrl(popupUrl, 'hybrid');
-              rtApplied = !!rtPrefs;
-              view = new WebContentsView({
-                webPreferences: {
-                  session: getProfileSession(),
-                  contextIsolation: true,
-                  devTools: true,
-                  ...(rtPrefs
-                    ? {
-                        preload: rtPrefs.preload,
-                        additionalArguments: rtPrefs.additionalArguments,
-                        sandbox: rtPrefs.sandbox,
-                      }
-                    : {}),
-                },
-              });
-            }
-            const placedBounds = baseWin.getBounds();
-            const parentInfo = getWindowInfo(hostWindowId);
-            const source = parentInfo ? parentInfo.source : 'system';
-            assembleHybridPageHost(baseWin, view, {
-              url: popupUrl,
-              // Non-http(s) popups (about:blank, data:, …) skip history
-              // tracking — the pre-adoption default-window path never
-              // tracked them, and an "about:blank" history item is noise.
-              options: isHttpPopup ? {} : { skipTracking: true },
-              source,
-              placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
-              contentX: placedBounds.x,
-              contentY: placedBounds.y,
-              contentW: placedBounds.width,
-              contentH: placedBounds.height,
-              isWebPage: true,
-              openerWindow: null,
-              isRealParent: false,
-              deferContentLoad: false,
-              rtPreloadApplied: rtApplied,
-            });
-            // Navigation ownership splits by case:
-            //  - ADOPTED guest WC (window.open / target=_blank / OAuth popup):
-            //    Chromium created the guest and already wired its navigation to
-            //    details.url, so we must NOT loadURL (that would double-navigate the
-            //    opener-wired WC).
-            //  - FRESH-MINTED WC (background-tab — cmd/ctrl+click — where Chromium
-            //    defers guest creation and hands us NO webContents to adopt):
-            //    Chromium does NOT navigate a WC it did not create, so WE own the
-            //    load. Without this the popup opened but its content stayed
-            //    un-navigated — the blank/black window on cmd+click (peek bebfd212).
-            //    Mirrors the fresh-open branch below; a rejected load is swallowed
-            //    (the window is already on screen and wireHybridContentEvents'
-            //    did-fail-load drives the load-error overlay).
-            if (!adoptWC) {
-              view.webContents.loadURL(popupUrl).catch((err) => {
-                DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background-tab loadURL failed:`, err);
-              });
-            }
-            // A popup is a child page of its host: it inherits the host's
-            // space/group mode, else the declared default for new content
-            // windows — this path never reaches `windowOpenHandler`, so it
-            // has to stamp the mode itself or the popup belongs to no
-            // workspace.
-            const popupMode = inheritedModeForNewWindow('child-content', hostWindowId, false);
-            if (popupMode) {
-              addContextEntry('mode', popupMode.value, {
-                windowId: baseWin.id,
-                source,
-                metadata: { ...popupMode.metadata, url: popupUrl },
-              });
-            }
-            publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
-            // DIAG(link-opens-wrong-window): placement, registration and lifecycle of the popup host.
-            {
-              const b = baseWin.getBounds();
-              const disp = screen.getDisplayMatching(b);
-              const primary = screen.getPrimaryDisplay();
-              const openerHw = getHybridWindow(hostWindowId);
-              const ob = openerHw && !openerHw.baseWin.isDestroyed() ? openerHw.baseWin.getBounds() : null;
-              wmLog('diag-popup-host-built', {
-                popupHost: baseWin.id,
-                opener: hostWindowId,
-                machineId: getWindowIdFor(baseWin.id) ?? null,
-                hybridRegistered: !!getHybridWindow(baseWin.id),
-                contentWc: view.webContents.id,
-                source,
-                mode: popupMode ? String(popupMode.value) : null,
-                x: b.x, y: b.y, w: b.width, h: b.height,
-                display: disp.id, displayPrimary: disp.id === primary.id,
-                openerX: ob?.x, openerY: ob?.y, openerW: ob?.width, openerH: ob?.height,
-                openerDisplay: ob ? screen.getDisplayMatching(ob).id : null,
-                visible: baseWin.isVisible(), focused: baseWin.isFocused(),
-                focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
-              });
-              const pwc = view.webContents;
-              const hostId = baseWin.id;
-              pwc.on('did-start-navigation', (d) => {
-                if (d.isMainFrame) wmLog('diag-popup-nav-start', { popupHost: hostId, url: d.url, sameDoc: d.isSameDocument });
-              });
-              pwc.on('did-redirect-navigation', (d) => {
-                if (d.isMainFrame) wmLog('diag-popup-redirect', { popupHost: hostId, url: d.url });
-              });
-              pwc.on('did-navigate', (_e, u, code) => wmLog('diag-popup-did-navigate', { popupHost: hostId, url: u, code }));
-              pwc.on('did-finish-load', () => wmLog('diag-popup-finish-load', { popupHost: hostId, url: pwc.getURL() }));
-              pwc.on('did-fail-load', (_e, code, desc, u, main) => {
-                if (main) wmLog('diag-popup-fail-load', { popupHost: hostId, code, desc, url: u });
-              });
-              pwc.on('focus', () => wmLog('diag-popup-content-focus', { popupHost: hostId }));
-              pwc.once('destroyed', () => wmLog('diag-popup-content-destroyed', { popupHost: hostId }));
-              baseWin.on('focus', () => wmLog('diag-popup-host-focus', { popupHost: hostId }));
-              baseWin.on('blur', () => wmLog('diag-popup-host-blur', { popupHost: hostId }));
-              baseWin.on('show', () => wmLog('diag-popup-host-show', { popupHost: hostId }));
-              baseWin.on('hide', () => wmLog('diag-popup-host-hide', { popupHost: hostId }));
-              baseWin.on('closed', () => wmLog('diag-popup-host-closed', { popupHost: hostId }));
-              baseWin.on('moved', () => {
-                if (baseWin.isDestroyed()) return;
-                const mb = baseWin.getBounds();
-                wmLog('diag-popup-host-moved', { popupHost: hostId, x: mb.x, y: mb.y, w: mb.width, h: mb.height });
-              });
-              setTimeout(() => {
-                if (baseWin.isDestroyed()) return;
-                const lb = baseWin.getBounds();
-                wmLog('diag-popup-host-1s', {
-                  popupHost: hostId,
-                  x: lb.x, y: lb.y, w: lb.width, h: lb.height,
-                  visible: baseWin.isVisible(), focused: baseWin.isFocused(),
-                  focusedBase: BaseWindow.getFocusedWindow()?.id ?? null,
-                  url: pwc.isDestroyed() ? null : pwc.getURL(),
-                  childViews: baseWin.contentView.children.length,
-                });
-              }, 1000);
-            }
-            return view.webContents;
-          } catch (e) {
-            console.error('[hybrid-page-host] popup createWindow host build failed:', e);
-            // Destroy the partially-built host (through the machine) so a
-            // pre-registration throw can't leak a constructed-never-registered
-            // BaseWindow. Destroying the host does NOT destroy the adopted
-            // guest WC (Electron leaves the main-owned content WC alive), so
-            // the fallback return below still works.
-            destroyUnassembledHybridHost(constructedHost);
-            // Best effort: still hand Chromium the guest WC (if any) so the opener
-            // isn't left with a broken/null handle; it just won't be Peek-hosted.
-            return (ctorOptions as { webContents?: Electron.WebContents }).webContents as Electron.WebContents;
-          }
-        },
-      };
+      return { action: 'allow', createWindow: buildPopupHost };
     }
   });
 
