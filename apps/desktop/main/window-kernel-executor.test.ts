@@ -1681,11 +1681,9 @@ describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8
 describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
   /**
    * The real backend realizes the reopen through the ordinary window-open path,
-   * which registers the replacement (naming the window it replaces) and then
-   * asks for its show, each as a command decided against the state of that
-   * moment; the close of the replaced window is the kernel's, and the real
-   * close-or-hide requests it synchronously. Modelled here by re-entering the
-   * executor the same way.
+   * which registers the replacement and then asks for its show, each as a
+   * command decided against the state of that moment. Modelled here by
+   * re-entering the executor the same way.
    */
   class ReenteringBackend extends RecordingBackend {
     exec: WindowKernelExecutor | null = null;
@@ -1701,16 +1699,10 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
         acceptsInput: true,
         class: 'primary',
         role: 'content',
-        replaces: id,
         expectedVersion: exec.getState().version,
       });
       exec.execute({ type: 'ShowWindow', id: wid(2), expectedVersion: exec.getState().version });
-    }
-    override closeOrHide(id: BackendWindowId): Promise<void> {
-      const done = super.closeOrHide(id);
-      const exec = this.exec!;
       exec.execute({ type: 'CloseOrHideWindow', id, expectedVersion: exec.getState().version });
-      return done;
     }
   }
 
@@ -1758,13 +1750,6 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
     exec.dispatch({ type: 'AppActivated' });
     const raises = backend.of('raiseWindow').map((c) => c.args[0]);
     assert.strictEqual(raises[raises.length - 1], wid(2));
-  });
-
-  it('the kernel closes the replaced window once, and raises only the replacement, without user intent', () => {
-    const { exec, backend } = transientPageHostSetup();
-    exec.dispatch({ type: 'AppActivated' });
-    assert.deepStrictEqual(backend.of('closeOrHide').map((c) => c.args[0]), [wid(1)]);
-    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => [c.args[0], c.args[2]]), [[wid(2), undefined]]);
   });
 
   it('with the app inactive, losing key closes the page: no reopen, no raise', () => {

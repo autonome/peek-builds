@@ -61,7 +61,6 @@ Each term is followed by the name the code uses for it.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
 - **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Losing key with the app inactive (the user clicked another app or switched desktop) closes it; nothing replaces it, and the page stays in history. The app becoming active while it is key replaces its non-activating window with an ordinary application window showing the same page at the same bounds, on the desktop the user is on, as the front window with key. Escape on a transient page-host window closes it. Reason for closing: the page was asked for while Peek was not focused, so leaving it ends that task, and on macOS the non-activating window is on every desktop, so a replacement could not be kept on the desktop the page was opened on.
-- **G14 switcher-reach.** The switcher lists the app's windows from every desktop, and picking one takes the user to that window's desktop. This is the one place the app switches the user's desktop for them (`specs/kernel-desktops.md` rule 1); it conflicts with opening a URL already open on another desktop in a new window on the current one (rule 5), and is accepted because the pick names one window explicitly.
 
 ### Opening a page from another app: which app holds OS focus at each step
 
@@ -97,12 +96,11 @@ inactive, or the app becomes active, the kernel replaces it
 (`window-kernel.ts isTransientPageHost()`, effect `ReopenAsOrdinaryWindow`) with an
 ordinary window showing the same page at the same bounds — activating,
 anchored to the desktop the user is on, shown without focus
-(`ipc.ts reopenWindowAsOrdinary()`). The ordering is the kernel's: the
-reopened window registers naming the window it replaces
-(`WindowRecord.replaces` / `replacedBy`), which closes the transient page-host
-window; that close raises the reopened window, machine-caused, in place of the
-F7 successor, so the reopened page is the front window rather than whatever the
-app had in front before. The page reloads in the new window; scroll, form input and back
+(`ipc.ts reopenWindowAsOrdinary()`). The replacement opens before the old
+window closes: a fresh window registers directly under the key window, so when
+the transient page-host window ended because the app activated (step 5e) the close's successor
+raise (F7) lands on the replacement rather than on whatever the app had in
+front before. The page reloads in the new window; scroll, form input and back
 history do not survive the reopen.
 
 A page opened while the app is inactive with nobody typing into the app — a

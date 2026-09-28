@@ -179,12 +179,6 @@ helper's reads; if they fail, nothing has yet been built on them.
 6. **Kernel `replaces` / `replacedBy` close and focus ordering for the 5e reopen** (decision 1).
    Add the switcher's cross-desktop reach under rule 1 of `docs/design/window-rules.md`. Remove
    probe hooks if still present.
-   Done: registration carries `replaces` (`RegisterWindow` → `WindowRegistered` →
-   `WindowRecord.replaces` / `replacedBy`, fed by `ipc.ts reopenWindowAsOrdinary()` through the
-   `replacesWindowId` open option); `react` diffs `replacedBy` into `DismissWindow` of the replaced
-   window, and its `WindowClosed` raises the reopened window without user intent in place of the
-   F7 successor, or the reopened window's first show does when the close came first. The
-   switcher's reach is `window-rules.md` G14. Probe hooks are a separate commit.
 7. Done ahead of the reshape, `84a123ee`: a transient page-host window that loses focus with the
    app inactive (click-away, desktop switch) closes instead of being reopened, because Electron
    panels are on every desktop (see "Research: Electron panels and desktops"). The earlier plan

@@ -109,7 +109,7 @@ import {
   kernelShowRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES, type WindowId } from './window-kernel.js';
+import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
   TRANSIENT_ROLES,
@@ -517,19 +517,22 @@ const TRANSIENT_PAGE_REOPEN_STRIP = new Set([
 
 /**
  * A transient page-host window has ended (`window-kernel.ts isTransientPageHost`, window-rules.md G13):
- * open the same page again as an ordinary window at the same bounds, shown
- * without focus. A window built as a panel can neither activate the app nor
- * stay on one desktop, and Electron fixes both at construction, so the
- * replacement is a new window.
+ * close its non-activating window and open the same page again as an ordinary
+ * window at the same bounds, shown without focus. A window built as a panel
+ * can neither activate the app nor stay on one desktop, and Electron fixes
+ * both at construction, so the replacement is a new window.
  *
- * This only builds the reopened window. The open names the window it
- * replaces (`replacesWindowId`, the kernel id), and the kernel orders the rest
- * (`window-kernel.ts WindowRecord.replacedBy`): registering the reopened
- * window closes the transient page-host window, and that close raises the
- * reopened window. The open carries `trackingSource: 'reopen'` so the URL
- * dedup in `windowOpenHandler` does not hand back the host being replaced.
- * Driven by the kernel's `ReopenAsOrdinaryWindow` effect through the Electron
- * backend.
+ * The replacement opens BEFORE the old host closes. The kernel registers a
+ * fresh window directly under the key window, so with the panel host still
+ * key the replacement is the topmost remaining window when the host goes:
+ * the successor raise the close provokes (window-rules.md F7, the app-active
+ * case of G13 step 5e) lands on the reopened page, not on whatever the app
+ * had in front before the transient page-host window. When key was already lost (the click-
+ * away case) the close provokes no raise and the replacement, registered on
+ * top, sits behind the other app. The open carries `trackingSource: 'reopen'`
+ * so the URL dedup in `windowOpenHandler` does not hand back the host being
+ * torn down. Driven by the kernel's `ReopenAsOrdinaryWindow` effect through
+ * the Electron backend.
  */
 export function reopenWindowAsOrdinary(osWindowId: number): void {
   const info = getWindowInfo(osWindowId);
@@ -562,27 +565,17 @@ export function reopenWindowAsOrdinary(osWindowId: number): void {
   // Names this open as the reopen so the URL dedup in `windowOpenHandler`
   // does not reuse the host that is about to close.
   options.trackingSource = 'reopen';
-  // The kernel closes this window once the reopened one registers.
-  const replacesWindowId = getWindowIdFor(osWindowId);
-  if (replacesWindowId != null) options.replacesWindowId = replacesWindowId;
   const source = info.source;
-  wmLog('transient-page-reopen', {
-    id: osWindowId,
-    replaces: replacesWindowId,
-    url,
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-  });
-  // A failed open registers nothing to replace the transient page-host
-  // window, so nothing would close it; close it here rather than strand it.
-  void invokeWindowOpen({ sender: bgWin.webContents }, { source, url, options }).catch((err) => {
-    console.error('[transient-page-reopen] invokeWindowOpen failed:', err);
-    return closeOrHideWindow(osWindowId).catch((closeErr) => {
-      console.error('[transient-page-reopen] close of the transient page-host window failed:', closeErr);
+  wmLog('transient-page-reopen', { id: osWindowId, url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+  const open = invokeWindowOpen({ sender: bgWin.webContents }, { source, url, options });
+  void open
+    .catch((err) => {
+      console.error('[transient-page-reopen] invokeWindowOpen failed:', err);
+    })
+    .then(() => closeOrHideWindow(osWindowId))
+    .catch((err) => {
+      console.error('[transient-page-reopen] close of the panel host failed:', err);
     });
-  });
 }
 
 /**
@@ -1117,10 +1110,6 @@ function assembleHybridPageHost(
   // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
   // session.ts, which drops it from old snapshots.)
   delete windowParams.restoreBlank;
-  // The window this open replaces (`reopenWindowAsOrdinary`) is a one-open
-  // directive naming a live window, never persistent window state.
-  const replaces = typeof options.replacesWindowId === 'string' ? (options.replacesWindowId as WindowId) : undefined;
-  delete windowParams.replacesWindowId;
   // Register the page-host with the window-state machine (both window kinds
   // register — judgment call 2). The OS adapter attaches focus/blur/show/hide/
   // closed/enter-leave-fullscreen listeners + drives front/fullscreen/Esc.
@@ -1164,7 +1153,6 @@ function assembleHybridPageHost(
     // ordinary page is anchored to the desktop it opens on. A transient
     // page-host window is a panel, which stays on every desktop regardless.
     ...(!isHeadless() ? { desktopMembership: desktopMembershipForRole(role) } : {}),
-    ...(replaces !== undefined ? { replaces } : {}),
   });
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
   // (session.ts restoreSessionSnapshot) both thread a maximized window's
