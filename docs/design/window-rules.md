@@ -60,7 +60,7 @@ Each term is followed by the name the code uses for it.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
-- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Its non-activating window is then replaced by an ordinary application window showing the same page at the same bounds: shown without focus, belonging to the desktop the user is on, not held above other apps, frontmost among the app's windows behind the active app. The other app keeps focus throughout. Escape on a transient page-host window closes it; a transient page-host window that hides or closes is not replaced.
+- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Its non-activating window is then replaced by an ordinary application window showing the same page at the same bounds: shown without focus, on the desktop the page was opened on, not held above other apps, frontmost among the app's windows behind the active app. The other app keeps focus throughout. Escape on a transient page-host window closes it; a transient page-host window that hides or closes is not replaced. When it stops being key because the user switched desktop, it is replaced only once that desktop is current again (row 5d).
 
 ### Opening a page from another app: which app holds OS focus at each step
 
@@ -80,7 +80,7 @@ at every step.
 | 5a | presses Escape | other app | other app | page closes |
 | 5b | presses the close shortcut | other app | other app | page closes |
 | 5c | clicks the other app | other app | other app | the transient page-host window is replaced by the reopened window (G13): the page is reopened as an ordinary window on this desktop, behind the other app, frontmost among the app's windows, not key |
-| 5d | switches desktop | other app | other app | same as 5c: the page stays on the desktop it was on when it lost key |
+| 5d | switches desktop | other app | other app | the transient page-host window stays on its desktop, not replaced, and never shows on the new one; it is replaced by the reopened window, as in 5c, when the user returns to that desktop |
 | 5e | brings the app forward | this app | the page | the transient page-host window is replaced by the reopened window (G13): the page is reopened as an ordinary window and is the front window |
 
 A page is a transient page-host window (`izui-roles.ts pageOpensTransient()`) when it is opened

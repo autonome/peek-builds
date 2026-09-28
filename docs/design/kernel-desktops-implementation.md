@@ -125,7 +125,7 @@ helper's reads; if they fail, nothing has yet been built on them.
    | `⟨old⟩-reopen` | `transient-page-reopen` | log line, and the `[…]` prefix of two `console.error` lines |
    | `⟨old⟩-reopen-dropped` | `transient-page-reopen-dropped` | log line |
    | `page-opens-as-⟨old⟩` | `page-opens-transient` | log line |
-   | `⟨old⟩-standin-misplaced` | `transient-placeholder-misplaced` | planned log line (commit 7); only docs carried the old name |
+   | `⟨old⟩-standin-misplaced` | `transient-placeholder-misplaced` | planned log line, since dropped with the placeholder window (commit 7 now plans `transient-reopen-misplaced`); only docs carried the old name |
    | `G13 ⟨old⟩-ends` | `G13 transient-page-ends` | rule label in `window-rules.md` |
    | `specs/⟨old⟩-ends-on-blur.md` | `specs/transient-page-ends-on-blur.md` | spec file, moved with `git mv` |
    | `⟨old⟩Escape` (type), `⟨old⟩_ESCAPE`, `⟨old⟩Escape` (parameter) | `TransientPageEscape`, `TRANSIENT_PAGE_ESCAPE`, `transientPageEscape` | already removed from code; named in the docs' history |
@@ -163,20 +163,21 @@ helper's reads; if they fail, nothing has yet been built on them.
    temporary probe hooks behind `PEEK_DESKTOP_PROBE=1`. The kernel has no desktop events yet, so the
    probe hooks are the provider's only report sink: they log its reads directly. Then the probe (the
    spec's macOS provider acceptance check) on a real Mac with a person. Stop and report if ids are
-   not stable across returns or the placeholder window does not keep its desktop; never fall back
-   to letting the page follow the user.
+   not stable across returns; never fall back to letting the page follow the user. Two backend
+   fixes found by the probe follow here, one commit each: the shared page chrome window on every
+   desktop (`hybrid-overlay.ts ensureOverlay()`), and the transient page-host window pinned to the
+   desktop it is shown on, no longer declared `onEveryDesktop`.
 5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
-   three events, `isCurrentDesktop`, `openedOnCurrentDesktop`, reshaped `onCurrentDesktop`,
-   `ReopenAsOrdinaryWindow.desktop` (filled, not acted on). Backend: the report → event loop, fed by
+   three events, `isCurrentDesktop`, `openedOnCurrentDesktop`, reshaped `onCurrentDesktop`.
+   Backend: the report → event loop, fed by
    whichever provider started. No rule reads the new state; behaviour unchanged on every platform
    (pinned by the property test).
-6. **A desktop switch replaces a transient page-host window** (the `openedOnCurrentDesktop` clause of
-   `isTransientPageHost`) and kernel `replaces` / `replacedBy` close and focus ordering
-   (decision 1). Reword G13 and row 5d in `docs/design/window-rules.md`; add the switcher's
-   cross-desktop reach under rule 1. Remove probe hooks if still present.
-7. **Reopened window on the desktop the transient page-host window was opened on**: the
-   placeholder window for providers without `canPlaceWindows`, the `placeWindow` path for those
-   with it, the `transient-placeholder-misplaced` check.
+6. **A switch away defers the reopen until the user returns** (`WindowRecord.reopenPending`, the
+   reopen gated on `openedOnCurrentDesktop`) and kernel `replaces` / `replacedBy` close and focus
+   ordering (decision 1). Add the switcher's cross-desktop reach under rule 1 of
+   `docs/design/window-rules.md`. Remove probe hooks if still present.
+7. **The `transient-reopen-misplaced` check**: after each reopen the backend reads the reopened
+   window's placement and logs when it is not on the transient page-host window's desktop.
 8. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
    raise of a window not on a current desktop, switcher selection carrying user intent, and
    decision 3.
@@ -241,3 +242,19 @@ build `c3647846`, log kept only locally.
 - Consequence for the spec: rule 1's `TRANSIENT_ROLES` exception (they appear on the desktop the
   user is on) needs a realization for the overlay window, for example declaring it `onEveryDesktop`
   in the Electron backend, before any gesture that visits a desktop holding a page-host window.
+
+**Third check, overlay on every desktop (2026-09-28, after `31c4ac84`):** one screen, two desktops.
+
+- The overlay reads `*` from start. Switching onto desktop 2 while it holds a page-host window no
+  longer pulls the user back to desktop 1: the person stayed on desktop 2.
+- Remaining defect, seen by the person and in the log: after opening a URL from the palette on
+  desktop 2 and switching to desktop 1, the page is visible on desktop 1. Log order: `space-changed`
+  (the transient page-host window `wm-9` read `*`), `native-blur` and `os-focus-left-app` 7ms
+  later, then `effect-reopen-as-ordinary` and `transient-page-reopen`; the reopened window `wm-10`
+  then reads `1/1`, desktop 1. Two causes: the panel is on every desktop, so it travels with the
+  switch, and the notification arrives only after the switch, too late to hide it; and the reopened
+  window is created on the desktop the user is on.
+- Decision taken from it: the transient page-host window is pinned to the desktop it is shown on,
+  and a switch away defers the reopen until the user returns to that desktop (spec rules 2 and 3).
+  The placeholder window and its probe gestures (the helper write test, the Mission Control check)
+  are dropped.
