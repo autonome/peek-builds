@@ -91,6 +91,15 @@ export interface WindowRecord {
   // asks to follow the user, is `desktopMembership === 'follow'`; read both
   // through `isOnEveryDesktop`.
   onEveryDesktop?: boolean;
+  // Declared at registration and recorded only when it named a live window:
+  // this window replaces that one (a reopened window replacing a transient
+  // page-host window). Cleared by this window's first genuine show, which
+  // keeps the desktop taken from the replaced window instead of re-stamping.
+  replaces?: WindowId;
+  // Set when another window registers with `replaces` naming this one; `react`
+  // diffs its arrival into the close of this window, and this window's close
+  // raises the replacement instead of choosing a successor.
+  replacedBy?: WindowId;
   pendingProjectedBounds: Rectangle | null;
 
   overlayFor?: WindowId;
@@ -205,6 +214,8 @@ export type Event =
       appLifetime?: boolean;
       // See `WindowRecord.onEveryDesktop` — declared here, by the backend.
       onEveryDesktop?: boolean;
+      // See `WindowRecord.replaces` — an id naming no live window is inert.
+      replaces?: WindowId;
     }
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
   // The full screen and desktop layout; replaces `screens` and `desktops`.
@@ -291,6 +302,8 @@ export type Command =
       appLifetime?: boolean;
       // See `WindowRecord.onEveryDesktop` — declared here, by the backend.
       onEveryDesktop?: boolean;
+      // See `WindowRecord.replaces`.
+      replaces?: WindowId;
       expectedVersion: number;
     }
   | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number }
@@ -358,9 +371,10 @@ export type Effect =
   // it held key (`isTransientPageHost` went from true to false with the window
   // still on screen and the app active): replace its non-activating window with an
   // ordinary one showing the same page at the same bounds, shown without
-  // focus and belonging to the desktop the user is on. One intention; the
-  // close-and-reopen it takes on a platform that fixes a window's type at
-  // construction is the backend's business.
+  // focus and belonging to the desktop the user is on. The backend only
+  // builds the reopened window, registering it with `replaces` naming this
+  // one; closing this window and raising the reopened one are the kernel's
+  // (`WindowRecord.replacedBy`).
   | { type: 'ReopenAsOrdinaryWindow'; id: WindowId }
   | { type: 'FocusContent'; id: WindowId }
   | { type: 'AttachOverlayTo'; overlayId: WindowId; hostId: WindowId | null };
@@ -520,6 +534,10 @@ export function evolve(state: State, ev: Event): State {
           ...(existing.desktopMembership !== undefined ? { desktopMembership: existing.desktopMembership } : {}),
           ...(existing.desktop !== undefined ? { desktop: existing.desktop } : {}),
           ...(existing.screen !== undefined ? { screen: existing.screen } : {}),
+          // A replacement is decided at first registration only; a later
+          // re-registration neither starts nor forgets one.
+          ...(existing.replaces !== undefined ? { replaces: existing.replaces } : {}),
+          ...(existing.replacedBy !== undefined ? { replacedBy: existing.replacedBy } : {}),
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
           ...(existing.overlayFrame !== undefined ? { overlayFrame: existing.overlayFrame } : {}),
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
@@ -598,6 +616,13 @@ export function evolve(state: State, ev: Event): State {
         };
       }
 
+      // A replacement (the reopened window of a transient page-host window)
+      // counts only when it names a live window not already being replaced;
+      // it takes that window's desktop and screen, and marks it `replacedBy`,
+      // which `react` diffs into its close.
+      const replaced = ev.replaces !== undefined && ev.replaces !== ev.id
+        ? state.order.find((w) => w.id === ev.replaces && w.replacedBy === undefined)
+        : undefined;
       const record: WindowRecord = {
         id: ev.id,
         kind: ev.kind,
@@ -629,9 +654,19 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.nonActivating !== undefined ? { nonActivating: ev.nonActivating } : {}),
         ...(ev.appLifetime !== undefined ? { appLifetime: ev.appLifetime } : {}),
         ...(ev.onEveryDesktop !== undefined ? { onEveryDesktop: ev.onEveryDesktop } : {}),
-        // `desktop` is deliberately NOT seeded: a window is on no desktop until it is first shown.
+        // `desktop` is NOT seeded otherwise: a window is on no desktop until it is first shown.
+        ...(replaced !== undefined
+          ? {
+              replaces: replaced.id,
+              ...(replaced.desktop !== undefined ? { desktop: replaced.desktop } : {}),
+              ...(replaced.screen !== undefined ? { screen: replaced.screen } : {}),
+            }
+          : {}),
         // `contentFocused` is deliberately NOT seeded: registration is the moment nothing has been reported yet.
       };
+      const baseOrder = replaced !== undefined
+        ? state.order.map((w) => (w.id === replaced.id ? { ...w, replacedBy: ev.id } : w))
+        : state.order;
       // Nothing else orders windows. A fresh registration is placed BELOW the
       // last-focused window, never on top — a background-opened window does
       // not appear above the window being worked in. Taking focus
@@ -655,7 +690,7 @@ export function evolve(state: State, ev: Event): State {
           : state.openedInBackground;
       return {
         ...state,
-        order: [...state.order.slice(0, insertAt), record, ...state.order.slice(insertAt)],
+        order: [...baseOrder.slice(0, insertAt), record, ...baseOrder.slice(insertAt)],
         openedInBackground,
         version: state.version + 1,
         openSeqCounter: state.openSeqCounter + 1,
@@ -669,10 +704,21 @@ export function evolve(state: State, ev: Event): State {
       // `lastOpSeq` is stamped only when this genuinely flips `visible` (the
       // same condition `react` uses to emit `ShowWindow`); an already-visible
       // window re-shown issues no op, so the counter does not move either.
-      const issuesShow = state.order.some((w) => w.id === ev.id && !w.visible);
+      const shown = state.order.find((w) => w.id === ev.id && !w.visible);
+      const issuesShow = shown !== undefined;
       const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
+      // A reopened window whose replaced window already closed before this
+      // first show: the close found it not yet on screen, so the raise that
+      // close owes it lands here instead (see the `WindowClosed` arm).
+      const raisesReplacement =
+        shown !== undefined &&
+        shown.replaces !== undefined &&
+        !state.order.some((w) => w.id === shown.replaces) &&
+        state.appActive === true &&
+        shown.pendingHidden !== true;
       return {
         ...state,
+        ...(raisesReplacement ? { lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state) } } : {}),
         order: state.order.map((w) => {
           if (w.id !== ev.id) return w;
           // Any `WindowShown` makes the window visible, so a stale sweep mark
@@ -689,6 +735,15 @@ export function evolve(state: State, ev: Event): State {
           // provisionally until a placement report; a window on every desktop
           // keeps the one it was first shown on.
           if (w.visible) return flushed;
+          // The first show of a reopened window keeps the desktop it took
+          // from the replaced window; the replacement is then done.
+          if (w.replaces !== undefined) {
+            const { replaces: _done, ...rest } = flushed;
+            void _done;
+            if (w.desktop !== undefined) return { ...rest, lastOpSeq: opSeq };
+            const desktop = desktopOnShow(state, w);
+            return { ...rest, lastOpSeq: opSeq, ...(desktop !== undefined ? { desktop } : {}) };
+          }
           const desktop = desktopOnShow(state, w);
           return { ...flushed, lastOpSeq: opSeq, ...(desktop !== undefined ? { desktop } : {}) };
         }),
@@ -798,10 +853,24 @@ export function evolve(state: State, ev: Event): State {
       // parentless transient (the switcher) closes rather than hides, and its
       // prior key holder gets key back the same way. Read off `filtered`, so a
       // `priorKey` naming the closed record itself is already nulled.
+      //
+      // A replaced window (5e) hands key to its replacement instead, machine-
+      // caused, and the successor choice stands down so no second raise
+      // competes with it. A replacement not yet on screen is raised by its
+      // own first show (the `WindowShown` arm); one gone already leaves the
+      // ordinary successor choice in place.
+      const replacement = closedRec?.replacedBy !== undefined
+        ? filtered.find((w) => w.id === closedRec.replacedBy)
+        : undefined;
+      const replacementOwnsRaise = replacement !== undefined && !raisesParent && selectionTarget === undefined;
+      const raisesReplacement =
+        replacementOwnsRaise && state.appActive === true && admitsFocusAssert(replacement, replacement.visible);
       const successor =
-        closedRec !== undefined && closedRec.id === state.key && state.appActive === true && !raisesParent && selectionTarget === undefined
-          ? successorOnHide({ ...state, order: filtered }, closedRec)
-          : null;
+        raisesReplacement
+          ? replacement!
+          : closedRec !== undefined && closedRec.id === state.key && state.appActive === true && !raisesParent && selectionTarget === undefined && !replacementOwnsRaise
+            ? successorOnHide({ ...state, order: filtered }, closedRec)
+            : null;
       // One token for the transition, not one per effect: this arm can issue
       // two focus-family ops (parent handoff, selection raise), and both get
       // stamped with the same `next.opSeqCounter`.
@@ -1771,6 +1840,20 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
       : { type: 'DismissWindow', id: nextRecord.id });
   }
 
+  // Replaced: a structural diff of `replacedBy` arriving on a live record —
+  // the reopened window has registered, so the window it replaces closes.
+  // `DismissWindow`, the same close the transient page-host window gets when
+  // it ends with the app inactive, so the close goes through the ordinary
+  // close-or-hide request and comes back as that window's `WindowClosed`,
+  // which raises the replacement. The ordering lives here and in that arm,
+  // not in the code that builds the reopened window.
+  for (const nextRecord of next.order) {
+    if (nextRecord.replacedBy === undefined) continue;
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined || prevRecord.replacedBy !== undefined) continue;
+    effects.push({ type: 'DismissWindow', id: nextRecord.id });
+  }
+
   // SetStacking: a minimal replay, not a re-assert of everything eligible. The
   // native primitive is move-to-top, so a window whose index didn't change can
   // still end up wrong once a different window moves past it — the unit that
@@ -1963,6 +2046,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.nonActivating !== undefined ? { nonActivating: cmd.nonActivating } : {}),
           ...(cmd.appLifetime !== undefined ? { appLifetime: cmd.appLifetime } : {}),
           ...(cmd.onEveryDesktop !== undefined ? { onEveryDesktop: cmd.onEveryDesktop } : {}),
+          ...(cmd.replaces !== undefined ? { replaces: cmd.replaces } : {}),
         },
       ],
     };

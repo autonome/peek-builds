@@ -167,6 +167,7 @@ export interface RegisterWindowSpec {
   nonActivating?: boolean;
   appLifetime?: boolean;
   onEveryDesktop?: boolean;
+  replaces?: WindowId;
 }
 
 export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
@@ -188,6 +189,7 @@ export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     ...(spec.onEveryDesktop !== undefined ? { onEveryDesktop: spec.onEveryDesktop } : {}),
+    ...(spec.replaces !== undefined ? { replaces: spec.replaces } : {}),
     expectedVersion: getKernelExecutor().getState().version,
   });
 }

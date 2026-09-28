@@ -1331,7 +1331,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   // Electron fixes a window's type at construction, so a transient page-host window
   // cannot become activating or leave every desktop in place: the page is
-  // closed and opened again as an ordinary window (`ipc.ts reopenWindowAsOrdinary`).
+  // opened again as an ordinary window (`ipc.ts reopenWindowAsOrdinary`) that
+  // registers as its replacement, and the kernel closes this one.
   reopenAsOrdinaryWindow(id: WindowId): void {
     const win = this.windows.get(id)?.win;
     if (!win || win.isDestroyed()) return;

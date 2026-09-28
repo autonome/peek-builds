@@ -46,6 +46,9 @@ export interface MachineWindowSpec {
   // non-activating window stays on every desktop whatever is asked.
   desktopMembership?: DesktopMembership;
   appLifetime?: boolean;
+  // The window this one replaces (the reopened window of a transient
+  // page-host window); the kernel closes it and then raises this one.
+  replaces?: WindowId;
   // BaseWindow (page-host) or BrowserWindow (browser).
   win: BaseWindow | BrowserWindow;
   // Content view WC for a page-host, root WC for a browser.
@@ -132,6 +135,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     ...(onEveryDesktop ? { onEveryDesktop: true } : {}),
+    ...(spec.replaces !== undefined ? { replaces: spec.replaces } : {}),
   });
   if (spec.desktopMembership !== undefined) {
     kernelSetDesktopMembership(id, spec.desktopMembership);
