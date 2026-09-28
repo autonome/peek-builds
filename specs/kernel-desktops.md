@@ -223,8 +223,10 @@ With the fallback provider the show stamp is the only source and is correct by c
   macOS a switch can be followed by an app activation while the page still holds key, which would
   otherwise read as 5e. It needs no desktop ids, so it cannot wait for the provider's read.
 - **Close and focus ordering (5e).** Registration with `replaces: X` marks X `replacedBy: <new
-  id>`; `react` diffs that into `CloseWindow X`. On X's `WindowClosed` the kernel raises the
-  reopened window, machine-caused. The ordering MUST be decided in the kernel, not by the code that
+  id>`; `react` diffs that into `DismissWindow X` (not `CloseWindow`, which realizes a window
+  already gone from state). On X's `WindowClosed` the kernel raises the reopened window,
+  machine-caused, in place of the F7 successor choice; if X closes before the reopened window is
+  first shown, that first show raises it. The ordering MUST be decided in the kernel, not by the code that
   builds the reopened window.
 - **Successor on hide or close.** `successorOnHide()` applies `onCurrentDesktop` to both its
   branches (prior window; topmost application window).
