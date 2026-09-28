@@ -125,7 +125,7 @@ helper's reads; if they fail, nothing has yet been built on them.
    | `⟨old⟩-reopen` | `transient-page-reopen` | log line, and the `[…]` prefix of two `console.error` lines |
    | `⟨old⟩-reopen-dropped` | `transient-page-reopen-dropped` | log line |
    | `page-opens-as-⟨old⟩` | `page-opens-transient` | log line |
-   | `⟨old⟩-standin-misplaced` | `transient-placeholder-misplaced` | planned log line, since dropped with the placeholder window (commit 7 now plans `transient-reopen-misplaced`); only docs carried the old name |
+   | `⟨old⟩-standin-misplaced` | `transient-placeholder-misplaced` | planned log line, since dropped with the placeholder window; only docs carried the old name |
    | `G13 ⟨old⟩-ends` | `G13 transient-page-ends` | rule label in `window-rules.md` |
    | `specs/⟨old⟩-ends-on-blur.md` | `specs/transient-page-ends-on-blur.md` | spec file, moved with `git mv` |
    | `⟨old⟩Escape` (type), `⟨old⟩_ESCAPE`, `⟨old⟩Escape` (parameter) | `TransientPageEscape`, `TRANSIENT_PAGE_ESCAPE`, `transientPageEscape` | already removed from code; named in the docs' history |
@@ -168,16 +168,17 @@ helper's reads; if they fail, nothing has yet been built on them.
    desktop (`hybrid-overlay.ts ensureOverlay()`), and the transient page-host window pinned to the
    desktop it is shown on, no longer declared `onEveryDesktop`.
 5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
-   three events, `isCurrentDesktop`, `openedOnCurrentDesktop`, reshaped `onCurrentDesktop`.
+   three events, `isCurrentDesktop`, reshaped `onCurrentDesktop`.
    Backend: the report → event loop, fed by
    whichever provider started. No rule reads the new state; behaviour unchanged on every platform
    (pinned by the property test).
-6. **A switch away defers the reopen until the user returns** (`WindowRecord.reopenPending`, the
-   reopen gated on `openedOnCurrentDesktop`) and kernel `replaces` / `replacedBy` close and focus
-   ordering (decision 1). Add the switcher's cross-desktop reach under rule 1 of
-   `docs/design/window-rules.md`. Remove probe hooks if still present.
-7. **The `transient-reopen-misplaced` check**: after each reopen the backend reads the reopened
-   window's placement and logs when it is not on the transient page-host window's desktop.
+6. **Kernel `replaces` / `replacedBy` close and focus ordering for the 5e reopen** (decision 1).
+   Add the switcher's cross-desktop reach under rule 1 of `docs/design/window-rules.md`. Remove
+   probe hooks if still present.
+7. Done ahead of the reshape, `84a123ee`: a transient page-host window that loses focus with the
+   app inactive (click-away, desktop switch) closes instead of being reopened, because Electron
+   panels are on every desktop (see "Research: Electron panels and desktops"). The earlier plan
+   (defer the reopen until the user returns, `reopenPending`) is dropped.
 8. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
    raise of a window not on a current desktop, switcher selection carrying user intent, and
    decision 3.
@@ -288,8 +289,12 @@ verified:
    fragile.
 
 The panel travelling with the user during the switch gesture is fixed only by 1 or 2; 3 and 4 fix
-only where the reopened window lands. The deferred reopen of rule 3 (`reopenPending`) also fixes
-where it lands, independent of all four.
+only where the reopened window lands.
+
+**Chosen for now (`84a123ee`): none of the four.** The panel stays; losing focus with the app
+inactive closes it, and nothing is reopened. Accepted cost: during a switch gesture the page shows
+on both desktops until the switch ends. Candidate 1 remains the way to keep the page open across a
+click-away if that is wanted later.
 
 ## Probe findings
 
