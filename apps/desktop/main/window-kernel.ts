@@ -157,6 +157,9 @@ export interface SelectionFocus {
 export interface FocusAssertRequest {
   id: WindowId;
   seq: number;
+  // Set only by a switcher pick: an explicit choice, so its raise is not held
+  // to the current desktop (every other assert is a machine raise).
+  switcherPick?: true;
 }
 
 export interface FocusRaiseRequest {
@@ -773,6 +776,8 @@ export function evolve(state: State, ev: Event): State {
       // `pendingSelectionFocus` names a switcher and the window the user
       // picked; this close is the spend when it is that switcher going away.
       // One-shot — cleared below regardless of whether the target survives.
+      // Gated on `admitsFocusAssert`, not `admitsMachineRaise`: a pick is an
+      // explicit choice, and it may name a window on another desktop.
       //
       // The raise goes through `lastFocusAssert`: `react` is a pure structural
       // diff that may not branch on `ev.type`, so the request must become a
@@ -782,7 +787,7 @@ export function evolve(state: State, ev: Event): State {
         ? state.pendingSelectionFocus
         : null;
       const selectionTarget = spentSelection !== null
-        ? filtered.find((w) => w.id === spentSelection.target && admitsMachineRaise(state, w))
+        ? filtered.find((w) => w.id === spentSelection.target && admitsFocusAssert(w, w.visible))
         : undefined;
       // Successor raise: a closed key holder that neither hands off to a
       // parent nor spends a selection asks for `successorOnHide`'s answer on
@@ -823,7 +828,7 @@ export function evolve(state: State, ev: Event): State {
         ...(spentSelection !== null
           ? {
               pendingSelectionFocus: null,
-              lastFocusAssert: { id: spentSelection.target, seq: nextFocusAssertSeq(state) },
+              lastFocusAssert: { id: spentSelection.target, seq: nextFocusAssertSeq(state), switcherPick: true },
             }
           : {}),
         ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
@@ -1855,10 +1860,14 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //
   // Gated on `admitsFocusAssert`, not merely present in `next.order` — without
   // it an assert naming an off-screen or doomed window would pull it onto screen and take key.
+  // Every assert but a switcher pick is also held to the current desktop
+  // (`admitsMachineRaise`), matching the gate `evolve` stamped its token under.
   const focusAssert = next.lastFocusAssert;
   if (focusAssert !== null && focusAssert.seq !== prev.lastFocusAssert?.seq) {
     const record = next.order.find((w) => w.id === focusAssert.id);
-    if (record !== undefined && admitsMachineRaise(next, record)) {
+    const admitted = record !== undefined &&
+      (focusAssert.switcherPick === true ? admitsFocusAssert(record, record.visible) : admitsMachineRaise(next, record));
+    if (record !== undefined && admitted) {
       effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
       // `isContentWindow` earns its keep for an assert dispatched as a raw event, bypassing `decide`'s own gate.
       // An assert never carries user intent (`FocusAssertRequested` has no `intent` field), so the

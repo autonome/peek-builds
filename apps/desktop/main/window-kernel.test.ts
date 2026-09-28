@@ -8080,6 +8080,18 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
   });
 
+  it('a switcher pick of a window on another desktop is raised, with a token', () => {
+    // The palette stands in for the switcher: any window can arm a selection.
+    const state = fold([{ type: 'SelectionFocusArmed', armer: PALETTE, target: PAGE }], paletteOverOffDesktopPage());
+    assert.strictEqual(onCurrentDesktop(state, windowById(state, PAGE)!), false, 'precondition: the page is on desktop 1');
+    const ev: Event = { type: 'WindowClosed', id: PALETTE };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter }]);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter + 1);
+    assert.strictEqual(windowById(next, PAGE)?.lastOpSeq, next.opSeqCounter, 'the raise and its stamp agree');
+  });
+
   it('an OS focus report for a window the kernel places on another desktop moves key but raises nothing', () => {
     const state = paletteOverOffDesktopPage();
     const ev: Event = { type: 'OsFocusGained', id: PAGE };

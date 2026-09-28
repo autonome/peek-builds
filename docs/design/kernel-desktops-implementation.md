@@ -182,12 +182,13 @@ helper's reads; if they fail, nothing has yet been built on them.
 8. Split in two:
    - **8a Done: F9 gate + F7 rewrite.** `successorOnHide()` applies `onCurrentDesktop` to both
      branches, and every raise `react` emits without user intent (successor, parent refocus, key
-     move on an OS focus report, focus assert and its content focus, raise request, switcher
-     selection spend, activation latch) passes one predicate, `admitsMachineRaise()`, which `evolve`
-     also asks where it stamps a token, so an ungated raise mints none. The `WindowClosed` arm
-     already chose a successor for any key holder, application windows included. Until 8b, a
-     switcher pick of a window on another desktop raises nothing, because the spend still carries
-     no user intent.
+     move on an OS focus report, focus assert and its content focus, raise request, activation
+     latch) passes one predicate, `admitsMachineRaise()`, which `evolve` also asks where it stamps
+     a token, so an ungated raise mints none. The `WindowClosed` arm already chose a successor for
+     any key holder, application windows included. The switcher selection spend is exempt: a pick
+     is an explicit choice and rule 1 takes the user to the picked window's desktop, so it is gated
+     on `admitsFocusAssert()` only, marked by `FocusAssertRequest.switcherPick`. Until 8b it still
+     carries no `intent: 'user'`, and no `ShowDesktop` precedes it.
    - **8b:** `ShowDesktop` before a user-intent raise of a window not on a current desktop,
      switcher selection carrying user intent, decision 3.
 9. Decision 2 (URL dedup).
