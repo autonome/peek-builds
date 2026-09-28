@@ -378,6 +378,11 @@ Cost: requests are asynchronous, and any window write comes from another process
   server number); X11, `getNativeWindowHandle()`.
 - `onEveryDesktop` declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
   reports only where the platform disagrees.
+- `TRANSIENT_ROLES` windows appear on the desktop the user is on through `setVisibleOnAllWorkspaces`
+  (desktop membership `follow`). This includes the shared page chrome window (role `overlay`), which
+  is registered outside the generic window-open handler and so sets its membership itself
+  (`hybrid-overlay.ts ensureOverlay()`); left on one desktop, showing it over a page-host window on
+  another desktop makes macOS switch back to the overlay's desktop.
 - macOS switch trigger:
   `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
   the provider supplies which desktop is now current.

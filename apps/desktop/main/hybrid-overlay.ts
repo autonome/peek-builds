@@ -101,9 +101,10 @@ import {
   roleIn,
   SATELLITE_ROLES,
 } from './window-kernel.js';
-import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
+import { deriveWindowSurface, classifyWindowRegistration, desktopMembershipForRole } from './izui-roles.js';
 import {
   kernelDestroyWindow,
+  kernelSetDesktopMembership,
   kernelWindowShown,
   kernelWindowHidden,
   kernelSetFullscreen,
@@ -355,6 +356,16 @@ function ensureOverlay(): BrowserWindow {
     // declares this fact.
     tracksBaseLayerTop: true,
   });
+
+  // The overlay is a `TRANSIENT_ROLES` window, so it follows the user across
+  // desktops like the palette, switcher and quick-view. Those get this from the
+  // generic window-open handler in `ipc.ts`; the overlay is registered here
+  // directly and must ask for it itself. Left on the desktop it was created on,
+  // showing it over a page-host window on another desktop made macOS switch the
+  // user back to the overlay's desktop.
+  if (!isHeadless()) {
+    kernelSetDesktopMembership(overlayWmId, desktopMembershipForRole('overlay'));
+  }
 
   overlayWin = win;
   DEBUG && console.log('[hybrid-overlay] created singleton overlay window', win.id);
