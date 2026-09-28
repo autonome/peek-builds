@@ -7713,6 +7713,45 @@ describe('window-kernel: a transient page-host window ends when it loses key: cl
     const later = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], activated.state);
     assert.deepStrictEqual(reopens(later.effects), []);
   });
+
+  // A desktop switch (row 5d) ends the page as a loss of focus, whichever
+  // order the platform reports the switch, the loss of key and an app
+  // activation in.
+  it('a desktop switch closes the page, and an activation that follows it reopens nothing', () => {
+    const before = transientPageHostHoldingKey(wid(1));
+    const switched = foldWithEffects([{ type: 'DesktopChanged', focused: wid(1) }], before);
+    assert.deepStrictEqual(dismisses(switched.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    const activated = foldWithEffects([{ type: 'AppActivated' }], switched.state);
+    assert.deepStrictEqual(reopens(activated.effects), []);
+    assert.deepStrictEqual(dismisses(activated.effects), []);
+  });
+
+  it('a desktop switch then a loss of key closes the page once', () => {
+    const before = transientPageHostHoldingKey(wid(1));
+    const after = foldWithEffects([
+      { type: 'DesktopChanged', focused: wid(1) },
+      { type: 'OsFocusLost', id: wid(1) },
+    ], before);
+    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    assert.deepStrictEqual(reopens(after.effects), []);
+  });
+
+  it('a loss of key then a desktop switch closes the page once', () => {
+    const before = transientPageHostHoldingKey(wid(1));
+    const after = foldWithEffects([
+      { type: 'OsFocusLost', id: wid(1) },
+      { type: 'DesktopChanged', focused: null },
+    ], before);
+    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    assert.deepStrictEqual(reopens(after.effects), []);
+  });
+
+  it('a desktop switch after the page became an ordinary window closes nothing', () => {
+    const before = transientPageHostHoldingKey(wid(1));
+    const activated = foldWithEffects([{ type: 'AppActivated' }], before);
+    const switched = foldWithEffects([{ type: 'DesktopChanged', focused: wid(1) }], activated.state);
+    assert.deepStrictEqual(dismisses(switched.effects), []);
+  });
 });
 
 // specs/kernel-desktops.md → "Kernel state" and "The desktop-switch event".

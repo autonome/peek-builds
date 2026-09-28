@@ -1260,14 +1260,23 @@ export function evolve(state: State, ev: Event): State {
       // backend's focus reports. `focused` only makes the one window the user
       // is looking at known to be here after the switch; an id not in `order`
       // stamps nothing.
+      //
+      // A switch ends a transient page-host window as a loss of focus: it is
+      // marked `pendingHidden` here, so `react`'s dismissal diff closes it.
+      // Decided on the switch report itself because macOS may follow the
+      // switch with an app activation while the page still holds key, which
+      // would otherwise read as the user bringing Peek forward (row 5e) and
+      // reopen the page on the desktop just switched to.
       const minted = ev.name === undefined;
       const desktopCounter = minted ? state.desktopCounter + 1 : state.desktopCounter;
       const desktop = ev.name ?? mintedDesktopId(desktopCounter);
+      const endsOnSwitch = (w: WindowRecord): boolean => w.pendingHidden !== true && isTransientPageHost(state, w);
       return {
         ...state,
-        order: ev.focused === null
-          ? state.order
-          : state.order.map((w) => (w.id === ev.focused && !isOnEveryDesktop(w) ? { ...w, desktop } : w)),
+        order: state.order.map((w) => {
+          const stamped = w.id === ev.focused && !isOnEveryDesktop(w) ? { ...w, desktop } : w;
+          return endsOnSwitch(w) ? { ...stamped, pendingHidden: true } : stamped;
+        }),
         desktop,
         desktopCounter,
         version: state.version + 1,
