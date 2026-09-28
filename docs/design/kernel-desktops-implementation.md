@@ -179,9 +179,17 @@ helper's reads; if they fail, nothing has yet been built on them.
    app inactive (click-away, desktop switch) closes instead of being reopened, because Electron
    panels are on every desktop (see "Research: Electron panels and desktops"). The earlier plan
    (defer the reopen until the user returns, `reopenPending`) is dropped.
-8. **F9 gate and F7 rewrite** in `react` / `successorOnHide()`, `ShowDesktop` before a user-intent
-   raise of a window not on a current desktop, switcher selection carrying user intent, and
-   decision 3.
+8. Split in two:
+   - **8a Done: F9 gate + F7 rewrite.** `successorOnHide()` applies `onCurrentDesktop` to both
+     branches, and every raise `react` emits without user intent (successor, parent refocus, key
+     move on an OS focus report, focus assert and its content focus, raise request, switcher
+     selection spend, activation latch) passes one predicate, `admitsMachineRaise()`, which `evolve`
+     also asks where it stamps a token, so an ungated raise mints none. The `WindowClosed` arm
+     already chose a successor for any key holder, application windows included. Until 8b, a
+     switcher pick of a window on another desktop raises nothing, because the spend still carries
+     no user intent.
+   - **8b:** `ShowDesktop` before a user-intent raise of a window not on a current desktop,
+     switcher selection carrying user intent, decision 3.
 9. Decision 2 (URL dedup).
 10. Decision 4 (focus filters).
 11. Decision 5 (resign settle).

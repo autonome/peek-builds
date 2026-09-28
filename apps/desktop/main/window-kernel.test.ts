@@ -7948,3 +7948,160 @@ describe('window-kernel: desktop state', () => {
     assert.strictEqual(onCurrentDesktop(next, windowById(next, wid(1))!), false);
   });
 });
+
+// specs/kernel-desktops.md rules 4, 8, 9 and "Kernel behaviour": successor on
+// hide or close, and the raise gate (window-rules.md F7, F9).
+describe('window-kernel: a focus the manager makes stays on the current desktop', () => {
+  const S = 'S';
+  const PAGE = wid(15);
+  const OTHER = wid(16);
+  const PALETTE = wid(20);
+  const page = (id: WindowId): Event => ({
+    type: 'WindowRegistered', id, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content',
+  });
+  const palette: Event = {
+    type: 'WindowRegistered', id: PALETTE, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: true, acceptsInput: true,
+    class: 'palette', role: 'palette', keepLive: true, onEveryDesktop: true,
+  };
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: S, current: '1' }],
+    desktops: [{ id: '1', screen: S }, { id: '3', screen: S }],
+  };
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+  const focusesToward = (effects: Effect[], id: WindowId): Effect[] =>
+    effects.filter((e) => (e.type === 'RaiseWindow' || e.type === 'FocusContent') && e.id === id);
+  const openPalette: Event[] = [palette, { type: 'WindowShown', id: PALETTE }, { type: 'OsFocusGained', id: PALETTE }];
+
+  // The live case: a page-host window on desktop 1 was key, the user switched
+  // to desktop 3 and opened the palette, which is on every desktop.
+  const paletteOverOffDesktopPage = (): State =>
+    fold([
+      layout,
+      page(PAGE),
+      { type: 'WindowShown', id: PAGE },
+      { type: 'OsFocusGained', id: PAGE },
+      { type: 'AppActivated' },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '3' },
+      ...openPalette,
+    ]);
+
+  for (const ending of ['WindowClosed', 'WindowHidden'] as const) {
+    it(`the palette on desktop 3 ends (${ending}) with its prior key window on desktop 1: nothing is raised, no token`, () => {
+      const state = paletteOverOffDesktopPage();
+      assert.strictEqual(state.key, PALETTE, 'precondition: the palette holds key');
+      assert.strictEqual(windowById(state, PALETTE)?.priorKey, PAGE, 'precondition: the page held key before it');
+      assert.strictEqual(onCurrentDesktop(state, windowById(state, PAGE)!), false, 'precondition: the page is on desktop 1');
+      const ev: Event = { type: ending, id: PALETTE };
+      const next = evolve(state, ev);
+      const effects = react(state, ev, next);
+      assert.deepStrictEqual(raises(effects), []);
+      assert.deepStrictEqual(focusesToward(effects, PAGE), []);
+      assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no raise, no token');
+    });
+  }
+
+  it('the prior key window is off the current desktop: the topmost application window on it is raised instead', () => {
+    // PAGE is shown on desktop 1 and OTHER on desktop 3; PAGE held key before the palette.
+    const swapped = fold([
+      layout,
+      page(PAGE),
+      { type: 'WindowShown', id: PAGE },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '3' },
+      page(OTHER),
+      { type: 'WindowShown', id: OTHER },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '1' },
+      { type: 'OsFocusGained', id: PAGE },
+      { type: 'AppActivated' },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '3' },
+      ...openPalette,
+    ]);
+    assert.strictEqual(windowById(swapped, PAGE)?.desktop, '1', 'precondition: the prior key window is on desktop 1');
+    assert.strictEqual(windowById(swapped, OTHER)?.desktop, '3', 'precondition: the other page is on desktop 3');
+    const ev: Event = { type: 'WindowClosed', id: PALETTE };
+    const next = evolve(swapped, ev);
+    assert.deepStrictEqual(raises(react(swapped, ev, next)), [{ type: 'RaiseWindow', id: OTHER, opSeq: next.opSeqCounter }]);
+  });
+
+  it('the prior key window on the current desktop wins over a topmost one', () => {
+    const state = fold([
+      layout,
+      page(PAGE),
+      { type: 'WindowShown', id: PAGE },
+      page(OTHER),
+      { type: 'WindowShown', id: OTHER },
+      { type: 'OsFocusGained', id: OTHER },
+      { type: 'OsFocusGained', id: PAGE },
+      { type: 'AppActivated' },
+      ...openPalette,
+    ]);
+    assert.strictEqual(windowById(state, PALETTE)?.priorKey, PAGE, 'precondition: the page held key before the palette');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, PAGE, 'the page took key last, so it is also topmost');
+    // Put OTHER on top without it taking key, so topmost and prior differ.
+    const reordered: State = { ...state, order: [...state.order.filter((w) => w.id !== OTHER), windowById(state, OTHER)!] };
+    const ev: Event = { type: 'WindowHidden', id: PALETTE };
+    const next = evolve(reordered, ev);
+    assert.deepStrictEqual(raises(react(reordered, ev, next)), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter }]);
+  });
+
+  it('before any layout report the prior key window is raised, as before', () => {
+    const state = fold([
+      page(PAGE),
+      { type: 'WindowShown', id: PAGE },
+      { type: 'OsFocusGained', id: PAGE },
+      { type: 'AppActivated' },
+      ...openPalette,
+    ]);
+    const ev: Event = { type: 'WindowClosed', id: PALETTE };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter }]);
+  });
+
+  it('a raise request without user intent for a window on another desktop is not emitted and mints no token', () => {
+    const state = paletteOverOffDesktopPage();
+    const ev: Event = { type: 'FocusRaiseRequested', id: PAGE };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(raises(react(state, ev, next)), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
+  });
+
+  it('a raise request with user intent for a window on another desktop is still emitted', () => {
+    const state = paletteOverOffDesktopPage();
+    const ev: Event = { type: 'FocusRaiseRequested', id: PAGE, intent: 'user' };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter, intent: 'user' }]);
+  });
+
+  it('a focus assert for a window on another desktop is not emitted, nor its content focus', () => {
+    const state = paletteOverOffDesktopPage();
+    const ev: Event = { type: 'FocusAssertRequested', id: PAGE };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(focusesToward(react(state, ev, next), PAGE), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
+  });
+
+  it('an OS focus report for a window the kernel places on another desktop moves key but raises nothing', () => {
+    const state = paletteOverOffDesktopPage();
+    const ev: Event = { type: 'OsFocusGained', id: PAGE };
+    const next = evolve(state, ev);
+    assert.strictEqual(next.key, PAGE, 'key is a reported fact');
+    assert.deepStrictEqual(raises(react(state, ev, next)), []);
+  });
+
+  it('closing a child whose parent is on another desktop raises no parent', () => {
+    const CHILD = wid(30);
+    const state = fold([
+      layout,
+      page(PAGE),
+      { type: 'WindowShown', id: PAGE },
+      { type: 'AppActivated' },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '3' },
+      { type: 'WindowRegistered', id: CHILD, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'child-content', parentId: PAGE },
+      { type: 'WindowShown', id: CHILD },
+      { type: 'OsFocusGained', id: CHILD },
+    ]);
+    const ev: Event = { type: 'WindowClosed', id: CHILD };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(focusesToward(react(state, ev, next), PAGE), []);
+  });
+});
