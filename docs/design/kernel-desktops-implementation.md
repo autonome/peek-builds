@@ -221,4 +221,23 @@ desktops is unverified. Wayland cannot be checked there.
   ids read through a provider.
 - Behaviour matched `main` (page reopened on desktop 1).
 
-**Second probe, native helper:** (filled by the implementing track)
+**Second probe, native helper (2026-09-28, stopped after gesture 3):** one screen, two desktops,
+build `c3647846`, log kept only locally.
+
+- Precondition met: `desktop-provider started name=mac`; `desktop-probe-hello` with all four
+  symbols resolved, including `CGSMoveWindowsToManagedSpace`.
+- Gesture 1 passed: the transient page-host window read `*` (every desktop); layout `1@1,3@1`,
+  desktop 2 (id `3`) current.
+- Gesture 2 passed: current went `3` → `1` → `3`; ids are stable across returns (the old
+  `space-changed` line kept minting `desktop-N` in the same run).
+- Gesture 3 passed: the reopened window read `1/3` (desktop 2) on every read, matching what was on
+  screen.
+- Gestures 4–6 not run, blocked by a new defect: the page chrome window (role `overlay`, one
+  shared window) sits on desktop 1. Arriving on desktop 2, where the reopened window is the
+  front Peek window, activates Peek; the overlay is shown for that window from desktop 1 and
+  macOS switches back to desktop 1 about 0.4s later, on every arrival. Clicking the page on
+  desktop 2 does the same. The `space-changed` lines show each arrival on desktop 2 followed by a
+  switch with `appActive=true key=wm-9` and `wm-1` (the overlay) turning visible.
+- Consequence for the spec: rule 1's `TRANSIENT_ROLES` exception (they appear on the desktop the
+  user is on) needs a realization for the overlay window, for example declaring it `onEveryDesktop`
+  in the Electron backend, before any gesture that visits a desktop holding a page-host window.
