@@ -1752,13 +1752,12 @@ describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
     assert.strictEqual(raises[raises.length - 1], wid(2));
   });
 
-  it('with the app inactive, the close of the old window raises nothing', () => {
+  it('with the app inactive, losing key closes the page: no reopen, no raise', () => {
     const { exec, backend } = transientPageHostSetup();
     exec.dispatch({ type: 'OsFocusLost', id: wid(1) });
-    assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow').map((c) => c.args[0]), [wid(1)]);
-    const replacement = exec.getState().order.find((w) => w.id === wid(2));
-    assert.ok(replacement, 'the replacement never registered');
-    assert.strictEqual(replacement.visible, true);
-    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]).filter((id) => id === wid(2)), []);
+    assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow'), []);
+    assert.deepStrictEqual(backend.of('closeOrHide').map((c) => c.args[0]), [wid(1)]);
+    assert.strictEqual(exec.getState().order.some((w) => w.id === wid(2)), false);
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
   });
 });

@@ -208,12 +208,11 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(page!.heldAboveOtherApps, timeline.join('\n')).toBe(true);
     expect(effectsFor(timeline, 'HoldAboveOtherApps', pageWmId).length, timeline.join('\n')).toBe(1);
 
-    // The transient page-host window is replaced by the reopened window when the page loses key with the app still inactive
-    // (window-rules.md G13): the user clicked the other app. The real `blur`
-    // on the host is what the OS would fire; the backend's settle turns it
-    // into the key window losing focus. The kernel then asks for the page to
-    // be reopened as an ordinary window, and the backend replaces the panel
-    // host with a new one at the same address, shown without focus.
+    // The transient page-host window closes when the page loses key with the
+    // app still inactive (window-rules.md G13, row 5c): the user clicked the
+    // other app. The real `blur` on the host is what the OS would fire; the
+    // backend's settle turns it into the key window losing focus. Nothing
+    // replaces it, and the app stays inactive.
     const blurred = await app.evaluateMain!(((_e: unknown, id: number) => {
       return (globalThis as any).__peek_test.blurHybridWindowForTest(id);
     }) as any, opened.id);
@@ -223,46 +222,13 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
       const old = s.order.find((w) => w.id === pageWmId);
       const fresh = s.order.find((w) => w.id !== pageWmId && w.kind === 'page-host' && w.role === 'content' && w.visible);
       return `${old === undefined ? 'old-closed' : 'old-present'}:${fresh === undefined ? 'no-reopen' : 'reopened'}`;
-    }, { timeout: 10000 }).toBe('old-closed:reopened');
+    }, { timeout: 10000 }).toBe('old-closed:no-reopen');
     const afterBlur = await readState();
-    const reopened = afterBlur.order.find((w) => w.id !== pageWmId && w.kind === 'page-host' && w.role === 'content' && w.visible)!;
-    expect(reopened.nonActivating === true, 'the reopened window is still non-activating').toBe(false);
-    expect(reopened.heldAboveOtherApps === true, 'the reopened window is held above other apps').toBe(false);
-    expect(afterBlur.key, 'the reopened window took key').not.toBe(reopened.id);
-    expect(afterBlur.appActive, 'the reopen activated the app').toBe(false);
+    expect(afterBlur.appActive, 'the close activated the app').toBe(false);
     const timelineAfterBlur = await readTimeline(baselineLen);
-    expect(effectsFor(timelineAfterBlur, 'ReopenAsOrdinaryWindow', pageWmId).length, timelineAfterBlur.join('\n')).toBe(1);
+    expect(effectsFor(timelineAfterBlur, 'ReopenAsOrdinaryWindow', pageWmId), timelineAfterBlur.join('\n')).toEqual([]);
+    expect(effectsFor(timelineAfterBlur, 'DismissWindow', pageWmId).length, timelineAfterBlur.join('\n')).toBe(1);
     expect(timelineAfterBlur.filter((l) => l.includes('HideApp')), timelineAfterBlur.join('\n')).toEqual([]);
-
-    // Exactly one window shows the page, with a new native id, and it is an
-    // ordinary window: on one desktop, not floating. The list reads each
-    // window's live URL, which the replacement reports once its page loads.
-    const listShowing = async () => {
-      const l = await bgWindow.evaluate(async () => (window as any).app.window.list());
-      return (l.windows ?? []).filter((w: { url?: string }) => w.url && w.url.includes(url)) as Array<{ id: number }>;
-    };
-    await expect.poll(async () => (await listShowing()).length, { timeout: 10000 }).toBe(1);
-    const showing = await listShowing();
-    expect(showing[0].id).not.toBe(opened.id);
-    const nativeAfter = await app.evaluateMain!((({ BaseWindow }: any, id: number) => {
-      const win = BaseWindow.getAllWindows().find((w: any) => w.id === id);
-      return win ? { visible: win.isVisible(), allDesktops: win.isVisibleOnAllWorkspaces(), floating: win.isAlwaysOnTop() } : null;
-    }) as any, showing[0].id);
-    expect(nativeAfter).toEqual({ visible: true, allDesktops: false, floating: false });
-
-    // Escape on a page taking Escape while the app is inactive closes it,
-    // with the app still inactive, and a closed window is not reopened.
-    const reopenedWmId = reopened.id;
-    await app.evaluateMain!((async (_e: unknown, id: number) => {
-      await (globalThis as any).__peekHybridOverlayTest.runHybridEscape(id);
-    }) as any, showing[0].id);
-    await expect.poll(async () => {
-      const s = await readState();
-      const rec = s.order.find((w) => w.id === reopenedWmId);
-      return rec === undefined ? `closed:${s.appActive ? 'active' : 'inactive'}` : `${rec.visible ? 'visible' : 'hidden'}`;
-    }, { timeout: 5000 }).toBe('closed:inactive');
-    const afterEscape = await readTimeline(baselineLen);
-    expect(effectsFor(afterEscape, 'ReopenAsOrdinaryWindow', reopenedWmId), afterEscape.join('\n')).toEqual([]);
   });
 
   test('the app activating while the transient page-host window holds key reopens the page as the front window', async () => {

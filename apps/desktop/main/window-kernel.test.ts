@@ -7601,7 +7601,7 @@ describe('window-kernel: a user-intent raise is never redundant while the app is
   });
 });
 
-describe('window-kernel: a transient page-host window ends when it loses key, and the window is reopened as an ordinary one (window-rules.md G13)', () => {
+describe('window-kernel: a transient page-host window ends when it loses key: closed with the app inactive, reopened as an ordinary one when the app comes forward (window-rules.md G13)', () => {
   const sidePage = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
     type: 'WindowRegistered',
     id,
@@ -7627,6 +7627,7 @@ describe('window-kernel: a transient page-host window ends when it loses key, an
   });
   const record = (state: State, id: WindowId): WindowRecord => state.order.find((w) => w.id === id)!;
   const reopens = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'ReopenAsOrdinaryWindow');
+  const dismisses = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'DismissWindow');
 
   // A transient page-host window in flight: the app inactive, the page shown, raised with user
   // intent from the palette, and confirmed key by the OS.
@@ -7646,10 +7647,11 @@ describe('window-kernel: a transient page-host window ends when it loses key, an
     assert.strictEqual(isTransientPageHost(state, record(state, wid(1))), true);
   });
 
-  it('losing key with the app still inactive reopens the page', () => {
+  it('losing key with the app still inactive closes the page, reopening nothing', () => {
     const before = transientPageHostHoldingKey(wid(1));
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
-    assert.deepStrictEqual(reopens(after.effects), [{ type: 'ReopenAsOrdinaryWindow', id: wid(1) }]);
+    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    assert.deepStrictEqual(reopens(after.effects), []);
     assert.strictEqual(after.state.appActive, false, 'the other app keeps focus');
     assert.strictEqual(isTransientPageHost(after.state, record(after.state, wid(1))), false);
   });
@@ -7663,14 +7665,16 @@ describe('window-kernel: a transient page-host window ends when it loses key, an
   it('key moving to the palette (the hotkey pressed again) ends the transient page-host window', () => {
     const before = fold([palette(wid(9))], transientPageHostHoldingKey(wid(1)));
     const after = foldWithEffects([{ type: 'WindowShown', id: wid(9) }, { type: 'OsFocusGained', id: wid(9) }], before);
-    assert.deepStrictEqual(reopens(after.effects), [{ type: 'ReopenAsOrdinaryWindow', id: wid(1) }]);
+    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    assert.deepStrictEqual(reopens(after.effects), []);
   });
 
-  it('emits once: a second focus-lost report for the same window reopens nothing', () => {
+  it('emits once: a second focus-lost report for the same window closes or reopens nothing', () => {
     const before = transientPageHostHoldingKey(wid(1));
     const first = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     const second = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }, { type: 'AppActivated' }], first.state);
-    assert.strictEqual(reopens(first.effects).length, 1);
+    assert.strictEqual(dismisses(first.effects).length, 1);
+    assert.deepStrictEqual(dismisses(second.effects), []);
     assert.deepStrictEqual(reopens(second.effects), []);
   });
 

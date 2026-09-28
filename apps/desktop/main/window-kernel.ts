@@ -334,8 +334,9 @@ export type Effect =
   // Return a held window to ordinary stacking — the same window, only its
   // stacking changes. Emitted when `heldAboveOtherApps` goes from true to not-true.
   | { type: 'ReleaseFromAboveOtherApps'; id: WindowId }
-  // A transient page-host window has ended (`isTransientPageHost` went from true to false with the
-  // window still on screen): replace its non-activating window with an
+  // A transient page-host window has ended because the app came forward while
+  // it held key (`isTransientPageHost` went from true to false with the window
+  // still on screen and the app active): replace its non-activating window with an
   // ordinary one showing the same page at the same bounds, shown without
   // focus and belonging to the desktop the user is on. One intention; the
   // close-and-reopen it takes on a platform that fixes a window's type at
@@ -1696,16 +1697,23 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     else if (!isHeld && wasHeld) effects.push({ type: 'ReleaseFromAboveOtherApps', id: nextRecord.id });
   }
 
-  // Transient page-host window replaced: a structural diff of `isTransientPageHost` per record. Only a
-  // window still on screen is reopened — one that hid or closed in this very
-  // transition (Escape, a close request) has nothing left to reopen, and a
-  // record that left `next.order` is not visited at all.
+  // Transient page-host window ended: a structural diff of `isTransientPageHost` per record. Only a
+  // window still on screen is acted on — one that hid or closed in this very
+  // transition (Escape, a close request) needs nothing, and a record that left
+  // `next.order` is not visited at all. The app coming forward while it holds
+  // key (5e) reopens it as an ordinary window, on the desktop the user is on.
+  // Losing focus with the app still inactive — a click on another app (5c) or
+  // a desktop switch (5d) — closes it: the platform may keep the window on
+  // every desktop, so a reopen after a switch would land on the wrong one, and
+  // the page stays reachable from history.
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) continue;
     if (!isTransientPageHost(prev, prevRecord) || isTransientPageHost(next, nextRecord)) continue;
     if (!nextRecord.visible || nextRecord.pendingHidden === true) continue;
-    effects.push({ type: 'ReopenAsOrdinaryWindow', id: nextRecord.id });
+    effects.push(next.appActive
+      ? { type: 'ReopenAsOrdinaryWindow', id: nextRecord.id }
+      : { type: 'DismissWindow', id: nextRecord.id });
   }
 
   // SetStacking: a minimal replay, not a re-assert of everything eligible. The
