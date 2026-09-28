@@ -187,6 +187,9 @@ Initial state: no screens, no desktops.
 - `CurrentDesktopChanged { screen: ScreenId; desktop: DesktopId }` — sets that screen's `current`;
   adds an unknown screen. With shared desktops, one per screen. MUST NOT write `key` (F1: only
   `OsFocusGained` / `OsFocusLost` do).
+- `DesktopSwitchObserved {}` — the platform reported a desktop switch, sent the moment it does and
+  before the provider is read. Carries no ids; it only ends a transient page-host window (section 4
+  "Kernel behaviour"). A backend with no switch notification never sends it.
 - `WindowPlacementReported { id: WindowId; screen: ScreenId | null; desktop: DesktopId | null;
   onEveryDesktop: boolean }` — a registered window's placement. `null` leaves the field unchanged.
   For an `onEveryDesktop` window that already has a desktop, `desktop` is ignored.
@@ -215,8 +218,10 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 - **Ending a transient page-host window.** `react` diffs `isTransientPageHost` per visible record.
   When it stops holding with the app inactive (5c, 5d: focus lost to another app or to a desktop
-  switch), `react` emits `DismissWindow`; with the app active (5e), `ReopenAsOrdinaryWindow`. The
-  kernel needs no desktop state for this: a desktop switch arrives as a loss of focus.
+  switch), `react` emits `DismissWindow`; with the app active (5e), `ReopenAsOrdinaryWindow`. A
+  `DesktopSwitchObserved` marks a transient page-host window for dismissal at once, because on
+  macOS a switch can be followed by an app activation while the page still holds key, which would
+  otherwise read as 5e. It needs no desktop ids, so it cannot wait for the provider's read.
 - **Close and focus ordering (5e).** Registration with `replaces: X` marks X `replacedBy: <new
   id>`; `react` diffs that into `CloseWindow X`. On X's `WindowClosed` the kernel raises the
   reopened window, machine-caused. The ordering MUST be decided in the kernel, not by the code that
@@ -239,7 +244,7 @@ With the fallback provider the show stamp is the only source and is correct by c
 ### Platform neutrality
 
 `scripts/check-platform-leak.mjs` enforces the kernel's neutrality. The kernel names ("screen",
-"desktop", `ScreenId`, `DesktopId`, the three events, the two effects, `onEveryDesktop`) are not in
+"desktop", `ScreenId`, `DesktopId`, the four events, the two effects, `onEveryDesktop`) are not in
 `FORBIDDEN`. `SCANNED` includes `desktop-provider.ts` and `desktop-provider-fallback.ts`;
 `FORBIDDEN` includes `getMediaSourceId`, `getNativeWindowHandle`, `getAllDisplays`,
 `getDisplayMatching`. Exempt, as the places platform detail belongs: `electron-window-backend.ts`,

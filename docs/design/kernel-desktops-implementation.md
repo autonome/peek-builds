@@ -168,10 +168,14 @@ helper's reads; if they fail, nothing has yet been built on them.
    desktop (`hybrid-overlay.ts ensureOverlay()`), and the transient page-host window pinned to the
    desktop it is shown on, no longer declared `onEveryDesktop`.
 5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
-   three events, `isCurrentDesktop`, reshaped `onCurrentDesktop`.
-   Backend: the report → event loop, fed by
-   whichever provider started. No rule reads the new state; behaviour unchanged on every platform
-   (pinned by the property test).
+   three spec events plus `DesktopSwitchObserved`, `isCurrentDesktop`, reshaped `onCurrentDesktop`.
+   Backend: the report → event loop (`electron-window-backend.ts onDesktopTrigger` /
+   `syncDesktops`, reads serialized), fed by whichever provider started. No rule reads the new
+   state; behaviour unchanged on every platform (pinned by the property test "the fallback
+   provider changes no effect"). `DesktopSwitchObserved` carries the switch-closes-the-page
+   behaviour of `96fe4006`, which lived in the removed `DesktopChanged` arm: it is sent
+   synchronously from the switch notification because the provider's read that yields
+   `CurrentDesktopChanged` is asynchronous and an activation can arrive first.
 6. **Kernel `replaces` / `replacedBy` close and focus ordering for the 5e reopen** (decision 1).
    Add the switcher's cross-desktop reach under rule 1 of `docs/design/window-rules.md`. Remove
    probe hooks if still present.

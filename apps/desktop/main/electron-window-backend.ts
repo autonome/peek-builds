@@ -16,6 +16,7 @@ import {
   FailSafeDesktopProvider,
   type Placement,
   type PlatformWindowId,
+  type ProviderDisplayId,
   type ProviderLayout,
 } from './desktop-provider.js';
 import { FallbackDesktopProvider } from './desktop-provider-fallback.js';
@@ -42,7 +43,7 @@ import {
   type StackingLevel,
   type WindowRegistrationDecision,
 } from './izui-roles.js';
-import type { DesktopMembership, FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
+import type { DesktopMembership, FocusCause, ScreenId, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { WindowBackend, WindowSpec } from './window-backend.js';
 import {
   destroyGuestsAndWait,
@@ -58,7 +59,10 @@ import {
   getKernelExecutor,
   kernelOsFocusGained,
   kernelOsFocusSettled,
-  kernelDesktopChanged,
+  kernelDesktopLayoutReported,
+  kernelCurrentDesktopChanged,
+  kernelDesktopSwitchObserved,
+  kernelWindowPlacementReported,
   kernelWindowClosed,
   kernelWindowShown,
   kernelWindowHidden,
@@ -84,6 +88,13 @@ const APP_RESIGN_SETTLE_MS = 500;
 // (specs/kernel-desktops.md, 7.2): logs `desktop-read` on every trigger and
 // binds the write test to Control+Option+Command+1. No behaviour change.
 const DESKTOP_PROBE = process.env.PEEK_DESKTOP_PROBE === '1';
+
+// A screen is an Electron display, named by its id; the providers name displays
+// by the same number, so the mapping is the identity. A provider screen that
+// stands for every display at once (`null`) is the one screen `shared`.
+function screenIdOf(display: ProviderDisplayId | null): ScreenId {
+  return display ?? 'shared';
+}
 const DESKTOP_PROBE_WRITE_ACCELERATOR = 'Control+Alt+Command+1';
 // Time for the window server to take in a freshly shown test window before reading it.
 const DESKTOP_PROBE_SETTLE_MS = 300;
@@ -229,9 +240,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private escGrabRegistered = false;
 
-  // The desktop provider this backend owns (specs/kernel-desktops.md, section 5).
-  // Nothing reports its reads to the kernel yet; only the probe logs them.
+  // The desktop provider this backend owns (specs/kernel-desktops.md, section 5);
+  // `onDesktopTrigger` reports its reads to the kernel.
   private desktopProvider: FailSafeDesktopProvider | null = null;
+  // The tail of the serialized provider reads.
+  private desktopSync: Promise<void> = Promise.resolve();
   // The same macOS provider the fail-safe wrapper holds, kept for the probe's
   // write test, which the provider interface does not offer.
   private macDesktopProvider: MacDesktopProvider | null = null;
@@ -293,22 +306,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     void app.whenReady().then(() => this.startDesktopProvider());
   }
 
-  // Reports every desktop switch to the kernel as `DesktopChanged`, with this
-  // backend's own read of which registered window has focus at that moment.
-  // The notification's `userInfo` is empty, so it names no desktop and the
-  // kernel mints one. Other platforms report no switches: the kernel then sees
-  // one desktop for the whole session.
+  // Reports every desktop switch to the kernel at once as
+  // `DesktopSwitchObserved`, then reads the provider, which reports the new
+  // current desktop. The notification's `userInfo` is empty, so it names no
+  // desktop. Other platforms' switches reach the kernel only through their
+  // provider's own changes.
   private attachSpaceChangeListener(): void {
     if (process.platform !== 'darwin') return;
     systemPreferences.subscribeWorkspaceNotification(
       'NSWorkspaceActiveSpaceDidChangeNotification',
       () => {
-        const focused = this.focusedWindowId();
-        kernelDesktopChanged(focused);
+        kernelDesktopSwitchObserved();
         const state = getKernelExecutor().getState();
         wmLog('space-changed', {
-          desktop: state.desktop,
-          focused,
+          screens: this.describeScreens(),
           key: state.key,
           appActive: state.appActive,
           windows: this.describeDesktops(),
@@ -318,12 +329,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     );
   }
 
-  // `id:desktop:visible` per registered window, `*` for a window on every
-  // desktop, `?` for one never shown — the probe's view of the kernel's desktops.
+  // `screen:current` per screen the kernel knows.
+  private describeScreens(): string {
+    return getKernelExecutor().getState().screens.map((s) => `${s.id}:${s.current}`).join(',');
+  }
+
+  // `id:screen/desktop:visible` per registered window, `*` for a window on
+  // every desktop, `?` for a field not yet known.
   private describeDesktops(): string {
     const state = getKernelExecutor().getState();
     return state.order
-      .map((r) => `${String(r.id)}:${isOnEveryDesktop(r) ? '*' : (r.desktop ?? '?')}:${r.visible ? 'v' : 'h'}`)
+      .map((r) => `${String(r.id)}:${r.screen ?? '?'}/${isOnEveryDesktop(r) ? '*' : (r.desktop ?? '?')}:${r.visible ? 'v' : 'h'}`)
       .join(',');
   }
 
@@ -367,7 +383,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     void provider
       .start((change) => this.onDesktopTrigger(`provider-${change.kind}`))
       .then(() => {
-        if (!DESKTOP_PROBE) return;
+        if (!DESKTOP_PROBE) {
+          this.onDesktopTrigger('start');
+          return;
+        }
         const hello = mac?.hello;
         if (hello && !provider.onFallback) {
           const symbols = Object.entries(hello.symbols)
@@ -431,11 +450,53 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     return null;
   }
 
-  // The provider's reads have no consumer until the kernel takes desktop
-  // events, so only the probe reads.
+  // Every trigger reads the provider and reports what changed to the kernel
+  // (specs/kernel-desktops.md, "Backend algorithm"). Reads run one at a time,
+  // in trigger order, so a slow read never reports over a newer one.
   private onDesktopTrigger(trigger: string): void {
-    if (!DESKTOP_PROBE) return;
-    void this.probeRead(trigger);
+    this.desktopSync = this.desktopSync.then(() => this.syncDesktops(trigger));
+    if (DESKTOP_PROBE) void this.desktopSync.then(() => this.probeRead(trigger));
+  }
+
+  private async syncDesktops(trigger: string): Promise<void> {
+    const provider = this.desktopProvider;
+    if (!provider) return;
+    try {
+      const layout = await provider.layout();
+      const screens = layout.screens.map((s) => ({ id: screenIdOf(s.display), current: s.current }));
+      const desktops = layout.desktops.map((d) => ({ id: d.id, screen: d.display === null ? null : screenIdOf(d.display) }));
+      // A change of screens or desktops is a layout report; a change of only
+      // which desktop a screen shows is a `CurrentDesktopChanged`.
+      const before = getKernelExecutor().getState();
+      const sameLayout =
+        JSON.stringify(before.desktops) === JSON.stringify(desktops) &&
+        JSON.stringify(before.screens.map((s) => s.id)) === JSON.stringify(screens.map((s) => s.id));
+      if (!sameLayout) kernelDesktopLayoutReported(screens, desktops);
+      for (const s of screens) {
+        const known = getKernelExecutor().getState().screens.find((k) => k.id === s.id);
+        if (known?.current !== s.current) kernelCurrentDesktopChanged(s.id, s.current);
+      }
+
+      const ids = new Map<PlatformWindowId, WindowId>();
+      for (const [id, { win }] of this.windows) {
+        const pid = this.platformWindowIdOf(win);
+        if (pid !== null) ids.set(pid, id);
+      }
+      const placements = await provider.placements([...ids.keys()]);
+      for (const p of placements) {
+        const id = ids.get(p.window);
+        const record = id === undefined ? null : windowById(getKernelExecutor().getState(), id);
+        if (id === undefined || record === null) continue;
+        const screenId = p.display === null ? null : screenIdOf(p.display);
+        const changed =
+          (screenId !== null && screenId !== record.screen) ||
+          (p.desktop !== null && p.desktop !== record.desktop) ||
+          p.onEveryDesktop !== (record.onEveryDesktop === true);
+        if (changed) kernelWindowPlacementReported(id, screenId, p.desktop, p.onEveryDesktop);
+      }
+    } catch (err) {
+      wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   // ─── Temporary probe (PEEK_DESKTOP_PROBE=1) ───────────────────────────────
@@ -760,6 +821,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (win.isDestroyed() || !win.isVisible()) return;
       const focused = this.isFocused(win);
       kernelWindowShown(id, focused, opSeq);
+      this.onDesktopTrigger('window-shown');
     });
     win.on('hide', () => {
       // AppKit can deliver a stale/lagged 'hide' for a BaseWindow that is
@@ -1183,6 +1245,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const osActivate = opts.activate && record?.nonActivating !== true && !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);
+    this.onDesktopTrigger('window-shown');
   }
 
   // Every show this backend performs funnels here. Opacity is zeroed before

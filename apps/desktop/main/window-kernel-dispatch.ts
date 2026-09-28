@@ -5,7 +5,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { type Command, type DesktopId, type DesktopMembership, type Event, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 
@@ -213,8 +213,25 @@ export function kernelWindowHidden(id: WindowId, opSeq?: number): void {
   kernelDispatch({ type: 'WindowHidden', id, opSeq });
 }
 
-export function kernelDesktopChanged(focused: WindowId | null, name?: DesktopId): void {
-  kernelDispatch({ type: 'DesktopChanged', focused, ...(name !== undefined ? { name } : {}) });
+export function kernelDesktopLayoutReported(screens: readonly ScreenState[], desktops: readonly DesktopState[]): void {
+  kernelDispatch({ type: 'DesktopLayoutReported', screens, desktops });
+}
+
+export function kernelCurrentDesktopChanged(screen: ScreenId, desktop: DesktopId): void {
+  kernelDispatch({ type: 'CurrentDesktopChanged', screen, desktop });
+}
+
+export function kernelDesktopSwitchObserved(): void {
+  kernelDispatch({ type: 'DesktopSwitchObserved' });
+}
+
+export function kernelWindowPlacementReported(
+  id: WindowId,
+  screen: ScreenId | null,
+  desktop: DesktopId | null,
+  onEveryDesktop: boolean,
+): void {
+  kernelDispatch({ type: 'WindowPlacementReported', id, screen, desktop, onEveryDesktop });
 }
 
 export function kernelAppActivated(): void {

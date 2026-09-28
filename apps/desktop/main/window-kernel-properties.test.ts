@@ -1433,3 +1433,39 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
     assert.strictEqual(dismissVerdict(danglingCarryPrefix(), machineCause), false);
   });
 });
+
+// specs/kernel-desktops.md, "7.1 Automated tests": with only what the fallback
+// provider sends (one layout, each window placed on its screen's only desktop,
+// no current-desktop change), every effect list equals the one with desktops
+// ignored. Commands in the desktop run have their expected version shifted by
+// the version bumps the desktop events add, so they are accepted or rejected alike.
+describe('window-kernel: the fallback provider changes no effect', () => {
+  const layout: Event = { type: 'DesktopLayoutReported', screens: [{ id: 'S', current: 'd' }], desktops: [{ id: 'd', screen: 'S' }] };
+  for (let seed = 0; seed < SEED_COUNT; seed++) {
+    it(`seed ${seed}: the same effects with and without desktop reports`, () => {
+      const log = generateLog(seed, LOG_LENGTH);
+      let plain = initialState();
+      let desk = evolve(plain, layout);
+      assert.deepStrictEqual(react(plain, layout, desk), []);
+      for (let i = 0; i < log.length; i++) {
+        const item = log[i];
+        const shifted: LogItem =
+          isCommand(item) && 'expectedVersion' in item
+            ? ({ ...item, expectedVersion: item.expectedVersion + (desk.version - plain.version) } as LogItem)
+            : item;
+        const a = stepLogItem(plain, item);
+        const b = stepLogItem(desk, shifted);
+        assert.deepStrictEqual(b.effects, a.effects, reproMessage(seed, log, i, 'effects differ with desktop reports'));
+        plain = a.state;
+        desk = b.state;
+        for (const w of desk.order) {
+          if (w.screen !== undefined) continue;
+          const placement: Event = { type: 'WindowPlacementReported', id: w.id, screen: 'S', desktop: 'd', onEveryDesktop: w.onEveryDesktop === true };
+          const next = evolve(desk, placement);
+          assert.deepStrictEqual(react(desk, placement, next), [], reproMessage(seed, log, i, 'a placement report emitted an effect'));
+          desk = next;
+        }
+      }
+    });
+  }
+});

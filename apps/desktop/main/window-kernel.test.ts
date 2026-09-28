@@ -23,6 +23,7 @@ import {
   isNonParentRole,
   isTransientPageHost,
   onCurrentDesktop,
+  isCurrentDesktop,
   isOnEveryDesktop,
   windowById,
   TRANSIENT_ROLES,
@@ -7719,7 +7720,7 @@ describe('window-kernel: a transient page-host window ends when it loses key: cl
   // activation in.
   it('a desktop switch closes the page, and an activation that follows it reopens nothing', () => {
     const before = transientPageHostHoldingKey(wid(1));
-    const switched = foldWithEffects([{ type: 'DesktopChanged', focused: wid(1) }], before);
+    const switched = foldWithEffects([{ type: 'DesktopSwitchObserved' }], before);
     assert.deepStrictEqual(dismisses(switched.effects), [{ type: 'DismissWindow', id: wid(1) }]);
     const activated = foldWithEffects([{ type: 'AppActivated' }], switched.state);
     assert.deepStrictEqual(reopens(activated.effects), []);
@@ -7729,7 +7730,7 @@ describe('window-kernel: a transient page-host window ends when it loses key: cl
   it('a desktop switch then a loss of key closes the page once', () => {
     const before = transientPageHostHoldingKey(wid(1));
     const after = foldWithEffects([
-      { type: 'DesktopChanged', focused: wid(1) },
+      { type: 'DesktopSwitchObserved' },
       { type: 'OsFocusLost', id: wid(1) },
     ], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
@@ -7740,7 +7741,7 @@ describe('window-kernel: a transient page-host window ends when it loses key: cl
     const before = transientPageHostHoldingKey(wid(1));
     const after = foldWithEffects([
       { type: 'OsFocusLost', id: wid(1) },
-      { type: 'DesktopChanged', focused: null },
+      { type: 'DesktopSwitchObserved' },
     ], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
     assert.deepStrictEqual(reopens(after.effects), []);
@@ -7749,12 +7750,12 @@ describe('window-kernel: a transient page-host window ends when it loses key: cl
   it('a desktop switch after the page became an ordinary window closes nothing', () => {
     const before = transientPageHostHoldingKey(wid(1));
     const activated = foldWithEffects([{ type: 'AppActivated' }], before);
-    const switched = foldWithEffects([{ type: 'DesktopChanged', focused: wid(1) }], activated.state);
+    const switched = foldWithEffects([{ type: 'DesktopSwitchObserved' }], activated.state);
     assert.deepStrictEqual(dismisses(switched.effects), []);
   });
 });
 
-// specs/kernel-desktops.md → "Kernel state" and "The desktop-switch event".
+// specs/kernel-desktops.md → "Model" and "7.1 Automated tests", desktop state.
 describe('window-kernel: desktop state', () => {
   const page = (n: number, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
     type: 'WindowRegistered',
@@ -7768,110 +7769,130 @@ describe('window-kernel: desktop state', () => {
     ...extra,
   });
   const desktopOf = (state: State, n: number): string | undefined => windowById(state, wid(n))?.desktop;
-
-  it('starts on a minted desktop, and each unnamed switch mints a new one', () => {
-    const start = initialState();
-    const once = evolve(start, { type: 'DesktopChanged', focused: null });
-    const twice = evolve(once, { type: 'DesktopChanged', focused: null });
-    assert.notStrictEqual(once.desktop, start.desktop);
-    assert.notStrictEqual(twice.desktop, once.desktop);
-    assert.notStrictEqual(twice.desktop, start.desktop);
+  // Two screens, `A` showing desktop `a1` and `B` showing `b1`; `a2` and `b2` not shown.
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: 'A', current: 'a1' }, { id: 'B', current: 'b1' }],
+    desktops: [{ id: 'a1', screen: 'A' }, { id: 'a2', screen: 'A' }, { id: 'b1', screen: 'B' }, { id: 'b2', screen: 'B' }],
+  };
+  const switchTo = (screen: string, desktop: string): Event => ({ type: 'CurrentDesktopChanged', screen, desktop });
+  const place = (n: number, screen: string | null, desktop: string | null, onEveryDesktop = false): Event => ({
+    type: 'WindowPlacementReported', id: wid(n), screen, desktop, onEveryDesktop,
   });
 
-  it('a named switch uses the name as given and mints nothing', () => {
-    const start = initialState();
-    const next = evolve(start, { type: 'DesktopChanged', focused: null, name: '2' });
-    assert.strictEqual(next.desktop, '2');
-    assert.strictEqual(next.desktopCounter, start.desktopCounter);
+  it('starts with no screens and no desktops', () => {
+    assert.deepStrictEqual(initialState().screens, []);
+    assert.deepStrictEqual(initialState().desktops, []);
   });
 
-  it('a switch never writes key, and emits no effect', () => {
-    const before = fold([page(1), { type: 'WindowShown', id: wid(1) }, { type: 'OsFocusGained', id: wid(1) }]);
-    const ev: Event = { type: 'DesktopChanged', focused: null };
+  it('a layout report replaces screens and desktops', () => {
+    const first = evolve(initialState(), layout);
+    const second = evolve(first, { type: 'DesktopLayoutReported', screens: [{ id: 'A', current: 'a2' }], desktops: [{ id: 'a2', screen: 'A' }] });
+    assert.deepStrictEqual(second.screens, [{ id: 'A', current: 'a2' }]);
+    assert.deepStrictEqual(second.desktops, [{ id: 'a2', screen: 'A' }]);
+  });
+
+  it('a current-desktop change writes one screen, never key, and emits no effect', () => {
+    const before = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }, { type: 'OsFocusGained', id: wid(1) }]);
+    const ev = switchTo('A', 'a2');
     const next = evolve(before, ev);
+    assert.deepStrictEqual(next.screens, [{ id: 'A', current: 'a2' }, { id: 'B', current: 'b1' }]);
     assert.strictEqual(next.key, before.key);
-    assert.strictEqual(next.version, before.version + 1);
     assert.deepStrictEqual(react(before, ev, next), []);
   });
 
-  it('a switch stamps the focused window with the new desktop, and only that window', () => {
-    const before = fold([
-      page(1),
-      page(2),
-      { type: 'WindowShown', id: wid(1) },
-      { type: 'WindowShown', id: wid(2) },
-    ]);
-    const next = evolve(before, { type: 'DesktopChanged', focused: wid(1) });
-    assert.strictEqual(desktopOf(next, 1), next.desktop);
-    assert.strictEqual(desktopOf(next, 2), before.desktop);
+  it('a current-desktop change for an unknown screen adds it', () => {
+    const next = fold([layout, switchTo('C', 'c1')]);
+    assert.deepStrictEqual(next.screens.map((s) => s.id), ['A', 'B', 'C']);
   });
 
-  it('a switch naming an unregistered window changes only the desktop', () => {
-    const before = fold([page(1), { type: 'WindowShown', id: wid(1) }]);
-    const next = evolve(before, { type: 'DesktopChanged', focused: wid(9) });
+  it('a desktop switch with no transient page-host window changes nothing but the version', () => {
+    const before = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }]);
+    const next = evolve(before, { type: 'DesktopSwitchObserved' });
     assert.deepStrictEqual(next.order, before.order);
+    assert.deepStrictEqual(next.screens, before.screens);
+    assert.strictEqual(next.version, before.version + 1);
   });
 
-  it('a window is on no desktop until it is first shown, then on the current one', () => {
-    const registered = fold([page(1)]);
+  it('a placement report writes screen and desktop, and leaves a field alone on null', () => {
+    const placed = fold([layout, page(1), place(1, 'B', 'b2')]);
+    assert.strictEqual(windowById(placed, wid(1))?.screen, 'B');
+    assert.strictEqual(desktopOf(placed, 1), 'b2');
+    const partial = evolve(placed, place(1, null, null));
+    assert.strictEqual(windowById(partial, wid(1))?.screen, 'B');
+    assert.strictEqual(desktopOf(partial, 1), 'b2');
+  });
+
+  it('a placement report keeps an every-desktop window on its first-shown desktop', () => {
+    const shown = fold([layout, page(1, { onEveryDesktop: true }), { type: 'WindowShown', id: wid(1) }]);
+    assert.strictEqual(desktopOf(shown, 1), 'a1');
+    const placed = evolve(shown, place(1, 'A', 'a2', true));
+    assert.strictEqual(desktopOf(placed, 1), 'a1');
+  });
+
+  it('a placement report can declare a window on every desktop', () => {
+    const placed = fold([layout, page(1), place(1, 'A', null, true)]);
+    assert.strictEqual(isOnEveryDesktop(windowById(placed, wid(1))!), true);
+  });
+
+  it('a first show stamps the current desktop of the window screen, or of the first screen when unknown', () => {
+    const onB = fold([layout, page(1), place(1, 'B', null), { type: 'WindowShown', id: wid(1) }]);
+    assert.strictEqual(desktopOf(onB, 1), 'b1');
+    const unknown = fold([layout, page(2), { type: 'WindowShown', id: wid(2) }]);
+    assert.strictEqual(desktopOf(unknown, 2), 'a1');
+  });
+
+  it('a window is on no desktop until it is first shown', () => {
+    const registered = fold([layout, page(1)]);
     assert.strictEqual(desktopOf(registered, 1), undefined);
-    const moved = evolve(registered, { type: 'DesktopChanged', focused: null });
-    const shown = evolve(moved, { type: 'WindowShown', id: wid(1) });
-    assert.strictEqual(desktopOf(shown, 1), moved.desktop);
   });
 
   it('a show of an already-visible window does not re-stamp it', () => {
-    const shown = fold([page(1), { type: 'WindowShown', id: wid(1) }]);
-    const moved = evolve(shown, { type: 'DesktopChanged', focused: null });
-    const again = evolve(moved, { type: 'WindowShown', id: wid(1) });
-    assert.strictEqual(desktopOf(again, 1), shown.desktop);
+    const shown = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }, switchTo('A', 'a2')]);
+    const again = evolve(shown, { type: 'WindowShown', id: wid(1) });
+    assert.strictEqual(desktopOf(again, 1), 'a1');
   });
 
-  it('a hidden window shown again lands on the current desktop', () => {
-    const shown = fold([page(1), { type: 'WindowShown', id: wid(1) }, { type: 'WindowHidden', id: wid(1) }]);
-    const moved = evolve(shown, { type: 'DesktopChanged', focused: null });
-    const reshown = evolve(moved, { type: 'WindowShown', id: wid(1) });
-    assert.strictEqual(desktopOf(reshown, 1), moved.desktop);
+  it('a hidden window shown again lands on the current desktop of its screen', () => {
+    const reshown = fold([
+      layout, page(1), { type: 'WindowShown', id: wid(1) }, { type: 'WindowHidden', id: wid(1) },
+      switchTo('A', 'a2'), { type: 'WindowShown', id: wid(1) },
+    ]);
+    assert.strictEqual(desktopOf(reshown, 1), 'a2');
   });
 
-  it('taking key stamps the current desktop', () => {
-    const shown = fold([page(1), { type: 'WindowShown', id: wid(1) }]);
-    const moved = evolve(shown, { type: 'DesktopChanged', focused: null });
-    const keyed = evolve(moved, { type: 'OsFocusGained', id: wid(1) });
-    assert.strictEqual(desktopOf(keyed, 1), moved.desktop);
+  it('focus does not stamp a desktop', () => {
+    const shown = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }, switchTo('A', 'a2')]);
+    const keyed = evolve(shown, { type: 'OsFocusGained', id: wid(1) });
+    assert.strictEqual(desktopOf(keyed, 1), 'a1');
   });
 
   it('a window the backend declares on every desktop keeps its first-shown desktop through focus, show and switch', () => {
-    const shown = fold([page(1, { onEveryDesktop: true }), { type: 'WindowShown', id: wid(1) }]);
-    const opened = desktopOf(shown, 1);
-    assert.strictEqual(opened, shown.desktop);
-    const moved = fold(
-      [
-        { type: 'DesktopChanged', focused: wid(1) },
-        { type: 'OsFocusGained', id: wid(1) },
-        { type: 'WindowHidden', id: wid(1) },
-        { type: 'WindowShown', id: wid(1) },
-      ],
-      shown,
-    );
-    assert.strictEqual(desktopOf(moved, 1), opened);
+    const moved = fold([
+      layout, page(1, { onEveryDesktop: true }), { type: 'WindowShown', id: wid(1) },
+      switchTo('A', 'a2'), { type: 'OsFocusGained', id: wid(1) },
+      { type: 'WindowHidden', id: wid(1) }, { type: 'WindowShown', id: wid(1) },
+    ]);
+    assert.strictEqual(desktopOf(moved, 1), 'a1');
   });
 
-  it("a role that follows the user counts as on every desktop", () => {
+  it('a role that follows the user counts as on every desktop', () => {
     const shown = fold([
+      layout,
       page(1),
       { type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' },
       { type: 'WindowShown', id: wid(1) },
+      switchTo('A', 'a2'),
     ]);
-    const moved = evolve(shown, { type: 'DesktopChanged', focused: wid(1) });
-    assert.strictEqual(desktopOf(moved, 1), shown.desktop);
-    assert.strictEqual(isOnEveryDesktop(windowById(moved, wid(1))!), true);
+    assert.strictEqual(isOnEveryDesktop(windowById(shown, wid(1))!), true);
+    assert.strictEqual(onCurrentDesktop(shown, windowById(shown, wid(1))!), true);
   });
 
-  it('re-registration keeps the lived desktop and the declared every-desktop fact', () => {
-    const shown = fold([page(1, { onEveryDesktop: true }), { type: 'WindowShown', id: wid(1) }]);
+  it('re-registration keeps the lived desktop, screen and the declared every-desktop fact', () => {
+    const shown = fold([layout, page(1, { onEveryDesktop: true }), place(1, 'A', null, true), { type: 'WindowShown', id: wid(1) }]);
     const again = evolve(shown, page(1));
-    assert.strictEqual(desktopOf(again, 1), shown.desktop);
+    assert.strictEqual(desktopOf(again, 1), 'a1');
+    assert.strictEqual(windowById(again, wid(1))?.screen, 'A');
     assert.strictEqual(windowById(again, wid(1))?.onEveryDesktop, true);
   });
 
@@ -7892,21 +7913,53 @@ describe('window-kernel: desktop state', () => {
     assert.strictEqual(windowById(next, wid(1))?.onEveryDesktop, true);
   });
 
-  it('onCurrentDesktop: every desktop, same id, older id, never shown', () => {
+  it('before any layout report every window is on a current desktop', () => {
+    const state = fold([page(1), { type: 'WindowShown', id: wid(1) }, page(2)]);
+    assert.strictEqual(onCurrentDesktop(state, windowById(state, wid(1))!), true);
+    assert.strictEqual(onCurrentDesktop(state, windowById(state, wid(2))!), true);
+    assert.strictEqual(isCurrentDesktop(state, 'anything'), true);
+  });
+
+  it('onCurrentDesktop: every desktop, current on its screen, current on another screen, not current, never shown', () => {
     const base = fold([
+      layout,
       page(1, { onEveryDesktop: true }),
       page(2),
       page(3),
       page(4),
+      page(5),
       { type: 'WindowShown', id: wid(1) },
-      { type: 'WindowShown', id: wid(3) },
-      { type: 'DesktopChanged', focused: null },
-      { type: 'WindowShown', id: wid(2) },
+      place(2, 'A', 'a1'),
+      place(3, 'B', 'b1'),
+      place(4, 'A', 'a2'),
     ]);
     const rec = (n: number): WindowRecord => windowById(base, wid(n))!;
     assert.strictEqual(onCurrentDesktop(base, rec(1)), true, 'every desktop');
-    assert.strictEqual(onCurrentDesktop(base, rec(2)), true, 'same id');
-    assert.strictEqual(onCurrentDesktop(base, rec(3)), false, 'older id');
-    assert.strictEqual(onCurrentDesktop(base, rec(4)), false, 'never shown');
+    assert.strictEqual(onCurrentDesktop(base, rec(2)), true, 'current on its screen');
+    assert.strictEqual(onCurrentDesktop(base, rec(3)), true, 'current on another screen');
+    assert.strictEqual(onCurrentDesktop(base, rec(4)), false, 'not current');
+    assert.strictEqual(onCurrentDesktop(base, rec(5)), false, 'never shown');
+  });
+
+  it('a shared desktop is current on every screen that shows it', () => {
+    const state = fold([
+      {
+        type: 'DesktopLayoutReported',
+        screens: [{ id: 'A', current: 's1' }, { id: 'B', current: 's1' }],
+        desktops: [{ id: 's1', screen: null }, { id: 's2', screen: null }],
+      },
+      page(1),
+      place(1, 'B', 's1'),
+    ]);
+    assert.strictEqual(isCurrentDesktop(state, 's1'), true);
+    assert.strictEqual(isCurrentDesktop(state, 's2'), false);
+    assert.strictEqual(onCurrentDesktop(state, windowById(state, wid(1))!), true);
+  });
+
+  it('a window whose desktop disappears from the layout is off every current desktop', () => {
+    const shown = fold([layout, page(1), place(1, 'A', 'a2')]);
+    const next = evolve(shown, { type: 'DesktopLayoutReported', screens: [{ id: 'A', current: 'a1' }], desktops: [{ id: 'a1', screen: 'A' }] });
+    assert.strictEqual(desktopOf(next, 1), 'a2');
+    assert.strictEqual(onCurrentDesktop(next, windowById(next, wid(1))!), false);
   });
 });

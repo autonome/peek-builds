@@ -28,11 +28,23 @@ export const BASE_LAYER = 0;
 
 export type DesktopMembership = 'follow' | 'anchor';
 
-// A desktop, opaque: the backend's own name when its platform gives one,
-// otherwise an id the kernel mints on each reported switch, meaning "the
-// desktop that has been current since that switch". Design:
-// `specs/kernel-desktops.md` → "Kernel state".
+// A screen and a desktop, opaque: chosen below the backend port, stable while
+// the thing exists, and only ever compared. Design: `specs/kernel-desktops.md`
+// → "Model".
+export type ScreenId = string;
 export type DesktopId = string;
+
+// One screen and the desktop it currently shows.
+export interface ScreenState {
+  readonly id: ScreenId;
+  readonly current: DesktopId;
+}
+
+// One desktop and the screen it belongs to; `null` = shared by every screen.
+export interface DesktopState {
+  readonly id: DesktopId;
+  readonly screen: ScreenId | null;
+}
 
 export interface WindowRecord {
   id: WindowId;
@@ -66,10 +78,13 @@ export interface WindowRecord {
   maximized: boolean;
   preMaxBounds: Rectangle | null;
   desktopMembership?: DesktopMembership;
+  // The screen this window was last reported on; absent until a placement report.
+  screen?: ScreenId;
   // The desktop this window was last known to be on — a lived fact, absent
-  // until the window is first shown. Stamped by a genuine show, by taking key,
-  // and by a `DesktopChanged` that names it focused; a window on every desktop
-  // keeps the desktop it was first shown on. Read through `onCurrentDesktop`.
+  // until the window is first shown or reported. A placement report is
+  // authoritative; a genuine show stamps it provisionally; focus never does.
+  // A window on every desktop keeps the desktop it was first shown on. Read
+  // through `onCurrentDesktop`.
   desktop?: DesktopId;
   // Declared at registration: the backend reports that its platform keeps this
   // window on every desktop whatever is asked. The other source, a role that
@@ -128,10 +143,10 @@ export interface State {
   readonly pendingColdStartFocus: WindowId | null;
   readonly pendingSelectionFocus: SelectionFocus | null;
   readonly openedInBackground: boolean;
-  // The desktop the user is on; written only by `DesktopChanged`.
-  readonly desktop: DesktopId;
-  // Mints `desktop` ids for a switch whose backend names no desktop.
-  readonly desktopCounter: number;
+  // The screens and desktops the backend last reported; empty until the first
+  // layout report, and then every window counts as on a current desktop.
+  readonly screens: readonly ScreenState[];
+  readonly desktops: readonly DesktopState[];
 }
 
 export interface SelectionFocus {
@@ -192,10 +207,15 @@ export type Event =
       onEveryDesktop?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId; opSeq?: number }
-  // The user switched desktop. `focused` is the backend's own read, at the
-  // moment of the switch, of which registered window has focus; `name` is the
-  // new desktop's name when the platform gives one. Never writes `key`.
-  | { type: 'DesktopChanged'; focused: WindowId | null; name?: DesktopId }
+  // The full screen and desktop layout; replaces `screens` and `desktops`.
+  | { type: 'DesktopLayoutReported'; screens: readonly ScreenState[]; desktops: readonly DesktopState[] }
+  // One screen now shows `desktop`; an unknown screen is added. Never writes `key`.
+  | { type: 'CurrentDesktopChanged'; screen: ScreenId; desktop: DesktopId }
+  // The user switched desktop, reported the moment the platform says so and
+  // before the backend has read which desktop is now current; carries nothing.
+  | { type: 'DesktopSwitchObserved' }
+  // Where a registered window is; `null` leaves that field unchanged.
+  | { type: 'WindowPlacementReported'; id: WindowId; screen: ScreenId | null; desktop: DesktopId | null; onEveryDesktop: boolean }
   | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
   | { type: 'WindowClosed'; id: WindowId }
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
@@ -364,13 +384,9 @@ export function initialState(): State {
     pendingSelectionFocus: null,
     // No windows yet, so no session — the first registration decides this.
     openedInBackground: false,
-    desktop: mintedDesktopId(1),
-    desktopCounter: 1,
+    screens: [],
+    desktops: [],
   };
-}
-
-function mintedDesktopId(n: number): DesktopId {
-  return `desktop-${n}`;
 }
 
 // The next `TeardownRequest.seq` — one per teardown event, monotone, never reused.
@@ -503,6 +519,7 @@ export function evolve(state: State, ev: Event): State {
           // Lived facts — re-registration must not forget an answer already given.
           ...(existing.desktopMembership !== undefined ? { desktopMembership: existing.desktopMembership } : {}),
           ...(existing.desktop !== undefined ? { desktop: existing.desktop } : {}),
+          ...(existing.screen !== undefined ? { screen: existing.screen } : {}),
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
           ...(existing.overlayFrame !== undefined ? { overlayFrame: existing.overlayFrame } : {}),
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
@@ -668,9 +685,12 @@ export function evolve(state: State, ev: Event): State {
             // A genuine show clears a doomed mark too — the OS put the window back, so the teardown did not (yet) happen.
             ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
           });
-          // A genuine show puts the window on the desktop the user is on; a
-          // window on every desktop keeps the one it was first shown on.
-          return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq, desktop: desktopOnShow(state, w) };
+          // A genuine show stamps the current desktop of the window's screen,
+          // provisionally until a placement report; a window on every desktop
+          // keeps the one it was first shown on.
+          if (w.visible) return flushed;
+          const desktop = desktopOnShow(state, w);
+          return { ...flushed, lastOpSeq: opSeq, ...(desktop !== undefined ? { desktop } : {}) };
         }),
         opSeqCounter: opSeq,
         version: state.version + 1,
@@ -856,12 +876,11 @@ export function evolve(state: State, ev: Event): State {
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       // Written alongside `key`, only when this report hands key to a different window than whoever held it.
       const takesKey = state.key !== ev.id;
-      // The key window is on the desktop the user is on, unless it is on every desktop.
+      // Focus never stamps `desktop`: a placement report or a genuine show does.
       const movedRecord = {
         ...record,
         ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
         ...(takesKey ? { priorKey: state.key } : {}),
-        ...(isOnEveryDesktop(record) ? {} : { desktop: state.desktop }),
       };
       const order = [...withoutRecord, movedRecord];
       // Mark this transition's own sweep victims `pendingHidden` here, off the
@@ -1255,30 +1274,57 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
-    case 'DesktopChanged': {
+    case 'DesktopLayoutReported': {
+      // A fact, never rejected. A window whose desktop no longer exists keeps
+      // the stale id, off every current desktop, until its next placement report.
+      return { ...state, screens: ev.screens, desktops: ev.desktops, version: state.version + 1 };
+    }
+
+    case 'CurrentDesktopChanged': {
       // A fact, never rejected. `key` is not written: key moves only on the
-      // backend's focus reports. `focused` only makes the one window the user
-      // is looking at known to be here after the switch; an id not in `order`
-      // stamps nothing.
-      //
+      // backend's focus reports.
+      const known = state.screens.some((s) => s.id === ev.screen);
+      return {
+        ...state,
+        screens: known
+          ? state.screens.map((s) => (s.id === ev.screen ? { ...s, current: ev.desktop } : s))
+          : [...state.screens, { id: ev.screen, current: ev.desktop }],
+        version: state.version + 1,
+      };
+    }
+
+    case 'DesktopSwitchObserved': {
       // A switch ends a transient page-host window as a loss of focus: it is
       // marked `pendingHidden` here, so `react`'s dismissal diff closes it.
-      // Decided on the switch report itself because macOS may follow the
-      // switch with an app activation while the page still holds key, which
-      // would otherwise read as the user bringing Peek forward (row 5e) and
-      // reopen the page on the desktop just switched to.
-      const minted = ev.name === undefined;
-      const desktopCounter = minted ? state.desktopCounter + 1 : state.desktopCounter;
-      const desktop = ev.name ?? mintedDesktopId(desktopCounter);
+      // Decided on the platform's switch notification itself, not on the
+      // `CurrentDesktopChanged` that follows it: that one waits on a desktop
+      // read, and macOS may follow the switch with an app activation while the
+      // page still holds key, which would read as the user bringing Peek
+      // forward (row 5e) and reopen the page on the desktop just switched to.
       const endsOnSwitch = (w: WindowRecord): boolean => w.pendingHidden !== true && isTransientPageHost(state, w);
+      if (!state.order.some(endsOnSwitch)) return { ...state, version: state.version + 1 };
+      return {
+        ...state,
+        order: state.order.map((w) => (endsOnSwitch(w) ? { ...w, pendingHidden: true } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'WindowPlacementReported': {
+      // Authoritative for `screen` and `desktop`; `null` leaves a field as it
+      // is. A window on every desktop keeps the desktop it was first shown on.
       return {
         ...state,
         order: state.order.map((w) => {
-          const stamped = w.id === ev.focused && !isOnEveryDesktop(w) ? { ...w, desktop } : w;
-          return endsOnSwitch(w) ? { ...stamped, pendingHidden: true } : stamped;
+          if (w.id !== ev.id) return w;
+          const placed = { ...w, onEveryDesktop: ev.onEveryDesktop };
+          const keepsDesktop = isOnEveryDesktop(placed) && w.desktop !== undefined;
+          return {
+            ...placed,
+            ...(ev.screen !== null ? { screen: ev.screen } : {}),
+            ...(ev.desktop !== null && !keepsDesktop ? { desktop: ev.desktop } : {}),
+          };
         }),
-        desktop,
-        desktopCounter,
         version: state.version + 1,
       };
     }
@@ -2133,17 +2179,28 @@ export function isOnEveryDesktop(record: WindowRecord): boolean {
   return record.onEveryDesktop === true || record.desktopMembership === 'follow';
 }
 
-// True when the window is known to be on the desktop the user is on. False
-// covers both "known to be elsewhere" and "never shown"; the rules treat them
-// alike, because a wrong guess either way switches the user's desktop.
-export function onCurrentDesktop(state: State, record: WindowRecord): boolean {
-  return isOnEveryDesktop(record) || record.desktop === state.desktop;
+// True when some screen shows the desktop, and for every desktop before the
+// first layout report.
+export function isCurrentDesktop(state: State, desktop: DesktopId): boolean {
+  return state.screens.length === 0 || state.screens.some((s) => s.current === desktop);
 }
 
-// The desktop a genuine show puts a window on.
-function desktopOnShow(state: State, record: WindowRecord): DesktopId {
+// True when the window is known to be on a desktop some screen shows. False
+// covers both "known to be elsewhere" and "never shown"; the rules treat them
+// alike, because a wrong guess either way switches the user's desktop. Before
+// the first layout report every window counts as on a current desktop.
+export function onCurrentDesktop(state: State, record: WindowRecord): boolean {
+  if (isOnEveryDesktop(record) || state.screens.length === 0) return true;
+  return record.desktop !== undefined && isCurrentDesktop(state, record.desktop);
+}
+
+// The desktop a genuine show stamps: the current desktop of the window's
+// screen, or of the first screen when its screen is unknown; nothing before the
+// first layout report.
+function desktopOnShow(state: State, record: WindowRecord): DesktopId | undefined {
   if (isOnEveryDesktop(record) && record.desktop !== undefined) return record.desktop;
-  return state.desktop;
+  const screen = state.screens.find((s) => s.id === record.screen) ?? state.screens[0];
+  return screen?.current;
 }
 
 export function windowById(state: State, id: WindowId): WindowRecord | null {
