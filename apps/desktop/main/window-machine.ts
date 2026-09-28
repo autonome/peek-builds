@@ -8,12 +8,13 @@ import { getKernelExecutor as buildKernelExecutor } from './window-kernel-single
 import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { EscapeMode } from './window-backend.js';
-import type { Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecord } from './window-kernel.js';
+import type { DesktopMembership, Rectangle, WindowId, WindowKind, WindowRecord as KernelWindowRecord } from './window-kernel.js';
 import { isWebPageRole, type WindowClass } from './izui-roles.js';
 import {
   setKernelExecutorProvider,
   kernelRegisterWindow,
   kernelWindowShown,
+  kernelSetDesktopMembership,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, isContentWindow, windowById } from './window-kernel.js';
@@ -41,6 +42,9 @@ export interface MachineWindowSpec {
   tracksBaseLayerTop?: boolean;
   selfClosesOnBlur?: boolean;
   nonActivating?: boolean;
+  // Asked of the kernel right after registration, before any show — `'anchor'`
+  // keeps even a non-activating window on the one desktop it is shown on.
+  desktopMembership?: DesktopMembership;
   appLifetime?: boolean;
   // BaseWindow (page-host) or BrowserWindow (browser).
   win: BaseWindow | BrowserWindow;
@@ -129,6 +133,9 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     ...(onEveryDesktop ? { onEveryDesktop: true } : {}),
   });
+  if (spec.desktopMembership !== undefined) {
+    kernelSetDesktopMembership(id, spec.desktopMembership);
+  }
   // pumpShownEvent: the native window was already visible at registration time, which never
   // fires a native 'show' transition — this is the only report the kernel ever gets of it.
   if (decision.pumpShownEvent) {

@@ -389,8 +389,8 @@ Cost: requests are asynchronous, and any window write comes from another process
 - `onEveryDesktop` declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
   reports only where the platform disagrees. Exception: a transient page-host window.
 - A transient page-host window is a macOS panel, which Electron puts on every desktop. The backend
-  pins it to the desktop it is shown on (`setVisibleOnAllWorkspaces(false)` with
-  `visibleOnFullScreen` kept, before the first show) and does not declare it `onEveryDesktop`.
+  pins it to the desktop it is shown on (desktop membership `anchor`, asked at registration and
+  realized before the first show) and does not declare it `onEveryDesktop`.
 - `TRANSIENT_ROLES` windows appear on the desktop the user is on through `setVisibleOnAllWorkspaces`
   (desktop membership `follow`). This includes the shared page chrome window (role `overlay`), which
   is registered outside the generic window-open handler and so sets its membership itself

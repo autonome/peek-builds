@@ -141,16 +141,19 @@ export interface RegisterWindowSpec extends WindowSpec {
   contentWC?: NativeWebContents | null;
   // A non-activating window is built as a panel (`izui-roles.ts windowNonActivating`).
   nonActivating?: boolean;
+  // The membership the caller asks for right after registration. `'anchor'`
+  // takes a panel off every desktop (see `setDesktopMembership`).
+  desktopMembership?: DesktopMembership;
 }
 
 export interface BackendRegistration {
   id: WindowId;
   decision: WindowRegistrationDecision;
   initialBounds: Rectangle | null;
-  // This platform keeps the window on every desktop whatever is asked:
-  // Electron sets every panel's collection behaviour to join all Spaces
-  // (`electron_ns_panel.mm`), so on macOS a non-activating window is on every
-  // desktop. Declared to the kernel as `onEveryDesktop`.
+  // This platform keeps the window on every desktop: Electron sets every
+  // panel's collection behaviour to join all Spaces (`electron_ns_panel.mm`),
+  // so on macOS a non-activating window is on every desktop unless it is
+  // anchored. Declared to the kernel as `onEveryDesktop`.
   onEveryDesktop: boolean;
 }
 
@@ -640,7 +643,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.urlSafe(rendererWC),
       );
 
-    const onEveryDesktop = process.platform === 'darwin' && spec.nonActivating === true;
+    const onEveryDesktop =
+      process.platform === 'darwin' && spec.nonActivating === true && spec.desktopMembership !== 'anchor';
     return { id, decision, initialBounds, onEveryDesktop };
   }
 
