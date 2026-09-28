@@ -49,9 +49,7 @@ on every desktop. The macOS helper's placement read reports them; revisit before
 
 One commit each, order per "Order of work":
 
-1. **`ipc.ts reopenWindowAsOrdinary()`** (open → close → focus by promise chain) → the `replaces` /
-   `replacedBy` state in the spec; the function keeps only building the reopened window. Also
-   replaces the parked track's `takesKey` payload.
+1. Dropped: 5e now closes the page, so there is no reopen to order.
 2. **`ipc.ts` hybrid URL dedup** → kernel predicate `admitsReuse(state, record)`; the
    `pageOpensTransient()` check moves ahead of the dedup. The rule check watches for a hidden
    window re-shown on a desktop that is not current.
@@ -176,9 +174,7 @@ helper's reads; if they fail, nothing has yet been built on them.
    behaviour of `96fe4006`, which lived in the removed `DesktopChanged` arm: it is sent
    synchronously from the switch notification because the provider's read that yields
    `CurrentDesktopChanged` is asynchronous and an activation can arrive first.
-6. **Kernel `replaces` / `replacedBy` close and focus ordering for the 5e reopen** (decision 1).
-   Add the switcher's cross-desktop reach under rule 1 of `docs/design/window-rules.md`. Remove
-   probe hooks if still present.
+6. Dropped: 5e now closes the page, so there is no reopen to order.
 7. Done ahead of the reshape, `84a123ee`: a transient page-host window that loses focus with the
    app inactive (click-away, desktop switch) closes instead of being reopened, because Electron
    panels are on every desktop (see "Research: Electron panels and desktops"). The earlier plan

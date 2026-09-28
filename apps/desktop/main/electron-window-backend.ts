@@ -30,7 +30,6 @@ import {
 } from './windows.js';
 // Bound at call time only, like `windows.js` above: ipc.js reaches this module
 // through window-machine.js, and the reopen is never invoked during module evaluation.
-import { reopenWindowAsOrdinary } from './ipc.js';
 // `dispatchEscapePress` is called only inside `escGrabHandler`'s closure, never
 // at this module's top level — window-machine.js imports this file directly.
 import { dispatchEscapePress, getAppActive } from './window-machine.js';
@@ -1327,15 +1326,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     } catch {
       /* pinning a torn-down window is a no-op */
     }
-  }
-
-  // Electron fixes a window's type at construction, so a transient page-host window
-  // cannot become activating or leave every desktop in place: the page is
-  // closed and opened again as an ordinary window (`ipc.ts reopenWindowAsOrdinary`).
-  reopenAsOrdinaryWindow(id: WindowId): void {
-    const win = this.windows.get(id)?.win;
-    if (!win || win.isDestroyed()) return;
-    reopenWindowAsOrdinary(win.id);
   }
 
   // A `pinned` window (the chrome overlay) needs `setAlwaysOnTop` rather than

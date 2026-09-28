@@ -48,7 +48,7 @@ Each term is followed by the name the code uses for it.
 
 ## Gestures — what the user does and must see
 
-- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. A page asked for from a panel that holds key over another app is a transient page-host window: it is built non-activating, takes key and content focus at once, and the app stays in the background; it lasts exactly as long as it holds key with the app inactive (G13). An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward either, and the other app keeps key. Both are held above other apps until the app activates or the transient page-host window is replaced by the reopened window, which returns every held window to ordinary stacking and puts the most recently held one in front. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
+- **G1 panel-from-anywhere.** A panel focused with user intent while another app is frontmost appears and takes typing while the app stays in the background; the app comes forward only when an application window is focused with user intent or the user focuses one. A page asked for from a panel that holds key over another app is a transient page-host window: it is built non-activating, takes key and content focus at once, and the app stays in the background; it lasts exactly as long as it holds key with the app inactive (G13). An unpinned page-hosting application window focused without user intent while the app is inactive — a page opened from the command line — does not bring the app forward either, and the other app keeps key. Both are held above other apps until the app activates or the transient page-host window closes, which returns every held window to ordinary stacking and puts the most recently held one in front. A window shown without a focus (a restored window, a window opened not to show) is never held. With the app already active the same focus is an ordinary focus.
 - **G2 escape-is-one-change.** Escape does exactly one thing per press: content that consumes it changes only that content; otherwise the one key window hides or closes; with nothing to hide, the Escape fallback window opens.
 - **G3 hide-returns.** When a transient hides, key returns to its prior window: a window of the app if the app was active when it opened, the other app if not. No window that was not in use comes forward.
 - **G4 transient-opens-every-time.** A transient opened over an application window shows above that window and key, on every open, and stays until dismissed or the app deactivates.
@@ -60,7 +60,8 @@ Each term is followed by the name the code uses for it.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
-- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Losing key with the app inactive (the user clicked another app or switched desktop) closes it; nothing replaces it, and the page stays in history. The app becoming active while it is key replaces its non-activating window with an ordinary application window showing the same page at the same bounds, on the desktop the user is on, as the front window with key. Escape on a transient page-host window closes it. Reason for closing: the page was asked for while Peek was not focused, so leaving it ends that task, and on macOS the non-activating window is on every desktop, so a replacement could not be kept on the desktop the page was opened on.
+- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Every one of those closes it outright; nothing replaces it, and the page stays in history. Losing key with the app inactive is the user clicking another app or switching desktop; the app becoming active while the page is key ends it the same way, rather than bringing the page forward as an ordinary window. Escape on a transient page-host window closes it too. Reason for closing: the page was asked for while Peek was not focused, so the task ends the moment that focus state ends, whichever way it ends — including the user bringing Peek itself forward.
+- **G14 switcher-reach.** The switcher lists the app's windows from every desktop, and picking one takes the user to that window's desktop. This conflicts with opening a URL already open on another desktop opening a new page-host window here instead of reusing it (`specs/kernel-desktops.md` rule 5); accepted, because the pick is explicit.
 
 ### Opening a page from another app: which app holds OS focus at each step
 
@@ -81,7 +82,7 @@ at every step.
 | 5b | presses the close shortcut | other app | other app | page closes |
 | 5c | clicks the other app | other app | other app | the transient page-host window closes (G13); nothing replaces it |
 | 5d | switches desktop | other app | other app | same as 5c: the transient page-host window closes; it may show on both desktops while the switch gesture runs |
-| 5e | brings the app forward | this app | the page | the transient page-host window is replaced by the reopened window (G13): the page is reopened as an ordinary window and is the front window |
+| 5e | brings the app forward | this app | elsewhere in this app (F7 successor) | the transient page-host window closes (G13), the same as 5c/5d; nothing replaces it |
 
 A page is a transient page-host window (`izui-roles.ts pageOpensTransient()`) when it is opened
 to show while one of the app's panels holds key over another app — the user is
@@ -92,16 +93,12 @@ panel is also pinned to every desktop for good: Electron adds the all-desktops
 flag to a panel on every set and no call clears it
 (`electron_ns_panel.mm setCollectionBehavior:`). So a transient page-host window must not
 outlive the typing that made it: the moment it stops being key with the app
-inactive, or the app becomes active, the kernel replaces it
-(`window-kernel.ts isTransientPageHost()`, effect `ReopenAsOrdinaryWindow`) with an
-ordinary window showing the same page at the same bounds — activating,
-anchored to the desktop the user is on, shown without focus
-(`ipc.ts reopenWindowAsOrdinary()`). The replacement opens before the old
-window closes: a fresh window registers directly under the key window, so when
-the transient page-host window ended because the app activated (step 5e) the close's successor
-raise (F7) lands on the replacement rather than on whatever the app had in
-front before. The page reloads in the new window; scroll, form input and back
-history do not survive the reopen.
+inactive, or the app becomes active, the kernel closes it outright
+(`window-kernel.ts isTransientPageHost()`, effect `DismissWindow`) — the page was
+asked for while Peek was not focused, so the task ends the moment that focus state ends, and the
+page stays reachable from history rather than reappearing as an ordinary window. Nothing reopens
+it: a second window, plus the close-and-focus ordering keeping one on screen would need, would add
+machinery for little gain over history.
 
 A page opened while the app is inactive with nobody typing into the app — a
 command-line open — is not a transient page-host window. It takes no key; it is held above other
@@ -139,7 +136,7 @@ Limits and checking notes for a transient page-host window:
 - **F3 confirmation-drives-nothing.** The OS report confirming an asked-for focus causes no further focus change and no dismissal.
 - **F4 raise-means-key.** A window the manager focuses ends up key and accepting input; if it was already key it is only brought to the front.
 - **F5 raise-needs-a-surface.** A focus command lands only on a window that is visible and not pending hidden; on any other record it does nothing.
-- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent: such a focus never activates the app, never moves key, and never takes content focus — a content focus that accompanies a raise follows the raise's own fate, so it never reaches the window on its own once the raise is masked — and on an unpinned page-hosting application window it holds that window above other apps instead (G1) until the app activates or the window leaves the screen. A user-intent focus on a non-activating page-hosting window leaves the app inactive as well, so it holds that window the same way, until the transient page-host window is replaced by the reopened window (G13).
+- **F6 intent-beats-inactive.** A focus carrying user intent reaches its target regardless of the frontmost app: a panel takes key without activating the app, any other window brings the app forward. The app-inactive mask applies only to focus commands without user intent: such a focus never activates the app, never moves key, and never takes content focus — a content focus that accompanies a raise follows the raise's own fate, so it never reaches the window on its own once the raise is masked — and on an unpinned page-hosting application window it holds that window above other apps instead (G1) until the app activates or the window leaves the screen. A user-intent focus on a non-activating page-hosting window leaves the app inactive as well, so it holds that window the same way, until the transient page-host window closes (G13).
 - **F7 hide-returns-key.** When the key window hides or closes, key goes to its prior window if that window is still visible; if that window is gone, to the topmost visible application window; if nothing in the app was key before it, nothing is focused.
 - **F8 dismissal-keeps-the-app.** A dismissal never deactivates the app: if the app was frontmost it stays frontmost, with no key window when nothing visible remains. Focus is never handed to another app by a dismissal.
 
