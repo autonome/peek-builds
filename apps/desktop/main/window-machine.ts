@@ -42,8 +42,8 @@ export interface MachineWindowSpec {
   tracksBaseLayerTop?: boolean;
   selfClosesOnBlur?: boolean;
   nonActivating?: boolean;
-  // Asked of the kernel right after registration, before any show — `'anchor'`
-  // keeps even a non-activating window on the one desktop it is shown on.
+  // Asked of the kernel right after registration, before any show. A
+  // non-activating window stays on every desktop whatever is asked.
   desktopMembership?: DesktopMembership;
   appLifetime?: boolean;
   // BaseWindow (page-host) or BrowserWindow (browser).

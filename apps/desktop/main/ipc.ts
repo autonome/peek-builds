@@ -1149,9 +1149,9 @@ function assembleHybridPageHost(
     // same `options.type` already threaded to `createHybridHostBaseWindow`
     // above for the native NSPanel construction option.
     nonActivating: windowNonActivating(options),
-    // Same per-role intention the generic window-open handler asks for. A
-    // transient page-host window is a panel with role `content`, so `'anchor'`
-    // keeps it on the desktop it opens on instead of every desktop.
+    // Same per-role intention the generic window-open handler asks for: an
+    // ordinary page is anchored to the desktop it opens on. A transient
+    // page-host window is a panel, which stays on every desktop regardless.
     ...(!isHeadless() ? { desktopMembership: desktopMembershipForRole(role) } : {}),
   });
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
