@@ -67,9 +67,6 @@ rule that depends on either, on every platform the desktop app runs on.
 - **User intent**: a focus or raise carrying `intent: 'user'` (`FocusRaiseRequested`,
   `RaiseWindow`; on open, `activation: 'user'`): the user asked for it by naming one specific
   window, for example by picking it in the switcher. Anything else is machine-caused.
-- **Placeholder window**: on macOS, an invisible, click-through window the backend opens alongside
-  a transient page-host window, on the same desktop, so that the reopened window can appear on that desktop
-  later (section 6). Planned and backend-private; the code has no name for it yet.
 
 ## 2. User stories
 
@@ -388,9 +385,9 @@ Cost: requests are asynchronous, and any window write comes from another process
   server number); X11, `getNativeWindowHandle()`.
 - `onEveryDesktop` declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
   reports only where the platform disagrees. Exception: a transient page-host window.
-- A transient page-host window is a macOS panel, which Electron puts on every desktop. The backend
-  pins it to the desktop it is shown on (desktop membership `anchor`, asked at registration and
-  realized before the first show) and does not declare it `onEveryDesktop`.
+- A transient page-host window must stay on the desktop it is shown on. Electron's `type: 'panel'`
+  cannot (every panel joins all Spaces whatever is asked), so the realization is open; the
+  candidates are in the implementation doc, "Research: Electron panels and desktops".
 - `TRANSIENT_ROLES` windows appear on the desktop the user is on through `setVisibleOnAllWorkspaces`
   (desktop membership `follow`). This includes the shared page chrome window (role `overlay`), which
   is registered outside the generic window-open handler and so sets its membership itself
@@ -602,8 +599,10 @@ outside `apps/desktop/tests/gate-baseline.md`.
 - macOS reports a desktop switch before the loss of focus it causes (seen on every switch in two
   probes). In the reverse order the reopen is immediate and the reopened window may appear on the
   new desktop; `transient-reopen-misplaced` reports it.
-- A macOS panel pinned with `setVisibleOnAllWorkspaces(false)` before its first show stays on the
-  desktop it is shown on and does not travel with a switch.
+- A realization exists, in the Electron backend on macOS, that keeps a transient page-host window
+  on one desktop. *Shown false for Electron's `type: 'panel'`*: `ElectronNSPanel` re-adds
+  join-all-Spaces on every collection-behaviour change (see the implementation doc, "Research:
+  Electron panels and desktops").
 
 ## 9. Open questions
 

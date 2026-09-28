@@ -210,6 +210,87 @@ failure outside `apps/desktop/tests/gate-baseline.md`.
 checkable on the remote Linux dev box's virtual X server; whether its window manager implements EWMH
 desktops is unverified. Wayland cannot be checked there.
 
+## Research: Electron panels and desktops
+
+Web and history research, 2026-09-28, Electron 43.0.0. Nothing here was run.
+
+**Electron cannot keep a `type: 'panel'` window on one desktop.** `ElectronNSPanel`
+(`shell/browser/ui/cocoa/electron_ns_panel.mm`, unchanged since PR #34388, Electron 20) overrides
+the setter:
+
+```objc
+- (void)setCollectionBehavior:(NSWindowCollectionBehavior)collectionBehavior {
+  NSWindowCollectionBehavior panelBehavior =
+      (NSWindowCollectionBehaviorCanJoinAllSpaces |
+       NSWindowCollectionBehaviorFullScreenAuxiliary);
+  [super setCollectionBehavior:collectionBehavior | panelBehavior];
+}
+```
+
+`NativeWindowMac::SetVisibleOnAllWorkspaces` only sets or clears join-all-Spaces and full-screen
+auxiliary through that setter, so on a panel the clear has no effect; so do `setFullScreenable`
+and `setHiddenInMissionControl`. Electron's docs (`base-window-options.md`, `type: 'panel'`) say
+the panel "will appear on all spaces (desktops)". No API changes a window's type after creation.
+`ElectronNSPanel` is an `ElectronNSWindow` subclass whose `styleMask` getter adds the
+non-activating bit, not a real `NSPanel`. No Electron issue asks to pin a panel to one desktop.
+Links: https://github.com/electron/electron/blob/v43.0.0/shell/browser/ui/cocoa/electron_ns_panel.mm,
+https://github.com/electron/electron/pull/34388, https://github.com/electron/electron/pull/52914
+(open, keeps the override), https://github.com/electron/electron/issues/53889 (macOS 27: clicking
+a panel activates the app; workaround `_setPreventsActivation:`).
+
+**Repo history.** Ordinary windows stayed on their desktop through the on-then-off
+`setVisibleOnAllWorkspaces` pair right after construction and before any show (`6b3651b9`,
+2026-05-15, the ancestor of desktop membership `anchor`); `TRANSIENT_ROLES` windows kept
+join-all-Spaces. Pages opened from the palette became panels in `e77f6cdc` (2026-09-20); an
+attempt to open them as ordinary windows outright (`41b76804`) was reverted minutes later
+(`e5046f79`). The reopen path (`a2137355`, `ipc.ts reopenWindowAsOrdinary()`) creates a new
+window through the generic open, so it lands on the desktop the user is on when it runs.
+`docs/macos-spaces-analysis.md` records the earlier Spaces root causes.
+
+**AppKit facts.** A managed window (default collection behaviour) belongs to the desktop active
+when it is first ordered on screen and stays bound to it after `orderOut`; showing it again takes
+the user back there (electron#8734). Only one of managed, join-all-Spaces and move-to-active-Space
+may be set. Full-screen auxiliary does not mean every desktop; appearing over another app's
+full-screen desktop needs join-all-Spaces or move-to-active-Space as well. A non-activating window
+that is managed is legal AppKit. Toggling the non-activating style bit after creation leaves the
+window server's prevents-activation tag stale; `_setPreventsActivation:` (private) re-syncs it
+(https://philz.blog/nspanel-nonactivating-style-mask-flag/,
+https://github.com/mitchchn/FunWithPanels). Moving a window to a given desktop needs private
+SkyLight calls that broke in macOS 14.5, 15 and 27 (Hammerspoon `libspaces.m`, issue #3698,
+PR #3889).
+
+**Prior art.** No shipped app or library was found doing the whole flow (transient non-activating
+page → persistent window pinned to its desktop). Pieces:
+
+- `@akiflow/electron-panel-window` (maintained, shipped in Akiflow, Electron 43.1.0):
+  `makePanel` swaps the window's class to a panel class with `object_setClass` and calls
+  `_setPreventsActivation:YES`; `makeWindow` swaps it back and calls `NO`. Its panel class
+  overrides the `collectionBehavior` getter (join-all-Spaces). Warnings: never call
+  `setVisibleOnAllWorkspaces(true)` on it; call `makeWindow` before close. Its desktop behaviour
+  after `makeWindow` is undocumented. https://github.com/akiflow/electron-panel-window
+- `goabstract/electron-panel-window`: class swap with move-to-active-Space instead of
+  join-all-Spaces. https://github.com/goabstract/electron-panel-window
+
+**Candidate realizations for a transient page-host window that stays on its desktop**, none
+verified:
+
+1. An ordinary window (not `type: 'panel'`) plus a small native addon calling
+   `_setPreventsActivation:YES` and making it key, `NO` to promote it to an ordinary window. Being
+   managed, it stays on the desktop it opened on, and promotion replaces nothing. Unverified:
+   keyboard focus without activating the app from a plain window on current macOS. Cost: cannot
+   show over another app's full-screen desktop.
+2. akiflow's class swap, with the desktop set while the user is still on the original desktop
+   (managed behaviour, then swap back on loss of focus or activation, before any switch).
+3. Stock Electron: keep the panel, and create the reopened window at open time on the same
+   desktop, ordered on screen once (transparent or behind) and then out, so it stays bound there;
+   show it at reopen time. Showing it later may take the user back to that desktop.
+4. Record the desktop at open and move the reopened window back with private SkyLight calls. Most
+   fragile.
+
+The panel travelling with the user during the switch gesture is fixed only by 1 or 2; 3 and 4 fix
+only where the reopened window lands. The deferred reopen of rule 3 (`reopenPending`) also fixes
+where it lands, independent of all four.
+
 ## Probe findings
 
 **First probe (inferred ids):**
