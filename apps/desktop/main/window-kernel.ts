@@ -745,15 +745,7 @@ function evolveEvent(state: State, ev: Event): State {
           // provisionally until a placement report; a window on every desktop
           // that is not transient keeps the one it was first shown on.
           if (w.visible) return flushed;
-          const desktop = desktopOnShow(state, w);
-          if (desktop !== undefined) return { ...flushed, lastOpSeq: opSeq, desktop };
-          // Shown while the current desktop is unread: the old stamp may name
-          // the desktop the user left, so the window waits for its placement report.
-          if (desktopUnread(state) && !keepsFirstDesktop(w)) {
-            const { desktop: _left, ...unplaced } = flushed;
-            return { ...unplaced, lastOpSeq: opSeq };
-          }
-          return { ...flushed, lastOpSeq: opSeq };
+          return { ...withShownDesktop(state, w, flushed), lastOpSeq: opSeq };
         }),
         opSeqCounter: opSeq,
         version: state.version + 1,
@@ -1057,13 +1049,14 @@ function evolveEvent(state: State, ev: Event): State {
           if (!reshow && !stamped && !released && unverifiedMode === w.fsMode) {
             return w;
           }
-          return {
+          const next = {
             ...w,
             ...(released ? { heldAboveOtherApps: false } : {}),
             ...(reshow ? { visible: true, hiddenByAppBlur: false } : {}),
             ...(stamped ? { lastOpSeq: opSeq } : {}),
             fsMode: unverifiedMode,
           };
+          return reshow ? withShownDesktop(state, w, next) : next;
         }),
         opSeqCounter: opSeq,
         pendingColdStartFocus: null,
@@ -1230,7 +1223,8 @@ function evolveEvent(state: State, ev: Event): State {
         order: state.order.map((w) => {
           if (w.id === ev.id) return withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForOsLeft(w.fsMode) });
           if (patch !== null && overlay !== null && w.id === overlay.id) {
-            return { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+            const patched = { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+            return issuesShow ? withShownDesktop(state, w, patched) : patched;
           }
           return w;
         }),
@@ -1276,7 +1270,8 @@ function evolveEvent(state: State, ev: Event): State {
         order: state.order.map((w) => {
           if (w.id === ev.id) return { ...w, bounds: ev.bounds };
           if (patch !== null && overlay !== null && w.id === overlay.id) {
-            return { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+            const patched = { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+            return issuesShow ? withShownDesktop(state, w, patched) : patched;
           }
           return w;
         }),
@@ -1441,9 +1436,11 @@ function evolveEvent(state: State, ev: Event): State {
       const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) =>
-          w.id === ev.overlayId ? { ...w, overlayFor: resolvedHostId, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) } : w,
-        ),
+        order: state.order.map((w) => {
+          if (w.id !== ev.overlayId) return w;
+          const patched = { ...w, overlayFor: resolvedHostId, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+          return issuesShow ? withShownDesktop(state, w, patched) : patched;
+        }),
         opSeqCounter: opSeq,
         version: state.version + 1,
       };
@@ -2303,6 +2300,23 @@ function desktopOnShow(state: State, record: WindowRecord): DesktopId | undefine
   return screen?.current;
 }
 
+// The one desktop stamp for a write that flips `visible` to true (a show, the
+// re-show on app activation, the overlay reveal): `before` is the record as it
+// was, `shown` the record with the write applied. A window already visible
+// keeps its desktop. Shown while the current desktop is unread, the old stamp
+// may name the desktop the user left, so the window waits for its placement
+// report instead.
+function withShownDesktop(state: State, before: WindowRecord, shown: WindowRecord): WindowRecord {
+  if (before.visible) return shown;
+  const desktop = desktopOnShow(state, before);
+  if (desktop !== undefined) return { ...shown, desktop };
+  if (desktopUnread(state) && !keepsFirstDesktop(before)) {
+    const { desktop: _left, ...unplaced } = shown;
+    return unplaced;
+  }
+  return shown;
+}
+
 function keepsFirstDesktop(record: WindowRecord): boolean {
   return isOnEveryDesktop(record) && record.desktop !== undefined && record.transient !== true;
 }
@@ -2389,8 +2403,12 @@ function isBaseLayerFrontEligible(r: WindowRecord): boolean {
   return isFrontEligibleWindow(r) && !r.pendingHidden && r.layer === BASE_LAYER;
 }
 
+// The page chrome's host: the frontmost base-layer window on a current desktop,
+// if it is a page-host window (specs/kernel-desktops.md section 4 "Page
+// chrome"). A window on a desktop no screen shows is skipped, so the chrome is
+// never shown over it and never takes the user there.
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
-  const front = topmost(state, isBaseLayerFrontEligible);
+  const front = topmost(state, (r) => isBaseLayerFrontEligible(r) && onCurrentDesktop(state, r));
   return front !== null && isBaseLayerPageHost(front) ? front : null;
 }
 

@@ -5457,6 +5457,21 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     assert.strictEqual(topmostBaseLayerPageHost(state)?.id, second);
   });
 
+  it('a page host on a desktop no screen shows is skipped: the chrome frames the one on the current desktop', () => {
+    const here = wid(1);
+    const elsewhere = wid(2);
+    const state = fold([
+      { type: 'DesktopLayoutReported', screens: [{ id: 'S', current: 'd1' }], desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }] },
+      registerPageHost(here),
+      ...shown(here),
+      registerPageHost(elsewhere),
+      ...shown(elsewhere),
+      { type: 'WindowPlacementReported', id: elsewhere, screen: 'S', desktop: 'd2', onEveryDesktop: false },
+    ]);
+    assert.strictEqual(state.order[state.order.length - 1].id, elsewhere, 'precondition: the other desktop’s host is topmost by position');
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, here);
+  });
+
   it('a doomed page host (a teardown already decided) is not the attach target, even though it is topmost by position', () => {
     const first = wid(1);
     const second = wid(2);
@@ -7838,6 +7853,23 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.strictEqual(record(read.state, wid(9)).desktop, 'd2');
     const back = foldWithEffects([switchNotice, ...readSwitchTo('d1', 2)], read.state);
     assert.deepStrictEqual(dismisses(back.effects), [{ type: 'DismissWindow', id: wid(9) }]);
+  });
+
+  // One desktop stamp on show (implementation doc 8c): the re-show on app
+  // activation stamps like a show does, so a floating window hidden by the
+  // resign sweep on desktop 1 and re-shown after a switch reads desktop 2.
+  it('the re-show on app activation stamps the desktop it is re-shown on', () => {
+    const floating: Event = {
+      type: 'WindowRegistered', id: wid(5), kind: 'browser', layer: BASE_LAYER + 1,
+      canBecomeKey: true, acceptsInput: true, class: 'utility', role: 'utility',
+    };
+    const hidden = fold([layout, floating, { type: 'WindowShown', id: wid(5) }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
+    assert.strictEqual(record(hidden, wid(5)).hiddenByAppBlur, true, 'precondition: the resign sweep hid it');
+    assert.strictEqual(record(hidden, wid(5)).desktop, 'd1', 'precondition: first shown on d1');
+    const switched = fold([switchNotice, ...readSwitchTo('d2', 1)], hidden);
+    const reshown = fold([{ type: 'AppActivated' }], switched);
+    assert.strictEqual(record(reshown, wid(5)).visible, true);
+    assert.strictEqual(record(reshown, wid(5)).desktop, 'd2');
   });
 
   it('a window that is not transient stays open across a switch', () => {
