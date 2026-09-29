@@ -43,7 +43,6 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
-  getTopmostContentWindowId,
 } from './window-machine.js';
 import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
@@ -1108,22 +1107,18 @@ export async function initialize(): Promise<void> {
       } catch {
         /* detached devtools window not resolvable — attached mode, or races teardown */
       }
-      if (hostId != null) {
-        // Feed the kernel (window-kernel-dispatch.ts) — this is what drives
-        // the window manager, re-raising focus onto the kernel's own
-        // topmost-content-window query.
-        const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) kernelAssertFocus(topmostContentId);
-      }
+      // Focus goes back to the host whose devtools opened, never to the
+      // topmost content window: that one may sit on another desktop, and
+      // raising it switches the user there (docs/design/window-rules.md F7).
+      if (hostId != null) kernelAssertFocus(hostId);
     });
     wc.on('devtools-closed', () => {
+      // Same target as devtools-opened. When the host itself is closing
+      // (cmd+w on a page with devtools open) the assert is a no-op: a focus
+      // on a record that is not visible, or is pending hidden, does nothing
+      // (F5), and a closed id does not throw.
       const hostId = hostMachineId();
-      if (hostId != null) {
-        // Feed the kernel (window-kernel-dispatch.ts) — same re-raise target
-        // as devtools-opened above.
-        const topmostContentId = getTopmostContentWindowId();
-        if (topmostContentId != null) kernelAssertFocus(topmostContentId);
-      }
+      if (hostId != null) kernelAssertFocus(hostId);
     });
 
     // Registration tripwire, hook 2: BaseWindow coverage. Electron has no
