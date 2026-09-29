@@ -243,6 +243,21 @@ export class WindowKernelExecutor {
     this.logTransition(event, prev, next);
     this.recordTimeline(event, prev, next, effects);
     this.logDismissalDecisions(event, prev, next);
+    // DIAG (kernel-desktops live peek check): name the event that marks a window for dismissal.
+    {
+      const marked = next.order.filter((w) => w.pendingHidden === true && prev.order.find((p) => p.id === w.id)?.pendingHidden !== true);
+      if (marked.length > 0) {
+        wmLog('diag-dismiss-mark', {
+          event: event.type,
+          eventId: 'id' in event ? String(event.id) : undefined,
+          marked: marked.map((w) => w.id).join(','),
+          prevKey: String(prev.key),
+          key: String(next.key),
+          appActive: next.appActive,
+          attention: next.lastAttention ? `${String(next.lastAttention.holder)}:${next.lastAttention.cause.kind}` : 'null',
+        });
+      }
+    }
     this.runEffects(effects);
     this.reconcileEscGrab();
     this.notify();
