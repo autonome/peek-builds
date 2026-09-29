@@ -26,6 +26,7 @@ import {
   type Rectangle,
   type FocusCause,
 } from './window-kernel.js';
+import { windowIsTransient, windowNonActivating } from './izui-roles.js';
 
 type Rng = () => number;
 
@@ -1474,6 +1475,152 @@ describe('window-kernel: the fallback provider changes no effect', () => {
           desk = next;
         }
       }
+    });
+  }
+});
+
+// specs/kernel-desktops.md, "7.1 Automated tests", the transience property:
+// over the window API, not the features that use it. Each case starts with
+// Peek or another app focused, opens a chain of windows from random open
+// options (a global trigger opens the first, each opens the next), declares
+// each window from those options alone (`izui-roles.ts windowIsTransient`,
+// and non-activating when transient, as the spec's "How a transient window is
+// built" requires), then applies one leave event. Pass: every transient
+// window in the chain has ended, none is left showing on the desktop switched
+// to, and while another app is in front the leave raises and focuses nothing.
+// Roles are drawn at random so no case names the palette, a peek or a page.
+describe('window-kernel: every transient window in a chain ends when the user leaves', () => {
+  type OpenOptions = { modal?: boolean; overlay?: boolean; focusable?: boolean; clickThrough?: boolean; type?: 'panel'; show?: boolean };
+  type Leave = 'clicks another app' | 'clicks another Peek window' | 'Peek comes forward' | 'switches desktop';
+  const LEAVES: readonly Leave[] = ['clicks another app', 'clicks another Peek window', 'Peek comes forward', 'switches desktop'];
+  const BASE = wid(0);
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: 'S', current: 'd1' }],
+    desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }],
+  };
+  const baseWindow: Event = {
+    type: 'WindowRegistered', id: BASE, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary',
+  };
+
+  const randomOpenOptions = (rng: Rng): OpenOptions => ({
+    modal: pick(rng, [true, undefined]),
+    overlay: pick(rng, [true, undefined]),
+    focusable: pick(rng, [false, undefined, undefined, undefined]),
+    clickThrough: pick(rng, [true, undefined, undefined, undefined]),
+    type: pick(rng, ['panel', undefined] as const),
+    show: pick(rng, [false, undefined, undefined, undefined]),
+  });
+
+  // The events one open produces: registration, then, if shown and able to
+  // take key, a user-intent raise and the OS focus report. An activating
+  // window taking key over another app brings the app forward first.
+  function openWindow(rng: Rng, state: State, id: WindowId, opener: WindowId | null): { events: Event[]; transient: boolean } {
+    const options = randomOpenOptions(rng);
+    const keyHeldWhileAppInactive = !state.appActive && state.key !== null;
+    const transient = windowIsTransient(keyHeldWhileAppInactive, options);
+    const nonActivating = windowNonActivating(options) || transient;
+    const canBecomeKey = options.focusable !== false;
+    const events: Event[] = [{
+      type: 'WindowRegistered',
+      id,
+      kind: pick(rng, KINDS),
+      layer: BASE_LAYER,
+      canBecomeKey,
+      acceptsInput: canBecomeKey && options.clickThrough !== true,
+      class: pick(rng, ['primary', 'utility', 'palette']),
+      role: pick(rng, ROLES),
+      ...(opener ? { parentId: opener } : {}),
+      ...(transient ? { transient: true } : {}),
+      ...(nonActivating ? { nonActivating: true } : {}),
+    }];
+    if (options.show === false) return { events, transient };
+    events.push({ type: 'WindowShown', id }, { type: 'WindowContentOrderable', id });
+    if (!canBecomeKey) return { events, transient };
+    events.push({ type: 'FocusRaiseRequested', id, intent: 'user' });
+    if (!state.appActive && !nonActivating) events.push({ type: 'AppActivated' });
+    events.push({ type: 'OsFocusGained', id });
+    return { events, transient };
+  }
+
+  function leaveEvents(state: State, leave: Leave): Event[] {
+    const key = state.key;
+    switch (leave) {
+      // Resigning settles after a delay the backend owns (`AppResignSettled`).
+      case 'clicks another app':
+        return state.appActive
+          ? [{ type: 'AppResigned' }, ...(key ? [{ type: 'OsFocusLost', id: key } as Event] : []), { type: 'AppResignSettled' }]
+          : key ? [{ type: 'OsFocusLost', id: key }] : [];
+      case 'clicks another Peek window':
+        return [...(state.appActive ? [] : [{ type: 'AppActivated' } as Event]), { type: 'OsFocusGained', id: BASE, cause: { kind: 'world' } }];
+      // Only a leave while another app is in front; with Peek in front there is nothing to come forward.
+      case 'Peek comes forward':
+        return state.appActive ? [] : [{ type: 'AppActivated' }];
+      case 'switches desktop':
+        return [
+          { type: 'DesktopSwitchObserved' },
+          { type: 'CurrentDesktopChanged', screen: 'S', desktop: 'd2' },
+          ...state.order.filter((w) => w.desktop !== undefined).map((w): Event => (
+            { type: 'WindowPlacementReported', id: w.id, screen: 'S', desktop: 'd1', onEveryDesktop: false })),
+          { type: 'DesktopsRead', switchesSeen: state.desktopSwitchCount + 1 },
+        ];
+    }
+  }
+
+  function scenario(seed: number) {
+    const rng = mulberry32(seed);
+    const peekFocused = randomBool(rng);
+    const log: Event[] = [layout, baseWindow, { type: 'WindowShown', id: BASE }, { type: 'OsFocusGained', id: BASE }];
+    if (!peekFocused) log.push({ type: 'AppResigned' }, { type: 'OsFocusLost', id: BASE });
+    let { state, effects } = foldWithEffects(log);
+    const dismissed = new Set(effects.flatMap((e) => (e.type === 'DismissWindow' ? [e.id] : [])));
+    const transients = new Set<WindowId>();
+    const depth = randomInt(rng, 4) + 1;
+    let opener: WindowId | null = null;
+    for (let n = 1; n <= depth; n++) {
+      const id = wid(n);
+      const open = openWindow(rng, state, id, opener);
+      if (open.transient) transients.add(id);
+      const r = foldWithEffects(open.events, state);
+      for (const e of r.effects) if (e.type === 'DismissWindow') dismissed.add(e.id);
+      log.push(...open.events);
+      state = r.state;
+      assert.strictEqual(state.order.find((w) => w.id === id)?.transient === true, open.transient,
+        `seed ${seed}: the kernel records the transience the open options decided\n  log=${JSON.stringify(log)}`);
+      if (state.key === id) opener = id;
+    }
+    return { state, log, dismissed, transients };
+  }
+
+  const ended = (state: State, dismissed: ReadonlySet<WindowId>, id: WindowId): boolean => {
+    const w = state.order.find((r) => r.id === id);
+    return !w || !w.visible || w.pendingHidden === true || dismissed.has(id);
+  };
+
+  for (const leave of LEAVES) {
+    it(`the user ${leave}: every transient window in the chain ends`, () => {
+      let exercised = 0;
+      let cases = 0;
+      for (let seed = 0; seed < SEED_COUNT; seed++) {
+        const { state, log, dismissed, transients } = scenario(seed);
+        if (leave === 'Peek comes forward' && state.appActive) continue;
+        cases++;
+        const shownTransients = [...transients].filter((id) => !ended(state, dismissed, id));
+        if (shownTransients.length > 0) exercised++;
+        const events = leaveEvents(state, leave);
+        const after = foldWithEffects(events, state);
+        for (const e of after.effects) if (e.type === 'DismissWindow') dismissed.add(e.id);
+        const repro = (detail: string) => `seed ${seed}: ${detail}\n  log=${JSON.stringify([...log, ...events])}\n  effects=${JSON.stringify(after.effects)}`;
+        for (const id of transients) {
+          assert.ok(ended(after.state, dismissed, id), repro(`transient ${id} is still showing`));
+        }
+        if (!state.appActive && (leave === 'clicks another app' || leave === 'switches desktop')) {
+          const moved = after.effects.filter((e) => e.type === 'RaiseWindow' || e.type === 'ShowDesktop' || e.type === 'FocusContent' || e.type === 'ShowWindow');
+          assert.deepStrictEqual(moved, [], repro('a Peek window was raised or given key while another app is in front'));
+          assert.strictEqual(after.state.appActive, false, repro('Peek came forward'));
+        }
+      }
+      assert.ok(exercised >= cases / 4, `only ${exercised}/${cases} cases had a transient window showing before the leave`);
     });
   }
 });
