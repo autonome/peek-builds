@@ -44,8 +44,8 @@ import {
 import {
   getWindowInfo,
   removeWindow,
-  findWindowByKey,
-  findWindowByUrl,
+  findWindowsByKey,
+  findWindowsByUrl,
   getAllWindows,
   validateThemeCSS,
   popClosedWindow,
@@ -84,8 +84,10 @@ import {
   showWindowHeadlessSafe,
   showHybridHost,
   closeOrHideWindow,
+  closeHostWindow,
 } from './windows.js';
 import {
+  pickReusableHere,
   registerWindowWithMachine,
   dispatchEscapePress,
   getWindowModeName,
@@ -161,8 +163,8 @@ import { markPageHostContent, registerGuest } from './webview-guest-registry.js'
 import {
   registerHybridWindow,
   unregisterHybridWindow,
-  findHybridWindowByUrl,
-  findHybridWindowByKey,
+  findHybridWindowsByUrl,
+  findHybridWindowsByKey,
   getHybridContentWC,
   getHybridWindow,
   claimHybridDeferredLoad,
@@ -883,7 +885,7 @@ function assembleHybridPageHost(
     contentWC: view.webContents,
     key: options.key,
     // The key's namespace. Canvas parity: the machine record stores `source`
-    // and `findWindowByKey` matches on it, so the hybrid registry must file
+    // and `findWindowsByKey` matches on it, so the hybrid registry must file
     // the key under its declaring feature too.
     source,
     url,
@@ -2755,13 +2757,15 @@ export function registerWindowHandlers(): void {
       }
 
       // P1.4a hybrid dedup (by key): hybrid page-hosts are BaseWindows, which
-      // findWindowByKey (via getLiveWindow == BrowserWindow.fromId) cannot
+      // findWindowsByKey (via getLiveWindow == BrowserWindow.fromId) cannot
       // resolve. Consult the hybrid registry first so a repeat open of the
       // same key REUSES the existing hybrid window (focus
       // its baseWin, return its id) instead of spawning a duplicate — matching
-      // the canvas key-reuse semantics below.
+      // the canvas key-reuse semantics below. Only one the kernel admits for
+      // reuse here (rule 5); a page on another desktop stays, and a new one
+      // opens here.
       {
-        const existingHybrid = findHybridWindowByKey(options.key, msg.source);
+        const existingHybrid = pickReusableHere(findHybridWindowsByKey(options.key, msg.source), (e) => e.baseWin);
         if (existingHybrid) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
           // Parity with the canvas key-reuse below: let the stored Placement
@@ -2811,7 +2815,17 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      const existingWindow = findWindowByKey(msg.source, options.key);
+      // A window opened by key is one per app (settings, groups, …). Reused
+      // only if the kernel admits it here (rule 5); one visible on another
+      // desktop is closed there, and a new one opens here.
+      const keyed = findWindowsByKey(msg.source, options.key);
+      const existingWindow = pickReusableHere(keyed, (w) => w.window);
+      if (existingWindow === null) {
+        for (const elsewhere of keyed) {
+          wmLog('window-open-closed-elsewhere', { key: options.key, id: elsewhere.id });
+          closeHostWindow(elsewhere.id, elsewhere.window);
+        }
+      }
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
 
@@ -2919,14 +2933,19 @@ export function registerWindowHandlers(): void {
     // window identity by key, not by URL." Otherwise a slide (key=address:edge)
     // whose window was just transient-closed will fall through here and get
     // attached to whatever unrelated http window happens to share its URL.
-    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key) {
+    // A page opened from the palette over another app is a transient task and
+    // always opens new (rule 5); asked here, before any reuse, with the same
+    // inputs the page-host branch below asks it with.
+    const opensTransient = pageOpensTransient(isKeyHeldWhileAppInactive(), options);
+    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key && !opensTransient) {
       // P1.4a hybrid dedup (by url): same rationale as the key path above —
-      // BaseWindow page-hosts are invisible to findWindowByUrl. Reuse an
+      // BaseWindow page-hosts are invisible to findWindowsByUrl. Reuse an
       // existing hybrid window loading the same url (focus its baseWin,
       // reload it fresh like the canvas path, return its id) instead of
-      // spawning a duplicate.
+      // spawning a duplicate — only one the kernel admits for reuse here
+      // (rule 5); one on another desktop stays, and a new one opens here.
       {
-        const existingHybridByUrl = findHybridWindowByUrl(url);
+        const existingHybridByUrl = pickReusableHere(findHybridWindowsByUrl(url), (e) => e.baseWin);
         if (existingHybridByUrl) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
           try {
@@ -2967,7 +2986,7 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      const existingByUrl = findWindowByUrl(url);
+      const existingByUrl = pickReusableHere(findWindowsByUrl(url), (w) => w.window);
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
         {
@@ -3272,10 +3291,10 @@ export function registerWindowHandlers(): void {
     // popup routing.
     //
     // Window-reuse/dedup IS handled — just not here. The canvas dedup checks
-    // earlier in this handler (findWindowByUrl / findWindowByKey) resolve via
+    // earlier in this handler (findWindowsByUrl / findWindowsByKey) resolve via
     // getLiveWindow == BrowserWindow.fromId, which cannot find a BaseWindow. So
     // P1.4a added a PARALLEL dedup against the hybrid registry at the top of
-    // this handler (findHybridWindowByKey / findHybridWindowByUrl), which
+    // this handler (findHybridWindowsByKey / findHybridWindowsByUrl), which
     // reuses+focuses the existing hybrid window (with placement-on-reuse +
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
@@ -3285,7 +3304,7 @@ export function registerWindowHandlers(): void {
       // its open carries the user intent of the keystroke that asked for it,
       // so the raise reaches it (window-rules.md F6) with content focus and
       // without the app coming forward.
-      if (pageOpensTransient(isKeyHeldWhileAppInactive(), options)) {
+      if (opensTransient) {
         options.type = 'panel';
         options.activation = 'user';
         wmLog('page-opens-transient', { url: String(url) });

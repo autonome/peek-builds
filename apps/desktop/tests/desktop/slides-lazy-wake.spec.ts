@@ -22,7 +22,7 @@
  * It also pins the IDENTITY contract that makes the lazy conversion safe: the
  * in-renderer `slideWindows` Map is NOT load-bearing across a wake/unload
  * cycle. Window identity is owned by main's `(source, key)` dedup
- * (findWindowByKey, main.ts) where slides' key is `address:edge`. So
+ * (findWindowsByKey, main.ts) where slides' key is `address:edge`. So
  * reopening a CLOSED key yields a NEW window (no stale Map reuse), while
  * reopening a STILL-OPEN key reuses the live window.
  *

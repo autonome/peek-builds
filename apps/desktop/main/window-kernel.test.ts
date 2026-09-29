@@ -23,6 +23,7 @@ import {
   isNonParentRole,
   isTransientPageHost,
   onCurrentDesktop,
+  reusableHere,
   isCurrentDesktop,
   isOnEveryDesktop,
   windowById,
@@ -8072,6 +8073,45 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
     assert.deepStrictEqual(raises(react(state, ev, next)), []);
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no raise, no token');
     assert.strictEqual(windowById(next, PAGE)?.lastOpSeq, windowById(state, PAGE)?.lastOpSeq, 'no raise, no stamp');
+  });
+
+  describe('reusableHere (rule 5)', () => {
+    it('a visible window on another desktop is not reusable; a new window opens here', () => {
+      const state = paletteOverOffDesktopPage();
+      assert.strictEqual(reusableHere(state, [PAGE]), null);
+    });
+
+    it('a visible window on the current desktop is reusable', () => {
+      const state = fold([{ type: 'CurrentDesktopChanged', screen: S, desktop: '1' }], paletteOverOffDesktopPage());
+      assert.strictEqual(reusableHere(state, [PAGE]), PAGE);
+    });
+
+    it('a hidden window is reusable wherever it was: its re-show lands here', () => {
+      const state = fold([{ type: 'WindowHidden', id: PAGE }], paletteOverOffDesktopPage());
+      assert.strictEqual(reusableHere(state, [PAGE]), PAGE);
+    });
+
+    it('a window on every desktop is reusable', () => {
+      assert.strictEqual(reusableHere(paletteOverOffDesktopPage(), [PALETTE]), PALETTE);
+    });
+
+    it('the first reusable candidate wins; one on another desktop is skipped', () => {
+      const state = fold(
+        [page(OTHER), { type: 'WindowShown', id: OTHER }],
+        paletteOverOffDesktopPage(),
+      );
+      assert.strictEqual(windowById(state, OTHER)?.desktop, '3', 'precondition: the second page was shown on desktop 3');
+      assert.strictEqual(reusableHere(state, [PAGE, OTHER]), OTHER);
+    });
+
+    it('before the first layout report every window is reusable', () => {
+      const state = fold([page(PAGE), { type: 'WindowShown', id: PAGE }]);
+      assert.strictEqual(reusableHere(state, [PAGE]), PAGE);
+    });
+
+    it('an unknown id is skipped', () => {
+      assert.strictEqual(reusableHere(paletteOverOffDesktopPage(), [wid(99)]), null);
+    });
   });
 
   it('a switcher pick of a window on the current desktop asks for no desktop', () => {

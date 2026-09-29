@@ -24,8 +24,8 @@ import { fileURLToPath } from 'node:url';
 import type { BaseWindow, WebContents } from 'electron';
 import {
   _resetForTests,
-  findHybridWindowByKey,
-  findHybridWindowByUrl,
+  findHybridWindowsByKey,
+  findHybridWindowsByUrl,
   getAllHybridWindows,
   getHybridContentWC,
   getHybridWindow,
@@ -287,26 +287,32 @@ describe('hybrid-page-host-registry: dedup by url', () => {
 
   it('exact http url match returns the entry', () => {
     const f = mk({ url: 'https://example.com/page' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/page')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/page')[0].windowId, f.id);
+  });
+
+  it('returns every window open on the url, in registration order — the kernel chooses among them', () => {
+    const a = mk({ url: 'https://example.com/page' });
+    const b = mk({ url: 'https://example.com/page' });
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://example.com/page').map((e) => e.windowId), [a.id, b.id]);
   });
 
   it('is trailing-slash tolerant', () => {
     const f = mk({ url: 'https://example.com/' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com')[0].windowId, f.id);
   });
 
   it('strips a lone trailing ? or # before matching', () => {
     const f = mk({ url: 'https://example.com/p' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/p?')!.windowId, f.id);
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/p#')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/p?')[0].windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/p#')[0].windowId, f.id);
   });
 
   it('matches host case-insensitively (path case is significant — canvas/datastore parity)', () => {
     // Host is case-insensitive per URL spec; path is NOT (servers may serve
     // different resources for /Path vs /path), matching datastore.normalizeUrl.
     const f = mk({ url: 'https://Example.COM/Path' });
-    assert.strictEqual(findHybridWindowByUrl('https://EXAMPLE.com/Path')!.windowId, f.id);
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/path'), null);
+    assert.strictEqual(findHybridWindowsByUrl('https://EXAMPLE.com/Path')[0].windowId, f.id);
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://example.com/path'), []);
   });
 
   it('dedups on the requested open address, surviving in-page navigation', () => {
@@ -314,7 +320,7 @@ describe('hybrid-page-host-registry: dedup by url', () => {
     // repeat open of X (match on the stored requested address).
     const f = mk({ url: 'https://example.com/' });
     f.wc.navigate('https://example.com/deep/link');
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/')[0].windowId, f.id);
   });
 
   it('dedups on the LIVE content url too — reopening the redirected-to address reuses the window (Mechanism 1)', () => {
@@ -323,48 +329,48 @@ describe('hybrid-page-host-registry: dedup by url', () => {
     // matching on the live content URL — not just the static requested address.
     const f = mk({ url: 'https://example.com/' });
     f.wc.navigate('https://example.com/deep/link');
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/deep/link')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/deep/link')[0].windowId, f.id);
   });
 
   it('canonicalizes query-param ORDER — opens differing only in param order dedup (Mechanism 2)', () => {
     const f = mk({ url: 'https://example.com/p?b=2&a=1' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/p?a=1&b=2')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com/p?a=1&b=2')[0].windowId, f.id);
   });
 
   it('canonicalizes DEFAULT PORTS — :443/:80 dedup against the portless form (Mechanism 2)', () => {
     const https = mk({ url: 'https://example.com/p' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com:443/p')!.windowId, https.id);
+    assert.strictEqual(findHybridWindowsByUrl('https://example.com:443/p')[0].windowId, https.id);
     const http = mk({ url: 'http://plain.test/q' });
-    assert.strictEqual(findHybridWindowByUrl('http://plain.test:80/q')!.windowId, http.id);
+    assert.strictEqual(findHybridWindowsByUrl('http://plain.test:80/q')[0].windowId, http.id);
   });
 
   it('does NOT dedup a non-default port (real distinction preserved)', () => {
     mk({ url: 'https://example.com/p' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com:8443/p'), null);
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://example.com:8443/p'), []);
   });
 
   it('returns null for a non-matching url', () => {
     mk({ url: 'https://example.com/' });
-    assert.strictEqual(findHybridWindowByUrl('https://other.com/'), null);
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://other.com/'), []);
   });
 
   it('ignores non-http(s) and empty query urls (matches the canvas path)', () => {
     mk({ url: 'peek://app/page/index.html' });
-    assert.strictEqual(findHybridWindowByUrl('peek://app/page/index.html'), null);
-    assert.strictEqual(findHybridWindowByUrl('file:///tmp/x.html'), null);
-    assert.strictEqual(findHybridWindowByUrl(''), null);
+    assert.deepStrictEqual(findHybridWindowsByUrl('peek://app/page/index.html'), []);
+    assert.deepStrictEqual(findHybridWindowsByUrl('file:///tmp/x.html'), []);
+    assert.deepStrictEqual(findHybridWindowsByUrl(''), []);
   });
 
   it('does not match a window registered without a requested url', () => {
     // makeWiredHybrid-style opener windows register no url → never dedup-match.
     mk({}); // no url
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/'), null);
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://example.com/'), []);
   });
 
   it('skips a window whose host baseWin was destroyed', () => {
     const f = mk({ url: 'https://example.com/' });
     f.baseWin.destroyed = true;
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/'), null);
+    assert.deepStrictEqual(findHybridWindowsByUrl('https://example.com/'), []);
   });
 });
 
@@ -376,41 +382,41 @@ describe('hybrid-page-host-registry: dedup by key', () => {
 
   it('returns the window registered with the key', () => {
     const f = mk({ url: 'https://x/', key: 'tab:7' });
-    assert.strictEqual(findHybridWindowByKey('tab:7')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowsByKey('tab:7')[0].windowId, f.id);
   });
 
   it('returns null for an empty key or an unknown key', () => {
     mk({ url: 'https://x/', key: 'tab:7' });
-    assert.strictEqual(findHybridWindowByKey(''), null);
-    assert.strictEqual(findHybridWindowByKey('tab:9'), null);
+    assert.deepStrictEqual(findHybridWindowsByKey(''), []);
+    assert.deepStrictEqual(findHybridWindowsByKey('tab:9'), []);
   });
 
   it('skips a window whose baseWin was destroyed', () => {
     const f = mk({ url: 'https://x/', key: 'tab:7' });
     f.baseWin.destroyed = true;
-    assert.strictEqual(findHybridWindowByKey('tab:7'), null);
+    assert.deepStrictEqual(findHybridWindowsByKey('tab:7'), []);
   });
 
   it('does not match on url (key lookup is key-only)', () => {
     mk({ url: 'https://x/', key: 'tab:7' });
-    assert.strictEqual(findHybridWindowByKey('https://x/'), null);
+    assert.deepStrictEqual(findHybridWindowsByKey('https://x/'), []);
   });
 
   it('a key is private to the feature that declared it', () => {
     const a = mk({ url: 'https://a/', key: 'settings', source: 'peek://ext/alpha' });
     const b = mk({ url: 'https://b/', key: 'settings', source: 'peek://ext/bravo' });
-    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/alpha')!.windowId, a.id);
-    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/bravo')!.windowId, b.id);
+    assert.strictEqual(findHybridWindowsByKey('settings', 'peek://ext/alpha')[0].windowId, a.id);
+    assert.strictEqual(findHybridWindowsByKey('settings', 'peek://ext/bravo')[0].windowId, b.id);
   });
 
   it('a sourced key is not found by a lookup that omits the source', () => {
     mk({ url: 'https://a/', key: 'settings', source: 'peek://ext/alpha' });
-    assert.strictEqual(findHybridWindowByKey('settings'), null);
+    assert.deepStrictEqual(findHybridWindowsByKey('settings'), []);
   });
 
   it('a sourceless key is not found by a lookup that names one', () => {
     mk({ url: 'https://a/', key: 'settings' });
-    assert.strictEqual(findHybridWindowByKey('settings', 'peek://ext/alpha'), null);
+    assert.deepStrictEqual(findHybridWindowsByKey('settings', 'peek://ext/alpha'), []);
   });
 });
 

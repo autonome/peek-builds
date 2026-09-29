@@ -17,7 +17,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * must be a fresh popup, not a silently reused window.
  *
  * URL dedup is NOT gone: the APP-initiated open path (the canonical window-open
- * IPC handler, `findHybridWindowByUrl` at `ipc.ts` ~2571) still reuses a
+ * IPC handler, `findHybridWindowsByUrl` at `ipc.ts` ~2571) still reuses a
  * same-URL hybrid host. This spec covers ONLY the page-content `window.open`
  * popup path, which intentionally does not dedup. (Before ef30747b the popup
  * path deny+re-routed through that same IPC handler and so DID URL-dedup — the

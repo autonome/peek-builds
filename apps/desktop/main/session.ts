@@ -1450,7 +1450,7 @@ export async function restoreSessionSnapshot(
         continue;
       }
       // `source` is the key namespace: `ipc.ts windowOpenHandler` stores it on
-      // the window record and `main.ts findWindowByKey(source, key)` matches on
+      // the window record and `main.ts findWindowsByKey(source, key)` matches on
       // it, so a restored window must carry the source that originally opened
       // it. Restoring everything under `WEB_CORE_ADDRESS` filed keyed windows
       // in the wrong namespace, and the owning feature's next open of the same

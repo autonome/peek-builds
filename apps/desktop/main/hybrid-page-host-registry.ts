@@ -233,7 +233,7 @@ function normalizeForDedup(url: string): string {
  * so a closed hybrid window never lingers in the registry.
  *
  * `opts.url` is the static open address this window was created for; it is what
- * `findHybridWindowByUrl` dedups against (canvas-parity — see that function).
+ * `findHybridWindowsByUrl` dedups against (canvas-parity — see that function).
  *
  * Idempotent on `windowId`: re-registering overwrites the prior entry.
  */
@@ -376,35 +376,35 @@ export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry |
 }
 
 /**
- * Find a hybrid window opened FOR `url` (for dedup/reuse on a repeat open).
- * Matches the canonical (`normalizeForDedup`) target against BOTH keys of each
- * live entry: its static REQUESTED address AND its LIVE content URL. A match on
- * EITHER reuses the window. Matching both is what makes dedup survive in-page
+ * Find the hybrid windows opened FOR `url` — candidates for reuse on a repeat
+ * open, in registration order; which one (if any) serves the open is the
+ * kernel's answer (`window-kernel.ts reusableHere`), since only it knows which
+ * desktop each is on. Matches the canonical (`normalizeForDedup`) target
+ * against BOTH keys of each live entry: its static REQUESTED address AND its
+ * LIVE content URL. Matching both is what makes dedup survive in-page
  * navigation / redirects in both directions: re-opening the ORIGINAL address of
  * a window that has since redirected hits `requestedUrl`, while re-opening the
  * address the window has NAVIGATED to (SPA / server redirect) hits the live
- * content URL. Only http(s) urls participate, matching the canvas path. Returns
- * null if none.
+ * content URL. Only http(s) urls participate, matching the canvas path.
  */
-export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
+export function findHybridWindowsByUrl(url: string): HybridWindowEntry[] {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return [];
   const target = normalizeForDedup(url);
+  const found: HybridWindowEntry[] = [];
   for (const e of entries.values()) {
     if (e.baseWin.isDestroyed()) continue;
-    if (e.requestedUrl && normalizeForDedup(e.requestedUrl) === target) {
-      return toPublic(e);
-    }
     const live = safeUrl(e.contentWC);
-    if (live && normalizeForDedup(live) === target) {
-      return toPublic(e);
+    if ((e.requestedUrl && normalizeForDedup(e.requestedUrl) === target) || (live && normalizeForDedup(live) === target)) {
+      found.push(toPublic(e));
     }
   }
-  return null;
+  return found;
 }
 
 /**
- * Find a hybrid window opened with dedup `key` by the feature at `source`.
- * Mirrors the canvas path's `findWindowByKey(source, key)`: a key is the
+ * Find the hybrid windows opened with dedup `key` by the feature at `source` —
+ * candidates for reuse, chosen among by the kernel as for a url.
+ * Mirrors the canvas path's `findWindowsByKey(source, key)`: a key is the
  * per-window identity its declaring feature manages, and it is private to that
  * feature — matching on the bare key made one global space in which two
  * features using the same key string reused each other's windows.
@@ -412,14 +412,15 @@ export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
  * `source` is compared, not merely preferred, so an entry registered without
  * one is found only by a lookup that also passes none.
  */
-export function findHybridWindowByKey(key: string, source?: string): HybridWindowEntry | null {
-  if (!key) return null;
+export function findHybridWindowsByKey(key: string, source?: string): HybridWindowEntry[] {
+  if (!key) return [];
+  const found: HybridWindowEntry[] = [];
   for (const e of entries.values()) {
     if (e.key === key && e.source === source && !e.baseWin.isDestroyed()) {
-      return toPublic(e);
+      found.push(toPublic(e));
     }
   }
-  return null;
+  return found;
 }
 
 /** Test-only: clear all registry state. */

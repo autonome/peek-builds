@@ -37,7 +37,7 @@ native-call timing.
   switches desktop (`raise-realized id=wm-3` then `space-changed`).
 - Switcher selection (`tile-ipc.ts` → `kernelArmSelectionFocus`) is spent in the `WindowClosed` arm
   as a `lastFocusAssert`, which carries no user intent.
-- Hybrid URL dedup in the `ipc.ts` window-open handler (`findHybridWindowByUrl` →
+- Hybrid URL dedup in the `ipc.ts` window-open handler (`findHybridWindowsByUrl` →
   `kernelShowRequested(reusedId, true)`) runs before the `pageOpensTransient()` check and reuses a
   window on any desktop.
 
@@ -217,8 +217,13 @@ helper's reads; if they fail, nothing has yet been built on them.
 9. **Choosing a window moves into the kernel.** `reusableHere` and `frontWindowHere` (spec
    section 4 "Queries"), then every site outside the kernel that picks a window uses them, one
    commit per group:
-   - **9a reuse:** `ipc.ts windowOpenHandler` (`findHybridWindowByUrl`, `findHybridWindowByKey`,
-     `main.ts findWindowByKey` / `findWindowByUrl`), `chrome-extensions.ts
+   - **9a Done — reuse:** the finders return every match (`findHybridWindowsByUrl`,
+     `findHybridWindowsByKey`, `main.ts findWindowsByKey` / `findWindowsByUrl`) and
+     `window-machine.ts pickReusableHere` takes the kernel's `reusableHere` answer. A keyed
+     BrowserWindow found only off every current desktop is closed there (`closeHostWindow`,
+     log `window-open-closed-elsewhere`); a page-host window found there stays. Workspace restore
+     reaches reuse through the same handler, so it is covered too. Was: `ipc.ts windowOpenHandler` (`findHybridWindowsByUrl`, `findHybridWindowsByKey`,
+     `main.ts findWindowsByKey` / `findWindowsByUrl`), `chrome-extensions.ts
      openChromeExtensionPage`, and workspace restore through the same handler. The
      `pageOpensTransient()` check moves ahead of reuse. A one-per-app window found only off every
      current desktop is closed there and opened here. Replaces decision 2.

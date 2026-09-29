@@ -471,7 +471,7 @@ const devTiles = new Map<string, { path: string }>();
 // window-state machine's window records now (window-manager.md §4.1 dim 1a,
 // §5 step 4) — the module-level Map this file used to hold is DELETED. The
 // exported accessors below (`attachWindowOpenPayload` / `getWindowInfo` /
-// `findWindowByKey` / …) survive as the numeric-Electron-id seam over the
+// `findWindowsByKey` / …) survive as the numeric-Electron-id seam over the
 // machine state: records that carry a `source`+`params` payload are exactly
 // the windows the old Map contained (ipc.ts open sites + the core background
 // window); machine-registered infrastructure windows (tiles, bridge,
@@ -1592,36 +1592,41 @@ export function getWindowInfo(windowId: number): { source: string; params: Recor
 }
 
 /**
- * Find a window by source and key
+ * Find the windows opened by `source` with `key` — candidates for reuse; which
+ * one (if any) serves the open is `window-kernel.ts reusableHere`'s answer.
  */
-export function findWindowByKey(source: string, key: string): { id: number; window: BrowserWindow; data: unknown } | null {
-  if (!key) return null;
+export function findWindowsByKey(source: string, key: string): { id: number; window: BrowserWindow; data: unknown }[] {
+  if (!key) return [];
 
+  const found: { id: number; window: BrowserWindow; data: unknown }[] = [];
   for (const [id, win] of machineRegistryEntries()) {
     if (win.source === source && win.params && win.params.key === key) {
       const browserWindow = getLiveWindow(id);
       if (browserWindow) {
-        return { id, window: browserWindow, data: win };
+        found.push({ id, window: browserWindow, data: win });
+        continue;
       }
       // A live machine record whose id doesn't resolve to a BrowserWindow is
       // a hybrid BaseWindow (getLiveWindow is BrowserWindow.fromId-backed) —
       // skip it; hybrid dedup runs on the hybrid registry before this lookup.
       // (The old Map deleted "stale" entries here, which for a hybrid was a
       // live-entry deletion bug; the machine record retires on WINDOW_CLOSED.)
-      DEBUG && console.log('findWindowByKey: id', id, 'has no live BrowserWindow — skipping');
+      DEBUG && console.log('findWindowsByKey: id', id, 'has no live BrowserWindow — skipping');
     }
   }
-  return null;
+  return found;
 }
 
 /**
- * Find an existing page-host window that has the given URL loaded (by address param).
+ * Find the page-host windows that have the given URL loaded (by address param),
+ * candidates for reuse as for `findWindowsByKey`.
  * Only searches for http/https URLs. Only matches page-host windows (canvas pages
  * with role 'content' or 'child-content'), NOT peeks, slides, modals, or other
  * non-page-host window types.
  */
-export function findWindowByUrl(url: string): { id: number; window: BrowserWindow; data: unknown } | null {
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
+export function findWindowsByUrl(url: string): { id: number; window: BrowserWindow; data: unknown }[] {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return [];
+  const found: { id: number; window: BrowserWindow; data: unknown }[] = [];
 
   // Normalize the target once. Match registry addresses on their normalized
   // form too, so a re-open of the SAME page that differs only in trailing
@@ -1642,11 +1647,11 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
 
       const browserWindow = getLiveWindow(id);
       if (browserWindow) {
-        return { id, window: browserWindow, data: win };
+        found.push({ id, window: browserWindow, data: win });
       }
     }
   }
-  return null;
+  return found;
 }
 
 /**
@@ -1844,7 +1849,7 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
   // code paths use `WEB_CORE_ADDRESS` to identify the core window
   // (e.g. `closeOrHideWindow` refuses to close it, `countVisibleWindows`
   // excludes it). `key: 'background-core'` preserves the v1 winPrefs.key
-  // so any `findWindowByKey(WEB_CORE_ADDRESS, 'background-core')`
+  // so any `findWindowsByKey(WEB_CORE_ADDRESS, 'background-core')`
   // lookups continue to work.
   const systemAddress = getSystemAddress();
   // Record `placement` intent on the registry. The core background window

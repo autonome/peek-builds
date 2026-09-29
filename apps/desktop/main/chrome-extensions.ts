@@ -29,9 +29,10 @@ import { DEBUG, isHeadless } from './config.js';
 import {
   registerWindowWithMachine,
   getWindowIdFor,
+  pickReusableHere,
 } from './window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
-import { kernelDestroyWindow, kernelShowRequested } from './window-kernel-dispatch.js';
+import { kernelCloseWindowDirect, kernelDestroyWindow, kernelShowRequested } from './window-kernel-dispatch.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -1047,14 +1048,22 @@ export function openChromeExtensionPage(
   // (an ACTIVATING show — reuse means "bring it to me", so activate:true,
   // same as the ipc.ts key/url-reuse shows), never a direct `.focus()` on the
   // Electron handle: a raw focus is a restack the window-state machine never
-  // sees, so `front`/stacking would go stale.
+  // sees, so `front`/stacking would go stale. Reused only if the kernel admits
+  // it here (rule 5): one page per extension and type, so one visible on
+  // another desktop is closed there and a new one opens here.
   const existing = extensionUiWindows.get(windowKey);
   if (existing && !existing.isDestroyed()) {
     const existingId = getWindowIdFor(existing);
-    if (existingId != null) {
-      kernelShowRequested(existingId, true);
+    if (pickReusableHere([existing], (w) => w) !== null) {
+      if (existingId != null) {
+        kernelShowRequested(existingId, true);
+      }
+      return existing;
     }
-    return existing;
+    extensionUiWindows.delete(windowKey);
+    if (existingId != null) {
+      kernelCloseWindowDirect(existingId);
+    }
   }
 
   // Find the UI entry
@@ -1122,7 +1131,8 @@ export function openChromeExtensionPage(
   extensionUiWindows.set(windowKey, win);
 
   win.on('closed', () => {
-    extensionUiWindows.delete(windowKey);
+    // A replacement opened on another desktop may already hold this key.
+    if (extensionUiWindows.get(windowKey) === win) extensionUiWindows.delete(windowKey);
     DEBUG && console.log(`[chrome-ext] UI window closed: ${windowKey}`);
   });
 

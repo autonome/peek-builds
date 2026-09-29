@@ -17,7 +17,7 @@ import {
   kernelSetDesktopMembership,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow, windowById } from './window-kernel.js';
+import { topmost, isContentWindow, windowById, reusableHere } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
@@ -171,6 +171,17 @@ export function dispatchEscapePress(landedId: WindowId | 'global', site: string)
     track: (pending) => getKernelExecutorForApp().trackExternalAsyncEffect(pending),
   };
   handleEscapePress({ landedId }, deps);
+}
+
+// The candidate that may serve a request to reuse an open window here (rule 5): the kernel's
+// `reusableHere` over the candidates' machine ids. Callers find candidates by their own
+// criterion and take this answer; `null` means open a new window here. A candidate with no
+// machine record is skipped.
+export function pickReusableHere<T>(candidates: readonly T[], windowOf: (c: T) => BaseWindow | BrowserWindow): T | null {
+  const ids = candidates.map((c) => getWindowIdFor(windowOf(c)));
+  const chosen = reusableHere(getKernelExecutor().getState(), ids.filter((id): id is WindowId => id !== null));
+  if (chosen === null) return null;
+  return candidates[ids.indexOf(chosen)];
 }
 
 // THE target window id for command / close / Esc / session-save focused descriptor reads.

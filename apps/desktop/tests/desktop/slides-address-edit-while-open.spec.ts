@@ -7,7 +7,7 @@
  * never takes effect" report: `features/slides/background.js` `executeItem()`
  * dedups on `slideWindows` (an in-renderer Map keyed by `${address}:${edge}`),
  * but that Map is NOT the identity authority — main's window registry is
- * (`findWindowByKey`, `main.ts`, referenced in `executeItem`'s own comments).
+ * (`findWindowsByKey`, `main.ts`, referenced in `executeItem`'s own comments).
  * The concern: if main's dedup matched on something address-INDEPENDENT (its
  * `trackingSource`/`trackingSourceId`, used for history/frecency tracking —
  * see `ipc.ts` `trackWindowLoad` call), an address edit wouldn't change the
@@ -16,8 +16,8 @@
  *
  * Read before writing this spec, rather than assumed: `ipc.ts`'s window-open
  * handler consults TWO dedup lookups before creating a window — the hybrid
- * registry's `findHybridWindowByKey(options.key, msg.source)`
- * (`hybrid-page-host-registry.ts`) and the legacy `findWindowByKey(msg.source,
+ * registry's `findHybridWindowsByKey(options.key, msg.source)`
+ * (`hybrid-page-host-registry.ts`) and the legacy `findWindowsByKey(msg.source,
  * options.key)` (`main.ts`) for non-hybrid windows. Both match on
  * `e.key === key && e.source === source` — the exact `options.key` string,
  * which `executeItem`'s `openNewSlide()` sets to `${item.address}:${edge}`.

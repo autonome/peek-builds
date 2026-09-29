@@ -99,7 +99,7 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   /** Open a fresh opener hybrid page-host, resolving once its script has loaded. */
   async function openOpener(caseTag: string): Promise<number> {
     // Unique opener URL per test. app.window.open dedups by normalized URL
-    // (findHybridWindowByUrl → normalizeForDedup, which keeps query strings),
+    // (findHybridWindowsByUrl → normalizeForDedup, which keeps query strings),
     // so a shared /opener would be REUSED + RELOADED across tests — same
     // openerId, wiped listener/handle state, colliding popup window names. A
     // per-test query param keeps each test's opener a distinct, isolated host.

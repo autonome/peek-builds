@@ -67,7 +67,7 @@ describe('entities / open-command manifest declaration', () => {
       'declaratively (bypassing tile boot).',
     );
 
-    // Singleton reuse is driven ONLY by action.options.key (findWindowByKey),
+    // Singleton reuse is driven ONLY by action.options.key (findWindowsByKey),
     // and must match the entities home tile's key so repeat invocations reuse
     // the same window instead of spawning duplicates.
     const homeTile = (manifest.tiles ?? []).find(t => t.id === 'home');

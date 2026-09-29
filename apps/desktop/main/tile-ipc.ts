@@ -2924,7 +2924,7 @@ export function registerTileIpcHandlers(): void {
     if (target) {
       // Route through closeOrHideWindow so windows with keepLive:true are
       // HIDDEN rather than destroyed — the api.window.open key-reuse path
-      // in ipc.ts then finds the window in findWindowByKey and calls
+      // in ipc.ts then finds the window in findWindowsByKey and calls
       // win.show() + dispatches tile:lifecycle:visible. Without this, a
       // raw target.close() destroys the window regardless of keepLive,
       // defeating the reuse path and causing cmd panel-like "rapid

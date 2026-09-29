@@ -197,7 +197,7 @@ const initItems = (prefs, items) => {
  * wake hotkeys are owned by main's wake-shortcut registry (re-declared on
  * the next declareWakeShortcuts in initItems), so we don't unregister them
  * here. We also do NOT tear down open slide windows: window identity is
- * owned by main's `(source, key)` dedup (findWindowByKey, main.ts) and the
+ * owned by main's `(source, key)` dedup (findWindowsByKey, main.ts) and the
  * window registry survives a renderer unload. The in-renderer
  * `slideWindows` Map is only a local cache used while this tile is awake;
  * it is NOT load-bearing for identity across a wake/unload cycle, so

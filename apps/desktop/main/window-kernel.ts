@@ -2472,6 +2472,25 @@ export function admitsFocus(
   return visible && !record.pendingHidden && withinReach(state, record, requester);
 }
 
+// Rule 5: a window may serve a request that would reuse it if it is hidden (a
+// re-show lands on the current desktop of its screen) or visible on a current
+// desktop. One being hidden counts as hidden.
+export function admitsReuse(state: State, record: WindowRecord): boolean {
+  return !record.visible || record.pendingHidden === true || onCurrentDesktop(state, record);
+}
+
+// The one answer to "which of these open windows can serve this request
+// here?". Callers outside the kernel find candidates by their own criterion
+// (URL, key, extension page) and never choose among them themselves. `null`:
+// open a new window here.
+export function reusableHere(state: State, candidates: readonly WindowId[]): WindowId | null {
+  for (const id of candidates) {
+    const record = state.order.find((w) => w.id === id);
+    if (record !== undefined && admitsReuse(state, record)) return id;
+  }
+  return null;
+}
+
 // F7: the prior key holder if it is on screen and on a current desktop, else
 // the topmost application window on a current desktop, else nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
