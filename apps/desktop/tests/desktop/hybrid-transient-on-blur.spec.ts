@@ -71,6 +71,13 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   // mid-flight doesn't bleed into the next test's autoclose iteration.
   test.afterEach(async () => {
     if (!bgWindow) return;
+    // A test that fires an app resign leaves the app inactive. The next test's
+    // opens would then be made while another app is focused and a Peek window
+    // holds key, which makes every window opened to show transient
+    // (`izui-roles.ts windowIsTransient`), so Peek is brought back first.
+    try {
+      await app.evaluateMain?.(() => (globalThis as any).__peek_test.fireAppBecomeActive());
+    } catch { /* app may be gone */ }
     try {
       await bgWindow.evaluate(async (keepId: number) => {
         const r = await (window as any).app.window.list({ includeInternal: true });
