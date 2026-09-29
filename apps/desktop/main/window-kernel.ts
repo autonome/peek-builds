@@ -2383,7 +2383,11 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
   return front !== null && isBaseLayerPageHost(front) ? front : null;
 }
 
-export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
+// Roles whose windows launch or overlay other windows rather than own them: a
+// window opened from one is a top-level window, not its child. This asks what
+// the opener is for, not how it ends, so it is not read from `transient` — a
+// page opened over another app is transient and still owns what it opens.
+export const LAUNCHER_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 // Default provenance for a focus report that carries none — see `FocusCause`.
 const WORLD_CAUSE: FocusCause = { kind: 'world' };
@@ -2393,7 +2397,7 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
 }
 
 export function isNonParentRole(role: string | undefined): boolean {
-  return roleIn(TRANSIENT_ROLES, role);
+  return roleIn(LAUNCHER_ROLES, role);
 }
 
 // The `pendingHidden` clause keeps a chosen-for-dismissal window out of the next sweep until its hide confirms;

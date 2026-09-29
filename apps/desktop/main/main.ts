@@ -820,8 +820,8 @@ export async function initialize(): Promise<void> {
       publish(getSystemAddress(), 'app:focus-changed', { focused: false });
 
       // (Overlay-switcher close removed — §5 step 9's LAST direct window call
-      // out of this file. The switcher is a TRANSIENT-role window
-      // (`window-kernel.ts` `TRANSIENT_ROLES`), so an app resign dismisses it
+      // out of this file. The switcher is a transient window
+      // (`WindowRecord.transient`), so an app resign dismisses it
       // through the same `selectTransientAutoclose` law that closes any other
       // transient window on app blur — no dedicated overlay-switcher path or
       // side-channel stamp survives here.)

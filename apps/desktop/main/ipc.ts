@@ -114,7 +114,6 @@ import {
 import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
-  TRANSIENT_ROLES,
   inferIzuiRole,
   spacesPolicyForRole,
   desktopMembershipForRole,
@@ -2746,7 +2745,7 @@ export function registerWindowHandlers(): void {
     // exists yet, and ratchets a transient session to active if Peek now
     // has focus) — see izui-state.ts evaluateOnShow. The per-window
     // `params.transient` flag this used to feed is gone; a window's real
-    // transience is its `role` (`window-kernel.ts TRANSIENT_ROLES`).
+    // transience is decided below (`izui-roles.ts windowIsTransient`).
     const coordinator = getIzuiCoordinator();
     coordinator.evaluateOnShow();
 
@@ -3170,8 +3169,8 @@ export function registerWindowHandlers(): void {
     // a non-parent breaks the `parentWindowId is set when opened from a
     // content window` test in izui-behavior.spec.ts. Long-term fix is
     // to stop overloading 'utility'; short-term, `isNonParentRole` covers
-    // only the roles the transient-dismissal law governs
-    // (`window-kernel.ts TRANSIENT_ROLES`), which excludes `utility`.
+    // only the launcher roles (`window-kernel.ts LAUNCHER_ROLES`), which
+    // exclude `utility`.
     const openerWindow = windowFromWebContents(ev.sender);
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
@@ -3924,14 +3923,16 @@ export function registerWindowHandlers(): void {
       // update — for peek:// URLs the hash is derived deterministically
       // from the URL itself.
       //
-      // Transient roles (palette, quick-view, overlay) are skipped:
+      // Transient windows (`options.transient`: the palette, peeks, the
+      // switcher, anything opened over another app) and windows that take no
+      // input (a desktop border) are skipped:
       //   - cmd panel UI changes every keystroke, so any captured frame
       //     is stale by the time it's seen
-      //   - quick-view / overlay windows close before the user could
-      //     navigate to them in the Windows feature anyway
+      //   - a transient window ends before the user could navigate to it
+      //     in the Windows feature anyway
       //   - it also avoids running webContents.capturePage on the cmd
       //     panel mid-test, which has historically been a flaky surface
-      if (url.startsWith('peek://') && !TRANSIENT_ROLES.has(role)) {
+      if (url.startsWith('peek://') && options.transient !== true && options.focusable !== false) {
         win.webContents.on('did-stop-loading', () => {
           const pageUrl = win.webContents.getURL() || url;
           if (!pageUrl.startsWith('peek://')) return;

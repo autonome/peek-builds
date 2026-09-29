@@ -28,7 +28,7 @@ import {
   desktopUnread,
   isOnEveryDesktop,
   windowById,
-  TRANSIENT_ROLES,
+  LAUNCHER_ROLES,
   roleIn,
   BASE_LAYER,
   type State,
@@ -47,6 +47,11 @@ import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 import { isWebPageRole } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `wk-${n}` as WindowId;
+
+// The roles whose features open their windows with `modal` or `overlay`, so a
+// fixture registering one of these roles declares it transient the way
+// `izui-roles.ts windowIsTransient` would.
+const OPENED_AS_TRANSIENT: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 // Used to prove react never writes to its arguments.
 function deepFreeze<T>(value: T): T {
@@ -4186,7 +4191,7 @@ describe('window-kernel: transient autoclose', () => {
     acceptsInput: true,
     class: 'primary',
     ...(role !== undefined ? { role } : {}),
-    ...(roleIn(TRANSIENT_ROLES, role) ? { transient: true } : {}),
+    ...(roleIn(OPENED_AS_TRANSIENT, role) ? { transient: true } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
   // A page-host is registered orderable: false and is not a transient-autoclose candidate until
@@ -4633,8 +4638,8 @@ describe('window-kernel: transient autoclose', () => {
 });
 
 describe('window-kernel: isNonParentRole', () => {
-  it('every TRANSIENT_ROLES member cannot be a parent — quick-view included', () => {
-    for (const role of TRANSIENT_ROLES) {
+  it('every LAUNCHER_ROLES member cannot be a parent — quick-view included', () => {
+    for (const role of LAUNCHER_ROLES) {
       assert.strictEqual(isNonParentRole(role), true, `${role} must not be a real parent`);
     }
   });
@@ -4658,7 +4663,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     acceptsInput: true,
     class: 'primary',
     ...(role !== undefined ? { role } : {}),
-    ...(roleIn(TRANSIENT_ROLES, role) ? { transient: true } : {}),
+    ...(roleIn(OPENED_AS_TRANSIENT, role) ? { transient: true } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
   const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
