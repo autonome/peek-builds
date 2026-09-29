@@ -1069,9 +1069,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     else win.focus();
   }
 
+  // Electron's `webContents.focus()` makes the window key first, then focuses
+  // the contents; for a panel that takes key without activating. A flagged
+  // window gets the same pair through the addon, or a non-activating show
+  // followed by content focus (a peek over another app) leaves it without key.
   private focusRendererContent(win: NativeWindow, wc: NativeWebContents): void {
-    if (isFlaggedNonActivating(win)) focusContentWithoutActivating(win);
-    else wc.focus();
+    if (isFlaggedNonActivating(win)) {
+      makeKeyWithoutActivating(win);
+      focusContentWithoutActivating(win);
+    } else {
+      wc.focus();
+    }
   }
 
   setFullscreen(id: WindowId, on: boolean): void {
