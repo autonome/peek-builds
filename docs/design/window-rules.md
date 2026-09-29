@@ -106,7 +106,8 @@ command-line open — is not a transient page-host window. It takes no key; it i
 apps unfocused (G1), and the first click on it brings the app forward. That
 click must reach the kernel as a world-caused focus: a hide made while the app
 is inactive provokes no platform-chosen focus, so none is expected after it
-(`window-kernel-executor.ts hideProvokesFocusReassignment()`); an expectation
+(`window-kernel.ts hideProvokesFocusReassignment()`, recorded by
+`expectPlatformFocus` and matched by `platformChoseFocus`); an expectation
 left standing swallows the click, leaves no key window, and sends the next
 Escape to the Escape fallback window.
 

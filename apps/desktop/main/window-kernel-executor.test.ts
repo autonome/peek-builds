@@ -17,7 +17,6 @@ import {
   WindowKernelExecutor,
   planRaise,
   planRaiseRealization,
-  hideProvokesFocusReassignment,
   planRestoreFocus,
   stackingLevelForLayer,
   type FsSettleOutcome,
@@ -25,6 +24,7 @@ import {
 import {
   initialState,
   evolve,
+  hideProvokesFocusReassignment,
   BASE_LAYER,
   type DesktopMembership,
   type Event,
@@ -672,10 +672,6 @@ describe('planRaiseRealization — refining an activating raise once isVisible()
   });
 });
 
-// Wired in `electron-window-backend.ts hideWindow`, which is not
-// unit-reachable here for the same reason as `raiseWindow` above; the live
-// signal is the absence of an `os-focus-suppressed reason=hide-provoked`
-// record on the first click into a page opened while the app was inactive.
 describe('hideProvokesFocusReassignment — when a hide is followed by a focus the platform chose', () => {
   it('a focused window hidden while the app is active provokes one', () => {
     assert.strictEqual(hideProvokesFocusReassignment(true, true), true);
@@ -688,6 +684,118 @@ describe('hideProvokesFocusReassignment — when a hide is followed by a focus t
   it('an unfocused window provokes none, active or not', () => {
     assert.strictEqual(hideProvokesFocusReassignment(false, true), false);
     assert.strictEqual(hideProvokesFocusReassignment(false, false), false);
+  });
+});
+
+// The backend reports every focus with its raw cause; the kernel records what
+// the platform will hand out by itself as it emits the causing effect, and
+// ignores the one world-caused report that answers it.
+describe('a focus the platform hands out by itself after a kernel effect', () => {
+  const worldFocus = (id: WindowId): Event => ({ type: 'OsFocusGained', id, cause: { kind: 'world' } });
+
+  function twoWindows(opts: { headless?: boolean; backend?: RecordingBackend } = {}): WindowKernelExecutor {
+    const exec = opts.backend
+      ? new WindowKernelExecutor(opts.backend, { headless: opts.headless ?? false })
+      : makeExecutor({ headless: opts.headless }).exec;
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2), { keepLive: true }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+    exec.dispatch(worldFocus(wid(2)));
+    return exec;
+  }
+
+  function hideKey(exec: WindowKernelExecutor): void {
+    const out = exec.execute({ type: 'CloseOrHideWindow', id: wid(2), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+  }
+
+  it('hiding the key window while the app is active swallows the next world focus, and only that one', () => {
+    const exec = twoWindows();
+    hideKey(exec);
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(2), 'the reassigned focus is not the user choosing wk-1');
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(1), 'the next click is the user');
+  });
+
+  it('a machine-caused focus is never swallowed, and spends the hide expectation', () => {
+    const exec = twoWindows();
+    hideKey(exec);
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: exec.getState().opSeqCounter } });
+    assert.strictEqual(exec.getState().key, wid(1));
+    assert.strictEqual(exec.getState().expectedPlatformFocus.hide, false);
+  });
+
+  it('a hide while the app is inactive expects nothing — the first click brings the app forward', () => {
+    const exec = twoWindows();
+    exec.dispatch({ type: 'AppResigned' });
+    hideKey(exec);
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(1));
+  });
+
+  it('running focus-free expects nothing, since nothing holds real focus to reassign', () => {
+    const exec = twoWindows({ headless: true });
+    hideKey(exec);
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(1));
+  });
+
+  it('the app resigning clears a hide expectation the platform never answered', () => {
+    const exec = twoWindows();
+    hideKey(exec);
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch({ type: 'AppActivated' });
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(1));
+  });
+
+  it('an activation asked for one window swallows the platform handing key to another, once', () => {
+    const exec = twoWindows();
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch({ type: 'ColdStartFocusArmed', id: wid(1) });
+    exec.dispatch({ type: 'AppActivated' });
+    exec.dispatch(worldFocus(wid(2)));
+    assert.strictEqual(exec.getState().key, wid(2), 'unchanged: wk-2 held key before');
+    assert.strictEqual(exec.getState().expectedPlatformFocus.activation, null, 'spent by the one swallowed focus');
+    exec.dispatch(worldFocus(wid(1)));
+    exec.dispatch(worldFocus(wid(2)));
+    assert.strictEqual(exec.getState().key, wid(2), 'a later click is the user');
+  });
+
+  it("the asked-for window's own focus spends the activation expectation", () => {
+    const exec = twoWindows();
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch({ type: 'ColdStartFocusArmed', id: wid(1) });
+    exec.dispatch({ type: 'AppActivated' });
+    exec.dispatch(worldFocus(wid(1)));
+    assert.strictEqual(exec.getState().key, wid(1));
+    exec.dispatch(worldFocus(wid(2)));
+    assert.strictEqual(exec.getState().key, wid(2));
+  });
+
+  it('a restack swallows the focus it hands out only where restacking takes focus', () => {
+    class RestackingBackend extends RecordingBackend {
+      readonly restackingTakesFocus = true;
+    }
+    const restacking = twoWindows({ backend: new RestackingBackend() });
+    exec3(restacking);
+    const keyBefore = restacking.getState().key;
+    restacking.dispatch(worldFocus(wid(3)));
+    assert.strictEqual(restacking.getState().key, keyBefore, 'the focus the restack handed wk-3 is not the user');
+    restacking.dispatch(worldFocus(wid(3)));
+    assert.strictEqual(restacking.getState().key, wid(3));
+
+    const plain = twoWindows();
+    exec3(plain);
+    plain.dispatch(worldFocus(wid(3)));
+    assert.strictEqual(plain.getState().key, wid(3));
+
+    function exec3(exec: WindowKernelExecutor): void {
+      exec.dispatch(register(wid(3)));
+      exec.dispatch({ type: 'WindowShown', id: wid(3) });
+    }
   });
 });
 

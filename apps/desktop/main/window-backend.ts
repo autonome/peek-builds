@@ -43,6 +43,11 @@ export interface WindowSpec {
 // names below are deliberately not platform method names —
 // scripts/check-r2-window-ops.mjs greps for the platform names verbatim.
 export interface WindowBackend {
+  // Whether restacking a window hands it focus on this platform, so the focus
+  // report that follows a restack is the platform's choice, not the user's.
+  // Absent means it does not.
+  readonly restackingTakesFocus?: boolean;
+
   attachAppListeners(): void;
 
   // opSeq arms "expecting a self-caused focus, op N" before the native call,

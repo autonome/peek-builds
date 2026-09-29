@@ -37,7 +37,7 @@ import {
 // through window-machine.js, and the reopen is never invoked during module evaluation.
 // `dispatchEscapePress` is called only inside `escGrabHandler`'s closure, never
 // at this module's top level — window-machine.js imports this file directly.
-import { dispatchEscapePress, getAppActive } from './window-machine.js';
+import { dispatchEscapePress } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import {
@@ -58,7 +58,7 @@ import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
-import { planRaiseRealization, hideProvokesFocusReassignment } from './window-kernel-executor.js';
+import { planRaiseRealization } from './window-kernel-executor.js';
 import {
   getKernelExecutor,
   kernelOsFocusGained,
@@ -201,18 +201,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // consuming on the first read mislabels the second echo `world`.
   private readonly pendingSelfCausedFocus = new Map<WindowId, number>();
 
-  private readonly pendingStackingFocus = new Set<WindowId>();
-  private pendingHideProvokedFocus = false;
-
-  // The window an app activation was asked to put in front, from the moment
-  // the activation is reported until that window's own focus arrives. On
-  // activation the platform hands key to the app's main window by itself; when
-  // the kernel asked for a different window, that focus is the platform's
-  // choice, not the user's, and reporting it would raise the main window back
-  // over the one asked for. Spent by the first such focus, by the asked-for
-  // window's own focus echo, or by the app resigning, so it never outlives the
-  // activation it belongs to and swallows at most one focus.
-  private activationFocusTarget: WindowId | null = null;
+  readonly restackingTakesFocus = STACKING_TAKES_FOCUS;
 
   // Armed before the native show/hide call that can provoke it — a
   // `BaseWindow`'s native 'show'/'hide' can fire ahead of this method's own
@@ -284,15 +273,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
-      const askedFor = getKernelExecutor().getState().pendingColdStartFocus;
       kernelAppActivated();
-      // Armed only for a window the activation really can put in front.
-      const askedRecord =
-        askedFor !== null ? getKernelExecutor().getState().order.find((w) => w.id === askedFor) : undefined;
-      this.activationFocusTarget = askedRecord !== undefined && askedRecord.visible ? askedFor : null;
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
-      this.activationFocusTarget = null;
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       this.appResignSettleTimer = setTimeout(() => {
@@ -790,38 +773,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Taking focus instead of closing means a beforeunload prompt this
       // window was asked to unload for was answered "stay".
       if (this.quitPromptPending.delete(id)) this.quitting = false;
-      const stackingProvoked = this.pendingStackingFocus.delete(id);
-      // The platform provokes at most one focus for a whole stacking batch,
-      // so this focus voids every other arming in it.
-      this.pendingStackingFocus.clear();
-      const cause = this.takeFocusCause(id);
-      const suppressed = stackingProvoked && cause.kind !== 'machine';
-      if (suppressed) {
-        getKernelExecutor().markTimeline(`focus suppressed stacking-provoked ${String(id)} cause=${cause.kind}`);
-        wmLog('os-focus-suppressed', { id, reason: 'stacking-provoked', causeKind: cause.kind });
-        return;
-      }
-      const hideProvoked = this.pendingHideProvokedFocus;
-      this.pendingHideProvokedFocus = false;
-      if (hideProvoked && cause.kind !== 'machine') {
-        getKernelExecutor().markTimeline(`focus suppressed hide-provoked ${String(id)} cause=${cause.kind}`);
-        wmLog('os-focus-suppressed', { id, reason: 'hide-provoked', causeKind: cause.kind });
-        return;
-      }
-      const activationTarget = this.activationFocusTarget;
-      if (activationTarget !== null) {
-        if (id === activationTarget) {
-          this.activationFocusTarget = null;
-        } else if (cause.kind !== 'machine') {
-          // The platform hands key over once per activation, so one
-          // suppression spends the expectation.
-          this.activationFocusTarget = null;
-          getKernelExecutor().markTimeline(`focus suppressed activation-provoked ${String(id)} cause=${cause.kind}`);
-          wmLog('os-focus-suppressed', { id, reason: 'activation-provoked', causeKind: cause.kind, askedFor: activationTarget });
-          return;
-        }
-      }
-      kernelOsFocusGained(id, cause);
+      // Every focus is reported with its raw cause; the kernel tells a focus
+      // the platform handed out by itself from the user's
+      // (`window-kernel.ts platformChoseFocus`).
+      kernelOsFocusGained(id, this.takeFocusCause(id));
     });
     // Electron fires a losing window's blur before a gaining window's focus,
     // so a one-tick settle is what tells "focus left Peek" from "focus moved
@@ -829,7 +784,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('blur', () => {
       wmLog('native-blur', { id });
       this.pendingSelfCausedFocus.delete(id);
-      this.pendingStackingFocus.delete(id);
       this.armBlurSettle();
     });
     win.on('show', () => {
@@ -869,7 +823,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.clearFullscreenSettle(id);
       this.quitPromptPending.delete(id);
       this.pendingSelfCausedFocus.delete(id);
-      this.pendingStackingFocus.delete(id);
       this.pendingShowOpSeq.delete(id);
       this.pendingHideOpSeq.delete(id);
       this.pendingMachineClose.delete(id);
@@ -932,7 +885,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private armSelfCausedFocus(id: WindowId, opSeq: number): void {
     this.pendingSelfCausedFocus.set(id, opSeq);
-    this.pendingStackingFocus.delete(id);
   }
 
   // Reads the arming without deleting it: a page-host's two native focus
@@ -957,16 +909,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       selfCausedFocusFor: listIds(this.pendingSelfCausedFocus.keys()),
       showOpFor: listIds(this.pendingShowOpSeq.keys()),
       hideOpFor: listIds(this.pendingHideOpSeq.keys()),
-      stackingFor: listIds(this.pendingStackingFocus.keys()),
       machineCloseFor: listIds(this.pendingMachineClose.keys()),
     };
   }
 
-  // Reuses `pendingStackingFocus` — the same arming `setStacking` carries for
-  // the same `moveTop()` primitive — rather than a second suppression mechanism.
-  private reorderToTop(id: WindowId, win: NativeWindow): void {
+  // Every caller arms the raise's own focus first, so a focus this restack
+  // provokes reports as machine-caused.
+  private reorderToTop(win: NativeWindow): void {
     try {
-      if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
       win.moveTop();
     } catch {
       /* moveTop unsupported on some platforms, or torn down mid-raise — a no-op */
@@ -1006,7 +956,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         case 'reorder':
         case 'take-key':
           this.armSelfCausedFocus(id, opSeq);
-          this.reorderToTop(id, win);
+          this.reorderToTop(win);
           if (plan === 'take-key' && !isHeadless()) {
             try {
               this.takeKey(win);
@@ -1034,7 +984,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       case 'reorder':
       case 'take-key':
         this.armSelfCausedFocus(id, opSeq);
-        this.reorderToTop(id, win);
+        this.reorderToTop(win);
         if (plan === 'take-key' && !isHeadless()) {
           try {
             this.takeKey(win);
@@ -1350,15 +1300,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     else this.pendingHideOpSeq.delete(id);
     try {
       if (win.isDestroyed()) return;
-      // Hiding the focused window makes the platform reassign focus to a
-      // window the machine never named — gated on the window actually
-      // holding focus, since hiding an unfocused window reassigns nothing.
-      // and on the app being active, since an inactive app's hide reassigns
-      // nothing either and the unanswered expectation would swallow the next
-      // real focus. The kernel's record of app activity is the authority: the
-      // platform's own query answers true while an inactive app's palette
-      // holds key, which is exactly the case this guards.
-      this.pendingHideProvokedFocus = hideProvokesFocusReassignment(this.isFocused(win), getAppActive());
       win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */
@@ -1395,7 +1336,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!win) return;
     try {
       if (win.isDestroyed()) return;
-      if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
       if (level === 'pinned') win.setAlwaysOnTop(true, 'floating');
       else win.moveTop();
     } catch {

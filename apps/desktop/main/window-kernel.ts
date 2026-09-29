@@ -166,7 +166,29 @@ export interface State {
   // user left, so no window counts as on a current desktop (`desktopUnread`).
   readonly desktopSwitchCount: number;
   readonly desktopSwitchesRead: number;
+  // Focus the platform is expected to hand out by itself after an effect this
+  // kernel emitted; a world-caused report matching it is the platform's
+  // choice, not the user's (`platformChoseFocus`).
+  readonly expectedPlatformFocus: PlatformFocusExpectation;
 }
+
+export interface PlatformFocusExpectation {
+  // Windows restacked on a platform where restacking hands a window focus.
+  // The platform provokes at most one focus for a whole restacking batch.
+  readonly stacking: readonly WindowId[];
+  // The key window was hidden while the app was active, so the platform
+  // hands key to another of the app's windows.
+  readonly hide: boolean;
+  // The window an activation was asked to put in front. On activation the
+  // platform hands key to the app's main window by itself; when a different
+  // window was asked for, that focus is the platform's choice, and reporting
+  // it would raise the main window back over the one asked for. Spent by the
+  // first such focus, by the asked-for window's own focus, or by the app
+  // resigning, so it swallows at most one focus.
+  readonly activation: WindowId | null;
+}
+
+const NO_PLATFORM_FOCUS_EXPECTED: PlatformFocusExpectation = { stacking: [], hide: false, activation: null };
 
 export interface SelectionFocus {
   armer: WindowId;
@@ -412,6 +434,7 @@ export function initialState(): State {
     desktops: [],
     desktopSwitchCount: 0,
     desktopSwitchesRead: 0,
+    expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
   };
 }
 
@@ -883,6 +906,7 @@ function evolveEvent(state: State, ev: Event): State {
         ...(successor !== null ? { lastRaiseRequest: { id: successor.id, seq: nextRaiseRequestSeq(state) } } : {}),
         // The session ends when its window stack empties — reset here so the next session answers from its own first window.
         ...(order.length === 0 ? { openedInBackground: false } : {}),
+        expectedPlatformFocus: withoutStackingExpectation(state.expectedPlatformFocus, ev.id),
         version: state.version + 1,
       };
     }
@@ -896,10 +920,18 @@ function evolveEvent(state: State, ev: Event): State {
       // unconditionally — every report, including one that re-confirms the
       // window already holding key, needs a fresh distinct `seq` for `react`
       // to diff against.
+      //
+      // A focus the platform handed out by itself, after an effect this
+      // kernel emitted, is recorded as spent and otherwise ignored.
+      const provoked = platformChoseFocus(state, ev.id, ev.cause ?? WORLD_CAUSE);
+      const expectedPlatformFocus = spendPlatformFocusExpectation(state.expectedPlatformFocus, ev.id, provoked);
+      if (provoked !== null) {
+        return { ...state, expectedPlatformFocus, version: state.version + 1 };
+      }
       const idx = state.order.findIndex((w) => w.id === ev.id);
       if (idx === -1) {
         const attention: Attention = { holder: ev.id, cause: ev.cause ?? { kind: 'world' }, seq: nextAttentionSeq(state) };
-        return { ...state, key: ev.id, lastAttention: attention, version: state.version + 1 };
+        return { ...state, key: ev.id, lastAttention: attention, expectedPlatformFocus, version: state.version + 1 };
       }
       const record = state.order[idx];
       // A raise echo for the window already holding key re-confirms the standing attention:
@@ -941,6 +973,7 @@ function evolveEvent(state: State, ev: Event): State {
         key: ev.id,
         opSeqCounter: opSeq,
         lastAttention: attention,
+        expectedPlatformFocus,
         version: state.version + 1,
       };
     }
@@ -948,10 +981,12 @@ function evolveEvent(state: State, ev: Event): State {
     case 'OsFocusLost': {
       // Only clears `key` if this id is the one currently holding it — a
       // stale/duplicate report about a window that isn't key is a no-op, not
-      // a repair.
+      // a repair. A window that lost focus is no longer about to be handed it
+      // by a restack.
       return {
         ...state,
         key: state.key === ev.id ? null : state.key,
+        expectedPlatformFocus: withoutStackingExpectation(state.expectedPlatformFocus, ev.id),
         version: state.version + 1,
       };
     }
@@ -982,10 +1017,16 @@ function evolveEvent(state: State, ev: Event): State {
       const hidesImmediately = (w: WindowRecord): boolean =>
         !w.pendingHidden && !dismissVictims.has(w.id) && w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
       const hidesSomething = state.order.some(hidesImmediately);
+      // Every expectation ends here: the activation's with it, and focus has
+      // left every window, so nothing the platform was about to hand out
+      // after a restack or a hide is still coming. A hide the platform made
+      // itself (the app hidden) is recorded like the kernel's own, and this
+      // resign is what clears it before the user's next click.
       return {
         ...state,
         appActive: false,
         pendingAppResignSweep: true,
+        expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
         order: hidesSomething
           ? state.order.map((w) => (hidesImmediately(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w))
           : state.order,
@@ -1060,6 +1101,14 @@ function evolveEvent(state: State, ev: Event): State {
         }),
         opSeqCounter: opSeq,
         pendingColdStartFocus: null,
+        // Expected only for a window this activation leaves on screen.
+        expectedPlatformFocus: {
+          ...state.expectedPlatformFocus,
+          activation:
+            latchedCandidate !== undefined && (latchedCandidate.visible || appBlurRevealAdmits(state, latchedCandidate))
+              ? latchedCandidate.id
+              : null,
+        },
         // The other half of the ratchet: the user has come to Peek, so
         // whatever is on screen is somewhere they are now. Unconditional and one-way.
         openedInBackground: false,
@@ -2335,6 +2384,73 @@ function keepsFirstDesktop(record: WindowRecord): boolean {
 
 export function windowById(state: State, id: WindowId): WindowRecord | null {
   return state.order.find((w) => w.id === id) ?? null;
+}
+
+export type PlatformChosenFocus = 'stacking' | 'hide' | 'activation';
+
+// Which expectation, if any, a focus report answers: a world-caused report
+// that follows an effect after which the platform hands out focus by itself.
+// A machine-caused report is the kernel's own op and never the platform's choice.
+export function platformChoseFocus(state: State, id: WindowId, cause: FocusCause): PlatformChosenFocus | null {
+  if (cause.kind === 'machine') return null;
+  const expected = state.expectedPlatformFocus;
+  if (expected.stacking.includes(id)) return 'stacking';
+  if (expected.hide) return 'hide';
+  if (expected.activation !== null && expected.activation !== id) return 'activation';
+  return null;
+}
+
+// Any focus report ends the restacking batch and the hide it follows; the
+// activation expectation ends with the asked-for window's own focus or with
+// the one focus it swallows. A report swallowed as a restack leaves the hide
+// and activation expectations standing, as one swallowed as a hide leaves
+// the activation one.
+export function spendPlatformFocusExpectation(
+  expected: PlatformFocusExpectation,
+  id: WindowId,
+  provoked: PlatformChosenFocus | null,
+): PlatformFocusExpectation {
+  if (provoked === 'stacking') return { ...expected, stacking: [] };
+  if (provoked === 'hide') return { ...expected, stacking: [], hide: false };
+  const activationSpent = expected.activation !== null && (expected.activation === id || provoked === 'activation');
+  return { stacking: [], hide: false, activation: activationSpent ? null : expected.activation };
+}
+
+function withoutStackingExpectation(expected: PlatformFocusExpectation, id: WindowId): PlatformFocusExpectation {
+  return expected.stacking.includes(id) ? { ...expected, stacking: expected.stacking.filter((w) => w !== id) } : expected;
+}
+
+// Whether hiding a window makes the platform hand focus to another of the
+// app's windows, a focus the kernel never asked for and must not read as the
+// user's. Only the key window's hide does, and only while the app is active:
+// an inactive app's hide reassigns nothing, so expecting a focus there would
+// leave the expectation standing until it swallowed the user's next real click.
+export function hideProvokesFocusReassignment(windowFocused: boolean, appActive: boolean): boolean {
+  return windowFocused && appActive;
+}
+
+export interface PlatformFocusFacts {
+  // Restacking a window hands it focus on this platform.
+  restackingTakesFocus: boolean;
+  // Windows hold real focus (false when running focus-free, where a hide
+  // reassigns nothing).
+  holdsFocus: boolean;
+}
+
+// Records what focus the platform will hand out by itself as it realizes
+// `effects`, emitted by `react` for `state`. A hide replaces the previous
+// hide expectation (the last hide decides); a restack adds to the batch.
+export function expectPlatformFocus(state: State, effects: readonly Effect[], facts: PlatformFocusFacts): State {
+  let expected = state.expectedPlatformFocus;
+  for (const effect of effects) {
+    if (effect.type === 'HideWindow') {
+      const hide = facts.holdsFocus && hideProvokesFocusReassignment(state.key === effect.id, state.appActive);
+      if (hide !== expected.hide) expected = { ...expected, hide };
+    } else if (effect.type === 'SetStacking' && facts.restackingTakesFocus && !expected.stacking.includes(effect.id)) {
+      expected = { ...expected, stacking: [...expected.stacking, effect.id] };
+    }
+  }
+  return expected === state.expectedPlatformFocus ? state : { ...state, expectedPlatformFocus: expected };
 }
 
 export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): boolean {

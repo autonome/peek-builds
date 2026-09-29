@@ -238,7 +238,15 @@ helper's reads; if they fail, nothing has yet been built on them.
      the request is a switcher pick (`features/windows/windows.js`).
    - **9d the static check** of spec section 4 "Enforcement", with the finders and `topmost` as
      its listed names and an allowlist that only shrinks.
-10. Decision 4 (focus filters).
+10. Decision 4 (focus filters). Done: `State.expectedPlatformFocus` holds the three expectations.
+    `window-kernel.ts expectPlatformFocus` records them from the effects `react` emits: a hide of
+    the key window while the app is active and windows hold real focus, and a restack where the
+    backend's `restackingTakesFocus` says restacking takes focus. `AppActivated` records the
+    activation's asked-for window. `platformChoseFocus` classifies each `OsFocusGained`, and a
+    matched world-caused report is spent and otherwise ignored. `AppResigned` clears all three,
+    which also retires a hide the platform made itself (the app hidden), recorded like the
+    kernel's own because both arrive as `WindowHidden`. The backend reports every focus with its
+    raw cause.
 11. Decision 5 (resign settle).
 12. Folded into 9b.
 13. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.

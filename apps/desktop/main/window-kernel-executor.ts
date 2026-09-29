@@ -12,12 +12,15 @@ import {
   BASE_LAYER,
   decide,
   evolve,
+  expectPlatformFocus,
   FULLSCREEN_SETTLE_TIMEOUT_MS as DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS,
   initialState,
   isStaleSelfEcho,
   isStaleWindowEcho,
   keyWindow,
+  platformChoseFocus,
   react,
+  spendPlatformFocusExpectation,
   traceTransientAutoclose,
   type Command,
   type Effect,
@@ -66,15 +69,6 @@ export function planRaiseRealization(alreadyVisible: boolean, alreadyKey: boolea
   if (!alreadyVisible) return 'show-and-take-key';
   if (alreadyKey) return 'reorder';
   return 'take-key';
-}
-
-// Whether hiding a window makes the platform hand focus to another of the
-// app's windows, a focus the machine never asked for and must not read as the
-// user's. Only a focused window's hide does, and only while the app is active:
-// an inactive app's hide reassigns nothing, so expecting an echo there would
-// leave the expectation standing until it swallowed the user's next real click.
-export function hideProvokesFocusReassignment(windowFocused: boolean, appActive: boolean): boolean {
-  return windowFocused && appActive;
 }
 
 export function planRestoreFocus(coldStart: boolean, headless: boolean, appActive: boolean): boolean {
@@ -218,6 +212,7 @@ export class WindowKernelExecutor {
     if (event.type === 'OsFocusGained' && event.cause !== undefined) {
       // Drops a late machine echo before `evolve` sees it, because its `opSeq` is below the
       // record's `lastOpSeq` — deliberately `<`, pairing with `isOpConfirmation`'s `===` in the kernel.
+      // It is still a focus, so it spends what the platform was expected to hand out.
       if (isStaleSelfEcho(this.state, event.id, event.cause)) {
         DEBUG && console.log('[window-kernel] dropped stale self-echo for', event.id);
         wmLog('stale-focus-echo-dropped', {
@@ -225,7 +220,24 @@ export class WindowKernelExecutor {
           causeKind: event.cause.kind,
           opSeq: event.cause.kind === 'machine' ? event.cause.opSeq : undefined,
         });
+        this.state = {
+          ...this.state,
+          expectedPlatformFocus: spendPlatformFocusExpectation(this.state.expectedPlatformFocus, event.id, null),
+        };
         return;
+      }
+    }
+    if (event.type === 'OsFocusGained') {
+      const cause = event.cause ?? { kind: 'world' as const };
+      const provoked = platformChoseFocus(this.state, event.id, cause);
+      if (provoked !== null) {
+        this.markTimeline(`focus suppressed ${provoked}-provoked ${String(event.id)} cause=${cause.kind}`);
+        wmLog('os-focus-suppressed', {
+          id: event.id,
+          reason: `${provoked}-provoked`,
+          causeKind: cause.kind,
+          ...(provoked === 'activation' ? { askedFor: this.state.expectedPlatformFocus.activation } : {}),
+        });
       }
     }
     if ((event.type === 'WindowShown' || event.type === 'WindowHidden') && event.opSeq !== undefined) {
@@ -239,7 +251,11 @@ export class WindowKernelExecutor {
     const prev = this.state;
     const next = evolve(prev, event);
     const effects = react(prev, event, next);
-    this.state = next;
+    // Recorded before any effect runs, since realizing one can report focus.
+    this.state = expectPlatformFocus(next, effects, {
+      restackingTakesFocus: this.backend.restackingTakesFocus === true,
+      holdsFocus: !this.headless,
+    });
     this.logTransition(event, prev, next);
     this.recordTimeline(event, prev, next, effects);
     this.logDismissalDecisions(event, prev, next);
