@@ -2427,7 +2427,7 @@ export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
 // key while the app was inactive, and holding key that way right now
 // (window-rules.md G1, G13). It ends the moment it stops being key with the
 // app still inactive, or the app becomes active; `react` diffs this predicate
-// across the transition and asks for the window to be reopened as an ordinary one.
+// across the transition and emits one `DismissWindow`; nothing replaces it.
 export function isTransientPageHost(state: State, record: WindowRecord): boolean {
   return (
     !state.appActive &&
@@ -2496,8 +2496,6 @@ export function reusableHere(state: State, candidates: readonly WindowId[]): Win
 // desktop, else the topmost application window on a current desktop, else
 // nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
-// A window that took key from nothing hands key to nothing: a plain dismiss is
-// not a raise. Rule 9 of specs/kernel-desktops.md says otherwise; unsettled.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
   if (hiddenRecord.priorKey === null) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
