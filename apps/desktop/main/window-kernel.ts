@@ -101,6 +101,13 @@ export interface WindowRecord {
 
   priorKey: WindowId | null;
 
+  // A lived fact, written with `priorKey` each time this window takes key: it
+  // is non-activating and took key while the app was inactive — from another
+  // app directly, or through a transient Peek window (the palette) that did
+  // the same. Its hide or close raises no successor (F7); the user goes back
+  // to the other app.
+  tookKeyFromAnotherApp?: boolean;
+
   hiddenByAppBlur?: boolean;
 
   // DO NOT DELETE as unread: no rule here branches on it, but `window-escape.ts interpretEscape` reads it outside the kernel.
@@ -524,6 +531,7 @@ export function evolve(state: State, ev: Event): State {
           // A re-registration names no focus history, so it must not overwrite
           // whatever this window's own `OsFocusGained` already recorded.
           priorKey: existing.priorKey,
+          ...(existing.tookKeyFromAnotherApp !== undefined ? { tookKeyFromAnotherApp: existing.tookKeyFromAnotherApp } : {}),
           ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
           ...(existing.pendingHidden !== undefined ? { pendingHidden: existing.pendingHidden } : {}),
           // Dropping this would silently turn an observed `false` back into "nothing reported yet", a different answer.
@@ -881,7 +889,7 @@ export function evolve(state: State, ev: Event): State {
       const movedRecord = {
         ...record,
         ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
-        ...(takesKey ? { priorKey: state.key } : {}),
+        ...(takesKey ? { priorKey: state.key, tookKeyFromAnotherApp: !state.appActive && record.nonActivating === true } : {}),
       };
       const order = [...withoutRecord, movedRecord];
       // Mark this transition's own sweep victims `pendingHidden` here, off the
@@ -2497,7 +2505,7 @@ export function reusableHere(state: State, candidates: readonly WindowId[]): Win
 // nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
-  if (hiddenRecord.priorKey === null) return null;
+  if (hiddenRecord.priorKey === null || hiddenRecord.tookKeyFromAnotherApp === true) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
   if (prior !== undefined && admitsFocus(state, prior, MACHINE_REQUEST)) return prior;
   return topmost(state, (w) => isContentWindow(w) && admitsFocus(state, w, MACHINE_REQUEST));

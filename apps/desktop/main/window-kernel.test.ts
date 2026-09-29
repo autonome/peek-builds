@@ -7739,6 +7739,49 @@ describe('window-kernel: a transient page-host window closes outright whenever i
     const switched = foldWithEffects([{ type: 'DesktopSwitchObserved' }], activated.state);
     assert.deepStrictEqual(dismisses(switched.effects), []);
   });
+
+  // F7 and row 5e: a page opened from the palette over another app took key
+  // from that app through the palette, so its close raises no Peek window —
+  // not the palette it took key from, and not the topmost page as a fallback.
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+  const openedFromPaletteOverAnotherApp = (): State =>
+    fold([
+      sidePage(wid(5), { nonActivating: undefined }),
+      { type: 'WindowShown', id: wid(5) },
+      { type: 'OsFocusGained', id: wid(5) },
+      { type: 'OsFocusLost', id: wid(5) },
+      { type: 'AppResigned' },
+      palette(wid(9)),
+      { type: 'WindowShown', id: wid(9) },
+      { type: 'FocusRaiseRequested', id: wid(9), intent: 'user' },
+      { type: 'OsFocusGained', id: wid(9) },
+      sidePage(wid(1)),
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'FocusRaiseRequested', id: wid(1), intent: 'user' },
+      { type: 'OsFocusGained', id: wid(1) },
+      { type: 'WindowHidden', id: wid(9) },
+    ]);
+
+  it('the page closing after the app comes forward raises no other Peek window', () => {
+    const before = openedFromPaletteOverAnotherApp();
+    assert.strictEqual(record(before, wid(1)).priorKey, wid(9));
+    const activated = foldWithEffects([{ type: 'AppActivated' }], before);
+    assert.deepStrictEqual(dismisses(activated.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    const closed = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], activated.state);
+    assert.deepStrictEqual(raises(closed.effects), []);
+    assert.deepStrictEqual(closed.state.lastRaiseRequest, activated.state.lastRaiseRequest);
+  });
+
+  it('the page closing after a desktop switch and then an activation raises no other Peek window', () => {
+    const before = openedFromPaletteOverAnotherApp();
+    const after = foldWithEffects([
+      { type: 'DesktopSwitchObserved' },
+      { type: 'AppActivated' },
+      { type: 'WindowClosed', id: wid(1) },
+    ], before);
+    assert.deepStrictEqual(raises(after.effects), []);
+    assert.deepStrictEqual(after.state.lastRaiseRequest, before.lastRaiseRequest);
+  });
 });
 
 // specs/kernel-desktops.md → "Model" and "7.1 Automated tests", desktop state.
