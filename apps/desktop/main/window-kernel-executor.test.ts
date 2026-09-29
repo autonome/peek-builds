@@ -793,13 +793,13 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(2)]);
   });
 
-  it('headless and backgrounded together still resolve to inactive-show, and the show still carries activate: true', () => {
+  it('headless and backgrounded together perform nothing either — a machine raise while inactive is never emitted', () => {
+    // `window-kernel.ts admitsFocus` admits no machine request while the app
+    // is inactive, so `react` emits no raise for the executor to plan, headless or not.
     const backend = raiseSetup({}, true, false);
-    assert.deepStrictEqual(backend.of('raiseWindow'), [], 'headless never reaches the activating raise, backgrounded or not');
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(backend.of('focusContent'), []);
-    const shows = backend.of('showWindow');
-    assert.strictEqual(shows.length, 1);
-    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, true);
+    assert.deepStrictEqual(backend.of('showWindow'), []);
   });
 
   it('a backgrounded quick-view gets no content focus either — the gate suppresses that mask too', () => {

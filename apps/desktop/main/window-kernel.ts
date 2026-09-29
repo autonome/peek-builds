@@ -1028,7 +1028,7 @@ function evolveEvent(state: State, ev: Event): State {
       const latchedRecord = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
       const assertsFocus =
         latchedRecord !== undefined &&
-        admitsFocus(state, latchedRecord, MACHINE_REQUEST, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
+        admitsFocus({ ...state, appActive: true }, latchedRecord, MACHINE_REQUEST, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
 
       // Fullscreen reconcile sweep: macOS can enter or leave fullscreen while
       // Peek is backgrounded, so a transition still marked `entering`/`leaving`
@@ -2551,14 +2551,20 @@ export function withinReach(state: State, record: WindowRecord, requester: Focus
 // assert, successor and latch spend in `react` asks it, and so does every
 // `evolve` stamp that pairs with one, so the two agree on whether a transition
 // issued an op. `visible` defaults to the record's own; the `AppActivated`
-// latch passes its post-re-show answer.
+// latch passes its post-re-show answer, and asks with the app active.
+//
+// While the app is inactive only a request with user intent is admitted: an
+// inactive app cannot come forward on its own, so a machine raise there is one
+// the platform would not honour. It is not emitted at all, rather than emitted
+// and dropped by the executor (the hold above other apps asks `withinReach`
+// alone, since it stands in for exactly that raise).
 export function admitsFocus(
   state: State,
   record: WindowRecord,
   requester: FocusRequester,
   visible: boolean = record.visible,
 ): boolean {
-  return visible && !record.pendingHidden && withinReach(state, record, requester);
+  return visible && !record.pendingHidden && (state.appActive || requester.user) && withinReach(state, record, requester);
 }
 
 // Rule 5: a window may serve a request that would reuse it if it is hidden (a
