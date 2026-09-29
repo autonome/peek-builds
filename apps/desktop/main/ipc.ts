@@ -126,6 +126,7 @@ import {
   isSatelliteRegistration,
   classifyWindowRegistration,
 } from './izui-roles.js';
+import { flagNonActivating, ordinaryNonActivatingSupported } from './nonactivating-window.js';
 
 
 import { trackWindow } from './display-watcher.js';
@@ -1070,7 +1071,8 @@ function assembleHybridPageHost(
     nonActivating: windowNonActivating(options),
     // Same per-role intention the generic window-open handler asks for: an
     // ordinary page is anchored to the desktop it opens on. A transient
-    // page-host window is a panel, which stays on every desktop regardless.
+    // page-host window built as a panel stays on every desktop regardless;
+    // one built as a flagged ordinary window stays anchored.
     ...(!isHeadless() ? { desktopMembership: desktopMembershipForRole(role) } : {}),
   });
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
@@ -3299,15 +3301,19 @@ export function registerWindowHandlers(): void {
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
     if (usePageHost) {
-      // A transient page-host window (`izui-roles.ts pageOpensTransient()`) is built as a
-      // panel, the one window type that can hold key in an inactive app, and
-      // its open carries the user intent of the keystroke that asked for it,
-      // so the raise reaches it (window-rules.md F6) with content focus and
-      // without the app coming forward.
+      // A transient page-host window (`izui-roles.ts pageOpensTransient()`) must hold key in
+      // an inactive app. Where the platform supports it, it is an ordinary window
+      // flagged non-activating (`nonactivating-window.ts`), which stays on the
+      // desktop it opened on; otherwise a panel, which macOS draws on every
+      // desktop. Its open carries the user intent of the keystroke that asked
+      // for it, so the raise reaches it (window-rules.md F6) with content focus
+      // and without the app coming forward.
+      const flagsOrdinary = opensTransient && ordinaryNonActivatingSupported();
       if (opensTransient) {
-        options.type = 'panel';
+        if (flagsOrdinary) options.nonActivating = true;
+        else options.type = 'panel';
         options.activation = 'user';
-        wmLog('page-opens-transient', { url: String(url) });
+        wmLog('page-opens-transient', { url: String(url), ordinary: flagsOrdinary });
       }
       // Tracks the constructed host across the try so the catch can clean up
       // a construct→register-gap throw (see destroyUnassembledHybridHost).
@@ -3330,6 +3336,10 @@ export function registerWindowHandlers(): void {
           { type: options.type },
         );
         constructedHost = baseWin;
+        if (flagsOrdinary && !flagNonActivating(baseWin)) {
+          // The addon loaded but refused this window: build nothing half-declared.
+          throw new Error('page-opens-transient: flagging the window non-activating failed');
+        }
 
         // Content view: main owns this webContents handle. Session MUST match
         // today's `<webview>`, which uses partition `persist:${profileId}`

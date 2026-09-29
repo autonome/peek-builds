@@ -210,6 +210,11 @@ describe('windowNonActivating (the Panel open-time declaration — window-rules.
     assert.strictEqual(windowNonActivating({}), false);
     assert.strictEqual(windowNonActivating({ type: 'normal' }), false);
   });
+
+  it('an ordinary window the open declared non-activating never activates the app', () => {
+    assert.strictEqual(windowNonActivating({ nonActivating: true }), true);
+    assert.strictEqual(windowNonActivating({ nonActivating: false }), false);
+  });
 });
 
 describe('pageOpensTransient (a page opened from a panel over another app — window-rules.md G1)', () => {

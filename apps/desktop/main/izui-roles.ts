@@ -58,8 +58,11 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
   return options.modal === true;
 }
 
-export function windowNonActivating(options: { type?: string }): boolean {
-  return options.type === 'panel';
+// A panel, or an ordinary window the open declared non-activating (a page
+// opened over another app where the platform supports that; see `ipc.ts
+// windowOpenHandler`).
+export function windowNonActivating(options: { type?: string; nonActivating?: boolean }): boolean {
+  return options.type === 'panel' || options.nonActivating === true;
 }
 
 // A page opened to show while the user is typing into one of the app's panels

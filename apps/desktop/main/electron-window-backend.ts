@@ -21,6 +21,11 @@ import {
 } from './desktop-provider.js';
 import { FallbackDesktopProvider } from './desktop-provider-fallback.js';
 import { MacDesktopProvider, macHelperPath, windowNumberFromSourceId } from './desktop-provider-mac.js';
+import {
+  focusContentWithoutActivating,
+  isFlaggedNonActivating,
+  makeKeyWithoutActivating,
+} from './nonactivating-window.js';
 
 import { isHeadless, DEBUG } from './config.js';
 import {
@@ -150,7 +155,8 @@ export interface NativeWebContents {
 export interface RegisterWindowSpec extends WindowSpec {
   win: NativeWindow;
   contentWC?: NativeWebContents | null;
-  // A non-activating window is built as a panel (`izui-roles.ts windowNonActivating`).
+  // A non-activating window is built as a panel (`izui-roles.ts windowNonActivating`),
+  // or as an ordinary window flagged through `nonactivating-window.ts`.
   nonActivating?: boolean;
 }
 
@@ -161,8 +167,9 @@ export interface BackendRegistration {
   // This platform keeps the window on every desktop whatever is asked:
   // Electron's panel re-adds join-all-Spaces on every collection-behaviour
   // change (`electron_ns_panel.mm setCollectionBehavior:`), so on macOS a
-  // non-activating window is on every desktop, anchored or not. Declared to
-  // the kernel as `onEveryDesktop`.
+  // non-activating window built as a panel is on every desktop, anchored or
+  // not. A flagged ordinary window is not. Declared to the kernel as
+  // `onEveryDesktop`.
   onEveryDesktop: boolean;
 }
 
@@ -711,7 +718,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.urlSafe(rendererWC),
       );
 
-    const onEveryDesktop = process.platform === 'darwin' && spec.nonActivating === true;
+    const onEveryDesktop =
+      process.platform === 'darwin' && spec.nonActivating === true && !isFlaggedNonActivating(win);
     return { id, decision, initialBounds, onEveryDesktop };
   }
 
@@ -994,7 +1002,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           this.reorderToTop(id, win);
           if (plan === 'take-key' && !isHeadless()) {
             try {
-              win.focus();
+              this.takeKey(win);
             } catch {
               /* window gone mid-raise */
             }
@@ -1007,7 +1015,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           this.armSelfCausedFocus(id, opSeq);
-          rendererWC.focus();
+          this.focusRendererContent(win, rendererWC);
         } catch {
           /* wc gone mid-raise */
         }
@@ -1044,10 +1052,24 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   focusContent(id: WindowId, opSeq: number): void {
-    const wc = this.windows.get(id)?.rendererWC;
-    if (!wc || wc.isDestroyed()) return;
+    const entry = this.windows.get(id);
+    const wc = entry?.rendererWC;
+    if (!entry || !wc || wc.isDestroyed()) return;
     this.armSelfCausedFocus(id, opSeq);
-    wc.focus();
+    this.focusRendererContent(entry.win, wc);
+  }
+
+  // Electron's window and web contents `focus()` activate the app for any
+  // non-panel, so a window flagged non-activating (`nonactivating-window.ts`)
+  // takes key and content focus through the addon instead.
+  private takeKey(win: NativeWindow): void {
+    if (isFlaggedNonActivating(win)) makeKeyWithoutActivating(win);
+    else win.focus();
+  }
+
+  private focusRendererContent(win: NativeWindow, wc: NativeWebContents): void {
+    if (isFlaggedNonActivating(win)) focusContentWithoutActivating(win);
+    else wc.focus();
   }
 
   setFullscreen(id: WindowId, on: boolean): void {
@@ -1271,7 +1293,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         /* setOpacity unsupported on some platforms */
       }
     }
-    if (activate) {
+    if (activate && isFlaggedNonActivating(win)) {
+      // A flagged window takes key without activating: shown inactive, then
+      // made key through the addon. The `'focus'` that provokes is self-caused.
+      try {
+        this.armSelfCausedFocus(id, opSeq);
+        win.showInactive();
+        makeKeyWithoutActivating(win);
+      } catch {
+        /* window gone mid-show */
+      }
+      this.pendingShowOpSeq.delete(id);
+    } else if (activate) {
       try {
         // An activating show is `makeKeyAndOrderFront:` — it takes the macOS key
         // window, so the `'focus'` it provokes is self-caused. Armed only on this
