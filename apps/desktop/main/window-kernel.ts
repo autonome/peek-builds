@@ -1025,7 +1025,12 @@ function evolveEvent(state: State, ev: Event): State {
       // activation is about to re-show is raise-eligible even though `state`
       // still has it hidden — `appBlurRevealAdmits` is reused, not restated,
       // so the two can never drift apart.
-      const latchedRecord = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
+      // A latched window that holds key taken from another app ends in this
+      // very transition (5e, `markEndedKeyTakenFromAnotherApp`), so the latch is
+      // spent on nothing: no stamp, and no focus assert names it.
+      const latchedCandidate = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
+      const latchEnds = latchedCandidate !== undefined && holdsKeyTakenFromAnotherApp(state, latchedCandidate);
+      const latchedRecord = latchEnds ? undefined : latchedCandidate;
       const assertsFocus =
         latchedRecord !== undefined &&
         admitsFocus({ ...state, appActive: true }, latchedRecord, MACHINE_REQUEST, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
@@ -1068,7 +1073,7 @@ function evolveEvent(state: State, ev: Event): State {
         // Untouched when no latch was held — an activation that was not asked
         // to re-raise anything must not bump the assert `seq`.
         lastFocusAssert:
-          latched !== null ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
+          latched !== null && !latchEnds ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
         version: state.version + 1,
       };
     }

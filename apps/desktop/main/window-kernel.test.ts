@@ -7730,6 +7730,20 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
+  // The page's raise was held above the other app, which armed the cold-start
+  // latch on it; the activation that ends the page must not also spend the
+  // latch on it (a stamp with no raise, or a focus assert naming a doomed window).
+  it('the activation that ends a held page does not spend the cold-start latch on it', () => {
+    const before = transientPageHoldingKey(wid(1));
+    assert.strictEqual(before.pendingColdStartFocus, wid(1), 'precondition: the held raise armed the latch');
+    const after = foldWithEffects([{ type: 'AppActivated' }], before);
+    assert.deepStrictEqual(after.effects.filter((e) => e.type === 'RaiseWindow' || e.type === 'FocusContent'), []);
+    assert.strictEqual(after.state.opSeqCounter, before.opSeqCounter, 'no op issued');
+    assert.strictEqual(record(after.state, wid(1)).lastOpSeq, record(before, wid(1)).lastOpSeq, 'no stamp on the ended page');
+    assert.strictEqual(after.state.pendingColdStartFocus, null);
+    assert.deepStrictEqual(after.state.lastFocusAssert, before.lastFocusAssert, 'no focus assert names it');
+  });
+
   it('key moving to the palette (the hotkey pressed again) ends the page', () => {
     const before = fold([palette(wid(9))], transientPageHoldingKey(wid(1)));
     const after = foldWithEffects([{ type: 'WindowShown', id: wid(9) }, { type: 'OsFocusGained', id: wid(9) }], before);
