@@ -154,6 +154,11 @@ export interface State {
   // layout report, and then every window counts as on a current desktop.
   readonly screens: readonly ScreenState[];
   readonly desktops: readonly DesktopState[];
+  // Switch notices seen, and how many of them a finished desktop read covers.
+  // While the first is ahead, `screens[].current` still names the desktop the
+  // user left, so no window counts as on a current desktop (`desktopUnread`).
+  readonly desktopSwitchCount: number;
+  readonly desktopSwitchesRead: number;
 }
 
 export interface SelectionFocus {
@@ -224,6 +229,9 @@ export type Event =
   // The user switched desktop, reported the moment the platform says so and
   // before the backend has read which desktop is now current; carries nothing.
   | { type: 'DesktopSwitchObserved' }
+  // The backend finished a desktop read that began after `switchesSeen`
+  // switch notices; any `CurrentDesktopChanged` it produced came first.
+  | { type: 'DesktopsRead'; switchesSeen: number }
   // Where a registered window is; `null` leaves that field unchanged.
   | { type: 'WindowPlacementReported'; id: WindowId; screen: ScreenId | null; desktop: DesktopId | null; onEveryDesktop: boolean }
   | { type: 'WindowHidden'; id: WindowId; opSeq?: number }
@@ -391,6 +399,8 @@ export function initialState(): State {
     openedInBackground: false,
     screens: [],
     desktops: [],
+    desktopSwitchCount: 0,
+    desktopSwitchesRead: 0,
   };
 }
 
@@ -696,7 +706,14 @@ export function evolve(state: State, ev: Event): State {
           // keeps the one it was first shown on.
           if (w.visible) return flushed;
           const desktop = desktopOnShow(state, w);
-          return { ...flushed, lastOpSeq: opSeq, ...(desktop !== undefined ? { desktop } : {}) };
+          if (desktop !== undefined) return { ...flushed, lastOpSeq: opSeq, desktop };
+          // Shown while the current desktop is unread: the old stamp may name
+          // the desktop the user left, so the window waits for its placement report.
+          if (desktopUnread(state) && !isOnEveryDesktop(w)) {
+            const { desktop: _left, ...unplaced } = flushed;
+            return { ...unplaced, lastOpSeq: opSeq };
+          }
+          return { ...flushed, lastOpSeq: opSeq };
         }),
         opSeqCounter: opSeq,
         version: state.version + 1,
@@ -1301,13 +1318,21 @@ export function evolve(state: State, ev: Event): State {
       // page still holds key — marking here ahead of that keeps the close on
       // this switch rather than racing an activation that ends the window the
       // same way (row 5e).
+      // It also marks the current desktop unread until the read that follows.
       const endsOnSwitch = (w: WindowRecord): boolean => w.pendingHidden !== true && isTransientPageHost(state, w);
-      if (!state.order.some(endsOnSwitch)) return { ...state, version: state.version + 1 };
+      const counted = { ...state, desktopSwitchCount: state.desktopSwitchCount + 1, version: state.version + 1 };
+      if (!state.order.some(endsOnSwitch)) return counted;
       return {
-        ...state,
+        ...counted,
         order: state.order.map((w) => (endsOnSwitch(w) ? { ...w, pendingHidden: true } : w)),
-        version: state.version + 1,
       };
+    }
+
+    case 'DesktopsRead': {
+      // A fact, never rejected. A read covering no new switch changes nothing,
+      // so every routine read does not bump `version`.
+      if (ev.switchesSeen <= state.desktopSwitchesRead) return state;
+      return { ...state, desktopSwitchesRead: ev.switchesSeen, version: state.version + 1 };
     }
 
     case 'WindowPlacementReported': {
@@ -2207,14 +2232,22 @@ export function isCurrentDesktop(state: State, desktop: DesktopId): boolean {
 // the first layout report every window counts as on a current desktop.
 export function onCurrentDesktop(state: State, record: WindowRecord): boolean {
   if (isOnEveryDesktop(record) || state.screens.length === 0) return true;
+  if (desktopUnread(state)) return false;
   return record.desktop !== undefined && isCurrentDesktop(state, record.desktop);
+}
+
+// True from a switch notice until a desktop read covering it: `current` still
+// names the desktop the user left, so it is not trusted in either direction.
+export function desktopUnread(state: State): boolean {
+  return state.desktopSwitchCount > state.desktopSwitchesRead;
 }
 
 // The desktop a genuine show stamps: the current desktop of the window's
 // screen, or of the first screen when its screen is unknown; nothing before the
-// first layout report.
+// first layout report, or while the current desktop is unread.
 function desktopOnShow(state: State, record: WindowRecord): DesktopId | undefined {
   if (isOnEveryDesktop(record) && record.desktop !== undefined) return record.desktop;
+  if (desktopUnread(state)) return undefined;
   const screen = state.screens.find((s) => s.id === record.screen) ?? state.screens[0];
   return screen?.current;
 }

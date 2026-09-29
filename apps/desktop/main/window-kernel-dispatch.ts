@@ -225,6 +225,10 @@ export function kernelDesktopSwitchObserved(): void {
   kernelDispatch({ type: 'DesktopSwitchObserved' });
 }
 
+export function kernelDesktopsRead(switchesSeen: number): void {
+  kernelDispatch({ type: 'DesktopsRead', switchesSeen });
+}
+
 export function kernelWindowPlacementReported(
   id: WindowId,
   screen: ScreenId | null,

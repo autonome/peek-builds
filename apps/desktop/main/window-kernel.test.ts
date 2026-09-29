@@ -25,6 +25,7 @@ import {
   onCurrentDesktop,
   reusableHere,
   isCurrentDesktop,
+  desktopUnread,
   isOnEveryDesktop,
   windowById,
   TRANSIENT_ROLES,
@@ -7860,6 +7861,39 @@ describe('window-kernel: desktop state', () => {
     assert.strictEqual(next.version, before.version + 1);
   });
 
+  it('from a switch notice until a read covering it, only an every-desktop window is on a current desktop', () => {
+    const before = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }, page(2, { onEveryDesktop: true }), { type: 'WindowShown', id: wid(2) }]);
+    assert.strictEqual(onCurrentDesktop(before, windowById(before, wid(1))!), true, 'precondition');
+    const switched = evolve(before, { type: 'DesktopSwitchObserved' });
+    assert.strictEqual(desktopUnread(switched), true);
+    assert.strictEqual(onCurrentDesktop(switched, windowById(switched, wid(1))!), false);
+    assert.strictEqual(onCurrentDesktop(switched, windowById(switched, wid(2))!), true);
+    const read = evolve(switched, { type: 'DesktopsRead', switchesSeen: switched.desktopSwitchCount });
+    assert.strictEqual(desktopUnread(read), false);
+    assert.strictEqual(onCurrentDesktop(read, windowById(read, wid(1))!), true);
+  });
+
+  it('a read that began before the latest switch notice leaves the desktop unread', () => {
+    const once = fold([layout, { type: 'DesktopSwitchObserved' }]);
+    const twice = evolve(once, { type: 'DesktopSwitchObserved' });
+    const staleRead = evolve(twice, { type: 'DesktopsRead', switchesSeen: once.desktopSwitchCount });
+    assert.strictEqual(desktopUnread(staleRead), true);
+  });
+
+  it('a read covering no new switch changes nothing, not even the version', () => {
+    const before = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }]);
+    assert.strictEqual(evolve(before, { type: 'DesktopsRead', switchesSeen: before.desktopSwitchCount }), before);
+  });
+
+  it('a show while the desktop is unread stamps no desktop; the placement report places it', () => {
+    const shown = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }, { type: 'WindowHidden', id: wid(1) }]);
+    assert.strictEqual(desktopOf(shown, 1), 'a1', 'precondition: stamped on first show');
+    const reshown = fold([{ type: 'DesktopSwitchObserved' }, { type: 'WindowShown', id: wid(1) }], shown);
+    assert.strictEqual(desktopOf(reshown, 1), undefined);
+    const placed = evolve(reshown, place(1, 'A', 'a2'));
+    assert.strictEqual(desktopOf(placed, 1), 'a2');
+  });
+
   it('a placement report writes screen and desktop, and leaves a field alone on null', () => {
     const placed = fold([layout, page(1), place(1, 'B', 'b2')]);
     assert.strictEqual(windowById(placed, wid(1))?.screen, 'B');
@@ -8061,6 +8095,18 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
       assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no raise, no token');
     });
   }
+
+  it('the palette ends after a switch notice but before the desktop read: its prior key window on the desktop left is not raised', () => {
+    // The user opened the palette over PAGE on desktop 1 and switched to
+    // desktop 3; `current` still says 1 until the read lands.
+    const onDesktop1 = fold([layout, page(PAGE), { type: 'WindowShown', id: PAGE }, { type: 'OsFocusGained', id: PAGE }, { type: 'AppActivated' }, ...openPalette]);
+    const ev: Event = { type: 'WindowHidden', id: PALETTE };
+    const control = evolve(onDesktop1, ev);
+    assert.notDeepStrictEqual(focusesToward(react(onDesktop1, ev, control), PAGE), [], 'control: without a switch the page is refocused');
+    const switched = evolve(onDesktop1, { type: 'DesktopSwitchObserved' });
+    const next = evolve(switched, ev);
+    assert.deepStrictEqual(focusesToward(react(switched, ev, next), PAGE), []);
+  });
 
   it('the prior key window is off the current desktop: the topmost application window on it is raised instead', () => {
     // PAGE is shown on desktop 1 and OTHER on desktop 3; PAGE held key before the palette.

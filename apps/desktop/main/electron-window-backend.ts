@@ -61,6 +61,7 @@ import {
   kernelDesktopLayoutReported,
   kernelCurrentDesktopChanged,
   kernelDesktopSwitchObserved,
+  kernelDesktopsRead,
   kernelWindowPlacementReported,
   kernelWindowClosed,
   kernelWindowShown,
@@ -318,7 +319,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         kernelDesktopSwitchObserved();
         const state = getKernelExecutor().getState();
         wmLog('space-changed', {
-          screens: this.describeScreens(),
+          // The kernel's desktops before the read that follows: the one left.
+          screensBefore: this.describeScreens(),
           key: state.key,
           appActive: state.appActive,
           windows: this.describeDesktops(),
@@ -457,9 +459,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (DESKTOP_PROBE) void this.desktopSync.then(() => this.probeRead(trigger));
   }
 
+  // Every path ends with `kernelDesktopsRead`, a failed read included: a switch
+  // notice left uncovered would keep every window off the current desktop.
   private async syncDesktops(trigger: string): Promise<void> {
+    const switchesSeen = getKernelExecutor().getState().desktopSwitchCount;
     const provider = this.desktopProvider;
-    if (!provider) return;
+    if (!provider) {
+      kernelDesktopsRead(switchesSeen);
+      return;
+    }
     try {
       const layout = await provider.layout();
       const screens = layout.screens.map((s) => ({ id: screenIdOf(s.display), current: s.current }));
@@ -475,6 +483,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         const known = getKernelExecutor().getState().screens.find((k) => k.id === s.id);
         if (known?.current !== s.current) kernelCurrentDesktopChanged(s.id, s.current);
       }
+      kernelDesktopsRead(switchesSeen);
 
       const ids = new Map<PlatformWindowId, WindowId>();
       for (const [id, { win }] of this.windows) {
@@ -495,6 +504,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       }
     } catch (err) {
       wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
+      kernelDesktopsRead(switchesSeen);
     }
   }
 
