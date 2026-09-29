@@ -90,6 +90,11 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
 - Stop: kill the `Electron.app` process under this worktree's `node_modules/electron`
   (`pgrep -f`), then confirm no `peek-desktop-helper` is left. Never `pkill -f electron`.
 - Escape reaches the switcher fallback only when no text field has focus (Peek task `69098f7c`).
-- Open the switcher with Escape on a page with no focused field; Cmd+Shift+W is the windows
-  feature's wake shortcut (`feature-shortcut-registrar.ts registerWakeShortcutList`), *unverified*
-  live on this branch.
+- Never drive a live check through a global hotkey (Cmd+Shift+W or any other): a production Peek
+  running alongside registers the same accelerators, and the keystroke can open its window
+  instead, which takes key from the one under test. Open the switcher through the profile's own
+  socket: `peek-cli debug-eval 'peek://app/background.html'
+  "window.app.pubsub.publish('cmd:execute:windows', {})"` with the launch's `PEEK_PROFILE` and
+  `TMPDIR`; the palette with `peek-cli cmd-open`.
+- A flagged window takes key only through `ElectronWindowBackend.takeKey`; any direct Electron
+  `focus()` on it activates Peek, and the activation can land hundreds of milliseconds later.
