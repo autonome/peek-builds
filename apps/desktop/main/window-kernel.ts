@@ -1113,10 +1113,16 @@ function evolveEvent(state: State, ev: Event): State {
       // This arm is what admits a just-painted record to
       // `isTransientAutocloseCandidate`, so it is also where the law asks
       // about it, against whatever `lastAttention` already stands rather than a fresh report.
+      // Only while that holder still holds key: once key has left it (another
+      // app came forward), no Peek window holds the focus a newly painted
+      // window would have lost to. A peek opened over another app paints
+      // before its raise gives it key, and must not be ended by the window
+      // that held key before the user left Peek.
       const attention = state.lastAttention;
       const isVictim =
         flipsToOrderable &&
         attention !== null &&
+        state.key === attention.holder &&
         order.some((w) => w.id === attention.holder) &&
         selectTransientAutoclose({ ...state, order }, attention.holder, attention.cause).includes(ev.id);
       return {

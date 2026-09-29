@@ -4929,6 +4929,21 @@ describe('window-kernel: react applies transient autoclose', () => {
     );
   });
 
+  it('a quick-view that paints after key has left the attention holder is not swept by it', () => {
+    // A peek opened over another app: the window that last held key lost it when the
+    // other app came forward, and the peek paints before its own raise gives it key.
+    // The holder no longer holds the focus the peek would have lost to.
+    const state = fold([reg(1, undefined), reg(2, 'quick-view'), show(1), show(2)], initialState());
+    const focused = evolve(state, { type: 'OsFocusGained', id: wid(1) });
+    const left = fold([{ type: 'AppResigned' }, { type: 'OsFocusLost', id: wid(1) }], focused);
+    assert.strictEqual(left.key, null, 'precondition: key has left Peek');
+    assert.strictEqual(left.lastAttention?.holder, wid(1), 'precondition: the attention record still names the old holder');
+
+    const orderableEv: Event = { type: 'WindowContentOrderable', id: wid(2) };
+    const next = evolve(left, orderableEv);
+    assert.deepStrictEqual(react(left, orderableEv, next).filter((e) => e.type === 'DismissWindow'), []);
+  });
+
   it('a machine raise of a window that was not key still records its own machine cause', () => {
     // Only a re-confirmation keeps the standing cause; a raise that actually moves key arms
     // the ordering floor as before (the successor / parent-refocus / focus-assert cases).
