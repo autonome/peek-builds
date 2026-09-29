@@ -21,12 +21,18 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
 ## Transient page (a page opened from the palette over another app)
 
 - Decided at open: `izui-roles.ts pageOpensTransient(isKeyHeldWhileAppInactive(), options)` in
-  `ipc.ts windowOpenHandler`; it sets `options.type = 'panel'` and `options.activation = 'user'`
-  and logs `page-opens-transient`. It never reuses an existing window.
-- Recorded as `WindowRecord.nonActivating` (`izui-roles.ts windowNonActivating`: type is panel).
-- `ElectronWindowBackend.registerWindow` declares every non-activating window `onEveryDesktop` on
-  macOS, because Electron's panel re-adds join-all-Spaces on every collection-behaviour change
-  (`electron_ns_panel.mm setCollectionBehavior:`). `setVisibleOnAllWorkspaces(false)` cannot undo it.
+  `ipc.ts windowOpenHandler`; it sets `options.activation = 'user'` and logs
+  `page-opens-transient`. It never reuses an existing window.
+- Built as an ordinary window flagged non-activating (`nonactivating-window.ts flagNonActivating`,
+  addon `native/nonactivating-window/nonactivating_window.mm`), `options.nonActivating = true`.
+  It belongs to the desktop it opened on. Without the addon it is a panel (`options.type =
+  'panel'`); the log line's `ordinary=` says which.
+- Recorded as `WindowRecord.nonActivating` (`izui-roles.ts windowNonActivating`: a panel, or
+  `options.nonActivating`).
+- `ElectronWindowBackend.registerWindow` declares a non-activating window `onEveryDesktop` on
+  macOS only when it is a panel, because Electron's panel re-adds join-all-Spaces on every
+  collection-behaviour change (`electron_ns_panel.mm setCollectionBehavior:`).
+  `setVisibleOnAllWorkspaces(false)` cannot undo it.
 - While it holds key with the app inactive, `window-kernel.ts isTransientPageHost` holds; `react`
   emits one `DismissWindow` when that stops (click-away, desktop switch, Peek brought forward).
   `DesktopSwitchObserved` marks it `pendingHidden` at once.
@@ -34,8 +40,9 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
   (`admitsHoldAboveOtherApps`), realized by `pinAlwaysOnTop` at the floating level. Without the
   floating level, macOS restacks an inactive app's ordinary window behind the active app's windows
   about 20 ms after it shows.
-- Key comes from `ElectronWindowBackend.raiseWindow`: page-host `take-key` calls `win.focus()`,
-  then `rendererWC.focus()` for content focus.
+- Key comes from `ElectronWindowBackend.raiseWindow`: page-host `take-key` goes through
+  `takeKey`, then `focusRendererContent` for content focus. For a flagged window both use the
+  addon (`makeKey`, `focusContent`), since Electron's `focus()` activates the app for a non-panel.
 
 ## Electron 43 facts that decide the transient-page design (checked in source)
 
