@@ -314,7 +314,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // window-open treated any opener that wasn't bg (peek://app/background.html)
     // as a real content parent — including the cmd palette. URLs opened from a
     // palette were then classified `role: 'child-content'`, which at the time
-    // closed on ESC in every session. The fix (`ipc.ts NON_PARENT_ROLES`)
+    // closed on ESC in every session. The fix (`window-kernel.ts LAUNCHER_ROLES`)
     // excludes launcher roles from the real-parent test.
     //
     // WHAT THIS TEST ASSERTS, AND WHY IT IS NOT THE ESC OUTCOME.
@@ -332,7 +332,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     //
     // So an ESC assertion here passes whatever the classification is, which is
     // what made the previous version of this test vacuous — it survived
-    // `'palette'` being deleted from `NON_PARENT_ROLES`, the exact defect it
+    // `'palette'` being deleted from `LAUNCHER_ROLES`, the exact defect it
     // names. Asserting the role instead fails on that deletion.
     //
     // The URL opened below must be http(s). `izui-roles.ts inferIzuiRole` gates
@@ -342,11 +342,15 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // could not reach either role — a second, independent reason it proved
     // nothing.
 
-    // Open a palette-role window via bg. This stands in for the cmd panel
-    // (app/cmd/background.js opens itself with role: 'palette').
+    // Open a palette-role window via bg. This stands in for the cmd panel, so
+    // it carries the open options that make `renderer/cmd/background.js
+    // openPanelWindow` transient (`izui-roles.ts windowIsTransient`): without
+    // `modal` it is an ordinary window and is never dismissed below.
     const paletteResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://groups/home.html', {
         role: 'palette',
+        modal: true,
+        type: 'panel',
         width: 400,
         height: 300,
       });
@@ -365,7 +369,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // `window-kernel.ts selectTransientAutoclose` dismisses a visible
     // transient whenever another window genuinely takes key, unless that
     // window names it as parent. A page opened from the palette deliberately
-    // does not (`ipc.ts NON_PARENT_ROLES` — the same exclusion this test
+    // does not (`window-kernel.ts LAUNCHER_ROLES` — the same exclusion this test
     // guards), so no exemption applies. A chain popup DOES stay exempt,
     // because `renderer/cmd/panel.js openChainPopup()` passes
     // `declareParent: true`.
@@ -399,7 +403,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     expect(opened, `no window registered for ${openedUrl}`).toBeTruthy();
 
     // The assertions the fix is answerable for. Delete 'palette' from
-    // `ipc.ts NON_PARENT_ROLES` and both of these fail: `isRealParent` becomes
+    // `window-kernel.ts LAUNCHER_ROLES` and both of these fail: `isRealParent` becomes
     // true, which stamps the palette as parentWindowId and promotes the role to
     // child-content in `inferIzuiRole`.
     // Asserted as a pair so a failure reports both facts — the parent stamp and
@@ -412,7 +416,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // Secondary, and asserted AFTER the guard above so a regression in the
     // guard fails on the guard rather than here: the palette was dismissed when
-    // the opened page took key. If `ipc.ts NON_PARENT_ROLES` ever stops
+    // the opened page took key. If `window-kernel.ts LAUNCHER_ROLES` ever stops
     // excluding the palette, the opened page becomes its child, the exemption
     // in `window-kernel.ts selectTransientAutoclose` applies, and this inverts —
     // but the pair above fails first, which is the intended signal.
