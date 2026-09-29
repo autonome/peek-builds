@@ -1405,10 +1405,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // flashes out for a frame. `'anchor'` is an ordered pair — `true` then
   // `false`, with different options — because a bare `false` call leaves the
   // window on whichever Space it was created from, not the user's active one.
+  //
+  // A window flagged non-activating is left alone: the addon already moves it
+  // to the current desktop on every show, and AppKit rejects joining every
+  // desktop together with that.
   setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
     if (process.platform !== 'darwin') return;
     const win = this.windows.get(id)?.win;
-    if (!win) return;
+    if (!win || isFlaggedNonActivating(win)) return;
     try {
       if (win.isDestroyed()) return;
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });

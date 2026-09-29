@@ -127,7 +127,7 @@ import {
   isSatelliteRegistration,
   classifyWindowRegistration,
 } from './izui-roles.js';
-import { flagNonActivating, ordinaryNonActivatingSupported } from './nonactivating-window.js';
+import { flagNonActivating, isFlaggedNonActivating, ordinaryNonActivatingSupported } from './nonactivating-window.js';
 
 
 import { trackWindow } from './display-watcher.js';
@@ -2866,7 +2866,8 @@ export function registerWindowHandlers(): void {
           // during the call.
           const reuseRole = existingData.params.role as string | undefined;
           const reusePolicy = reuseRole ? spacesPolicyForRole(reuseRole, process.platform) : 'none';
-          if (reusePolicy === 'follow') {
+          // A flagged window is moved to the current desktop by the addon.
+          if (reusePolicy === 'follow' && !isFlaggedNonActivating(existingWindow.window)) {
             const spacesMachineId = getWindowIdFor(existingWindow.window);
             if (spacesMachineId != null) {
               // Feed the kernel (window-kernel-dispatch.ts) — this is what
@@ -3491,7 +3492,25 @@ export function registerWindowHandlers(): void {
     }
     // ────────────────────────────────────────────────────────────────────
 
-    if (options.modal === true) {
+    // A transient window that must not activate the app (the palette, the
+    // switcher: a panel, or modal) is, where the addon exists, an ordinary
+    // window flagged non-activating (`nonactivating-window.ts`): it is on the
+    // desktop it was shown on, and the addon moves it to the current desktop
+    // on every show, so a kept-alive one re-shown after a desktop switch
+    // appears where the user is. A panel is on every desktop whatever is asked.
+    // It is built hidden and shown through the kernel, since Electron's own
+    // show and focus activate the app for any non-panel; the show carries the
+    // user intent of the gesture that opened it, as a transient page's does.
+    const flagsOrdinaryTransient =
+      options.transient === true &&
+      (options.type === 'panel' || options.modal === true) &&
+      ordinaryNonActivatingSupported();
+    if (flagsOrdinaryTransient) {
+      delete winOptions.type;
+      winOptions.show = false;
+      options.nonActivating = true;
+      options.activation = 'user';
+    } else if (options.modal === true) {
       // Use panel type on macOS to improve focus restoration when closed
       if (process.platform === 'darwin') {
         winOptions.type = 'panel';
@@ -3563,6 +3582,14 @@ export function registerWindowHandlers(): void {
     }
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
     perfMark('after-create');
+    // Flagged before registration, which reads `options.nonActivating`. Should
+    // the addon refuse the window, it stays an ordinary window that activates
+    // the app, and is declared as one.
+    const flaggedTransient = flagsOrdinaryTransient && flagNonActivating(win);
+    if (flagsOrdinaryTransient) {
+      if (!flaggedTransient) options.nonActivating = false;
+      wmLog('transient-opens-flagged', { url: url.substring(0, 80), flagged: flaggedTransient });
+    }
 
     // (alwaysOnTop reinforcement moved into the machine: the registration
     // below declares `alwaysOnTop`, and the reducer's WINDOW_REGISTERED
@@ -3735,7 +3762,9 @@ export function registerWindowHandlers(): void {
         // directly (`desktopMembershipForRole`, `izui-roles.ts`): every role
         // wants to either follow the user or stay anchored regardless of
         // platform.
-        kernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role));
+        // A flagged window belongs to the desktop it is shown on, re-placed on
+        // every show by the addon, so it never follows.
+        kernelSetDesktopMembership(machineWindowId, flaggedTransient ? 'anchor' : desktopMembershipForRole(role));
       }
 
       // Feed the kernel the OPEN intent (gate fallout of the WindowId

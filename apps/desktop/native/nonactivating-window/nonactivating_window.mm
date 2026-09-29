@@ -18,6 +18,13 @@
 // flagged window becomes key, keeps the other app frontmost, receives typing,
 // and stays on the desktop it opened on.
 //
+// A flagged window also moves to the current desktop each time it is shown
+// (move-to-active collection behaviour), so a window kept alive and re-shown
+// appears where the user is instead of staying, invisible yet key, on the
+// desktop it was last shown on. It never follows a switch while visible.
+// AppKit rejects that behaviour together with joining every desktop, so a
+// flagged window must never be put on every desktop.
+//
 // Electron's `focus()` (window or web contents) activates the app for any
 // non-panel, so a flagged window takes key through `makeKey` and gives its web
 // content focus through `focusContent` instead.
@@ -88,6 +95,9 @@ static napi_value SetNonActivating(napi_env env, napi_callback_info info) {
   if ([window respondsToSelector:prevents]) {
     reinterpret_cast<void (*)(id, SEL, BOOL)>(objc_msgSend)(window, prevents, on ? YES : NO);
   }
+  NSWindowCollectionBehavior behavior =
+      window.collectionBehavior & ~(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace);
+  window.collectionBehavior = on ? (behavior | NSWindowCollectionBehaviorMoveToActiveSpace) : behavior;
   return JsBool(env, true);
 }
 
