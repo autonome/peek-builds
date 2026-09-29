@@ -7480,10 +7480,22 @@ describe('window-kernel: a page asked forward while the app is inactive is held 
     assert.deepStrictEqual(holds(after.effects), []);
   });
 
-  it('only a visible base-layer content page is held', () => {
+  // A peek or slide built as a flagged ordinary window: without the hold the
+  // OS restacks it behind the frontmost app just after it shows.
+  it('a transient page-host window that is not a content page is held too, whatever its role', () => {
+    const after = foldWithEffects([
+      { type: 'AppResigned' },
+      ...openForward(wid(1), { role: 'quick-view', class: 'quick-view', transient: true, nonActivating: true }),
+    ]);
+    assert.strictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), [{ type: 'HoldAboveOtherApps', id: wid(1) }]);
+  });
+
+  it('only a visible base-layer content page or transient page-host window is held', () => {
     const cases: Array<[string, Event[]]> = [
       ['a palette', openForward(wid(1), { role: 'palette', class: 'palette' })],
-      ['a quick-view', openForward(wid(1), { role: 'quick-view', class: 'quick-view' })],
+      ['a quick-view that is not transient', openForward(wid(1), { role: 'quick-view', class: 'quick-view' })],
+      ['a transient browser-kind window', openForward(wid(1), { kind: 'browser', transient: true })],
       ['a browser-kind window', openForward(wid(1), { kind: 'browser' })],
       ['a window already above the base layer', openForward(wid(1), { layer: BASE_LAYER + 1 })],
       ['a window that cannot become key', openForward(wid(1), { canBecomeKey: false })],

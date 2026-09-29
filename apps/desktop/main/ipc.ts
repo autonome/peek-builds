@@ -1074,8 +1074,12 @@ function assembleHybridPageHost(
     // Same per-role intention the generic window-open handler asks for: an
     // ordinary page is anchored to the desktop it opens on. A transient
     // page-host window built as a panel stays on every desktop regardless;
-    // one built as a flagged ordinary window stays anchored.
-    ...(!isHeadless() ? { desktopMembership: desktopMembershipForRole(role) } : {}),
+    // one built as a flagged ordinary window (`options.nonActivating`, set by
+    // the page-host branch of the window-open handler) is anchored and moved
+    // to the current desktop by the addon on every show, so it never follows.
+    ...(!isHeadless()
+      ? { desktopMembership: options.nonActivating === true ? 'anchor' as const : desktopMembershipForRole(role) }
+      : {}),
   });
   // Reopen-last-closed (reopenLastClosedWindow above) and session restore
   // (session.ts restoreSessionSnapshot) both thread a maximized window's
@@ -1344,12 +1348,12 @@ function assembleHybridPageHost(
   // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
   // false` above.
   //
-  // EXCEPTION — quick-view surfaces (peeks/slides, `role:'quick-view'`): show
-  // WITHOUT activating the app but still make the content the first responder.
-  // The host is a `type:'panel'` NSPanel (threaded into the ctor above), so it
-  // takes key input while the frontmost app keeps OS focus — the non-activating
-  // overlay the user expects (regression 524f7aba). Popups (createWindow path)
-  // pass `options:{}` → no role → they activate like a normal web window.
+  // EXCEPTION — non-activating hosts (`izui-roles.ts windowNonActivating`:
+  // peeks, slides, a page opened over another app): show WITHOUT activating the
+  // app but still make the content the first responder. The host is a panel or
+  // an ordinary window flagged non-activating, so it takes key input while the
+  // frontmost app keeps OS focus (regression 524f7aba). Popups (createWindow
+  // path) pass `options:{}` → they activate like a normal web window.
   //
   // `activation: 'user'` forwarded the same way the window-REUSE path already
   // forwards it (see the plain-BrowserWindow reuse branch above): a raise that
@@ -1360,7 +1364,7 @@ function assembleHybridPageHost(
   // suppressed identically to a stale one.
   showHybridHost(baseWin, {
     inactive: options.show === false,
-    nonActivating: options.role === 'quick-view',
+    nonActivating: windowNonActivating(options),
     ...(options.activation === 'user' ? { activation: 'user' as const } : {}),
   });
 }
@@ -3316,12 +3320,26 @@ export function registerWindowHandlers(): void {
       // desktop. Its open carries the user intent of the keystroke that asked
       // for it, so the raise reaches it (window-rules.md F6) with content focus
       // and without the app coming forward.
-      const flagsOrdinary = opensTransient && ordinaryNonActivatingSupported();
+      //
+      // A transient window that asks for a panel (peeks, slides) is built the
+      // same way where the platform supports it, as the palette and switcher
+      // are in the browser-window branch below: it is on the desktop it was
+      // shown on, and the addon moves it to the current desktop on every show,
+      // so a kept-alive one re-shown after a desktop switch appears where the
+      // user is. A panel is on every desktop whatever is asked.
+      const flagsTransientPanel =
+        options.transient === true && options.type === 'panel' && ordinaryNonActivatingSupported();
+      const flagsOrdinary = (opensTransient || flagsTransientPanel) && ordinaryNonActivatingSupported();
       if (opensTransient) {
         if (flagsOrdinary) options.nonActivating = true;
         else options.type = 'panel';
         options.activation = 'user';
         wmLog('page-opens-transient', { url: String(url), ordinary: flagsOrdinary });
+      } else if (flagsTransientPanel) {
+        delete options.type;
+        options.nonActivating = true;
+        options.activation = 'user';
+        wmLog('transient-opens-flagged', { url: String(url).substring(0, 80), flagged: true });
       }
       // Tracks the constructed host across the try so the catch can clean up
       // a construct→register-gap throw (see destroyUnassembledHybridHost).
@@ -3346,7 +3364,7 @@ export function registerWindowHandlers(): void {
         constructedHost = baseWin;
         if (flagsOrdinary && !flagNonActivating(baseWin)) {
           // The addon loaded but refused this window: build nothing half-declared.
-          throw new Error('page-opens-transient: flagging the window non-activating failed');
+          throw new Error('page-host: flagging the transient window non-activating failed');
         }
 
         // Content view: main owns this webContents handle. Session MUST match
