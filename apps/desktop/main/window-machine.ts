@@ -17,7 +17,7 @@ import {
   kernelSetDesktopMembership,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow, windowById, reusableHere } from './window-kernel.js';
+import { isContentWindow, windowById, reusableHere, frontWindowHere } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
@@ -186,23 +186,20 @@ export function pickReusableHere<T>(candidates: readonly T[], windowOf: (c: T) =
   return candidates[ids.indexOf(chosen)];
 }
 
-// THE target window id for command / close / Esc / session-save focused descriptor reads.
-// `keyWindow` is NOT a substitute: key is nulled the moment the app loses OS focus, and a
-// satellite such as the shared chrome overlay can hold it, silently naming the wrong window.
+// THE target window id for command / close / Esc / session-save focused descriptor reads:
+// the kernel's `frontWindowHere` over content windows, so it is never a window on a desktop
+// the user is not on. `keyWindow` alone is NOT a substitute: key is nulled the moment the app
+// loses OS focus, and a satellite such as the shared chrome overlay can hold it; the filter
+// passes over both and falls back to the topmost content window on a current desktop.
 export function getTopmostContentWindowId(): WindowId | null {
-  return topmost(getKernelExecutor().getState(), isContentWindow)?.id ?? null;
+  return frontWindowHere(getKernelExecutor().getState(), isContentWindow);
 }
 
 // THE target window for a developer surface that only means something over an http/https page
 // (devtools). Composed over isContentWindow rather than re-derived, so its gates stay in one
 // place. Null when nothing on screen is a page; callers fall back to getTopmostContentWindowId.
 export function getTopmostWebPageWindowId(): WindowId | null {
-  return (
-    topmost(
-      getKernelExecutor().getState(),
-      (r) => isContentWindow(r) && isWebPageRole(r.role),
-    )?.id ?? null
-  );
+  return frontWindowHere(getKernelExecutor().getState(), (r) => isContentWindow(r) && isWebPageRole(r.role));
 }
 
 // Reads the overlay's attachment relation off the record carrying `tracksBaseLayerTop`, rather

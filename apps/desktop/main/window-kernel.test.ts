@@ -16,6 +16,7 @@ import {
   isContentWindow,
   isFrontEligibleWindow,
   topmostBaseLayerPageHost,
+  frontWindowHere,
   isStaleSelfEcho,
   selectTransientAutoclose,
   isAppResignSweepEligible,
@@ -5455,6 +5456,26 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     const second = wid(2);
     const state = fold([registerPageHost(first), ...shown(first), registerPageHost(second), ...shown(second)]);
     assert.strictEqual(topmostBaseLayerPageHost(state)?.id, second);
+  });
+
+  it('frontWindowHere: the key window if it passes and is here, else the topmost that is; never one on another desktop', () => {
+    const a = wid(1);
+    const b = wid(2);
+    const c = wid(3);
+    const base = fold([
+      { type: 'DesktopLayoutReported', screens: [{ id: 'S', current: 'd1' }], desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }] },
+      registerPageHost(a), ...shown(a),
+      registerPageHost(b), ...shown(b),
+      registerPageHost(c), ...shown(c),
+    ]);
+    const keyOnA = fold([{ type: 'OsFocusGained', id: a }], base);
+    assert.strictEqual(frontWindowHere(keyOnA, isContentWindow), a, 'the key window wins over the topmost');
+    const cElsewhere = fold([{ type: 'WindowPlacementReported', id: c, screen: 'S', desktop: 'd2', onEveryDesktop: false }], base);
+    assert.strictEqual(frontWindowHere(cElsewhere, isContentWindow), b, 'no key: the topmost here, skipping the one on d2');
+    const keyElsewhere = fold([{ type: 'OsFocusGained', id: c }, { type: 'WindowPlacementReported', id: c, screen: 'S', desktop: 'd2', onEveryDesktop: false }], base);
+    assert.strictEqual(frontWindowHere(keyElsewhere, isContentWindow), b, 'a key window on another desktop is passed over');
+    const allElsewhere = fold([a, b, c].map((id): Event => ({ type: 'WindowPlacementReported', id, screen: 'S', desktop: 'd2', onEveryDesktop: false })), base);
+    assert.strictEqual(frontWindowHere(allElsewhere, isContentWindow), null);
   });
 
   it('a page host on a desktop no screen shows is skipped: the chrome frames the one on the current desktop', () => {

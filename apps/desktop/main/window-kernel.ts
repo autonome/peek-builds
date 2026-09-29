@@ -2260,6 +2260,18 @@ export function keyWindow(state: State): WindowRecord | null {
   return state.order.find((w) => w.id === state.key) ?? null;
 }
 
+// The window the user is looking at (specs/kernel-desktops.md section 4
+// "Queries"): the key window if it is on screen, passes `filter` and is on a
+// current desktop, else the topmost on-screen window that does. Every "focused
+// window" or "topmost content window" answer outside the kernel is this one,
+// so an action never lands on a window on a desktop the user is not on.
+export function frontWindowHere(state: State, filter: (r: WindowRecord) => boolean = () => true): WindowId | null {
+  const here = (r: WindowRecord): boolean => r.visible && r.pendingHidden !== true && filter(r) && onCurrentDesktop(state, r);
+  const key = keyWindow(state);
+  if (key !== null && here(key)) return key.id;
+  return topmost(state, here)?.id ?? null;
+}
+
 // A window is on every desktop when the backend declared it so, or when its
 // role asks to follow the user across desktops.
 export function isOnEveryDesktop(record: WindowRecord): boolean {

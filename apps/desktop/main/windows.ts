@@ -38,7 +38,7 @@ import {
   kernelCloseOrHideRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { keyWindow, topmost, isFrontEligibleWindow } from './window-kernel.js';
+import { frontWindowHere, isFrontEligibleWindow } from './window-kernel.js';
 import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
@@ -438,13 +438,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
 // isFrontEligibleWindow, not isContentWindow, deliberately: a focused peek (role: 'quick-view')
 // must close itself, not the page host behind it, and isContentWindow's role allow-list excludes it.
 export function resolveFocusedWindowIdForClose(): number | null {
-  const state = getKernelExecutor().getState();
-  const key = keyWindow(state);
-  const target = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
+  // `frontWindowHere`: the key window if front-eligible and on a current desktop, else the
+  // topmost such window, so Cmd+W never closes a window on a desktop the user is not on.
+  const target = frontWindowHere(getKernelExecutor().getState(), isFrontEligibleWindow);
   if (target == null) return null;
   // The kernel speaks WM WindowId; the close path is still Electron-id-keyed, so resolve the
   // target's native handle and hand back its id.
-  const win = getNativeWindowFor(target.id);
+  const win = getNativeWindowFor(target);
   return win ? win.id : null;
 }
 

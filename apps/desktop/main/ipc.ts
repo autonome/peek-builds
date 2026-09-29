@@ -111,7 +111,7 @@ import {
   kernelShowRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
-import { topmost, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
+import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import {
   inferIzuiRole,
@@ -537,8 +537,8 @@ export function openNewPageWindow(sourceWindowId?: number): void {
   let modeEntry = frontId != null ? getContextEntrySafe(frontId) : null;
 
   if (frontId == null || !modeEntry) {
-    const topmostContent = topmost(state, isContentWindow);
-    const topmostWin = topmostContent ? getNativeWindowFor(topmostContent.id) : null;
+    const frontContent = frontWindowHere(state, isContentWindow);
+    const topmostWin = frontContent ? getNativeWindowFor(frontContent) : null;
     frontId = topmostWin ? topmostWin.id : null;
     modeEntry = frontId != null ? getContextEntrySafe(frontId) : null;
   }
