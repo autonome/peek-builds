@@ -400,3 +400,19 @@ build `c3647846`, log kept only locally.
   and a switch away defers the reopen until the user returns to that desktop (spec rules 2 and 3).
   The placeholder window and its probe gestures (the helper write test, the Mission Control check)
   are dropped.
+
+**Fourth probe, a kept-alive flagged window re-shown on another desktop (2026-09-29).** Throwaway
+Electron script (log kept only locally): an ordinary window flagged non-activating
+(`nonactivating-window.ts flagNonActivating`), floating level, Finder frontmost; shown and made
+key on desktop 1, hidden, desktop switched right, then shown and made key again, as the palette
+and the switcher are.
+
+- With AppKit's move-to-active-desktop collection behaviour set on the window: the re-show appears
+  on desktop 2, no desktop switch follows, Finder stays frontmost, the window is key and receives
+  typing. Switching back to desktop 1 while it is visible leaves it on desktop 2: it moves only
+  when shown, never follows a switch.
+- Without it: the re-show stays on desktop 1, invisible from desktop 2, yet becomes key, so typing
+  lands in a window the user cannot see. No desktop switch follows either, since the app is not
+  activated.
+- Consequence: the palette and the switcher can be flagged ordinary windows kept alive, with the
+  move behaviour set by the addon; the close-and-rebuild fallback is not needed.
