@@ -4,7 +4,6 @@
 // `docs/design/window-manager.md`.
 
 import { DEBUG } from './config.js';
-import { wmLog } from './window-diag.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
@@ -407,26 +406,6 @@ export function kernelSetLayer(id: WindowId, layer: number): void {
 // kernelShowRequested with activate is ShowWindow then RaiseWindow, and opts.activation === 'user' puts intent on the raise.
 export function kernelShowRequested(id: WindowId, activate: boolean, opts?: { activation?: 'user' }): void {
   kernelExecute({ type: 'ShowWindow', id, expectedVersion: getKernelExecutor().getState().version });
-  // DIAG (kernel-desktops live peek check): whether the raise a show asks for is accepted.
-  {
-    const rec = getKernelExecutor().getState().order.find((w) => w.id === id);
-    wmLog('diag-show-requested', {
-      id: String(id),
-      activate,
-      activation: opts?.activation,
-      visible: rec?.visible,
-      orderable: rec?.orderable,
-      outcome: activate
-        ? JSON.stringify(getKernelExecutor().execute({
-            type: 'RaiseWindow',
-            id,
-            expectedVersion: getKernelExecutor().getState().version,
-            ...(opts?.activation === 'user' ? { intent: 'user' as const } : {}),
-          }))
-        : 'no-raise',
-    });
-    return;
-  }
   if (activate) {
     kernelExecute({
       type: 'RaiseWindow',
