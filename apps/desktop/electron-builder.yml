@@ -159,6 +159,12 @@ extraResources:
   # uses the fallback desktop provider.
   - from: "apps/desktop/dist/native/peek-desktop-helper"
     to: "peek-desktop-helper"
+  # macOS non-activating window addon, built by
+  # apps/desktop/scripts/build-nonactivating-window.mjs as part of the desktop
+  # build. Outside the asar because a native addon cannot load from inside it.
+  # Absent where it was not built; pages opened over another app then stay panels.
+  - from: "apps/desktop/dist/native/nonactivating-window.node"
+    to: "nonactivating-window.node"
 
 # macOS specific
 mac:
