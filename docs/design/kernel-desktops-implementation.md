@@ -189,14 +189,52 @@ helper's reads; if they fail, nothing has yet been built on them.
      is an explicit choice and rule 1 takes the user to the picked window's desktop, so it is gated
      on `admitsFocusAssert()` only, marked by `FocusAssertRequest.switcherPick`. Until 8b it still
      carries no `intent: 'user'`, and no `ShowDesktop` precedes it.
-   - **8b:** `ShowDesktop` before a user-intent raise of a window not on a current desktop,
-     switcher selection carrying user intent, decision 3.
-9. Decision 2 (URL dedup).
+   - **8b: one admission rule.** `admitsFocus(state, record, { named })` (spec section 4) replaces
+     `admitsMachineRaise` and `admitsFocusAssert` at every site in `evolve` and `react`, including
+     `successorOnHide`. Folded in, because each is the same rule applied unevenly today:
+     - app inactive and not named → not admitted, so `react` stops emitting what `planRaise`
+       suppresses (decision 3); `planRaise` keeps headless and non-activating choices only;
+     - a key move reported by the OS (`OsFocusGained`) is not gated;
+     - `FocusAssertRequested` and `FocusRaiseRequested` stamp `lastOpSeq` only when they issue an
+       op;
+     - the hold above other apps and the cold-start latch are armed only when the raise they stand
+       for is admitted, and the latch never names a window dismissed in the same transition;
+     - `successorOnHide` falls through to the topmost window on a current desktop when there is no
+       prior key window (F7);
+     - a switcher pick is `named`: its `RaiseWindow` carries `intent: 'user'`, preceded by
+       `ShowDesktop` when the window is not on a current desktop (`FocusAssertRequest.switcherPick`
+       becomes that flag).
+     Tests: the property test of spec section 4 "Enforcement".
+   - **8c: one desktop stamp on show, chrome on this desktop.** Every write flipping `visible` to
+     true goes through one helper that stamps the desktop (today the re-show on app activation and
+     the overlay reveal skip it). `topmostBaseLayerPageHost` picks only a page-host window on a
+     current desktop.
+9. **Choosing a window moves into the kernel.** `reusableHere` and `frontWindowHere` (spec
+   section 4 "Queries"), then every site outside the kernel that picks a window uses them, one
+   commit per group:
+   - **9a reuse:** `ipc.ts windowOpenHandler` (`findHybridWindowByUrl`, `findHybridWindowByKey`,
+     `main.ts findWindowByKey` / `findWindowByUrl`), `chrome-extensions.ts
+     openChromeExtensionPage`, and workspace restore through the same handler. The
+     `pageOpensTransient()` check moves ahead of reuse. A one-per-app window found only off every
+     current desktop is closed there and opened here. Replaces decision 2.
+   - **9b the window the user is looking at:** `window-machine.ts getTopmostContentWindowId` and
+     its consumers (`tile:window:get-focused-visible-id`, `tile:dialogs:save` / `open`,
+     `tileResolveWebWindow`, the fullscreen and colour-scheme defaults, `tile:window:devtools`),
+     `windows.ts resolveFocusedWindowIdForClose`, the Cmd+W devtools guard in `entry.ts`, and
+     `ipc.ts openNewPageWindow`. The devtools-opened / devtools-closed handlers in `main.ts` take
+     `5f888241` from track `close-raises-other-desktop` (decision 6).
+   - **9c requests by id:** `tile:window:focus` and `tile:window:show` carry `named`, false unless
+     the request is a switcher pick (`features/windows/windows.js`).
+   - **9d the static check** of spec section 4 "Enforcement", with the finders and `topmost` as
+     its listed names and an allowlist that only shrinks.
 10. Decision 4 (focus filters).
 11. Decision 5 (resign settle).
-12. Decision 6: cherry-pick `5f888241` from track `close-raises-other-desktop` (see
-    "Relationship to `close-raises-other-desktop`").
+12. Folded into 9b.
 13. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.
+
+Open, not scheduled: `DesktopSwitchObserved` carries no screen, so a switch on another screen still
+ends a transient page-host window (spec rule 3 says it changes nothing); and whether the stacking
+replay's move-to-top of a window on another desktop can switch desktop is unverified.
 
 The macOS provider acceptance check runs after commit 4; the rule acceptance check after commit 8.
 

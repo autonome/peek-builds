@@ -91,8 +91,9 @@ rule that depends on either, on every platform the desktop app runs on.
    desktop the user is on.
 
    **The switcher** MUST list the app's windows from every desktop. Picking one MUST take the user
-   to that window's desktop. This conflicts with rule 5 and is accepted, because the pick is
-   explicit.
+   to that window's desktop. This is the one way to go to another desktop's window: a pick names
+   a window the user already knows is open there, whereas every other request asks for something
+   to happen, and new things happen where the user is (rule 5).
 2. **A transient page-host window ends where it was opened.** Clicking the other app
    (`window-rules.md` 5c), switching desktop (5d), or bringing Peek forward while it holds key (5e)
    MUST close it; nothing replaces it, and the page stays reachable from history.
@@ -108,10 +109,20 @@ rule that depends on either, on every platform the desktop app runs on.
 4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if it is on
    a current desktop, else the frontmost page-host window on a current desktop, else nothing
    (rule 9).
-5. **Opening a URL already open on another desktop opens a new page-host window on the desktop the
-   user is on**, not the one there. Opening a URL from the palette over another app MUST always
-   open a new transient page-host window; it MUST NOT reuse an existing page-host window. Reason: switching
-   desktop is deliberate, so actions happen there.
+5. **New things happen where the user is.** A request that would reuse an open window — a URL
+   already open, a window opened by key (settings, groups, tags and other one-per-app windows), an
+   extension page — reuses it only if it is hidden or on a current desktop. Otherwise:
+   - a page-host window for a URL: a new page-host window opens on the desktop the user is on, and
+     the one on the other desktop stays;
+   - a window opened by key, of which only one may exist: the one on the other desktop closes and
+     a new one opens on the desktop the user is on.
+
+   Opening a URL from the palette over another app MUST always open a new transient page-host
+   window; it MUST NOT reuse an existing page-host window. A request aimed at "the window the user
+   is looking at" (a command, Cmd+W, devtools, a dialog's parent) MUST resolve to a window on a
+   current desktop, or to none. Reason: switching desktop is deliberate, so actions happen there.
+   A later palette affordance may offer "switch to" beside "open here"; until then only the
+   switcher goes elsewhere (rule 1).
 6. **The rules hold on every platform with desktops.** With a provider that reads real desktops,
    rules 1–5 hold as written. With only the fallback provider the app sees one desktop per screen
    and behaves as a desktop-unaware app; the OS may then take the user to another desktop (see
@@ -168,9 +179,31 @@ Initial state: no screens, no desktops.
 - `onCurrentDesktop(state, record): boolean` — `isOnEveryDesktop(record)`, or `record.desktop` is
   current. False both for a window on a desktop no screen shows and for a window never shown,
   except that it is true for every window before the first layout report.
-- `admitsReuse(state, record): boolean` — the record may serve an open of its URL: visible and on
-  a current desktop, or hidden. A hidden window is re-shown on the current desktop of its screen;
-  if the OS shows it elsewhere, the following placement report corrects the kernel.
+- `admitsReuse(state, record): boolean` — the record may serve a request that would reuse it:
+  visible and on a current desktop, or hidden. A hidden window is re-shown on the current desktop
+  of its screen; if the OS shows it elsewhere, the following placement report corrects the kernel.
+- `admitsFocus(state, record, { named }): boolean` — the one admission rule for bringing a window
+  forward. Always: visible (or being shown in the same transition) and not being hidden or
+  dismissed. With `named` (the user named this window: a switcher pick) that is all. Without it,
+  also on a current desktop and the app active. Every raise, focus assert, content focus,
+  successor, parent refocus and latch spend in `react`, and every op-token stamp in `evolve`,
+  MUST ask this predicate and no other; a key move reported by the OS (`OsFocusGained`) is not a
+  request and is not gated.
+
+### Queries (the only way code outside the kernel chooses a window)
+
+Code outside the kernel MUST NOT choose among windows itself. A caller supplies candidates it
+found by its own criterion (URL, key, extension page), and the kernel answers:
+
+- `reusableHere(state, candidates): WindowId | null` — the first candidate for which
+  `admitsReuse` holds. `null` means open a new window here; for a one-per-app window, the caller
+  also closes the candidates.
+- `frontWindowHere(state, filter?): WindowId | null` — the key window if it passes `filter` and is
+  on a current desktop, else the topmost visible window passing `filter` on a current desktop.
+  Replaces every "topmost content window" and "focused window" fallback outside the kernel.
+
+A request from a tile to show or focus a window by id carries `named`; it is false unless the
+request is a switcher pick.
 
 ### Events (facts, never rejected)
 
@@ -225,9 +258,21 @@ With the fallback provider the show stamp is the only source and is correct by c
 - **Taking the user to a window's desktop.** For a user-intent raise of a window not on a current
   desktop, `react` emits `ShowDesktop { desktop: record.desktop }` immediately before
   `RaiseWindow`. The resulting switch arrives as an ordinary `CurrentDesktopChanged`.
-- **URL reuse.** Opening a URL reuses an existing page-host window for that URL only if
-  `admitsReuse` holds. The `pageOpensTransient()` check runs before reuse: an open that makes a
+- **Reuse.** Every reuse path (URL, key, extension page, workspace restore) goes through
+  `reusableHere`. The `pageOpensTransient()` check runs before reuse: an open that makes a
   transient page-host window never reuses.
+- **One place records a desktop on show.** Every write that flips `visible` to true (`WindowShown`,
+  the re-show on app activation, the overlay reveal) stamps the desktop through one helper.
+- **Page chrome.** The overlay attaches only to a page-host window on a current desktop.
+
+### Enforcement
+
+- A static check next to `scripts/check-r2-window-ops.mjs` fails on any window lookup outside the
+  kernel that does not end in `reusableHere` or `frontWindowHere` (the registry finders and
+  `topmost` are the listed names).
+- A kernel property test folds random event sequences over several desktops and asserts: no
+  `RaiseWindow`, `FocusContent` or reuse targets a window off every current desktop unless the
+  request was `named`; every op-token stamp in `evolve` has a matching effect in `react`.
 
 ### Platform neutrality
 
