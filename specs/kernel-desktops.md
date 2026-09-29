@@ -36,26 +36,32 @@ rule that depends on either, on every platform the desktop app runs on.
   a **page-host window**: a window the kernel records with `kind: 'page-host'`
   (`window-kernel.ts WindowKind`), which the handler builds when `usePageHost` holds. **The page**
   is the web content in that window.
-- **Transient window**: a window that is closed or hidden when it loses focus. There are two
-  kinds, defined next: `TRANSIENT_ROLES` windows and transient page-host windows; nothing replaces
-  either kind. `TRANSIENT_ROLES` names only the first kind; where a rule means only that kind it
-  says "`TRANSIENT_ROLES` window", never "transient window".
-- **`TRANSIENT_ROLES` window**: a window whose `role` is in `window-kernel.ts TRANSIENT_ROLES`:
-  `palette` (the command palette), `quick-view`, `overlay` (page chrome) and `switcher` (the window
-  switcher). It is transient by role: losing focus closes or hides it.
-- **Transient page-host window**: a page-host window with a content role
-  (`window-kernel.ts CONTENT_ROLES`) opened over another app with the window-open options
-  `type: 'panel'` and `activation: 'user'`. The window-open handler sets both when
-  `izui-roles.ts pageOpensTransient()` holds: the URL is opened (in practice from the palette)
-  while another app is in front and a Peek window holds key
-  (`window-machine.ts isKeyHeldWhileAppInactive()`), the caller passed no `type`, and `show` is not
-  `false` (`window-rules.md` G1, G13). The kernel records `type: 'panel'` as
-  `WindowRecord.nonActivating`. A transient page-host window floats over the other app and holds
-  key without bringing Peek forward; while it does, `window-kernel.ts isTransientPageHost()` holds
-  for it. Every way it stops holding key while still on screen closes it (`DismissWindow`): the
-  user clicking another app, switching desktop, or bringing Peek forward — the page was asked for
-  while Peek was not focused, so the task ends when that moment ends, and the page stays reachable
-  from history. Closing it directly (Escape, a close request) emits nothing more.
+- **Transient window**: a window that ends when the user leaves it. Transience is one property of
+  a window, decided once when it opens, from its window-open options and whether Peek is the
+  focused app; it is recorded as `WindowRecord.transient`, and every rule reads that field, never
+  a role, a window kind or the feature that opened the window. A window is transient when:
+  - its open asks for it: `modal: true` (the palette, peeks, slides), or `overlay: true` on a
+    window that accepts input (the switcher); or
+  - it is opened to show (`show` is not `false`) while another app is focused and a Peek window
+    holds key (`window-machine.ts isKeyHeldWhileAppInactive()`), for example a page opened from
+    the palette over another app, or a window opened from that page in turn, to any depth.
+
+  So while Peek is focused only windows opened as transient are transient; while another app is
+  focused, windows that would otherwise persist are transient too. A page opened from the palette
+  while Peek is focused is an ordinary window. A window opened while no Peek window holds key (a
+  command-line open) is not transient (`window-rules.md` G1). Page chrome attached to a host
+  (`overlayFor`) and windows that take no input are never transient.
+- **Ending a transient window**: a transient window ends — closed, or hidden if it is kept for
+  reuse — when it loses key, when the app resigns, when the user switches desktop, and, if it took
+  key from another app, when Peek comes forward while it holds key (`window-rules.md` 5e). Nothing
+  replaces it; a page stays reachable from history. Closing it directly (Escape, a close request)
+  emits nothing more. A transient window never follows the user to another desktop.
+- **How a transient window is built**: it must take key and typing without bringing Peek forward,
+  so it is non-activating (`WindowRecord.nonActivating`). On macOS it is an ordinary window flagged
+  non-activating (`nonactivating-window.ts flagNonActivating`), which belongs to the desktop it was
+  shown on; it is held on the floating level above other apps while it is on screen, since macOS
+  restacks an inactive app's ordinary window behind the active app's. A panel (`type: 'panel'`),
+  which Electron puts on every desktop, is used only where the flag is unavailable.
 - **`onEveryDesktop` window**: a window for which `isOnEveryDesktop(record)` holds: the platform
   keeps it on every desktop regardless of placement (for example a macOS panel). The app counts it
   as belonging to the desktop it was first shown on.
@@ -87,25 +93,26 @@ rule that depends on either, on every platform the desktop app runs on.
 
 1. **A window stays on the desktop it was put on.** Nothing the app does on its own MUST move a
    window to another desktop or switch the user's desktop; only the user does, by switching desktop
-   or asking for one specific window. Exception: `TRANSIENT_ROLES` windows MUST appear on the
-   desktop the user is on.
+   or asking for one specific window. A transient window opens, or is re-shown when kept for
+   reuse, on the desktop the user is on, and never moves with the user after that (rule 2).
 
    **The switcher** MUST list the app's windows from every desktop. Picking one MUST take the user
    to that window's desktop. This is the one way to go to another desktop's window: a pick names
    a window the user already knows is open there, whereas every other request asks for something
    to happen, and new things happen where the user is (rule 5).
-2. **A transient page-host window ends where it was opened.** Clicking the other app
-   (`window-rules.md` 5c), switching desktop (5d), or bringing Peek forward while it holds key (5e)
-   MUST close it; nothing replaces it, and the page stays reachable from history.
-3. **Opening from the palette over another app is a transient task.** The user asked for the page
-   while Peek was not focused, so the task ends the moment that focus state ends — whether by
-   leaving it (another app, another desktop) or by bringing Peek forward while the page still holds
-   key. Reason for closing rather than keeping it: on macOS the transient page-host window is an
-   Electron panel, which is on every desktop whatever is asked, and a window created after a switch
-   lands on the desktop the user switched to, so the panel could not stay on the desktop the page
-   was opened on (implementation doc, "Research: Electron panels and desktops"). While the switch
-   gesture is in progress the panel is visible on both desktops; this is accepted. A switch on a
-   different screen from the transient page-host window's changes nothing.
+2. **A transient window ends where it was opened.** Losing key (clicking another app or another
+   Peek window, `window-rules.md` 5c), the app resigning, switching desktop (5d), or bringing Peek
+   forward while it holds key taken from another app (5e) MUST end it: every transient window,
+   whatever opened it, and every transient window it opened in turn. Nothing replaces it, and a
+   page stays reachable from history. It is never drawn on the desktop switched to: it belongs to
+   the desktop it was shown on (see "How a transient window is built"). A switch on a different
+   screen from the transient window's changes nothing.
+3. **Transience follows focus.** While Peek is focused, only windows opened as transient are
+   transient. While another app is focused, a window a Peek window opens to show is transient too:
+   the user asked for it without leaving the other app, so it ends when that moment ends — by
+   leaving it (another app, another desktop) or by bringing Peek forward while it still holds key.
+   Accepted cost of keeping a transient window on its own desktop: it cannot show over another
+   app's full-screen desktop.
 4. **Closing or hiding a window never switches desktop.** The user goes back to where they were:
    another app if the window took key from one, else the prior window if it is on a current
    desktop, else the frontmost page-host window on a current desktop, else nothing (rule 9).
@@ -117,8 +124,8 @@ rule that depends on either, on every platform the desktop app runs on.
    - a window opened by key, of which only one may exist: the one on the other desktop closes and
      a new one opens on the desktop the user is on.
 
-   Opening a URL from the palette over another app MUST always open a new transient page-host
-   window; it MUST NOT reuse an existing page-host window. A request aimed at "the window the user
+   An open that makes a transient page-host window (rule 3) MUST always open a new window; it
+   MUST NOT reuse an existing page-host window. A request aimed at "the window the user
    is looking at" (a command, Cmd+W, devtools, a dialog's parent) MUST resolve to a window on a
    current desktop, or to none. Reason: switching desktop is deliberate, so actions happen there.
    A later palette affordance may offer "switch to" beside "open here"; until then only the
@@ -129,7 +136,7 @@ rule that depends on either, on every platform the desktop app runs on.
    section 6).
 7. **Relation to `window-rules.md`.** Rules 2 and 3 are realized there as G13 and rows 5c–5e, and
    supersede `transient-page-ends-on-blur.md`, which replaced the page on a click-away. The
-   implementation MUST NOT satisfy rule 2 by letting the page-host window follow the user to
+   implementation MUST NOT satisfy rule 2 by letting any transient window follow the user to
    another desktop.
 8. **F9 stay-on-this-desktop** (new rule under Focus in `window-rules.md`):
 
@@ -147,8 +154,8 @@ rule that depends on either, on every platform the desktop app runs on.
    > topmost visible application window on a current desktop; otherwise nothing. Whatever the OS
    > focuses next arrives world-caused.
 
-   The kernel MUST choose a successor for closes of application windows as well as of
-   `TRANSIENT_ROLES` windows.
+   The kernel MUST choose a successor for closes of application windows as well as of transient
+   windows.
 
 ## 4. Model
 
@@ -166,7 +173,7 @@ app restarts is not required.
   null }` (`null` = shared).
 - `WindowRecord.screen?: ScreenId` — last reported screen.
 - `WindowRecord.desktop?: DesktopId` — last reported desktop. For an `onEveryDesktop` window, the
-  desktop it was first shown on (for a transient page-host window, the desktop it was opened on). Absent until
+  desktop it was first shown on. Absent until
   first shown or reported.
 - `WindowRecord.onEveryDesktop?: boolean` — the backend's declaration at registration, or set by a
   placement report. The kernel MUST read it only as that declaration and MUST NOT derive it from
@@ -223,8 +230,9 @@ request is a switcher pick.
   adds an unknown screen. With shared desktops, one per screen. MUST NOT write `key` (F1: only
   `OsFocusGained` / `OsFocusLost` do).
 - `DesktopSwitchObserved {}` — the platform reported a desktop switch, sent the moment it does and
-  before the provider is read. Carries no ids; it only ends a transient page-host window (section 4
-  "Kernel behaviour"). A backend with no switch notification never sends it.
+  before the provider is read. Carries no ids; it marks the current desktop unread until the next
+  `DesktopsRead` (section 4 "Kernel behaviour"). A backend with no switch notification never sends
+  it.
 - `WindowPlacementReported { id: WindowId; screen: ScreenId | null; desktop: DesktopId | null;
   onEveryDesktop: boolean }` — a registered window's placement. `null` leaves the field unchanged.
   For an `onEveryDesktop` window that already has a desktop, `desktop` is ignored.
@@ -248,13 +256,16 @@ With the fallback provider the show stamp is the only source and is correct by c
 
 ### Kernel behaviour
 
-- **Ending a transient page-host window.** `react` diffs `isTransientPageHost` per visible record.
-  Whenever it stops holding — the app inactive (5c, 5d: focus lost to another app or to a desktop
-  switch) or the app coming forward while it holds key (5e) — `react` emits one `DismissWindow`. A
-  `DesktopSwitchObserved` marks a transient page-host window for dismissal at once, because on
-  macOS a switch can be followed by an app activation while the page still holds key, and marking
-  here keeps the close on the switch rather than racing an activation that ends the window the same
-  way. It needs no desktop ids, so it cannot wait for the provider's read.
+- **Ending a transient window.** Every rule reads `WindowRecord.transient`, written once at
+  registration. A visible transient window ends (`DismissWindow`, or a hide for one kept for reuse)
+  when key leaves it, when the app resigns, when the app comes forward while it holds key it took
+  from another app (5e), and when, after a desktop switch, the read desktops show it is not on a
+  current desktop. The switch case waits for the read rather than acting on `DesktopSwitchObserved`:
+  macOS sends the switch notice after the switch animation, so a transient window the user opened
+  on the new desktop in the meantime would be ended by the notice. A transient window is never drawn
+  on another desktop while it waits, since it belongs to the desktop it was shown on. The read
+  reports every placement before `DesktopsRead`, and a transient window shown while the desktop is
+  unread takes its desktop from its placement report, not from a show stamp.
 - **Successor on hide or close.** `successorOnHide()` applies `onCurrentDesktop` to both its
   branches (prior window; topmost application window).
 - **Raise gate.** `react` MUST NOT emit a `RaiseWindow` without user intent for a record that is
@@ -267,8 +278,8 @@ With the fallback provider the show stamp is the only source and is correct by c
   desktop, `react` emits `ShowDesktop { desktop: record.desktop }` immediately before
   `RaiseWindow`. The resulting switch arrives as an ordinary `CurrentDesktopChanged`.
 - **Reuse.** Every reuse path (URL, key, extension page, workspace restore) goes through
-  `reusableHere`. The `pageOpensTransient()` check runs before reuse: an open that makes a
-  transient page-host window never reuses.
+  `reusableHere`. The transience decision runs before reuse: an open that makes a transient
+  page-host window never reuses.
 - **One place records a desktop on show.** Every write that flips `visible` to true (`WindowShown`,
   the re-show on app activation, the overlay reveal) stamps the desktop through one helper.
 - **Page chrome.** The overlay attaches only to a page-host window on a current desktop.
@@ -412,15 +423,19 @@ Cost: requests are asynchronous, and any window write comes from another process
 - Platform window id: macOS, from `getMediaSourceId()` (`window:<n>:0`, `<n>` taken as the window
   server number); X11, `getNativeWindowHandle()`.
 - `onEveryDesktop` declaration: panels on macOS and `setVisibleOnAllWorkspaces` windows; the provider
-  reports only where the platform disagrees. Exception: a transient page-host window.
-- A transient page-host window is a `type: 'panel'` window, on every desktop whatever is asked
-  (Electron's panel re-adds join-all-Spaces), declared `onEveryDesktop`. Rule 2 closes it when a
-  switch takes its focus.
-- `TRANSIENT_ROLES` windows appear on the desktop the user is on through `setVisibleOnAllWorkspaces`
-  (desktop membership `follow`). This includes the shared page chrome window (role `overlay`), which
-  is registered outside the generic window-open handler and so sets its membership itself
-  (`hybrid-overlay.ts ensureOverlay()`); left on one desktop, showing it over a page-host window on
-  another desktop makes macOS switch back to the overlay's desktop.
+  reports only where the platform disagrees.
+- A transient window is an ordinary window flagged non-activating through the addon
+  (`nonactivating-window.ts`), on the desktop it was shown on, not `onEveryDesktop`. One kept for
+  reuse and re-shown after the user switched desktop is moved to the desktop the user is on as it
+  is shown (*unverified*: the addon marking it to move to the active desktop; if that fails, it is
+  closed on the other desktop and opened afresh, as rule 5 does for a window opened by key). Only
+  without the addon is a transient window a `type: 'panel'` window, on every desktop whatever is
+  asked (Electron's panel re-adds join-all-Spaces), declared `onEveryDesktop`.
+- The shared page chrome window (role `overlay`, attached to a host through `overlayFor`) is not
+  transient; it appears on the desktop the user is on through `setVisibleOnAllWorkspaces`
+  (desktop membership `follow`). It is registered outside the generic window-open handler and so
+  sets its membership itself (`hybrid-overlay.ts ensureOverlay()`); left on one desktop, showing it
+  over a page-host window on another desktop makes macOS switch back to the overlay's desktop.
 - macOS switch trigger:
   `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
   the provider supplies which desktop is now current.
@@ -515,11 +530,24 @@ Kernel unit tests (`window-kernel.test.ts`), one group per rule:
   `onCurrentDesktop` over {every desktop,
   current on its screen, current on another screen, not current, never shown}; shared desktops
   (`screen: null`) current on every screen.
-- **5c / 5d.** Transient page-host window, `OsFocusLost` (or key moving to another Peek window),
+- **5c / 5d.** Transient window, `OsFocusLost` (or key moving to another Peek window),
   app inactive: one `DismissWindow`, no `RaiseWindow`; `appActive` still false. A second
   `OsFocusLost` emits nothing.
-- **5e.** Transient page-host window is key, `AppActivated`: one `DismissWindow`, same as 5c/5d.
-- **G13.** Escape or close request on a transient page-host window: no further `DismissWindow`.
+- **5e.** Transient window that took key from another app is key, `AppActivated`: one
+  `DismissWindow`, same as 5c/5d.
+- **Switch.** A transient window shown before a switch and read afterwards as not on a current
+  desktop: one `DismissWindow`. One shown after the switch, before the read, and read as on the
+  current desktop: nothing.
+- **G13.** Escape or close request on a transient window: no further `DismissWindow`.
+
+Transience property test (`window-kernel-properties.test.ts`), which tests the window API, not the
+features that use it: generate window-open parameter combinations (`modal`, `overlay`,
+`focusable`, `type`, `show`, role) and the app's focus state at open, classify each as transient
+or not from those inputs alone, and compose them — with another app in front, a global trigger
+opens a window; that window opens another, to any depth; then apply each leave event (key lost,
+app resigned, desktop switched and read). Pass: every transient window in the chain ends, none is
+on the desktop switched to, and no Peek window is raised or given key. No case names the palette,
+a peek or a page.
 - **F7 / F9.** Prior window on a current desktop: raised. Prior not on a current desktop: topmost
   application window on a current desktop raised. None on a current desktop: no raise, no token.
   User-intent raise of a window not on a current desktop: emitted, preceded by `ShowDesktop` with
@@ -566,7 +594,7 @@ desktop 1. With a second screen, two desktops there too.
 
 | # | Gesture | Passes when |
 |---|---|---|
-| 1 | On desktop 2, open a URL from the palette. | The transient page-host window is read as on every desktop; the layout shows two desktops on the primary screen, desktop 2 current. |
+| 1 | On desktop 2, open a URL from the palette. | The transient page-host window is read as on desktop 2 only; the layout shows two desktops on the primary screen, desktop 2 current. |
 | 2 | Control+Left, wait two seconds, Control+Right. | Current-desktop reads go 2 → 1 → 2; desktop 2 has the same id both times. |
 | 3 | Say which desktop the page-host window is on now (switch to look, come back to desktop 2). | The helper's read for the page-host window matches: the backend-derived window number is the window server's. |
 | 4 | Second screen only: click its desktop background, Control+Right, Control+Left. | Only that screen's current desktop changes, and the helper's display id maps to an Electron display; with shared desktops, both screens change together. |
@@ -578,9 +606,13 @@ on return.
 
 1. Desktop 2, other app in front: open a URL from the palette → type in the page → click the other
    app. The page closes; the other app keeps focus.
-2. Same, but switch to desktop 1 instead of clicking. The page may show on both desktops during
-   the switch gesture; once it ends, desktop 1 shows no page-host window, and back on desktop 2 the
-   page is gone.
+2. Same, but switch to desktop 1 instead of clicking. The page slides out with desktop 2 and is
+   never drawn on desktop 1; back on desktop 2 the page is gone.
+2a. Desktop 2, other app in front: open the palette, then switch to desktop 1. The palette slides
+   out with desktop 2, is never drawn on desktop 1, and is not showing back on desktop 2. Then open
+   the palette on desktop 1: it opens there, stays open, and the user stays on desktop 1.
+2b. The same as 2a with a peek, a slide, and the switcher, and with a page opened from a page
+   opened from the palette: each ends, and nothing is drawn on desktop 1.
 3. Same, but cmd+tab to Peek. The page closes the same way — Peek comes forward with no page-host
    window of its own to show.
 4. After 2, on desktop 1, open the same URL from the palette: a new transient page-host window on

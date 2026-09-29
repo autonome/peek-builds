@@ -25,9 +25,9 @@ Each term is followed by the name the code uses for it.
 - **Asked-for focus** — the focus the manager itself requested, as opposed to the OS report that later confirms it (`opSeq` on the command and on the report's cause).
 - **Late report** — an OS report about a show or focus the manager already handled, arriving after something newer happened (`isStaleSelfEcho`, `isStaleWindowEcho`).
 - **Painted** — the window's first frame has composited, so the native window can be stacked (`orderable`).
-- **Transient** — a window that closes itself when another window takes focus (`selfClosesOnBlur`, or today one of the roles in `TRANSIENT_ROLES`).
+- **Transient** — a window that ends when the user leaves it: it loses key, the app resigns, or the user switches desktop (`WindowRecord.transient`). Decided once at open from the window-open options and the app's focus, never from role or feature: a window opened with `modal: true`, or with `overlay: true` and accepting input, is transient; while another app is focused, a window a Peek window opens to show is transient too (`specs/kernel-desktops.md`, "Transient window"). A transient window never follows the user to another desktop.
 - **Application window** — a window the user works in (today one of the roles in `CONTENT_ROLES`). A window may be neither transient nor an application window.
-- **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`type: 'panel'` at open, `WindowRecord.nonActivating`).
+- **Panel** — a window declared to never activate the app: it shows, and takes keystrokes, while the app stays in the background (`WindowRecord.nonActivating`). On macOS it is an ordinary window flagged non-activating (`nonactivating-window.ts`), which stays on the desktop it was shown on; a `type: 'panel'` window, which Electron puts on every desktop, only where the flag is unavailable.
 - **Pinned** — kept above the normal stack of windows (`layer` above `BASE_LAYER`, from `alwaysOnTop`).
 - **Held above other apps** — an unpinned window kept, for now, above other apps' windows without the app activating and without the window taking key; its declared layer is unchanged and it is the same window throughout (`heldAboveOtherApps`, `admitsHoldAboveOtherApps`).
 - **Prior window** — the window that had focus when this one took it (`priorKey`).
@@ -60,7 +60,7 @@ Each term is followed by the name the code uses for it.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
 - **G12 restore.** A restored window comes back at its saved bounds and maximized state.
-- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, or the app becomes active while it is key. Every one of those closes it outright; nothing replaces it, and the page stays in history. Losing key with the app inactive is the user clicking another app or switching desktop; the app becoming active while the page is key ends it the same way, rather than bringing the page forward as an ordinary window. Escape on a transient page-host window closes it too. Reason for closing: the page was asked for while Peek was not focused, so the task ends the moment that focus state ends, whichever way it ends — including the user bringing Peek itself forward.
+- **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, the user switches desktop, or the app becomes active while it is key. The same holds for every transient window that took key from another app, directly or through a chain of transient windows; nothing about it depends on which feature opened the window. Every one of those closes it outright; nothing replaces it, and the page stays in history. Losing key with the app inactive is the user clicking another app or switching desktop; the app becoming active while the page is key ends it the same way, rather than bringing the page forward as an ordinary window. Escape on a transient page-host window closes it too. Reason for closing: the page was asked for while Peek was not focused, so the task ends the moment that focus state ends, whichever way it ends — including the user bringing Peek itself forward.
 - **G14 switcher-reach.** The switcher lists the app's windows from every desktop, and picking one takes the user to that window's desktop. It is the one way to reach another desktop's window: a pick names a window the user knows is open there, while every other request makes something happen, and new things happen where the user is (`specs/kernel-desktops.md` rule 5).
 
 ### Opening a page from another app: which app holds OS focus at each step
@@ -81,24 +81,25 @@ at every step.
 | 5a | presses Escape | other app | other app | page closes |
 | 5b | presses the close shortcut | other app | other app | page closes |
 | 5c | clicks the other app | other app | other app | the transient page-host window closes (G13); nothing replaces it |
-| 5d | switches desktop | other app | other app | same as 5c: the transient page-host window closes; it may show on both desktops while the switch gesture runs |
+| 5d | switches desktop | other app | other app | same as 5c: the transient page-host window closes; it stays on its own desktop and is never drawn on the one switched to |
 | 5e | brings the app forward | this app | elsewhere in this app (F7 successor) | the transient page-host window closes (G13), the same as 5c/5d; nothing replaces it |
 
-A page is a transient page-host window (`izui-roles.ts pageOpensTransient()`) when it is opened
-to show while one of the app's panels holds key over another app — the user is
-already typing into the app, so handing key to the page takes nothing from the
-other app. Only a non-activating window can hold key in an inactive app, and
-that is fixed when a window is built, so a transient page-host window is built as a panel. A
-panel is also pinned to every desktop for good: Electron adds the all-desktops
-flag to a panel on every set and no call clears it
-(`electron_ns_panel.mm setCollectionBehavior:`). So a transient page-host window must not
-outlive the typing that made it: the moment it stops being key with the app
-inactive, or the app becomes active, the kernel closes it outright
-(`window-kernel.ts isTransientPageHost()`, effect `DismissWindow`) — the page was
-asked for while Peek was not focused, so the task ends the moment that focus state ends, and the
-page stays reachable from history rather than reappearing as an ordinary window. Nothing reopens
-it: a second window, plus the close-and-focus ordering keeping one on screen would need, would add
-machinery for little gain over history.
+A page is a transient page-host window when it is opened to show while one of the app's windows
+holds key over another app — the user is already typing into the app, so handing key to the page
+takes nothing from the other app. This is the general rule for transience, not a page rule: while
+another app is focused, anything a Peek window opens to show is transient
+(`WindowRecord.transient`). Only a non-activating window can hold key in an inactive app, and that
+is fixed when a window is built, so a transient window is built non-activating: on macOS an
+ordinary window flagged through `nonactivating-window.ts`, which stays on the desktop it was shown
+on. (A `type: 'panel'` window, the fallback without the flag, is pinned to every desktop for good:
+Electron adds the all-desktops flag to a panel on every set and no call clears it,
+`electron_ns_panel.mm setCollectionBehavior:`.) A transient window does not outlive the moment
+that made it: when it stops being key, the app resigns, the user switches desktop, or the app
+becomes active while it holds key taken from another app, the kernel ends it outright (effect
+`DismissWindow`) — the page was asked for while Peek was not focused, so the task ends the moment
+that focus state ends, and the page stays reachable from history rather than reappearing as an
+ordinary window. Nothing reopens it: a second window, plus the close-and-focus ordering keeping one
+on screen would need, would add machinery for little gain over history.
 
 A page opened while the app is inactive with nobody typing into the app — a
 command-line open — is not a transient page-host window. It takes no key; it is held above other
