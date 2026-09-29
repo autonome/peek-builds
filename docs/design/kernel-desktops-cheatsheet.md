@@ -1,0 +1,86 @@
+# Desktops and transient pages: working cheatsheet
+
+Facts to hold while changing how Peek's windows behave across macOS desktops. Requirements live in
+`specs/kernel-desktops.md`; history and research in `docs/design/kernel-desktops-implementation.md`;
+rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
+
+## The pipeline, one sentence each
+
+- Native events become kernel events in `electron-window-backend.ts attachNativeListeners` (window
+  focus, blur, show, hide, close) and `attachAppListeners` (app activate / resign, desktop switch).
+- `window-kernel.ts evolve` folds events into `State`; `react` diffs old and new state into effects.
+- `window-kernel-executor.ts` realizes effects through the `WindowBackend` port; the Electron
+  realization is `ElectronWindowBackend` (`raiseWindow`, `showWindow`, `hideWindow`,
+  `pinAlwaysOnTop`, `setDesktopMembership`, `closeWindow`).
+- Tiles open windows through `ipc.ts windowOpenHandler`; web URLs become page-host windows (a
+  `BaseWindow` plus one `WebContentsView`), built by `createHybridHostBaseWindow` and registered in
+  the same handler's hybrid branch with `registerWindowWithMachine`.
+- Only `electron-window-backend.ts` (and the provider files) may name Electron or AppKit;
+  `scripts/check-platform-leak.mjs` and `scripts/check-r2-window-ops.mjs` enforce it.
+
+## Transient page (a page opened from the palette over another app)
+
+- Decided at open: `izui-roles.ts pageOpensTransient(isKeyHeldWhileAppInactive(), options)` in
+  `ipc.ts windowOpenHandler`; it sets `options.type = 'panel'` and `options.activation = 'user'`
+  and logs `page-opens-transient`. It never reuses an existing window.
+- Recorded as `WindowRecord.nonActivating` (`izui-roles.ts windowNonActivating`: type is panel).
+- `ElectronWindowBackend.registerWindow` declares every non-activating window `onEveryDesktop` on
+  macOS, because Electron's panel re-adds join-all-Spaces on every collection-behaviour change
+  (`electron_ns_panel.mm setCollectionBehavior:`). `setVisibleOnAllWorkspaces(false)` cannot undo it.
+- While it holds key with the app inactive, `window-kernel.ts isTransientPageHost` holds; `react`
+  emits one `DismissWindow` when that stops (click-away, desktop switch, Peek brought forward).
+  `DesktopSwitchObserved` marks it `pendingHidden` at once.
+- Its raise is held above other apps: `FocusRaiseRequested` in `evolve` sets `heldAboveOtherApps`
+  (`admitsHoldAboveOtherApps`), realized by `pinAlwaysOnTop` at the floating level. Without the
+  floating level, macOS restacks an inactive app's ordinary window behind the active app's windows
+  about 20 ms after it shows.
+- Key comes from `ElectronWindowBackend.raiseWindow`: page-host `take-key` calls `win.focus()`,
+  then `rendererWC.focus()` for content focus.
+
+## Electron 43 facts that decide the transient-page design (checked in source)
+
+- `NativeWindowMac::Focus(true)` calls `[NSApp activateIgnoringOtherApps:NO]` unless the window is a
+  panel, then `makeKeyAndOrderFront:`. So `win.focus()` on any non-panel activates Peek.
+- `WebContents::Focus()` on macOS calls `owner_window()->Focus(true)` first, then focuses the web
+  contents. So `webContents.focus()` on a non-panel activates Peek too.
+- A panel is on every desktop whatever is asked; an ordinary (managed) window stays on the desktop
+  it was first ordered on. Shown on the other desktop, it takes the user back there.
+- No Electron API changes a window's type after creation.
+
+## Desktop reads
+
+- The macOS switch notice (`NSWorkspaceActiveSpaceDidChangeNotification`) arrives after the
+  switch animation and names no desktop. `attachSpaceChangeListener` sends
+  `DesktopSwitchObserved`, then `onDesktopTrigger('space-changed')` queues `syncDesktops`.
+- `syncDesktops` reads the helper (`native/desktop-helper/main.swift`, through
+  `desktop-provider-mac.ts` and `FailSafeDesktopProvider`), sends `DesktopLayoutReported` /
+  `CurrentDesktopChanged` / `DesktopsRead`, then `WindowPlacementReported` per changed window.
+- Between the notice and the read (5–30 ms) `desktopUnread` holds, and only on-every-desktop
+  windows count as on a current desktop.
+- `space-changed screensBefore=` in the log is the desktop left; `desktop-read` (only with
+  `PEEK_DESKTOP_PROBE=1`) is the helper's truth. In `desktop-read`, `wm-N#<number>:<display>/<desktop>`,
+  `*` = every desktop.
+
+## Automation (no person needed)
+
+- `osascript -e 'tell application "Finder" to activate'` puts another app in front.
+- `osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`
+  reads the active app (works from this terminal).
+- Keystrokes and desktop switches through System Events (`keystroke`, `key code 123/124 using
+  control down`) need Accessibility permission for the terminal; *unverified* whether granted.
+- The desktop helper can read any window's desktop given its window number
+  (`getMediaSourceId()` → `windowNumberFromSourceId`).
+- A probe never waits on a person: it starts its show from a trigger the agent controls (a file,
+  a signal, stdin), not a countdown.
+
+## Running the app from this worktree
+
+- Build: `yarn workspace @peek/desktop build` (also builds the desktop helper).
+- Start: `PEEK_DESKTOP_PROBE=1 PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktops
+  TMPDIR=<worktree>/.tmp yarn start`, stdout to `<worktree>/.tmp/<name>.log`.
+- Stop: kill the `Electron.app` process under this worktree's `node_modules/electron`
+  (`pgrep -f`), then confirm no `peek-desktop-helper` is left. Never `pkill -f electron`.
+- Escape reaches the switcher fallback only when no text field has focus (Peek task `69098f7c`).
+- Open the switcher with Escape on a page with no focused field; Cmd+Shift+W is the windows
+  feature's wake shortcut (`feature-shortcut-registrar.ts registerWakeShortcutList`), *unverified*
+  live on this branch.
