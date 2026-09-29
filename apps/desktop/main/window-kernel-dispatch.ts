@@ -4,6 +4,7 @@
 // `docs/design/window-manager.md`.
 
 import { DEBUG } from './config.js';
+import { wmLog } from './window-diag.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
@@ -144,7 +145,21 @@ function kernelExecute(command: Command): void {
 
 function kernelDispatch(event: Event): void {
   try {
+    // DIAG (kernel-desktops live peek check): name the event that marks a window for dismissal.
+    const before = new Set(getKernelExecutor().getState().order.filter((w) => w.pendingHidden === true).map((w) => w.id));
     getKernelExecutor().dispatch(event);
+    const after = getKernelExecutor().getState();
+    const marked = after.order.filter((w) => w.pendingHidden === true && !before.has(w.id)).map((w) => w.id);
+    if (marked.length > 0) {
+      wmLog('diag-dismiss-mark', {
+        event: event.type,
+        eventId: 'id' in event ? String(event.id) : undefined,
+        marked: marked.join(','),
+        key: String(after.key),
+        appActive: after.appActive,
+        attention: after.lastAttention ? `${String(after.lastAttention.holder)}:${after.lastAttention.cause.kind}` : 'null',
+      });
+    }
   } catch (err) {
     DEBUG && console.log('[window-kernel-dispatch] event threw:', event.type, err);
   }
