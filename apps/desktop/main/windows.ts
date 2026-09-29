@@ -332,11 +332,6 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
   }
 }
 
-// Defined in izui-roles.ts (pure module, Electron-free); re-exported so existing
-// `from './windows.js'` imports keep working. Covers palette/quick-view/overlay — windows that
-// ride above the workspace and, on macOS, follow the user across Spaces.
-export { TRANSIENT_ROLES } from './izui-roles.js';
-
 // Call at startup and when the showInDockAndSwitcher preference changes. Test profiles and
 // headless runs always hide the dock; use PROFILE=tmp-* for a manual sandbox instead (bypasses
 // the single-instance lock without inheriting test-only behaviors).

@@ -6,7 +6,12 @@
 
 import { BASE_LAYER, type WindowKind } from './window-kernel.js';
 
-export const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
+// The roles whose windows follow the user across desktops: on-screen chrome
+// that is not transient (the page chrome overlay, a Peek space's border).
+// Every other window, transient ones included, belongs to the desktop it is
+// shown on (specs/kernel-desktops.md "A transient window never follows the
+// user to another desktop").
+export const FOLLOWING_ROLES: ReadonlySet<string> = new Set(['overlay']);
 
 export interface IzuiRoleContext {
   isWebPage: boolean;
@@ -100,11 +105,11 @@ export function spacesPolicyForRole(
   platform: NodeJS.Platform,
 ): 'follow' | 'anchor' | 'none' {
   if (platform !== 'darwin') return 'none';
-  return TRANSIENT_ROLES.has(role) ? 'follow' : 'anchor';
+  return FOLLOWING_ROLES.has(role) ? 'follow' : 'anchor';
 }
 
 export function desktopMembershipForRole(role: string): 'follow' | 'anchor' {
-  return TRANSIENT_ROLES.has(role) ? 'follow' : 'anchor';
+  return FOLLOWING_ROLES.has(role) ? 'follow' : 'anchor';
 }
 
 // Check existence AND destroyed: at quit teardown the WC getter can already be undefined, and

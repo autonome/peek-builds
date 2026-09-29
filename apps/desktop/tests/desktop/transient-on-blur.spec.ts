@@ -2,8 +2,9 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 
-// IZUI policy: a window with role in TRANSIENT_ROLES (palette, quick-view,
-// overlay) must auto-hide when another non-utility window gains focus.
+// IZUI policy: a transient window (`izui-roles.ts windowIsTransient`: opened
+// with `modal`, or `overlay` taking input) must auto-hide when another
+// non-utility window gains focus.
 // Driven from main-process `win.on('focus')` in apps/desktop/main/ipc.ts —
 // macOS NSPanels don't fire reliable per-window blur on intra-app focus
 // shifts, so the focuser closes its transient siblings explicitly.
@@ -24,11 +25,10 @@ test.describe('Transient on blur auto-hide @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
 
-  // Anchor: a non-transient visible window that prevents `maybeHideApp` from
-  // hiding the entire app when a transient gets auto-closed and the visible
-  // window count drops to zero. (`getVisibleWindowCount` excludes
-  // TRANSIENT_ROLES + utility, so without an anchor every test would trigger
-  // `app.hide()` on the first autoclose, marking the focuser non-visible.)
+  // Anchor: a non-transient visible window that keeps the app on screen when
+  // a transient gets auto-closed. (`window-kernel.ts holdsAppOnScreen` excludes
+  // some window classes, so without an anchor a test could hide the app on
+  // the first autoclose, marking the focuser non-visible.)
   let anchorId: number | null = null;
 
   test.beforeAll(async () => {

@@ -16,7 +16,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
 //      BrowserWindow id); changing the edge produces a different window.
 //
 // Close-on-blur is covered generically by transient-on-blur.spec.ts —
-// slides have role: 'quick-view', which is in TRANSIENT_ROLES, so the
+// slides open with `modal: true`, which makes them transient, so the
 // general autoclose loop fires when any non-utility window focuses next.
 
 test.describe('Slides @desktop', () => {

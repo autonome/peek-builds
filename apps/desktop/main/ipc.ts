@@ -2854,9 +2854,11 @@ export function registerWindowHandlers(): void {
             'keepLive-reuse',
           );
 
-          // Re-apply Spaces visibility for transient roles so the hidden
-          // window follows the user to the active Space rather than dragging
-          // them back to its home Space. Non-transient (anchored) windows
+          // Re-apply Spaces visibility for following roles
+          // (`izui-roles.ts FOLLOWING_ROLES`) so the hidden window follows the
+          // user to the active Space rather than dragging them back to its
+          // home Space. A kept-alive transient window is moved there by the
+          // addon (flagged) or is a panel on every Space. Anchored windows
           // intentionally stay where they were opened — macOS pulls the user
           // to them on show(), which is the desired behavior, so ONLY the
           // 'follow' policy re-asserts here; an 'anchor' role must NOT get its
@@ -3764,9 +3766,10 @@ export function registerWindowHandlers(): void {
       });
 
       // macOS Spaces intent by role (§5 step 10 — machine-owned):
-      //   'follow' — palette/quick-view/overlay (cmd, slides, peeks). Window
+      //   'follow' — on-screen chrome (`izui-roles.ts FOLLOWING_ROLES`). Window
       //     appears on every Space, riding along with the user.
-      //   'anchor' — everything else on darwin. The reducer emits the ORDERED
+      //   'anchor' — everything else on darwin, transient windows included
+      //     (a transient window never follows the user). The reducer emits the ORDERED
       //     PAIR (true → false) so macOS lands the window on the user's active
       //     Space and pins it there.
       //   'none' — non-darwin platforms; macOS Spaces don't exist.

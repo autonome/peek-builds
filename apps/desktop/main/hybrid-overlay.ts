@@ -357,10 +357,10 @@ function ensureOverlay(): BrowserWindow {
     tracksBaseLayerTop: true,
   });
 
-  // The overlay is a `TRANSIENT_ROLES` window, so it follows the user across
-  // desktops like the palette, switcher and quick-view. Those get this from the
-  // generic window-open handler in `ipc.ts`; the overlay is registered here
-  // directly and must ask for it itself. Left on the desktop it was created on,
+  // The overlay is a `FOLLOWING_ROLES` window (`izui-roles.ts`), so it follows
+  // the user across desktops. Windows opened through the generic window-open
+  // handler in `ipc.ts` get their membership there; the overlay is registered
+  // here directly and must ask for it itself. Left on the desktop it was created on,
   // showing it over a page-host window on another desktop made macOS switch the
   // user back to the overlay's desktop.
   if (!isHeadless()) {

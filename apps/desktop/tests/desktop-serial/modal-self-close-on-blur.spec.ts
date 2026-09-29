@@ -13,8 +13,8 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * login — the auth window was opened `modal:true` and died the instant the
  * user switched to a password manager / 2FA app mid-login (peek 5b4fefdc).
  * The fix opens such windows with a persistent role (`utility`) instead,
- * which the law excludes from candidacy entirely (`TRANSIENT_ROLES` doesn't
- * name it, and it never sets `selfClosesOnBlur`).
+ * which the law excludes from candidacy entirely (such a window is not
+ * transient, and it never sets `selfClosesOnBlur`).
  *
  * The dismissal trigger is "another holder takes attention," not "loses
  * focus, any reason" — a bare blur with nothing gaining focus produces no
@@ -112,7 +112,7 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
     await showWindow(focuserId);
 
     // Same trigger as above, proving the law discriminates by candidacy
-    // (utility is neither a TRANSIENT_ROLES member nor selfClosesOnBlur), not
+    // (the utility window is neither transient nor selfClosesOnBlur), not
     // "dismiss everything that isn't the newly-focused window."
     await fireFocus(focuserId);
 

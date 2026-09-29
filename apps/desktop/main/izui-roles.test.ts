@@ -3,7 +3,7 @@
  *
  * Covers:
  *   - inferIzuiRole: how api.window.open params map to an IZUI role
- *   - TRANSIENT_ROLES: which roles are transient/overlay-class
+ *   - FOLLOWING_ROLES: which roles follow the user across desktops
  *   - spacesPolicyForRole: how IZUI role maps to macOS Spaces policy
  *   - desktopMembershipForRole: the platform-neutral half of the same
  *     derivation, feeding the rewritten kernel
@@ -27,7 +27,7 @@ import {
   downloadCloseTarget,
   RESIZE_EDGE_PX,
   RESIZE_CORNER_PX,
-  TRANSIENT_ROLES,
+  FOLLOWING_ROLES,
   isWebPageRole,
   deriveWindowSurface,
   deriveWindowLayer,
@@ -103,18 +103,15 @@ describe('inferIzuiRole', () => {
   });
 });
 
-describe('TRANSIENT_ROLES', () => {
-  it('includes palette, quick-view, overlay', () => {
-    assert.ok(TRANSIENT_ROLES.has('palette'));
-    assert.ok(TRANSIENT_ROLES.has('quick-view'));
-    assert.ok(TRANSIENT_ROLES.has('overlay'));
+describe('FOLLOWING_ROLES', () => {
+  it('is on-screen chrome only', () => {
+    assert.deepStrictEqual([...FOLLOWING_ROLES], ['overlay']);
   });
 
-  it('excludes workspace, content, child-content, utility', () => {
-    assert.ok(!TRANSIENT_ROLES.has('workspace'));
-    assert.ok(!TRANSIENT_ROLES.has('content'));
-    assert.ok(!TRANSIENT_ROLES.has('child-content'));
-    assert.ok(!TRANSIENT_ROLES.has('utility'));
+  it('holds no role a transient window opens with (a transient window never follows the user)', () => {
+    for (const role of ['palette', 'quick-view', 'switcher', 'content', 'child-content', 'workspace', 'utility']) {
+      assert.ok(!FOLLOWING_ROLES.has(role), role);
+    }
   });
 });
 
@@ -474,20 +471,14 @@ describe('runDeferredQuitCleanup (the re-quit waits for the async cleanup)', () 
 // `izui-roles.ts`.)
 
 describe('spacesPolicyForRole', () => {
-  it("returns 'follow' for palette on darwin", () => {
-    assert.strictEqual(spacesPolicyForRole('palette', 'darwin'), 'follow');
-  });
-
-  it("returns 'follow' for quick-view on darwin", () => {
-    assert.strictEqual(spacesPolicyForRole('quick-view', 'darwin'), 'follow');
-  });
-
   it("returns 'follow' for overlay on darwin", () => {
     assert.strictEqual(spacesPolicyForRole('overlay', 'darwin'), 'follow');
   });
 
-  it("returns 'follow' for switcher on darwin", () => {
-    assert.strictEqual(spacesPolicyForRole('switcher', 'darwin'), 'follow');
+  it("returns 'anchor' for the transient roles on darwin: palette, quick-view, switcher", () => {
+    assert.strictEqual(spacesPolicyForRole('palette', 'darwin'), 'anchor');
+    assert.strictEqual(spacesPolicyForRole('quick-view', 'darwin'), 'anchor');
+    assert.strictEqual(spacesPolicyForRole('switcher', 'darwin'), 'anchor');
   });
 
   it("returns 'anchor' for workspace on darwin", () => {
@@ -518,14 +509,14 @@ describe('spacesPolicyForRole', () => {
 });
 
 describe('desktopMembershipForRole', () => {
-  it("returns 'follow' for every transient role, with no platform argument", () => {
-    assert.strictEqual(desktopMembershipForRole('palette'), 'follow');
-    assert.strictEqual(desktopMembershipForRole('quick-view'), 'follow');
+  it("returns 'follow' for overlay chrome only, with no platform argument", () => {
     assert.strictEqual(desktopMembershipForRole('overlay'), 'follow');
-    assert.strictEqual(desktopMembershipForRole('switcher'), 'follow');
   });
 
-  it("returns 'anchor' for every other role, with no platform argument", () => {
+  it("returns 'anchor' for every other role, transient ones included, with no platform argument", () => {
+    assert.strictEqual(desktopMembershipForRole('palette'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('quick-view'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('switcher'), 'anchor');
     assert.strictEqual(desktopMembershipForRole('workspace'), 'anchor');
     assert.strictEqual(desktopMembershipForRole('content'), 'anchor');
     assert.strictEqual(desktopMembershipForRole('child-content'), 'anchor');
