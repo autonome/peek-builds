@@ -838,7 +838,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       const opSeq = this.pendingShowOpSeq.get(id);
       this.pendingShowOpSeq.delete(id);
       if (win.isDestroyed() || !win.isVisible()) return;
-      const focused = this.isFocused(win);
+      // Only a show this backend performed confirms focus, under its own op
+      // token. A show the platform made by itself (AppKit re-showing the page
+      // chrome after a desktop switch and handing it key) reports visibility
+      // only: its focus arrives through the `'focus'` listener above, which
+      // is where platform-provoked focus is told from the user's.
+      const focused = opSeq !== undefined && this.isFocused(win);
       kernelWindowShown(id, focused, opSeq);
       this.onDesktopTrigger('window-shown');
     });
