@@ -16,6 +16,7 @@ import {
   isAppResignSweepEligible,
   isContentWindow,
   hostForOverlay,
+  onCurrentDesktop,
   BASE_LAYER,
   type State,
   type Event,
@@ -1621,6 +1622,82 @@ describe('window-kernel: every transient window in a chain ends when the user le
         }
       }
       assert.ok(exercised >= cases / 4, `only ${exercised}/${cases} cases had a transient window showing before the leave`);
+    });
+  }
+});
+
+// specs/kernel-desktops.md section 4 "Enforcement": random event sequences over
+// two desktops. No `RaiseWindow` or `FocusContent` reaches a window off every
+// current desktop unless a `ShowDesktop` for its desktop precedes it in the
+// same transition (a named request, rule 1); no raise without user intent is
+// emitted while the app is inactive (`admitsFocus`); and every op token a
+// transition stamps pairs with the effect that carries it.
+describe('window-kernel: nothing is brought forward on a desktop the user is not on', () => {
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: 'S', current: 'd1' }],
+    desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }],
+  };
+  const DESKTOP_EVENT_BIAS = 0.25;
+  // Longer than the base logs: an off-desktop raise needs a window shown, placed on the other
+  // desktop, a switch away, and then a request for it, in that order.
+  const ENFORCEMENT_LOG_LENGTH = 120;
+
+  function randomDesktopEvents(rng: Rng, state: State): Event[] {
+    if (randomBool(rng)) {
+      return [
+        { type: 'DesktopSwitchObserved' },
+        { type: 'CurrentDesktopChanged', screen: 'S', desktop: pick(rng, ['d1', 'd2']) },
+        { type: 'DesktopsRead', switchesSeen: state.desktopSwitchCount + 1 },
+      ];
+    }
+    return [{
+      type: 'WindowPlacementReported',
+      id: wid(randomInt(rng, POOL_SIZE)),
+      screen: 'S',
+      desktop: pick(rng, ['d1', 'd2']),
+      onEveryDesktop: randomInt(rng, 8) === 0,
+    }];
+  }
+
+  function checkEnforcement(step: Step): string[] {
+    const violations: string[] = [];
+    step.effects.forEach((effect, i) => {
+      if (effect.type !== 'RaiseWindow' && effect.type !== 'FocusContent') return;
+      const record = step.next.order.find((w) => w.id === effect.id);
+      if (record !== undefined && !onCurrentDesktop(step.next, record)) {
+        const named = step.effects
+          .slice(0, i)
+          .some((e) => e.type === 'ShowDesktop' && e.desktop === record.desktop);
+        if (!named) violations.push(`${effect.type} for ${effect.id} on desktop ${String(record.desktop)}, off every current desktop, with no ShowDesktop before it`);
+      }
+      if (effect.type === 'RaiseWindow' && effect.intent !== 'user' && !step.next.appActive) {
+        violations.push(`RaiseWindow for ${effect.id} without user intent while the app is inactive`);
+      }
+    });
+    return violations;
+  }
+
+  for (let seed = 0; seed < SEED_COUNT; seed++) {
+    it(`seed ${seed}: every raise lands on a current desktop or was named`, () => {
+      const rng = mulberry32(seed ^ 0xde5c7095);
+      transientStreams.set(rng, mulberry32(seed ^ 0x5eed7a11));
+      const log: LogItem[] = [layout];
+      let state = stepLogItem(initialState(), layout).state;
+      for (let i = 0; i < ENFORCEMENT_LOG_LENGTH; i++) {
+        const items: LogItem[] = randomInt(rng, 100) < DESKTOP_EVENT_BIAS * 100
+          ? randomDesktopEvents(rng, state)
+          : [randomLogItem(rng, state)];
+        for (const item of items) {
+          log.push(item);
+          const r = stepLogItem(state, item);
+          for (const step of r.steps) {
+            const violations = [...checkEnforcement(step), ...checkOpSeqInvariants(step)];
+            assert.deepStrictEqual(violations, [], reproMessage(seed, log, log.length - 1, violations.join('; ')));
+          }
+          state = r.state;
+        }
+      }
     });
   }
 });
