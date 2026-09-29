@@ -29,6 +29,7 @@ import {
   isOnEveryDesktop,
   windowById,
   TRANSIENT_ROLES,
+  roleIn,
   BASE_LAYER,
   type State,
   type Event,
@@ -1927,7 +1928,7 @@ describe('window-kernel: successor raise on WindowClosed', () => {
       { type: 'WindowRegistered', id: P, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
       { type: 'WindowShown', id: P },
       { type: 'OsFocusGained', id: P, cause: { kind: 'world' } },
-      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher', transient: true },
       { type: 'WindowShown', id: S },
     ]);
     const decision = decide(base, { type: 'RaiseWindow', id: S, expectedVersion: base.version });
@@ -1966,7 +1967,7 @@ describe('window-kernel: successor raise on WindowClosed', () => {
     const S = wid(2);
     const state = fold([
       { type: 'WindowRegistered', id: P, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
-      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+      { type: 'WindowRegistered', id: S, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher', transient: true },
       { type: 'WindowShown', id: P },
       { type: 'WindowShown', id: S },
       { type: 'OsFocusGained', id: S, cause: { kind: 'world' } },
@@ -3864,10 +3865,10 @@ describe('window-kernel: which windows a real app resign hides', () => {
       { type: 'WindowRegistered', id: hud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
       { type: 'WindowRegistered', id: spaceBorder, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: false, class: 'overlay', role: 'overlay' },
       { type: 'WindowRegistered', id: testFixture, kind: 'browser', layer: BASE_LAYER, canBecomeKey: false, acceptsInput: true, class: 'test-fixture', role: 'utility' },
-      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', selfClosesOnBlur: true },
-      { type: 'WindowRegistered', id: quickView, kind: 'page-host', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'quick-view', role: 'quick-view', selfClosesOnBlur: true },
+      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', selfClosesOnBlur: true, transient: true },
+      { type: 'WindowRegistered', id: quickView, kind: 'page-host', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'quick-view', role: 'quick-view', selfClosesOnBlur: true, transient: true },
       { type: 'WindowRegistered', id: alreadyHiddenHud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
-      { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher' },
+      { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher', transient: true },
       // workspace takes key before any floater/transient below is shown, or a switcher shown
       // first would already be a visible transient losing focus to workspace — dismissed by
       // this setup event before the resign scenario below gets to exercise it.
@@ -3923,13 +3924,13 @@ describe('window-kernel: which windows a real app resign hides', () => {
     }
   });
 
-  it('the switcher is admitted, a self-closing palette is not, the space border is NOT admitted, and a base-layer window is not', () => {
+  it('no transient window is admitted, the space border is NOT admitted, and a base-layer window is not', () => {
     const state = scene();
     const rec = (id: WindowId) => state.order.find((w) => w.id === id)!;
 
-    assert.strictEqual(isAppResignSweepEligible(rec(switcher)), true, 'floats, accepts input, does not self-close — admitted');
-    assert.strictEqual(isAppResignSweepEligible(rec(cmdPanel)), false, 'floats, but already self-closes on blur — its own policy');
-    assert.strictEqual(isAppResignSweepEligible(rec(quickView)), false, 'floats, but already self-closes on blur — its own policy');
+    assert.strictEqual(isAppResignSweepEligible(rec(switcher)), false, 'floats, but transient — the settle dismisses it');
+    assert.strictEqual(isAppResignSweepEligible(rec(cmdPanel)), false, 'floats, but transient — the settle dismisses it');
+    assert.strictEqual(isAppResignSweepEligible(rec(quickView)), false, 'floats, but transient — the settle dismisses it');
     assert.strictEqual(isAppResignSweepEligible(rec(spaceBorder)), false, 'click-through — never admitted, matches its documented purpose');
     assert.strictEqual(isAppResignSweepEligible(rec(testFixture)), false, 'does not float — a base-layer window is never eligible');
     assert.strictEqual(isAppResignSweepEligible(rec(workspace)), false, 'does not float');
@@ -4174,6 +4175,8 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
 // ── Transient autoclose (the two selectors) ─────────────────────────────────
 
 describe('window-kernel: transient autoclose', () => {
+  // A fixture for a feature's window declares what its open would: the
+  // palette, peeks, slides and the switcher open transient.
   const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
     type: 'WindowRegistered',
     id: wid(n),
@@ -4183,6 +4186,7 @@ describe('window-kernel: transient autoclose', () => {
     acceptsInput: true,
     class: 'primary',
     ...(role !== undefined ? { role } : {}),
+    ...(roleIn(TRANSIENT_ROLES, role) ? { transient: true } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
   // A page-host is registered orderable: false and is not a transient-autoclose candidate until
@@ -4322,7 +4326,7 @@ describe('window-kernel: transient autoclose', () => {
     const chainPopup = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
         {
           type: 'WindowRegistered',
           id: chainPopup,
@@ -4349,7 +4353,7 @@ describe('window-kernel: transient autoclose', () => {
     const overlay = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'quick-view' },
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'quick-view', transient: true },
         { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
         { type: 'WindowShown', id: host },
         { type: 'WindowShown', id: overlay },
@@ -4366,7 +4370,7 @@ describe('window-kernel: transient autoclose', () => {
     const devtools = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
         {
           type: 'WindowRegistered',
           id: devtools,
@@ -4397,7 +4401,7 @@ describe('window-kernel: transient autoclose', () => {
         // `browser`, as `renderer/cmd/background.js openPanelWindow` registers
         // it — a palette is never a page host, so it is `orderable` from birth
         // and a dismissal candidate the moment it is shown.
-        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
         { type: 'WindowRegistered', id: pageHost, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: pageHost },
@@ -4427,8 +4431,8 @@ describe('window-kernel: transient autoclose', () => {
         // (`renderer/cmd/background.js openPanelWindow`,
         // `features/windows/background.js openWindowsView`) — neither is a page
         // host, so both are `orderable` from birth.
-        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
-        { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
+        { type: 'WindowRegistered', id: switcher, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher', transient: true },
         { type: 'WindowShown', id: workspace },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: switcher },
@@ -4448,7 +4452,7 @@ describe('window-kernel: transient autoclose', () => {
     const utilityWindow = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
         { type: 'WindowRegistered', id: utilityWindow, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: utilityWindow },
@@ -4467,7 +4471,7 @@ describe('window-kernel: transient autoclose', () => {
     const oauthWindow = wid(2);
     const state = fold(
       [
-        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: palette, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette', transient: true },
         { type: 'WindowRegistered', id: oauthWindow, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: oauthWindow },
@@ -4481,7 +4485,7 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
-  it("a roleless modal:true window (windowSelfClosesOnBlur) is a candidate on selfClosesOnBlur alone — no role required", () => {
+  it('a roleless transient window is a candidate on `transient` alone — no role required', () => {
     const workspace = wid(1);
     const modalWindow = wid(2);
     const state = fold(
@@ -4495,7 +4499,7 @@ describe('window-kernel: transient autoclose', () => {
           canBecomeKey: true,
           acceptsInput: true,
           class: 'primary',
-          selfClosesOnBlur: true,
+          transient: true,
         },
         { type: 'WindowShown', id: workspace },
         { type: 'WindowShown', id: modalWindow },
@@ -4505,7 +4509,7 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(
       selectTransientAutoclose(state, workspace, { kind: 'world' }),
       [modalWindow],
-      'a modal:true window declares no role and no relation — selfClosesOnBlur alone must make it a candidate',
+      'a transient window declares no role and no relation — `transient` alone must make it a candidate',
     );
   });
 
@@ -4654,6 +4658,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     acceptsInput: true,
     class: 'primary',
     ...(role !== undefined ? { role } : {}),
+    ...(roleIn(TRANSIENT_ROLES, role) ? { transient: true } : {}),
   });
   const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
   const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
@@ -5104,8 +5109,8 @@ describe('window-kernel: which window the user is working in', () => {
       { type: 'WindowRegistered', id: extensionPopup, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'extension-ui', role: 'content', escapeMode: 'ignore' },
       { type: 'WindowRegistered', id: hud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace', escapeMode: 'ignore' },
       { type: 'WindowRegistered', id: chromeOverlay, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
-      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', selfClosesOnBlur: true },
-      { type: 'WindowRegistered', id: slide, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', keepLive: true },
+      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', selfClosesOnBlur: true, transient: true },
+      { type: 'WindowRegistered', id: slide, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', keepLive: true, transient: true },
       { type: 'WindowRegistered', id: devtools, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'devtools', role: 'utility' },
       { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
       // pageHost takes key before cmdPanel/slide (both transient-law candidates) are shown, or

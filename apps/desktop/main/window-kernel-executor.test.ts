@@ -936,7 +936,7 @@ describe('effect performance', () => {
   it('a DismissWindow effect (the transient-autoclose sweep) closes through closeOrHide, never closeWindow — a keepLive slide must be hidden, not destroyed', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
-    exec.dispatch(register(wid(2), { kind: 'page-host', role: 'quick-view' }));
+    exec.dispatch(register(wid(2), { kind: 'page-host', role: 'quick-view', transient: true }));
     // A page host is not a dismissal candidate until it reports its first
     // composited frame (`window-kernel.ts isTransientAutocloseCandidate`), and
     // a real one does so within a frame or two of being shown.

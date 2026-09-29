@@ -22,6 +22,7 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  windowIsTransient,
   hybridResizeDirAt,
   downloadCloseTarget,
   RESIZE_EDGE_PX,
@@ -234,6 +235,30 @@ describe('pageOpensTransient (a page opened from a panel over another app — wi
   it("a caller's own window type is left alone", () => {
     assert.strictEqual(pageOpensTransient(true, { type: 'panel' }), false);
     assert.strictEqual(pageOpensTransient(true, { type: 'normal' }), false);
+  });
+});
+
+describe('windowIsTransient (specs/kernel-desktops.md "Transient window")', () => {
+  it('an open that asks for it is transient whatever the focus', () => {
+    for (const held of [false, true]) {
+      assert.strictEqual(windowIsTransient(held, { modal: true }), true);
+      assert.strictEqual(windowIsTransient(held, { overlay: true }), true);
+      assert.strictEqual(windowIsTransient(held, { modal: true, show: false }), true, 'a pre-created hidden palette');
+    }
+  });
+
+  it('while Peek is focused, nothing else is transient', () => {
+    assert.strictEqual(windowIsTransient(false, {}), false);
+  });
+
+  it('while another app is focused, anything opened to show is transient', () => {
+    assert.strictEqual(windowIsTransient(true, {}), true);
+    assert.strictEqual(windowIsTransient(true, { show: false }), false);
+  });
+
+  it('a window that takes no input never is', () => {
+    assert.strictEqual(windowIsTransient(true, { overlay: true, focusable: false }), false);
+    assert.strictEqual(windowIsTransient(true, { modal: true, clickThrough: true }), false);
   });
 });
 

@@ -17,8 +17,6 @@ import {
   isContentWindow,
   hostForOverlay,
   BASE_LAYER,
-  TRANSIENT_ROLES,
-  roleIn,
   type State,
   type Event,
   type Command,
@@ -118,6 +116,9 @@ function isCommand(item: LogItem): item is Command {
   return 'expectedVersion' in item;
 }
 
+// A second stream per generated log, for the `transient` draw only.
+const transientStreams = new WeakMap<Rng, Rng>();
+
 function randomRegistrationFields(rng: Rng) {
   const hasParent = rng() < 0.3;
   const hasKeepLive = rng() < 0.3;
@@ -138,6 +139,10 @@ function randomRegistrationFields(rng: Rng) {
     ...(escapeMode !== undefined ? { escapeMode } : {}),
     ...(kind === 'browser' ? { tracksBaseLayerTop: true } : {}),
     ...(role === 'palette' || role === 'quick-view' ? { selfClosesOnBlur: true } : {}),
+    // Drawn independently of role: transience is a window-open parameter,
+    // never a property of the feature that opened the window. From its own
+    // stream, so every other draw of a seed is unchanged by it.
+    ...(randomBool(transientStreams.get(rng) ?? rng) ? { transient: true } : {}),
   };
 }
 
@@ -374,6 +379,7 @@ function checkOpSeqInvariants(step: Step): string[] {
 
 function generateLog(seed: number, length: number): LogItem[] {
   const rng = mulberry32(seed);
+  transientStreams.set(rng, mulberry32(seed ^ 0x5eed7a11));
   const log: LogItem[] = [];
   let state = initialState();
   for (let i = 0; i < length; i++) {
@@ -626,10 +632,6 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
 // CONTENT_ROLES — an imported constant would make the soundness check a tautology.
 const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']);
 
-// Mirrors window-kernel.ts TRANSIENT_ROLES exactly — a role missing here makes isSweepableVictim
-// report a false violation the moment the generator emits it.
-const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
-
 function checkAutocloseInvariants(state: State): string[] {
   const violations: string[] = [];
 
@@ -638,9 +640,8 @@ function checkAutocloseInvariants(state: State): string[] {
     if (rec === undefined) return false;
     if (rec.id === focusedId) return false;
     if (!rec.visible) return false;
-    // Candidacy: a transient role, or selfClosesOnBlur (the roleless `modal` open option).
-    const isTransientRole = rec.role !== undefined && TRANSIENT_ROLES_EXPECTED.has(rec.role);
-    if (!isTransientRole && rec.selfClosesOnBlur !== true) return false;
+    // Candidacy: the window was opened transient, whatever its role.
+    if (rec.transient !== true) return false;
     if (rec.overlayFor !== undefined) return false;
     // A window the pointer passes through is never a victim.
     if (!rec.acceptsInput) return false;
@@ -733,7 +734,7 @@ function checkAutocloseWiring(step: Step): string[] {
   return violations;
 }
 
-// No record whose role is in TRANSIENT_ROLES may carry hiddenByAppBlur===true unless a
+// No transient record may carry hiddenByAppBlur===true unless a
 // focuser/overlay/click-through exemption holds — restated as literal clauses so this catches a
 // hide-instead-of-dismiss path even one that never calls selectTransientAutoclose at all.
 function checkTransientHideIsNotDismiss(step: Step): string[] {
@@ -742,7 +743,7 @@ function checkTransientHideIsNotDismiss(step: Step): string[] {
   const focuser = holder !== null ? step.next.order.find((w) => w.id === holder) : undefined;
   for (const rec of step.next.order) {
     if (rec.hiddenByAppBlur !== true) continue;
-    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (rec.transient !== true) continue;
     if (!rec.orderable) continue;
     if (focuser !== undefined && (focuser.parentId === rec.id || focuser.overlayFor === rec.id)) continue;
     if (rec.overlayFor !== undefined) continue;
@@ -762,7 +763,7 @@ function checkStrandedHideAgreesWithSelector(step: Step): string[] {
   const { prev, next } = step;
   const violations: string[] = [];
   for (const rec of next.order) {
-    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (rec.transient !== true) continue;
     const probe: State = {
       ...next,
       order: next.order.map((w) => (w.id === rec.id ? { ...w, visible: true } : w)),
@@ -1180,10 +1181,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.strictEqual(markedRecord.hiddenByAppBlur, true, 'the resign sweep marked it');
     assert.strictEqual(markedRecord.visible, false, 'a marked window is hidden');
 
-    const asPalette: Event = { ...asWorkspace, role: 'palette' };
+    const asPalette: Event = { ...asWorkspace, role: 'palette', transient: true };
     const after = evolve(before, asPalette);
     const afterRecord = after.order.find((w) => w.id === marked)!;
-    assert.strictEqual(afterRecord.role, 'palette', 'the merge took the new role');
+    assert.strictEqual(afterRecord.transient, true, 'the merge took the new declaration');
     assert.strictEqual(
       afterRecord.hiddenByAppBlur,
       false,
@@ -1210,10 +1211,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.strictEqual(markedRecord.hiddenByAppBlur, true, 'the resign sweep marked it while it still took input');
     assert.strictEqual(markedRecord.acceptsInput, false, 'and it went click-through afterwards');
 
-    const asPalette: Event = { ...asWorkspace, role: 'palette' };
+    const asPalette: Event = { ...asWorkspace, role: 'palette', transient: true };
     const after = evolve(before, asPalette);
     const afterRecord = after.order.find((w) => w.id === marked)!;
-    assert.strictEqual(afterRecord.role, 'palette', 'the merge took the new role');
+    assert.strictEqual(afterRecord.transient, true, 'the merge took the new declaration');
     assert.strictEqual(afterRecord.acceptsInput, false, 'and left the lived click-through fact alone');
     assert.strictEqual(
       afterRecord.hiddenByAppBlur,
@@ -1357,6 +1358,7 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
     class: 'primary',
     role: 'quick-view',
     keepLive: false,
+    transient: true,
   });
 
   const baseline = (): State =>

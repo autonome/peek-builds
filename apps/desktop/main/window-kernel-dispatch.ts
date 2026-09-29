@@ -164,6 +164,7 @@ export interface RegisterWindowSpec {
   bounds?: Rectangle;
   tracksBaseLayerTop?: boolean;
   selfClosesOnBlur?: boolean;
+  transient?: boolean;
   nonActivating?: boolean;
   appLifetime?: boolean;
   onEveryDesktop?: boolean;
@@ -185,6 +186,7 @@ export function kernelRegisterWindow(spec: RegisterWindowSpec): void {
     ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
+    ...(spec.transient !== undefined ? { transient: spec.transient } : {}),
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     ...(spec.onEveryDesktop !== undefined ? { onEveryDesktop: spec.onEveryDesktop } : {}),

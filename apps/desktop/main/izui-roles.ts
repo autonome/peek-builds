@@ -79,6 +79,22 @@ export function pageOpensTransient(
   return keyHeldWhileAppInactive && options.show !== false && options.type === undefined;
 }
 
+// The one transience decision (specs/kernel-desktops.md "Transient window"),
+// recorded as `WindowRecord.transient`. From the open options and whether a
+// Peek window holds key while another app is focused, never from role: while
+// Peek is focused only a window opened as transient is transient; while
+// another app is focused, anything opened to show is. A window that takes no
+// input never is; one opened not to show (session restore) is only if it
+// asked to be.
+export function windowIsTransient(
+  keyHeldWhileAppInactive: boolean,
+  options: { modal?: boolean; overlay?: boolean; show?: boolean; focusable?: boolean; clickThrough?: boolean },
+): boolean {
+  if (options.focusable === false || options.clickThrough === true) return false;
+  if (options.modal === true || options.overlay === true) return true;
+  return keyHeldWhileAppInactive && options.show !== false;
+}
+
 export function spacesPolicyForRole(
   role: string,
   platform: NodeJS.Platform,

@@ -117,6 +117,13 @@ export interface WindowRecord {
 
   selfClosesOnBlur?: boolean;
 
+  // Declared at registration (`izui-roles.ts windowIsTransient`): this window
+  // ends when the user leaves it (specs/kernel-desktops.md "Transient
+  // window"). Decided from the window-open options and whether the app was
+  // focused at open, never from role or feature; every transient rule reads
+  // this field and nothing else.
+  transient?: boolean;
+
   // The `type: 'panel'` open declaration; takes key without activating the app.
   nonActivating?: boolean;
 
@@ -214,6 +221,8 @@ export type Event =
       tracksBaseLayerTop?: boolean;
       // See `WindowRecord.selfClosesOnBlur` — declared here.
       selfClosesOnBlur?: boolean;
+      // See `WindowRecord.transient` — declared here.
+      transient?: boolean;
       // See `WindowRecord.nonActivating` — declared here.
       nonActivating?: boolean;
       // See `WindowRecord.appLifetime` — declared here.
@@ -303,6 +312,8 @@ export type Command =
       tracksBaseLayerTop?: boolean;
       // See `WindowRecord.selfClosesOnBlur` — declared here.
       selfClosesOnBlur?: boolean;
+      // See `WindowRecord.transient` — declared here.
+      transient?: boolean;
       // See `WindowRecord.nonActivating` — declared here.
       nonActivating?: boolean;
       // See `WindowRecord.appLifetime` — declared here.
@@ -580,6 +591,11 @@ export function evolve(state: State, ev: Event): State {
             : existing.selfClosesOnBlur !== undefined
               ? { selfClosesOnBlur: existing.selfClosesOnBlur }
               : {}),
+          ...(ev.transient !== undefined
+            ? { transient: ev.transient }
+            : existing.transient !== undefined
+              ? { transient: existing.transient }
+              : {}),
           ...(ev.nonActivating !== undefined
             ? { nonActivating: ev.nonActivating }
             : existing.nonActivating !== undefined
@@ -642,6 +658,7 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
         ...(ev.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: ev.tracksBaseLayerTop } : {}),
         ...(ev.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: ev.selfClosesOnBlur } : {}),
+        ...(ev.transient !== undefined ? { transient: ev.transient } : {}),
         ...(ev.nonActivating !== undefined ? { nonActivating: ev.nonActivating } : {}),
         ...(ev.appLifetime !== undefined ? { appLifetime: ev.appLifetime } : {}),
         ...(ev.onEveryDesktop !== undefined ? { onEveryDesktop: ev.onEveryDesktop } : {}),
@@ -936,8 +953,8 @@ export function evolve(state: State, ev: Event): State {
       //
       // Attachment and `layer`, never role, select the victims — an attached
       // overlay's visibility belongs to its attachment and is never dismissed;
-      // `isAppResignSweepEligible` also excludes `selfClosesOnBlur` windows, which
-      // already own their own app-resign policy. An already-hidden window is
+      // `isAppResignSweepEligible` also excludes transient windows, which the
+      // settle dismisses rather than hides. An already-hidden window is
       // left alone, so a fullscreen host's overlay stays off screen.
       //
       // No `opSeq` is stamped — `HideWindow` carries no token. `key`/`order` untouched.
@@ -2001,6 +2018,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
           ...(cmd.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: cmd.tracksBaseLayerTop } : {}),
           ...(cmd.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: cmd.selfClosesOnBlur } : {}),
+          ...(cmd.transient !== undefined ? { transient: cmd.transient } : {}),
           ...(cmd.nonActivating !== undefined ? { nonActivating: cmd.nonActivating } : {}),
           ...(cmd.appLifetime !== undefined ? { appLifetime: cmd.appLifetime } : {}),
           ...(cmd.onEveryDesktop !== undefined ? { onEveryDesktop: cmd.onEveryDesktop } : {}),
@@ -2357,7 +2375,7 @@ export function isNonParentRole(role: string | undefined): boolean {
 export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
   if (!rec.orderable) return false;
   if (rec.pendingHidden === true) return false;
-  return roleIn(TRANSIENT_ROLES, rec.role) || rec.selfClosesOnBlur === true;
+  return rec.transient === true;
 }
 
 // Which of the four exemption clauses in the transient-dismissal law spared a candidate.
@@ -2439,7 +2457,7 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
     record.visible &&
     record.layer > BASE_LAYER &&
     record.acceptsInput &&
-    !record.selfClosesOnBlur &&
+    record.transient !== true &&
     record.heldAboveOtherApps !== true &&
     !isContentWindow(record)
   );

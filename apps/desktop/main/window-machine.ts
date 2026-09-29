@@ -41,6 +41,7 @@ export interface MachineWindowSpec {
   keepLive?: boolean;
   tracksBaseLayerTop?: boolean;
   selfClosesOnBlur?: boolean;
+  transient?: boolean;
   nonActivating?: boolean;
   // Asked of the kernel right after registration, before any show. A
   // non-activating window stays on every desktop whatever is asked.
@@ -129,6 +130,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(initialBounds !== null ? { bounds: initialBounds } : {}),
     ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     ...(spec.selfClosesOnBlur !== undefined ? { selfClosesOnBlur: spec.selfClosesOnBlur } : {}),
+    ...(spec.transient !== undefined ? { transient: spec.transient } : {}),
     ...(spec.nonActivating !== undefined ? { nonActivating: spec.nonActivating } : {}),
     ...(spec.appLifetime !== undefined ? { appLifetime: spec.appLifetime } : {}),
     ...(onEveryDesktop ? { onEveryDesktop: true } : {}),

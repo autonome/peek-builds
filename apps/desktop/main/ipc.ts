@@ -122,6 +122,7 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  windowIsTransient,
   deriveWindowSurface,
   isSatelliteRegistration,
   classifyWindowRegistration,
@@ -1069,6 +1070,8 @@ function assembleHybridPageHost(
     // same `options.type` already threaded to `createHybridHostBaseWindow`
     // above for the native NSPanel construction option.
     nonActivating: windowNonActivating(options),
+    // Decided once by the window-open handler (`izui-roles.ts windowIsTransient`).
+    transient: options.transient === true,
     // Same per-role intention the generic window-open handler asks for: an
     // ordinary page is anchored to the desktop it opens on. A transient
     // page-host window built as a panel stays on every desktop regardless;
@@ -2938,7 +2941,12 @@ export function registerWindowHandlers(): void {
     // A page opened from the palette over another app is a transient task and
     // always opens new (rule 5); asked here, before any reuse, with the same
     // inputs the page-host branch below asks it with.
-    const opensTransient = pageOpensTransient(isKeyHeldWhileAppInactive(), options);
+    const keyHeldWhileAppInactive = isKeyHeldWhileAppInactive();
+    const opensTransient = pageOpensTransient(keyHeldWhileAppInactive, options);
+    // The one transience decision for this window, read by both registration
+    // branches below (`WindowRecord.transient`); decided here, before the
+    // window is built, since building it can move key.
+    options.transient = windowIsTransient(keyHeldWhileAppInactive, options);
     if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key && !opensTransient) {
       // P1.4a hybrid dedup (by url): same rationale as the key path above —
       // BaseWindow page-hosts are invisible to findWindowsByUrl. Reuse an
@@ -3700,12 +3708,10 @@ export function registerWindowHandlers(): void {
         // keepLive rides the registration (first-class on the kernel record)
         // — the kernel's CloseOrHideRequested clause branches on it.
         keepLive: options.keepLive === true,
-        // See `window-kernel.ts WindowRecord.selfClosesOnBlur`'s doc — this
-        // is the one stamp of that DECLARED fact, read by
-        // `isAppResignSweepEligible` (skip a window that already tears itself
-        // down on blur) and by `isTransientAutocloseCandidate` (admit it to
-        // the transient-dismissal sweep regardless of role).
         selfClosesOnBlur: windowSelfClosesOnBlur(options),
+        // Decided once above (`izui-roles.ts windowIsTransient`); every
+        // transient rule in the kernel reads it (`WindowRecord.transient`).
+        transient: options.transient === true,
         // See `window-kernel.ts WindowRecord.nonActivating`'s doc — the
         // `type: 'panel'` open-time declaration, stored so `showWindow`/
         // `raiseWindow` and `planRaise` can read it instead of branching on

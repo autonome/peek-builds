@@ -73,12 +73,12 @@ const regHost = (id: WindowId): Event => ({
 /** The cmd panel: floats, focusable (you type in it), `role:'palette'`. */
 const regPalette = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'browser', layer: FLOATING,
-  canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette',
+  canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette', transient: true,
 });
 /** `features/windows/background.js`: `role:'switcher'`, alwaysOnTop, focusable, never attached. */
 const regSwitcher = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'browser', layer: FLOATING,
-  canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher',
+  canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher', transient: true,
 });
 /** `hybrid-overlay.ts ensureOverlay`: same class as the switcher, own role — told apart by attachment. */
 const regChromeOverlay = (id: WindowId): Event => ({
@@ -94,7 +94,7 @@ const regHud = (id: WindowId): Event => ({
 /** A slide/peek. */
 const regQuickView = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'page-host', layer: FLOATING,
-  canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view',
+  canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', transient: true,
 });
 
 const show = (id: WindowId): Event => ({ type: 'WindowShown', id });
