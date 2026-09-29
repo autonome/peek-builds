@@ -540,6 +540,13 @@ export class WindowKernelExecutor {
         this.backend.focusContent(effect.id, this.state.opSeqCounter);
         return;
       }
+      case 'ShowDesktop': {
+        // No backend can switch desktops yet (macOS gets no writes; the X11 provider is
+        // unscheduled), so there is no port call: on macOS the raise that follows takes the user
+        // to the window's desktop. Logged so a live check can see the request.
+        wmLog('effect-show-desktop', { desktop: effect.desktop });
+        return;
+      }
       case 'DestroyAllGuests': {
         // Async, and the pump doesn't await it. Kept in `guestTeardown` — separate from
         // `pendingAsyncEffects` — so `waitForGuestTeardown` can await this settlement specifically.

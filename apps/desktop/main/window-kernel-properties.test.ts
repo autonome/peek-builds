@@ -818,6 +818,12 @@ function checkEffectInvariants(effects: Effect[], next: State): string[] {
       }
       continue;
     }
+    if (effect.type === 'ShowDesktop') {
+      if (!next.desktops.some((d) => d.id === effect.desktop)) {
+        violations.push(`ShowDesktop names a desktop not in the layout: ${JSON.stringify(effect)}`);
+      }
+      continue;
+    }
     const record = next.order.find((w) => w.id === effect.id);
     if (record === undefined) {
       if (effect.type === 'CloseWindow') continue;

@@ -189,22 +189,27 @@ helper's reads; if they fail, nothing has yet been built on them.
      is an explicit choice and rule 1 takes the user to the picked window's desktop, so it is gated
      on `admitsFocusAssert()` only, marked by `FocusAssertRequest.switcherPick`. Until 8b it still
      carries no `intent: 'user'`, and no `ShowDesktop` precedes it.
-   - **8b: one admission rule.** `admitsFocus(state, record, { user, named })` (spec section 4) replaces
-     `admitsMachineRaise` and `admitsFocusAssert` at every site in `evolve` and `react`, including
-     `successorOnHide`. Folded in, because each is the same rule applied unevenly today:
-     - app inactive and no user intent → not admitted, so `react` stops emitting what `planRaise`
-       suppresses (decision 3); `planRaise` keeps headless and non-activating choices only;
-     - a key move reported by the OS (`OsFocusGained`) is not gated;
-     - `FocusAssertRequested` and `FocusRaiseRequested` stamp `lastOpSeq` only when they issue an
-       op;
-     - the hold above other apps and the cold-start latch are armed only when the raise they stand
-       for is admitted, and the latch never names a window dismissed in the same transition;
-     - `successorOnHide` falls through to the topmost window on a current desktop when there is no
-       prior key window (F7);
-     - a switcher pick is `named`: its `RaiseWindow` carries `intent: 'user'`, preceded by
-       `ShowDesktop` when the window is not on a current desktop (`FocusAssertRequest.switcherPick`
-       becomes that flag).
-     Tests: the property test of spec section 4 "Enforcement".
+   - **8b-1 Done: one desktop rule.** `admitsFocus(state, record, requester)` with requesters
+     `MACHINE_REQUEST`, `USER_REQUEST`, `SWITCHER_PICK` replaces `admitsMachineRaise` and
+     `admitsFocusAssert` at every site in `evolve` and `react`, including `successorOnHide`;
+     `withinReach` is its desktop half. With it:
+     - user intent alone no longer reaches another desktop (rule 5); only a switcher pick does;
+     - a switcher pick's `RaiseWindow` carries `intent: 'user'`, preceded by `ShowDesktop` when the
+       window is not on a current desktop (`pushRaise`); the executor only logs `ShowDesktop`, since
+       no backend can switch desktops;
+     - `FocusAssertRequested` and `FocusRaiseRequested` stamp `lastOpSeq` only when they issue an op;
+     - the hold above other apps (and its cold-start latch) needs the target within reach.
+     Kept as it was: a key move the OS reports is still gated on the desktop, because a late report
+     for a window on a desktop the user just left must not pull the user back.
+   - **8b-2: the app-active half.** App inactive and no user intent → not admitted, so `react`
+     stops emitting what `planRaise` suppresses (decision 3), and `planRaise` keeps headless and
+     non-activating choices only. The hold above other apps asks `withinReach` only, since it
+     stands in for exactly that raise. Also: the cold-start latch never names a window dismissed
+     in the same transition; the property test of spec section 4 "Enforcement".
+   - **Open, needs a decision:** `successorOnHide` returns nothing when the window that hid or
+     closed took key from nothing (four kernel tests pin this, e.g. dismissing the switcher with
+     no pick raises nothing), while spec rule 9 says the topmost window on a current desktop gets
+     key.
    - **8c: one desktop stamp on show, chrome on this desktop.** Every write flipping `visible` to
      true goes through one helper that stamps the desktop (today the re-show on app activation and
      the overlay reveal skip it). `topmostBaseLayerPageHost` picks only a page-host window on a

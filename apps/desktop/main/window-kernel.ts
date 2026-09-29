@@ -329,6 +329,9 @@ export type Effect =
   | { type: 'CloseWindow'; id: WindowId; maximized: boolean; preMaxBounds: Rectangle | null }
   | { type: 'DismissWindow'; id: WindowId }
   | { type: 'RaiseWindow'; id: WindowId; opSeq: number; intent?: 'user' }
+  // Make `desktop` current on its screen; emitted only just before the raise of a window the user
+  // named on a desktop no screen shows. A backend that cannot switch desktops ignores it.
+  | { type: 'ShowDesktop'; desktop: DesktopId }
   // Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`.
   | { type: 'SetFullscreen'; id: WindowId }
   // Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`.
@@ -772,12 +775,11 @@ export function evolve(state: State, ev: Event): State {
       // record itself held `key` — otherwise the parent still gets raised,
       // and the eventual `OsFocusGained` echo reconciles `order` for real.
       const parent = closedRec?.parentId !== undefined ? filtered.find((w) => w.id === closedRec.parentId) : undefined;
-      const raisesParent = parent !== undefined && isContentWindow(parent) && admitsMachineRaise(state, parent);
+      const raisesParent = parent !== undefined && isContentWindow(parent) && admitsFocus(state, parent, MACHINE_REQUEST);
       // `pendingSelectionFocus` names a switcher and the window the user
       // picked; this close is the spend when it is that switcher going away.
       // One-shot — cleared below regardless of whether the target survives.
-      // Gated on `admitsFocusAssert`, not `admitsMachineRaise`: a pick is an
-      // explicit choice, and it may name a window on another desktop.
+      // A pick names its window, so it may be on another desktop (rule 1).
       //
       // The raise goes through `lastFocusAssert`: `react` is a pure structural
       // diff that may not branch on `ev.type`, so the request must become a
@@ -787,7 +789,7 @@ export function evolve(state: State, ev: Event): State {
         ? state.pendingSelectionFocus
         : null;
       const selectionTarget = spentSelection !== null
-        ? filtered.find((w) => w.id === spentSelection.target && admitsFocusAssert(w, w.visible))
+        ? filtered.find((w) => w.id === spentSelection.target && admitsFocus(state, w, SWITCHER_PICK))
         : undefined;
       // Successor raise: a closed key holder that neither hands off to a
       // parent nor spends a selection asks for `successorOnHide`'s answer on
@@ -864,12 +866,14 @@ export function evolve(state: State, ev: Event): State {
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
       // `lastOpSeq` is stamped only when this genuinely takes key — same
       // condition `react` uses to emit `RaiseWindow`. Gated on
-      // `admitsFocusAssert` (a hidden or doomed target drives no raise — the
+      // `admitsFocus` (a hidden or doomed target drives no raise — the
       // report is stale evidence of a raise that preceded the hide) and not on
       // a confirmation (`isOpConfirmation`): the echo of an op issued by
       // another transition (a successor raise, a parent refocus, a focus
       // assert) must not raise the same window a second time.
-      const issuesRaise = state.key !== ev.id && admitsMachineRaise(state, record) && !isOpConfirmation(record, ev.cause);
+      // Gated on the desktop too: a late report for a window on a desktop the
+      // user just left must not pull the user back to it.
+      const issuesRaise = state.key !== ev.id && admitsFocus(state, record, MACHINE_REQUEST) && !isOpConfirmation(record, ev.cause);
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       // Written alongside `key`, only when this report hands key to a different window than whoever held it.
       const takesKey = state.key !== ev.id;
@@ -969,7 +973,7 @@ export function evolve(state: State, ev: Event): State {
       const latchedRecord = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
       const assertsFocus =
         latchedRecord !== undefined &&
-        admitsMachineRaise(state, latchedRecord, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
+        admitsFocus(state, latchedRecord, MACHINE_REQUEST, latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
 
       // Fullscreen reconcile sweep: macOS can enter or leave fullscreen while
       // Peek is backgrounded, so a transition still marked `entering`/`leaving`
@@ -1454,13 +1458,15 @@ export function evolve(state: State, ev: Event): State {
       //
       // The one record write is the focus-op stamp: `react` turns this
       // transition into a `RaiseWindow`, so the stamp must require the same
-      // `admitsFocusAssert` condition `react` does, or the two would disagree
-      // about whether this transition issued an op at all.
-      const issuesRaise = state.order.some((w) => w.id === ev.id && admitsMachineRaise(state, w));
+      // `admitsFocus` condition `react` does, or the two would disagree
+      // about whether this transition issued an op at all. No op, no stamp:
+      // restamping an old token could make the echo of an op still in flight
+      // on this window read as stale.
+      const issuesRaise = state.order.some((w) => w.id === ev.id && admitsFocus(state, w, MACHINE_REQUEST));
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, lastOpSeq: opSeq } : w)),
+        order: issuesRaise ? state.order.map((w) => (w.id === ev.id ? { ...w, lastOpSeq: opSeq } : w)) : state.order,
         opSeqCounter: opSeq,
         lastFocusAssert: { id: ev.id, seq: nextFocusAssertSeq(state) },
         version: state.version + 1,
@@ -1478,7 +1484,7 @@ export function evolve(state: State, ev: Event): State {
       const issuesRaiseRequest =
         (state.key !== ev.id || alreadyKeyButUnhonoured) &&
         targetRecord !== undefined &&
-        (ev.intent === 'user' ? admitsFocusAssert(targetRecord, targetRecord.visible) : admitsMachineRaise(state, targetRecord));
+        admitsFocus(state, targetRecord, ev.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST);
       const requestOpSeq = issuesRaiseRequest ? state.opSeqCounter + 1 : state.opSeqCounter;
       // An inactive app cannot honour a raise by coming forward unless the
       // raise carries user intent, and an ordinary-level window of an inactive
@@ -1491,12 +1497,19 @@ export function evolve(state: State, ev: Event): State {
       // and the app activating later returns it to ordinary stacking like any
       // other held window rather than leaving it above every app for good.
       const raiseLeavesAppInactive = ev.intent !== 'user' || targetRecord?.nonActivating === true;
+      // A window on another desktop is not held: holding stands in for a raise, and the raise could not reach it.
       const holds =
-        !state.appActive && raiseLeavesAppInactive && targetRecord !== undefined && admitsHoldAboveOtherApps(targetRecord);
+        !state.appActive &&
+        raiseLeavesAppInactive &&
+        targetRecord !== undefined &&
+        admitsHoldAboveOtherApps(targetRecord) &&
+        withinReach(state, targetRecord, ev.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST);
       return {
         ...state,
         order: state.order.map((w) =>
-          w.id === ev.id ? { ...w, lastOpSeq: requestOpSeq, ...(holds ? { heldAboveOtherApps: true } : {}) } : w,
+          w.id === ev.id && (issuesRaiseRequest || holds)
+            ? { ...w, ...(issuesRaiseRequest ? { lastOpSeq: requestOpSeq } : {}), ...(holds ? { heldAboveOtherApps: true } : {}) }
+            : w,
         ),
         opSeqCounter: requestOpSeq,
         // A held window is what the user was last given over the other app. The
@@ -1613,7 +1626,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     if (next.order.some((w) => w.id === prevRecord.id)) continue;
     if (prevRecord.parentId === undefined) continue;
     const parent = next.order.find((w) => w.id === prevRecord.parentId);
-    if (parent !== undefined && isContentWindow(parent) && admitsMachineRaise(next, parent)) {
+    if (parent !== undefined && isContentWindow(parent) && admitsFocus(next, parent, MACHINE_REQUEST)) {
       effects.push({ type: 'RaiseWindow', id: parent.id, opSeq: next.opSeqCounter });
     }
   }
@@ -1689,7 +1702,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // RaiseWindow: `State.key` changed — diffed rather than the top of `order`,
   // so a pure reorder never raises but an already-topmost window taking key
-  // from someone else still does; gated on `admitsFocusAssert` and on
+  // from someone else still does; gated on `admitsFocus` and on
   // `isOpConfirmation` so a raise's own OS echo cannot re-fire itself.
   const nextKey = next.key;
   const raiseTarget = nextKey === null ? undefined : next.order.find((w) => w.id === nextKey);
@@ -1705,7 +1718,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     nextKey !== null &&
     nextKey !== prev.key &&
     raiseTarget !== undefined &&
-    admitsMachineRaise(next, raiseTarget) &&
+    admitsFocus(next, raiseTarget, MACHINE_REQUEST) &&
     !keyMoveConfirmsIssuedOp
   ) {
     // No `intent` here — a `RaiseWindow` command's own "user asked for this"
@@ -1858,19 +1871,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // Last, deliberately: the assert must land after the re-show / overlay-reveal
   // / stacking work above, or it would drive first responder before a re-show lands on top of it.
   //
-  // Gated on `admitsFocusAssert`, not merely present in `next.order` — without
-  // it an assert naming an off-screen or doomed window would pull it onto screen and take key.
-  // Every assert but a switcher pick is also held to the current desktop
-  // (`admitsMachineRaise`), matching the gate `evolve` stamped its token under.
+  // Gated on `admitsFocus`, not merely present in `next.order` — without
+  // it an assert naming an off-screen or doomed window would pull it onto screen and take key —
+  // under the same requester `evolve` stamped its token with.
   const focusAssert = next.lastFocusAssert;
   if (focusAssert !== null && focusAssert.seq !== prev.lastFocusAssert?.seq) {
     const record = next.order.find((w) => w.id === focusAssert.id);
-    const admitted = record !== undefined &&
-      (focusAssert.switcherPick === true ? admitsFocusAssert(record, record.visible) : admitsMachineRaise(next, record));
-    if (record !== undefined && admitted) {
-      effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
+    const requester = focusAssert.switcherPick === true ? SWITCHER_PICK : MACHINE_REQUEST;
+    if (record !== undefined && admitsFocus(next, record, requester)) {
+      pushRaise(effects, next, record, requester);
       // `isContentWindow` earns its keep for an assert dispatched as a raw event, bypassing `decide`'s own gate.
-      // An assert never carries user intent (`FocusAssertRequested` has no `intent` field), so the
+      // Only a switcher pick carries user intent, so the
       // content focus paired with the raise above must follow F6 the same way the raise itself does:
       // the executor's `planRaise` answers `suppressed` for this raise while the app is inactive, and a
       // content focus that still reached the backend would take first responder and activate the app
@@ -1887,7 +1898,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // hidden/closed key holder hands key back to; `key` itself moves only
   // later, off the backend's own confirming `OsFocusGained`.
   //
-  // Gated on `next.key !== raiseRequest.id` in addition to `admitsFocusAssert`:
+  // Gated on `next.key !== raiseRequest.id` in addition to `admitsFocus`:
   // a `RaiseWindow` command on the window that already holds key is the
   // silent no-op `AssertFocus` exists to override — EXCEPT while the app is
   // inactive and the request carries user intent. `key` only ever names which
@@ -1903,22 +1914,27 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   if (raiseRequest !== null && raiseRequest.seq !== prev.lastRaiseRequest?.seq) {
     const record = next.order.find((w) => w.id === raiseRequest.id);
     const alreadyKeyButUnhonoured = next.key === raiseRequest.id && raiseRequest.intent === 'user' && !next.appActive;
-    // A raise without user intent passes the F9 gate; one with it is the
-    // user naming the window, which may take the user to its desktop.
-    const admitted =
-      record !== undefined &&
-      (raiseRequest.intent === 'user' ? admitsFocusAssert(record, record.visible) : admitsMachineRaise(next, record));
-    if (record !== undefined && (next.key !== raiseRequest.id || alreadyKeyButUnhonoured) && admitted) {
-      effects.push({
-        type: 'RaiseWindow',
-        id: raiseRequest.id,
-        opSeq: next.opSeqCounter,
-        ...(raiseRequest.intent === 'user' ? { intent: 'user' as const } : {}),
-      });
+    const requester = raiseRequest.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST;
+    if (record !== undefined && (next.key !== raiseRequest.id || alreadyKeyButUnhonoured) && admitsFocus(next, record, requester)) {
+      pushRaise(effects, next, record, requester);
     }
   }
 
   return effects;
+}
+
+// A raise, carrying user intent when the requester has it, and preceded by
+// `ShowDesktop` when a named window is on a desktop no screen shows (rule 1).
+function pushRaise(effects: Effect[], next: State, record: WindowRecord, requester: FocusRequester): void {
+  if (requester.named && !onCurrentDesktop(next, record) && record.desktop !== undefined) {
+    effects.push({ type: 'ShowDesktop', desktop: record.desktop });
+  }
+  effects.push({
+    type: 'RaiseWindow',
+    id: record.id,
+    opSeq: next.opSeqCounter,
+    ...(requester.user ? { intent: 'user' as const } : {}),
+  });
 }
 
 function descendantsToCascadeClose(
@@ -2423,28 +2439,47 @@ export function isTransientPageHost(state: State, record: WindowRecord): boolean
   );
 }
 
-export function admitsFocusAssert(record: WindowRecord, visible: boolean): boolean {
-  return visible && !record.pendingHidden;
+// Who is asking for a window to come forward (specs/kernel-desktops.md,
+// `admitsFocus`). `user`: the user acted. `named`: the user named this very
+// window (a switcher pick), which may take the user to its desktop.
+export interface FocusRequester {
+  readonly user: boolean;
+  readonly named: boolean;
+}
+export const MACHINE_REQUEST: FocusRequester = { user: false, named: false };
+export const USER_REQUEST: FocusRequester = { user: true, named: false };
+export const SWITCHER_PICK: FocusRequester = { user: true, named: true };
+
+// F9 and rule 5: a window is within reach of a request if it is on a current
+// desktop, or the request names it. Before the first layout report
+// `onCurrentDesktop` is true for every window. The hold above other apps asks
+// this alone, since it stands in for a raise an inactive app cannot make.
+export function withinReach(state: State, record: WindowRecord, requester: FocusRequester): boolean {
+  return requester.named || onCurrentDesktop(state, record);
 }
 
-// F9: a raise the manager makes without user intent lands only on a window on
-// a current desktop, because raising a window on another desktop switches the
-// user's desktop. Every machine raise `react` emits asks this, and so does
-// every `evolve` stamp that pairs with one, so the two agree on whether a
-// transition issued an op. `visible` defaults to the record's own; the
-// `AppActivated` latch passes its post-re-show answer. Before the first layout
-// report `onCurrentDesktop` is true for every window, so this is then exactly
-// `admitsFocusAssert`.
-export function admitsMachineRaise(state: State, record: WindowRecord, visible: boolean = record.visible): boolean {
-  return admitsFocusAssert(record, visible) && onCurrentDesktop(state, record);
+// The one admission rule for bringing a window forward. Every raise, focus
+// assert, successor and latch spend in `react` asks it, and so does every
+// `evolve` stamp that pairs with one, so the two agree on whether a transition
+// issued an op. `visible` defaults to the record's own; the `AppActivated`
+// latch passes its post-re-show answer.
+export function admitsFocus(
+  state: State,
+  record: WindowRecord,
+  requester: FocusRequester,
+  visible: boolean = record.visible,
+): boolean {
+  return visible && !record.pendingHidden && withinReach(state, record, requester);
 }
 
 // F7: the prior key holder if it is on screen and on a current desktop, else
 // the topmost application window on a current desktop, else nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
+// A window that took key from nothing hands key to nothing: a plain dismiss is
+// not a raise. Rule 9 of specs/kernel-desktops.md says otherwise; unsettled.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
   if (hiddenRecord.priorKey === null) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
-  if (prior !== undefined && admitsMachineRaise(state, prior)) return prior;
-  return topmost(state, (w) => isContentWindow(w) && onCurrentDesktop(state, w));
+  if (prior !== undefined && admitsFocus(state, prior, MACHINE_REQUEST)) return prior;
+  return topmost(state, (w) => isContentWindow(w) && admitsFocus(state, w, MACHINE_REQUEST));
 }

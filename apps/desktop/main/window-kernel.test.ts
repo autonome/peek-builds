@@ -548,8 +548,8 @@ describe('window-kernel: raise vs. show', () => {
     assert.deepStrictEqual(effects, [], 'a confirmation drives nothing further — no second sweep, no second raise');
   });
 
-  it('a RaiseWindow command on a record that fails admitsFocusAssert emits nothing and leaves the window model untouched (F5)', () => {
-    // `evolve`'s `FocusRaiseRequested` arm gates its stamp on `admitsFocusAssert`
+  it('a RaiseWindow command on a record that fails admitsFocus emits nothing and leaves the window model untouched (F5)', () => {
+    // `evolve`'s `FocusRaiseRequested` arm gates its stamp on `admitsFocus`
     // exactly as `FocusAssertRequested` and `AppActivated` do; `react`'s
     // raise-request rule mirrors the same gate. A hidden (never-shown) target
     // fails it, so the command is admitted by `decide` (it names a real
@@ -568,7 +568,7 @@ describe('window-kernel: raise vs. show', () => {
     assert.strictEqual(next.key, state.key, 'key untouched');
     assert.deepStrictEqual(next.order.map((w) => w.id), state.order.map((w) => w.id), 'order untouched');
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no fresh token minted — nothing to confirm later');
-    assert.strictEqual(next.order[0].lastOpSeq, state.opSeqCounter, 'the record is not stamped with a NEW op — same value the counter already held');
+    assert.strictEqual(next.order[0].lastOpSeq, state.order[0].lastOpSeq, 'no op issued, so the record is not stamped at all');
   });
 
   it('showing a hidden window does NOT change its position in order', () => {
@@ -893,7 +893,7 @@ describe('window-kernel: the raise a focus report drives', () => {
     // 'show-and-take-key'), the world focus that follows sweeps it, the sweep's
     // hide echoes, and around: the 2026-09-04 command-palette loop, ~7ms per
     // cycle. Same gate as `FocusAssertRequested` and the focus-assert rule:
-    // `admitsFocusAssert`, the one place the condition lives.
+    // `admitsFocus`, the one place the condition lives.
     const hidden = fold([{ type: 'WindowHidden', id: wid(1) }, { type: 'OsFocusGained', id: wid(2) }], twoWindows(wid(1), wid(2)));
     assert.strictEqual(hidden.order.find((w) => w.id === wid(1))?.visible, false, 'precondition: hidden');
     assert.strictEqual(hidden.key, wid(2), 'precondition: somebody else holds key');
@@ -8065,11 +8065,32 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
   });
 
-  it('a raise request with user intent for a window on another desktop is still emitted', () => {
+  it('a raise request with user intent for a window on another desktop is not emitted: user intent does not name the window (rule 5)', () => {
     const state = paletteOverOffDesktopPage();
     const ev: Event = { type: 'FocusRaiseRequested', id: PAGE, intent: 'user' };
     const next = evolve(state, ev);
-    assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter, intent: 'user' }]);
+    assert.deepStrictEqual(raises(react(state, ev, next)), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no raise, no token');
+    assert.strictEqual(windowById(next, PAGE)?.lastOpSeq, windowById(state, PAGE)?.lastOpSeq, 'no raise, no stamp');
+  });
+
+  it('a switcher pick of a window on the current desktop asks for no desktop', () => {
+    const state = fold(
+      [{ type: 'CurrentDesktopChanged', screen: S, desktop: '1' }, { type: 'SelectionFocusArmed', armer: PALETTE, target: PAGE }],
+      paletteOverOffDesktopPage(),
+    );
+    const ev: Event = { type: 'WindowClosed', id: PALETTE };
+    const effects = react(state, ev, evolve(state, ev));
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'ShowDesktop'), []);
+    assert.strictEqual(raises(effects).length, 1);
+  });
+
+  it('a raise request for a window on another desktop does not hold it above other apps', () => {
+    const state = fold([{ type: 'AppResigned' }], paletteOverOffDesktopPage());
+    assert.strictEqual(state.appActive, false, 'precondition: app inactive');
+    const next = evolve(state, { type: 'FocusRaiseRequested', id: PAGE });
+    assert.notStrictEqual(windowById(next, PAGE)?.heldAboveOtherApps, true);
+    assert.strictEqual(next.pendingColdStartFocus, state.pendingColdStartFocus, 'no latch armed for it either');
   });
 
   it('a focus assert for a window on another desktop is not emitted, nor its content focus', () => {
@@ -8080,14 +8101,17 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
   });
 
-  it('a switcher pick of a window on another desktop is raised, with a token', () => {
+  it('a switcher pick of a window on another desktop asks for its desktop, then raises it with user intent and a token', () => {
     // The palette stands in for the switcher: any window can arm a selection.
     const state = fold([{ type: 'SelectionFocusArmed', armer: PALETTE, target: PAGE }], paletteOverOffDesktopPage());
     assert.strictEqual(onCurrentDesktop(state, windowById(state, PAGE)!), false, 'precondition: the page is on desktop 1');
     const ev: Event = { type: 'WindowClosed', id: PALETTE };
     const next = evolve(state, ev);
-    const effects = react(state, ev, next);
-    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter }]);
+    const effects = react(state, ev, next).filter((e) => e.type === 'ShowDesktop' || e.type === 'RaiseWindow');
+    assert.deepStrictEqual(effects, [
+      { type: 'ShowDesktop', desktop: '1' },
+      { type: 'RaiseWindow', id: PAGE, opSeq: next.opSeqCounter, intent: 'user' },
+    ]);
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter + 1);
     assert.strictEqual(windowById(next, PAGE)?.lastOpSeq, next.opSeqCounter, 'the raise and its stamp agree');
   });
