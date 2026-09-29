@@ -391,6 +391,8 @@ export class WindowKernelExecutor {
     } else if (event.type === 'AppResignSettled') {
       if (!prev.pendingAppResignSweep) {
         wmLog('app-resign-settle-noop', { reason: 'not-armed' });
+      } else if (prev.overlayTransitionSinceResign) {
+        wmLog('app-resign-settle-noop', { reason: 'overlay-transition' });
       } else {
         const victims = appResignHideVictims(prev, next);
         wmLog('app-resign-settle', { victims: victims.length, ids: victims.join(',') || undefined });

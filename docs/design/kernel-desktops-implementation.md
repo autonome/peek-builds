@@ -247,7 +247,13 @@ helper's reads; if they fail, nothing has yet been built on them.
     which also retires a hide the platform made itself (the app hidden), recorded like the
     kernel's own because both arrive as `WindowHidden`. The backend reports every focus with its
     raw cause.
-11. Decision 5 (resign settle).
+11. Decision 5 (resign settle). Done: the switcher opening (`ipc.ts windowOpenHandler`, beside
+    `enterOverlay`) and closing (`main.ts`, beside `exitOverlay`) dispatch
+    `OverlayTransitionObserved`, which sets `State.overlayTransitionSinceResign`; `AppResigned`
+    resets it, and `AppResignSettled` is inert while it holds. The backend's settle timer no longer
+    reads the coordinator's cooldowns. With the 500 ms settle, those cooldowns (500 ms after
+    entry, 300 ms after exit) only ever held for a transition after the resign, so the kernel
+    rule needs no clock; it is slightly wider for an exit in the first 200 ms after a resign.
 12. Folded into 9b.
 13. **Linux on X11**, separate unscheduled track: EWMH provider with reads and writes.
 

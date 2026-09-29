@@ -54,6 +54,7 @@ import {
   kernelAssertFocus,
   kernelAppActivated,
   kernelAppResigned,
+  kernelOverlayTransitionObserved,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import type { WindowId } from './window-kernel.js';
@@ -1012,6 +1013,7 @@ export async function initialize(): Promise<void> {
             // is empty in the no-hide overlay model, so the showInactive
             // loop inside is a no-op).
             coordinator.exitOverlay();
+            kernelOverlayTransitionObserved();
           } else {
             DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
           }

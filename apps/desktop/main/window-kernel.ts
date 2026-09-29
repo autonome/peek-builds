@@ -170,6 +170,10 @@ export interface State {
   // kernel emitted; a world-caused report matching it is the platform's
   // choice, not the user's (`platformChoseFocus`).
   readonly expectedPlatformFocus: PlatformFocusExpectation;
+  // An overlay opened or closed since the app last resigned. That resign is
+  // then the platform's churn around the overlay, not the user leaving, so
+  // its settle sweeps nothing.
+  readonly overlayTransitionSinceResign: boolean;
 }
 
 export interface PlatformFocusExpectation {
@@ -272,6 +276,9 @@ export type Event =
   | { type: 'AppResigned' }
   | { type: 'AppActivated' }
   | { type: 'AppResignSettled' }
+  // An overlay (the switcher) opened or closed. Either can make the platform
+  // resign and re-activate the app on its own.
+  | { type: 'OverlayTransitionObserved' }
   // The first-composited-frame report — flips `orderable` to `true`.
   | { type: 'WindowContentOrderable'; id: WindowId }
   | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
@@ -435,6 +442,7 @@ export function initialState(): State {
     desktopSwitchCount: 0,
     desktopSwitchesRead: 0,
     expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
+    overlayTransitionSinceResign: false,
   };
 }
 
@@ -1027,6 +1035,7 @@ function evolveEvent(state: State, ev: Event): State {
         appActive: false,
         pendingAppResignSweep: true,
         expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
+        overlayTransitionSinceResign: false,
         order: hidesSomething
           ? state.order.map((w) => (hidesImmediately(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w))
           : state.order,
@@ -1120,6 +1129,11 @@ function evolveEvent(state: State, ev: Event): State {
       };
     }
 
+    case 'OverlayTransitionObserved': {
+      // A fact about the resign now pending, if any; `AppResigned` resets it.
+      return { ...state, overlayTransitionSinceResign: true, version: state.version + 1 };
+    }
+
     case 'AppResignSettled': {
       // Inert unless still armed — an AppActivated in between (the dance) already disarmed this.
       //
@@ -1127,7 +1141,12 @@ function evolveEvent(state: State, ev: Event): State {
       // edge above. Re-running `isAppResignSweepEligible` here is a backstop:
       // it only catches a window that became sweep-eligible after the raw
       // edge and before this settle, which the raw edge had no chance to see.
-      if (!state.pendingAppResignSweep) {
+      //
+      // Also inert after an overlay opened or closed since the resign: the
+      // platform resigns the app around an overlay's entry and exit, and
+      // re-activates it on its own. The sweep stays armed, as the next resign
+      // re-arms it anyway.
+      if (!state.pendingAppResignSweep || state.overlayTransitionSinceResign) {
         return { ...state, version: state.version + 1 };
       }
       // Defensive: the app came back active without an `AppActivated`

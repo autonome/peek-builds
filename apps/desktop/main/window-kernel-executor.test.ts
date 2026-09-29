@@ -687,6 +687,27 @@ describe('hideProvokesFocusReassignment — when a hide is followed by a focus t
   });
 });
 
+describe('the resign settle after an overlay transition', () => {
+  function settle(events: Event[]): State {
+    return events.reduce((s, ev) => evolve(s, ev), initialState());
+  }
+
+  it('sweeps after an ordinary resign', () => {
+    const s = settle([{ type: 'AppResigned' }, { type: 'AppResignSettled' }]);
+    assert.strictEqual(s.pendingAppResignSweep, false);
+  });
+
+  it('is inert when an overlay opened or closed after the resign — the platform churning around it', () => {
+    const s = settle([{ type: 'AppResigned' }, { type: 'OverlayTransitionObserved' }, { type: 'AppResignSettled' }]);
+    assert.strictEqual(s.pendingAppResignSweep, true, 'still armed, never swept');
+  });
+
+  it('an overlay transition before the resign does not spare its settle', () => {
+    const s = settle([{ type: 'OverlayTransitionObserved' }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
+    assert.strictEqual(s.pendingAppResignSweep, false);
+  });
+});
+
 // The backend reports every focus with its raw cause; the kernel records what
 // the platform will hand out by itself as it emits the causing effect, and
 // ignores the one world-caused report that answers it.

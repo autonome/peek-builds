@@ -39,7 +39,6 @@ import {
 // at this module's top level — window-machine.js imports this file directly.
 import { dispatchEscapePress } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
-import { getIzuiCoordinator } from './izui-state.js';
 import {
   shouldCloseContentWCOnFinalize,
   decideWindowRegistration,
@@ -278,17 +277,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
+      // Whether this settle sweeps anything is the kernel's decision
+      // (`AppResignSettled` is inert after an overlay transition).
       this.appResignSettleTimer = setTimeout(() => {
         this.appResignSettleTimer = null;
-        // A resign fired by an izui overlay entry/exit transition is
-        // activation churn, not an app switch, so the settle point never
-        // arrives for it — read at the producer since the coordinator's
-        // cooldowns are the only signal for that churn.
-        const coordinator = getIzuiCoordinator();
-        if (coordinator.isWithinOverlayExitCooldown() || coordinator.isWithinOverlayEntryCooldown()) {
-          DEBUG && console.log('[wm-backend] app-resign settle suppressed (izui overlay cooldown)');
-          return;
-        }
         kernelAppResignSettled();
       }, APP_RESIGN_SETTLE_MS);
     });

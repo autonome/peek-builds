@@ -252,6 +252,10 @@ export function kernelAppResignSettled(): void {
   kernelDispatch({ type: 'AppResignSettled' });
 }
 
+export function kernelOverlayTransitionObserved(): void {
+  kernelDispatch({ type: 'OverlayTransitionObserved' });
+}
+
 export function kernelDestroyWindow(id: WindowId): void {
   kernelExecute({ type: 'DestroyWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }

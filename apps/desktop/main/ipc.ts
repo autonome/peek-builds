@@ -109,6 +109,7 @@ import {
   kernelUnmaximize,
   kernelSetDesktopMembership,
   kernelShowRequested,
+  kernelOverlayTransitionObserved,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
@@ -4137,6 +4138,7 @@ export function registerWindowHandlers(): void {
       if (options.overlay === true) {
         const coordinator = getIzuiCoordinator();
         coordinator.enterOverlay(win.id, []);
+        kernelOverlayTransitionObserved();
       }
 
       // Notify HUD and other listeners that a window was opened
