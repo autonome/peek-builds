@@ -1032,7 +1032,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.reorderToTop(id, win);
         if (plan === 'take-key' && !isHeadless()) {
           try {
-            win.focus();
+            this.takeKey(win);
           } catch {
             /* window gone mid-raise */
           }
@@ -1043,7 +1043,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         if (!isHeadless()) {
           try {
             this.armSelfCausedFocus(id, opSeq);
-            win.focus();
+            this.takeKey(win);
           } catch {
             /* window gone mid-raise */
           }
