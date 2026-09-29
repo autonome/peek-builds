@@ -206,10 +206,9 @@ helper's reads; if they fail, nothing has yet been built on them.
      non-activating choices only. The hold above other apps asks `withinReach` only, since it
      stands in for exactly that raise. Also: the cold-start latch never names a window dismissed
      in the same transition; the property test of spec section 4 "Enforcement".
-   - **Open, needs a decision:** `successorOnHide` returns nothing when the window that hid or
-     closed took key from nothing (four kernel tests pin this, e.g. dismissing the switcher with
-     no pick raises nothing), while spec rule 9 says the topmost window on a current desktop gets
-     key.
+   - **Settled:** `successorOnHide` returns nothing when the window that hid or closed took key
+     from nothing, so a transient window opened over another app returns the user to that app;
+     spec rule 9 and F7 now say so. Four kernel tests pin it.
    - **8c: one desktop stamp on show, chrome on this desktop.** Every write flipping `visible` to
      true goes through one helper that stamps the desktop (today the re-show on app activation and
      the overlay reveal skip it). `topmostBaseLayerPageHost` picks only a page-host window on a

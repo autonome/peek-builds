@@ -2491,8 +2491,10 @@ export function reusableHere(state: State, candidates: readonly WindowId[]): Win
   return null;
 }
 
-// F7: the prior key holder if it is on screen and on a current desktop, else
-// the topmost application window on a current desktop, else nothing.
+// F7: nothing if the window took key from another app (the user goes back
+// there); else the prior key holder if it is on screen and on a current
+// desktop, else the topmost application window on a current desktop, else
+// nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
 // A window that took key from nothing hands key to nothing: a plain dismiss is
 // not a raise. Rule 9 of specs/kernel-desktops.md says otherwise; unsettled.

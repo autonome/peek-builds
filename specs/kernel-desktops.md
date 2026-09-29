@@ -106,9 +106,9 @@ rule that depends on either, on every platform the desktop app runs on.
    was opened on (implementation doc, "Research: Electron panels and desktops"). While the switch
    gesture is in progress the panel is visible on both desktops; this is accepted. A switch on a
    different screen from the transient page-host window's changes nothing.
-4. **Closing or hiding a window never switches desktop.** Key goes to the prior window if it is on
-   a current desktop, else the frontmost page-host window on a current desktop, else nothing
-   (rule 9).
+4. **Closing or hiding a window never switches desktop.** The user goes back to where they were:
+   another app if the window took key from one, else the prior window if it is on a current
+   desktop, else the frontmost page-host window on a current desktop, else nothing (rule 9).
 5. **New things happen where the user is.** A request that would reuse an open window — a URL
    already open, a window opened by key (settings, groups, tags and other one-per-app windows), an
    extension page — reuses it only if it is hidden or on a current desktop. Otherwise:
@@ -139,10 +139,13 @@ rule that depends on either, on every platform the desktop app runs on.
    > window in the switcher is such a focus.
 9. **F7 hide-returns-key** (replaces F7 in `window-rules.md`):
 
-   > When the key window hides or closes while the app is active, key goes to its prior window if
-   > that window is visible and on a current desktop; otherwise to the topmost visible application
-   > window on a current desktop; otherwise the manager focuses nothing, and whatever the OS focuses
-   > next arrives world-caused.
+   > When the key window hides or closes while the app is active, the user goes back to where they
+   > were before it took key. If it took key from another app (no prior Peek window), the manager
+   > focuses nothing and the user is back in that app: a transient window opened over another app
+   > never brings Peek forward when it ends. If it took key from a Peek window, key returns to that
+   > window if it is visible and on a current desktop; if that window is gone or elsewhere, to the
+   > topmost visible application window on a current desktop; otherwise nothing. Whatever the OS
+   > focuses next arrives world-caused.
 
    The kernel MUST choose a successor for closes of application windows as well as of
    `TRANSIENT_ROLES` windows.
