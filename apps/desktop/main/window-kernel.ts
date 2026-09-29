@@ -768,22 +768,16 @@ export function evolve(state: State, ev: Event): State {
               : w;
           return w.priorKey === ev.id ? { ...detached, priorKey: null } : detached;
         });
-      // Parent refocus: a closing window whose parent is still registered and
-      // eligible (`isContentWindow`) hands the raise to that parent, which
-      // `react` diffs into a `RaiseWindow` effect below.
+      // Parent refocus: a closing window that held key while the app was
+      // active hands the raise to its parent, when `refocusesParent` admits
+      // it; `react` diffs the same answer into a `RaiseWindow` effect below.
+      // A child closing without key, or with the app inactive, raises nothing.
       //
       // `key` is left untouched — the OS's echo of the raise will write it —
-      // but the parent's `lastOpSeq` is stamped unconditionally whenever the
-      // raise fires, matching `react`'s own emission below.
-      //
-      // Whether the parent is actually moved to the top of `order` is
-      // conditional: `key` can still name a live record other than the
-      // parent, and moving the parent above it would put a non-key record on
-      // top of whoever holds key. So the reorder happens only when the closed
-      // record itself held `key` — otherwise the parent still gets raised,
-      // and the eventual `OsFocusGained` echo reconciles `order` for real.
+      // but the parent's `lastOpSeq` is stamped and the parent moved to the
+      // top of `order` whenever the raise fires, matching `react`'s emission.
       const parent = closedRec?.parentId !== undefined ? filtered.find((w) => w.id === closedRec.parentId) : undefined;
-      const raisesParent = parent !== undefined && isContentWindow(parent) && admitsFocus(state, parent, MACHINE_REQUEST);
+      const raisesParent = closedRec !== undefined && parent !== undefined && refocusesParent(state, closedRec, parent);
       // `pendingSelectionFocus` names a switcher and the window the user
       // picked; this close is the spend when it is that switcher going away.
       // One-shot — cleared below regardless of whether the target survives.
@@ -815,13 +809,9 @@ export function evolve(state: State, ev: Event): State {
       const opSeq = raisesParent || selectionTarget !== undefined || successor !== null
         ? state.opSeqCounter + 1
         : state.opSeqCounter;
-      const stamped = raisesParent ? { ...parent, lastOpSeq: opSeq } : undefined;
-      const shouldReorder = raisesParent && closedRec?.id === state.key;
-      const withParent = shouldReorder
-        ? [...filtered.filter((w) => w.id !== stamped!.id), stamped!]
-        : stamped !== undefined
-          ? filtered.map((w) => (w.id === stamped.id ? stamped : w))
-          : filtered;
+      const withParent = raisesParent
+        ? [...filtered.filter((w) => w.id !== parent!.id), { ...parent!, lastOpSeq: opSeq }]
+        : filtered;
       // The selection target is stamped but never reordered — `key` and the
       // stack position it implies are the OS echo's to write, same as every
       // other raise. Applied after the parent map so a window that is both the
@@ -1622,19 +1612,18 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // Parent refocus: the same membership-shrink diff as the `CloseWindow` loop
   // just above, read a second time for the removed record's `parentId`.
-  // Parent eligibility is judged against its current (`next`) record.
+  // Eligibility is `refocusesParent` on the state the close arrived in — the
+  // same question `evolve` asked when it stamped and reordered the parent.
   //
-  // Placed here, before `SetStacking` further down: when the closed record
-  // held `key`, `evolve` already moved the eligible parent to the top of
-  // `order` in the same transition, so this raise must reach the executor
-  // before the trailing `SetStacking` sweep replays that new position. When
-  // the closed record did not hold key, `evolve` leaves the parent's position
-  // alone, and the eventual `OsFocusGained` echo reconciles `order` for real.
+  // Placed here, before `SetStacking` further down: `evolve` already moved
+  // the eligible parent to the top of `order` in the same transition, so this
+  // raise must reach the executor before the trailing `SetStacking` sweep
+  // replays that new position.
   for (const prevRecord of prev.order) {
     if (next.order.some((w) => w.id === prevRecord.id)) continue;
     if (prevRecord.parentId === undefined) continue;
-    const parent = next.order.find((w) => w.id === prevRecord.parentId);
-    if (parent !== undefined && isContentWindow(parent) && admitsFocus(next, parent, MACHINE_REQUEST)) {
+    const parent = prev.order.find((w) => w.id === prevRecord.parentId);
+    if (parent !== undefined && next.order.some((w) => w.id === parent.id) && refocusesParent(prev, prevRecord, parent)) {
       effects.push({ type: 'RaiseWindow', id: parent.id, opSeq: next.opSeqCounter });
     }
   }
@@ -2504,6 +2493,20 @@ export function reusableHere(state: State, candidates: readonly WindowId[]): Win
 // desktop, else the topmost application window on a current desktop, else
 // nothing.
 // Reads `priorKey`; `evolve`'s `WindowHidden` and `WindowClosed` arms both call this one helper and record its answer on `lastRaiseRequest`.
+// Parent refocus on a child's close, gated like the successor: only a child
+// that held key while the app was active hands key to its parent, and never
+// one that took key from another app. `state` is the state the close arrived
+// in; `evolve`'s `WindowClosed` arm and `react`'s parent-refocus loop both ask.
+function refocusesParent(state: State, closedRecord: WindowRecord, parent: WindowRecord): boolean {
+  return (
+    closedRecord.id === state.key &&
+    state.appActive === true &&
+    closedRecord.tookKeyFromAnotherApp !== true &&
+    isContentWindow(parent) &&
+    admitsFocus(state, parent, MACHINE_REQUEST)
+  );
+}
+
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
   if (hiddenRecord.priorKey === null || hiddenRecord.tookKeyFromAnotherApp === true) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
