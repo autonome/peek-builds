@@ -9,15 +9,13 @@
 // A machine-initiated operation must not feed its own side effect back in as
 // fresh OS evidence.
 
-import { app, BaseWindow, BrowserWindow, globalShortcut, screen, systemPreferences, webContents } from 'electron';
+import { app, BrowserWindow, globalShortcut, screen, systemPreferences, webContents } from 'electron';
 import type { WebContents } from 'electron';
 
 import {
   FailSafeDesktopProvider,
-  type Placement,
   type PlatformWindowId,
   type ProviderDisplayId,
-  type ProviderLayout,
 } from './desktop-provider.js';
 import { FallbackDesktopProvider } from './desktop-provider-fallback.js';
 import { MacDesktopProvider, macHelperPath, windowNumberFromSourceId } from './desktop-provider-mac.js';
@@ -88,26 +86,11 @@ function requestGuestDestroy(guest: TeardownGuest): void {
 
 const APP_RESIGN_SETTLE_MS = 500;
 
-// Temporary diagnostic mode for the macOS provider's live acceptance check
-// (specs/kernel-desktops.md, 7.2): logs `desktop-read` on every trigger and
-// binds the write test to Control+Option+Command+1. No behaviour change.
-const DESKTOP_PROBE = process.env.PEEK_DESKTOP_PROBE === '1';
-
 // A screen is an Electron display, named by its id; the providers name displays
 // by the same number, so the mapping is the identity. A provider screen that
 // stands for every display at once (`null`) is the one screen `shared`.
 function screenIdOf(display: ProviderDisplayId | null): ScreenId {
   return display ?? 'shared';
-}
-const DESKTOP_PROBE_WRITE_ACCELERATOR = 'Control+Alt+Command+1';
-// Time for the window server to take in a freshly shown test window before reading it.
-const DESKTOP_PROBE_SETTLE_MS = 300;
-// `probePlace` bypasses the fail-safe wrapper's request timeout, so it gets its own.
-const DESKTOP_PROBE_PLACE_TIMEOUT_MS = 2000;
-
-interface DesktopProbeWindows {
-  red: BaseWindow;
-  placeholder: BaseWindow;
 }
 
 // STACKING_TAKES_FOCUS is a claim never checked off macOS — see the design
@@ -240,10 +223,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   private desktopProvider: FailSafeDesktopProvider | null = null;
   // The tail of the serialized provider reads.
   private desktopSync: Promise<void> = Promise.resolve();
-  // The same macOS provider the fail-safe wrapper holds, kept for the probe's
-  // write test, which the provider interface does not offer.
-  private macDesktopProvider: MacDesktopProvider | null = null;
-  private desktopProbeWindows: DesktopProbeWindows | null = null;
 
   private readonly escGrabHandler = (): void => {
     // Reaches the same decision the before-input-event path does, so a stale
@@ -357,7 +336,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       process.platform === 'darwin'
         ? new MacDesktopProvider({ command: macHelperPath(app.isPackaged, process.resourcesPath) })
         : null;
-    this.macDesktopProvider = mac;
     const provider = new FailSafeDesktopProvider({ primary: mac, fallback });
     this.desktopProvider = provider;
     for (const event of ['display-added', 'display-removed', 'display-metrics-changed'] as const) {
@@ -365,27 +343,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     void provider
       .start((change) => this.onDesktopTrigger(`provider-${change.kind}`))
-      .then(() => {
-        if (!DESKTOP_PROBE) {
-          this.onDesktopTrigger('start');
-          return;
-        }
-        const hello = mac?.hello;
-        if (hello && !provider.onFallback) {
-          const symbols = Object.entries(hello.symbols)
-            .map(([name, ok]) => `${name}:${ok ? 'y' : 'n'}`)
-            .join(',');
-          wmLog('desktop-probe-hello', { version: hello.version, symbols });
-        }
-        this.installDesktopProbeShortcut();
-        this.onDesktopTrigger('start');
-      });
+      .then(() => this.onDesktopTrigger('start'));
   }
 
   private stopDesktopProvider(): void {
     this.desktopProvider?.stop();
     this.desktopProvider = null;
-    this.macDesktopProvider = null;
   }
 
   private electronDisplayIds(): string[] {
@@ -423,14 +386,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private nativeWindowForPlatformId(pid: PlatformWindowId): NativeWindow | null {
     const id = this.windowIdForPlatformId(pid);
-    if (id !== null) return this.getNativeWindowFor(id);
-    const probe = this.desktopProbeWindows;
-    if (probe) {
-      for (const w of [probe.red, probe.placeholder]) {
-        if (this.platformWindowIdOf(w as unknown as NativeWindow) === pid) return w as unknown as NativeWindow;
-      }
-    }
-    return null;
+    return id === null ? null : this.getNativeWindowFor(id);
   }
 
   // Every trigger reads the provider and reports what changed to the kernel
@@ -438,7 +394,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // in trigger order, so a slow read never reports over a newer one.
   private onDesktopTrigger(trigger: string): void {
     this.desktopSync = this.desktopSync.then(() => this.syncDesktops(trigger));
-    if (DESKTOP_PROBE) void this.desktopSync.then(() => this.probeRead(trigger));
   }
 
   // Every path ends with `kernelDesktopsRead`, a failed read included: a switch
@@ -490,147 +445,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
       kernelDesktopsRead(switchesSeen);
     }
-  }
-
-  // ─── Temporary probe (PEEK_DESKTOP_PROBE=1) ───────────────────────────────
-
-  // `id#platformId` for every registered window and the probe's test windows.
-  private probeWindowLabels(): Map<PlatformWindowId, string> {
-    const labels = new Map<PlatformWindowId, string>();
-    for (const [id, { win }] of this.windows) {
-      const pid = this.platformWindowIdOf(win);
-      if (pid !== null) labels.set(pid, `${String(id)}#${pid}`);
-    }
-    const probe = this.desktopProbeWindows;
-    if (probe) {
-      const red = this.platformWindowIdOf(probe.red as unknown as NativeWindow);
-      const placeholder = this.platformWindowIdOf(probe.placeholder as unknown as NativeWindow);
-      if (red !== null) labels.set(red, `red#${red}`);
-      if (placeholder !== null) labels.set(placeholder, `placeholder#${placeholder}`);
-    }
-    return labels;
-  }
-
-  private static describeLayout(layout: ProviderLayout, electronDisplays: readonly string[]): WmLogFields {
-    const known = new Set(electronDisplays);
-    return {
-      screens: layout.screens
-        .map((s) => `${s.display ?? 'shared'}:${s.current}:${s.display === null || known.has(s.display) ? 'mapped' : 'unmapped'}`)
-        .join(','),
-      desktops: layout.desktops.map((d) => `${d.id}@${d.display ?? 'shared'}`).join(','),
-      electronDisplays: electronDisplays.join(','),
-    };
-  }
-
-  private static describePlacements(placements: readonly Placement[], labels: Map<PlatformWindowId, string>): string {
-    return placements
-      .map((p) => `${labels.get(p.window) ?? `?#${p.window}`}:${p.display ?? '?'}/${p.onEveryDesktop ? '*' : (p.desktop ?? '?')}`)
-      .join(',');
-  }
-
-  private async probeRead(trigger: string, extra: WmLogFields = {}): Promise<void> {
-    const provider = this.desktopProvider;
-    if (!provider) return;
-    try {
-      const layout = await provider.layout();
-      const labels = this.probeWindowLabels();
-      const placements = await provider.placements([...labels.keys()]);
-      wmLog('desktop-read', {
-        trigger,
-        provider: provider.name,
-        ...ElectronWindowBackend.describeLayout(layout, this.electronDisplayIds()),
-        windows: ElectronWindowBackend.describePlacements(placements, labels),
-        ...extra,
-      });
-    } catch (err) {
-      wmLog('desktop-read-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  private installDesktopProbeShortcut(): void {
-    try {
-      const ok = globalShortcut.register(DESKTOP_PROBE_WRITE_ACCELERATOR, () => void this.probeWriteTest());
-      wmLog('desktop-probe-shortcut', { accelerator: DESKTOP_PROBE_WRITE_ACCELERATOR, registered: ok });
-    } catch (err) {
-      wmLog('desktop-probe-shortcut', { accelerator: DESKTOP_PROBE_WRITE_ACCELERATOR, registered: false, error: String(err) });
-    }
-  }
-
-  // The write test of spec 7.2 step 4: a small opaque red window and a
-  // placeholder window (not a panel, zero opacity, click-through) shown on the
-  // current desktop, both read; then the helper is asked to move the red
-  // window to another desktop of its screen and it is read again. BaseWindows,
-  // so they never pass through the app's window registration. A repeat press
-  // only reads again.
-  private async probeWriteTest(): Promise<void> {
-    if (this.desktopProbeWindows) {
-      await this.probeRead('probe-hotkey');
-      return;
-    }
-    const area = screen.getPrimaryDisplay().workArea;
-    const red = new BaseWindow({
-      x: area.x + 40,
-      y: area.y + 40,
-      width: 120,
-      height: 120,
-      frame: false,
-      resizable: false,
-      focusable: false,
-      hasShadow: false,
-      backgroundColor: '#ff0000',
-      show: false,
-    });
-    const placeholder = new BaseWindow({
-      x: area.x + Math.floor(area.width / 2) - 240,
-      y: area.y + Math.floor(area.height / 2) - 180,
-      width: 480,
-      height: 360,
-      frame: false,
-      focusable: false,
-      hasShadow: false,
-      show: false,
-    });
-    placeholder.setOpacity(0);
-    placeholder.setIgnoreMouseEvents(true);
-    this.desktopProbeWindows = { red, placeholder };
-    red.showInactive();
-    placeholder.showInactive();
-    await new Promise((resolve) => setTimeout(resolve, DESKTOP_PROBE_SETTLE_MS));
-    await this.probeRead('probe-write-before');
-
-    const provider = this.desktopProvider;
-    const mac = this.macDesktopProvider;
-    const redPid = this.platformWindowIdOf(red as unknown as NativeWindow);
-    if (!provider || !mac || provider.onFallback || redPid === null) {
-      wmLog('desktop-probe-write', { attempted: false, reason: provider?.onFallback ? 'fallback' : 'no-mac-provider-or-window-number' });
-      return;
-    }
-    const [placement] = await provider.placements([redPid]);
-    const layout = await provider.layout();
-    const onScreen = layout.screens.find((s) => s.display === (placement?.display ?? null)) ?? layout.screens[0];
-    const target = layout.desktops.find((d) => d.display === (onScreen?.display ?? null) && d.id !== onScreen?.current);
-    if (!target) {
-      wmLog('desktop-probe-write', { attempted: false, reason: 'no-other-desktop', from: placement?.desktop ?? null });
-      return;
-    }
-    try {
-      const result = await Promise.race([
-        mac.probePlace(redPid, target.id),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('place-timeout')), DESKTOP_PROBE_PLACE_TIMEOUT_MS),
-        ),
-      ]);
-      wmLog('desktop-probe-write', {
-        window: redPid,
-        from: placement?.desktop ?? null,
-        to: target.id,
-        attempted: result.attempted,
-        desktopsAfter: result.desktops.join(','),
-      });
-    } catch (err) {
-      wmLog('desktop-probe-write', { window: redPid, to: target.id, error: err instanceof Error ? err.message : String(err) });
-    }
-    await this.probeRead('probe-write-after');
   }
 
   // ───────────────────────────────────────────────────────────────────────────

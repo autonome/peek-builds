@@ -588,7 +588,8 @@ flagged).
 A person performs only the gestures; the app is built and started in an isolated profile, and
 `main.log` is read to verify each step. A diagnostic mode (`PEEK_DESKTOP_PROBE=1`, no behaviour
 change) logs `desktop-read` with the helper's full layout and every registered window's placement,
-read from the provider directly, on every switch and screen change.
+read from the provider directly, on every switch and screen change. The mode is removed once
+this check has passed; re-running the check means restoring it from history.
 
 Precondition, checked in the log: `desktop-provider started name=mac` and a `hello` with every
 private symbol resolved. If the fallback line appears instead, the check stops and the logged

@@ -153,8 +153,9 @@ helper's reads; if they fail, nothing has yet been built on them.
 
    Verify: the `tracks.json` verify, `node scripts/check-platform-leak.mjs`, and the grep above
    returning nothing.
-3. **Remove the first probe's hooks**: `installDesktopProbe` and its `probe*` members in
-   `electron-window-backend.ts`, own commit.
+3. Done after the live checks: the `PEEK_DESKTOP_PROBE` hooks (`installDesktopProbeShortcut`,
+   `probeRead`, `probeWriteTest` and their test windows) are removed from
+   `electron-window-backend.ts`. `MacDesktopProvider.probePlace` and the helper's `place` op stay.
 4. **Providers and the macOS helper, no kernel change**: `desktop-provider.ts`,
    `desktop-provider-fallback.ts`, `main.swift`, `build-desktop-helper.mjs`, the `extraResources`
    entry, `desktop-provider-mac.ts`, the fail-safe, the `check-platform-leak.mjs` additions, and
@@ -267,8 +268,8 @@ The macOS provider acceptance check runs after commit 4; the rule acceptance che
 
 Run from the `kernel-desktops` worktree with `PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktops
 TMPDIR=<worktree>/.tmp` (create `.tmp` first). The agent builds, starts the app, reads `main.log`,
-and asks the person only for the gestures. For the probe add `PEEK_DESKTOP_PROBE=1`, stdout to
-`<worktree>/.tmp/probe.log`.
+and asks the person only for the gestures, stdout to `<worktree>/.tmp/<name>.log`. The
+`PEEK_DESKTOP_PROBE=1` mode that logged the helper's placements is removed (step 3).
 
 ## Done when
 

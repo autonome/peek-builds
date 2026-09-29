@@ -66,9 +66,10 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
   `CurrentDesktopChanged`, then `WindowPlacementReported` per changed window, then `DesktopsRead`.
 - Between the notice and the read (5–30 ms) `desktopUnread` holds, and only on-every-desktop
   windows count as on a current desktop.
-- `space-changed screensBefore=` in the log is the desktop left; `desktop-read` (only with
-  `PEEK_DESKTOP_PROBE=1`) is the helper's truth. In `desktop-read`, `wm-N#<number>:<display>/<desktop>`,
-  `*` = every desktop.
+- `space-changed screensBefore=` in the log is the desktop left. `desktop-provider started
+  name=mac` with no `desktop-provider fallback` line means the helper is in use; nothing logs
+  its per-window placements since the `PEEK_DESKTOP_PROBE` mode was removed (reverting that
+  removal commit brings back its `desktop-read` line).
 
 ## Automation (no person needed)
 
@@ -85,7 +86,7 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
 ## Running the app from this worktree
 
 - Build: `yarn workspace @peek/desktop build` (also builds the desktop helper).
-- Start: `PEEK_DESKTOP_PROBE=1 PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktops
+- Start: `PROFILE=kernel-desktops PEEK_PROFILE=kernel-desktops
   TMPDIR=<worktree>/.tmp yarn start`, stdout to `<worktree>/.tmp/<name>.log`.
 - Stop: kill the `Electron.app` process under this worktree's `node_modules/electron`
   (`pgrep -f`), then confirm no `peek-desktop-helper` is left. Never `pkill -f electron`.
