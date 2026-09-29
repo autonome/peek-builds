@@ -490,8 +490,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         const known = getKernelExecutor().getState().screens.find((k) => k.id === s.id);
         if (known?.current !== s.current) kernelCurrentDesktopChanged(s.id, s.current);
       }
-      kernelDesktopsRead(switchesSeen);
 
+      // Placements go before `kernelDesktopsRead`: the kernel ends a transient
+      // window left on another desktop on that event, from these placements.
       const ids = new Map<PlatformWindowId, WindowId>();
       for (const [id, { win }] of this.windows) {
         const pid = this.platformWindowIdOf(win);
@@ -509,6 +510,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           p.onEveryDesktop !== (record.onEveryDesktop === true);
         if (changed) kernelWindowPlacementReported(id, screenId, p.desktop, p.onEveryDesktop);
       }
+      kernelDesktopsRead(switchesSeen);
     } catch (err) {
       wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
       kernelDesktopsRead(switchesSeen);

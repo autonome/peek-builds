@@ -21,7 +21,7 @@ import {
   isAppResignSweepEligible,
   holdsAppOnScreen,
   isNonParentRole,
-  isTransientPageHost,
+  holdsKeyTakenFromAnotherApp,
   onCurrentDesktop,
   reusableHere,
   isCurrentDesktop,
@@ -7626,7 +7626,7 @@ describe('window-kernel: a user-intent raise is never redundant while the app is
   });
 });
 
-describe('window-kernel: a transient page-host window closes outright whenever it stops holding key, including the app coming forward while it holds key (window-rules.md G13)', () => {
+describe('window-kernel: a transient window that took key from another app ends whenever it stops holding that key, including the app coming forward (window-rules.md G13, specs/kernel-desktops.md rule 2)', () => {
   const sidePage = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
     type: 'WindowRegistered',
     id,
@@ -7637,9 +7637,10 @@ describe('window-kernel: a transient page-host window closes outright whenever i
     class: 'primary',
     role: 'content',
     nonActivating: true,
+    transient: true,
     ...extra,
   });
-  const palette = (id: WindowId): Event => ({
+  const palette = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
     type: 'WindowRegistered',
     id,
     kind: 'browser',
@@ -7649,117 +7650,189 @@ describe('window-kernel: a transient page-host window closes outright whenever i
     class: 'palette',
     role: 'palette',
     nonActivating: true,
+    transient: true,
+    ...extra,
   });
   const record = (state: State, id: WindowId): WindowRecord => state.order.find((w) => w.id === id)!;
   const dismisses = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'DismissWindow');
 
-  // A transient page-host window in flight: the app inactive, the page shown, raised with user
-  // intent from the palette, and confirmed key by the OS.
-  const transientPageHostHoldingKey = (id: WindowId, extra?: Partial<Extract<Event, { type: 'WindowRegistered' }>>): State =>
+  // One screen `S` showing desktop `d1`; `d2` not shown.
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: 'S', current: 'd1' }],
+    desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }],
+  };
+  // The platform's order for a switch to `d2`: the notice, then one read that
+  // reports the current desktop and every placement before `DesktopsRead`.
+  const switchNotice: Event = { type: 'DesktopSwitchObserved' };
+  const readSwitchTo = (desktop: string, switchesSeen: number, placements: Event[] = []): Event[] => [
+    { type: 'CurrentDesktopChanged', screen: 'S', desktop },
+    ...placements,
+    { type: 'DesktopsRead', switchesSeen },
+  ];
+
+  // A transient window in flight: the app inactive, the window shown, raised
+  // with user intent, and confirmed key by the OS.
+  const holdingKeyFromAnotherApp = (register: Event, id: WindowId): State =>
     fold([
+      layout,
       { type: 'AppResigned' },
-      sidePage(id, extra),
+      register,
       { type: 'WindowShown', id },
       { type: 'FocusRaiseRequested', id, intent: 'user' },
       { type: 'OsFocusGained', id },
     ]);
+  const transientPageHoldingKey = (id: WindowId, extra?: Partial<Extract<Event, { type: 'WindowRegistered' }>>): State =>
+    holdingKeyFromAnotherApp(sidePage(id, extra), id);
 
-  it('the fixture is a transient page-host window', () => {
-    const state = transientPageHostHoldingKey(wid(1));
+  it('the fixture holds key taken from another app', () => {
+    const state = transientPageHoldingKey(wid(1));
     assert.strictEqual(state.appActive, false);
     assert.strictEqual(state.key, wid(1));
-    assert.strictEqual(isTransientPageHost(state, record(state, wid(1))), true);
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(state, record(state, wid(1))), true);
   });
 
   it('losing key with the app still inactive closes the page', () => {
-    const before = transientPageHostHoldingKey(wid(1));
+    const before = transientPageHoldingKey(wid(1));
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
     assert.strictEqual(after.state.appActive, false, 'the other app keeps focus');
-    assert.strictEqual(isTransientPageHost(after.state, record(after.state, wid(1))), false);
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(after.state, record(after.state, wid(1))), false);
   });
 
   it('the app activating while the page is key closes it too', () => {
-    const before = transientPageHostHoldingKey(wid(1));
+    const before = transientPageHoldingKey(wid(1));
     const after = foldWithEffects([{ type: 'AppActivated' }], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
-  it('key moving to the palette (the hotkey pressed again) ends the transient page-host window', () => {
-    const before = fold([palette(wid(9))], transientPageHostHoldingKey(wid(1)));
+  it('key moving to the palette (the hotkey pressed again) ends the page', () => {
+    const before = fold([palette(wid(9))], transientPageHoldingKey(wid(1)));
     const after = foldWithEffects([{ type: 'WindowShown', id: wid(9) }, { type: 'OsFocusGained', id: wid(9) }], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
   it('emits once: a second focus-lost report for the same window closes nothing further', () => {
-    const before = transientPageHostHoldingKey(wid(1));
+    const before = transientPageHoldingKey(wid(1));
     const first = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     const second = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }, { type: 'AppActivated' }], first.state);
     assert.strictEqual(dismisses(first.effects).length, 1);
     assert.deepStrictEqual(dismisses(second.effects), []);
   });
 
-  it('a palette losing key is not a transient page-host window and closes nothing', () => {
-    const before = fold([
-      { type: 'AppResigned' },
-      palette(wid(9)),
-      { type: 'WindowShown', id: wid(9) },
-      { type: 'FocusRaiseRequested', id: wid(9), intent: 'user' },
-      { type: 'OsFocusGained', id: wid(9) },
-    ]);
-    assert.strictEqual(before.key, wid(9));
+  // The rule reads `transient`, never the kind of window or what opened it.
+  it('a palette that took key from another app ends on losing key, the same as a page', () => {
+    const before = holdingKeyFromAnotherApp(palette(wid(9)), wid(9));
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(before, record(before, wid(9))), true);
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(9) }], before);
-    assert.deepStrictEqual(dismisses(after.effects), []);
+    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(9) }]);
   });
 
-  it('an ordinary page losing key with the app inactive closes nothing — only a non-activating one is a transient page-host window', () => {
-    const before = transientPageHostHoldingKey(wid(1), { nonActivating: undefined });
-    assert.strictEqual(isTransientPageHost(before, record(before, wid(1))), false);
+  it('a window that is not transient losing key with the app inactive closes nothing', () => {
+    const before = transientPageHoldingKey(wid(1), { transient: undefined });
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(before, record(before, wid(1))), false);
     const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
     assert.deepStrictEqual(dismisses(after.effects), []);
   });
 
-  it('a transient page-host window that closes or hides in the same transition is not dismissed twice — Escape and a close request end it outright', () => {
-    const before = transientPageHostHoldingKey(wid(1));
+  it('an activating window takes no key from another app, so this rule closes nothing when it loses key', () => {
+    const before = transientPageHoldingKey(wid(1), { nonActivating: undefined });
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(before, record(before, wid(1))), false);
+    const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], before);
+    assert.deepStrictEqual(dismisses(after.effects), []);
+  });
+
+  it('a transient window that closes or hides in the same transition is not dismissed twice — Escape and a close request end it outright', () => {
+    const before = transientPageHoldingKey(wid(1));
     const closed = foldWithEffects([{ type: 'WindowClosed', id: wid(1) }], before);
     assert.deepStrictEqual(dismisses(closed.effects), []);
     const hidden = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], before);
     assert.deepStrictEqual(dismisses(hidden.effects), []);
   });
 
-  // A desktop switch (row 5d) ends the page as a loss of focus, whichever
-  // order the platform reports the switch, the loss of key and an app
-  // activation in.
-  it('a desktop switch closes the page, and an activation that follows it does nothing further', () => {
-    const before = transientPageHostHoldingKey(wid(1));
-    const switched = foldWithEffects([{ type: 'DesktopSwitchObserved' }], before);
+  // Switch (specs/kernel-desktops.md 7.1): the read decides, not the notice.
+  it('the switch notice alone ends nothing', () => {
+    const before = transientPageHoldingKey(wid(1));
+    const noticed = foldWithEffects([switchNotice], before);
+    assert.deepStrictEqual(dismisses(noticed.effects), []);
+    assert.strictEqual(record(noticed.state, wid(1)).pendingHidden, undefined);
+  });
+
+  it('a transient window shown before a switch and read afterwards as not on a current desktop ends once', () => {
+    const before = transientPageHoldingKey(wid(1));
+    assert.strictEqual(record(before, wid(1)).desktop, 'd1', 'precondition: stamped on show');
+    const switched = foldWithEffects([switchNotice, ...readSwitchTo('d2', 1, [
+      { type: 'WindowPlacementReported', id: wid(1), screen: 'S', desktop: 'd1', onEveryDesktop: false },
+    ])], before);
     assert.deepStrictEqual(dismisses(switched.effects), [{ type: 'DismissWindow', id: wid(1) }]);
-    const activated = foldWithEffects([{ type: 'AppActivated' }], switched.state);
+    const activated = foldWithEffects([{ type: 'AppActivated' }, { type: 'OsFocusLost', id: wid(1) }], switched.state);
     assert.deepStrictEqual(dismisses(activated.effects), []);
   });
 
-  it('a desktop switch then a loss of key closes the page once', () => {
-    const before = transientPageHostHoldingKey(wid(1));
-    const after = foldWithEffects([
-      { type: 'DesktopSwitchObserved' },
-      { type: 'OsFocusLost', id: wid(1) },
+  it('a transient window on every desktop shown before a switch ends on the read too', () => {
+    const before = holdingKeyFromAnotherApp(palette(wid(9), { onEveryDesktop: true }), wid(9));
+    const switched = foldWithEffects([switchNotice, ...readSwitchTo('d2', 1)], before);
+    assert.deepStrictEqual(dismisses(switched.effects), [{ type: 'DismissWindow', id: wid(9) }]);
+  });
+
+  it('a transient window shown after the switch notice, before the read, and read on the current desktop: nothing', () => {
+    const noticed = fold([layout, { type: 'AppResigned' }, switchNotice]);
+    const shown = fold([sidePage(wid(1)), { type: 'WindowShown', id: wid(1) }], noticed);
+    assert.strictEqual(record(shown, wid(1)).desktop, undefined, 'shown unread: no stamp');
+    const read = foldWithEffects(readSwitchTo('d2', 1, [
+      { type: 'WindowPlacementReported', id: wid(1), screen: 'S', desktop: 'd2', onEveryDesktop: false },
+    ]), shown);
+    assert.deepStrictEqual(dismisses(read.effects), []);
+    assert.strictEqual(record(read.state, wid(1)).desktop, 'd2');
+  });
+
+  it('a transient window on every desktop re-shown during the unread gap takes the desktop just read, not the one it was first shown on', () => {
+    const firstShown = fold([
+      layout,
+      palette(wid(9), { onEveryDesktop: true }),
+      { type: 'WindowShown', id: wid(9) },
+      { type: 'WindowHidden', id: wid(9) },
+    ]);
+    assert.strictEqual(record(firstShown, wid(9)).desktop, 'd1', 'precondition');
+    const reshown = fold([switchNotice, { type: 'WindowShown', id: wid(9) }], firstShown);
+    const read = foldWithEffects(readSwitchTo('d2', 1), reshown);
+    assert.deepStrictEqual(dismisses(read.effects), []);
+    assert.strictEqual(record(read.state, wid(9)).desktop, 'd2');
+    const back = foldWithEffects([switchNotice, ...readSwitchTo('d1', 2)], read.state);
+    assert.deepStrictEqual(dismisses(back.effects), [{ type: 'DismissWindow', id: wid(9) }]);
+  });
+
+  it('a window that is not transient stays open across a switch', () => {
+    const before = transientPageHoldingKey(wid(1), { transient: undefined });
+    const switched = foldWithEffects([switchNotice, ...readSwitchTo('d2', 1)], before);
+    assert.deepStrictEqual(dismisses(switched.effects), []);
+  });
+
+  it('a switch on another screen ends nothing', () => {
+    const twoScreens: Event = {
+      type: 'DesktopLayoutReported',
+      screens: [{ id: 'S', current: 'd1' }, { id: 'T', current: 't1' }],
+      desktops: [{ id: 'd1', screen: 'S' }, { id: 'd2', screen: 'S' }, { id: 't1', screen: 'T' }, { id: 't2', screen: 'T' }],
+    };
+    const before = fold([twoScreens], transientPageHoldingKey(wid(1)));
+    const switched = foldWithEffects([
+      switchNotice,
+      { type: 'CurrentDesktopChanged', screen: 'T', desktop: 't2' },
+      { type: 'DesktopsRead', switchesSeen: 1 },
     ], before);
+    assert.deepStrictEqual(dismisses(switched.effects), []);
+  });
+
+  it('a loss of key then a switch ends the page once', () => {
+    const before = transientPageHoldingKey(wid(1));
+    const after = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }, switchNotice, ...readSwitchTo('d2', 1)], before);
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
-  it('a loss of key then a desktop switch closes the page once', () => {
-    const before = transientPageHostHoldingKey(wid(1));
-    const after = foldWithEffects([
-      { type: 'OsFocusLost', id: wid(1) },
-      { type: 'DesktopSwitchObserved' },
-    ], before);
-    assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
-  });
-
-  it('a desktop switch after the page already closed at activation dismisses nothing further', () => {
-    const before = transientPageHostHoldingKey(wid(1));
+  it('a switch after the page already closed at activation dismisses nothing further', () => {
+    const before = transientPageHoldingKey(wid(1));
     const activated = foldWithEffects([{ type: 'AppActivated' }], before);
-    const switched = foldWithEffects([{ type: 'DesktopSwitchObserved' }], activated.state);
+    const switched = foldWithEffects([switchNotice, ...readSwitchTo('d2', 1)], activated.state);
     assert.deepStrictEqual(dismisses(switched.effects), []);
   });
 
@@ -7769,7 +7842,8 @@ describe('window-kernel: a transient page-host window closes outright whenever i
   const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
   const openedFromPaletteOverAnotherApp = (): State =>
     fold([
-      sidePage(wid(5), { nonActivating: undefined }),
+      layout,
+      sidePage(wid(5), { nonActivating: undefined, transient: undefined }),
       { type: 'WindowShown', id: wid(5) },
       { type: 'OsFocusGained', id: wid(5) },
       { type: 'OsFocusLost', id: wid(5) },
@@ -7795,10 +7869,11 @@ describe('window-kernel: a transient page-host window closes outright whenever i
     assert.deepStrictEqual(closed.state.lastRaiseRequest, activated.state.lastRaiseRequest);
   });
 
-  it('the page closing after a desktop switch and then an activation raises no other Peek window', () => {
+  it('the page closing after a switch and then an activation raises no other Peek window', () => {
     const before = openedFromPaletteOverAnotherApp();
     const after = foldWithEffects([
-      { type: 'DesktopSwitchObserved' },
+      switchNotice,
+      ...readSwitchTo('d2', 1),
       { type: 'AppActivated' },
       { type: 'WindowClosed', id: wid(1) },
     ], before);
@@ -7858,7 +7933,7 @@ describe('window-kernel: desktop state', () => {
     assert.deepStrictEqual(next.screens.map((s) => s.id), ['A', 'B', 'C']);
   });
 
-  it('a desktop switch with no transient page-host window changes nothing but the version', () => {
+  it('a desktop switch notice changes nothing but the version', () => {
     const before = fold([layout, page(1), { type: 'WindowShown', id: wid(1) }]);
     const next = evolve(before, { type: 'DesktopSwitchObserved' });
     assert.deepStrictEqual(next.order, before.order);

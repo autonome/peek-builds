@@ -509,6 +509,29 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
 }
 
 export function evolve(state: State, ev: Event): State {
+  return markEndedKeyTakenFromAnotherApp(state, evolveEvent(state, ev));
+}
+
+// A transient window that held key taken from another app ended in this
+// transition: a structural diff of `holdsKeyTakenFromAnotherApp` per record.
+// Every way it can stop holding that key ends it, including the app coming
+// forward while it holds key (5e): it was asked for while Peek was not
+// focused, so it ends when that moment ends, and a page stays reachable from
+// history. Marked `pendingHidden`, so `react`'s dismissal diff closes or hides
+// it once and a later rule (a desktop read) does not end it again. A window
+// that hid or closed in this very transition (Escape, a close request) or is
+// already marked needs nothing.
+function markEndedKeyTakenFromAnotherApp(prev: State, next: State): State {
+  const ended = (w: WindowRecord): boolean => {
+    if (!w.visible || w.pendingHidden === true) return false;
+    const before = prev.order.find((p) => p.id === w.id);
+    return before !== undefined && holdsKeyTakenFromAnotherApp(prev, before) && !holdsKeyTakenFromAnotherApp(next, w);
+  };
+  if (!next.order.some(ended)) return next;
+  return { ...next, order: next.order.map((w) => (ended(w) ? { ...w, pendingHidden: true } : w)) };
+}
+
+function evolveEvent(state: State, ev: Event): State {
   switch (ev.type) {
     case 'WindowRegistered': {
       // Re-registration of a still-live id is real, expected traffic (e.g. a
@@ -720,13 +743,13 @@ export function evolve(state: State, ev: Event): State {
           });
           // A genuine show stamps the current desktop of the window's screen,
           // provisionally until a placement report; a window on every desktop
-          // keeps the one it was first shown on.
+          // that is not transient keeps the one it was first shown on.
           if (w.visible) return flushed;
           const desktop = desktopOnShow(state, w);
           if (desktop !== undefined) return { ...flushed, lastOpSeq: opSeq, desktop };
           // Shown while the current desktop is unread: the old stamp may name
           // the desktop the user left, so the window waits for its placement report.
-          if (desktopUnread(state) && !isOnEveryDesktop(w)) {
+          if (desktopUnread(state) && !keepsFirstDesktop(w)) {
             const { desktop: _left, ...unplaced } = flushed;
             return { ...unplaced, lastOpSeq: opSeq };
           }
@@ -1327,29 +1350,40 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'DesktopSwitchObserved': {
-      // A switch ends a transient page-host window as a loss of focus: it is
-      // marked `pendingHidden` here, so `react`'s dismissal diff closes it.
-      // Decided on the platform's switch notification itself, not on the
-      // `CurrentDesktopChanged` that follows it: that one waits on a desktop
-      // read, and macOS may follow the switch with an app activation while the
-      // page still holds key — marking here ahead of that keeps the close on
-      // this switch rather than racing an activation that ends the window the
-      // same way (row 5e).
-      // It also marks the current desktop unread until the read that follows.
-      const endsOnSwitch = (w: WindowRecord): boolean => w.pendingHidden !== true && isTransientPageHost(state, w);
-      const counted = { ...state, desktopSwitchCount: state.desktopSwitchCount + 1, version: state.version + 1 };
-      if (!state.order.some(endsOnSwitch)) return counted;
-      return {
-        ...counted,
-        order: state.order.map((w) => (endsOnSwitch(w) ? { ...w, pendingHidden: true } : w)),
-      };
+      // Marks the current desktop unread until the read that follows. It ends
+      // nothing: macOS sends it after the switch animation, so a transient
+      // window the user opened on the new desktop in the meantime would be
+      // ended by it. The read decides (`DesktopsRead`).
+      return { ...state, desktopSwitchCount: state.desktopSwitchCount + 1, version: state.version + 1 };
     }
 
     case 'DesktopsRead': {
       // A fact, never rejected. A read covering no new switch changes nothing,
       // so every routine read does not bump `version`.
       if (ev.switchesSeen <= state.desktopSwitchesRead) return state;
-      return { ...state, desktopSwitchesRead: ev.switchesSeen, version: state.version + 1 };
+      const read = { ...state, desktopSwitchesRead: ev.switchesSeen, version: state.version + 1 };
+      // A switch ends every visible transient window that is not on a current
+      // desktop (specs/kernel-desktops.md rule 2): marked `pendingHidden`, so
+      // `react`'s dismissal diff closes or hides it once. The read sends every
+      // placement before this event, so a desktop here is the platform's. A
+      // transient window shown while the desktop was unread has none; it was
+      // shown on the desktop just read, and takes that one. A switch on another
+      // screen leaves the window's desktop current, so it changes nothing.
+      if (read.screens.length === 0) return read;
+      const shownTransient = (w: WindowRecord): boolean =>
+        w.transient === true && w.visible && w.pendingHidden !== true && w.overlayFor === undefined;
+      if (!read.order.some(shownTransient)) return read;
+      return {
+        ...read,
+        order: read.order.map((w) => {
+          if (!shownTransient(w)) return w;
+          if (w.desktop === undefined) {
+            const desktop = desktopOnShow(read, w);
+            return desktop === undefined ? w : { ...w, desktop };
+          }
+          return isCurrentDesktop(read, w.desktop) ? w : { ...w, pendingHidden: true };
+        }),
+      };
     }
 
     case 'WindowPlacementReported': {
@@ -1768,9 +1802,10 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // Transient autoclose: dismissal is one structural diff, kept right after
   // the `RaiseWindow` rule and before `SetStacking` to preserve emission order.
   //
-  // The choice of which record to dismiss is made in `evolve`, by the three
-  // sweep triggers themselves; each marks its own victims `pendingHidden: true`
-  // in that same transition. `react` only has to notice the mark landing: a
+  // The choice of which record to dismiss is made in `evolve`, by the sweep
+  // triggers, the end of a key taken from another app
+  // (`markEndedKeyTakenFromAnotherApp`) and a desktop read (`DesktopsRead`);
+  // each marks its own victims `pendingHidden: true` in that same transition. `react` only has to notice the mark landing: a
   // record whose `pendingHidden` reads not-true in `prev` and `true` in `next`
   // yields one `DismissWindow` — unless that flip is explained by a teardown
   // request naming the same record instead of a sweep choosing it.
@@ -1800,21 +1835,6 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const isHeld = nextRecord.heldAboveOtherApps === true;
     if (isHeld && !wasHeld) effects.push({ type: 'HoldAboveOtherApps', id: nextRecord.id });
     else if (!isHeld && wasHeld) effects.push({ type: 'ReleaseFromAboveOtherApps', id: nextRecord.id });
-  }
-
-  // Transient page-host window ended: a structural diff of `isTransientPageHost` per record. Only a
-  // window still on screen is acted on — one that hid or closed in this very
-  // transition (Escape, a close request) needs nothing, and a record that left
-  // `next.order` is not visited at all. Every way the window can stop being a
-  // transient page host closes it, including the app coming forward while it
-  // holds key (5e): the page was asked for while Peek was not focused, so the
-  // task ends when that moment ends, and the page stays reachable from history.
-  for (const nextRecord of next.order) {
-    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
-    if (prevRecord === undefined) continue;
-    if (!isTransientPageHost(prev, prevRecord) || isTransientPageHost(next, nextRecord)) continue;
-    if (!nextRecord.visible || nextRecord.pendingHidden === true) continue;
-    effects.push({ type: 'DismissWindow', id: nextRecord.id });
   }
 
   // SetStacking: a minimal replay, not a re-assert of everything eligible. The
@@ -2262,12 +2282,18 @@ export function desktopUnread(state: State): boolean {
 
 // The desktop a genuine show stamps: the current desktop of the window's
 // screen, or of the first screen when its screen is unknown; nothing before the
-// first layout report, or while the current desktop is unread.
+// first layout report, or while the current desktop is unread. A transient
+// window on every desktop is shown where the user is each time, so each show
+// stamps afresh; any other window on every desktop keeps its first.
 function desktopOnShow(state: State, record: WindowRecord): DesktopId | undefined {
-  if (isOnEveryDesktop(record) && record.desktop !== undefined) return record.desktop;
+  if (keepsFirstDesktop(record)) return record.desktop;
   if (desktopUnread(state)) return undefined;
   const screen = state.screens.find((s) => s.id === record.screen) ?? state.screens[0];
   return screen?.current;
+}
+
+function keepsFirstDesktop(record: WindowRecord): boolean {
+  return isOnEveryDesktop(record) && record.desktop !== undefined && record.transient !== true;
 }
 
 export function windowById(state: State, id: WindowId): WindowRecord | null {
@@ -2471,19 +2497,19 @@ export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
   return record.kind === 'page-host' && record.layer === BASE_LAYER && isContentWindow(record);
 }
 
-// A transient page-host window: a page the user works in, built non-activating so it could take
-// key while the app was inactive, and holding key that way right now
-// (window-rules.md G1, G13). It ends the moment it stops being key with the
-// app still inactive, or the app becomes active; `react` diffs this predicate
-// across the transition and emits one `DismissWindow`; nothing replaces it.
-export function isTransientPageHost(state: State, record: WindowRecord): boolean {
+// A transient window holding key it took from another app, directly or
+// through another transient window (window-rules.md G1, G13): whatever opened
+// it, and whatever kind of window it is. It ends the moment it stops being key
+// with the app still inactive, or the app becomes active; `react` diffs this
+// predicate across the transition and emits one `DismissWindow`; nothing
+// replaces it.
+export function holdsKeyTakenFromAnotherApp(state: State, record: WindowRecord): boolean {
   return (
     !state.appActive &&
     state.key === record.id &&
     record.visible &&
-    record.nonActivating === true &&
-    record.kind === 'page-host' &&
-    isContentWindow(record)
+    record.transient === true &&
+    record.tookKeyFromAnotherApp === true
   );
 }
 

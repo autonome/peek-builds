@@ -33,9 +33,11 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
   macOS only when it is a panel, because Electron's panel re-adds join-all-Spaces on every
   collection-behaviour change (`electron_ns_panel.mm setCollectionBehavior:`).
   `setVisibleOnAllWorkspaces(false)` cannot undo it.
-- While it holds key with the app inactive, `window-kernel.ts isTransientPageHost` holds; `react`
-  emits one `DismissWindow` when that stops (click-away, desktop switch, Peek brought forward).
-  `DesktopSwitchObserved` marks it `pendingHidden` at once.
+- While any transient window holds key taken from another app,
+  `window-kernel.ts holdsKeyTakenFromAnotherApp` holds; when that stops (click-away, Peek brought
+  forward) `evolve` (`markEndedKeyTakenFromAnotherApp`) marks it `pendingHidden` and `react` emits
+  one `DismissWindow`. A desktop switch ends it on the read, not the notice: `DesktopsRead` marks
+  every visible transient window whose desktop is not current.
 - Its raise is held above other apps: `FocusRaiseRequested` in `evolve` sets `heldAboveOtherApps`
   (`admitsHoldAboveOtherApps`), realized by `pinAlwaysOnTop` at the floating level. Without the
   floating level, macOS restacks an inactive app's ordinary window behind the active app's windows
@@ -61,7 +63,7 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
   `DesktopSwitchObserved`, then `onDesktopTrigger('space-changed')` queues `syncDesktops`.
 - `syncDesktops` reads the helper (`native/desktop-helper/main.swift`, through
   `desktop-provider-mac.ts` and `FailSafeDesktopProvider`), sends `DesktopLayoutReported` /
-  `CurrentDesktopChanged` / `DesktopsRead`, then `WindowPlacementReported` per changed window.
+  `CurrentDesktopChanged`, then `WindowPlacementReported` per changed window, then `DesktopsRead`.
 - Between the notice and the read (5–30 ms) `desktopUnread` holds, and only on-every-desktop
   windows count as on a current desktop.
 - `space-changed screensBefore=` in the log is the desktop left; `desktop-read` (only with
