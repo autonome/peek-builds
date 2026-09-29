@@ -6,6 +6,7 @@
 import {
   keyWindow,
   topmost,
+  frontWindowHere,
   isContentWindow,
   isTransientAutocloseCandidate,
   roleIn,
@@ -165,7 +166,7 @@ export function interpretEscape(key: EscapeKeyPress, state: State): EscapeOutcom
     return {
       kind: 'close-switcher',
       command: { type: 'CloseOrHideWindow', id: switcher.id, expectedVersion: state.version },
-      restoreTargetId: topmost(state, isContentWindow)?.id ?? null,
+      restoreTargetId: frontWindowHere(state, isContentWindow),
     };
   }
 
