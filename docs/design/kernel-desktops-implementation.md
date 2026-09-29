@@ -189,10 +189,10 @@ helper's reads; if they fail, nothing has yet been built on them.
      is an explicit choice and rule 1 takes the user to the picked window's desktop, so it is gated
      on `admitsFocusAssert()` only, marked by `FocusAssertRequest.switcherPick`. Until 8b it still
      carries no `intent: 'user'`, and no `ShowDesktop` precedes it.
-   - **8b: one admission rule.** `admitsFocus(state, record, { named })` (spec section 4) replaces
+   - **8b: one admission rule.** `admitsFocus(state, record, { user, named })` (spec section 4) replaces
      `admitsMachineRaise` and `admitsFocusAssert` at every site in `evolve` and `react`, including
      `successorOnHide`. Folded in, because each is the same rule applied unevenly today:
-     - app inactive and not named → not admitted, so `react` stops emitting what `planRaise`
+     - app inactive and no user intent → not admitted, so `react` stops emitting what `planRaise`
        suppresses (decision 3); `planRaise` keeps headless and non-activating choices only;
      - a key move reported by the OS (`OsFocusGained`) is not gated;
      - `FocusAssertRequested` and `FocusRaiseRequested` stamp `lastOpSeq` only when they issue an

@@ -182,10 +182,15 @@ Initial state: no screens, no desktops.
 - `admitsReuse(state, record): boolean` — the record may serve a request that would reuse it:
   visible and on a current desktop, or hidden. A hidden window is re-shown on the current desktop
   of its screen; if the OS shows it elsewhere, the following placement report corrects the kernel.
-- `admitsFocus(state, record, { named }): boolean` — the one admission rule for bringing a window
-  forward. Always: visible (or being shown in the same transition) and not being hidden or
-  dismissed. With `named` (the user named this window: a switcher pick) that is all. Without it,
-  also on a current desktop and the app active. Every raise, focus assert, content focus,
+- `admitsFocus(state, record, { user, named }): boolean` — the one admission rule for bringing a
+  window forward. Always: visible (or being shown in the same transition) and not being hidden or
+  dismissed. Then two independent conditions:
+  - the app is active, or the request carries user intent (`user`: the user acted, for example
+    the palette opening over another app);
+  - the window is on a current desktop, or the user named this window (`named`: a switcher pick,
+    which implies `user`).
+
+  Every raise, focus assert, content focus,
   successor, parent refocus and latch spend in `react`, and every op-token stamp in `evolve`,
   MUST ask this predicate and no other; a key move reported by the OS (`OsFocusGained`) is not a
   request and is not gated.
