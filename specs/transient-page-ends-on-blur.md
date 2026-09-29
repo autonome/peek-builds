@@ -6,6 +6,10 @@ depends-on: []
 
 # A transient page-host window ends when it loses key: the page is reopened as an ordinary window
 
+> **Superseded by `specs/kernel-desktops.md` rules 2–3; do not implement.** A transient window
+> now ends with nothing replacing it (the page stays reachable from history), and it is an
+> ordinary window flagged non-activating on its own desktop, not a panel on every desktop.
+
 Peek item `f46a44ad`. A page opened from the command palette while another app is frontmost is a
 transient page-host window (`izui-roles.ts pageOpensTransient()`, `docs/design/window-rules.md` G1): built as a
 non-activating window (`type: 'panel'`) so it can take typing without the app coming forward.

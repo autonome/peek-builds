@@ -163,8 +163,10 @@ helper's reads; if they fail, nothing has yet been built on them.
    spec's macOS provider acceptance check) on a real Mac with a person. Stop and report if ids are
    not stable across returns; never fall back to letting the page follow the user. Two backend
    fixes found by the probe follow here, one commit each: the shared page chrome window on every
-   desktop (`hybrid-overlay.ts ensureOverlay()`), and the transient page-host window pinned to the
-   desktop it is shown on, no longer declared `onEveryDesktop`.
+   desktop (`hybrid-overlay.ts ensureOverlay()`), and ~~the transient page-host window pinned to
+   the desktop it is shown on~~ — not possible for a panel, which Electron keeps on every
+   desktop; done instead by building it as an ordinary window flagged non-activating
+   (`4e6ada21`), later every transient window (`52e4f46a`, `26b5be31`).
 5. **Kernel model reshape.** Kernel: `State.screens` / `State.desktops`, `WindowRecord.screen`, the
    three spec events plus `DesktopSwitchObserved`, `isCurrentDesktop`, reshaped `onCurrentDesktop`.
    Backend: the report → event loop (`electron-window-backend.ts onDesktopTrigger` /
@@ -347,10 +349,11 @@ verified:
 The panel travelling with the user during the switch gesture is fixed only by 1 or 2; 3 and 4 fix
 only where the reopened window lands.
 
-**Chosen for now (`84a123ee`): none of the four.** The panel stays; losing focus with the app
-inactive closes it, and nothing is reopened. Accepted cost: during a switch gesture the page shows
-on both desktops until the switch ends. Candidate 1 remains the way to keep the page open across a
-click-away if that is wanted later.
+**Chosen for now (`84a123ee`): none of the four.** Losing focus with the app inactive closes the
+transient page-host window, and nothing is reopened. The panel was since replaced by an ordinary
+window flagged non-activating (`4e6ada21`), which stays on its own desktop, so the page no longer
+shows on both desktops during a switch gesture. Keeping a page open across a click-away is not
+planned: a transient window ends when the user leaves it.
 
 ## Probe findings
 

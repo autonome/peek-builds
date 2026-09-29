@@ -74,10 +74,11 @@ rule that depends on either, on every platform the desktop app runs on.
 ## 2. User stories
 
 - As a user on desktop 2 with another app in front, when I open a URL from the palette and then
-  click that app, then the page-host window stays on desktop 2 behind it.
+  click that app, then the page-host window closes and I am back in that app; the page stays
+  reachable from history.
 - As a user, when I open a URL from the palette over another app on desktop 2 and then switch to
-  desktop 1, then desktop 1 shows what it showed before, and the page-host window is on desktop 2
-  when I return.
+  desktop 1, then desktop 1 shows what it showed before, and the page-host window has closed; it
+  is never drawn on desktop 1, and the page stays reachable from history.
 - As a user, when I open a URL from the palette over another app and then bring Peek forward,
   then that page-host window closes, the same as if I had clicked another app or switched desktop;
   the page stays reachable from history.
@@ -113,9 +114,8 @@ rule that depends on either, on every platform the desktop app runs on.
    leaving it (another app, another desktop) or by bringing Peek forward while it still holds key.
    Accepted cost of keeping a transient window on its own desktop: it cannot show over another
    app's full-screen desktop.
-4. **Closing or hiding a window never switches desktop.** The user goes back to where they were:
-   another app if the window took key from one, else the prior window if it is on a current
-   desktop, else the frontmost page-host window on a current desktop, else nothing (rule 9).
+4. **Closing or hiding a window never switches desktop.** Where key goes next is rule 9. While
+   the app is inactive the manager focuses nothing: the user stays in the other app.
 5. **New things happen where the user is.** A request that would reuse an open window — a URL
    already open, a window opened by key (settings, groups, tags and other one-per-app windows), an
    extension page — reuses it only if it is hidden or on a current desktop. Otherwise:
@@ -147,8 +147,9 @@ rule that depends on either, on every platform the desktop app runs on.
 9. **F7 hide-returns-key** (replaces F7 in `window-rules.md`):
 
    > When the key window hides or closes while the app is active, the user goes back to where they
-   > were before it took key. If it took key from another app (no prior Peek window), the manager
-   > focuses nothing and the user is back in that app: a transient window opened over another app
+   > were before it took key. If it took key from another app, directly or through a chain of
+   > transient windows (no prior Peek window), the manager focuses nothing and the user is back
+   > in that app: a transient window opened over another app
    > never brings Peek forward when it ends. If it took key from a Peek window, key returns to that
    > window if it is visible and on a current desktop; if that window is gone or elsewhere, to the
    > topmost visible application window on a current desktop; otherwise nothing. Whatever the OS
@@ -266,8 +267,12 @@ With the fallback provider the show stamp is the only source and is correct by c
   on another desktop while it waits, since it belongs to the desktop it was shown on. The read
   reports every placement before `DesktopsRead`, and a transient window shown while the desktop is
   unread takes its desktop from its placement report, not from a show stamp.
-- **Successor on hide or close.** `successorOnHide()` applies `onCurrentDesktop` to both its
-  branches (prior window; topmost application window).
+- **Successor on hide or close.** A successor is asked for only when the key window hides or
+  closes while the app is active. `successorOnHide()` answers nothing when the window took key
+  from another app (`WindowRecord.tookKeyFromAnotherApp`) or had no prior key; otherwise it
+  applies `onCurrentDesktop` to both its branches (prior window; topmost application window). A
+  closing child raises its parent only through `refocusesParent`: the child held key with the app
+  active and did not take key from another app.
 - **Raise gate.** `react` MUST NOT emit a `RaiseWindow` without user intent for a record that is
   not on a current desktop, and MUST NOT emit what the executor would suppress (app inactive, no
   user intent). The gate lives in `react`, not the executor; `planRaise` keeps only environment concerns (headless,

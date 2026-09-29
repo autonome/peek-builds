@@ -1546,8 +1546,13 @@ relational, never per window kind: an overlay is attached to it (`rec.overlayFor
 it is click-through (`!rec.acceptsInput`) and so can never be in the user's way; the focuser names
 it as parent (`focuser.parentId === rec.id`) or is its overlay (`focuser.overlayFor === rec.id`);
 and a machine-caused focus spares anything strictly newer than the focuser (the ordering floor,
-above). Transient roles are `window-kernel.ts TRANSIENT_ROLES`: `quick-view`, `palette`,
-`switcher`, `overlay`.
+above). Transience is `WindowRecord.transient`, decided once at open from the open options and
+whether Peek is focused (`izui-roles.ts windowIsTransient`), never from role. A transient window
+that holds key taken from another app while the app is inactive also ends the moment that key is
+lost or the app becomes active (`window-kernel.ts holdsKeyTakenFromAnotherApp`), with no new
+holder needed; and a desktop switch ends every visible transient window not on a current desktop,
+decided on the desktop read (`DesktopsRead`). A window that first paints is judged only against a
+holder that still holds key.
 
 **The exemptions are ONE statement, not one per reader.** `window-kernel.ts
 transientAutocloseExemption` is that statement: it takes a single record, the focuser (or
