@@ -62,13 +62,6 @@ export declare const RESTORE_STRIP_KEYS: Set<string>;
 export declare const SYSTEM_WINDOW_URLS: string[];
 
 // ============================================================================
-// URL extraction
-// ============================================================================
-
-export declare function extractRealUrl(url: string): string;
-export declare function extractCanvasBounds(url: string): Rectangle | null;
-
-// ============================================================================
 // Parameter sanitization
 // ============================================================================
 

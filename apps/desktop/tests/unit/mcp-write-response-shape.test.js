@@ -12,6 +12,7 @@
  * real .mcp.json / ~/.claude.json), wait for "started" on stderr, speak
  * newline-delimited JSON-RPC over stdio.
  */
+// @no-product-import: exercises features/mcp-server/server.js end to end by spawning it as a subprocess over stdio; the product is run, not imported.
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';

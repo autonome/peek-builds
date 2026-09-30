@@ -32,6 +32,7 @@ import { ElectronBlocker, Request } from '@ghostery/adblocker-electron';
 import fetch from 'cross-fetch';
 
 import { getProfileSession } from './session-partition.js';
+import { buildFallbackEngine } from './adblocker-fallback.js';
 import { DEBUG } from './config.js';
 
 // Module state
@@ -50,44 +51,9 @@ const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 h
 const REFRESH_RETRY_BASE_MS = 60 * 60 * 1000;     //  1 h (doubles each failure)
 const REFRESH_RETRY_CAP_MS = 8 * 60 * 60 * 1000;  //  8 h cap
 
-// ─── Bundled fallback ────────────────────────────────────────────────────────
-// A minimal filter list shipped inside the app binary.  Privacy posture >
-// correctness: it is better to block a handful of well-known domains than to
-// run with no adblocker on first boot when the network is unavailable.
-// Rules are uBlock Origin / EasyList syntax.
-const BUNDLED_FALLBACK_FILTERS = `
-! Peek bundled adblocker fallback (used only when cache absent and network down)
-! Generated from a small subset of EasyList + EasyPrivacy core rules.
-||doubleclick.net^
-||googlesyndication.com^
-||googleadservices.com^
-||adnxs.com^
-||advertising.com^
-||ads.yahoo.com^
-||pubmatic.com^
-||rubiconproject.com^
-||openx.net^
-||quantserve.com^
-||scorecardresearch.com^
-||omtrdc.net^
-||2mdn.net^
-||adform.net^
-||criteo.com^
-||tapad.com^
-||liveramp.net^
-||liveramp.com^
-||adsrvr.org^
-||adtech.de^
-||smartadserver.com^
-||yieldmo.com^
-||google-analytics.com^$third-party
-||googletagmanager.com^$third-party
-||googletagservices.com^
-||moatads.com^
-||adroll.com^
-||facebook.com/tr/*^
-||connect.facebook.net^$third-party
-`.trim();
+// The bundled fallback list and its engine builder live in
+// ./adblocker-fallback.js — a leaf module with no electron import, so its tests
+// can load it under the main-process unit runner.
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 
@@ -129,14 +95,6 @@ async function writeCacheAtomic(data: Uint8Array): Promise<void> {
  */
 async function fetchFreshEngine(): Promise<ElectronBlocker> {
   return ElectronBlocker.fromPrebuiltAdsAndTracking(fetch);
-}
-
-/**
- * Build a minimal engine from the bundled fallback list.
- * Never throws.
- */
-function buildFallbackEngine(): ElectronBlocker {
-  return ElectronBlocker.parse(BUNDLED_FALLBACK_FILTERS);
 }
 
 // ─── Background refresh ───────────────────────────────────────────────────────
