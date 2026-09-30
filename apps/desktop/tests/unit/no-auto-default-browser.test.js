@@ -49,4 +49,12 @@ describe('no-auto-default-browser', () => {
       'tile-ipc.ts must still call setAsDefaultProtocolClient (the Settings button needs it)'
     );
   });
+
+  it('the Settings-button handler refuses in a headless run, before any registration call', () => {
+    const src = readFileSync(join(MAIN_DIR, 'tile-ipc.ts'), 'utf8');
+    const handler = src.slice(src.indexOf("'tile:app:set-default-browser', { mode"));
+    const guard = handler.indexOf('isHeadless()');
+    const register = handler.indexOf('setAsDefaultProtocolClient');
+    assert.ok(guard !== -1 && guard < register, 'the handler must return on isHeadless() before calling setAsDefaultProtocolClient');
+  });
 });

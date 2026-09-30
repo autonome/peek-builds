@@ -7206,6 +7206,11 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'app', 'tile:app:set-default-browser', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:app:set-default-browser' };
     }
+    // A headless run is a test or agent run: registering as the default browser
+    // changes the machine's setting and raises an OS confirmation prompt.
+    if (isHeadless()) {
+      return { success: false, error: 'Not available in a headless run.' };
+    }
     try {
       app.setAsDefaultProtocolClient('http');
       app.setAsDefaultProtocolClient('https');
