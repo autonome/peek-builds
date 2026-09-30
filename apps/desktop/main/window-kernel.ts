@@ -1158,7 +1158,18 @@ function evolveEvent(state: State, ev: Event): State {
       // when `react`'s resign-sweep rule will actually fire. `!w.pendingHidden`
       // guards the reversible branch too, so a record an earlier sweep already
       // marked (still awaiting its `WindowHidden` confirmation) is not resurrected.
-      const dismissVictims = attentionLost ? new Set(selectTransientAutoclose(state, null)) : null;
+      // A transient window holding key taken from another app is spared: the
+      // user opened it after the resign (the palette, asked for just after a
+      // desktop switch resigned the app), and it ends by its own rule,
+      // `holdsKeyTakenFromAnotherApp`, not by a settle armed before it existed.
+      const dismissVictims = attentionLost
+        ? new Set(
+            selectTransientAutoclose(state, null).filter((id) => {
+              const rec = state.order.find((w) => w.id === id);
+              return rec === undefined || !holdsKeyTakenFromAnotherApp(state, rec);
+            }),
+          )
+        : null;
       return {
         ...state,
         pendingAppResignSweep: false,

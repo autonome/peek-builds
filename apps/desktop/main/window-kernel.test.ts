@@ -7766,6 +7766,40 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
+  // A desktop switch resigns the app and arms the settle; the palette asked for
+  // inside that window takes key over the other app and must outlive the settle.
+  it('the resign settle spares a palette opened after the resign that holds key', () => {
+    const before = holdingKeyFromAnotherApp(palette(wid(1)), wid(1));
+    assert.strictEqual(before.pendingAppResignSweep, true, 'precondition: the resign armed the settle');
+    const after = foldWithEffects([{ type: 'AppResignSettled' }], before);
+    assert.deepStrictEqual(dismisses(after.effects), []);
+    assert.strictEqual(record(after.state, wid(1)).visible, true);
+    assert.strictEqual(record(after.state, wid(1)).pendingHidden === true, false);
+  });
+
+  // A page's popup (`ipc.ts buildPopupHost`) registers with its opener as parent.
+  it('key passing to a transient window the page opened keeps the page; losing key ends both', () => {
+    const opened = transientPageHoldingKey(wid(1));
+    const withPopup = foldWithEffects(
+      [
+        sidePage(wid(2), { parentId: wid(1) }),
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'FocusRaiseRequested', id: wid(2), intent: 'user' },
+        { type: 'OsFocusGained', id: wid(2) },
+      ],
+      opened,
+    );
+    assert.strictEqual(withPopup.state.key, wid(2));
+    assert.deepStrictEqual(dismisses(withPopup.effects), [], 'the opener must not end when its popup takes key');
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(withPopup.state, record(withPopup.state, wid(1))), true);
+
+    const ended = foldWithEffects([{ type: 'OsFocusLost', id: wid(2) }], withPopup.state);
+    assert.deepStrictEqual(
+      dismisses(ended.effects).map((e) => (e as { id: WindowId }).id).sort(),
+      [wid(1), wid(2)].sort(),
+    );
+  });
+
   // The page's raise was held above the other app, which armed the cold-start
   // latch on it; the activation that ends the page must not also spend the
   // latch on it (a stamp with no raise, or a focus assert naming a doomed window).
