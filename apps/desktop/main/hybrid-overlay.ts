@@ -642,8 +642,14 @@ function wireShowNavbarFocus(): void {
     if (!msg || msg.windowId == null) return;
     // Never steal focus while backgrounded (R1) — except into the non-activating
     // chrome over a held page, which takes key without activating.
-    if (!getAppActive() && !overlayOverHeldPage()) return;
-    if (msg.windowId !== overlayHostOsId()) return; // active window only
+    if (!getAppActive() && !overlayOverHeldPage()) {
+      wmLog('navbar-focus-refused', { reason: 'app-inactive' });
+      return;
+    }
+    if (msg.windowId !== overlayHostOsId()) {
+      wmLog('navbar-focus-refused', { reason: 'not-host', asked: msg.windowId, host: overlayHostOsId() });
+      return; // active window only
+    }
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;

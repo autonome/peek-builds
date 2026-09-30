@@ -1117,10 +1117,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     try {
       if (win.isDestroyed()) return;
       if (want && !isFlaggedNonActivating(win)) {
-        if (flagNonActivating(win)) this.chromeFlagged.add(id);
+        const flagged = flagNonActivating(win);
+        if (flagged) this.chromeFlagged.add(id);
+        wmLog('chrome-flag', { id, on: true, flagged });
       } else if (!want && this.chromeFlagged.has(id)) {
         this.chromeFlagged.delete(id);
-        if (unflagNonActivating(win) && record?.desktopMembership !== undefined) {
+        const unflagged = unflagNonActivating(win);
+        wmLog('chrome-flag', { id, on: false, unflagged });
+        if (unflagged && record?.desktopMembership !== undefined) {
           this.setDesktopMembership(id, record.desktopMembership);
         }
       }
