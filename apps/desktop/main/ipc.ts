@@ -3240,6 +3240,11 @@ export function registerWindowHandlers(): void {
     // only the launcher roles (`window-kernel.ts LAUNCHER_ROLES`), which
     // exclude `utility`.
     const openerWindow = windowFromWebContents(ev.sender);
+    // The opener's id, read now: the hybrid branch awaits the page load, and a
+    // transient opener (the command palette closes the moment it opens a URL)
+    // is destroyed by then, so reading `.id` or resolving `ev.sender` after the
+    // await throws "Object has been destroyed" and drops the open.
+    const openerWindowId = openerWindow ? openerWindow.id : null;
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
     const openerUrl = openerWindow ? openerWindow.webContents?.getURL() ?? '' : '';
@@ -3532,10 +3537,9 @@ export function registerWindowHandlers(): void {
           // workspace and survived every workspace switch.
           const pageHostRole = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
             isWebPage,
-            parentWindowId: isRealParent ? openerWindow!.id : null,
+            parentWindowId: isRealParent ? openerWindowId : null,
           });
-          const callingWin = windowFromWebContents(ev.sender);
-          const inherited = inheritedModeForNewWindow(pageHostRole, callingWin?.id ?? null, options.show === false);
+          const inherited = inheritedModeForNewWindow(pageHostRole, openerWindowId, options.show === false);
           if (inherited) {
             addContextEntry('mode', inherited.value, {
               windowId: baseWin.id,
