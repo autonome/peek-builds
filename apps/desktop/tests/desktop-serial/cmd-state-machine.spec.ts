@@ -213,7 +213,7 @@ test.describe('Cmd State Machine @desktop', () => {
     }
   });
 
-  test('Escape layering: param mode -> clear text -> close', async () => {
+  test('Escape layering: param mode -> hide dropdown -> clear text -> close', async () => {
     const { cmdWindow, windowId } = await openCmdPanel();
 
     try {
@@ -233,7 +233,24 @@ test.describe('Cmd State Machine @desktop', () => {
       const paramMode = await cmdWindow.evaluate(() => (window as any)._cmdState.paramMode);
       expect(paramMode).toBe(false);
 
-      // Escape 2: clear text -> IDLE
+      // The typed text still matches commands, so the dropdown is open
+      await cmdWindow.waitForFunction(
+        () => document.getElementById('results')?.classList.contains('visible'),
+        undefined,
+        { timeout: 5000 }
+      );
+
+      // Escape 2: hide the dropdown, keep the text -> TYPING
+      await cmdWindow.keyboard.press('Escape');
+      await cmdWindow.waitForFunction(
+        () => !document.getElementById('results')?.classList.contains('visible'),
+        undefined,
+        { timeout: 5000 }
+      );
+      await waitForState(cmdWindow, 'TYPING');
+      expect(await cmdWindow.$eval('input', (el: any) => el.value)).toBe('edit ');
+
+      // Escape 3: clear text -> IDLE
       await cmdWindow.keyboard.press('Escape');
       await waitForState(cmdWindow, 'IDLE');
 
@@ -241,7 +258,7 @@ test.describe('Cmd State Machine @desktop', () => {
       const inputValue = await cmdWindow.$eval('input', (el: any) => el.value);
       expect(inputValue).toBe('');
 
-      // Escape 3: close panel -> CLOSING
+      // Escape 4: close panel -> CLOSING
       await cmdWindow.keyboard.press('Escape');
       await waitForState(cmdWindow, 'CLOSING');
     } finally {
