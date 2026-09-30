@@ -530,7 +530,66 @@ describe('window-kernel: raise vs. show', () => {
 
     assert.strictEqual(keyWindow(requested), null, 'the request alone does not write key');
     assert.strictEqual(topmost(requested, () => true)?.id, wid(2), 'and does not reorder either');
-    assert.deepStrictEqual(effects, [{ type: 'RaiseWindow', id: wid(1), opSeq: requested.opSeqCounter }], 'exactly one RaiseWindow effect drives the OS');
+    assert.deepStrictEqual(
+      effects,
+      [
+        { type: 'RaiseWindow', id: wid(1), opSeq: requested.opSeqCounter },
+        { type: 'FocusContent', id: wid(1) },
+      ],
+      'exactly one RaiseWindow effect drives the OS, paired with the content focus a key window needs',
+    );
+  });
+
+  // A window made key must also have its contents as first responder, or it sees none of its own keys
+  // (Escape included) until clicked — whatever its role.
+  for (const role of ['switcher', 'palette', 'quick-view', 'content']) {
+    it(`a raise of a ${role} window pairs FocusContent with the RaiseWindow`, () => {
+      const state = fold(
+        [
+          { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role },
+          { type: 'WindowShown', id: wid(1) },
+        ],
+        initialState(),
+      );
+      const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
+      assert.ok('events' in decision);
+      const { state: requested, effects } = foldWithEffects(decision.events, state);
+      assert.deepStrictEqual(effects, [
+        { type: 'RaiseWindow', id: wid(1), opSeq: requested.opSeqCounter },
+        { type: 'FocusContent', id: wid(1) },
+      ]);
+    });
+  }
+
+  it('a raise of a window whose content already holds first responder emits no FocusContent', () => {
+    const held = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'ContentFirstResponderChanged', id: wid(1), held: true },
+      ],
+      initialState(),
+    );
+    const decision = decide(held, { type: 'RaiseWindow', id: wid(1), expectedVersion: held.version });
+    assert.ok('events' in decision);
+    const { effects } = foldWithEffects(decision.events, held);
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'FocusContent'), []);
+  });
+
+  it('a machine raise while the app is inactive emits no FocusContent — it would activate the app', () => {
+    const inactive = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'AppResigned' },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(inactive.appActive, false, 'precondition: app inactive');
+    const decision = decide(inactive, { type: 'RaiseWindow', id: wid(1), expectedVersion: inactive.version });
+    assert.ok('events' in decision);
+    const { effects } = foldWithEffects(decision.events, inactive);
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'FocusContent'), []);
   });
 
   it('the backend confirmation carrying the raise\'s opSeq is what actually writes key (F3: no second sweep, no second raise)', () => {

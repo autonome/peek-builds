@@ -2142,6 +2142,14 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const requester = raiseRequest.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST;
     if (record !== undefined && (next.key !== raiseRequest.id || alreadyKeyButUnhonoured) && admitsFocus(next, record, requester)) {
       pushRaise(effects, next, record, requester);
+      // Key alone does not make the window's contents the first responder, so a raised window
+      // (switcher, peek, palette) would see none of its own keys, Escape included, until clicked.
+      // Any key-capable window that takes key takes content focus with it, unless the report
+      // already says it holds it. Gated on `appActive` like the assert rule above, except a
+      // user-intent raise, whose activation is the point and is not suppressed.
+      if (record.canBecomeKey && record.contentFocused !== true && (next.appActive || requester.user)) {
+        effects.push({ type: 'FocusContent', id: raiseRequest.id });
+      }
     }
   }
 
