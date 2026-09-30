@@ -681,3 +681,33 @@ line numbers moved with the files). The other four:
 
 The A/B for the Escape-layering case ran the `desktop-serial` project through
 `scripts/playwright-with-display.sh` from source in both checkouts, not against the packaged build.
+
+### Fourteenth macOS gate run — `kernel-desktops`
+
+Gate run on the `kernel-desktops` track, macOS arm64. Exit 1.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3888 | 0 | — |
+| node unit | 826 | 0 | — |
+| desktop | 489 | 2 | — |
+| desktop-serial | 34 | 6 | — |
+| components | 66 | 0 | — |
+| editor | 91 | 0 | — |
+
+The `desktop-serial` failures are the six recorded in the thirteenth run
+(`cmd-url-window-reuse.spec.ts:115`, `external-url.spec.ts:25/89/164/227`,
+`cmd-state-machine.spec.ts:216`). Only one `desktop` failure is identifiable from the recorded
+history, `device-settings.spec.ts:190` (unchanged from the twelfth and thirteenth runs); the
+run's other `desktop` failure and its skipped count were not recorded, so neither is named here.
+
+The `fix-gate-failures` track resolved the pre-existing specs in this set:
+
+| Spec | Status |
+|---|---|
+| `desktop-serial/cmd-url-window-reuse.spec.ts:115` | resolved — `ipc.ts` hybrid page-host open read the opener after awaiting `loadURL`; the cmd panel is destroyed by then, so the open threw "Object has been destroyed", returned failure and skipped `window:opened`. The opener id is now read up front (`357c5a75`) |
+| `desktop-serial/external-url.spec.ts:25/89/164/227` | resolved — same cause and fix (`357c5a75`) |
+| `desktop-serial/cmd-state-machine.spec.ts:216` | resolved — stale spec. Escape now hides the results dropdown first (`state-machine.js`, TYPING ESCAPE), so the spec presses Escape one more time (`45890f8f`) |
+| `device-settings.spec.ts:190` | resolved — stale spec. The headless guard in `entry.ts` stubs `window.confirm` to return true with no native dialog, so no `dialog` event fired; the spec now wraps `window.confirm` to record the message (`1c16b52b`) |
+
+Each fix was verified by running the affected specs alone, not by a repeat of the full gate.
