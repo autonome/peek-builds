@@ -104,12 +104,12 @@ describe('inferIzuiRole', () => {
 });
 
 describe('FOLLOWING_ROLES', () => {
-  it('is empty (the page chrome overlay stays on the desktop it is shown on)', () => {
-    assert.deepStrictEqual([...FOLLOWING_ROLES], []);
+  it('is on-screen chrome only', () => {
+    assert.deepStrictEqual([...FOLLOWING_ROLES], ['overlay']);
   });
 
   it('holds no role a transient window opens with (a transient window never follows the user)', () => {
-    for (const role of ['overlay', 'palette','quick-view', 'switcher', 'content', 'child-content', 'workspace', 'utility']) {
+    for (const role of ['palette', 'quick-view', 'switcher', 'content', 'child-content', 'workspace', 'utility']) {
       assert.ok(!FOLLOWING_ROLES.has(role), role);
     }
   });
@@ -472,7 +472,7 @@ describe('runDeferredQuitCleanup (the re-quit waits for the async cleanup)', () 
 
 describe('spacesPolicyForRole', () => {
   it("returns 'follow' for overlay on darwin", () => {
-    assert.strictEqual(spacesPolicyForRole('overlay', 'darwin'), 'anchor');
+    assert.strictEqual(spacesPolicyForRole('overlay', 'darwin'), 'follow');
   });
 
   it("returns 'anchor' for the transient roles on darwin: palette, quick-view, switcher", () => {
@@ -510,7 +510,7 @@ describe('spacesPolicyForRole', () => {
 
 describe('desktopMembershipForRole', () => {
   it("returns 'follow' for overlay chrome only, with no platform argument", () => {
-    assert.strictEqual(desktopMembershipForRole('overlay'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('overlay'), 'follow');
   });
 
   it("returns 'anchor' for every other role, transient ones included, with no platform argument", () => {

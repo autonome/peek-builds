@@ -1050,12 +1050,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     const record = windowById(getKernelExecutor().getState(), id);
     this.syncChromeFlag(id, win);
-    // The shared chrome overlay is hidden between shows and anchored: nothing
-    // else moves it to the desktop the user is on, so re-anchor it now, while
-    // it is hidden (the anchor pair is what moves a window to the current desktop).
-    if (record?.tracksBaseLayerTop === true && record.desktopMembership === 'anchor') {
-      this.setDesktopMembership(id, 'anchor');
-    }
     // A chrome overlay flagged over a held page takes key through the addon
     // without activating; any other non-activating window never activates.
     const osActivate = opts.activate && (record?.nonActivating !== true || this.chromeFlagged.has(id)) && !isHeadless();

@@ -6,13 +6,12 @@
 
 import { BASE_LAYER, type WindowKind } from './window-kernel.js';
 
-// The roles whose windows follow the user across desktops. None today: every
-// window, transient ones and the page chrome overlay included, belongs to the
-// desktop it is shown on (specs/kernel-desktops.md "A transient window never
-// follows the user to another desktop"). A window that is on every desktop
-// is drawn there during a switch animation, before the kernel hears of the
-// switch, so a role only joins this set when that flash is acceptable.
-export const FOLLOWING_ROLES: ReadonlySet<string> = new Set();
+// The roles whose windows follow the user across desktops: on-screen chrome
+// that is not transient (the page chrome overlay, a Peek space's border).
+// Every other window, transient ones included, belongs to the desktop it is
+// shown on (specs/kernel-desktops.md "A transient window never follows the
+// user to another desktop").
+export const FOLLOWING_ROLES: ReadonlySet<string> = new Set(['overlay']);
 
 export interface IzuiRoleContext {
   isWebPage: boolean;

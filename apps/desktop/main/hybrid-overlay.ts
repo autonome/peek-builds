@@ -364,12 +364,12 @@ function ensureOverlay(): BrowserWindow {
     tracksBaseLayerTop: true,
   });
 
-  // The overlay belongs to the desktop it is shown on (`desktopMembershipForRole`
-  // answers 'anchor'); `ElectronWindowBackend.showWindow` re-anchors it to the
-  // current desktop at each show. Windows opened through the generic window-open
+  // The overlay is a `FOLLOWING_ROLES` window (`izui-roles.ts`), so it follows
+  // the user across desktops. Windows opened through the generic window-open
   // handler in `ipc.ts` get their membership there; the overlay is registered
-  // here directly and must ask for it itself. A window on every desktop is drawn
-  // on the new desktop during a switch, before the kernel hears of the switch.
+  // here directly and must ask for it itself. Left on the desktop it was created on,
+  // showing it over a page-host window on another desktop made macOS switch the
+  // user back to the overlay's desktop.
   if (!isHeadless()) {
     kernelSetDesktopMembership(overlayWmId, desktopMembershipForRole('overlay'));
   }
