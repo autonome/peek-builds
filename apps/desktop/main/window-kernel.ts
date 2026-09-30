@@ -2687,15 +2687,32 @@ export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
 // it, and whatever kind of window it is. It ends the moment it stops being key
 // with the app still inactive, or the app becomes active; `react` diffs this
 // predicate across the transition and emits one `DismissWindow`; nothing
-// replaces it.
+// replaces it. Key passing to a transient window it opened (a page's popup) is
+// not the end of it: it holds the key through that window, and the two end
+// together.
 export function holdsKeyTakenFromAnotherApp(state: State, record: WindowRecord): boolean {
   return (
     !state.appActive &&
-    state.key === record.id &&
+    state.key !== null &&
+    (state.key === record.id || transientDescendantHoldsKey(state, record.id)) &&
     record.visible &&
     record.transient === true &&
     record.tookKeyFromAnotherApp === true
   );
+}
+
+// Whether the key holder is a visible transient window opened, directly or
+// through other such windows, from `ancestorId`.
+function transientDescendantHoldsKey(state: State, ancestorId: WindowId): boolean {
+  let current = state.order.find((w) => w.id === state.key);
+  const seen = new Set<WindowId>();
+  while (current !== undefined && current.visible && current.transient === true && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.parentId === ancestorId) return true;
+    const parentId = current.parentId;
+    current = parentId == null ? undefined : state.order.find((w) => w.id === parentId);
+  }
+  return false;
 }
 
 // Who is asking for a window to come forward (specs/kernel-desktops.md,

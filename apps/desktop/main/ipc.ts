@@ -727,12 +727,34 @@ function createHybridHostBaseWindow(
  * Falls back to the app default size; omits x/y when Chromium supplied none so
  * createHybridHostBaseWindow lets Electron center it.
  */
-function resolvePopupContentRect(ctorOptions: Electron.BrowserWindowConstructorOptions): { x?: number; y?: number; width: number; height: number } {
-  const width = typeof ctorOptions.width === 'number' && ctorOptions.width > 0 ? ctorOptions.width : APP_DEF_WIDTH;
-  const height = typeof ctorOptions.height === 'number' && ctorOptions.height > 0 ? ctorOptions.height : APP_DEF_HEIGHT;
+/**
+ * The popup's content rect. Chromium fills an 800x600 size into the
+ * constructor options of every popup, asked for or not, so its size is used
+ * only when the page's `window.open` features named one; any other popup (a
+ * `target=_blank` link, a cmd+click) opens at the default page size.
+ */
+export function resolvePopupContentRect(
+  ctorOptions: Electron.BrowserWindowConstructorOptions,
+  features?: string,
+): { x?: number; y?: number; width: number; height: number } {
+  const named = popupFeatureNames(features);
+  const width = named.has('width') && typeof ctorOptions.width === 'number' && ctorOptions.width > 0 ? ctorOptions.width : APP_DEF_WIDTH;
+  const height = named.has('height') && typeof ctorOptions.height === 'number' && ctorOptions.height > 0 ? ctorOptions.height : APP_DEF_HEIGHT;
   const x = typeof ctorOptions.x === 'number' ? ctorOptions.x : undefined;
   const y = typeof ctorOptions.y === 'number' ? ctorOptions.y : undefined;
   return { x, y, width, height };
+}
+
+/** The lower-cased names in a `window.open` features string. */
+function popupFeatureNames(features: string | undefined): Set<string> {
+  const names = new Set<string>();
+  if (!features) return names;
+  for (const raw of features.split(/[\s,]+/)) {
+    if (!raw) continue;
+    const eq = raw.indexOf('=');
+    names.add((eq === -1 ? raw : raw.slice(0, eq)).trim().toLowerCase());
+  }
+  return names;
 }
 
 /**
@@ -1353,8 +1375,9 @@ function assembleHybridPageHost(
   // peeks, slides, a page opened over another app): show WITHOUT activating the
   // app but still make the content the first responder. The host is a panel or
   // an ordinary window flagged non-activating, so it takes key input while the
-  // frontmost app keeps OS focus (regression 524f7aba). Popups (createWindow
-  // path) pass `options:{}` → they activate like a normal web window.
+  // frontmost app keeps OS focus (regression 524f7aba). A popup (createWindow
+  // path) activates like a normal web window unless it opens transient, when
+  // it is flagged the same way.
   //
   // `activation: 'user'` forwarded the same way the window-REUSE path already
   // forwards it (see the plain-BrowserWindow reuse branch above): a raise that
@@ -2108,9 +2131,33 @@ export function wireHybridContentEvents(
           // creation deferred) and for a denied noopener request (called with
           // {}) — mint a fresh no-opener host in those cases.
           const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
-          const rect = resolvePopupContentRect(ctorOptions);
-          const baseWin = createHybridHostBaseWindow(rect);
+          const rect = resolvePopupContentRect(ctorOptions, details.features);
+          // Non-http(s) popups (about:blank, data:, …) skip history
+          // tracking — the pre-adoption default-window path never
+          // tracked them, and an "about:blank" history item is noise.
+          const popupOptions: Record<string, unknown> = isHttpPopup ? {} : { skipTracking: true };
+          // A popup takes the same transience decision as any other open
+          // (`izui-roles.ts windowIsTransient`, `pageOpensTransient`): opened
+          // while a Peek window holds key over another app — from a page opened
+          // from the palette there — it is a transient page-host window built the
+          // same way the window-open handler builds one, so it takes key in front
+          // of the other app and ends with its task. The click that opened it is
+          // the user's gesture, so its raise carries user intent (rule F6).
+          const keyHeldWhileAppInactive = isKeyHeldWhileAppInactive();
+          popupOptions.transient = windowIsTransient(keyHeldWhileAppInactive, popupOptions);
+          const opensTransient = pageOpensTransient(keyHeldWhileAppInactive, popupOptions);
+          const flagsOrdinary = opensTransient && ordinaryNonActivatingSupported();
+          if (opensTransient) {
+            if (flagsOrdinary) popupOptions.nonActivating = true;
+            else popupOptions.type = 'panel';
+            popupOptions.activation = 'user';
+            wmLog('popup-opens-transient', { url: popupUrl.substring(0, 80), ordinary: flagsOrdinary });
+          }
+          const baseWin = createHybridHostBaseWindow(rect, { type: popupOptions.type as string | undefined });
           constructedHost = baseWin;
+          if (flagsOrdinary && !flagNonActivating(baseWin)) {
+            throw new Error('page-host: flagging the transient popup non-activating failed');
+          }
           let view: Electron.WebContentsView;
           let rtApplied = false;
           if (adoptWC) {
@@ -2138,14 +2185,12 @@ export function wireHybridContentEvents(
             });
           }
           const placedBounds = baseWin.getBounds();
+          const popupParent = opensTransient ? BaseWindow.fromId(hostWindowId) : null;
           const parentInfo = getWindowInfo(hostWindowId);
           const source = parentInfo ? parentInfo.source : 'system';
           assembleHybridPageHost(baseWin, view, {
             url: popupUrl,
-            // Non-http(s) popups (about:blank, data:, …) skip history
-            // tracking — the pre-adoption default-window path never
-            // tracked them, and an "about:blank" history item is noise.
-            options: isHttpPopup ? {} : { skipTracking: true },
+            options: popupOptions,
             source,
             placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
             contentX: placedBounds.x,
@@ -2153,8 +2198,12 @@ export function wireHybridContentEvents(
             contentW: placedBounds.width,
             contentH: placedBounds.height,
             isWebPage: true,
-            openerWindow: null,
-            isRealParent: false,
+            // A transient popup belongs to the page that opened it: taking key
+            // must not end its opener (`window-kernel.ts
+            // transientAutocloseExemption`, the focuser-relation clause), so it
+            // registers with the opener as its parent. Only the id is read.
+            openerWindow: popupParent as unknown as BrowserWindow | null,
+            isRealParent: popupParent !== null,
             deferContentLoad: false,
             rtPreloadApplied: rtApplied,
           });

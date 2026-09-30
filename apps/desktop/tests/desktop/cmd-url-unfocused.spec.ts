@@ -230,6 +230,61 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     expect(timelineAfterBlur.filter((l) => l.includes('HideApp')), timelineAfterBlur.join('\n')).toEqual([]);
   });
 
+  test('a link the transient page opens in a new window is transient too, at the default size', async () => {
+    const url = `http://127.0.0.1:${serverPort}/opener`;
+    const { opened, pageWmId } = await openPageFromPaletteInBackground(url);
+    const before = await readState();
+    expect(before.key, 'the page did not take key as a transient page-host window').toBe(pageWmId);
+
+    // A target=_blank click in the page, the way a cmd+click or a link with a
+    // target opens a new window: Chromium hands the popup path an 800x600 size
+    // the page never asked for.
+    const popupUrl = `http://127.0.0.1:${serverPort}/popup`;
+    const existing = await app.evaluateMain!(() => (globalThis as any).__peekHybridOverlayTest.hybridIds());
+    const ran = await app.evaluateMain!(((_e: unknown, arg: { id: number; popupUrl: string }) => {
+      return (globalThis as any).__peekHybridOverlayTest.triggerBlankLinkClick(arg.id, arg.popupUrl);
+    }) as any, { id: opened.id, popupUrl });
+    expect(ran).toBe(true);
+    const popupId = (await app.evaluateMain!(((_e: unknown, arg: { popupUrl: string; existing: number[] }) => {
+      return (globalThis as any).__peekHybridOverlayTest.waitHybridForUrl(arg.popupUrl, arg.existing);
+    }) as any, { popupUrl, existing })) as number | null;
+    expect(popupId).not.toBeNull();
+    const popupWmId = (await app.evaluateMain!(((_e: unknown, id: number) => {
+      return (globalThis as any).__peekHybridOverlayTest.machineWindowIdFor(id);
+    }) as any, popupId)) as string;
+
+    // It is a transient page-host window like its opener: non-activating, and
+    // it takes key with the app still in the background rather than opening
+    // behind the other app.
+    await expect.poll(async () => (await readState()).key, { timeout: 5000 }).toBe(popupWmId);
+    const state = await readState();
+    const popup = state.order.find((w) => w.id === popupWmId) as (KernelState['order'][number] & { transient?: boolean }) | undefined;
+    expect(popup, 'the popup is not in the kernel').toBeTruthy();
+    expect(popup!.nonActivating).toBe(true);
+    expect(popup!.transient).toBe(true);
+    expect(state.appActive).toBe(false);
+    // The popup taking key does not end the page that opened it.
+    expect(state.order.find((w) => w.id === pageWmId)?.visible, JSON.stringify(state.order)).toBe(true);
+
+    const size = await app.evaluateMain!((({ BaseWindow }: any, id: number) => {
+      const win = BaseWindow.getAllWindows().find((w: any) => w.id === id);
+      return win ? win.getContentBounds() : null;
+    }) as any, popupId);
+    expect(size).toMatchObject({ width: 1024, height: 768 });
+
+    // The user clicks the other app: the popup loses key, and the task ends —
+    // the popup and the page it came from both close, and nothing comes forward.
+    const blurred = await app.evaluateMain!(((_e: unknown, id: number) => {
+      return (globalThis as any).__peek_test.blurHybridWindowForTest(id);
+    }) as any, popupId);
+    expect(blurred).toBe(true);
+    await expect.poll(async () => {
+      const s = await readState();
+      return [pageWmId, popupWmId].filter((id) => s.order.some((w) => w.id === id)).length;
+    }, { timeout: 10000 }).toBe(0);
+    expect((await readState()).appActive).toBe(false);
+  });
+
   test('the app activating while the transient page-host window holds key closes the page', async () => {
     const url = `http://127.0.0.1:${serverPort}/activated`;
     const { pageWmId } = await openPageFromPaletteInBackground(url);
