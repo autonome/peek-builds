@@ -19,6 +19,7 @@ import { app } from 'electron';
 
 interface NonActivatingAddon {
   setNonActivating(handle: Buffer, on: boolean): boolean;
+  setMoveToActiveDesktop(handle: Buffer, on: boolean): boolean;
   makeKey(handle: Buffer): boolean;
   focusContent(handle: Buffer): boolean;
   isKey(handle: Buffer): boolean;
@@ -83,6 +84,16 @@ export function unflagNonActivating(win: HandleWindow): boolean {
 
 export function isFlaggedNonActivating(win: object): boolean {
   return flagged.has(win);
+}
+
+/**
+ * Makes `win` appear on the desktop the user is on each time it is shown, without
+ * making it non-activating. Replaces any every-desktop membership. True when applied.
+ */
+export function moveToActiveDesktopOnShow(win: HandleWindow): boolean {
+  const a = loadAddon();
+  const handle = win.getNativeWindowHandle?.();
+  return !!a && handle !== undefined && a.setMoveToActiveDesktop(handle, true);
 }
 
 /** Orders a flagged window front and makes it key. True when it is key afterwards. */

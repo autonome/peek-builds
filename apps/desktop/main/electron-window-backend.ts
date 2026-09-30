@@ -24,6 +24,7 @@ import {
   focusContentWithoutActivating,
   isFlaggedNonActivating,
   makeKeyWithoutActivating,
+  moveToActiveDesktopOnShow,
   unflagNonActivating,
 } from './nonactivating-window.js';
 
@@ -1050,11 +1051,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     const record = windowById(getKernelExecutor().getState(), id);
     this.syncChromeFlag(id, win);
-    // The shared chrome overlay is hidden between shows and anchored: nothing
-    // else moves it to the desktop the user is on, so re-anchor it now, while
-    // it is hidden (the anchor pair is what moves a window to the current desktop).
-    if (record?.tracksBaseLayerTop === true && record.desktopMembership === 'anchor') {
-      this.setDesktopMembership(id, 'anchor');
+    // The shared chrome overlay is hidden between shows and anchored. Electron's
+    // own membership calls do not move a hidden window to the desktop the user is
+    // on (a show over a page on another desktop switched the user back), so the
+    // addon marks it to appear on the active desktop. A flagged overlay already is.
+    if (
+      process.platform === 'darwin' &&
+      !isHeadless() &&
+      record?.tracksBaseLayerTop === true &&
+      record.desktopMembership === 'anchor' &&
+      !isFlaggedNonActivating(win)
+    ) {
+      const moved = moveToActiveDesktopOnShow(win);
+      wmLog('overlay-move-to-active', { id, moved });
     }
     // A chrome overlay flagged over a held page takes key through the addon
     // without activating; any other non-activating window never activates.

@@ -101,6 +101,19 @@ static napi_value SetNonActivating(napi_env env, napi_callback_info info) {
   return JsBool(env, true);
 }
 
+// setMoveToActiveDesktop(handle, on) -> true when applied. Only the collection
+// behaviour: the window is shown on the desktop the user is on, and it never
+// joins every desktop. Activation is untouched.
+static napi_value SetMoveToActiveDesktop(napi_env env, napi_callback_info info) {
+  bool on = false;
+  NSWindow* window = WindowArg(env, info, &on);
+  if (window == nil) return JsBool(env, false);
+  NSWindowCollectionBehavior behavior =
+      window.collectionBehavior & ~(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorMoveToActiveSpace);
+  window.collectionBehavior = on ? (behavior | NSWindowCollectionBehaviorMoveToActiveSpace) : behavior;
+  return JsBool(env, true);
+}
+
 // makeKey(handle) -> true when the window is key afterwards. Orders the window
 // front and makes it key without asking the app to activate.
 static napi_value MakeKey(napi_env env, napi_callback_info info) {
@@ -138,6 +151,7 @@ static napi_value IsKey(napi_env env, napi_callback_info info) {
 static napi_value Init(napi_env env, napi_value exports) {
   struct { const char* name; napi_callback fn; } exported[] = {
     {"setNonActivating", SetNonActivating},
+    {"setMoveToActiveDesktop", SetMoveToActiveDesktop},
     {"makeKey", MakeKey},
     {"focusContent", FocusContent},
     {"isKey", IsKey},
