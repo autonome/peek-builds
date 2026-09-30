@@ -2747,11 +2747,18 @@ export function holdsKeyTakenFromAnotherApp(state: State, record: WindowRecord):
   return (
     !state.appActive &&
     state.key !== null &&
-    (state.key === record.id || transientDescendantHoldsKey(state, record.id)) &&
+    (state.key === record.id || overlayHoldsKeyFor(state, record.id) || transientDescendantHoldsKey(state, record.id)) &&
     record.visible &&
     record.transient === true &&
     record.tookKeyFromAnotherApp === true
   );
+}
+
+// Whether the key holder is the page chrome overlay attached to `hostId`: the
+// user typing in the address bar of a held page is still using that page.
+function overlayHoldsKeyFor(state: State, hostId: WindowId): boolean {
+  const holder = state.order.find((w) => w.id === state.key);
+  return holder !== undefined && holder.visible && holder.overlayFor === hostId;
 }
 
 // Whether the key holder is a visible transient window opened, directly or

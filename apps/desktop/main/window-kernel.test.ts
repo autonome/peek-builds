@@ -7817,6 +7817,17 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.ok(hides(ended.effects, wid(9)), 'the chrome leaves with the page');
   });
 
+  it('key moving to the page chrome keeps the page; losing key from the chrome ends it', () => {
+    const held = foldWithEffects([overlay(wid(9)), { type: 'OverlayAttached', overlayId: wid(9), hostId: wid(1), frame }], transientPageHoldingKey(wid(1)));
+    const onChrome = foldWithEffects([{ type: 'OsFocusGained', id: wid(9) }], held.state);
+    assert.deepStrictEqual(dismisses(onChrome.effects), [], 'typing in the address bar does not end the page');
+    assert.strictEqual(holdsKeyTakenFromAnotherApp(onChrome.state, record(onChrome.state, wid(1))), true);
+    assert.strictEqual(record(onChrome.state, wid(9)).visible, true);
+
+    const ended = foldWithEffects([{ type: 'OsFocusLost', id: wid(9) }], onChrome.state);
+    assert.deepStrictEqual(dismisses(ended.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+  });
+
   it('the page chrome stays hidden over an ordinary page while another app is active', () => {
     const after = foldWithEffects([
       layout,
