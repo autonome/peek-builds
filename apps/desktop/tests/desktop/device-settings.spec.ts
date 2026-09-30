@@ -270,15 +270,32 @@ test.describe('Device Settings Panel @desktop', () => {
     // The server allows it and answers `current: true`; the main process
     // drops the now-dead key, the panel explains instead of reloading into a
     // 401, and the Sync panel's API Key field no longer shows the dead key.
-    let selfRevokePrompt = '';
-    settingsWindow.once('dialog', (dialog) => {
-      selfRevokePrompt = dialog.message();
-      dialog.accept();
+    // A headless run replaces window.confirm with a stub that answers true
+    // without any native dialog (entry.ts headless guard), so Playwright never
+    // sees a 'dialog' event there. Record the message by wrapping whichever
+    // confirm is installed; a headed run still raises its real dialog, which
+    // the handler accepts.
+    await settingsWindow.evaluate(() => {
+      const w = window as unknown as {
+        confirm: (message?: string) => boolean;
+        __confirmMessages?: string[];
+      };
+      const original = w.confirm;
+      w.__confirmMessages = [];
+      w.confirm = (message?: string) => {
+        w.__confirmMessages!.push(String(message));
+        return original.call(window, message);
+      };
     });
+    settingsWindow.once('dialog', (dialog) => dialog.accept());
     await laptopCard.locator('[data-role="revoke-button"]').click();
     await expect(settingsWindow.locator('.devices-panel-status')).toContainText("This device's key was revoked");
     // The confirm names the consequence rather than reading like any other revoke.
-    expect(selfRevokePrompt).toContain('the device you are using right now');
+    const confirmMessages = await settingsWindow.evaluate(
+      () => (window as unknown as { __confirmMessages?: string[] }).__confirmMessages ?? [],
+    );
+    expect(confirmMessages).toHaveLength(1);
+    expect(confirmMessages[0]).toContain('the device you are using right now');
     await expect(settingsWindow.locator('[data-device-id]')).toHaveCount(0);
     expect(devices.find((d) => d.id === 'dev-laptop')?.revoked_at).toBeTruthy();
 
