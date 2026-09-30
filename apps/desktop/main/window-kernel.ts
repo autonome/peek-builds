@@ -1147,6 +1147,21 @@ function evolveEvent(state: State, ev: Event): State {
       // trust it as-is; `react`'s reconcile rule turns the mark into one
       // `ReconcileFullscreen` per record it newly sees.
       const opSeq = reshown || assertsFocus ? state.opSeqCounter + 1 : state.opSeqCounter;
+      // A user-intent raise made while the app was inactive leaves its target
+      // key with no latch (the raise itself activates the app), so the OS's
+      // own focus report for the previously key window that follows the
+      // activation must still read as the platform's choice, not the user's.
+      // Only while the raised window is still key and on screen.
+      const raised = state.lastRaiseRequest;
+      const raisedRecord =
+        raised?.intent === 'user' && state.key === raised.id ? state.order.find((w) => w.id === raised.id) : undefined;
+      const userRaisedWhileInactive =
+        !state.appActive &&
+        latched === null &&
+        raisedRecord !== undefined &&
+        (raisedRecord.visible || appBlurRevealAdmits(state, raisedRecord))
+          ? raisedRecord.id
+          : null;
       return {
         ...state,
         appActive: true,
@@ -1180,7 +1195,7 @@ function evolveEvent(state: State, ev: Event): State {
           activation:
             latchedCandidate !== undefined && (latchedCandidate.visible || appBlurRevealAdmits(state, latchedCandidate))
               ? latchedCandidate.id
-              : null,
+              : userRaisedWhileInactive,
         },
         // The other half of the ratchet: the user has come to Peek, so
         // whatever is on screen is somewhere they are now. Unconditional and one-way.

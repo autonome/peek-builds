@@ -29,6 +29,7 @@ import {
   desktopUnread,
   isOnEveryDesktop,
   windowById,
+  platformChoseFocus,
   LAUNCHER_ROLES,
   roleIn,
   BASE_LAYER,
@@ -8599,7 +8600,7 @@ describe('window-kernel: a focus the manager makes stays on the current desktop'
 // KNOWN-FAILING: the reported "page behind the tags window" bug. An inactive app gets a user-intent
 // raise on a new page window while another window is key; the OS then activates the app and reports
 // focus on the old key window as a world-caused focus, which the kernel treats as the user's choice.
-describe('window-kernel: a CLI open while the app is inactive (known-failing)', () => {
+describe('window-kernel: a CLI open while the app is inactive', () => {
   it('a world-caused focus report for the old key window after activation does not bury the raised page window', () => {
     const TAGS = wid(3);
     const PAGE = wid(6);
@@ -8639,5 +8640,35 @@ describe('window-kernel: a CLI open while the app is inactive (known-failing)', 
       'no RaiseWindow for the tags window after the last event',
     );
     assert.strictEqual(state.order[state.order.length - 1].id, PAGE, 'the page window stays on top of the order');
+  });
+
+  it('the expectation is spent by the first world report; a later one on another window is honoured', () => {
+    const TAGS = wid(3);
+    const PAGE = wid(6);
+    const OTHER = wid(7);
+    const reg = (id: WindowId, kind: 'browser' | 'page-host', role: string): Event =>
+      ({ type: 'WindowRegistered', id, kind, layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role }) as Event;
+    let state = fold([
+      reg(TAGS, 'browser', 'content'),
+      { type: 'WindowShown', id: TAGS },
+      { type: 'OsFocusGained', id: TAGS },
+      { type: 'AppResigned' },
+      reg(PAGE, 'page-host', 'content'),
+      reg(OTHER, 'browser', 'content'),
+      { type: 'WindowShown', id: OTHER },
+    ]);
+    const command = (cmd: (version: number) => Command): void => {
+      const decision = decide(state, cmd(state.version));
+      assert.ok('events' in decision, `command rejected: ${JSON.stringify(decision)}`);
+      for (const ev of decision.events) state = evolve(state, ev);
+    };
+    command((expectedVersion) => ({ type: 'ShowWindow', id: PAGE, expectedVersion }));
+    command((expectedVersion) => ({ type: 'RaiseWindow', id: PAGE, expectedVersion, intent: 'user' }));
+    state = evolve(state, { type: 'OsFocusGained', id: PAGE, cause: { kind: 'machine', opSeq: state.opSeqCounter } });
+    state = evolve(state, { type: 'AppActivated' });
+    assert.strictEqual(platformChoseFocus(state, TAGS, { kind: 'world' }), 'activation');
+    state = evolve(state, { type: 'OsFocusGained', id: TAGS, cause: { kind: 'world' } });
+    assert.strictEqual(state.expectedPlatformFocus.activation, null);
+    assert.strictEqual(platformChoseFocus(state, OTHER, { kind: 'world' }), null);
   });
 });
