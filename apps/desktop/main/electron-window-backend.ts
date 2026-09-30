@@ -759,6 +759,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin') {
       try {
         app.focus({ steal: true });
+        // macOS finishes the activation after this call returns and hands key
+        // to the window that was key when the app last resigned, ahead of the
+        // window this raise targeted. Re-assert the target once activation
+        // has settled, if it did not end up key.
+        for (const delayMs of [250, 600]) {
+          setTimeout(() => this.reassertUserRaise(id, opSeq), delayMs);
+        }
       } catch {
         /* activation refused by the OS — the window calls below still run */
       }
@@ -818,6 +825,22 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         break;
     }
     kernelWindowShown(id, true, opSeq);
+  }
+
+  private reassertUserRaise(id: WindowId, opSeq: number): void {
+    const entry = this.windows.get(id);
+    if (!entry || entry.win.isDestroyed() || isHeadless()) return;
+    if (this.isFocused(entry.win)) return;
+    wmLog('reassert-user-raise', { id });
+    try {
+      this.armSelfCausedFocus(id, opSeq);
+      this.reorderToTop(entry.win);
+      this.takeKey(entry.win);
+      const wc = entry.rendererWC;
+      if (wc && !wc.isDestroyed()) this.focusRendererContent(entry.win, wc);
+    } catch {
+      /* window gone */
+    }
   }
 
   focusContent(id: WindowId, opSeq: number): void {
