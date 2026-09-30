@@ -2001,6 +2001,7 @@ export function wireHybridContentEvents(
         if (!inRevealBand) {
           if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
             inRevealBand = true;
+            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal' });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {
               windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
             });
@@ -2008,6 +2009,7 @@ export function wireHybridContentEvents(
         } else {
           if (dy < 0 || dy > REVEAL_EXIT_PX) {
             inRevealBand = false;
+            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal-out' });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {
               windowId: hostWindowId, phase: 'reveal-out', screenX: input.globalX, screenY: input.globalY,
             });

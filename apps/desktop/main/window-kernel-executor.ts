@@ -440,10 +440,12 @@ export class WindowKernelExecutor {
   private performEffect(effect: Effect): void {
     switch (effect.type) {
       case 'ShowWindow': {
+        wmLog('effect-show', { id: effect.id, opSeq: effect.opSeq });
         this.backend.showWindow(effect.id, { activate: false, opSeq: effect.opSeq });
         return;
       }
       case 'HideWindow': {
+        wmLog('effect-hide', { id: effect.id, opSeq: effect.opSeq });
         this.backend.hideWindow(effect.id, effect.opSeq);
         return;
       }
