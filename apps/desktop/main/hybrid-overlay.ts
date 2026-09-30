@@ -653,7 +653,9 @@ function wireShowNavbarFocus(): void {
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
-    kernelShowRequested(overlayWmId, true);
+    // Cmd+L is the user's own act; with the app inactive the kernel admits only a
+    // user-intent raise, and this one takes key without activating (see above).
+    kernelShowRequested(overlayWmId, true, getAppActive() ? undefined : { activation: 'user' });
   });
 }
 
