@@ -95,7 +95,18 @@ function seedHudProfile(db: DatabaseSync): void {
       { url: 'https://kept-in-space.example.com', bounds: { x: 0, y: 0, width: 800, height: 600 }, zOrder: 1, focused: true },
     ],
   };
-  upsertFeatureSetting(db, 'space-workspaces:workspace:space1', 'space-workspaces', 'workspace:space1', JSON.stringify(workspaceSnapshot));
+  upsertFeatureSetting(db, 'session-snapshot:space1', 'session', 'snapshot:space1', JSON.stringify(workspaceSnapshot));
+
+  // Legacy per-workspace storage used before named snapshots joined the
+  // session namespace.
+  upsertFeatureSetting(db, 'space-workspaces:workspace:legacy', 'space-workspaces', 'workspace:legacy', JSON.stringify({
+    ...workspaceSnapshot,
+    spaceId: 'legacy',
+    windows: [
+      { url: 'peek://ext/hud/widgets/window.html' },
+      { url: 'https://kept-in-legacy-space.example.com' },
+    ],
+  }));
 
   // Stale HUD feature_settings rows.
   upsertFeatureSetting(db, 'hud-overlay_hud_sheet', 'hud-overlay', 'hud_sheet', JSON.stringify({ widgets: [] }));
@@ -113,13 +124,15 @@ function seedHudProfile(db: DatabaseSync): void {
     `INSERT INTO manifest_cache (featureId, version, manifest, updatedAt, disabledAt) VALUES (?, ?, ?, ?, ?)`
   ).run('windows', '1.0.0', '{}', Date.now(), null);
 
-  // Context entry keyed by a HUD tile id, plus an unrelated 'mode' entry.
-  db.prepare(
+  // Defensive context traces: literal HUD key, a normal mode key written by
+  // a HUD tile, and a pin row whose metadata associates it with a HUD URL.
+  const insertContext = db.prepare(
     `INSERT INTO context_history (id, key, value, metadata, windowId, source, timestamp, prevEntryId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run('ctx-hud-overlay', 'hud-overlay', '"some-value"', '{}', 7, 'test', Date.now(), null);
-  db.prepare(
-    `INSERT INTO context_history (id, key, value, metadata, windowId, source, timestamp, prevEntryId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run('ctx-mode', 'mode', '"default"', '{}', 9, 'test', Date.now(), null);
+  );
+  insertContext.run('ctx-hud-overlay', 'hud-overlay', '"some-value"', '{}', 7, 'test', Date.now(), null);
+  insertContext.run('ctx-hud-mode', 'mode', '"default"', '{}', 8, 'peek://hud-widget/background', Date.now(), null);
+  insertContext.run('ctx-hud-pin', 'pin', '"global"', '{"url":"peek://hud/hud.html"}', 9, 'peek://spaces/background', Date.now(), null);
+  insertContext.run('ctx-mode', 'mode', '"default"', '{}', 10, 'test', Date.now(), null);
 }
 
 function getFeatureSettingsValue(db: DatabaseSync, featureId: string, key: string): string | undefined {
@@ -155,13 +168,20 @@ describe('migrateHud', () => {
     assert.strictEqual(stack[0].url, 'https://kept.example.com');
   });
 
-  it('drops HUD entries from a per-workspace snapshot but keeps ordinary ones', () => {
+  it('drops HUD entries from current and legacy per-workspace snapshots', () => {
     migrateHud(wrapDb(db));
-    const value = getFeatureSettingsValue(db, 'space-workspaces', 'workspace:space1');
-    assert.ok(value);
-    const snapshot = JSON.parse(value!);
-    assert.strictEqual(snapshot.windows.length, 1);
-    assert.strictEqual(snapshot.windows[0].url, 'https://kept-in-space.example.com');
+
+    const currentValue = getFeatureSettingsValue(db, 'session', 'snapshot:space1');
+    assert.ok(currentValue);
+    const currentSnapshot = JSON.parse(currentValue!);
+    assert.strictEqual(currentSnapshot.windows.length, 1);
+    assert.strictEqual(currentSnapshot.windows[0].url, 'https://kept-in-space.example.com');
+
+    const legacyValue = getFeatureSettingsValue(db, 'space-workspaces', 'workspace:legacy');
+    assert.ok(legacyValue);
+    const legacySnapshot = JSON.parse(legacyValue!);
+    assert.strictEqual(legacySnapshot.windows.length, 1);
+    assert.strictEqual(legacySnapshot.windows[0].url, 'https://kept-in-legacy-space.example.com');
   });
 
   it('deletes every hud/hud-widget/hud-overlay feature_settings row, leaving unrelated ones', () => {
@@ -180,12 +200,15 @@ describe('migrateHud', () => {
     assert.ok(otherRow, 'unrelated manifest_cache row should survive');
   });
 
-  it('deletes context_history rows keyed by a HUD tile id, leaving unrelated ones', () => {
+  it('deletes HUD-keyed, HUD-sourced, and HUD-URL context rows only', () => {
     migrateHud(wrapDb(db));
-    const hudCtx = db.prepare('SELECT * FROM context_history WHERE key = ?').get('hud-overlay');
-    assert.strictEqual(hudCtx, undefined);
-    const modeCtx = db.prepare('SELECT * FROM context_history WHERE key = ?').get('mode');
-    assert.ok(modeCtx, 'unrelated context_history row should survive');
+    assert.strictEqual(db.prepare('SELECT * FROM context_history WHERE id = ?').get('ctx-hud-overlay'), undefined);
+    assert.strictEqual(db.prepare('SELECT * FROM context_history WHERE id = ?').get('ctx-hud-mode'), undefined);
+    assert.strictEqual(db.prepare('SELECT * FROM context_history WHERE id = ?').get('ctx-hud-pin'), undefined);
+    assert.ok(
+      db.prepare('SELECT * FROM context_history WHERE id = ?').get('ctx-mode'),
+      'unrelated context_history row should survive',
+    );
   });
 
   it('records itself as applied in the migrations table', () => {

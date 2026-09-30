@@ -22,38 +22,85 @@ let activeSpaceId = null;
 let activeSpaceName = null;
 let activeSpaceColor = null;
 
+// ===== Active Theme (for the vivid-color fallback palette) =====
+// Set from api.theme.getInfo() at init and kept live via api.theme.onChange()
+// — this document has the theme capability and IPC access config.js
+// deliberately doesn't (see resolveVividColor's doc comment), so this is
+// where the live theme id is read and threaded through.
+let activeThemeId = 'peek';
+
 // ===== Vivid Colors (for border when tag color is too pale) =====
-// Uses shared resolveVividColor from config.js
-const resolveSpaceBorderColor = resolveVividColor;
+// Uses shared resolveVividColor from config.js, pinned to the active theme.
+const resolveSpaceBorderColor = (color, spaceId) => resolveVividColor(color, spaceId, activeThemeId);
 
 // ===== Screen Border =====
 // The border is a feature-owned overlay window showing a colored border
 // around the screen when a space is active.
 
-let borderWindowId = null;
+// The border has exactly one window at a time, tracked as an explicit state
+// rather than a bare window id:
+//
+//   closed  --showBorder()-->  opening  --open resolved-->  open
+//   open    --hideBorder() / window gone-->  closed
+//
+// `opening` is the state that matters. `showBorder()` is called from several
+// places at once — `enterWorkspace()` directly, and `updateBorderVisibility()`
+// on every `window:focused` / `window:closed` event — and `api.window.open`
+// takes tens of milliseconds to resolve. With only an id to check, every call
+// arriving before the first open resolved saw "no border" and opened another
+// one. That is not just wasteful: the border is a transient overlay, and the
+// window kernel dismisses a transient when a sibling window appears
+// (`window-kernel.ts selectTransientAutoclose`; a border is exempt only once
+// its click-through flag has landed). Each extra border dismissed the one
+// before it, the dismissal's `window:closed` re-ran `updateBorderVisibility()`,
+// which opened yet another border — a self-sustaining loop of one new border
+// every ~100 ms that also dismissed every transient window opened meanwhile,
+// the command palette included, so every command after the first workspace
+// switch appeared to do nothing (specs/spaces-workspace-switch-regressions.md,
+// symptom 3). While `opening`, a show only records the latest color/name to
+// apply when the open resolves, and a hide only records that the window
+// should be closed as soon as it exists.
+const border = {
+  state: 'closed',   // 'closed' | 'opening' | 'open'
+  windowId: null,
+  pendingUpdate: null, // { color, name } received while opening
+  closeRequested: false,
+};
 let borderHideTimer = null;
 const BORDER_HIDE_DELAY_MS = 600;
 
 async function showBorder(color, name) {
   const safeColor = resolveSpaceBorderColor(color, activeSpaceId);
+  cancelHideTimer();
 
-  // If border window exists, just update it
-  if (borderWindowId) {
+  if (border.state === 'opening') {
+    border.pendingUpdate = { color: safeColor, name };
+    border.closeRequested = false;
+    return;
+  }
+
+  if (border.state === 'open') {
     try {
-      const exists = await api.window.exists(borderWindowId);
+      const exists = await api.window.exists(border.windowId);
       if (exists?.exists) {
-        // Update color and name via message
         api.pubsub.publish('spaces:border-update', { color: safeColor, name });
         return;
       }
     } catch { /* window gone */ }
-    borderWindowId = null;
+    // Closed from outside (the kernel dismissed it, or the user closed it).
+    border.state = 'closed';
+    border.windowId = null;
   }
 
-  // Create border overlay window
+  border.state = 'opening';
+  border.pendingUpdate = null;
+  border.closeRequested = false;
   try {
     const displayResult = await api.screen.getPrimaryDisplay();
-    if (!displayResult.success) return;
+    if (!displayResult.success) {
+      border.state = 'closed';
+      return;
+    }
     const { bounds } = displayResult.data;
 
     const borderHtml = `peek://spaces/border.html?color=${encodeURIComponent(safeColor)}&name=${encodeURIComponent(name)}`;
@@ -73,23 +120,45 @@ async function showBorder(color, name) {
       persist: false,
     });
 
-    if (result?.id) {
-      borderWindowId = result.id;
-      await api.window.setIgnoreMouseEvents(borderWindowId, true, true);
-      await api.window.setVisibleOnAllWorkspaces(borderWindowId, true);
+    if (!result?.id) {
+      border.state = 'closed';
+      return;
+    }
+    border.windowId = result.id;
+    border.state = 'open';
+    if (border.closeRequested) {
+      hideBorder();
+      return;
+    }
+    await api.window.setIgnoreMouseEvents(border.windowId, true, true);
+    await api.window.setVisibleOnAllWorkspaces(border.windowId, true);
+    if (border.pendingUpdate) {
+      api.pubsub.publish('spaces:border-update', border.pendingUpdate);
+      border.pendingUpdate = null;
     }
   } catch (err) {
     console.error('[ext:spaces] Failed to create border window:', err);
+    border.state = 'closed';
+    border.windowId = null;
   }
 }
 
 function hideBorder() {
-  if (borderWindowId) {
-    try {
-      api.window.close(borderWindowId);
-    } catch { /* ignore */ }
-    borderWindowId = null;
+  if (border.state === 'opening') {
+    // Honored by showBorder() the moment the open resolves.
+    border.closeRequested = true;
+    border.pendingUpdate = null;
+    return;
   }
+  if (border.windowId) {
+    try {
+      api.window.close(border.windowId);
+    } catch { /* ignore */ }
+  }
+  border.state = 'closed';
+  border.windowId = null;
+  border.pendingUpdate = null;
+  border.closeRequested = false;
 }
 
 function scheduleHideBorder() {
@@ -105,83 +174,6 @@ function cancelHideTimer() {
   if (borderHideTimer) {
     clearTimeout(borderHideTimer);
     borderHideTimer = null;
-  }
-}
-
-// ===== Workspace Panel =====
-// A global HUD window (docs/design/window-rules.md "The workspace panel"):
-// names the active workspace and offers close/switch controls. Opened
-// already pinned across workspaces — the one case where a window is pinned
-// by a feature rather than by the user — so it survives closeSpace()'s sweep
-// the same way any other globally-pinned window does, and gets no unpin
-// control. Unlike the border, it must stay open and merely update across a
-// workspace switch rather than closing and reopening (switchSpace() passes
-// `keepPanel: true` to closeSpace() for exactly this reason).
-
-let panelWindowId = null;
-
-async function showPanel(spaceName) {
-  if (panelWindowId) {
-    try {
-      const exists = await api.window.exists(panelWindowId);
-      if (exists?.exists) {
-        api.pubsub.publish('spaces:panel-update', { spaceName });
-        return;
-      }
-    } catch { /* window gone */ }
-    panelWindowId = null;
-  }
-
-  try {
-    const displayResult = await api.screen.getPrimaryDisplay();
-    if (!displayResult.success) return;
-    const { bounds } = displayResult.data;
-    const width = 260;
-    const height = 112;
-    const margin = 16;
-
-    const panelHtml = `peek://spaces/panel.html?spaceName=${encodeURIComponent(spaceName)}`;
-    const result = await api.window.open(panelHtml, {
-      // Chrome, not content: excluded from the Windows switcher by role
-      // (features/windows/windows.js loadWindows()'s CHROME_ROLES filter).
-      // Deliberately NOT 'overlay' — that's one of izui-roles.ts's
-      // TRANSIENT_ROLES, whose OS-Space-follow and blur-sweep treatment is
-      // for short-lived chrome (the border, the palette); the panel is
-      // pinned and must persist for the life of the workspace instead of
-      // being dismissed on a focus change.
-      role: 'panel',
-      x: bounds.x + bounds.width - width - margin,
-      y: bounds.y + bounds.height - height - margin,
-      width,
-      height,
-      resizable: false,
-      frame: false,
-      transparent: true,
-      skipTaskbar: true,
-      // Born already pinned across every workspace — the existing pin
-      // mechanism (window-kernel.ts Pinned layer + the 'pin' context key),
-      // set at open time the same way a restored globally-pinned window is.
-      alwaysOnTop: true,
-      pinScope: 'global',
-      // Feature chrome, never part of any snapshot — explicit (requirement 4,
-      // specs/workspace-session-snapshot.md), not inferred from role.
-      persist: false,
-    });
-
-    if (result?.id) {
-      panelWindowId = result.id;
-    }
-  } catch (err) {
-    console.error('[ext:spaces] Failed to create workspace panel window:', err);
-  }
-}
-
-function hidePanel() {
-  if (panelWindowId) {
-    try {
-      api.window.close(panelWindowId);
-    } catch { /* ignore */ }
-    panelWindowId = null;
   }
 }
 
@@ -320,28 +312,61 @@ const DEFAULT_WORKSPACE_SNAPSHOT_KEY = 'default';
 let defaultSpaceId = null;
 let defaultSpaceReady = null;
 
+// Roles a window can carry and still be user content that belongs to a
+// workspace — the window kernel's own content set (`window-kernel.ts
+// CONTENT_ROLES`): pages, their popups, and feature pages like the Spaces
+// browse-all list. Dedicated chrome (the palette, overlays, the switcher,
+// the border) and background pages carry a different role or none
+// at all, so they're left alone without a name-list of URLs to skip.
+const WORKSPACE_CONTENT_ROLES = new Set(['content', 'child-content', 'workspace']);
+
 /**
- * First launch only: whatever windows the general session restore already
- * opened, before this feature ever ran, become the default workspace's
- * membership from here on — the default is a real space from the start, not
- * one adopted piecemeal window-by-window later. Adopts only content windows
- * (`params.role === 'content'`, the same role `features/windows/windows.js
- * loadWindows()` treats as user content) — dedicated chrome (the palette,
- * overlays, the switcher, the workspace panel) and background pages carry a
- * different role or none at all, so they're left alone without a name-list
- * of URLs to skip.
+ * Declare the active workspace as the mode every content window opened from
+ * now on is born with when its opener passes no `spaceMode` of its own —
+ * the command palette, a page's popup, a declarative `window` command such
+ * as `open spaces`, a restored snapshot row that predates tagging. This is
+ * the one mechanism behind "every window belongs to exactly one workspace"
+ * (docs/design/window-rules.md "Workspace membership"): the main process
+ * stamps the mode at open time through `ipc.ts inheritedModeForNewWindow`,
+ * which is what lets the per-workspace sweep in
+ * `closeCurrentWorkspaceWindows()` find the window on the next switch and
+ * the session projection save it under this workspace's row. Declared
+ * BEFORE a workspace's snapshot is restored (see `enterWorkspace()`), so a
+ * restored window that carries no saved mode lands in the workspace being
+ * entered, never the one being left.
+ */
+async function declareActiveWorkspaceForNewWindows(spaceId, spaceName, color) {
+  try {
+    await api.context.setDefault('mode', 'space', { spaceId, spaceName, color });
+  } catch (err) {
+    console.error('[ext:spaces] Failed to declare the active workspace for new windows:', err);
+  }
+}
+
+/**
+ * Whatever content windows are already open when this feature wakes belong
+ * to the default workspace from here on — the default is a real space from
+ * the start, not one adopted piecemeal window-by-window later. Runs on every
+ * wake, not only the first launch: a window opened before the feature woke
+ * (or restored from a snapshot row saved before tagging existed) carries no
+ * workspace, or only the URL-detected `page`/`default` placeholder, and would
+ * otherwise never be swept. A window that already belongs to a space or a
+ * group keeps that membership. Only windows on screen are adopted: a hidden
+ * one (the pre-warmed settings singleton, a helper page) is not something
+ * the user has open in this workspace.
  */
 async function adoptOpenWindowsIntoDefault(tag, spaceName) {
   try {
     const listResult = await api.window.list();
     if (!listResult?.success || !Array.isArray(listResult.windows)) return;
     for (const w of listResult.windows) {
-      if (!w?.id || w.params?.role !== 'content') continue;
+      if (!w?.id || !w.visible || !WORKSPACE_CONTENT_ROLES.has(w.params?.role)) continue;
       const modeResult = await api.context.get('mode', w.id);
-      if (modeResult?.success && modeResult.data?.value) continue; // already has a mode of its own
+      const mode = modeResult?.success ? modeResult.data?.value : null;
+      if (mode === 'space' || mode === 'group') continue; // already has a membership of its own
       await api.context.setMode('space', {
         windowId: w.id,
-        metadata: { spaceId: tag.id, spaceName, color: tag.color }
+        metadata: { spaceId: tag.id, spaceName, color: tag.color, url: modeResult?.data?.metadata?.url }
       });
     }
   } catch (err) {
@@ -355,16 +380,15 @@ async function bootstrapDefaultSpace() {
     console.error('[ext:spaces] Failed to get/create the default workspace tag');
     return;
   }
-  const { tag, created } = tagResult.data;
+  const { tag } = tagResult.data;
 
   defaultSpaceId = tag.id;
   activeSpaceId = tag.id;
   activeSpaceName = getSpaceDisplayName(tag);
   activeSpaceColor = tag.color;
 
-  if (created) {
-    await adoptOpenWindowsIntoDefault(tag, activeSpaceName);
-  }
+  await declareActiveWorkspaceForNewWindows(tag.id, activeSpaceName, tag.color);
+  await adoptOpenWindowsIntoDefault(tag, activeSpaceName);
 }
 
 // ===== Session Management =====
@@ -400,6 +424,14 @@ function workspaceSnapshotKey(tagId) {
  */
 async function enterWorkspace(tag, spaceName) {
   const isDefault = tag.id === defaultSpaceId;
+  // The default shows no border, so its windows carry the tag's own color;
+  // a named workspace's windows carry the resolved accent the border shows.
+  const windowColor = isDefault ? tag.color : resolveSpaceBorderColor(tag.color, tag.id);
+
+  // First, before anything is restored or opened: every window born from
+  // here on belongs to the workspace being entered (see
+  // declareActiveWorkspaceForNewWindows()).
+  await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
 
   const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
   // `restored` counts the windows that actually opened — not `total`, the
@@ -415,7 +447,7 @@ async function enterWorkspace(tag, spaceName) {
       role: 'workspace',
       width: 1024,
       height: 768,
-      spaceMode: { spaceId: tag.id, spaceName, color: tag.color },
+      spaceMode: { spaceId: tag.id, spaceName, color: windowColor },
     });
   }
 
@@ -431,29 +463,35 @@ async function enterWorkspace(tag, spaceName) {
   } else {
     const borderColor = resolveSpaceBorderColor(tag.color, tag.id);
     showBorder(borderColor, spaceName);
-    // Show or update the workspace panel — it stays open across a switch
-    // (closeCurrentWorkspaceWindows() below keeps it alive when the target
-    // isn't the default; showPanel() reuses an already-open one instead of
-    // recreating it).
-    showPanel(spaceName);
   }
 }
 
 /**
  * Save and close whatever workspace is active now — the default included.
- * Shared by entering a different workspace and by leaving to the default;
- * the two differ only in whether the panel survives the transition.
+ * Shared by entering a different workspace and by leaving to the default.
  *
  * The save is the same `saveSessionSnapshot` the app's own quit/autosave
  * uses, keyed by the outgoing workspace's snapshot key (see
- * `workspaceSnapshotKey()`). Which windows that key saves is decided by the
- * key alone on the main-process side: a named workspace's row holds its own
- * windows and never one pinned across every workspace — that window is not
- * scoped to the workspace being left, so it is left out of the close sweep
- * below too (`docs/design/window-rules.md` "Persistent windows") — while the
- * default workspace's row holds everything on screen.
+ * `workspaceSnapshotKey()`).
+ *
+ * Closing mirrors quit the same way: quit never asks a window to prove it
+ * belongs to the session before destroying it — it closes everything, because
+ * the app's own design guarantees only one workspace's content windows are
+ * ever open at a time. This sweep closes every live content window
+ * (`WORKSPACE_CONTENT_ROLES`, same set `adoptOpenWindowsIntoDefault()` reads)
+ * on that same guarantee, rather than asking `getWindowsInSpace()` which
+ * windows carry this space's `mode` tag — a live tag can lag or be
+ * overwritten by an unrelated feature (e.g. a tile clobbering the shared
+ * `mode` context key), and a window that failed that check before was a
+ * window that silently outlived every future switch. A window pinned across
+ * every workspace (a global HUD window) is the one exception — it is not
+ * scoped to the workspace being left, so it is left out of the sweep
+ * (`docs/design/window-rules.md` "Persistent windows"). A workspace-pinned
+ * window has no such claim and closes normally; it comes back — pinned,
+ * badge intact — from the saved workspace row on re-entry (see
+ * `enterWorkspace()`).
  */
-async function closeCurrentWorkspaceWindows(options = {}) {
+async function closeCurrentWorkspaceWindows() {
   if (!activeSpaceId) return;
 
   try {
@@ -462,25 +500,17 @@ async function closeCurrentWorkspaceWindows(options = {}) {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
 
-  // Get all windows in the active space and close them — except one pinned
-  // across every workspace (a global HUD window): it is not scoped to this
-  // space in the first place, so leaving must not sweep it. A
-  // workspace-pinned window has no such claim and closes normally; it comes
-  // back — pinned, badge intact — from the saved workspace row on re-entry
-  // (see enterWorkspace()).
-  const result = await api.context.getWindowsInSpace(activeSpaceId);
-  if (result.success && result.data) {
-    for (const windowId of result.data) {
-      try {
-        const pinResult = await api.context.get('pin', windowId);
-        if (pinResult?.data?.value === 'global') continue;
-        await api.window.close(windowId);
-      } catch {
-      }
+  const listResult = await api.window.list();
+  if (!listResult?.success || !Array.isArray(listResult.windows)) return;
+  for (const w of listResult.windows) {
+    if (!w?.id || !WORKSPACE_CONTENT_ROLES.has(w.params?.role)) continue;
+    try {
+      const pinResult = await api.context.get('pin', w.id);
+      if (pinResult?.data?.value === 'global') continue;
+      await api.window.close(w.id);
+    } catch {
     }
   }
-
-  if (!options.keepPanel) hidePanel();
 }
 
 async function openSpace(spaceName) {
@@ -495,19 +525,16 @@ async function openSpace(spaceName) {
   const tag = tagResult.data.tag;
 
   // Resolve vivid color for spaces with default/grey color and persist it
-  const vividColor = resolveVividColor(tag.color, tag.id);
+  const vividColor = resolveVividColor(tag.color, tag.id, activeThemeId);
   if (vividColor !== tag.color) {
     tag.color = vividColor;
     await api.datastore.updateTagColor(tag.id, vividColor);
   }
 
   const displayName = getSpaceDisplayName(tag);
-  const enteringDefault = tag.id === defaultSpaceId;
 
   // Entering a workspace saves the current workspace's windows — the
-  // default included — and closes them (Goal, handoff.md). The panel
-  // carries through the switch unless we're landing on the default, which
-  // shows no chrome at all.
+  // default included — and closes them (Goal, handoff.md).
   //
   // The main process saves the ACTIVE workspace's row on its own schedule
   // (autosave, quit, and ~500ms after any window closes). Between the save
@@ -523,7 +550,7 @@ async function openSpace(spaceName) {
     console.error('[ext:spaces] Failed to mark the workspace switch as in progress:', err);
   }
   try {
-    await closeCurrentWorkspaceWindows({ keepPanel: !enteringDefault });
+    await closeCurrentWorkspaceWindows();
     await enterWorkspace(tag, displayName);
   } finally {
     try {
@@ -557,6 +584,16 @@ async function closeSpace() {
 
 async function switchSpace(targetName) {
   if (!targetName) return { success: false, error: 'Usage: switch space <name>' };
+  await defaultSpaceReady;
+  // Switching to the workspace that is already active is a no-op: re-entering
+  // it would save, close and reopen its own windows for no visible change.
+  // The Spaces UI's card click and the `switch space` command both come
+  // through here, so this is where that churn is avoided; `open space` keeps
+  // its re-enter semantics.
+  if (activeSpaceId && activeSpaceName &&
+      toSpaceTagName(targetName.trim()) === toSpaceTagName(activeSpaceName)) {
+    return { success: true, spaceId: activeSpaceId, spaceName: activeSpaceName, unchanged: true };
+  }
   // Entering any workspace already closes whichever one is active — switching
   // is just entering a different target (see openSpace()).
   return openSpace(targetName);
@@ -636,6 +673,12 @@ const initCommands = () => {
   // "close space"
   api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
+    if (!result?.success) {
+      // A command invocation has no result surface of its own, so a
+      // refused close (e.g. the default already active) would otherwise be
+      // indistinguishable from a click that never arrived.
+      console.warn('[ext:spaces] close space refused:', result?.error, 'active:', activeSpaceName);
+    }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
@@ -728,12 +771,38 @@ const init = async () => {
 
   initCommands();
 
+  // Wake topic (manifest `lazyEvents`): this tile is lazy and normally wakes
+  // only on a `cmd:execute:*` command, but `open spaces` is a declarative
+  // `window` command — the lazy-dispatch hook (`main/tile-lazy.ts
+  // handleCommandDispatch`) turns it into a `window:reopen-request` and never
+  // delivers a `cmd:execute:open spaces`, so opening the Spaces UI alone
+  // could not wake this tile, and the default workspace's tag did not exist
+  // until some other command ran. The Spaces UI (`home.js init()`) publishes
+  // this topic instead; being woken by it is the whole effect — `init` below
+  // already bootstraps the default, so the handler only has to exist and
+  // let the publish resolve once the bootstrap is done.
+  api.pubsub.subscribe('spaces:ensure-default', async () => {
+    await defaultSpaceReady;
+  });
+
   // Fire-and-forget: resolves activeSpaceId to the default workspace.
   // Every command handler above awaits this before touching activeSpaceId,
   // the same guard-the-body pattern lazy tiles use for a settings-load race
   // (see apps/desktop/CLAUDE.md "CRITICAL init-ordering rule for lazy tile
   // authors") — registration itself stays synchronous.
   defaultSpaceReady = bootstrapDefaultSpace();
+
+  // Track the active theme, live, for the vivid-color fallback palette.
+  // `activeThemeId` starts at its 'peek' default and is only ever read by
+  // color resolution, so there's nothing here to gate behind an awaited
+  // promise the way `defaultSpaceReady` is — a border shown before the
+  // first getInfo() resolves just uses that default.
+  api.theme.onChange?.((info) => {
+    if (info?.kind === 'theme' && info.themeId) activeThemeId = info.themeId;
+  });
+  api.theme.getInfo().then((info) => {
+    if (info?.themeId) activeThemeId = info.themeId;
+  }).catch(() => {});
 
   // Subscribe to item:created for auto-tagging
   api.pubsub.subscribe('item:created', handleItemCreated);
@@ -759,7 +828,6 @@ const uninit = () => {
   uninitCommands();
   cancelHideTimer();
   hideBorder();
-  hidePanel();
 };
 
 export default {

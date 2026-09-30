@@ -90,6 +90,7 @@ import {
   queryContent as dsQueryContent,
   addContextEntry,
   getContextEntry,
+  setContextDefault,
   queryContextHistory,
   getContextSnapshot,
   getWindowsWithContextValue,
@@ -1016,6 +1017,35 @@ export function registerTileIpcHandlers(): void {
         },
       );
       return { success: true, data: result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // Declare (or clear, with `value: null`) the default a key takes on every
+  // window opened from now on whose opener sets none — see
+  // `datastore.ts setContextDefault`. Gated like a write to that key.
+  registerTileIpc('tile:context:set-default', { mode: 'handle' }, async (_ev, args: {
+    token: string;
+    key: string;
+    value: unknown;
+    metadata?: Record<string, unknown>;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkContextAllowed(grant, 'set', args.key);
+    if (!check.ok) {
+      handleViolation(grant, 'context', 'context:set-default', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      setContextDefault(
+        args.key,
+        args.value === null || args.value === undefined
+          ? null
+          : { value: args.value, metadata: args.metadata || {} },
+      );
+      return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

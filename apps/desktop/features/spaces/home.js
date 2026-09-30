@@ -736,14 +736,46 @@ const createSpaceCard = (space) => {
   footer.textContent = `${count} ${count === 1 ? 'page' : 'pages'}`;
   card.appendChild(footer);
 
-  card.addEventListener('card-click', () => showItems(space));
+  card.addEventListener('card-click', () => activateSpace(space));
 
   return card;
 };
 
 /**
+ * Click or Enter on a space card: enter that workspace AND browse its items.
+ * Activation goes through the same `switch space` command the palette
+ * uses — one path into `background.js openSpace()`, not a parallel one.
+ * `grid-nav.js activateSelected()` implements Enter as a `.click()` on the
+ * selected card, so both gestures land here.
+ */
+const activateSpace = (space) => {
+  api.pubsub.publish('cmd:execute:switch space', {
+    search: getSpaceDisplayName(space),
+    params: [getSpaceDisplayName(space)],
+  });
+  return showItems(space);
+};
+
+/**
  * Create a card for an item in a space
  */
+/**
+ * The `spaceMode` a window opened from the browsed space's item list is born
+ * with. Its color is the space's resolved accent — the same
+ * `resolveVividColor` fallback `background.js openSpace()` persists — not
+ * the tag's raw stored color: a space whose tag is still grey (never entered
+ * through `open`/`switch space`) would otherwise put grey windows next to a
+ * vivid border, and the accent would depend on which happened first.
+ */
+const spaceModeFor = (space) => {
+  if (!space) return undefined;
+  return {
+    spaceId: space.id,
+    spaceName: getSpaceDisplayName(space),
+    color: resolveVividColor(space.color, space.id),
+  };
+};
+
 const createItemCard = (item) => {
   const itemUrl = item.uri || item.content;
 
@@ -758,11 +790,7 @@ const createItemCard = (item) => {
         key: url,
         width: 1024,
         height: 768,
-        spaceMode: state.currentSpace ? {
-          spaceId: state.currentSpace.id,
-          spaceName: getSpaceDisplayName(state.currentSpace),
-          color: state.currentSpace.color || '#999'
-        } : undefined
+        spaceMode: spaceModeFor(state.currentSpace)
       });
     },
     onDelete: async (deleteItem) => {
@@ -782,11 +810,7 @@ const createItemCard = (item) => {
         key: itemUrl,
         width: 1024,
         height: 768,
-        spaceMode: state.currentSpace ? {
-          spaceId: state.currentSpace.id,
-          spaceName: getSpaceDisplayName(state.currentSpace),
-          color: state.currentSpace.color || '#999'
-        } : undefined
+        spaceMode: spaceModeFor(state.currentSpace)
       };
       await api.window.open(itemUrl, openOptions);
     }
@@ -884,6 +908,15 @@ const init = async () => {
   });
 
   setupCreateSpace();
+
+  // Make sure the default workspace exists before the list renders for the
+  // first time. The tag is created by the feature's lazy background tile
+  // (`background.js bootstrapDefaultSpace()`), and this page is opened by a
+  // declarative `window` command that cannot wake it (see the
+  // `spaces:ensure-default` subscriber in background.js). Published after
+  // the live query above is subscribed: the datastore announces the new tag
+  // as `tag:created`, which re-renders the list through that query.
+  api.pubsub.publish('spaces:ensure-default', {});
 
   showSpaces();
 };

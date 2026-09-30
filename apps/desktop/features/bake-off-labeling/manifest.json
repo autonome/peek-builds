@@ -1,0 +1,45 @@
+{
+  "manifestVersion": 3,
+  "id": "bake-off-labeling",
+  "shortname": "bake-off-labeling",
+  "name": "Bake-off Labelling",
+  "description": "Manually label Peek data for the local AI bake-off",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "home",
+      "url": "home.html",
+      "width": 1100,
+      "height": 800,
+      "title": "Bake-off Labelling",
+      "role": "workspace",
+      "key": "bake-off-labeling",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "datastore": {
+      "tables": ["items", "item_visits"]
+    },
+    "dialogs": {
+      "types": ["save"]
+    }
+  },
+  "commands": [
+    {
+      "name": "open bake-off labeling",
+      "description": "Open the manual labelling workspace for the local AI bake-off",
+      "action": {
+        "type": "window",
+        "url": "peek://bake-off-labeling/home.html",
+        "options": {
+          "role": "workspace",
+          "key": "bake-off-labeling",
+          "width": 1100,
+          "height": 800
+        }
+      }
+    }
+  ]
+}

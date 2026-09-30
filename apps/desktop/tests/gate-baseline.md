@@ -607,3 +607,77 @@ the slide opening that address 22 seconds later. `PeekInput._handleChange()` now
 the inner input's `change` as a composed event. The two new desktop specs drive the field
 with real keyboard input and blur; the pre-existing options-save spec dispatched a
 synthetic composed `change`, which is why it passed on the broken code.
+
+### Twelfth macOS gate run — 2026-09-23
+
+`yarn test:desktop:electron:bg` on `track/spaces-switch-cleanup`, macOS arm64, packaged. Exit 1.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3311 | 0 | — |
+| node unit | 774 | 0 | — |
+| desktop | 476 | 1 | 21 |
+| desktop-serial | 35 | 5 | — |
+| components | 64 | 0 | — |
+| editor | 91 | 0 | — |
+
+Six failures total, all in the `desktop` and `desktop-serial` Playwright projects; main-process unit
+and node unit are clean. Both unit runners were separately re-verified at 3311/3311 and 774/774
+passing with 0 failures, run twice on this track — once before rebasing onto `main`, once after.
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `device-settings.spec.ts:166` | Device Settings Panel — lists, renames, revokes (including itself), mints a code and enrols with it | pre-existing — fails identically in isolation (`yarn test:grep`), unrelated feature area (device enrolment dialog text assertion: `Expected substring: "the device you are using right now" / Received string: ""`) |
+| `desktop-serial/cmd-url-window-reuse.spec.ts:82` | opening an already-open URL via cmd reuses the window instead of duplicating | pre-existing — reproducible (not flaky) on a second isolated run against the same packaged build; times out waiting for the `window:opened` pubsub event after a cmd-panel-driven URL open, though the window itself is created (`open-registry-set ... role=content`) |
+| `desktop-serial/external-url.spec.ts:25` | cmd panel detects and opens domain without protocol (youtube.com) | pre-existing — same `window:opened`-wait timeout pattern as the reuse test above |
+| `desktop-serial/external-url.spec.ts:89` | cmd panel opens URL with http protocol | pre-existing — same pattern |
+| `desktop-serial/external-url.spec.ts:164` | cmd panel opens URL with https protocol | pre-existing — same pattern |
+| `desktop-serial/external-url.spec.ts:227` | cmd panel opens localhost URLs | pre-existing — same pattern |
+
+This track's diff touches only `apps/desktop/features/spaces/background.js`
+`closeCurrentWorkspaceWindows()`, `apps/desktop/features/editor/home.js`, and the spec files added
+alongside them — `git diff --stat main..track/spaces-switch-cleanup` shows nothing in `main/ipc.ts`,
+the cmd UI, or the window-open/`window:opened`-publish path. The shared root cause across the four
+`external-url` failures and the one `cmd-url-window-reuse` failure is the cmd panel's "type a URL,
+press Enter" open path never firing, or never matching, the `window:opened` listener the tests wait
+on — a mechanism entirely outside this diff. The verdict also rests on static reachability:
+`closeCurrentWorkspaceWindows()` is only invoked from `openSpace()`, a user-triggered workspace
+switch, and none of these five tests trigger one.
+
+One thing is NOT established and should not be read as settled:
+
+- **None of the five cmd-panel failures have been A/B'd against `main` on the same packaged build.**
+  The verdict rests on static reachability plus confirmed non-flaky reproducibility (a second
+  isolated run against the same build reproduces all five identically), not on reverting this
+  track's changes and re-running the identical specs against the identical binary — which is what
+  would close the question outright.
+
+This track's own `workspace membership` (8 tests) and `spaces ui activation` (5 tests) describe
+blocks were green throughout the gate — neither appears in the failing set above.
+
+### Thirteenth macOS gate run — 2026-09-25
+
+`yarn test:desktop:electron:bg` on `agent/cmd-panel-focus-regression` rebased onto `main`
+(`1fe79e2d`), macOS arm64, packaged. Exit 1.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 3369 | 0 | — |
+| node unit | 826 | 0 | — |
+| desktop | 486 | 3 | 21 |
+| desktop-serial | 34 | 6 | — |
+| components | 66 | 0 | — |
+| editor | 91 | 0 | — |
+
+Nine failures. Five are the twelfth run's cmd-panel set unchanged (`device-settings.spec.ts:190`,
+`desktop-serial/cmd-url-window-reuse.spec.ts:115`, `desktop-serial/external-url.spec.ts:25/89/164/227`;
+line numbers moved with the files). The other four:
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `cmd-url-unfocused.spec.ts:170` | the kernel keeps the page window on screen and never hides the app | this track's own spec: it read the window list before the reopened page had loaded, so the list carried an empty URL. Fixed in the spec by polling the list; the fix passed on the next source run |
+| `command-chaining.spec.ts:365` | escape exits chain mode before closing panel | intermittent — `ERR_FAILED (-2) loading 'peek://cmd/panel.html'`, the signature already recorded for `:54` and `:127` above; passed in isolation on the same source |
+| `desktop-serial/cmd-state-machine.spec.ts:216` | Escape layering: param mode -> clear text -> close | pre-existing — fails 3 of 3 in isolation on this track and 2 of 2 on `main` in the primary checkout, same source build method, same signature (`waitForState('IDLE')` times out after the second Escape). Not previously recorded |
+
+The A/B for the Escape-layering case ran the `desktop-serial` project through
+`scripts/playwright-with-display.sh` from source in both checkouts, not against the packaged build.

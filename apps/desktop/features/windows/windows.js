@@ -172,11 +172,11 @@ const handleKeydown = (e) => {
 };
 
 // Roles that mark a window as dedicated chrome rather than user content —
-// izui-roles.ts's TRANSIENT_ROLES plus 'panel' (the workspace panel's own
-// role — deliberately not a TRANSIENT_ROLE itself, see
-// features/spaces/background.js showPanel()). Duplicated rather than
-// imported: this file is a plain peek:// tile script with no import path
-// into main-process TypeScript (see apps/desktop/CLAUDE.md's tile
+// izui-roles.ts's TRANSIENT_ROLES plus 'panel' (a dedicated-chrome role of
+// its own, deliberately not a TRANSIENT_ROLE — carried today by the Lexicon
+// Studio `chain-form` tile, features/lex/manifest.json). Duplicated rather
+// than imported: this file is a plain peek:// tile script with no import
+// path into main-process TypeScript (see apps/desktop/CLAUDE.md's tile
 // architecture notes).
 const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
 

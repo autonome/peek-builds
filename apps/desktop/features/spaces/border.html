@@ -14,16 +14,17 @@
     }
     .border {
       position: fixed;
-      inset: 0;
-      border: 3px solid var(--color, #007aff);
-      border-radius: 8px;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 5px;
+      background: linear-gradient(to left, var(--color, #007aff), transparent);
       pointer-events: none;
     }
     .label {
       position: fixed;
-      top: 6px;
-      left: 50%;
-      transform: translateX(-50%);
+      right: 14px;
+      bottom: 12px;
       background: var(--color, #007aff);
       color: #fff;
       font: 500 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -54,7 +55,6 @@
       api.pubsub.subscribe('spaces:border-update', (msg) => {
         if (msg.color) {
           document.documentElement.style.setProperty('--color', msg.color);
-          document.getElementById('border').style.borderColor = msg.color;
         }
         if (msg.name) {
           document.getElementById('label').textContent = msg.name;

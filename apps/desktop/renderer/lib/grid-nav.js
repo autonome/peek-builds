@@ -141,6 +141,12 @@ export const createKeydownHandler = (state, callbacks = {}) => {
         }
         break;
       case 'Enter':
+        // A focused interactive `<peek-card>` turns Enter into its own
+        // `card-click` before the event reaches the document (and marks it
+        // consumed). Activating the selected card here as well fired the
+        // activation twice per keypress — for a Spaces card, two concurrent
+        // `switch space` runs that raced each other into a double open.
+        if (e.defaultPrevented) return;
         e.preventDefault();
         if (callbacks.onActivate) {
           callbacks.onActivate();

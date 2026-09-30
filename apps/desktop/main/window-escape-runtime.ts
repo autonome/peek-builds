@@ -47,7 +47,6 @@ export interface EscapeRuntimeDeps {
 // a keystroke already dropped as stale has no window left to ask.
 function rendererCouldHavePreempted(outcome: EscapeOutcome): boolean {
   if (outcome.kind === 'close-window') return true;
-  if (outcome.kind === 'hide-window') return true;
   if (outcome.kind === 'open-switcher') return true;
   if (outcome.kind === 'nothing' && outcome.reason === 'policy-nothing') return true;
   return false;
@@ -103,16 +102,6 @@ function performEscapeOutcome(outcome: EscapeOutcome, deps: EscapeRuntimeDeps): 
     case 'close-window': {
       wmLog('esc-action', {
         action: 'close-window',
-        type: outcome.command.type,
-        id: outcome.command.id,
-        expectedVersion: outcome.command.expectedVersion,
-      });
-      deps.execute(outcome.command);
-      return;
-    }
-    case 'hide-window': {
-      wmLog('esc-action', {
-        action: 'hide-window',
         type: outcome.command.type,
         id: outcome.command.id,
         expectedVersion: outcome.command.expectedVersion,

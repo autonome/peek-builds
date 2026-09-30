@@ -1,0 +1,28 @@
+#!/bin/bash
+# Refuse a commit that stages a handoff.md anywhere in the tree.
+#
+# handoff.md is per-session working state and is gitignored. The root copy is
+# the track roster and each worktree's copy is that track's handoff, at the
+# same path. If any branch tracks the file, git treats the ignored copy in
+# every other worktree as disposable and overwrites it on fast-forward with no
+# conflict and no message, so a handoff is lost every time a track lands.
+# Only a file tracked nowhere is safe from that. The .gitignore already keeps
+# it out of a plain `git add`; this hook catches `git add -f` and a stale
+# branch that still carries the file.
+#
+# Enabled per clone by `git config core.hooksPath .githooks`, which the root
+# package.json postinstall runs on every `yarn install`.
+set -u
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+hits=$(printf '%s\n' "$staged" | grep -E '(^|/)handoff\.md$' || true)
+if [ -n "$hits" ]; then
+  echo "pre-commit: refusing to commit a handoff.md, which is per-session state and must stay untracked:" >&2
+  printf '  %s\n' $hits >&2
+  echo "Unstage it with: git rm --cached <path>" >&2
+  exit 1
+fi
+
+exit 0

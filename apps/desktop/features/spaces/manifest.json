@@ -10,7 +10,8 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "lazy": true,
+      "lazyEvents": ["spaces:ensure-default"]
     },
     {
       "id": "home",
@@ -28,15 +29,6 @@
       "frame": false,
       "focusable": false,
       "alwaysOnTop": true
-    },
-    {
-      "id": "panel",
-      "url": "panel.html",
-      "role": "overlay",
-      "transparent": true,
-      "frame": false,
-      "skipTaskbar": true,
-      "title": "Workspace"
     }
   ],
   "capabilities": {
@@ -81,7 +73,8 @@
       "manage": true
     },
     "commands": true,
-    "session": true
+    "session": true,
+    "theme": true
   },
   "commands": [
     {

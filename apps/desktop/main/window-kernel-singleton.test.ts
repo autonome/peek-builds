@@ -98,6 +98,9 @@ class FakeBackend implements WindowBackend {
   pinAlwaysOnTop(id: BackendWindowId, on: boolean): void {
     this.record('pinAlwaysOnTop', id, on);
   }
+  reopenAsOrdinaryWindow(id: BackendWindowId): void {
+    this.record('reopenAsOrdinaryWindow', id);
+  }
   hideApp(): void {
     this.record('hideApp');
   }

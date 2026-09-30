@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Bake-off Labelling</title>
+    <link rel="stylesheet" href="home.css">
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+    <script type="module">
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-button-group.js';
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-grid.js';
+      import 'peek://app/components/peek-grid-toolbar.js';
+      import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-select.js';
+      import 'peek://app/components/peek-switch.js';
+    </script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Bake-off labelling</h1>
+        <p>Build private, self-contained evaluation sets from your Peek data.</p>
+      </div>
+      <peek-button id="exportButton" variant="primary">Export task clustering</peek-button>
+    </header>
+
+    <peek-button-group id="workflowTabs" value="tasks" selection="single">
+      <peek-button-group-item value="tasks">Task clustering</peek-button-group-item>
+      <peek-button-group-item value="entities">Entities</peek-button-group-item>
+      <peek-button-group-item value="routing">Command routing</peek-button-group-item>
+    </peek-button-group>
+
+    <main>
+      <section id="tasksPanel" class="workflow" data-workflow="tasks">
+        <div class="range-row">
+          <label>Since <peek-input id="rangeSince" type="date"></peek-input></label>
+          <label>Until <peek-input id="rangeUntil" type="date"></peek-input></label>
+          <peek-button id="loadRangeButton" variant="secondary">Load range</peek-button>
+          <span id="rangeStatus" class="status"></span>
+        </div>
+        <div id="taskPicker" class="picker-host"></div>
+        <div class="group-row">
+          <peek-input id="taskLabel" placeholder="New task group name"></peek-input>
+          <peek-button id="createTaskButton">Create group</peek-button>
+          <peek-select id="taskGroupSelect" placeholder="Choose group"></peek-select>
+          <peek-button id="assignTaskButton" variant="secondary">Assign selected</peek-button>
+          <peek-button id="unassignTaskButton" variant="ghost">Mark unassigned</peek-button>
+        </div>
+        <peek-grid-toolbar id="taskToolbar" view-mode="fit"></peek-grid-toolbar>
+        <peek-grid id="taskGrid" view-mode="fit" min-item-width="260" gap="12"></peek-grid>
+      </section>
+
+      <section id="entitiesPanel" class="workflow" data-workflow="entities" hidden>
+        <div id="entityPicker" class="picker-host"></div>
+        <div class="entity-layout">
+          <peek-grid id="entityItems" view-mode="columns" min-item-width="240" gap="10"></peek-grid>
+          <peek-card class="entity-detail" bordered>
+            <strong slot="header" id="entityTitle">Choose an item</strong>
+            <div id="entityLoading" class="status"></div>
+            <pre id="entityText" tabindex="0" aria-label="Item text"></pre>
+            <div class="entity-controls">
+              <peek-select id="entityType"></peek-select>
+              <peek-button id="tagEntityButton">Tag selected span</peek-button>
+            </div>
+            <div id="entitySpans"></div>
+          </peek-card>
+        </div>
+      </section>
+
+      <section id="routingPanel" class="workflow" data-workflow="routing" hidden>
+        <peek-card bordered>
+          <strong slot="header">Add routing case</strong>
+          <div class="routing-form">
+            <label>Utterance <textarea id="utterance" rows="3" placeholder="What might someone ask Peek?"></textarea></label>
+            <label>Expected tool <peek-select id="toolSelect" placeholder="Choose an MCP tool"></peek-select></label>
+            <label>Arguments (JSON) <textarea id="toolArgs" rows="5">{}</textarea></label>
+            <peek-button id="addCallButton" variant="secondary">Add expected call</peek-button>
+            <div id="pendingCalls" aria-label="Expected calls for this case"></div>
+            <label class="refusal"><peek-switch id="refusalToggle"></peek-switch> No matching tool (refusal)</label>
+            <div id="routingError" class="error" role="alert"></div>
+            <peek-button id="addCaseButton">Add case</peek-button>
+          </div>
+        </peek-card>
+        <div id="routingCases" class="case-list"></div>
+      </section>
+    </main>
+
+    <script type="module" src="home.js"></script>
+  </body>
+</html>

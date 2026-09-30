@@ -78,6 +78,7 @@ class InertBackend implements WindowBackend {
   showWindow(): void {}
   hideWindow(): void {}
   pinAlwaysOnTop(): void {}
+  reopenAsOrdinaryWindow(): void {}
   destroyAllContentGuests(): Promise<void> {
     return Promise.resolve();
   }

@@ -119,6 +119,9 @@ class RecordingBackend implements WindowBackend {
   pinAlwaysOnTop(id: BackendWindowId, on: boolean): void {
     this.record('pinAlwaysOnTop', id, on);
   }
+  reopenAsOrdinaryWindow(id: BackendWindowId): void {
+    this.record('reopenAsOrdinaryWindow', id);
+  }
   hideApp(): void {
     this.record('hideApp');
   }
@@ -1670,5 +1673,92 @@ describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8
   // term.
   it('headless + appActive true returns true (appActive dominates; OS calls gated by planRaise)', () => {
     assert.strictEqual(planRestoreFocus(false, true, true), true);
+  });
+});
+
+// ── The reopen effect runs after the batch that asked for it ─────────────────
+
+describe('ReopenAsOrdinaryWindow runs once the batch has drained', () => {
+  /**
+   * The real backend realizes the reopen through the ordinary window-open path,
+   * which registers the replacement and then asks for its show, each as a
+   * command decided against the state of that moment. Modelled here by
+   * re-entering the executor the same way.
+   */
+  class ReenteringBackend extends RecordingBackend {
+    exec: WindowKernelExecutor | null = null;
+    override reopenAsOrdinaryWindow(id: BackendWindowId): void {
+      super.reopenAsOrdinaryWindow(id);
+      const exec = this.exec!;
+      exec.execute({
+        type: 'RegisterWindow',
+        id: wid(2),
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+        expectedVersion: exec.getState().version,
+      });
+      exec.execute({ type: 'ShowWindow', id: wid(2), expectedVersion: exec.getState().version });
+      exec.execute({ type: 'CloseOrHideWindow', id, expectedVersion: exec.getState().version });
+    }
+  }
+
+  /**
+   * The shape a side task has live: a settings-like window on screen, a
+   * palette that held key over the other app, and the page that took key from
+   * the palette, which then hid itself. The page's prior key window is the
+   * hidden palette, so the close's successor falls through to the topmost
+   * content window.
+   */
+  function sideTaskSetup(): { exec: WindowKernelExecutor; backend: ReenteringBackend } {
+    const backend = new ReenteringBackend();
+    const exec = new WindowKernelExecutor(backend, { headless: false });
+    backend.exec = exec;
+    exec.dispatch(register(wid(3), { role: 'workspace' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(3) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(3) });
+    exec.dispatch({ type: 'AppResigned' });
+    exec.dispatch({ type: 'OsFocusLost', id: wid(3) });
+    exec.dispatch(register(wid(4), { role: 'palette', class: 'palette', nonActivating: true, keepLive: true }));
+    exec.dispatch({ type: 'WindowShown', id: wid(4) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(4) });
+    exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content', nonActivating: true }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    exec.dispatch({ type: 'WindowHidden', id: wid(4) });
+    assert.strictEqual(exec.getState().key, wid(1));
+    assert.strictEqual(exec.getState().appActive, false);
+    backend.calls.length = 0;
+    return { exec, backend };
+  }
+
+  it('the replacement registered and shown from inside the effect is visible afterwards', () => {
+    const { exec, backend } = sideTaskSetup();
+    exec.dispatch({ type: 'AppActivated' });
+    assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow').map((c) => c.args[0]), [wid(1)]);
+    const replacement = exec.getState().order.find((w) => w.id === wid(2));
+    assert.ok(replacement, 'the replacement never registered');
+    assert.strictEqual(replacement.visible, true);
+    assert.strictEqual(exec.getState().order.some((w) => w.id === wid(1)), false);
+  });
+
+  it('with the app active, the close of the old window hands the raise to the replacement', () => {
+    const { exec, backend } = sideTaskSetup();
+    exec.dispatch({ type: 'AppActivated' });
+    const raises = backend.of('raiseWindow').map((c) => c.args[0]);
+    assert.strictEqual(raises[raises.length - 1], wid(2));
+  });
+
+  it('with the app inactive, the close of the old window raises nothing', () => {
+    const { exec, backend } = sideTaskSetup();
+    exec.dispatch({ type: 'OsFocusLost', id: wid(1) });
+    assert.deepStrictEqual(backend.of('reopenAsOrdinaryWindow').map((c) => c.args[0]), [wid(1)]);
+    const replacement = exec.getState().order.find((w) => w.id === wid(2));
+    assert.ok(replacement, 'the replacement never registered');
+    assert.strictEqual(replacement.visible, true);
+    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]).filter((id) => id === wid(2)), []);
   });
 });

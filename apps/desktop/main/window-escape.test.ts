@@ -39,7 +39,6 @@ import {
 } from './window-kernel.js';
 import {
   interpretEscape,
-  SIDE_TASK_ESCAPE,
   resolveEscapeTarget,
   switcherWindow,
   shouldArmEscapeGrab,
@@ -228,31 +227,22 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     });
   });
 
-  it('Escape on a page holding key while the app is inactive ends the side task instead of opening the switcher', () => {
+  it('Escape on a page holding key while the app is inactive closes the side task instead of opening the switcher', () => {
     const sidePage = wid(90);
     const state = fold([{ type: 'AppResigned' }, regHost(sidePage), show(sidePage), focus(sidePage)], loneHost());
     assert.strictEqual(state.appActive, false);
-    // The shipped setting hides: the page leaves the screen and stays open.
-    assert.strictEqual(SIDE_TASK_ESCAPE, 'hide');
     assert.deepStrictEqual(interpretEscape(press({ landedId: sidePage }), state), {
-      kind: 'hide-window',
-      command: { type: 'HideWindow', id: sidePage, expectedVersion: state.version, returnsOnActivation: true },
-    });
-    assert.deepStrictEqual(interpretEscape(press({ landedId: sidePage }), state, 'close'), {
       kind: 'close-window',
       command: { type: 'CloseOrHideWindow', id: sidePage, expectedVersion: state.version },
     });
-    // Set aside, the page leaves the screen and comes back when the app next
-    // becomes active; a plain hide made in the same state stays hidden.
+    // A hide made while the app is inactive stays hidden across the next activation.
     const visibleOf = (s: State) => s.order.find((w) => w.id === sidePage)?.visible;
-    const setAside = fold([{ type: 'WindowHidden', id: sidePage, returnsOnActivation: true }], state);
-    assert.strictEqual(visibleOf(setAside), false);
-    assert.strictEqual(visibleOf(fold([{ type: 'AppActivated' }], setAside)), true);
-    const plainHide = fold([{ type: 'WindowHidden', id: sidePage }], state);
-    assert.strictEqual(visibleOf(fold([{ type: 'AppActivated' }], plainHide)), false);
-    // A role Escape always closes is closed, never hidden, whatever the setting.
+    const hidden = fold([{ type: 'WindowHidden', id: sidePage }], state);
+    assert.strictEqual(visibleOf(hidden), false);
+    assert.strictEqual(visibleOf(fold([{ type: 'AppActivated' }], hidden)), false);
+    // A role Escape always closes is closed the same way.
     const peek = fold([{ type: 'AppResigned' }, regQuickView(quickView), show(quickView), focus(quickView)], loneHost());
-    assert.strictEqual(interpretEscape(press({ landedId: quickView }), peek, 'hide').kind, 'close-window');
+    assert.strictEqual(interpretEscape(press({ landedId: quickView }), peek).kind, 'close-window');
     // The same window with the app active keeps the ordinary page answer.
     const active = fold([{ type: 'AppActivated' }, focus(sidePage)], state);
     assert.strictEqual(interpretEscape(press({ landedId: sidePage }), active).kind, 'open-switcher');
