@@ -7766,6 +7766,72 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.deepStrictEqual(dismisses(after.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
+  // The page chrome overlay, attached to a host (`hybrid-overlay.ts ensureOverlay`).
+  const overlay = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'browser',
+    layer: 1,
+    canBecomeKey: true,
+    acceptsInput: false,
+    class: 'overlay',
+    role: 'overlay',
+  });
+  const frame: Rectangle = { x: 0, y: 0, width: 800, height: 644 };
+  const shows = (effects: Effect[], id: WindowId): boolean => effects.some((e) => e.type === 'ShowWindow' && e.id === id);
+  const hides = (effects: Effect[], id: WindowId): boolean => effects.some((e) => e.type === 'HideWindow' && e.id === id);
+
+  it('the page chrome is shown over the page while it holds key taken from another app', () => {
+    const held = transientPageHoldingKey(wid(1));
+    const after = foldWithEffects([overlay(wid(9)), { type: 'OverlayAttached', overlayId: wid(9), hostId: wid(1), frame }], held);
+    assert.strictEqual(after.state.appActive, false, 'the other app keeps focus');
+    assert.strictEqual(record(after.state, wid(9)).visible, true);
+    assert.ok(shows(after.effects, wid(9)), 'the chrome is shown on screen');
+  });
+
+  it('the page chrome shows once an attached page takes key from another app, and hides when the page ends', () => {
+    const attached = fold(
+      [
+        layout,
+        { type: 'AppResigned' },
+        sidePage(wid(1)),
+        overlay(wid(9)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'OverlayAttached', overlayId: wid(9), hostId: wid(1), frame },
+      ],
+    );
+    assert.strictEqual(record(attached, wid(9)).visible, false, 'not shown before the page holds key');
+
+    const held = foldWithEffects(
+      [
+        { type: 'FocusRaiseRequested', id: wid(1), intent: 'user' },
+        { type: 'OsFocusGained', id: wid(1) },
+      ],
+      attached,
+    );
+    assert.ok(shows(held.effects, wid(9)));
+
+    const ended = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], held.state);
+    assert.deepStrictEqual(dismisses(ended.effects), [{ type: 'DismissWindow', id: wid(1) }]);
+    assert.strictEqual(record(ended.state, wid(9)).visible, false);
+    assert.ok(hides(ended.effects, wid(9)), 'the chrome leaves with the page');
+  });
+
+  it('the page chrome stays hidden over an ordinary page while another app is active', () => {
+    const after = foldWithEffects([
+      layout,
+      sidePage(wid(1), { nonActivating: false, transient: false }),
+      overlay(wid(9)),
+      { type: 'AppActivated' },
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'OsFocusGained', id: wid(1) },
+      { type: 'OverlayAttached', overlayId: wid(9), hostId: wid(1), frame },
+      { type: 'AppResigned' },
+    ]);
+    assert.strictEqual(record(after.state, wid(9)).visible, false);
+    assert.strictEqual(record(after.state, wid(9)).hiddenByAppBlur, true);
+  });
+
   // A desktop switch resigns the app and arms the settle; the palette asked for
   // inside that window takes key over the other app and must outlive the settle.
   it('the resign settle spares a palette opened after the resign that holds key', () => {

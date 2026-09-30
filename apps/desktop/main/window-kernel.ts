@@ -540,7 +540,49 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
 }
 
 export function evolve(state: State, ev: Event): State {
-  return markEndedKeyTakenFromAnotherApp(state, evolveEvent(state, ev));
+  return followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, evolveEvent(state, ev)));
+}
+
+// The page chrome overlay over a page opened while another app is active: a
+// structural diff, like `markEndedKeyTakenFromAnotherApp`. With the app
+// inactive, an overlay starts to be over a host for which
+// `holdsKeyTakenFromAnotherApp` holds → shown; it stops (the page ended, key
+// went elsewhere, the overlay moved to another host) → hidden, marked
+// `hiddenByAppBlur` so `AppActivated` reveals it the same way it does after a
+// resign. Only the flip acts, so an OS report of the overlay's own show or
+// hide is never overruled. With the app active, `overlayFollowPatch` and
+// `AppActivated` own the overlay's visibility.
+function overlayOverHeldHost(state: State, overlay: WindowRecord): boolean {
+  if (state.appActive || overlay.overlayFor === undefined || overlay.pendingHidden === true) return false;
+  const host = state.order.find((h) => h.id === overlay.overlayFor);
+  return host !== undefined && host.fsMode.name === 'normal' && host.pendingHidden !== true && holdsKeyTakenFromAnotherApp(state, host);
+}
+
+function followHeldHostOverlay(prev: State, next: State): State {
+  const flip = (w: WindowRecord): 'show' | 'hide' | null => {
+    const before = prev.order.find((p) => p.id === w.id);
+    const was = before !== undefined && overlayOverHeldHost(prev, before);
+    const is = overlayOverHeldHost(next, w);
+    if (is && !was && !w.visible) return 'show';
+    if (was && !is && w.visible && !next.appActive) return 'hide';
+    return null;
+  };
+  if (!next.order.some((w) => flip(w) !== null)) return next;
+  // A show is stamped like every other: one counter step per transition,
+  // shared with any show or raise the event itself issued.
+  const issuesShow = next.order.some((w) => flip(w) === 'show' && prev.order.some((p) => p.id === w.id && !p.visible));
+  const opSeq = issuesShow && next.opSeqCounter === prev.opSeqCounter ? next.opSeqCounter + 1 : next.opSeqCounter;
+  return {
+    ...next,
+    order: next.order.map((w) => {
+      const f = flip(w);
+      if (f === 'hide') return { ...w, visible: false, hiddenByAppBlur: true };
+      if (f !== 'show') return w;
+      const shown = { ...w, visible: true, ...(w.hiddenByAppBlur === true ? { hiddenByAppBlur: false } : {}), lastOpSeq: opSeq };
+      return withShownDesktop(next, w, shown);
+    }),
+    opSeqCounter: opSeq,
+  };
 }
 
 // A transient window that held key taken from another app ended in this
