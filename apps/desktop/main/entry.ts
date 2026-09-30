@@ -125,6 +125,7 @@ import { getTilePreloadPath } from './config.js';
 import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
 import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-installer.js';
+import { installDefaultProtocolGuard } from './default-protocol-guard.js';
 import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
 import { startCpuWatch } from './cpu-watch.js';
@@ -919,6 +920,7 @@ app.setPath('sessionData', sessionDataPath);
 // startup log lines as possible land in the file (including a lock-failure
 // bailout below). Failures are swallowed.
 initMainLog();
+installDefaultProtocolGuard();
 
 // Acquire single instance lock EARLY (before app.whenReady).
 // This is critical on macOS: when a second instance is launched via
