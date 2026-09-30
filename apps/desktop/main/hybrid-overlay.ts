@@ -363,10 +363,7 @@ function ensureOverlay(): BrowserWindow {
   // here directly and must ask for it itself. Left on the desktop it was created on,
   // showing it over a page-host window on another desktop made macOS switch the
   // user back to the overlay's desktop.
-  // DIAG (desktop-switch flash): PEEK_DIAG_OVERLAY_ANCHOR=1 leaves the overlay
-  // on its creation desktop, to test whether the all-desktops overlay is what
-  // draws Peek's windows mid-switch.
-  if (!isHeadless() && process.env.PEEK_DIAG_OVERLAY_ANCHOR !== '1') {
+  if (!isHeadless()) {
     kernelSetDesktopMembership(overlayWmId, desktopMembershipForRole('overlay'));
   }
 
