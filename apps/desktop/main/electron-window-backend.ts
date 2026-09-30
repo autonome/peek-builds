@@ -38,7 +38,7 @@ import {
 // through window-machine.js, and the reopen is never invoked during module evaluation.
 // `dispatchEscapePress` is called only inside `escGrabHandler`'s closure, never
 // at this module's top level — window-machine.js imports this file directly.
-import { dispatchEscapePress } from './window-machine.js';
+import { dispatchEscapePress, getAppActive } from './window-machine.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import {
   shouldCloseContentWCOnFinalize,
@@ -257,9 +257,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.quitPromptPending.clear();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
+      wmLog('app-did-become-active', { kernelActive: getAppActive() });
       kernelAppActivated();
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
+      wmLog('app-did-resign-active', { kernelActive: getAppActive() });
       kernelAppResigned();
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       // Whether this settle sweeps anything is the kernel's decision
@@ -756,15 +758,31 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // `showWindow` and `raiseWindow` read `nonActivating` off the kernel
     // record; `app.focus({ steal: true })` runs only for a user-intended
     // raise of a non-panel.
-    if (intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin') {
+    const willAppFocus =
+      intent === 'user' && plan !== 'reorder' && !record?.nonActivating && !isHeadless() && process.platform === 'darwin';
+    wmLog('activation-decision', {
+      id,
+      intent: intent ?? 'none',
+      plan,
+      recordNonActivating: record?.nonActivating === true,
+      flagged: isFlaggedNonActivating(win),
+      headless: isHeadless(),
+      appFocusCalled: willAppFocus,
+      kernelActive: getAppActive(),
+    });
+    if (willAppFocus) {
       try {
         app.focus({ steal: true });
+        wmLog('activation-after-app-focus', { id, kernelActive: getAppActive() });
         // macOS finishes the activation after this call returns and hands key
         // to the window that was key when the app last resigned, ahead of the
         // window this raise targeted. Re-assert the target once activation
         // has settled, if it did not end up key.
         for (const delayMs of [250, 600]) {
-          setTimeout(() => this.reassertUserRaise(id, opSeq), delayMs);
+          setTimeout(() => {
+            wmLog('activation-reassert-timer', { id, delayMs, kernelActive: getAppActive(), focused: this.isFocused(win) });
+            this.reassertUserRaise(id, opSeq);
+          }, delayMs);
         }
       } catch {
         /* activation refused by the OS — the window calls below still run */
@@ -855,8 +873,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // non-panel, so a window flagged non-activating (`nonactivating-window.ts`)
   // takes key and content focus through the addon instead.
   private takeKey(win: NativeWindow): void {
-    if (isFlaggedNonActivating(win)) makeKeyWithoutActivating(win);
-    else win.focus();
+    if (isFlaggedNonActivating(win)) {
+      wmLog('native-make-key-no-activate', { where: 'take-key', id: this.getWindowIdFor(win) ?? undefined });
+      makeKeyWithoutActivating(win);
+    } else win.focus();
   }
 
   // Electron's `webContents.focus()` makes the window key first, then focuses
@@ -865,7 +885,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // followed by content focus (a peek over another app) leaves it without key.
   private focusRendererContent(win: NativeWindow, wc: NativeWebContents): void {
     if (isFlaggedNonActivating(win)) {
+      const wid = this.getWindowIdFor(win) ?? undefined;
+      wmLog('native-make-key-no-activate', { where: 'focus-content', id: wid });
       makeKeyWithoutActivating(win);
+      wmLog('native-focus-content-no-activate', { id: wid });
       focusContentWithoutActivating(win);
     } else {
       wc.focus();
@@ -1091,6 +1114,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // A chrome overlay flagged over a held page takes key through the addon
     // without activating; any other non-activating window never activates.
     const osActivate = opts.activate && (record?.nonActivating !== true || this.chromeFlagged.has(id)) && !isHeadless();
+    wmLog('os-show', {
+      id,
+      kind,
+      activateRequested: opts.activate,
+      osActivate,
+      recordNonActivating: record?.nonActivating === true,
+      chromeFlagged: this.chromeFlagged.has(id),
+      flagged: isFlaggedNonActivating(win),
+      path: !osActivate ? 'showInactive' : isFlaggedNonActivating(win) ? 'showInactive+makeKey' : 'show',
+      kernelActive: getAppActive(),
+    });
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);
     this.onDesktopTrigger('window-shown');
@@ -1116,6 +1150,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       try {
         this.armSelfCausedFocus(id, opSeq);
         win.showInactive();
+        wmLog('native-make-key-no-activate', { where: 'os-show', id });
         makeKeyWithoutActivating(win);
       } catch {
         /* window gone mid-show */
@@ -1156,11 +1191,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (win.isDestroyed()) return;
       if (want && !isFlaggedNonActivating(win)) {
         const flagged = flagNonActivating(win);
+        wmLog('native-flag-non-activating', { id, ok: flagged });
         if (flagged) this.chromeFlagged.add(id);
         wmLog('chrome-flag', { id, on: true, flagged });
       } else if (!want && this.chromeFlagged.has(id)) {
         this.chromeFlagged.delete(id);
         const unflagged = unflagNonActivating(win);
+        wmLog('native-unflag-non-activating', { id, ok: unflagged });
         wmLog('chrome-flag', { id, on: false, unflagged });
         if (unflagged && record?.desktopMembership !== undefined) {
           this.setDesktopMembership(id, record.desktopMembership);
