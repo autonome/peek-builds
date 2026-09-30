@@ -266,11 +266,23 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     // The popup taking key does not end the page that opened it.
     expect(state.order.find((w) => w.id === pageWmId)?.visible, JSON.stringify(state.order)).toBe(true);
 
-    const size = await app.evaluateMain!((({ BaseWindow }: any, id: number) => {
+    // Default size, and centred on its display rather than at the position
+    // Chromium filled in.
+    const placed = await app.evaluateMain!((({ BaseWindow, screen }: any, id: number) => {
       const win = BaseWindow.getAllWindows().find((w: any) => w.id === id);
-      return win ? win.getContentBounds() : null;
+      if (!win) return null;
+      const b = win.getContentBounds();
+      const area = screen.getDisplayMatching(b).workArea;
+      return {
+        width: b.width,
+        height: b.height,
+        offCentreX: Math.abs(b.x + b.width / 2 - (area.x + area.width / 2)),
+        offCentreY: Math.abs(b.y + b.height / 2 - (area.y + area.height / 2)),
+      };
     }) as any, popupId);
-    expect(size).toMatchObject({ width: 1024, height: 768 });
+    expect(placed).toMatchObject({ width: 1024, height: 768 });
+    expect(placed!.offCentreX).toBeLessThanOrEqual(2);
+    expect(placed!.offCentreY).toBeLessThanOrEqual(2);
 
     // The user clicks the other app: the popup loses key, and the task ends —
     // the popup and the page it came from both close, and nothing comes forward.

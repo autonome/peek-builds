@@ -722,26 +722,26 @@ function createHybridHostBaseWindow(
 }
 
 /**
- * Derive the content rect for a window.open popup host from the ctor options
- * Chromium parsed out of the window.open(url, name, features) features string.
- * Falls back to the app default size; omits x/y when Chromium supplied none so
- * createHybridHostBaseWindow lets Electron center it.
- */
-/**
- * The popup's content rect. Chromium fills an 800x600 size into the
- * constructor options of every popup, asked for or not, so its size is used
- * only when the page's `window.open` features named one; any other popup (a
- * `target=_blank` link, a cmd+click) opens at the default page size.
+ * The popup's content rect. Chromium fills an 800x600 size and a position
+ * into the constructor options of every popup, asked for or not, so each is
+ * used only when the page's `window.open` features named it; any other popup
+ * (a `target=_blank` link, a cmd+click) opens at the default page size,
+ * centred in `area` (the work area of its opener's display).
  */
 export function resolvePopupContentRect(
   ctorOptions: Electron.BrowserWindowConstructorOptions,
-  features?: string,
-): { x?: number; y?: number; width: number; height: number } {
+  features: string | undefined,
+  area: { x: number; y: number; width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
   const named = popupFeatureNames(features);
   const width = named.has('width') && typeof ctorOptions.width === 'number' && ctorOptions.width > 0 ? ctorOptions.width : APP_DEF_WIDTH;
   const height = named.has('height') && typeof ctorOptions.height === 'number' && ctorOptions.height > 0 ? ctorOptions.height : APP_DEF_HEIGHT;
-  const x = typeof ctorOptions.x === 'number' ? ctorOptions.x : undefined;
-  const y = typeof ctorOptions.y === 'number' ? ctorOptions.y : undefined;
+  const x = (named.has('left') || named.has('screenx')) && typeof ctorOptions.x === 'number'
+    ? ctorOptions.x
+    : Math.round(area.x + (area.width - width) / 2);
+  const y = (named.has('top') || named.has('screeny')) && typeof ctorOptions.y === 'number'
+    ? ctorOptions.y
+    : Math.round(area.y + (area.height - height) / 2);
   return { x, y, width, height };
 }
 
@@ -2131,7 +2131,11 @@ export function wireHybridContentEvents(
           // creation deferred) and for a denied noopener request (called with
           // {}) — mint a fresh no-opener host in those cases.
           const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
-          const rect = resolvePopupContentRect(ctorOptions, details.features);
+          const openerHost = BaseWindow.fromId(hostWindowId);
+          const openerArea = openerHost && !openerHost.isDestroyed()
+            ? screen.getDisplayMatching(openerHost.getBounds()).workArea
+            : screen.getPrimaryDisplay().workArea;
+          const rect = resolvePopupContentRect(ctorOptions, details.features, openerArea);
           // Non-http(s) popups (about:blank, data:, …) skip history
           // tracking — the pre-adoption default-window path never
           // tracked them, and an "about:blank" history item is noise.
@@ -2185,7 +2189,7 @@ export function wireHybridContentEvents(
             });
           }
           const placedBounds = baseWin.getBounds();
-          const popupParent = opensTransient ? BaseWindow.fromId(hostWindowId) : null;
+          const popupParent = opensTransient ? openerHost : null;
           const parentInfo = getWindowInfo(hostWindowId);
           const source = parentInfo ? parentInfo.source : 'system';
           assembleHybridPageHost(baseWin, view, {
