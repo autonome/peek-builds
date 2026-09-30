@@ -434,3 +434,26 @@ and the switcher are.
   activated.
 - Consequence: the palette and the switcher can be flagged ordinary windows kept alive, with the
   move behaviour set by the addon; the close-and-rebuild fallback is not needed.
+
+### Fifth probe: the page chrome overlay on a switch (live, macOS)
+
+- As a window on every desktop the overlay was drawn on the new desktop during a switch, until
+  the switch notice arrived.
+- Anchoring it and re-applying Electron's `setVisibleOnAllWorkspaces` pair while it was hidden did
+  not move it: showing it over a page on another desktop made macOS switch back to the overlay's
+  old desktop, about 0.4 s after each show, in the log as an unrequested `space-changed`.
+- Setting only the move-to-active-desktop collection behaviour through the addon
+  (`setMoveToActiveDesktop`, applied in `ElectronWindowBackend.showWindow` to the anchored overlay
+  before each show) fixed both: no bar on the new desktop during a switch, no switch back, the
+  bar shown on both desktops, and a page opened over another app kept that app frontmost with
+  the bar taking key. Log line `overlay-move-to-active`.
+
+### Default-browser prompt during a gate run
+
+A packaged gate run raised the OS prompt to make Peek the default browser. The system log
+(`/usr/bin/log show`, predicate on `setting handler for scheme`) showed a packaged Peek process
+asking about 0.6 s after launch, then exiting while the dialog stayed up. The source has one
+registration call, the Settings button handler; no spec reaches it and single specs did not
+reproduce it, so the trigger is unknown. `default-protocol-guard.ts` refuses any registration in a
+headless run and logs the caller (`default-protocol-client-requested`); the handler also logs the
+requesting page (`set-default-browser-requested`).
