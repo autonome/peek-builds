@@ -199,7 +199,7 @@ import {
 } from './page-host-compat.js';
 import {
   initHybridEditableFocusTracking,
-  isEditableFocusedForWc,
+  shouldDeferEscapeToPageForWc,
   clearEditableFocusForWc,
 } from './hybrid-editable-focus.js';
 import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
@@ -1562,9 +1562,11 @@ export function wireHybridContentEvents(
       // editable is focused, let ESC fall through to the page UNSTOLEN — do NOT
       // preventDefault and do NOT route to policy — so the page blurs the field
       // natively. A second ESC (nothing focused now) reaches the switcher route.
-      // Deterministic: a cached focus boolean read synchronously, no timer.
-      if (isEditableFocusedForWc(contentWC.id)) {
-        DEBUG && console.log(`[esc] hybrid ESC deferred to page — editable focused in content wc ${contentWC.id}`);
+      // Deterministic: a cached focus state read synchronously, no timer. An
+      // EMPTY focused field has nothing for ESC to clear, so it counts as no
+      // field: only a focused field holding text defers.
+      if (shouldDeferEscapeToPageForWc(contentWC.id)) {
+        DEBUG && console.log(`[esc] hybrid ESC deferred to page — editable with text focused in content wc ${contentWC.id}`);
         return;
       }
       const now = Date.now();

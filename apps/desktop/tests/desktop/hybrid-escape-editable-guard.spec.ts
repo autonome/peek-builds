@@ -64,7 +64,7 @@ test.describe('Hybrid page-host ESC editable guard @desktop', () => {
       });
       b.setActive(id);
       // Simulate the content preload reporting an editable is focused.
-      const seeded = b.setContentEditableFocus(id, true);
+      const seeded = b.setContentEditableFocus(id, true, { empty: false });
       const existedBefore = b.hybridWindowExists(id);
       // Drive the REAL content-WC before-input-event with a no-modifier ESC.
       const prevented = b.dispatchContentKey(id, 'Escape', { meta: false, control: false });
@@ -84,6 +84,27 @@ test.describe('Hybrid page-host ESC editable guard @desktop', () => {
     const survived = await app.evaluateMain!(((_e: unknown, wid: number) =>
       (globalThis as any).__peekHybridOverlayTest.hybridWindowExists(wid)) as any, setup.id);
     expect(survived).toBe(true);
+  });
+
+  // Editable focused but EMPTY: there is nothing for ESC to clear, so it behaves
+  // as if no field had focus — stolen (preventDefault) and routed to the switcher.
+  test('ESC with an empty editable focused opens the switcher', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const setup = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = await b.makeRoledHybrid('data:text/html,<title>Empty</title><input>', {
+        role: 'content',
+      });
+      b.setActive(id);
+      b.setContentEditableFocus(id, true, { empty: true });
+      const prevented = b.dispatchContentKey(id, 'Escape', { meta: false, control: false });
+      return { id, prevented };
+    });
+    expect(setup.prevented).toBe(true);
+
+    const switcher = await app.getWindow('windows/windows.html', 8000);
+    expect(switcher).toBeTruthy();
   });
 
   // Regression guard for the base path: with NOTHING editable focused, ESC is

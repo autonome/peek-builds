@@ -2,13 +2,14 @@
  * Editable-focus tracking for hybrid page-host content (peek 51798bae).
  *
  * The universal content preload (chrome-api-polyfills/runtime-external-preload.cjs)
- * reports, on every focus TRANSITION inside an http(s) page, whether an editable
- * element is currently focused — via `ipcRenderer.send('page:editable-focus', bool)`.
+ * reports, on every focus TRANSITION and every `input` inside an http(s) page,
+ * whether an editable element is focused and whether it is empty — via
+ * `ipcRenderer.send('page:editable-focus', { editable, empty })`.
  * This module caches that per content webContents so the hybrid ESC handler
  * (wireHybridContentEvents' before-input-event in ipc.ts) can make a synchronous,
- * deterministic decision: if an editable is focused, ESC belongs to the editing
- * context (blur/dismiss the field) and must NOT be stolen to open the Windows
- * switcher.
+ * deterministic decision: if an editable holding text is focused, ESC belongs to
+ * the editing context and must NOT be stolen to open the Windows switcher; an
+ * empty field behaves as if nothing were focused.
  *
  * Keyed by webContents.id (the content WC's own id) — that's exactly what the
  * before-input-event closure has in scope (`contentWC.id`) and what
@@ -18,8 +19,13 @@
  * transitions and read at ESC time.
  */
 import { ipcMain } from 'electron';
+import {
+  normalizeEditableFocusReport,
+  shouldDeferEscapeToEditable,
+  type EditableFocusState,
+} from './hybrid-editable-escape.js';
 
-const editableByWcId = new Map<number, boolean>();
+const editableByWcId = new Map<number, EditableFocusState>();
 let registered = false;
 
 /**
@@ -29,14 +35,17 @@ let registered = false;
 export function initHybridEditableFocusTracking(): void {
   if (registered) return;
   registered = true;
-  ipcMain.on('page:editable-focus', (event, editable: unknown) => {
-    editableByWcId.set(event.sender.id, editable === true);
+  ipcMain.on('page:editable-focus', (event, report: unknown) => {
+    editableByWcId.set(event.sender.id, normalizeEditableFocusReport(report));
   });
 }
 
-/** True iff the content WC last reported an editable element focused. */
-export function isEditableFocusedForWc(wcId: number): boolean {
-  return editableByWcId.get(wcId) === true;
+/**
+ * True iff ESC should stay with the page: the content WC last reported an
+ * editable element focused AND holding text. An empty field defers nothing.
+ */
+export function shouldDeferEscapeToPageForWc(wcId: number): boolean {
+  return shouldDeferEscapeToEditable(editableByWcId.get(wcId));
 }
 
 /** Drop cached state when a content WC is destroyed. */
@@ -45,6 +54,6 @@ export function clearEditableFocusForWc(wcId: number): void {
 }
 
 /** Test-only: set the cached state directly without the IPC round-trip. */
-export function __setEditableFocusForWcForTest(wcId: number, editable: boolean): void {
-  editableByWcId.set(wcId, editable);
+export function __setEditableFocusForWcForTest(wcId: number, editable: boolean, empty = false): void {
+  editableByWcId.set(wcId, { editable, empty });
 }

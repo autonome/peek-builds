@@ -65,12 +65,26 @@ function _peekIsEditableElement(el) {
   return false;
 }
 
+// Whether the focused editable holds no text. ESC on an empty field has nothing
+// to clear, so main treats it like no field focused (opens the switcher). A
+// <select> has no text to clear, so it reports non-empty and keeps owning ESC.
+function _peekIsEmptyEditable(el) {
+  const tag = (el.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return (el.value || '') === '';
+  if (tag === 'select') return false;
+  return (el.textContent || '') === '';
+}
+
 let _peekLastEditable = null;
+let _peekLastEmpty = null;
 function _peekReportEditableFocus() {
-  const editable = _peekIsEditableElement(_peekDeepActiveElement());
-  if (editable === _peekLastEditable) return;
+  const el = _peekDeepActiveElement();
+  const editable = _peekIsEditableElement(el);
+  const empty = editable ? _peekIsEmptyEditable(el) : true;
+  if (editable === _peekLastEditable && empty === _peekLastEmpty) return;
   _peekLastEditable = editable;
-  try { ipcRenderer.send(IPC_EDITABLE_FOCUS, editable); } catch (_) {}
+  _peekLastEmpty = empty;
+  try { ipcRenderer.send(IPC_EDITABLE_FOCUS, { editable, empty }); } catch (_) {}
 }
 // focusin/focusout bubble (unlike focus/blur) so ONE document-level capture
 // listener sees focus moving anywhere in the page, incl. across shadow
@@ -82,6 +96,9 @@ function _peekReportEditableFocus() {
 function _peekScheduleReport() { Promise.resolve().then(_peekReportEditableFocus); }
 document.addEventListener('focusin', _peekScheduleReport, true);
 document.addEventListener('focusout', _peekScheduleReport, true);
+// Typing/clearing changes emptiness without a focus transition; `input` is
+// composed and fires after the value updates, so the state stays current.
+document.addEventListener('input', _peekReportEditableFocus, true);
 
 // === Content-area double-click window gesture (peek d8ce0ddf) ================
 // A double-click over "dead" page content toggles the host window's maximize.

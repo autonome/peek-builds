@@ -2988,10 +2988,10 @@ function installTestBridge(): void {
      * WC id the hybrid ESC gate reads (isEditableFocusedForWc(contentWC.id)).
      * Returns false if the id is not a live hybrid host.
      */
-    setContentEditableFocus(id: number, editable: boolean): boolean {
+    setContentEditableFocus(id: number, editable: boolean, opts?: { empty?: boolean }): boolean {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return false;
-      __setEditableFocusForWcForTest(entry.contentWC.id, editable);
+      __setEditableFocusForWcForTest(entry.contentWC.id, editable, opts?.empty === true);
       return true;
     },
     /**
