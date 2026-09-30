@@ -80,8 +80,9 @@ export function windowNonActivating(options: { type?: string; nonActivating?: bo
 // opened not to show (session restore) is never a transient page-host window.
 export function pageOpensTransient(
   keyHeldWhileAppInactive: boolean,
-  options: { show?: boolean; type?: string },
+  options: { show?: boolean; type?: string; regular?: boolean },
 ): boolean {
+  if (options.regular === true) return false;
   return keyHeldWhileAppInactive && options.show !== false && options.type === undefined;
 }
 
@@ -94,10 +95,14 @@ export function pageOpensTransient(
 // asked to be.
 export function windowIsTransient(
   keyHeldWhileAppInactive: boolean,
-  options: { modal?: boolean; overlay?: boolean; show?: boolean; focusable?: boolean; clickThrough?: boolean },
+  options: { modal?: boolean; overlay?: boolean; show?: boolean; focusable?: boolean; clickThrough?: boolean; regular?: boolean },
 ): boolean {
   if (options.focusable === false || options.clickThrough === true) return false;
   if (options.modal === true || options.overlay === true) return true;
+  // An open that declares itself regular (a command-line open: nobody is
+  // typing into a Peek panel, whatever stale key the kernel still holds) is
+  // never transient by focus.
+  if (options.regular === true) return false;
   return keyHeldWhileAppInactive && options.show !== false;
 }
 

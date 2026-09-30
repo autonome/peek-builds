@@ -3005,6 +3005,9 @@ export function registerWindowHandlers(): void {
     // inputs the page-host branch below asks it with.
     const keyHeldWhileAppInactive = isKeyHeldWhileAppInactive();
     const opensTransient = pageOpensTransient(keyHeldWhileAppInactive, options);
+    // A regular open (command line) is a user gesture: the raise reaches it
+    // and brings the app forward, as the transient path does for its window.
+    if (options.regular === true) options.activation = 'user';
     // The one transience decision for this window, read by both registration
     // branches below (`WindowRecord.transient`); decided here, before the
     // window is built, since building it can move key.

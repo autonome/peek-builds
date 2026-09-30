@@ -253,6 +253,12 @@ describe('windowIsTransient (specs/kernel-desktops.md "Transient window")', () =
     assert.strictEqual(windowIsTransient(true, { show: false }), false);
   });
 
+  it('an open that declares itself regular is not transient by focus, and does not open transient', () => {
+    assert.strictEqual(windowIsTransient(true, { regular: true }), false);
+    assert.strictEqual(pageOpensTransient(true, { regular: true }), false);
+    assert.strictEqual(windowIsTransient(true, { regular: true, modal: true }), true);
+  });
+
   it('a window that takes no input never is', () => {
     assert.strictEqual(windowIsTransient(true, { overlay: true, focusable: false }), false);
     assert.strictEqual(windowIsTransient(true, { modal: true, clickThrough: true }), false);

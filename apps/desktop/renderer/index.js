@@ -659,12 +659,17 @@ export const init = async () => {
       log.error('core', 'Error resolving the default workspace tag for an external URL:', error);
     }
 
+    // A command-line open is a regular window, frontmost, with the app brought
+    // forward — not a transient one, whatever key state Peek still holds.
+    const cliOpenOptions = trackingSource === 'cli' ? { regular: true, activation: 'user' } : {};
+
     try {
       // Use URL as key to reuse existing windows
       await windowManager.createWindow(url, {
         key: url,
         trackingSource,
         trackingSourceId,
+        ...cliOpenOptions,
         ...(spaceMode ? { spaceMode } : {})
       });
     } catch (error) {
@@ -677,6 +682,7 @@ export const init = async () => {
           key: url,
           trackingSource,
           trackingSourceId,
+          ...cliOpenOptions,
           ...(spaceMode ? { spaceMode } : {})
         });
       } catch (retryError) {
