@@ -558,8 +558,30 @@ function overlayOverHeldHost(state: State, overlay: WindowRecord): boolean {
   return host !== undefined && host.fsMode.name === 'normal' && host.pendingHidden !== true && holdsKeyTakenFromAnotherApp(state, host);
 }
 
+// Over a held page the chrome takes clicks and key without activating the app:
+// an activating click would end the page (rule 5e). Both revert once the chrome
+// is no longer over a held page (input is asked for by the overlay's capture
+// request, which is refused only while the chrome is not over one). The backend realizes `nonActivating` on the
+// overlay's window at its next show and hide.
+function chromeInputOverHeldHost(next: State): State {
+  const changes = (w: WindowRecord): boolean => w.overlayFor !== undefined && overlayOverHeldHost(next, w) !== (w.nonActivating === true);
+  if (!next.order.some(changes)) return next;
+  return {
+    ...next,
+    order: next.order.map((w) => {
+      if (!changes(w)) return w;
+      const held = overlayOverHeldHost(next, w);
+      return { ...w, nonActivating: held, acceptsInput: held ? w.acceptsInput : false };
+    }),
+  };
+}
+
 function followHeldHostOverlay(prev: State, next: State): State {
-  const flip = (w: WindowRecord): 'show' | 'hide' | null => {
+  return chromeInputOverHeldHost(followHeldHostOverlayVisibility(prev, next));
+}
+
+function followHeldHostOverlayVisibility(prev: State, next: State): State {
+  const flip =(w: WindowRecord): 'show' | 'hide' | null => {
     const before = prev.order.find((p) => p.id === w.id);
     const was = before !== undefined && overlayOverHeldHost(prev, before);
     const is = overlayOverHeldHost(next, w);

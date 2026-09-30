@@ -69,6 +69,18 @@ export function flagNonActivating(win: HandleWindow): boolean {
   return true;
 }
 
+/**
+ * Clears the flag. The addon also clears the window's desktop membership, so the
+ * caller re-applies it. True when the window is no longer flagged.
+ */
+export function unflagNonActivating(win: HandleWindow): boolean {
+  const a = loadAddon();
+  const handle = win.getNativeWindowHandle?.();
+  if (!a || !handle || !a.setNonActivating(handle, false)) return false;
+  flagged.delete(win);
+  return true;
+}
+
 export function isFlaggedNonActivating(win: object): boolean {
   return flagged.has(win);
 }

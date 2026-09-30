@@ -20,9 +20,11 @@ import {
 import { FallbackDesktopProvider } from './desktop-provider-fallback.js';
 import { MacDesktopProvider, macHelperPath, windowNumberFromSourceId } from './desktop-provider-mac.js';
 import {
+  flagNonActivating,
   focusContentWithoutActivating,
   isFlaggedNonActivating,
   makeKeyWithoutActivating,
+  unflagNonActivating,
 } from './nonactivating-window.js';
 
 import { isHeadless, DEBUG } from './config.js';
@@ -189,6 +191,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // `BaseWindow`'s native 'show'/'hide' can fire ahead of this method's own
   // synthetic echo, so the listener needs the token armed first.
   private readonly pendingShowOpSeq = new Map<WindowId, number>();
+  // Page chrome overlays this backend flagged non-activating because the kernel
+  // marked them so (over a held page); it unflags exactly these.
+  private readonly chromeFlagged = new Set<WindowId>();
   private readonly pendingHideOpSeq = new Map<WindowId, number>();
 
   // A count, not a flag: `closeWindow` has two suspension points ahead of its
@@ -1044,7 +1049,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return;
     }
     const record = windowById(getKernelExecutor().getState(), id);
-    const osActivate = opts.activate && record?.nonActivating !== true && !isHeadless();
+    this.syncChromeFlag(id, win);
+    // A chrome overlay flagged over a held page takes key through the addon
+    // without activating; any other non-activating window never activates.
+    const osActivate = opts.activate && (record?.nonActivating !== true || this.chromeFlagged.has(id)) && !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);
     this.onDesktopTrigger('window-shown');
@@ -1099,6 +1107,28 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
   }
 
+  // Makes a page chrome overlay's native flag match the kernel record: flagged
+  // exactly while the record says non-activating (over a held page). Unflagging
+  // clears the window's desktop membership, so it is re-applied from the record.
+  private syncChromeFlag(id: WindowId, win: NativeWindow): void {
+    if (process.platform !== 'darwin' || isHeadless()) return;
+    const record = windowById(getKernelExecutor().getState(), id);
+    const want = record?.overlayFor !== undefined && record.nonActivating === true;
+    try {
+      if (win.isDestroyed()) return;
+      if (want && !isFlaggedNonActivating(win)) {
+        if (flagNonActivating(win)) this.chromeFlagged.add(id);
+      } else if (!want && this.chromeFlagged.has(id)) {
+        this.chromeFlagged.delete(id);
+        if (unflagNonActivating(win) && record?.desktopMembership !== undefined) {
+          this.setDesktopMembership(id, record.desktopMembership);
+        }
+      }
+    } catch {
+      /* torn-down window mid-sync */
+    }
+  }
+
   hideWindow(id: WindowId, opSeq?: number): void {
     const win = this.windows.get(id)?.win;
     if (!win) return;
@@ -1107,6 +1137,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     try {
       if (win.isDestroyed()) return;
       win.hide();
+      this.syncChromeFlag(id, win);
     } catch {
       /* hiding a torn-down window is a no-op */
       return;
@@ -1191,6 +1222,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!win) return;
     try {
       if (win.isDestroyed()) return;
+      this.syncChromeFlag(id, win);
       win.setIgnoreMouseEvents(!acceptsInput, { forward: true });
     } catch {
       /* torn-down window mid-command — the machine already recorded intent */

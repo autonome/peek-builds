@@ -142,6 +142,13 @@ import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
  * every read-back converts here — through the singleton's sanctioned
  * mapping, never a private map.
  */
+// The kernel marks the overlay non-activating exactly while it is over a page
+// held over another app (`window-kernel.ts chromeInputOverHeldHost`).
+function overlayOverHeldPage(): boolean {
+  if (overlayWmId == null) return false;
+  return getKernelExecutor().getState().order.find((w) => w.id === overlayWmId)?.nonActivating === true;
+}
+
 function overlayHostOsId(): number | null {
   if (overlayWmId == null) return null;
   const host = hostForOverlay(getKernelExecutor().getState(), overlayWmId);
@@ -487,7 +494,9 @@ function wireClickCapture(): void {
     // turned the overlay opaque then, the next click would hit it (activating
     // Electron and swallowing the click meant for the other app). Force
     // click-through until the app is active again (become-active restores it).
-    const capture = !!(msg && msg.capture) && getAppActive();
+    // The one exception: the chrome over a page held over another app is
+    // non-activating (the kernel marks it), so a click on it cannot activate Peek.
+    const capture = !!(msg && msg.capture) && (getAppActive() || overlayOverHeldPage());
     lastCaptureState = capture;
     if (!overlayWin || overlayWin.isDestroyed()) return;
     // Kernel click-through intent (window-kernel.ts SetAcceptsInput) — R2:
@@ -631,7 +640,9 @@ function wireShowNavbarFocus(): void {
   subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
-    if (!getAppActive()) return; // never steal focus while backgrounded (R1)
+    // Never steal focus while backgrounded (R1) — except into the non-activating
+    // chrome over a held page, which takes key without activating.
+    if (!getAppActive() && !overlayOverHeldPage()) return;
     if (msg.windowId !== overlayHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;

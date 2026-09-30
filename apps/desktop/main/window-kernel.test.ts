@@ -7828,6 +7828,18 @@ describe('window-kernel: a transient window that took key from another app ends 
     assert.deepStrictEqual(dismisses(ended.effects), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 
+  it('the page chrome is non-activating only while it is over a held page', () => {
+    const held = fold([overlay(wid(9)), { type: 'OverlayAttached', overlayId: wid(9), hostId: wid(1), frame }], transientPageHoldingKey(wid(1)));
+    assert.strictEqual(record(held, wid(9)).nonActivating, true);
+
+    const ended = foldWithEffects([{ type: 'OsFocusLost', id: wid(1) }], held);
+    assert.notStrictEqual(record(ended.state, wid(9)).nonActivating, true);
+    assert.strictEqual(record(ended.state, wid(9)).acceptsInput, false);
+
+    const activated = fold([{ type: 'AppActivated' }], held);
+    assert.notStrictEqual(record(activated, wid(9)).nonActivating, true);
+  });
+
   it('the page chrome stays hidden over an ordinary page while another app is active', () => {
     const after = foldWithEffects([
       layout,
