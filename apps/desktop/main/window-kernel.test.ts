@@ -8204,6 +8204,20 @@ describe('window-kernel: desktop state', () => {
     assert.strictEqual(desktopOf(placed, 1), 'a1');
   });
 
+  it('an anchored chrome overlay is not on the new desktop after a switch, and is restamped on its next show', () => {
+    const overlay = page(2, { role: 'overlay', class: 'overlay', kind: 'browser' });
+    const shown = fold([
+      layout, overlay, { type: 'DesktopMembershipSet', id: wid(2), membership: 'anchor' },
+      { type: 'WindowShown', id: wid(2) },
+    ]);
+    assert.strictEqual(desktopOf(shown, 2), 'a1', 'precondition: stamped on first show');
+    const switched = fold([switchTo('A', 'a2'), { type: 'DesktopSwitchObserved' }, { type: 'DesktopsRead', switchesSeen: 1 }], shown);
+    assert.strictEqual(onCurrentDesktop(switched, windowById(switched, wid(2))!), false);
+    const reshown = fold([{ type: 'WindowHidden', id: wid(2) }, { type: 'WindowShown', id: wid(2) }], switched);
+    assert.strictEqual(desktopOf(reshown, 2), 'a2');
+    assert.strictEqual(onCurrentDesktop(reshown, windowById(reshown, wid(2))!), true);
+  });
+
   it('a placement report can declare a window on every desktop', () => {
     const placed = fold([layout, page(1), place(1, 'A', null, true)]);
     assert.strictEqual(isOnEveryDesktop(windowById(placed, wid(1))!), true);

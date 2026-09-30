@@ -437,10 +437,15 @@ Cost: requests are asynchronous, and any window write comes from another process
   without the addon is a transient window a `type: 'panel'` window, on every desktop whatever is
   asked (Electron's panel re-adds join-all-Spaces), declared `onEveryDesktop`.
 - The shared page chrome window (role `overlay`, attached to a host through `overlayFor`) is not
-  transient; it appears on the desktop the user is on through `setVisibleOnAllWorkspaces`
-  (desktop membership `follow`). It is registered outside the generic window-open handler and so
-  sets its membership itself (`hybrid-overlay.ts ensureOverlay()`); left on one desktop, showing it
-  over a page-host window on another desktop makes macOS switch back to the overlay's desktop.
+  transient and belongs to the desktop it is shown on (desktop membership `anchor`). It is
+  registered outside the generic window-open handler and so sets its membership itself
+  (`hybrid-overlay.ts ensureOverlay()`). It is hidden between shows, and
+  `ElectronWindowBackend.showWindow` re-applies the anchor before each show, which moves it to the
+  desktop the user is on; the kernel restamps its desktop on the same show. It is not on every
+  desktop: a window on every desktop is drawn on the new desktop during the switch animation,
+  before the switch notice arrives. *Unverified live*: a show over a page-host window on another
+  desktop must not make macOS switch back to the overlay's old desktop (the reason the overlay
+  once followed the user).
 - macOS switch trigger:
   `systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification')`;
   the provider supplies which desktop is now current.
