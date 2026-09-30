@@ -46,7 +46,7 @@ import {
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StackingLevel } from './izui-roles.js';
+import { reuseShowActivation, type StackingLevel } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
 
@@ -600,6 +600,23 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
 
     assert.strictEqual(getKernelExecutor().getState().lastRaiseRequest?.id, a, 'the request names a');
     assert.strictEqual(getKernelExecutor().getState().lastRaiseRequest?.intent, 'user');
+  });
+
+  it('a reuse of an open page by a regular (command line) open, while the app is inactive, raises it with user intent', () => {
+    // `ipc.ts windowOpenHandler`'s hybrid reuse branches pass
+    // `reuseShowActivation(options)` to `kernelShowRequested`; the command
+    // line opens with `regular: true, activation: 'user'`.
+    const [a, b] = [wid(127), wid(128)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+    kernelAppResigned();
+    assert.strictEqual(getKernelExecutor().getState().appActive, false);
+
+    kernelShowRequested(a, true, reuseShowActivation({ regular: true, activation: 'user' }));
+
+    const request = getKernelExecutor().getState().lastRaiseRequest;
+    assert.strictEqual(request?.id, a, 'the request names the reused page');
+    assert.strictEqual(request?.intent, 'user');
   });
 
   it('an activating show without the option stays a machine raise — no intent on the request', () => {

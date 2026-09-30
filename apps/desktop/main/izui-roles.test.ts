@@ -22,6 +22,7 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  reuseShowActivation,
   windowIsTransient,
   hybridResizeDirAt,
   downloadCloseTarget,
@@ -257,6 +258,12 @@ describe('windowIsTransient (specs/kernel-desktops.md "Transient window")', () =
     assert.strictEqual(windowIsTransient(true, { regular: true }), false);
     assert.strictEqual(pageOpensTransient(true, { regular: true }), false);
     assert.strictEqual(windowIsTransient(true, { regular: true, modal: true }), true);
+  });
+
+  it('reusing an open page carries user activation for a user gesture or a regular open only', () => {
+    assert.deepStrictEqual(reuseShowActivation({ regular: true }), { activation: 'user' });
+    assert.deepStrictEqual(reuseShowActivation({ activation: 'user' }), { activation: 'user' });
+    assert.deepStrictEqual(reuseShowActivation({}), {});
   });
 
   it('a window that takes no input never is', () => {

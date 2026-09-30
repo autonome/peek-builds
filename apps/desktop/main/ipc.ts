@@ -122,6 +122,7 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  reuseShowActivation,
   windowIsTransient,
   deriveWindowSurface,
   isSatelliteRegistration,
@@ -2867,7 +2868,9 @@ export function registerWindowHandlers(): void {
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
             if (reusedId != null) {
-              kernelShowRequested(reusedId, hybridReuseActivate);
+              // A user-gesture open (the command line) raises through the app
+              // being inactive, as a fresh open does.
+              kernelShowRequested(reusedId, hybridReuseActivate, reuseShowActivation(options));
             }
           }
           wmLog('window-open-reused', {
@@ -2966,7 +2969,7 @@ export function registerWindowHandlers(): void {
         // the app forward natively.
         showWindowHeadlessSafe(existingWindow.window, {
           active: reuseActivate,
-          ...(options.activation === 'user' ? { activation: 'user' as const } : {}),
+          ...reuseShowActivation(options),
         });
         // Signal keepLive-reuse to the renderer BEFORE returning so the
         // renderer's `api.onVisible` handler dispatches its FSM reset
@@ -3048,7 +3051,7 @@ export function registerWindowHandlers(): void {
           {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
             if (reusedId != null) {
-              kernelShowRequested(reusedId, true);
+              kernelShowRequested(reusedId, true, reuseShowActivation(options));
             }
           }
           // Reload so content is fresh (mirrors the canvas path's reload).
@@ -3084,7 +3087,7 @@ export function registerWindowHandlers(): void {
         // keepLive-reuse block above (WINDOW_SHOWN {focused:true} → front
         // assertion → RAISE_WINDOW), so the old headless-gated imperative
         // focus() is gone.
-        showWindowHeadlessSafe(existingByUrl.window, { active: true });
+        showWindowHeadlessSafe(existingByUrl.window, { active: true, ...reuseShowActivation(options) });
         // Reload the page so content is fresh (the webview may have navigated
         // away or the content may be stale from session restore).
         try {

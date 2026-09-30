@@ -86,6 +86,17 @@ export function pageOpensTransient(
   return keyHeldWhileAppInactive && options.show !== false && options.type === undefined;
 }
 
+// The show option a reuse of an already-open window carries: a user gesture
+// (`activation: 'user'`, or a regular open, which is the command line's) asks
+// the kernel to raise even while another app is frontmost, so the reused page
+// comes forward and activates the app as a fresh open does.
+export function reuseShowActivation(options: {
+  activation?: string;
+  regular?: boolean;
+}): { activation?: 'user' } {
+  return options.activation === 'user' || options.regular === true ? { activation: 'user' } : {};
+}
+
 // The one transience decision (specs/kernel-desktops.md "Transient window"),
 // recorded as `WindowRecord.transient`. From the open options and whether a
 // Peek window holds key while another app is focused, never from role: while
