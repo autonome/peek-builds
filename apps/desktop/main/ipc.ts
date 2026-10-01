@@ -208,6 +208,7 @@ import {
   HYBRID_LOAD_TIMEOUT_MS,
   LOAD_TIMED_OUT_CODE,
   buildErrorPageUrl,
+  contentReportsFirstFrame,
   failedUrlFromErrorPage,
   isErrorPageUrl,
   nextLoadPhase,
@@ -1065,7 +1066,7 @@ function assembleHybridPageHost(
   // loadURL so did-start-loading / did-navigate / did-finish-load are
   // not missed. (Action mediation — navbar→content — is DEFERRED to
   // P1.4, where the shared overlay is the consumer.)
-  wireHybridContentEvents(view.webContents, baseWin.id, url, options);
+  wireHybridContentEvents(view.webContents, baseWin.id, url, options, rtPreloadApplied);
 
   // P1.3 — initial history insert, matching the canvas path's
   // trackWindowLoad (ipc.ts ~2422). Skip internal peek:// URLs and
@@ -1472,6 +1473,9 @@ export function wireHybridContentEvents(
   initialUrl: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options: any,
+  // Whether the runtime-external preload (the first-frame reporter) is attached.
+  // Bridge-built test hosts keep the default and register orderable themselves.
+  preloadAttached = true,
 ): void {
   const isHttp = (u: string | null | undefined): u is string =>
     !!u && (u.startsWith('http://') || u.startsWith('https://'));
@@ -1526,9 +1530,10 @@ export function wireHybridContentEvents(
     if (contentWC.isDestroyed()) return;
     // The view has now painted a frame (page, error page, or abort).
     markHybridPainted(hostWindowId);
-    // The error page is an internal peek:// page with no runtime preload, so it
-    // never reports a first frame; showing it is itself the fact that ends the wait.
-    if (isErrorPageUrl(contentWC.getURL())) {
+    // A host whose content will not report a first frame (no preload, or an
+    // internal peek:// page such as New Tab or the error page) is made orderable
+    // by this terminal load outcome. Hosts that report keep waiting for it.
+    if (!contentReportsFirstFrame(preloadAttached, contentWC.getURL())) {
       const machineId = getWindowIdFor(hostWindowId);
       if (machineId != null) kernelWindowContentOrderable(machineId);
     }

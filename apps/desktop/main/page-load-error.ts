@@ -113,6 +113,19 @@ export function isErrorPageUrl(url: string | null | undefined): boolean {
 }
 
 /**
+ * Whether a page host's content will report its first composited frame, the
+ * fact that makes the host orderable (`session.ts installFirstFrameOrderableProducer`).
+ * Only a page that has the runtime-external preload can report one, and an
+ * internal `peek://` page is excluded even with it: a real window can be
+ * inactive or occluded, so such a page may never composite a frame to report.
+ * A host whose content will not report waits for the main-process terminal load
+ * outcome instead. Hosts that do report keep waiting for the frame.
+ */
+export function contentReportsFirstFrame(preloadAttached: boolean, url: string | null | undefined): boolean {
+  return preloadAttached && !(url ?? '').startsWith('peek://');
+}
+
+/**
  * The address a session snapshot records for a window: the address the user
  * asked for. A window showing the load-error page is saved under the failed
  * address, so restore reloads it and goes through the normal error path.

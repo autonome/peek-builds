@@ -3,12 +3,32 @@ import assert from 'node:assert/strict';
 import {
   LOAD_TIMED_OUT_CODE,
   buildErrorPageUrl,
+  contentReportsFirstFrame,
   describeLoadError,
   failedUrlFromErrorPage,
   isErrorPageUrl,
   nextLoadPhase,
   savedWindowUrl,
 } from './page-load-error.js';
+
+describe('contentReportsFirstFrame', () => {
+  it('is true for a web page with the preload attached', () => {
+    assert.equal(contentReportsFirstFrame(true, 'https://example.com/'), true);
+    assert.equal(contentReportsFirstFrame(true, 'data:text/html,hi'), true);
+  });
+  it('is false for any content without the preload', () => {
+    assert.equal(contentReportsFirstFrame(false, 'https://example.com/'), false);
+    assert.equal(contentReportsFirstFrame(false, 'peek://app/new-tab/index.html'), false);
+  });
+  it('is false for internal peek:// pages even with the preload', () => {
+    assert.equal(contentReportsFirstFrame(true, 'peek://app/new-tab/index.html'), false);
+    assert.equal(contentReportsFirstFrame(true, buildErrorPageUrl('http://x/', -7, 'timed out')), false);
+  });
+  it('depends on the preload alone when there is no url', () => {
+    assert.equal(contentReportsFirstFrame(true, ''), true);
+    assert.equal(contentReportsFirstFrame(false, undefined), false);
+  });
+});
 
 describe('savedWindowUrl', () => {
   it('saves the failed address for a window showing the load-error page', () => {
