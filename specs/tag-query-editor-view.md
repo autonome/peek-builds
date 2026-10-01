@@ -72,8 +72,7 @@ query editor closes that gap: the group becomes one editable document.
 - `edit #todo #today` — the `edit` command recognizes arguments that are
   entirely `#tag` tokens as a query and produces a query output instead of a
   single item or selection list. (Whether `edit` itself grows this form or a
-  sibling command is better is Open question 1; the UX described here is the
-  source item's example verbatim.)
+  sibling command is better was settled in Decisions: `edit` takes it.)
 - Tag resolution follows existing patterns: resolve by name
   (case-insensitive; `renderer/cmd/item-suggestions.js` `findTagByName`), read
   items with `api.datastore.getItemsByTag(tag.id)` and intersect across query
@@ -83,7 +82,7 @@ query editor closes that gap: the group becomes one editable document.
 - The panel routes the query output to the editor window, mirroring the
   `publishEditorOpen` seam in `renderer/cmd/panel.js` (today it branches on
   `mimeType === 'new-item'` → `editor:add`, single item → `editor:open`). The
-  exact new output shape / topic is Open question 2.
+  exact new output shape / topic is Open question 2 (routing seam).
 - The editor opens with the query as its source, the way `features/editor/home.js`
   `init()` today reads `content` / `file` / `itemId` URL params — a query param
   (e.g. `tags=todo,today`) is the natural extension, and `openEditor()` keys
@@ -92,7 +91,7 @@ query editor closes that gap: the group becomes one editable document.
 - Default order: `updatedAt` descending (most recently edited first). The
   source item's ordering line is truncated after "with a visua…" — the intended
   visual cue (date separators? age badges like `search-result-card.js`
-  `formatAge`?) is unknown; Open question 3.
+  `formatAge`?) is a sort-option dropdown in the toolbar plus a manual order; see Open question 1.
 
 ### The document
 
@@ -106,10 +105,10 @@ query editor closes that gap: the group becomes one editable document.
   path `features/editor/preview-sidebar.js` `renderMarkdown` already provides);
   `url` items render like a card row (favicon, title, URL —
   `card-helpers.js` `getItemDisplayInfo` / `createUrlSpan`); `image` items
-  render the image. Type coverage beyond text/url/image is Open question 5.
+  render the image. Other item types are left out (see Decisions).
 - Which sidebars apply is undecided: the layout's pane machinery (outline /
   preview / annotations, see Reuse map) is available, but what the outline of a
-  query document is (block titles as top-level entries?) is Open question 7.
+  query document is (block titles as top-level entries?) is settled in Decisions (block titles, no preview).
 
 ### Left column: tag bindings
 
@@ -121,7 +120,7 @@ query editor closes that gap: the group becomes one editable document.
   the shared affordance module, not a copy.
 - Toggling a binding that removes an item from the query (e.g. checking
   `todo→done` in a `#todo` view) SHOULD animate the item leaving the document
-  rather than silently vanishing; exact behavior is Open question 10.
+  rather than silently vanishing; open-editor cases are Open question 5.
 
 ### Top toolbar
 
@@ -131,7 +130,7 @@ query editor closes that gap: the group becomes one editable document.
   host — not a query-view-private strip. The existing editor's toolbar lives
   below the editor pane (`EditorLayout` `this.toolbar`); the top toolbar is
   additional, not a move. Contents (query display? sort? filter? refresh? add
-  item?) are Open question 8.
+  item?) beyond sort are undecided (see Decisions).
 
 ### Navigation and folding
 
@@ -151,7 +150,7 @@ query editor closes that gap: the group becomes one editable document.
     block.
   - Inside an open inline editing session these keys belong to the inline
     editor's own document (CodeMirror folding), not the block level — the
-    handoff is Open question 6.
+    handoff: see Decisions (folding and instant apply).
 - The editor's existing per-line folditall folding (`codemirror.js`
   `canStartFold` / `hasFoldableChildren` machinery) does not operate on the
   outer surface in v1.
@@ -206,7 +205,7 @@ paraphrases:
 - search tagged items, render each appropriately for the type (note, url,
   image)
 - default order: date edited, descending, with a visua… (truncated in the
-  source item; see Open question 3)
+  source item; see Open question 1)
 - tag binding stuff works: a left col that renders/executes the bindings, e.g.
   checkbox for `#todo`/`#done`, just like in cards
 - rendered view renders markdown content in items
@@ -244,7 +243,7 @@ What exists today and MUST be reused rather than copied:
 | Per-type item display | `renderer/lib/card-helpers.js` (`getItemDisplayInfo`, `extractTitle`, `createUrlSpan`); card assembly in `renderer/lib/search-result-card.js` |
 | Markdown rendering | `features/editor/preview-sidebar.js` `renderMarkdown` |
 | j/k row selection pattern | `renderer/lib/grid-nav.js` (`updateSelection`, `toggleSelectedCheckbox`) |
-| Keeping the view fresh | `renderer/lib/live-query.js` `liveQuery` (query + subscribe + debounced re-render; whether to use it is Open question 10) |
+| Keeping the view fresh | `renderer/lib/live-query.js` `liveQuery` (query + subscribe + debounced re-render; live updates are decided in Decisions) |
 | Lazy rendering of many rows | `renderer/lib/visibility-gate.js` `createVisibilityGate` (already used by the tags view) |
 | Tag resolution + `getItemsByTag` precedent | `features/todo/background.js` `ensureTag`; `renderer/cmd/item-suggestions.js` `findTagByName` / `filterTaggedItems` |
 | Cmd output → editor routing | `renderer/cmd/state-machine.js` (`COMMAND_COMPLETE` guards), `renderer/cmd/panel.js` `doSelectOutputItem` / `publishEditorOpen`, `features/editor/background.js` `editor:open` subscription / `openEditor` |
@@ -259,7 +258,7 @@ What exists today and MUST be reused rather than copied:
   panes and chrome while the center content area renders the block document
   instead of (or as a mode of) the single CodeMirror document. Whether the
   outer surface is itself CodeMirror with block decorations, plain DOM blocks,
-  or an adopted library is the central open decision (Open question 4) and is
+  or an adopted library is the central open decision (Open question 3) and is
   exactly what the library review must answer.
 - **The single-document editor MUST NOT regress.** The existing editor test
   surface (`apps/desktop/tests/editor/editor-layout.spec.ts`,
@@ -284,7 +283,7 @@ requirements: vim-mode compatibility or embeddability of CodeMirror instances
 per block, block-level fold/collapse APIs, j/k selection hooks, markdown
 rendering per block, license/size/maintenance, and theming against the
 existing CSS variables the editor and `StatusLine` use (`--base00`…). Outcome
-recorded against Open question 4.
+recorded against Open question 3.
 
 ## Non-goals
 
@@ -295,7 +294,7 @@ recorded against Open question 4.
   block-level only).
 - Full vim parity on the outer surface beyond navigation + the folding subset
   (what else the outer surface needs — searching, marks, `:` commands — is part
-  of Open question 4's criteria).
+  of Open question 3's criteria).
 
 ## What is unverified
 
@@ -321,45 +320,47 @@ recorded against Open question 4.
 - The library review has not been done; every "which library" statement above
   is a requirement statement, not a finding.
 
+## Decisions
+
+- **Command surface (was question 1):** `edit` with arguments that are all
+  `#tag` tokens opens the query view, including a single tag (`edit #todo`).
+  Other `edit` arguments keep today's behavior (pick one item from a text
+  search and open it alone).
+- **Item types (5):** only text, url and image items appear; other item types
+  that can carry tags are left out. For url and image blocks the notes and
+  tags are editable; the image itself is shown static.
+- **Edits apply instantly (6):** there is no save step in a block. Edits are
+  written as they are made and flushed when the block closes, whether by
+  `<Esc>` or by a fold command collapsing it.
+- **Folding (6):** the `z` bindings open and close blocks; they do not enter
+  edit mode.
+- **Outline (7):** the outline lists each block's title, falling back to the
+  top line, or the first line of the notes for url and image items. No preview
+  sidebar: every block that is not being edited is already rendered.
+- **Top toolbar (8):** collapsible, with a small handle like the sidebar
+  separators. The only control decided so far is sort; the rest is open.
+- **Vim command area (9):** modal. It belongs to the whole document, or to the
+  inline editor while one is open.
+- **Liveness (10):** the document updates live as items and tags change.
+- **Mobile (12):** out of scope.
+
 ## Open questions
 
-1. **Command surface:** extend `edit` itself (`edit #todo #today`) or add a
-   sibling command? If `edit`, how do `#tag` tokens coexist with its existing
-   text search and `{ type: 'item' }` param suggestions (`completers.js`
-   `completeItem`)? Does bare `edit #todo` (one tag) open the query view or
-   today's single-item picker?
-2. **Routing seam:** new output mimeType (e.g. `item-set`) routed by
-   `publishEditorOpen`, a `tags` field on `editor:open`, or a new topic? And
-   the window-key scheme for query windows (`editor-query-<tags>`) — confirm.
-3. **Ordering cue:** what was "with a visua…" meant to be — date separators,
-   age badges (`formatAge`), a gutter date? Is the order strictly
-   `updatedAt` desc, with any tie-break?
-4. **Outer surface representation:** CodeMirror with block decorations vs DOM
-   blocks + embedded CodeMirror per block vs an adopted block-editor library —
-   decided by the library review against which criteria list?
-5. **Type coverage in v1:** text/url/image are named; what about `tagset`,
-   `series`, `feed`, `entity`, `event` items that can carry tags — render
-   read-only rows, or exclude from the view? Are url/image blocks read-only
-   (open on activate) or metadata-editable?
-6. **Folding/focus handoff:** while an inline editor is open, do `z` keys
-   always go to the inner document? How does block selection behave when a
-   fold command would collapse the block being edited?
-7. **Sidebars in the query view:** which of outline/preview/annotations apply?
-   Is the outline the list of block titles (and does clicking it jump/fold)?
-   Does preview render the whole document or the selected block?
-8. **Top toolbar contents and placement:** which controls, and confirmation
-   that the single-doc editor adopts the same toolbar (the source item wants
-   it designed for reuse)?
-9. **Vim command area takeover mechanics:** rebind one `StatusLine` to the
-   focused surface, or multiplex events? What does the status line show while
-   the outer surface has no vim state of its own (if the outer surface is not
-   CodeMirror-based)?
-10. **Liveness and mutation:** does the document re-render live as items
-    change (`liveQuery` on `item:*` / `tag:*` topics), or refresh on demand?
-    What happens to an open inline editor when its item is edited elsewhere,
-    retagged out of the query, or deleted? Is there an add-item flow that
-    pre-tags a new note with the query's tags?
-11. **Scale/virtualization:** expected worst-case block counts per query, and
-    whether the visibility gate or another virtualization is required for v1.
-12. **Mobile:** confirm it stays fully out of scope for this spec's
-    implementation slices.
+1. **Sort and manual order:** the view needs several sort orders, chosen from a
+   dropdown in the toolbar (date edited descending is the default), and a
+   manual, curated order. Where does a manual order live (per query, per saved
+   list), and how does it relate to the "lists" feature filed as issues? This
+   is an open design problem; the routing decision (question 2) may inform it.
+2. **Routing seam:** new output type routed by `publishEditorOpen`, a `tags`
+   field on `editor:open`, or a new topic? Window key per query
+   (`editor-query-<tags>`)? Decided by reviewing the tradeoffs at
+   implementation time.
+3. **Outer surface representation:** CodeMirror with block decorations, DOM
+   blocks with an embedded editor each, or a block-editor library. Needs the
+   library review against the requirements, and probably a few trial
+   implementations.
+4. **Scale and virtualization:** review virtualization options first, since
+   the answer may constrain the surface choice in question 3.
+5. **Live updates while editing:** what happens to an open inline editor when
+   its item is edited elsewhere, retagged out of the query, or deleted? Is
+   there an add-item flow that pre-tags a new note with the query's tags?
