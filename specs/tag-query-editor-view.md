@@ -285,6 +285,73 @@ rendering per block, license/size/maintenance, and theming against the
 existing CSS variables the editor and `StatusLine` use (`--base00`…). Outcome
 recorded against Open question 3.
 
+## Library review findings
+
+Registry facts (license, version, last publish, unpacked size) were read from
+the npm registry on 2026-10-01. Everything else about the libraries comes from
+general knowledge of their designs and was not checked against their current
+documentation or by a trial; web search was unavailable.
+
+What the repo has: `apps/desktop/package.json` already depends on
+`@codemirror/view` 6.39, `@codemirror/language`, `@codemirror/state`,
+`@replit/codemirror-vim` 6.3 (MIT) and `lit`; no React and no ProseMirror. The
+editor theme in `features/editor/codemirror.js` is built entirely from
+`var(--base00…0F)` values, so any CodeMirror instance created through its
+`createEditor` is already themed. `renderer/lib/visibility-gate.js`
+`createVisibilityGate` is not a virtualizer: it only defers a refresh while the
+window is hidden. The tags view (`features/tags/home.js`) renders all cards and
+relies on CSS `content-visibility: auto` (comment near `renderCards`) to skip
+painting off-screen cards.
+
+| Option | License / size / upkeep | Per-block CodeMirror with vim | Block-level fold, j/k | Markdown per block | Theming with `--base*` | Fit |
+| --- | --- | --- | --- | --- | --- | --- |
+| BlockNote (`@blocknote/core` 0.55) | MPL-2.0; 9.3 MB unpacked; active | Code blocks use a highlighter, not CodeMirror; would need a custom block hosting `createEditor` | No block collapse built in beyond toggle blocks; keys are ProseMirror's, so j/k would be a custom plugin | Its own document model; markdown is import/export | Own CSS, overridable | Poor: React-centred UI, a second editing model next to CodeMirror |
+| Tiptap (`@tiptap/core` 3.31) | MIT core (some paid extensions); active | Node views can mount any DOM, including a CodeMirror per node | Collapse is a custom node attribute; j/k custom | Markdown extension is import/export | Headless, so themable | Workable but adds ProseMirror for no gain over plain DOM blocks |
+| Lexical (`lexical` 0.52) | MIT; 3.2 MB unpacked; active | Decorator nodes can host a CodeMirror | Custom | Markdown transformers | Headless | Same objection as Tiptap |
+| Milkdown (`@milkdown/core` 7.22) | MIT; active | Has a CodeMirror code-block plugin, not a per-item editor | Custom | Markdown-native, one document | Own themes | Models a single markdown document; our blocks are separate items |
+| CodeMirror 6 with block decorations (in repo) | MIT; zero new weight | The outer surface is itself a vim editor; inline editors would be a second vim instance (the unverified item below) | Fold ranges and `foldEffect` exist, but block-widget bodies are not text, so j/k and folds would map to document lines, not blocks | Widgets render with `renderMarkdown` | Already themed | Uncertain: every block is a widget, so CodeMirror adds a text layer under them that nothing needs |
+| Plain DOM blocks plus per-block `createEditor` (in repo) | No new dependency | One embedded editor at a time, as the tags view already does; no outer vim instance | Block fold is a class toggle; j/k follows `grid-nav.js` `updateSelection` | `renderMarkdown` on non-editing blocks | Uses the same variables as cards | Best fit |
+
+Virtualization options, same sources:
+
+| Option | License / size | Notes |
+| --- | --- | --- |
+| CSS `content-visibility: auto` with `contain-intrinsic-size` | Built into Chromium; none | Already used by the tags grid; skips layout and paint but keeps every block in the DOM, so scroll position, find and j/k jumps need no extra code |
+| `@tanstack/virtual-core` 3.17 | MIT; 0.4 MB unpacked; framework-free | Dynamic heights through measurement; folding and live edits change heights, which causes scroll correction work |
+| `virtua` 0.52 | MIT; 2.3 MB unpacked | Mainly a React/Vue/Solid component set; adds a framework |
+| `createVisibilityGate` | in repo | Not a virtualizer; only defers refresh while hidden |
+
+Recommendation: plain DOM blocks in the existing editor window's center area,
+each rendered with the shared affordance, card and `renderMarkdown` modules,
+with one embedded `createEditor` instance opened inside the selected block at a
+time, and selection and folding done at the block level. Add no block-editor
+library: each one brings a second document model and, for BlockNote, React,
+while the requirements are met by modules the repo already has, and one vim
+editor at a time removes the two-instances risk. For scale, start with
+`content-visibility: auto` and measure; reach for `@tanstack/virtual-core` only
+if hundreds-to-thousands of blocks measurably stall, since virtualized folding
+and inline editing both change block heights.
+
+What remains unverified:
+- Performance of `content-visibility: auto` at a thousand blocks with rendered
+  markdown and affordances; no measurement was made.
+- That a custom ProseMirror/Lexical block hosting `createEditor` would be as
+  awkward as assumed; no trial was built, and library capabilities above are not
+  checked against current documentation.
+- That the outer surface needs no CodeMirror at all: searching within the
+  document, `:` commands and marks are not covered by plain DOM blocks and would
+  have to be added or dropped.
+- Whether the editor tests for the single-document path stay untouched when the
+  center area is swapped.
+
+Manual order (Open question 1): the filed notes about a lists feature could not
+be read, because the peek tools were not available in this run, so nothing
+here is drawn from them. From the design alone: an order stored on the query
+(its sorted tag set) would be lost when the tags change, while an order stored
+as an ordered membership of a saved list survives; whichever the lists feature
+chooses should be the one used here, so that question should be answered after
+reading those notes and before the routing decision.
+
 ## Non-goals
 
 - Mobile. The source item wants this on mobile eventually ("super cool on
@@ -317,8 +384,8 @@ recorded against Open question 3.
 - Scale is unmeasured: no data on how many items a typical `#tag` query
   matches or how a single-document block view behaves at that size. The
   visibility-gate mechanism is the existing lazy-render answer if needed.
-- The library review has not been done; every "which library" statement above
-  is a requirement statement, not a finding.
+- The library review was desk-only (registry metadata and general knowledge of
+  each design); see "Library review findings" for what remains unchecked.
 
 ## Decisions
 
@@ -358,9 +425,14 @@ recorded against Open question 3.
 3. **Outer surface representation:** CodeMirror with block decorations, DOM
    blocks with an embedded editor each, or a block-editor library. Needs the
    library review against the requirements, and probably a few trial
-   implementations.
+   implementations. Narrowed by "Library review findings": block-editor
+   libraries are ruled out on paper; still open is DOM blocks versus CodeMirror
+   with block decorations, which needs a trial.
 4. **Scale and virtualization:** review virtualization options first, since
-   the answer may constrain the surface choice in question 3.
+   the answer may constrain the surface choice in question 3. Narrowed by
+   "Library review findings": the repo has no virtualizer, and DOM blocks with
+   `content-visibility: auto` is the starting point; still open is a
+   measurement at about a thousand blocks.
 5. **Live updates while editing:** what happens to an open inline editor when
    its item is edited elsewhere, retagged out of the query, or deleted? Is
    there an add-item flow that pre-tags a new note with the query's tags?
