@@ -8,6 +8,7 @@ import { getLiveWindow } from './window-registry.js';
 import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
+import { failedUrlFromErrorPage } from './page-load-error.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
@@ -62,7 +63,9 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
 }
 
 function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
-  const address = entry.url();
+  // A host showing the load-error page presents the address that failed.
+  const hostUrl = entry.url();
+  const address = failedUrlFromErrorPage(hostUrl) ?? hostUrl;
   let bounds: Electron.Rectangle = { x: 0, y: 0, width: 0, height: 0 };
   let visible = true;
   let focused = false;
