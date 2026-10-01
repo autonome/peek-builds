@@ -53,6 +53,7 @@
  */
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
+import { savedWindowUrl } from './page-load-error.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import type { State, WindowId, WindowRecord } from './window-kernel.js';
 
@@ -477,7 +478,9 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       notices.push({ level: 'debug', message: `[session:save] No presentation for window ${w.nativeId}, skipping` });
       continue;
     }
-    const realUrl = presentation.address;
+    // A window showing the load-error page is saved under the address that
+    // failed, so restore reloads it instead of reopening the internal page.
+    const realUrl = savedWindowUrl(presentation.address);
 
     // Geometry + maximize are machine facts (§5 steps 7B/7C/7D). The
     // presentation's rect survives only as the fallback for a window the

@@ -112,6 +112,15 @@ export function isErrorPageUrl(url: string | null | undefined): boolean {
   return !!url && url.startsWith(ERROR_PAGE_BASE);
 }
 
+/**
+ * The address a session snapshot records for a window: the address the user
+ * asked for. A window showing the load-error page is saved under the failed
+ * address, so restore reloads it and goes through the normal error path.
+ */
+export function savedWindowUrl(url: string): string {
+  return failedUrlFromErrorPage(url) || url;
+}
+
 /** The failed address carried by an error page URL, or null for any other URL. */
 export function failedUrlFromErrorPage(url: string | null | undefined): string | null {
   if (!isErrorPageUrl(url)) return null;

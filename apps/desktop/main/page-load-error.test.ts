@@ -7,7 +7,23 @@ import {
   failedUrlFromErrorPage,
   isErrorPageUrl,
   nextLoadPhase,
+  savedWindowUrl,
 } from './page-load-error.js';
+
+describe('savedWindowUrl', () => {
+  it('saves the failed address for a window showing the load-error page', () => {
+    const failed = 'http://127.0.0.1:9/hang';
+    assert.equal(savedWindowUrl(buildErrorPageUrl(failed, LOAD_TIMED_OUT_CODE, 'timed out')), failed);
+  });
+  it('saves any other address unchanged', () => {
+    assert.equal(savedWindowUrl('https://example.com/a'), 'https://example.com/a');
+    assert.equal(savedWindowUrl(''), '');
+  });
+  it('keeps the error page URL when it carries no failed address', () => {
+    const bare = 'peek://app/page-error/index.html';
+    assert.equal(savedWindowUrl(bare), bare);
+  });
+});
 
 describe('nextLoadPhase', () => {
   it('arms the timer when a load starts', () => {

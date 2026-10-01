@@ -26,7 +26,6 @@ import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop, DEFA
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
-
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
