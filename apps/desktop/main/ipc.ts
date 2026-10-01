@@ -205,6 +205,28 @@ import {
 } from './hybrid-editable-focus.js';
 import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
 import {
+  HYBRID_LOAD_TIMEOUT_MS,
+  LOAD_TIMED_OUT_CODE,
+  buildErrorPageUrl,
+  failedUrlFromErrorPage,
+  isErrorPageUrl,
+  nextLoadPhase,
+} from './page-load-error.js';
+import type { LoadEvent, LoadPhase } from './page-load-error.js';
+
+/**
+ * Per host window: records the address about to be loaded. A string that is not
+ * a valid address fails before any navigation starts, so the failure could not
+ * otherwise name it.
+ */
+const hybridNavTargetNoters = new Map<number, (url: string) => void>();
+
+/** The hung-load timeout; a test can shorten it through the environment. */
+function hybridLoadTimeoutMs(): number {
+  const override = Number(process.env.PEEK_PAGE_LOAD_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : HYBRID_LOAD_TIMEOUT_MS;
+}
+import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
   clearRendererHandledEscapeForWc,
@@ -1447,9 +1469,14 @@ export function wireHybridContentEvents(
   // maximize (via the overlay), detent 3 → toggle fullscreen. See hybrid-window-gesture.ts.
   initHybridWindowGestureHandling();
 
+  // Assigned with the load-failure wiring below; a no-op until then.
+  let advanceLoadOnStop: () => void = () => {};
+  // The address the user sees: on the error page it is the address that failed.
+  const shownUrl = (u: string): string => failedUrlFromErrorPage(u) ?? u;
+
   const publishNavState = () => {
     if (contentWC.isDestroyed()) return;
-    const url = contentWC.getURL() || initialUrl;
+    const url = shownUrl(contentWC.getURL() || initialUrl);
     publish(getSystemAddress(), 'page:nav-state', {
       windowId: hostWindowId,
       url,
@@ -1471,6 +1498,7 @@ export function wireHybridContentEvents(
     // The view has now painted a frame (page, error page, or abort).
     markHybridPainted(hostWindowId);
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
+    advanceLoadOnStop();
 
     // Thumbnail capture, matching the canvas guest's did-stop-loading (ipc.ts ~2102).
     const pageUrl = contentWC.getURL() || initialUrl;
@@ -1488,8 +1516,69 @@ export function wireHybridContentEvents(
     }
   });
 
-  // A failed main-frame load commits Chromium's own error page in the content
-  // view; nothing extra is layered over it.
+  // ── Load failure / hang → error page in the content area ────────────────
+  // The load phase is an explicit state (page-load-error.ts nextLoadPhase);
+  // the timer below only ever fires its `timeout` event. A failed or timed-out
+  // main-frame load replaces the content with the peek:// error page, which
+  // supersedes a hung load. Back, forward, reload, stop and the address bar keep
+  // working against the same content webContents.
+  let loadPhase: LoadPhase = 'idle';
+  let loadTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingNavUrl = initialUrl;
+  const advanceLoad = (ev: LoadEvent, failedUrl?: string, description = ''): void => {
+    const step = nextLoadPhase(loadPhase, ev);
+    loadPhase = step.phase;
+    if (step.effect === 'clear-timer' || step.effect === 'arm-timer') {
+      if (loadTimer) clearTimeout(loadTimer);
+      loadTimer = undefined;
+    }
+    if (step.effect === 'arm-timer') {
+      loadTimer = setTimeout(() => {
+        loadTimer = undefined;
+        if (!contentWC.isDestroyed()) advanceLoad({ type: 'timeout' }, pendingNavUrl, 'timed out');
+      }, hybridLoadTimeoutMs());
+    }
+    if (step.effect === 'show-error' && !contentWC.isDestroyed()) {
+      const code = ev.type === 'failed' ? ev.code : LOAD_TIMED_OUT_CODE;
+      contentWC
+        .loadURL(buildErrorPageUrl(failedUrl || pendingNavUrl, code, description))
+        .catch((err) => DEBUG && console.log(`[hybrid-page-host:${hostWindowId}] error page load failed:`, err));
+    }
+  };
+  advanceLoadOnStop = () => advanceLoad({ type: 'stopped' });
+  // The failed navigation leaves its own history entry behind the error page, so
+  // Back would land on a second copy of the failure. Drop that entry.
+  contentWC.on('did-navigate', (_e: Electron.Event, navUrl: string) => {
+    if (!isErrorPageUrl(navUrl)) return;
+    try {
+      const h = contentWC.navigationHistory;
+      const idx = h.getActiveIndex();
+      const prev = idx > 0 ? h.getEntryAtIndex(idx - 1) : null;
+      const failed = failedUrlFromErrorPage(navUrl);
+      if (prev && (prev.url === failed || isErrorPageUrl(prev.url) || prev.url.startsWith('chrome-error://'))) {
+        h.removeEntryAtIndex(idx - 1);
+      }
+    } catch { /* history unavailable */ }
+  });
+  hybridNavTargetNoters.set(hostWindowId, (u: string) => { pendingNavUrl = u; });
+  contentWC.once('destroyed', () => hybridNavTargetNoters.delete(hostWindowId));
+  contentWC.on('did-start-navigation', (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+    const d = details as unknown as { url: string; isMainFrame: boolean; isSameDocument: boolean };
+    if (!d.isMainFrame || d.isSameDocument) return;
+    if (isErrorPageUrl(d.url)) {
+      advanceLoad({ type: 'error-page-started' });
+      return;
+    }
+    pendingNavUrl = d.url;
+    advanceLoad({ type: 'started' });
+  });
+  contentWC.on('did-fail-load', (
+    _event: Electron.Event, code: number, description: string, validatedURL: string, isMainFrame: boolean,
+  ) => {
+    if (!isMainFrame) return;
+    advanceLoad({ type: 'failed', code }, validatedURL || pendingNavUrl, description);
+  });
+  contentWC.once('destroyed', () => { if (loadTimer) clearTimeout(loadTimer); });
 
   // ── Title → datastore + chrome state ─────────────────────────────────────
   contentWC.on('page-title-updated', (_event: Electron.Event, title: string) => {
@@ -1505,7 +1594,7 @@ export function wireHybridContentEvents(
       // Overlay chrome state (P1.4).
       publish(getSystemAddress(), 'page:title-updated', {
         windowId: hostWindowId,
-        url: pageUrl,
+        url: shownUrl(pageUrl),
         title,
       });
     }
@@ -2323,7 +2412,7 @@ export function wireHybridContentEvents(
       if (winInfo) winInfo.params.currentUrl = navUrl;
     }
     publishNavState();
-    publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: navUrl, title: contentWC.getTitle() || '' });
+    publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: shownUrl(navUrl), title: contentWC.getTitle() || '' });
 
     // History tracking — same skip rules as the canvas path (ipc.ts ~2446).
     if (navUrl === initialUrl) return;
@@ -2471,6 +2560,7 @@ export function installHybridNavbarActionRouting(): void {
     if (!r) return;
     const url = (raw as { url?: string }).url;
     if (!url) return;
+    hybridNavTargetNoters.get(r.windowId)?.(url);
     r.wc.loadURL(url).catch((err) => {
       DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
     });
@@ -2479,7 +2569,17 @@ export function installHybridNavbarActionRouting(): void {
   subscribe(getSystemAddress(), 'page:reload', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
-    try { r.wc.reload(); } catch { /* wc gone */ }
+    try {
+      // Reloading the error page retries the address that failed.
+      const failed = failedUrlFromErrorPage(r.wc.getURL());
+      if (failed) {
+        r.wc.loadURL(failed).catch((err) => {
+          DEBUG && console.log(`[hybrid-page-host:${r.windowId}] retry failed:`, err);
+        });
+      } else {
+        r.wc.reload();
+      }
+    } catch { /* wc gone */ }
   });
 
   // Cancels an in-flight load (a page that never answers). The overlay shows
