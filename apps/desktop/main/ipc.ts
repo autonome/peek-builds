@@ -101,6 +101,7 @@ import {
   kernelCloseContent,
   kernelCloseWindowDirect,
   kernelWindowShown,
+  kernelWindowContentOrderable,
   kernelSetFullscreen,
   kernelMaximizeExitedByResize,
   kernelSetBounds,
@@ -781,6 +782,23 @@ export function popupRequestsNoOpener(features: string | undefined): boolean {
 
 /** Longest the open call waits for a page's first load before completing anyway. */
 const HYBRID_OPEN_LOAD_WAIT_MS = 2000;
+
+/**
+ * Make a page host orderable although its content has not painted.
+ *
+ * A host normally becomes orderable on its page's first composited frame
+ * (`session.ts installFirstFrameOrderableProducer`), which exists so a relative
+ * raise is not issued at a window the window server cannot yet order. A page
+ * that fails or never answers reports no frame, so the chrome overlay would
+ * never attach to it. The host's own failed or timed-out initial load is the
+ * fact that ends the wait. The reducer treats a later first-frame as a no-op
+ * for an already-orderable host.
+ */
+function markUnpaintedHostOrderable(baseWin: Electron.BaseWindow): void {
+  if (baseWin.isDestroyed()) return;
+  const machineId = getWindowIdFor(baseWin);
+  if (machineId != null) kernelWindowContentOrderable(machineId);
+}
 
 /**
  * Leak guard for the hybrid construct→register gap. `createHybridHostBaseWindow`
@@ -3511,6 +3529,7 @@ export function registerWindowHandlers(): void {
         } else if (options.skipTracking) {
           view.webContents.loadURL(url).catch((err) => {
             DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
+            markUnpaintedHostOrderable(baseWin);
           });
         } else {
           // A rejected loadURL (DNS failure, connection refused, etc.) must
@@ -3529,17 +3548,27 @@ export function registerWindowHandlers(): void {
           // the returned window id) would wait on it. A load that has not
           // settled after HYBRID_OPEN_LOAD_WAIT_MS keeps loading in the
           // background while the open completes.
-          const initialLoad = view.webContents.loadURL(url).catch((err) => {
-            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] initial loadURL failed (window still opens; load-error overlay handles it):`, err);
-          });
+          //
+          // Why the wait ended is a fact about this host: 'loaded' (a first
+          // frame follows and orderability waits for it, see
+          // session.ts installFirstFrameOrderableProducer), or 'failed' / 'timed-out'
+          // (no frame is coming soon, so the host is made orderable without one).
+          const initialLoad = view.webContents.loadURL(url).then(
+            (): 'loaded' => 'loaded',
+            (err): 'failed' => {
+              DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] initial loadURL failed (window still opens; load-error overlay handles it):`, err);
+              return 'failed';
+            },
+          );
           let loadWaitTimer: ReturnType<typeof setTimeout> | undefined;
-          await Promise.race([
+          const loadWaitOutcome = await Promise.race([
             initialLoad,
-            new Promise<void>((resolve) => {
-              loadWaitTimer = setTimeout(resolve, HYBRID_OPEN_LOAD_WAIT_MS);
+            new Promise<'timed-out'>((resolve) => {
+              loadWaitTimer = setTimeout(() => resolve('timed-out'), HYBRID_OPEN_LOAD_WAIT_MS);
             }),
           ]);
           if (loadWaitTimer) clearTimeout(loadWaitTimer);
+          if (loadWaitOutcome !== 'loaded') markUnpaintedHostOrderable(baseWin);
         }
 
         // Explicit `spaceMode` option, same shape and meaning as the plain

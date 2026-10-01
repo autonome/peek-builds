@@ -20,6 +20,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { waitOverlayReady } from '../helpers/hybrid-page';
 import http from 'http';
 import net from 'net';
 
@@ -218,6 +219,58 @@ test.describe('Page host hung load @desktop', () => {
     await expect.poll(() => contentUrl(id), { timeout: 5000 }).toContain('/ok/first');
     await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
     await closeWindow(id);
+  });
+
+  // The chrome overlay frames a host only once the host is orderable. A page
+  // that never paints reports no first frame, so the host's own failed or
+  // timed-out load must make it orderable. Asserts the overlay is attached to
+  // the host (not just that the load state is right), and that its renderer is up.
+  const expectChromeAttached = async (id: number) => {
+    await app.evaluateMain!(((_e: unknown, i: number) =>
+      (globalThis as any).__peekHybridOverlayTest.setActive(i)) as any, id);
+    await expect
+      .poll(
+        async () =>
+          app.evaluateMain!(() => (globalThis as any).__peekHybridOverlayTest.activeId() as number | null),
+        { timeout: 8000, message: 'the chrome overlay should attach to the host whose content never painted' },
+      )
+      .toBe(id);
+    await waitOverlayReady(app);
+  };
+
+  test('chrome overlay attaches to a host whose server never answers', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    const { id } = await openHanging('chrome-hung');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(true);
+    await expectChromeAttached(id);
+    await closeWindow(id);
+  });
+
+  test('chrome overlay attaches to a host whose connection is refused', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    // A port that was just free and is now closed.
+    const closedPort = await new Promise<number>((resolve) => {
+      const s = net.createServer();
+      s.listen(0, '127.0.0.1', () => {
+        const p = (s.address() as net.AddressInfo).port;
+        s.close(() => resolve(p));
+      });
+    });
+    const url = `http://127.0.0.1:${closedPort}/refused`;
+    const before = await app.evaluateMain!(
+      () => (globalThis as any).__peekHybridOverlayTest.hybridIds() as number[],
+    );
+    await bgWindow.evaluate((u: string) => {
+      (window as any).app.window.open(u, { width: 800, height: 600 });
+    }, url);
+    const id = (await app.evaluateMain!(((_e: unknown, arg: { url: string; before: number[] }) =>
+      (globalThis as any).__peekHybridOverlayTest.waitHybridForUrl(arg.url, arg.before, 8000)) as any, {
+      url,
+      before,
+    })) as number | null;
+    expect(id, 'a hybrid page-host should be registered for the refused URL').not.toBeNull();
+    await expectChromeAttached(id as number);
+    await closeWindow(id as number);
   });
 
   test('a second open with the same key reuses the window while the first load hangs', async () => {
