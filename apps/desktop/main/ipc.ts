@@ -779,6 +779,9 @@ export function popupRequestsNoOpener(features: string | undefined): boolean {
   return false;
 }
 
+/** Longest the open call waits for a page's first load before completing anyway. */
+const HYBRID_OPEN_LOAD_WAIT_MS = 2000;
+
 /**
  * Leak guard for the hybrid construct→register gap. `createHybridHostBaseWindow`
  * constructs the native BaseWindow, but machine registration happens deep
@@ -3511,9 +3514,24 @@ export function registerWindowHandlers(): void {
           // otherwise-live window (regression: window.app.window.open() on
           // an unreachable URL — the exact case the load-error overlay
           // exists to handle gracefully).
-          await view.webContents.loadURL(url).catch((err) => {
+          //
+          // The wait is bounded: a server that accepts the connection and never
+          // answers leaves loadURL pending with no timeout, and everything after
+          // this point (mode registration, `window:opened`, pending-key cleanup,
+          // the returned window id) would wait on it. A load that has not
+          // settled after HYBRID_OPEN_LOAD_WAIT_MS keeps loading in the
+          // background while the open completes.
+          const initialLoad = view.webContents.loadURL(url).catch((err) => {
             DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] initial loadURL failed (window still opens; load-error overlay handles it):`, err);
           });
+          let loadWaitTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            initialLoad,
+            new Promise<void>((resolve) => {
+              loadWaitTimer = setTimeout(resolve, HYBRID_OPEN_LOAD_WAIT_MS);
+            }),
+          ]);
+          if (loadWaitTimer) clearTimeout(loadWaitTimer);
         }
 
         // Explicit `spaceMode` option, same shape and meaning as the plain
