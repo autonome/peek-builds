@@ -56,10 +56,11 @@ import http from 'http';
 // bites, small enough that draining it is instant.
 const BACKEND_CALL_CAP = 25;
 
-// A normal peek close over two surviving page hosts is a handful of kernel
-// transitions (the close itself, at most one legitimate overlay retarget, at
-// most one settle show/hide). A runaway blows past this immediately.
-const SANE_TRANSITION_BOUND = 12;
+// A normal peek close over two surviving page hosts is about 10 kernel
+// transitions (the close itself, one overlay retarget, the settle show/hide and
+// late bounds/desktop echoes), with run-to-run jitter up to 12. The runaway this
+// guards against reaches about 25 or more before the circuit breaker silences it.
+const SANE_TRANSITION_BOUND = 16;
 
 let app: DesktopApp;
 let bgWindow: Page;
