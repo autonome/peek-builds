@@ -1,6 +1,11 @@
 # Fast gate: install, typecheck/build, and every check that needs no
-# display and no Electron window. Runs on every push/PR to main so a
-# stale lockfile, a schema drift, or a broken sync path fails fast.
+# display and no Electron window. Runs only when started by hand; the push
+# and pull-request triggers are off while its results are not being read.
+# To turn them back on, restore:
+#   - event: ["push"]
+#     branch: ["main"]
+#   - event: ["pull_request"]
+#     branch: ["main"]
 #
 # Deliberately excluded:
 # - yarn lint — it is `echo "No linting configured"`, and naming it here
@@ -10,10 +15,6 @@
 #   apps/desktop/CLAUDE.md.
 
 when:
-  - event: ["push"]
-    branch: ["main"]
-  - event: ["pull_request"]
-    branch: ["main"]
   - event: ["manual"]
 
 engine: "nixery"
