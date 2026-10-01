@@ -222,6 +222,81 @@ import type { LoadEvent, LoadPhase } from './page-load-error.js';
  */
 const hybridNavTargetNoters = new Map<number, (url: string) => void>();
 
+/**
+ * A page whose renderer is stuck (an infinite script loop) cannot commit a
+ * navigation: the new load queues behind the stuck script. Chromium reports the
+ * stuck renderer a few seconds in (`unresponsive`). A navigation the user asked
+ * for is remembered until it commits or stops; if the renderer is reported
+ * stuck meanwhile, the renderer is killed and the navigation re-issued into a
+ * fresh process. A navigation asked for while the renderer is already known to
+ * be stuck does the same at once.
+ */
+const hungContents = new WeakSet<Electron.WebContents>();
+const pendingUserNavigation = new WeakMap<Electron.WebContents, () => void>();
+
+/** Kills the stuck renderer and runs `then` once Chromium reports it gone. */
+function restartRendererThen(wc: Electron.WebContents, then: () => void): void {
+  let ran = false;
+  const run = () => {
+    if (ran || wc.isDestroyed()) return;
+    ran = true;
+    then();
+  };
+  wc.once('render-process-gone', run);
+  // Backstop in case the gone event does not arrive.
+  setTimeout(run, 1500);
+  wc.forcefullyCrashRenderer();
+}
+
+function driveUserNavigation(wc: Electron.WebContents, action: () => void): void {
+  try {
+    if (hungContents.has(wc)) {
+      hungContents.delete(wc);
+      restartRendererThen(wc, action);
+      return;
+    }
+    pendingUserNavigation.set(wc, action);
+    action();
+    // Chromium reports a stuck renderer only while input is waiting on it, so
+    // a navigation that has not committed after a grace period probes the
+    // renderer with a trivial script and recovers if it does not answer.
+    setTimeout(() => {
+      if (wc.isDestroyed() || pendingUserNavigation.get(wc) !== action) return;
+      let answered = false;
+      wc.executeJavaScript('0').then(() => { answered = true; }).catch(() => { answered = true; });
+      setTimeout(() => {
+        if (answered || wc.isDestroyed() || pendingUserNavigation.get(wc) !== action) return;
+        pendingUserNavigation.delete(wc);
+        try {
+          restartRendererThen(wc, action);
+        } catch { /* wc gone */ }
+      }, HUNG_RENDERER_PROBE_MS);
+    }, HUNG_RENDERER_GRACE_MS);
+  } catch { /* wc gone */ }
+}
+
+const HUNG_RENDERER_GRACE_MS = 2500;
+const HUNG_RENDERER_PROBE_MS = 1500;
+
+function watchForHungRenderer(wc: Electron.WebContents): void {
+  const settle = () => { pendingUserNavigation.delete(wc); };
+  wc.on('unresponsive', () => {
+    hungContents.add(wc);
+    const retry = pendingUserNavigation.get(wc);
+    if (!retry) return;
+    pendingUserNavigation.delete(wc);
+    hungContents.delete(wc);
+    try {
+      restartRendererThen(wc, retry);
+    } catch { /* wc gone */ }
+  });
+  wc.on('responsive', () => { hungContents.delete(wc); });
+  wc.on('render-process-gone', () => { hungContents.delete(wc); });
+  wc.on('did-navigate', settle);
+  wc.on('did-stop-loading', settle);
+  wc.on('did-fail-load', settle);
+}
+
 /** The hung-load timeout; a test can shorten it through the environment. */
 function hybridLoadTimeoutMs(): number {
   const override = Number(process.env.PEEK_PAGE_LOAD_TIMEOUT_MS);
@@ -1600,6 +1675,7 @@ export function wireHybridContentEvents(
       }
     } catch { /* history unavailable */ }
   });
+  watchForHungRenderer(contentWC);
   hybridNavTargetNoters.set(hostWindowId, (u: string) => { pendingNavUrl = u; });
   contentWC.once('destroyed', () => hybridNavTargetNoters.delete(hostWindowId));
   contentWC.on('did-start-navigation', (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
@@ -2601,8 +2677,10 @@ export function installHybridNavbarActionRouting(): void {
     const url = (raw as { url?: string }).url;
     if (!url) return;
     hybridNavTargetNoters.get(r.windowId)?.(url);
-    r.wc.loadURL(url).catch((err) => {
-      DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
+    driveUserNavigation(r.wc, () => {
+      r.wc.loadURL(url).catch((err) => {
+        DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
+      });
     });
   });
 
@@ -2612,13 +2690,15 @@ export function installHybridNavbarActionRouting(): void {
     try {
       // Reloading the error page retries the address that failed.
       const failed = failedUrlFromErrorPage(r.wc.getURL());
-      if (failed) {
-        r.wc.loadURL(failed).catch((err) => {
-          DEBUG && console.log(`[hybrid-page-host:${r.windowId}] retry failed:`, err);
-        });
-      } else {
-        r.wc.reload();
-      }
+      driveUserNavigation(r.wc, () => {
+        if (failed) {
+          r.wc.loadURL(failed).catch((err) => {
+            DEBUG && console.log(`[hybrid-page-host:${r.windowId}] retry failed:`, err);
+          });
+        } else {
+          r.wc.reload();
+        }
+      });
     } catch { /* wc gone */ }
   });
 
@@ -2627,14 +2707,19 @@ export function installHybridNavbarActionRouting(): void {
   subscribe(getSystemAddress(), 'page:stop', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
-    try { r.wc.stop(); } catch { /* wc gone */ }
+    try {
+      pendingUserNavigation.delete(r.wc);
+      r.wc.stop();
+    } catch { /* wc gone */ }
   });
 
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
     try {
-      if (r.wc.navigationHistory.canGoBack()) r.wc.navigationHistory.goBack();
+      if (r.wc.navigationHistory.canGoBack()) {
+        driveUserNavigation(r.wc, () => r.wc.navigationHistory.goBack());
+      }
     } catch { /* wc gone */ }
   });
 
