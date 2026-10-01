@@ -2464,6 +2464,14 @@ export function installHybridNavbarActionRouting(): void {
     try { r.wc.reload(); } catch { /* wc gone */ }
   });
 
+  // Cancels an in-flight load (a page that never answers). The overlay shows
+  // this in place of reload while the content is loading.
+  subscribe(getSystemAddress(), 'page:stop', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    try { r.wc.stop(); } catch { /* wc gone */ }
+  });
+
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {
     const r = wcFor(raw);
     if (!r) return;

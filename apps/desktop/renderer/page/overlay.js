@@ -460,7 +460,11 @@ navbar.addEventListener('reload', () => {
   if (activeWindowId == null) return;
   api.publish('page:reload', { windowId: activeWindowId });
 });
-navbar.addEventListener('dismiss', () => { hideNavbar(); });
+navbar.addEventListener('stop', () => {
+  if (activeWindowId == null) return;
+  api.publish('page:stop', { windowId: activeWindowId });
+});
+navbar.addEventListener('dismiss',() => { hideNavbar(); });
 
 // ── Navbar show/hide (trigger-zone hover), mirrors page.js behavior ───────────
 let hideTimer = null;

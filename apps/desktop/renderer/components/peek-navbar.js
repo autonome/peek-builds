@@ -726,10 +726,10 @@ export class PeekNavbar extends PeekElement {
           @click=${(e) => { e.stopPropagation(); this.emit('go-forward'); }}
         >&#8594;</button>
         <button
-          class="nav-btn"
-          title="Reload (Cmd+R)"
-          @click=${(e) => { e.stopPropagation(); this.emit('reload'); }}
-        >&#8635;</button>
+          class="nav-btn ${this.loading ? 'stop-btn' : 'reload-btn'}"
+          title=${this.loading ? 'Stop loading' : 'Reload (Cmd+R)'}
+          @click=${(e) => { e.stopPropagation(); this.emit(this.loading ? 'stop' : 'reload'); }}
+        >${this.loading ? html`&#10005;` : html`&#8635;`}</button>
         ${this.favicon || this.pageTitle ? html`
           <div class="title-chip" title=${this.pageTitle || ''}>
             ${this.favicon ? html`<img class="title-favicon" src=${this.favicon} alt="">` : ''}

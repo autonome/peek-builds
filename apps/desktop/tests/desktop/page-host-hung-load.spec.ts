@@ -63,20 +63,26 @@ test.describe('Page host hung load @desktop', () => {
 
   // Opens the hanging page without awaiting the open call; returns the new
   // host's window id.
-  const openHanging = async (label: string): Promise<{ id: number; url: string }> => {
-    const url = `http://127.0.0.1:${serverPort}/hang/${label}`;
+  const openHanging = async (
+    label: string,
+    opts: { path?: string; key?: string } = {},
+  ): Promise<{ id: number; url: string }> => {
+    const url = `http://127.0.0.1:${serverPort}/${opts.path ?? 'hang'}/${label}`;
     const before = await app.evaluateMain!(() => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return (b.hybridIds ? b.hybridIds() : []) as number[];
     });
-    await bgWindow.evaluate((u: string) => {
-      const w = window as any;
-      w.__hungOpen = { settled: false, result: null as unknown };
-      w.app.window.open(u, { width: 800, height: 600 }).then((r: unknown) => {
-        w.__hungOpen.settled = true;
-        w.__hungOpen.result = r;
-      });
-    }, url);
+    await bgWindow.evaluate(
+      ({ u, key }: { u: string; key?: string }) => {
+        const w = window as any;
+        w.__hungOpen = { settled: false, result: null as unknown };
+        w.app.window.open(u, { width: 800, height: 600, ...(key ? { key } : {}) }).then((r: unknown) => {
+          w.__hungOpen.settled = true;
+          w.__hungOpen.result = r;
+        });
+      },
+      { u: url, key: opts.key },
+    );
     const id = (await app.evaluateMain!(((_e: unknown, arg: { url: string; before: number[] }) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return b.waitHybridForUrl(arg.url, arg.before, 8000) as Promise<number | null>;
@@ -147,5 +153,100 @@ test.describe('Page host hung load @desktop', () => {
         { timeout: 5000 },
       )
       .toBeFalsy();
+  });
+
+  const publish = async (topic: string, msg: Record<string, unknown>) =>
+    app.evaluateMain!(((_e: unknown, arg: { topic: string; msg: Record<string, unknown> }) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic(arg.topic, arg.msg);
+    }) as any, { topic, msg });
+
+  const contentUrl = async (id: number) =>
+    app.evaluateMain!(((_e: unknown, i: number) =>
+      (globalThis as any).__peekHybridOverlayTest.contentUrl(i)) as any, id) as Promise<string>;
+
+  const contentLoading = async (id: number) =>
+    app.evaluateMain!(((_e: unknown, i: number) =>
+      (globalThis as any).__peekHybridOverlayTest.contentLoading(i)) as any, id) as Promise<boolean>;
+
+  const closeWindow = async (id: number) =>
+    bgWindow.evaluate((i: number) => (window as any).app.window.close(i), id);
+
+  test('stop cancels the hung load', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    const { id } = await openHanging('stop');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(true);
+
+    await publish('page:stop', { windowId: id });
+
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
+    await closeWindow(id);
+  });
+
+  test('reload while the load hangs leaves the window usable', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    const { id } = await openHanging('reload');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(true);
+
+    await publish('page:reload', { windowId: id });
+    // Still loading (the server never answers) and still responsive: stop works,
+    // then navigation to another address works.
+    expect(await contentLoading(id)).toBe(true);
+    await publish('page:stop', { windowId: id });
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
+
+    await publish('page:navigate', { windowId: id, url: `http://127.0.0.1:${serverPort}/ok/after-reload` });
+    await expect.poll(() => contentUrl(id), { timeout: 5000 }).toContain('/ok/after-reload');
+    await closeWindow(id);
+  });
+
+  test('back while the load hangs returns to the previous page', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    const { id } = await openHanging('first', { path: 'ok' });
+    // Let the first page commit so it is a history entry, not a superseded load.
+    await expect.poll(() => contentUrl(id), { timeout: 5000 }).toContain('/ok/first');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
+    await publish('page:navigate', { windowId: id, url: `http://127.0.0.1:${serverPort}/ok/second` });
+    await expect.poll(() => contentUrl(id), { timeout: 5000 }).toContain('/ok/second');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
+
+    await publish('page:navigate', { windowId: id, url: `http://127.0.0.1:${serverPort}/hang/back` });
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(true);
+
+    await publish('page:go-back', { windowId: id });
+
+    await expect.poll(() => contentUrl(id), { timeout: 5000 }).toContain('/ok/first');
+    await expect.poll(() => contentLoading(id), { timeout: 5000 }).toBe(false);
+    await closeWindow(id);
+  });
+
+  test('a second open with the same key reuses the window while the first load hangs', async () => {
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
+    const key = 'hung-load-same-key';
+    const { id, url } = await openHanging('same-key', { key });
+    const countBefore = await app.evaluateMain!(
+      () => (globalThis as any).__peekHybridOverlayTest.hybridCount() as number,
+    );
+
+    // The first open settles once its bounded wait on the load ends; the key is
+    // then no longer pending and the second open must find the first window.
+    await expect
+      .poll(async () => bgWindow.evaluate(() => (window as any).__hungOpen.settled as boolean), {
+        timeout: 8000,
+      })
+      .toBe(true);
+
+    const second = await bgWindow.evaluate(
+      ({ u, k }: { u: string; k: string }) =>
+        (window as any).app.window.open(u, { width: 800, height: 600, key: k }) as Promise<any>,
+      { u: url, k: key },
+    );
+    expect(second).toMatchObject({ success: true, id, reused: true });
+
+    const countAfter = await app.evaluateMain!(
+      () => (globalThis as any).__peekHybridOverlayTest.hybridCount() as number,
+    );
+    expect(countAfter, 'no duplicate window').toBe(countBefore);
+    await closeWindow(id);
   });
 });

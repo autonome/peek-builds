@@ -1564,6 +1564,11 @@ function installTestBridge(): void {
       const entry = getHybridWindow(id);
       return entry ? entry.url() : '';
     },
+    /** Whether a hybrid window's content webContents has a load in flight. */
+    contentLoading(id: number): boolean {
+      const entry = getHybridWindow(id);
+      return !!entry && !entry.contentWC.isDestroyed() && entry.contentWC.isLoading();
+    },
     /**
      * Regression repro (peek bebfd212): drive a REAL modified left-click on a
      * hybrid host's content WC at (x,y). A synthetic JS `.click()` with `metaKey`
