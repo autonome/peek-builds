@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { queryKey, isEditClick, navCaret, attachQueryKeys } from '../../features/editor/query-keys.js';
+import { queryKey, isEditClick, attachQueryKeys } from '../../features/editor/query-keys.js';
 
 describe('isEditClick', () => {
   // A target whose closest() matches when the selector lists `cls`.
@@ -127,19 +127,7 @@ describe('queryKey: other keys', () => {
   });
 });
 
-describe('navCaret', () => {
-  it('down keys put the caret at the start, up keys at the end', () => {
-    assert.equal(navCaret('j'), 'start');
-    assert.equal(navCaret('ArrowDown'), 'start');
-    assert.equal(navCaret('k'), 'end');
-    assert.equal(navCaret('ArrowUp'), 'end');
-  });
-  it('other keys do not open anything', () => {
-    for (const key of ['J', 'K', 'z', 'o', 'Enter']) assert.equal(navCaret(key), null);
-  });
-});
-
-describe('attachQueryKeys: selecting by key opens the editor', () => {
+describe('attachQueryKeys: selecting by key does not open the editor', () => {
   const makeSurface = (count, start) => {
     let selected = start;
     return {
@@ -154,22 +142,21 @@ describe('attachQueryKeys: selecting by key opens the editor', () => {
   };
   const press = (key, surface) => {
     const opened = [];
-    const inline = { isOpen: () => false, open: (i, opts) => opened.push([i, opts.caretAtEnd]) };
+    const inline = { isOpen: () => false, open: (i) => opened.push(i) };
     let handler;
     const doc = { addEventListener: (_, fn) => { handler = fn; }, removeEventListener() {} };
     attachQueryKeys(surface, doc, inline);
     handler({ key, target: { tagName: 'DIV' }, preventDefault() {} });
     return opened;
   };
-  it('j and ArrowDown open the next block with the caret at the start', () => {
-    assert.deepEqual(press('j', makeSurface(3, 0)), [[1, false]]);
-    assert.deepEqual(press('ArrowDown', makeSurface(3, 1)), [[2, false]]);
+  it('j, k, ArrowDown and ArrowUp only move the selection', () => {
+    for (const [key, from, to] of [['j', 0, 1], ['ArrowDown', 1, 2], ['k', 2, 1], ['ArrowUp', 1, 0]]) {
+      const surface = makeSurface(3, from);
+      assert.deepEqual(press(key, surface), []);
+      assert.equal(surface.selectedIndex(), to);
+    }
   });
-  it('k and ArrowUp open the previous block with the caret at the end', () => {
-    assert.deepEqual(press('k', makeSurface(3, 2)), [[1, true]]);
-    assert.deepEqual(press('ArrowUp', makeSurface(3, 1)), [[0, true]]);
-  });
-  it('nothing opens without blocks', () => {
-    assert.deepEqual(press('j', makeSurface(0, -1)), []);
+  it('Enter opens the selected block', () => {
+    assert.deepEqual(press('Enter', makeSurface(3, 1)), [1]);
   });
 });

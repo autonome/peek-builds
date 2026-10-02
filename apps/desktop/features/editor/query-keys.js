@@ -89,18 +89,6 @@ export function queryKey(key, state) {
   }
 }
 
-/**
- * Where the caret goes when a block-moving key also opens the block's editor:
- * the end when moving up (arriving from below), the start when moving down.
- * @param {string} key KeyboardEvent.key
- * @returns {'end'|'start'|null} null for keys that do not move the selection
- */
-export function navCaret(key) {
-  if (key === 'j' || key === 'ArrowDown') return 'start';
-  if (key === 'k' || key === 'ArrowUp') return 'end';
-  return null;
-}
-
 /** Parts of a block that keep their own click behavior: affordances, links, fold controls, the editor. */
 const CLICK_EXEMPT = 'a, button, input, select, textarea, .qs-block-left, .qs-link, .qs-fold, .qs-inline-editor, .cm-editor';
 
@@ -130,8 +118,7 @@ function isEditable(target) {
  * Handle block keys on `doc` for `surface` (the interface of query-surface-dom.js
  * mountDomSurface). Ignored while a text field or inline editor has the keys.
  * @param {object} [inline] the inline editor controller: `isOpen()` and
- *   `open(index, {caretAtEnd})`. <Enter> opens the selected block in it, and
- *   j/k/ArrowDown/ArrowUp open the block they select.
+ *   `open(index)`. <Enter> opens the selected block in it.
  * @param {{add?: () => void, move?: (delta: number) => void}} [actions] `move`
  *   runs on Shift+j / Shift+k with +1 / -1 (the caller ignores it outside manual
  *   order). `add` runs on `o` (add a new item, as
@@ -191,13 +178,6 @@ export function attachQueryKeys(surface, doc = document, inline = null, actions 
         if (want !== folded.has(i)) (want ? surface.fold(i) : surface.unfold(i));
       }
       surface.revealSelected();
-    }
-
-    // Selecting a block by key opens its editor, like a click does.
-    const caret = state.pendingZ ? null : navCaret(e.key);
-    if (caret && inline && result.selectedIndex >= 0 && result.selectedIndex < count) {
-      surface.revealSelected();
-      inline.open(result.selectedIndex, { caretAtEnd: caret === 'end' });
     }
   };
 
