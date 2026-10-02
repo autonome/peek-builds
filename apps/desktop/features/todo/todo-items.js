@@ -43,32 +43,38 @@ export const sortNewestFirst = (items) => {
 };
 
 /**
- * The cmd result for the `todos` command. One or more items become output with
- * `mimeType: 'item'`, which puts the panel into its output selection list.
+ * The cmd result for a list command — `todos` over the `todo` tag, `done` over
+ * the `done` tag. One or more items become output with `mimeType: 'item'`,
+ * which puts the panel into its output selection list.
+ *
+ * `noun` names one listed item in the heading and is pluralised with a bare
+ * `s`; `emptyMessage` is what an empty list says. The defaults describe the
+ * outstanding todos `todos` lists.
  *
  * No items is a failure message rather than empty output data: the panel's
  * chain-mode guard reads an empty array as chainable output.
  */
-export const todosListResult = (items) => {
+export const todosListResult = (items, labels = {}) => {
+  const { noun = 'todo', emptyMessage = 'No outstanding todos' } = labels;
   const ordered = sortNewestFirst(items);
   if (ordered.length === 0) {
-    return { success: false, message: 'No outstanding todos' };
+    return { success: false, message: emptyMessage };
   }
   return {
     success: true,
     output: {
       data: ordered,
       mimeType: 'item',
-      title: ordered.length === 1 ? '1 todo' : `${ordered.length} todos`
+      title: `${ordered.length} ${noun}${ordered.length === 1 ? '' : 's'}`
     }
   };
 };
 
 /**
- * The item the `done` command should act on: the panel's selection when it
+ * The item the `complete` command should act on: the panel's selection when it
  * carries an id, else the first text match, else nothing.
  */
-export const pickDoneTarget = (items, { selectedItem, match } = {}) => {
+export const pickCompleteTarget = (items, { selectedItem, match } = {}) => {
   if (selectedItem && typeof selectedItem === 'object' && selectedItem.id) {
     return selectedItem;
   }

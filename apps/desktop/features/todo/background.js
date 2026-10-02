@@ -1,25 +1,27 @@
 /**
  * Todo Extension Background Script
  *
- * Three cmd-panel commands:
+ * Four cmd-panel commands:
  *   - `todo {text} [#tag …]`  — creates a text item, auto-tags with `todo`
  *     plus any `#tag` words that end the text (removed from the text).
  *   - `todos`                 — lists the outstanding `todo`-tagged items,
  *     newest first, as `item` output the panel turns into a selection list.
- *   - `done {match}`          — marks one `todo`-tagged item done: the item
+ *   - `done`                  — lists the `done`-tagged items the same way,
+ *     read-only: Enter on a row opens the item, it marks nothing.
+ *   - `complete {match}`      — marks one `todo`-tagged item done: the item
  *     picked from the panel's suggestion list when there is one, otherwise
  *     the first whose title/content contains `match` (case-insensitive).
- *     Swaps the `todo` tag for `done`, records a `done` item event.
+ *     Swaps the `todo` tag for `done`, records a `completed` item event.
  *
  * Lazy-loaded: tile boots on first `cmd:execute:todo` / `cmd:execute:todos` /
- * `cmd:execute:done`.
+ * `cmd:execute:done` / `cmd:execute:complete`.
  *
  * Runs in isolated extension process (peek://todo/background.html).
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { splitTrailingTags } from 'peek://app/lib/note-tags.js';
-import { matchTodos, parseTodoArgs, pickDoneTarget, todosListResult } from './todo-items.js';
+import { matchTodos, parseTodoArgs, pickCompleteTarget, todosListResult } from './todo-items.js';
 
 const api = window.app;
 
@@ -106,13 +108,31 @@ const handleTodos = async () => {
   return todosListResult(itemsResult.data);
 };
 
-const handleDone = async (rawArgs, selectedItem) => {
+const handleDone = async () => {
+  const doneTag = await ensureTag(DONE_TAG);
+  if (!doneTag) {
+    return { output: 'Failed to query done todos', mimeType: 'text/plain' };
+  }
+
+  const itemsResult = await api.datastore.getItemsByTag(doneTag.id);
+  if (!itemsResult.success) {
+    console.error('[ext:todo] getItemsByTag failed:', itemsResult.error);
+    return { output: 'Failed to query done todos', mimeType: 'text/plain' };
+  }
+
+  return todosListResult(itemsResult.data, {
+    noun: 'done todo',
+    emptyMessage: 'No done todos yet'
+  });
+};
+
+const handleComplete = async (rawArgs, selectedItem) => {
   const match = (rawArgs || '').trim();
   // A row picked in the panel's suggestion list carries the whole item, so
   // there is nothing left for the user to type.
   const picked = selectedItem && typeof selectedItem === 'object' && selectedItem.id;
   if (!match && !picked) {
-    return { output: 'Usage: done <text-substring-of-todo>', mimeType: 'text/plain' };
+    return { output: 'Usage: complete <text-substring-of-todo>', mimeType: 'text/plain' };
   }
 
   // Resolve the #todo tag so we can scope the search.
@@ -127,7 +147,7 @@ const handleDone = async (rawArgs, selectedItem) => {
     return { output: 'Failed to query todos', mimeType: 'text/plain' };
   }
 
-  const target = pickDoneTarget(itemsResult.data, { selectedItem, match });
+  const target = pickCompleteTarget(itemsResult.data, { selectedItem, match });
   if (!target) {
     return { output: `No #todo item matches "${match}"`, mimeType: 'text/plain' };
   }
@@ -173,7 +193,14 @@ const init = async () => {
   });
 
   api.pubsub.subscribe('cmd:execute:done', async (msg) => {
-    const result = await handleDone(
+    const result = await handleDone();
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+
+  api.pubsub.subscribe('cmd:execute:complete', async (msg) => {
+    const result = await handleComplete(
       msg.search?.trim() || msg.data?.text || '',
       msg.selectedItem
     );

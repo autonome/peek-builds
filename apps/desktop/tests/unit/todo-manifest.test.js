@@ -1,5 +1,5 @@
 /**
- * The todo feature's manifest must parse, declare its three commands, and
+ * The todo feature's manifest must parse, declare its four commands, and
  * allow every `cmd:execute:*` topic background.js subscribes to (the IPC gate
  * silently drops subscriptions whose topic is not in the manifest).
  *
@@ -17,14 +17,14 @@ const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8'));
 const background = readFileSync(join(dir, 'background.js'), 'utf-8');
 
 describe('todo manifest', () => {
-  it('declares the todo, todos and done commands', () => {
+  it('declares the todo, todos, done and complete commands', () => {
     assert.equal(manifest.id, 'todo');
-    assert.deepEqual(manifest.commands.map((c) => c.name), ['todo', 'todos', 'done']);
+    assert.deepEqual(manifest.commands.map((c) => c.name), ['todo', 'todos', 'done', 'complete']);
   });
 
   it('allows every cmd:execute topic background.js subscribes to', () => {
     const subscribed = [...background.matchAll(/subscribe\(\s*'(cmd:execute:[^']+)'/g)].map((m) => m[1]);
-    assert.deepEqual(subscribed.sort(), ['cmd:execute:done', 'cmd:execute:todo', 'cmd:execute:todos']);
+    assert.deepEqual(subscribed.sort(), ['cmd:execute:complete', 'cmd:execute:done', 'cmd:execute:todo', 'cmd:execute:todos']);
     const allowed = manifest.capabilities.pubsub.topics;
     for (const topic of subscribed) {
       assert.ok(allowed.includes(topic), `${topic} missing from capabilities.pubsub.topics`);

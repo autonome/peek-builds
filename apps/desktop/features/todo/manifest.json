@@ -3,7 +3,7 @@
   "id": "todo",
   "shortname": "todo",
   "name": "Todo Commands",
-  "description": "Quick `todo`, `todos` and `done` cmd-panel commands",
+  "description": "Quick `todo`, `todos`, `done` and `complete` cmd-panel commands",
   "version": "1.0.0",
   "builtin": true,
   "tiles": [
@@ -21,6 +21,7 @@
         "cmd:execute:todo",
         "cmd:execute:todos",
         "cmd:execute:done",
+        "cmd:execute:complete",
         "cmd:register",
         "cmd:unregister",
         "ext:ready",
@@ -52,6 +53,11 @@
     },
     {
       "name": "done",
+      "description": "List the #done items, newest first.",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "complete",
       "description": "Mark a todo done. The list shows the outstanding #todo items; pick one, or type enough of its text to name it.",
       "action": { "type": "execute" },
       "params": [

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'todo', 'todo-items.js');
-const { matchTodos, sortNewestFirst, todosListResult, pickDoneTarget, parseTodoArgs } = await import(modulePath);
+const { matchTodos, sortNewestFirst, todosListResult, pickCompleteTarget, parseTodoArgs } = await import(modulePath);
 const { splitTrailingTags } = await import(join(__dirname, '..', '..', 'renderer', 'lib', 'note-tags.js'));
 
 const item = (id, fields = {}) => ({ id, title: id, content: '', updatedAt: '2026-01-01T00:00:00Z', ...fields });
@@ -99,25 +99,56 @@ describe('todosListResult', () => {
   });
 });
 
-describe('pickDoneTarget', () => {
+describe('todosListResult over the done tag', () => {
+  const doneLabels = { noun: 'done todo', emptyMessage: 'No done todos yet' };
+
+  it('says there are no done todos yet when the list is empty', () => {
+    const result = todosListResult([], doneLabels);
+    assert.equal(result.success, false);
+    assert.equal(result.message, 'No done todos yet');
+    assert.equal(result.output, undefined);
+  });
+
+  it('heads a single item with the done noun in the singular', () => {
+    const result = todosListResult([item('a')], doneLabels);
+    assert.equal(result.success, true);
+    assert.equal(result.output.title, '1 done todo');
+    assert.equal(result.output.mimeType, 'item');
+    assert.deepEqual(result.output.data.map(i => i.id), ['a']);
+  });
+
+  it('heads several items with their count and orders them newest first', () => {
+    const items = [
+      item('old', { updatedAt: '2026-01-01T00:00:00Z' }),
+      item('new', { updatedAt: '2026-03-01T00:00:00Z' }),
+      item('mid', { updatedAt: '2026-02-01T00:00:00Z' })
+    ];
+    const result = todosListResult(items, doneLabels);
+    assert.equal(result.success, true);
+    assert.equal(result.output.title, '3 done todos');
+    assert.deepEqual(result.output.data.map(i => i.id), ['new', 'mid', 'old']);
+  });
+});
+
+describe('pickCompleteTarget', () => {
   const items = [item('a', { title: 'write spec' }), item('b', { title: 'call bank' })];
 
   it('takes the selected item when it carries an id', () => {
     const selectedItem = item('b');
-    assert.equal(pickDoneTarget(items, { selectedItem, match: 'write' }), selectedItem);
+    assert.equal(pickCompleteTarget(items, { selectedItem, match: 'write' }), selectedItem);
   });
 
   it('falls back to the first text match with no selection', () => {
-    assert.equal(pickDoneTarget(items, { match: 'bank' }).id, 'b');
+    assert.equal(pickCompleteTarget(items, { match: 'bank' }).id, 'b');
   });
 
   it('falls back to the text match when the selection lacks an id', () => {
-    assert.equal(pickDoneTarget(items, { selectedItem: { title: 'call bank' }, match: 'write' }).id, 'a');
+    assert.equal(pickCompleteTarget(items, { selectedItem: { title: 'call bank' }, match: 'write' }).id, 'a');
   });
 
   it('returns null when nothing matches', () => {
-    assert.equal(pickDoneTarget(items, { match: 'zzz' }), null);
-    assert.equal(pickDoneTarget([], {}), null);
+    assert.equal(pickCompleteTarget(items, { match: 'zzz' }), null);
+    assert.equal(pickCompleteTarget([], {}), null);
   });
 });
 
