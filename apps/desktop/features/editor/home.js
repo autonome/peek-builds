@@ -17,6 +17,7 @@ import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js'
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys } from './query-keys.js';
+import { createTaggedItem, discardItem, shouldDiscard } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 
@@ -181,8 +182,15 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   let rebuildPending = false;
   let rebuilding = false;
   let lastSignature = null;
+  const addedIds = new Set(); // items added here whose editor has not closed yet
+  let awaitingAdd = null; // { id, done }: the added item whose block is awaited
+  let adding = false;
 
-  const wrap = document.createElement('div');
+  const addBtn = document.createElement('button');
+  addBtn.className = 'toolbar-btn';
+  addBtn.textContent = '+ Add item';
+
+  const wrap =document.createElement('div');
   wrap.className = 'tag-query-list';
 
   const heading = document.createElement('h2');
@@ -200,6 +208,32 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     empty.remove();
     if (unknownTags.length > 0) heading.after(notice);
     if (shown.length === 0) (unknownTags.length > 0 ? notice : heading).after(empty);
+    // A query naming a tag that does not exist has no tag set to apply to a new item.
+    addBtn.disabled = unknownTags.length > 0;
+    addBtn.title = unknownTags.length > 0
+      ? `Cannot add an item: ${unknownTags.map(t => '#' + t).join(' ')} ${unknownTags.length > 1 ? 'are not existing tags' : 'is not an existing tag'}`
+      : `Add a new item tagged ${tagNames.map(t => '#' + t).join(' ')} (o)`;
+  };
+
+  // A short message in the window's one status line, put back when it times out.
+  let sayTimer = null;
+  let saidFrom = null;
+  const clearSay = () => {
+    if (!sayTimer) return;
+    clearTimeout(sayTimer);
+    sayTimer = null;
+    editorLayout.statusLine?.restoreState(saidFrom);
+    saidFrom = null;
+  };
+  const say = (message) => {
+    const line = editorLayout.statusLine;
+    if (!line) return;
+    clearSay();
+    saidFrom = line.saveState();
+    if (line.container) line.container.style.display = '';
+    line.show();
+    line.showMessage(message, 0);
+    sayTimer = setTimeout(clearSay, 4000);
   };
 
   editorLayout = new EditorLayout({ container: rootEl, textEditor: false });
@@ -269,7 +303,9 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       vimMode,
       onBlockChanged: () => setOutline(mounted),
       isDiscarded: (item) => deletedIds.has(item.id),
-      onClosed: () => {
+      onClosed: (item) => {
+        // A new item closed without any text is removed again.
+        if (addedIds.delete(item.id) && shouldDiscard(item)) discardItem(api, item.id);
         if (rebuilding) return;
         // After the current event finishes: the close may sit inside a selection change.
         setTimeout(() => {
@@ -288,9 +324,13 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     // A block that is leaving cannot be opened for editing.
     const guarded = {
       isOpen: () => editor.isOpen(),
-      open: (index) => { if (!leaving.has(display[index]?.id)) return editor.open(index); },
+      open: (index) => {
+        if (leaving.has(display[index]?.id)) return undefined;
+        clearSay();
+        return editor.open(index);
+      },
     };
-    detachKeys = attachQueryKeys(mounted, document, guarded);
+    detachKeys = attachQueryKeys(mounted, document, guarded, { add: () => addItem() });
 
     if (keep) {
       let at = display.findIndex(item => item.id === keep.selectedId);
@@ -312,7 +352,46 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     });
     setOutline(mounted);
     updateNotices();
+    if (awaitingAdd && display.some(item => item.id === awaitingAdd.id)) awaitingAdd.done();
   };
+
+  /** Resolve true once the live update has shown a block for `id`, false on timeout. */
+  const waitForBlock = (id, ms) => new Promise((resolve) => {
+    if (shown.some(item => item.id === id)) { resolve(true); return; }
+    const timer = setTimeout(() => { awaitingAdd = null; resolve(false); }, ms);
+    awaitingAdd = { id, done: () => { clearTimeout(timer); awaitingAdd = null; resolve(true); } };
+  });
+
+  /**
+   * Add a text item carrying every tag in the query. The block comes in through
+   * the live update; it is then selected and opened in the inline editor.
+   */
+  const addItem = async () => {
+    if (adding) return;
+    if (unknownTags.length > 0) { say(addBtn.title); return; }
+    adding = true;
+    try {
+      await inline?.close(); // writes (or drops) an editor that is open
+      clearSay();
+      const created = await createTaggedItem(api, tagNames);
+      if (!created.ok) { say(created.message); return; }
+      addedIds.add(created.id);
+      if (!(await waitForBlock(created.id, 5000))) {
+        addedIds.delete(created.id);
+        await discardItem(api, created.id);
+        say('The new item did not show up in the view, so it was removed');
+        return;
+      }
+      const at = shown.findIndex(item => item.id === created.id);
+      if (at < 0) return;
+      surface.select(at);
+      surface.revealSelected();
+      await inline.open(at);
+    } finally {
+      adding = false;
+    }
+  };
+  addBtn.addEventListener('click', () => addItem());
 
   /** Remove a block once its fade has finished. */
   const finishLeaving = (id) => {
@@ -403,7 +482,14 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     api.escape.onEscape(() => (inline ? inline.handleEscape() : { handled: false }));
   }
   // The layout is torn down by cleanup() on unload, so only write the text here.
-  window.addEventListener('beforeunload', () => { inline?.flush(); });
+  window.addEventListener('beforeunload', () => {
+    inline?.flush();
+    // Closing the window with a new item's editor still empty removes the item.
+    const openItem = inline?.isOpen() ? shown[inline.openIndex()] : null;
+    if (openItem && addedIds.has(openItem.id) && (inline.openText() || '').trim() === '') {
+      discardItem(api, openItem.id);
+    }
+  });
 
   const select = document.createElement('select');
   select.className = 'editor-top-toolbar-select';
@@ -419,7 +505,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     sortOption = select.value;
     mountSorted();
   });
-  editorLayout.setTopToolbar(select);
+  editorLayout.setTopToolbar([addBtn, select]);
 }
 
 /**

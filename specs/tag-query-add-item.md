@@ -30,8 +30,9 @@ unresolved tag.
 ## What stays
 
 - The existing `editor:add` flow for the single-document editor.
-- Autosave behavior of the inline editor: an item left empty stays a normal item; deleting empty items
-  is not part of this slice.
+- Autosave behavior of the inline editor. An item added here and closed with no text is deleted again
+  (the item is persisted at once so it reaches the view through live updates, so a blank item would
+  otherwise be left behind); any other item left empty stays a normal item.
 
 ## Tests to change
 
@@ -51,3 +52,18 @@ need the Electron app and are not exercised here; say so under **Result**.
 ## Working rules
 
 Run one command per Bash call. Never run the Electron gate without an explicit OK.
+
+## Result
+
+Built. The key is plain `o` (free in `query-keys.js`: the outer surface has no vim instance, and
+Cmd/Ctrl+O is excluded by the modifier check; the window's Esc goes through the preload, not a key
+handler). The item is created and tagged straight away, the view waits for its block from the live
+update (5 s limit, after which the item is removed and the status line says so), then selects it and
+opens the inline editor. Closing it with no text soft-deletes the item; closing the window with an
+empty new editor open deletes it too. An unknown tag disables the toolbar button (tooltip gives the
+reason) and `o` shows the same reason in the status line; no tag is created.
+
+Checked live on a headless Electron profile: button and `o` create a tagged item that appears and
+opens, typed text autosaves, an empty close leaves nothing, an unknown-tag query disables the control.
+Not checked live: Esc closing the empty editor (the preload consumes Esc, synthetic keys do not reach
+it, so the check closed it by selecting another block), and the window-close discard.

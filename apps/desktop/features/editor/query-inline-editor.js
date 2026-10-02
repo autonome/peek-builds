@@ -255,5 +255,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     handleEscape,
     isOpen: () => !!session || opening,
     openIndex: () => (session ? session.index : -1),
+    /** The text in the open editor, or null when none is open. */
+    openText: () => (session ? cm.getContent(session.view) : null),
   };
 }

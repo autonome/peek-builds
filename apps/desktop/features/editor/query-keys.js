@@ -17,7 +17,10 @@
  * @property {boolean} [inlineOpen] an inline editor is open; no key is handled here
  */
 
-const FOLD_KEYS = new Set(['c', 'o', 'a', 'M', 'R']);
+/** The key that adds a new item to the query. */
+export const ADD_KEY = 'o';
+
+const FOLD_KEYS =new Set(['c', 'o', 'a', 'M', 'R']);
 
 /**
  * Apply one key to the state.
@@ -95,9 +98,12 @@ function isEditable(target) {
  * mountDomSurface). Ignored while a text field or inline editor has the keys.
  * @param {object} [inline] the inline editor controller: `isOpen()` and
  *   `open(index)`. <Enter> opens the selected block in it.
+ * @param {{add?: () => void}} [actions] `add` runs on `o` (add a new item, as
+ *   vim's `o` opens a new line). Plain `o` is free here: the outer surface has no
+ *   vim instance, and Cmd/Ctrl+O (open file) is excluded by the modifier check.
  * @returns {() => void} detach function
  */
-export function attachQueryKeys(surface, doc = document, inline = null) {
+export function attachQueryKeys(surface, doc = document, inline = null, actions = {}) {
   let pendingZ = false;
 
   const onKeyDown = (e) => {
@@ -112,6 +118,13 @@ export function attachQueryKeys(surface, doc = document, inline = null) {
         e.preventDefault();
         inline.open(at);
       }
+      return;
+    }
+
+    if (e.key === ADD_KEY && actions.add) {
+      pendingZ = false;
+      e.preventDefault();
+      actions.add();
       return;
     }
 

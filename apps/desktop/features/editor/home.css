@@ -791,6 +791,11 @@ body {
   color: var(--base05);
 }
 
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .toolbar-btn.active {
   background: var(--base0D);
   color: var(--base00);
