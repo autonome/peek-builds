@@ -711,3 +711,16 @@ The `fix-gate-failures` track resolved the pre-existing specs in this set:
 | `device-settings.spec.ts:190` | resolved — stale spec. The headless guard in `entry.ts` stubs `window.confirm` to return true with no native dialog, so no `dialog` event fired; the spec now wraps `window.confirm` to record the message (`1c16b52b`) |
 
 Each fix was verified by running the affected specs alone, not by a repeat of the full gate.
+
+### Intermittent failures from the `page-host-resilience` gate
+
+Two `desktop` failures from the full gate on the `page-host-resilience` branch. Neither is a
+regression: both are intermittent, and the full gate on `eef9e955` passed without either failing.
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `hybrid-close-two-hosts-hang.spec.ts` | closing a peek over two surviving page hosts stays within a sane transition bound | intermittent — failed in the branch gate and also fails on `main`; the bound was raised to 16 in `e4ef6094`; did not fail in the full gate on `eef9e955` |
+| `hybrid-show-activate.spec.ts` | overlay hides when the app resigns active, re-shows on become-active (R6) | intermittent focus flake — failed in the branch gate; passes alone on both `main` and the branch; did not fail in the full gate on `eef9e955` |
+
+Treat a fresh failure of either as a flake rather than a regression until a recording catches it
+on an unchanged tree twice.
