@@ -33,6 +33,7 @@ import {
 } from './window-machine.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
 import { kernelCloseWindowDirect, kernelDestroyWindow, kernelShowRequested } from './window-kernel-dispatch.js';
+import { decideExtensionPopupOpen } from './web-contents-policy.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -1182,7 +1183,7 @@ export function openChromeExtensionPage(
   // extensions specifically, the call also returns null, breaking
   // Proton's auth-fork chain.
   win.webContents.setWindowOpenHandler(({ url: childUrl }) => {
-    if (childUrl.startsWith('http://') || childUrl.startsWith('https://')) {
+    if (decideExtensionPopupOpen(childUrl) === 'route') {
       DEBUG && console.log(`[chrome-ext] popup ${windowKey} → opening ${childUrl} in Peek`);
       if (invokeWindowOpen) {
         // ipc.ts derives the opener window via BrowserWindow.fromWebContents(ev.sender);

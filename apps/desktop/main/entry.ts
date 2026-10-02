@@ -119,6 +119,11 @@ import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop
 import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
+import {
+  isIsolationCheckedType,
+  evaluateIsolationViolations,
+  hasDefaultDenyWindowOpen,
+} from './web-contents-policy.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
@@ -595,7 +600,7 @@ app.on('web-contents-created', (_event, contents) => {
   // to land via PR.
   {
     const type = contents.getType();
-    if (type !== 'backgroundPage' && type !== 'offscreen') {
+    if (isIsolationCheckedType(type)) {
       try {
         // `getLastWebPreferences` exists at runtime on Electron 40
         // (returns null for some surfaces) but is not in the public
@@ -604,18 +609,13 @@ app.on('web-contents-created', (_event, contents) => {
           getLastWebPreferences?: () => Electron.WebPreferences | null;
         }).getLastWebPreferences;
         const prefs = typeof getter === 'function' ? getter.call(contents) : null;
-        if (prefs) {
-          const violations: string[] = [];
-          if (prefs.nodeIntegration === true) violations.push('nodeIntegration=true');
-          if (prefs.contextIsolation === false) violations.push('contextIsolation=false');
-          if (prefs.webSecurity === false) violations.push('webSecurity=false');
-          if (violations.length > 0) {
-            const url = contents.getURL() || '<no url yet>';
-            const msg = `[SECURITY] webContents ${contents.id} (type=${type}, url=${url}) violates isolation policy: ${violations.join(', ')}`;
-            console.error(msg);
-            if (process.env.NODE_ENV !== 'production') {
-              throw new Error(msg);
-            }
+        const violations = evaluateIsolationViolations(prefs);
+        if (violations.length > 0) {
+          const url = contents.getURL() || '<no url yet>';
+          const msg = `[SECURITY] webContents ${contents.id} (type=${type}, url=${url}) violates isolation policy: ${violations.join(', ')}`;
+          console.error(msg);
+          if (process.env.NODE_ENV !== 'production') {
+            throw new Error(msg);
           }
         }
       } catch (err) {
@@ -684,7 +684,7 @@ app.on('web-contents-created', (_event, contents) => {
   // precedence. Anything that doesn't install its own handler fails
   // closed: window.open() from an unhandled context is denied instead
   // of silently spawning a raw BrowserWindow.
-  if (contents.getType() === 'window' || contents.getType() === 'webview') {
+  if (hasDefaultDenyWindowOpen(contents.getType())) {
     contents.setWindowOpenHandler(({ url }) => {
       console.warn(`[SECURITY] Default-deny chokepoint: window.open('${url}') from webContents ${contents.id} (type=${contents.getType()}) — install an explicit setWindowOpenHandler if this should be allowed`);
       return { action: 'deny' };
