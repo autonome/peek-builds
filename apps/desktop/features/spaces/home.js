@@ -24,6 +24,35 @@ const api = window.app;
 
 const SPACE_PREFIX = 'space:';
 
+// ===== Active Theme (for the vivid-color fallback palette) =====
+//
+// `resolveVividColor` draws its fallback from the active theme's palette, so
+// every caller has to pass the same theme or two callers produce two different
+// accents for one space. This page is not a display-only caller: `loadSpaces()`
+// PERSISTS what it resolves onto the tag, and a persisted color has enough
+// chroma that every later resolution keeps it. So whichever of this page and
+// `background.js resolveSpaceBorderColor()` resolves a space first decides that
+// space's accent permanently — resolving against the wrong palette here made the
+// accent depend on whether the browse-all list had rendered the space before it
+// was entered, which is the entry-order dependence the accent is supposed to be
+// free of.
+let activeThemeId = 'peek';
+
+/**
+ * Read the active theme before the first `loadSpaces()`, awaited rather than
+ * fire-and-forget. `background.js` can read it in the background because it
+ * only ever recomputes a border color; here a color resolved from the wrong
+ * palette is written to the tag and outlives the correction.
+ */
+const loadActiveThemeId = async () => {
+  try {
+    const info = await api.theme.getInfo();
+    if (info?.themeId) activeThemeId = info.themeId;
+  } catch {
+    // Keep the built-in default palette.
+  }
+};
+
 /**
  * Check if a URL is a navigable web URL (http/https only)
  */
@@ -222,7 +251,7 @@ const loadSpaces = async () => {
     }
     // Resolve vivid colors for spaces with default/grey color
     for (const tag of spaceTags) {
-      const vivid = resolveVividColor(tag.color, tag.id);
+      const vivid = resolveVividColor(tag.color, tag.id, activeThemeId);
       if (vivid !== tag.color) {
         tag.color = vivid;
         api.datastore.updateTagColor(tag.id, vivid);
@@ -765,14 +794,17 @@ const activateSpace = (space) => {
  * `resolveVividColor` fallback `background.js openSpace()` persists — not
  * the tag's raw stored color: a space whose tag is still grey (never entered
  * through `open`/`switch space`) would otherwise put grey windows next to a
- * vivid border, and the accent would depend on which happened first.
+ * vivid border, and the accent would depend on which happened first. The
+ * active theme is passed for the same reason `loadSpaces()` passes it (see the
+ * Active Theme note at the top of this file) — the two resolvers have to agree
+ * on the palette, not just on the space.
  */
 const spaceModeFor = (space) => {
   if (!space) return undefined;
   return {
     spaceId: space.id,
     spaceName: getSpaceDisplayName(space),
-    color: resolveVividColor(space.color, space.id),
+    color: resolveVividColor(space.color, space.id, activeThemeId),
   };
 };
 
@@ -871,6 +903,15 @@ const init = async () => {
   loadViewPrefs();
   setupToolbar();
 
+  // A later theme switch has to reach the accent resolvers below, or a space
+  // first listed after the switch would still be resolved against the palette
+  // this page started with.
+  api.theme.onChange?.((info) => {
+    if (info?.kind === 'theme' && info.themeId) activeThemeId = info.themeId;
+  });
+
+  // Awaited before the first resolve: loadSpaces() persists what it resolves.
+  await loadActiveThemeId();
   await loadSpaces();
 
   const searchInput = document.querySelector('peek-input.search-input');
