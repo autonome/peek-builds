@@ -155,20 +155,13 @@ End of test document.
 `;
 
 /**
- * Title of an item for the tag query list: first content line without heading marker.
- */
-function queryItemTitle(item) {
-  const firstLine = (item.content || '').split('\n').find(line => line.trim()) || '';
-  return item.title || firstLine.replace(/^#+\s*/, '').trim() || item.url || 'Untitled';
-}
-
-/**
  * Resolve a tag query against the datastore (not from any id list passed in) and
  * show the matching items as a plain list of titles.
  * @param {HTMLElement} rootEl
  * @param {string[]} tagNames
+ * @param {'dom'|'cm'} surface which outer surface to use (trial switch)
  */
-async function renderTagQuery(rootEl, tagNames) {
+async function renderTagQuery(rootEl, tagNames, surface = 'dom') {
   document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
   rootEl.textContent = '';
 
@@ -193,7 +186,6 @@ async function renderTagQuery(rootEl, tagNames) {
 
   const wrap = document.createElement('div');
   wrap.className = 'tag-query-list';
-  wrap.style.cssText = 'padding: 16px; font-family: system-ui, sans-serif; color: var(--base05, inherit);';
 
   const heading = document.createElement('h2');
   heading.textContent = tagNames.map(t => '#' + t).join(' ');
@@ -206,22 +198,47 @@ async function renderTagQuery(rootEl, tagNames) {
     wrap.appendChild(notice);
   }
 
+  rootEl.appendChild(wrap);
+
   if (items.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'tag-query-empty';
     empty.textContent = 'No items match this query.';
     wrap.appendChild(empty);
-  } else {
-    const list = document.createElement('ul');
-    for (const item of items) {
-      const li = document.createElement('li');
-      li.textContent = queryItemTitle(item);
-      list.appendChild(li);
-    }
-    wrap.appendChild(list);
+    return;
   }
 
+  if (surface === 'cm') {
+    const pending = document.createElement('p');
+    pending.className = 'tag-query-notice';
+    pending.textContent = 'The CodeMirror surface is not built yet.';
+    wrap.appendChild(pending);
+    return;
+  }
+
+  const { mountDomSurface } = await import('./query-surface-dom.js');
+  mountDomSurface(wrap, items);
+}
+
+/**
+ * Measurement hook (URL param syntheticBlocks=N): mount the DOM surface over generated items (no datastore writes)
+ * and record timings. The result is logged to main.log via perfLog and kept on
+ * window.__syntheticBlocksResult for a live probe.
+ * @param {HTMLElement} rootEl
+ * @param {number} count
+ */
+async function runSyntheticBlocks(rootEl, count) {
+  rootEl.textContent = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'tag-query-list';
   rootEl.appendChild(wrap);
+  const { measureSyntheticBlocks } = await import('./query-surface-dom.js');
+  const { surface, ...result } = measureSyntheticBlocks(wrap, count);
+  window.__syntheticSurface = surface;
+  window.__syntheticBlocksResult = result;
+  const line = `[query-surface-dom:measure] ${JSON.stringify(result)}`;
+  console.log(line);
+  try { api?.perfLog?.(line); } catch { /* instrumentation only */ }
 }
 
 /**
@@ -268,9 +285,16 @@ const init = async () => {
   const itemIdParam = params.get('itemId');
 
   // Tag query mode: show the items carrying every tag in the query
+  const surfaceParam = params.get('surface') === 'cm' ? 'cm' : 'dom';
+  // Measurement hook: generated items, no datastore reads or writes.
+  const syntheticBlocks = parseInt(params.get('syntheticBlocks') || '', 10);
+  if (Number.isFinite(syntheticBlocks) && syntheticBlocks > 0) {
+    await runSyntheticBlocks(rootEl, syntheticBlocks);
+    return;
+  }
   const queryTags = parseTagQuery((params.get('tags') || '').split(',').filter(Boolean).map(t => '#' + t).join(' '));
   if (queryTags) {
-    await renderTagQuery(rootEl, queryTags);
+    await renderTagQuery(rootEl, queryTags, surfaceParam);
     return;
   }
 

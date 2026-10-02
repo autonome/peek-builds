@@ -820,3 +820,74 @@ body {
 .cm-highlight-mark:hover {
   filter: brightness(1.2);
 }
+
+/* =====================================================================
+   Tag-query view: heading, notices, and the DOM block surface
+   ===================================================================== */
+
+.tag-query-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 16px 16px 0;
+  color: var(--base05);
+}
+
+.tag-query-list h2 {
+  flex: none;
+  font-size: 1.1em;
+  margin-bottom: 8px;
+}
+
+.tag-query-notice,
+.tag-query-empty {
+  flex: none;
+  color: var(--base04);
+  margin-bottom: 8px;
+}
+
+.qs-dom {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+  outline: none;
+}
+
+.qs-block {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-left: 3px solid var(--base03);
+  border-radius: 4px;
+  /* Skip layout and paint of off-screen blocks; keep them in the DOM. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 140px;
+}
+
+.qs-block.selected {
+  border-left-color: var(--base0D);
+  background: var(--base02);
+}
+
+.qs-block-title {
+  font-weight: 600;
+  color: var(--base06);
+}
+
+.qs-block-body {
+  margin-top: 6px;
+  color: var(--base05);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.qs-block.folded {
+  contain-intrinsic-size: auto 36px;
+}
+
+.qs-block.folded .qs-block-body {
+  display: none;
+}
