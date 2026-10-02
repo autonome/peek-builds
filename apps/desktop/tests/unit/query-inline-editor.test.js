@@ -10,6 +10,7 @@ import {
   SAVE_KEY,
   inlineKeymap,
   isAtEdge,
+  caretLineEdges,
 } from '../../features/editor/query-inline-editor.js';
 import { queryKey } from '../../features/editor/query-keys.js';
 
@@ -33,36 +34,62 @@ describe('inlineKeymap', () => {
     const keys = inlineKeymap(() => {}, (dir) => { calls.push(dir); return true; });
     const up = keys.find(k => k.key === 'ArrowUp');
     const down = keys.find(k => k.key === 'ArrowDown');
-    const view = (from, to, length) => ({ state: { selection: { main: { from, to } }, doc: { length } } });
-    assert.equal(up.run(view(3, 3, 10)), false);
-    assert.equal(down.run(view(3, 3, 10)), false);
-    assert.equal(up.run(view(0, 0, 10)), true);
-    assert.equal(down.run(view(10, 10, 10)), true);
+    // A two-line document "abcde\nfghij": positions 0-5 on line 1, 6-11 on line 2.
+    const view = (from, to) => ({
+      state: {
+        selection: { main: { from, to, head: to } },
+        doc: { length: 11, lines: 2, lineAt: (pos) => ({ number: pos <= 5 ? 1 : 2 }) },
+      },
+    });
+    assert.equal(up.run(view(8, 8)), false); // second line: ArrowUp moves the caret
+    assert.equal(down.run(view(3, 3)), false); // first line: ArrowDown moves the caret
+    assert.equal(up.run(view(3, 3)), true); // first line, not at position 0
+    assert.equal(down.run(view(8, 8)), true); // last line, not at the end
+    assert.equal(up.run(view(1, 3)), false); // a selection stays in the editor
     assert.deepEqual(calls, ['up', 'down']);
   });
 
   test('an edge handler that does not move leaves the key to the editor', () => {
     const [, up] = inlineKeymap(() => {}, () => false);
-    assert.equal(up.run({ state: { selection: { main: { from: 0, to: 0 } }, doc: { length: 5 } } }), false);
+    const state = { selection: { main: { from: 0, to: 0, head: 0 } }, doc: { length: 5, lines: 1, lineAt: () => ({ number: 1 }) } };
+    assert.equal(up.run({ state }), false);
   });
 });
 
 describe('isAtEdge', () => {
-  test('up needs the caret at the start, down at the end', () => {
-    assert.equal(isAtEdge('up', { from: 0, to: 0 }, 5), true);
-    assert.equal(isAtEdge('up', { from: 2, to: 2 }, 5), false);
-    assert.equal(isAtEdge('down', { from: 5, to: 5 }, 5), true);
-    assert.equal(isAtEdge('down', { from: 2, to: 2 }, 5), false);
+  test('up needs the first visual line, down the last', () => {
+    assert.equal(isAtEdge('up', { from: 2, to: 2 }, true, false), true);
+    assert.equal(isAtEdge('up', { from: 2, to: 2 }, false, true), false);
+    assert.equal(isAtEdge('down', { from: 2, to: 2 }, false, true), true);
+    assert.equal(isAtEdge('down', { from: 2, to: 2 }, true, false), false);
   });
 
   test('a selection is never an edge', () => {
-    assert.equal(isAtEdge('up', { from: 0, to: 3 }, 5), false);
-    assert.equal(isAtEdge('down', { from: 2, to: 5 }, 5), false);
+    assert.equal(isAtEdge('up', { from: 0, to: 3 }, true, true), false);
+    assert.equal(isAtEdge('down', { from: 2, to: 5 }, true, true), false);
   });
 
-  test('an empty document is both edges', () => {
-    assert.equal(isAtEdge('up', { from: 0, to: 0 }, 0), true);
-    assert.equal(isAtEdge('down', { from: 0, to: 0 }, 0), true);
+  test('a single-line document is both edges', () => {
+    assert.equal(isAtEdge('up', { from: 0, to: 0 }, true, true), true);
+    assert.equal(isAtEdge('down', { from: 0, to: 0 }, true, true), true);
+  });
+});
+
+describe('caretLineEdges', () => {
+  const doc = { length: 11, lines: 2, lineAt: (pos) => ({ number: pos <= 5 ? 1 : 2 }) };
+  const view = (head, coordsAtPos) => ({ state: { doc, selection: { main: { head } } }, coordsAtPos });
+
+  test('without geometry the document lines decide', () => {
+    assert.deepEqual(caretLineEdges(view(3, () => null)), { first: true, last: false });
+    assert.deepEqual(caretLineEdges(view(8, () => null)), { first: false, last: true });
+  });
+
+  test('wrapped lines count as separate visual lines', () => {
+    // One logical line wrapped onto three rows of height 20; the caret is on the middle row.
+    const rows = (pos) => (pos === 0 ? { top: 0, bottom: 20 } : pos === 11 ? { top: 40, bottom: 60 } : { top: 20, bottom: 40 });
+    assert.deepEqual(caretLineEdges(view(5, rows)), { first: false, last: false });
+    assert.deepEqual(caretLineEdges(view(0, rows)), { first: true, last: false });
+    assert.deepEqual(caretLineEdges(view(11, rows)), { first: false, last: true });
   });
 });
 

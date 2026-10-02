@@ -38,15 +38,40 @@ export const SAVE_KEY = 'Mod-Enter';
 
 /**
  * Whether an arrow key at this caret leaves the editor for the neighbouring
- * block: ArrowUp with the caret at the very start of the text, ArrowDown at the
- * very end, and no selection. Anywhere else the key moves the caret as usual.
+ * block: ArrowUp with the caret on the first visual line, ArrowDown on the last,
+ * and no selection. Anywhere else the key moves the caret as usual.
  * @param {'up'|'down'} dir
  * @param {{from: number, to: number}} selection main selection range
- * @param {number} docLength
+ * @param {boolean} onFirstLine the caret is on the first visual line
+ * @param {boolean} onLastLine the caret is on the last visual line
  */
-export function isAtEdge(dir, selection, docLength) {
+export function isAtEdge(dir, selection, onFirstLine, onLastLine) {
   if (!selection || selection.from !== selection.to) return false;
-  return dir === 'up' ? selection.from === 0 : selection.to === docLength;
+  return dir === 'up' ? !!onFirstLine : !!onLastLine;
+}
+
+/**
+ * Whether the caret sits on the first and last visual line (wrapped lines count
+ * separately), from the rendered geometry; without geometry (not laid out) the
+ * document's own lines decide.
+ * @returns {{first: boolean, last: boolean}}
+ */
+export function caretLineEdges(view) {
+  const doc = view.state.doc;
+  const head = view.state.selection.main.head;
+  const line = doc.lineAt(head);
+  let first = line.number === 1;
+  let last = line.number === doc.lines;
+  try {
+    const at = view.coordsAtPos(head);
+    const start = view.coordsAtPos(0);
+    const end = view.coordsAtPos(doc.length);
+    if (at && start && end) {
+      first = Math.abs(at.top - start.top) < 1;
+      last = Math.abs(at.bottom - end.bottom) < 1;
+    }
+  } catch { /* keep the line-number answer */ }
+  return { first, last };
 }
 
 /**
@@ -66,7 +91,8 @@ export function inlineKeymap(onSave, onEdge) {
         key,
         run: (view) => {
           const { from, to } = view.state.selection.main;
-          if (!isAtEdge(dir, { from, to }, view.state.doc.length)) return false;
+          const { first, last } = caretLineEdges(view);
+          if (!isAtEdge(dir, { from, to }, first, last)) return false;
           return onEdge(dir) === true;
         },
       });
