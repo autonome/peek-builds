@@ -71,10 +71,12 @@ export function blockTitle(item) {
  * @param {Array<{id?:string,title?:string,content?:string,url?:string}>} items
  * @param {{renderBlock?: (item: object) => {left?: HTMLElement, title: HTMLElement, body: HTMLElement},
  *   onSelect?: (index: number, prev: number) => void,
- *   onFold?: (index: number, folded: boolean) => void}} [options]
+ *   onFold?: (index: number, folded: boolean) => void,
+ *   onBlockClick?: (index: number, event: MouseEvent) => void}} [options]
  *   renderBlock builds a block's left column, title row and body; without it a
  *   block shows a plain-text title and body. onSelect / onFold are called after
- *   the selected or folded block changes.
+ *   the selected or folded block changes; onBlockClick after every click on a
+ *   block (selection already moved to it).
  * @returns the surface interface plus `element` and `selectedIndex()`
  */
 export function mountDomSurface(root, items, options = {}) {
@@ -135,7 +137,10 @@ export function mountDomSurface(root, items, options = {}) {
 
   scroller.addEventListener('click', (e) => {
     const block = e.target.closest?.('.qs-block');
-    if (block) state.select(Number(block.dataset.index));
+    if (!block) return;
+    const index = Number(block.dataset.index);
+    state.select(index);
+    options.onBlockClick?.(index, e);
   });
 
   return {

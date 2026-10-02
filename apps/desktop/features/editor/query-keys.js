@@ -89,6 +89,23 @@ export function queryKey(key, state) {
   }
 }
 
+/** Parts of a block that keep their own click behavior: affordances, links, fold controls, the editor. */
+const CLICK_EXEMPT = 'a, button, input, select, textarea, .qs-block-left, .qs-link, .qs-fold, .qs-inline-editor, .cm-editor';
+
+/**
+ * True when a click on a block should open it for editing: a plain primary-button
+ * click, not on one of the block's own controls and not ending a text selection.
+ * @param {{button?: number, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean,
+ *   shiftKey?: boolean, defaultPrevented?: boolean, target?: any}} e a MouseEvent
+ * @param {boolean} [hasSelection] the document has a non-empty text selection
+ */
+export function isEditClick(e, hasSelection = false) {
+  if (!e || e.defaultPrevented || hasSelection) return false;
+  if ((e.button || 0) !== 0) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
+  return !e.target?.closest?.(CLICK_EXEMPT);
+}
+
 /** True for a target that takes its own typing (inputs, selects, inline editors). */
 function isEditable(target) {
   if (!target || !target.tagName) return false;

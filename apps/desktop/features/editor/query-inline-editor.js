@@ -1,6 +1,7 @@
 /**
- * Inline editor for the tag-query view: <Enter> on the selected block opens one
- * embedded CodeMirror editor inside it, <Esc> closes it.
+ * Inline editor for the tag-query view: <Enter> on the selected block (or a click
+ * on it) opens one embedded CodeMirror editor inside it, <Esc> or Mod-Enter closes
+ * it (Mod-Enter is bound inside the editor; both write unsaved text first).
  *
  * - Text items edit their whole content; url and image items edit only their
  *   notes (the picture and the address stay static).
@@ -30,6 +31,18 @@ export function escapeAction(state) {
   if (!state || !state.open) return 'default';
   if (state.vimEnabled && state.vimInsertOrVisual) return 'vim-normal';
   return 'close';
+}
+
+/** CodeMirror key for "save now and leave edit mode": Cmd+Enter on macOS, Ctrl+Enter elsewhere. */
+export const SAVE_KEY = 'Mod-Enter';
+
+/**
+ * Key bindings added to the inline editor. `run` returns true so CodeMirror
+ * treats the key as handled and inserts no newline.
+ * @param {() => void} onSave
+ */
+export function inlineKeymap(onSave) {
+  return [{ key: SAVE_KEY, run: () => { onSave(); return true; } }];
 }
 
 /** True when text typed in the editor has not reached the datastore yet. */
@@ -139,7 +152,8 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     savedStatus = null;
   }
 
-  async function open(index) {
+  /** @param {{caretAtEnd?: boolean}} [opts] caretAtEnd: caret after the last character (opened by a click) */
+  async function open(index, opts = {}) {
     if (session || opening) return;
     const listed = items[index];
     if (!listed || !listed.id) return;
@@ -172,6 +186,9 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
         content: text,
         vimMode,
         showLineNumbers: false,
+        // Save now (the close path flushes the pending autosave) and leave edit mode;
+        // the block stays selected.
+        extraKeys: inlineKeymap(() => { close(); }),
         onChange: (content) => {
           if (s.timer) clearTimeout(s.timer);
           s.timer = setTimeout(() => {
@@ -185,6 +202,8 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
         },
       });
       session = s;
+      // The rendered block does not map back to a source offset, so a click puts the caret at the end.
+      if (opts.caretAtEnd) s.view.dispatch({ selection: { anchor: s.view.state.doc.length } });
       cm.focus(s.view);
     } finally {
       opening = false;

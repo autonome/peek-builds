@@ -5,7 +5,30 @@
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { queryKey } from '../../features/editor/query-keys.js';
+import { queryKey, isEditClick } from '../../features/editor/query-keys.js';
+
+describe('isEditClick', () => {
+  // A target whose closest() matches when the selector lists `cls`.
+  const target = (cls) => ({ closest: (sel) => (cls && sel.split(', ').includes(cls) ? {} : null) });
+
+  it('a plain click on block content edits', () => {
+    assert.equal(isEditClick({ button: 0, target: target(null) }), true);
+  });
+
+  it('clicks on the left column, links, folds and the open editor do not', () => {
+    for (const cls of ['.qs-block-left', '.qs-link', '.qs-fold', 'a', 'button', '.cm-editor']) {
+      assert.equal(isEditClick({ button: 0, target: target(cls) }), false, cls);
+    }
+  });
+
+  it('other buttons, modifiers, a text selection or a prevented click do not', () => {
+    assert.equal(isEditClick({ button: 2, target: target(null) }), false);
+    assert.equal(isEditClick({ button: 0, metaKey: true, target: target(null) }), false);
+    assert.equal(isEditClick({ button: 0, shiftKey: true, target: target(null) }), false);
+    assert.equal(isEditClick({ button: 0, defaultPrevented: true, target: target(null) }), false);
+    assert.equal(isEditClick({ button: 0, target: target(null) }, true), false);
+  });
+});
 
 const state = (over = {}) => ({
   selectedIndex: 0,

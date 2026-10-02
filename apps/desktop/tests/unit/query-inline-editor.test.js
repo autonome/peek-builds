@@ -7,8 +7,22 @@ import {
   editableText,
   savePayload,
   AUTOSAVE_DELAY_MS,
+  SAVE_KEY,
+  inlineKeymap,
 } from '../../features/editor/query-inline-editor.js';
 import { queryKey } from '../../features/editor/query-keys.js';
+
+describe('inlineKeymap', () => {
+  test('Mod-Enter saves and reports the key handled, so no newline is inserted', () => {
+    let saved = 0;
+    const [binding, ...rest] = inlineKeymap(() => { saved++; });
+    assert.equal(rest.length, 0);
+    assert.equal(binding.key, SAVE_KEY);
+    assert.equal(SAVE_KEY, 'Mod-Enter');
+    assert.equal(binding.run(), true);
+    assert.equal(saved, 1);
+  });
+});
 
 describe('escapeAction', () => {
   test('closed editor leaves <Esc> to the window', () => {

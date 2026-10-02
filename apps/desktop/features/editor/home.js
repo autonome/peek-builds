@@ -17,7 +17,7 @@ import { SORT_OPTIONS, DEFAULT_SORT_OPTION, MANUAL_SORT_OPTION, sortItems } from
 import { loadOrder, saveOrder, ensureOrder, moveBlock } from './manual-order.js';
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
-import { attachQueryKeys } from './query-keys.js';
+import { attachQueryKeys, isEditClick } from './query-keys.js';
 import { createTaggedItem, discardItem, shouldDiscard } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
@@ -257,6 +257,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   let surface = null;
   let detachKeys = null;
   let inline = null;
+  let clickOpen = null; // opens a clicked block; set once its inline editor exists
   // Manual order: stored ids per query, read here and written on every move. It is
   // used only while the sort option is manual and kept when another option is chosen.
   const orderKey = queryKey(tagNames);
@@ -297,6 +298,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       renderBlock,
       onSelect: (next) => { if (inline?.isOpen() && inline.openIndex() !== next) inline.close(); },
       onFold: (index) => { if (inline?.isOpen() && inline.openIndex() === index) inline.close(); },
+      onBlockClick: (index, e) => clickOpen?.(index, e),
     });
     surface = mounted;
     // The editor's one status line is borrowed by the inline editor while it is open.
@@ -329,11 +331,16 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     // A block that is leaving cannot be opened for editing.
     const guarded = {
       isOpen: () => editor.isOpen(),
-      open: (index) => {
+      open: (index, opts) => {
         if (leaving.has(display[index]?.id)) return undefined;
         clearSay();
-        return editor.open(index);
+        return editor.open(index, opts);
       },
+    };
+    // A click on a block (the surface has already selected it and closed any other
+    // open editor, saving it) opens it for editing.
+    clickOpen = (index, e) => {
+      if (isEditClick(e, !window.getSelection()?.isCollapsed)) guarded.open(index, { caretAtEnd: true });
     };
     detachKeys = attachQueryKeys(mounted, document, guarded, { add: () => addItem(), move: moveSelected });
 

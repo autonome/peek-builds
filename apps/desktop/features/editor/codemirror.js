@@ -5,7 +5,7 @@
  * with optional vim mode support and folditall-style folding.
  */
 
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, Prec } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -690,13 +690,17 @@ const folditallFoldService = foldService.of((state, lineStart, lineEnd) => {
  * @param {Function} options.onSelectionChange - Callback when cursor position changes (line, col)
  * @param {Function} options.onVimModeChange - Callback when vim mode changes (mode string)
  * @param {Function} options.onFoldChange - Callback when fold state changes
+ * @param {Array} options.extraKeys - Extra CodeMirror key bindings, highest precedence
  * @returns {EditorView} - CodeMirror EditorView instance
  */
-export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange, onScroll }) {
+export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange, onScroll, extraKeys }) {
   // Track last known vim mode to detect changes
   let lastVimMode = 'normal';
 
   const extensions = [
+    // Caller key bindings (e.g. Mod-Enter to save), ahead of the defaults
+    ...(extraKeys && extraKeys.length ? [Prec.highest(keymap.of(extraKeys))] : []),
+
     // Core extensions
     history(),
     drawSelection(),
