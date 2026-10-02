@@ -14,6 +14,7 @@ import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
 import { findTagByName } from 'peek://cmd/item-suggestions.js';
 import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
+import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -162,7 +163,6 @@ End of test document.
  */
 async function renderTagQuery(rootEl, tagNames) {
   document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
-  rootEl.textContent = '';
 
   const unknownTags = [];
   const itemLists = [];
@@ -197,7 +197,8 @@ async function renderTagQuery(rootEl, tagNames) {
     wrap.appendChild(notice);
   }
 
-  rootEl.appendChild(wrap);
+  editorLayout = new EditorLayout({ container: rootEl, initialContent: '' });
+  editorLayout.setCenterContent(wrap);
 
   if (items.length === 0) {
     const empty = document.createElement('p');
@@ -208,7 +209,29 @@ async function renderTagQuery(rootEl, tagNames) {
   }
 
   const { mountDomSurface } = await import('./query-surface-dom.js');
-  mountDomSurface(wrap, items);
+  let sortOption = DEFAULT_SORT_OPTION; // window state only
+  let surface = null;
+  const mountSorted = () => {
+    surface?.element.remove();
+    surface = mountDomSurface(wrap, sortItems(items, sortOption));
+  };
+  mountSorted();
+
+  const select = document.createElement('select');
+  select.className = 'editor-top-toolbar-select';
+  select.title = 'Sort order';
+  for (const option of SORT_OPTIONS) {
+    const el = document.createElement('option');
+    el.value = option.id;
+    el.textContent = option.label;
+    select.appendChild(el);
+  }
+  select.value = sortOption;
+  select.addEventListener('change', () => {
+    sortOption = select.value;
+    mountSorted();
+  });
+  editorLayout.setTopToolbar(select);
 }
 
 /**

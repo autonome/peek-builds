@@ -126,6 +126,7 @@ export class EditorLayout {
     if (Array.isArray(prefs.paneOrder) && prefs.paneOrder.length === 3) {
       this.paneOrder = prefs.paneOrder;
     }
+    this.topToolbarCollapsed = !!prefs.topToolbarCollapsed;
   }
 
   _savePrefs() {
@@ -134,6 +135,7 @@ export class EditorLayout {
       paneCollapsed: this.paneCollapsed,
       paneWidths: this.paneWidths,
       paneOrder: this.paneOrder,
+      topToolbarCollapsed: this.topToolbarCollapsed,
     });
   }
 
@@ -159,6 +161,22 @@ export class EditorLayout {
     // Create editor container (center)
     this.editorContainer = document.createElement('div');
     this.editorContainer.className = 'editor-container';
+
+    // Top toolbar: hosts controls supplied by setTopToolbar(); renders nothing
+    // until some are set.
+    this.topToolbar = document.createElement('div');
+    this.topToolbar.className = 'editor-top-toolbar';
+    this.topToolbar.style.display = 'none';
+    this.topToolbarControls = document.createElement('div');
+    this.topToolbarControls.className = 'editor-top-toolbar-controls';
+    this.topToolbarHandle = document.createElement('button');
+    this.topToolbarHandle.className = 'editor-top-toolbar-handle';
+    this.topToolbarHandle.tabIndex = -1;
+    this.topToolbarHandle.addEventListener('mousedown', (e) => e.preventDefault());
+    this.topToolbarHandle.addEventListener('click', () => this.toggleTopToolbar());
+    this.topToolbar.append(this.topToolbarControls, this.topToolbarHandle);
+    this.editorContainer.appendChild(this.topToolbar);
+    this._applyTopToolbarState();
 
     // Editor header bar (matches sidebar headers)
     this.editorHeader = document.createElement('div');
@@ -336,6 +354,41 @@ export class EditorLayout {
     setTimeout(() => {
       if (this.cmEditor) CodeMirror.focus(this.cmEditor);
     }, 100);
+  }
+
+  /**
+   * Set the controls shown in the top toolbar. Pass an element or an array of
+   * elements; pass null or an empty array to remove them, which hides the
+   * toolbar and its handle.
+   * @param {HTMLElement|HTMLElement[]|null} controls
+   */
+  setTopToolbar(controls) {
+    const list = controls ? [].concat(controls) : [];
+    this.topToolbarControls.replaceChildren(...list);
+    this.topToolbar.style.display = list.length > 0 ? '' : 'none';
+  }
+
+  /** Collapse or expand the top toolbar; the state persists with the layout prefs. */
+  toggleTopToolbar() {
+    this.topToolbarCollapsed = !this.topToolbarCollapsed;
+    this._applyTopToolbarState();
+    this._savePrefs();
+  }
+
+  _applyTopToolbarState() {
+    this.topToolbar.classList.toggle('collapsed', this.topToolbarCollapsed);
+    this.topToolbarHandle.title = this.topToolbarCollapsed ? 'Show toolbar' : 'Hide toolbar';
+  }
+
+  /**
+   * Show `el` in the center area instead of the text editor and its status line.
+   * @param {HTMLElement} el
+   */
+  setCenterContent(el) {
+    this.cmContainer.style.display = 'none';
+    this.statusLineContainer.style.display = 'none';
+    this.cmContainer.after(el);
+    el.classList.add('center-content');
   }
 
   _createToggleBtn(label, title, onClick) {

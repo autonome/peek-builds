@@ -664,6 +664,8 @@ body {
 }
 
 .editor-container.collapsed .cm-container,
+.editor-container.collapsed .center-content,
+.editor-container.collapsed .editor-top-toolbar,
 .editor-container.collapsed .editor-toolbar,
 .editor-container.collapsed .status-line-container {
   display: none;
@@ -688,6 +690,68 @@ body {
 
 .cm-container .cm-scroller {
   overflow: auto;
+}
+
+/* Replacement for the text editor in the center area (set by the host) */
+.editor-container .center-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* =====================================================================
+   Editor Top Toolbar
+   ===================================================================== */
+
+.editor-top-toolbar {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--base01);
+  border-bottom: 1px solid var(--base02);
+}
+
+.editor-top-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.editor-top-toolbar.collapsed .editor-top-toolbar-controls {
+  display: none;
+}
+
+/* Handle: a thin strip along the bottom edge, like the sidebar separators */
+.editor-top-toolbar-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: row-resize;
+  z-index: 20;
+}
+
+.editor-top-toolbar-handle:hover {
+  background: var(--base0A);
+  opacity: 0.6;
+}
+
+.editor-top-toolbar.collapsed {
+  height: 0;
+  border-bottom: 2px solid var(--base02);
+}
+
+.editor-top-toolbar-select {
+  background: var(--base00);
+  color: var(--base05);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
 }
 
 /* =====================================================================
