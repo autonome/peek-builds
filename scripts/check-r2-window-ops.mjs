@@ -154,6 +154,8 @@ const WRITE_ALLOWLIST = [
     why: 'Notification.show for download complete/failed — OS notification, not a window' },
   { file: 'apps/desktop/main/tray.ts', call: 'destroy', count: 1,
     why: 'Tray.destroy on tray teardown — not a window' },
+  { file: 'apps/desktop/main/nav-history.ts', call: 'restore', count: 1,
+    why: 'webContents.navigationHistory.restore in the page-history restore path — loads saved back/forward entries into a page, not a window' },
   { file: 'apps/desktop/main/ipc.ts', call: 'setBounds', count: 1,
     why: 'WebContentsView content fill (assembleHybridPageHost fillView) — a child-view op inside the host, not a window op; every WINDOW setBounds in this file died in §5 step 7E (SET_BOUNDS_REQUESTED → reducer → port)' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setBounds', count: 5,
