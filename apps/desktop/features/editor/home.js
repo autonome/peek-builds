@@ -15,6 +15,8 @@ import { getCM, Vim, onVimSetOption } from './codemirror.js';
 import { findTagByName } from 'peek://cmd/item-suggestions.js';
 import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
+import { isBlockItem, createBlockRenderer } from './query-blocks.js';
+import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -157,7 +159,7 @@ End of test document.
 
 /**
  * Resolve a tag query against the datastore (not from any id list passed in) and
- * show the matching items as a plain list of titles.
+ * show the matching text, url and image items as blocks.
  * @param {HTMLElement} rootEl
  * @param {string[]} tagNames
  */
@@ -181,7 +183,7 @@ async function renderTagQuery(rootEl, tagNames) {
   } catch (err) {
     console.error('[editor] Failed to resolve tag query:', err);
   }
-  const items = unknownTags.length > 0 ? [] : intersectItems(itemLists);
+  const items = unknownTags.length > 0 ? [] : intersectItems(itemLists).filter(isBlockItem);
 
   const wrap = document.createElement('div');
   wrap.className = 'tag-query-list';
@@ -197,7 +199,7 @@ async function renderTagQuery(rootEl, tagNames) {
     wrap.appendChild(notice);
   }
 
-  editorLayout = new EditorLayout({ container: rootEl, initialContent: '' });
+  editorLayout = new EditorLayout({ container: rootEl, textEditor: false });
   editorLayout.setCenterContent(wrap);
 
   if (items.length === 0) {
@@ -209,11 +211,33 @@ async function renderTagQuery(rootEl, tagNames) {
   }
 
   const { mountDomSurface } = await import('./query-surface-dom.js');
+
+  // Tag bindings come from the shared affordance rules and each item's tags.
+  const itemTags = new Map();
+  try {
+    const allTagsResult = await api.datastore.getAllItemTags();
+    const allTagsMap = allTagsResult?.success ? (allTagsResult.data || {}) : {};
+    for (const item of items) {
+      itemTags.set(item.id, (allTagsMap[item.id] || []).map(t => t.name));
+    }
+  } catch (err) {
+    console.error('[editor] Failed to load item tags:', err);
+  }
+  const rulesCache = createActionRulesCache(api);
+  for (let waited = 0; !rulesCache.isLoaded() && waited < 1000; waited += 25) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  const renderBlock = await createBlockRenderer({
+    api,
+    getRules: () => rulesCache.getRules(),
+    getTagNames: (id) => itemTags.get(id) || [],
+  });
+
   let sortOption = DEFAULT_SORT_OPTION; // window state only
   let surface = null;
   const mountSorted = () => {
     surface?.element.remove();
-    surface = mountDomSurface(wrap, sortItems(items, sortOption));
+    surface = mountDomSurface(wrap, sortItems(items, sortOption), { renderBlock });
   };
   mountSorted();
 

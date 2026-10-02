@@ -80,6 +80,10 @@ export class EditorLayout {
     this.initialContent = options.initialContent || '';
     this.vimMode = options.vimMode || false;
     this.initialVimSettings = options.vimSettings || null;
+    // With `textEditor: false` the layout hosts only center content set through
+    // setCenterContent(): no CodeMirror instance is created, and the panes and
+    // bottom toolbar that work on a text document are hidden.
+    this.hasTextEditor = options.textEditor !== false;
 
     this.outlineSidebar = null;
     this.previewSidebar = null;
@@ -267,6 +271,7 @@ export class EditorLayout {
     this.saveStatus.style.display = 'none';
     this.toolbar.appendChild(this.saveStatus);
 
+    if (!this.hasTextEditor) this.toolbar.style.display = 'none';
     this.editorContainer.appendChild(this.toolbar);
 
     // Create preview sidebar
@@ -309,17 +314,19 @@ export class EditorLayout {
     __layoutMark('dom-built', __t0);
 
     // Initialize CodeMirror
-    this.cmEditor = CodeMirror.createEditor({
-      parent: this.cmContainer,
-      content: this.initialContent,
-      vimMode: this.vimMode,
-      showLineNumbers: true,
-      onChange: (content) => this.handleContentChange(content),
-      onSelectionChange: (line, col) => this.handleSelectionChange(line, col),
-      onVimModeChange: (mode) => this.handleVimModeUpdate(mode),
-      onFoldChange: () => this.syncOutlineFromFolds(),
-      onScroll: (view) => this._handleEditorScroll(view),
-    });
+    if (this.hasTextEditor) {
+      this.cmEditor = CodeMirror.createEditor({
+        parent: this.cmContainer,
+        content: this.initialContent,
+        vimMode: this.vimMode,
+        showLineNumbers: true,
+        onChange: (content) => this.handleContentChange(content),
+        onSelectionChange: (line, col) => this.handleSelectionChange(line, col),
+        onVimModeChange: (mode) => this.handleVimModeUpdate(mode),
+        onFoldChange: () => this.syncOutlineFromFolds(),
+        onScroll: (view) => this._handleEditorScroll(view),
+      });
+    }
     __layoutMark('cm-created', __t0);
 
     // Apply persisted vim settings
@@ -328,7 +335,7 @@ export class EditorLayout {
     }
 
     // Set up command bar suggestions
-    if (this.cmContainer) {
+    if (this.cmEditor) {
       this.cmdSuggestionsCleanup = observeCommandBar(this.cmContainer);
     }
 
@@ -351,9 +358,11 @@ export class EditorLayout {
     this._setupEditorScrollListener();
 
     // Focus editor
-    setTimeout(() => {
-      if (this.cmEditor) CodeMirror.focus(this.cmEditor);
-    }, 100);
+    if (this.cmEditor) {
+      setTimeout(() => {
+        if (this.cmEditor) CodeMirror.focus(this.cmEditor);
+      }, 100);
+    }
   }
 
   /**
@@ -592,6 +601,16 @@ export class EditorLayout {
   }
 
   /**
+   * Whether a pane is shown. Without a text editor the outline, preview and
+   * notes panes are hidden whatever the saved layout says; the saved layout is
+   * left untouched so the single-document editor keeps its own choices.
+   */
+  _isPaneVisible(name) {
+    if (!this.hasTextEditor && name !== 'editor') return false;
+    return !!this.paneVisible[name];
+  }
+
+  /**
    * Apply the full pane state to DOM. This is the SINGLE source of truth.
    * Reads paneVisible, paneCollapsed, paneWidths and updates:
    *   - display (visible vs hidden)
@@ -608,7 +627,7 @@ export class EditorLayout {
       const el = this._getPaneElement(name);
       if (!el) continue;
 
-      const visible = this.paneVisible[name];
+      const visible = this._isPaneVisible(name);
       const collapsed = this.paneCollapsed[name];
 
       if (!visible) {
@@ -648,7 +667,7 @@ export class EditorLayout {
 
     // Annotations resizer visibility: shown only when annotations is visible AND expanded
     if (this.annotationsResizer) {
-      const annVisible = this.paneVisible.annotations;
+      const annVisible = this._isPaneVisible('annotations');
       const annCollapsed = this.paneCollapsed.annotations;
       this.annotationsResizer.style.display = (annVisible && !annCollapsed) ? '' : 'none';
     }
@@ -657,10 +676,10 @@ export class EditorLayout {
     this.paneContainer.querySelectorAll('.resizer').forEach(r => {
       const left = r.dataset.leftPane;
       const right = r.dataset.rightPane;
-      const leftOk = this.paneVisible[left] && !this.paneCollapsed[left];
-      const rightOk = this.paneVisible[right] && !this.paneCollapsed[right];
+      const leftOk = this._isPaneVisible(left) && !this.paneCollapsed[left];
+      const rightOk = this._isPaneVisible(right) && !this.paneCollapsed[right];
       // Show resizer if both panes are visible and at least one is expanded
-      const bothVisible = this.paneVisible[left] && this.paneVisible[right];
+      const bothVisible = this._isPaneVisible(left) && this._isPaneVisible(right);
       r.style.display = (bothVisible && (leftOk || rightOk)) ? '' : 'none';
     });
 

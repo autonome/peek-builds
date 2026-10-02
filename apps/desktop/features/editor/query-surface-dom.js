@@ -69,9 +69,12 @@ export function blockTitle(item) {
  * Mount one block per item into `root`.
  * @param {HTMLElement} root
  * @param {Array<{id?:string,title?:string,content?:string,url?:string}>} items
+ * @param {{renderBlock?: (item: object) => {left?: HTMLElement, title: HTMLElement, body: HTMLElement}}} [options]
+ *   renderBlock builds a block's left column, title row and body; without it a
+ *   block shows a plain-text title and body
  * @returns the surface interface plus `element` and `selectedIndex()`
  */
-export function mountDomSurface(root, items) {
+export function mountDomSurface(root, items, options = {}) {
   const scroller = document.createElement('div');
   scroller.className = 'qs-dom';
   scroller.tabIndex = 0;
@@ -96,15 +99,24 @@ export function mountDomSurface(root, items) {
     block.dataset.index = String(i);
     if (item.id) block.dataset.itemId = item.id;
 
-    const title = document.createElement('div');
-    title.className = 'qs-block-title';
-    title.textContent = blockTitle(item);
+    const rendered = options.renderBlock?.(item);
+    if (rendered) {
+      const main = document.createElement('div');
+      main.className = 'qs-block-main';
+      main.append(rendered.title, rendered.body);
+      block.classList.add('qs-block-columns');
+      block.append(rendered.left || document.createElement('div'), main);
+    } else {
+      const title = document.createElement('div');
+      title.className = 'qs-block-title';
+      title.textContent = blockTitle(item);
 
-    const body = document.createElement('div');
-    body.className = 'qs-block-body';
-    body.textContent = item.content || item.url || '';
+      const body = document.createElement('div');
+      body.className = 'qs-block-body';
+      body.textContent = item.content || item.url || '';
 
-    block.append(title, body);
+      block.append(title, body);
+    }
     blocks.push(block);
     frag.appendChild(block);
   });

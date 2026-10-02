@@ -34,6 +34,8 @@
         "app:shutdown",
         "cmd:*",
         "sync:pull-completed",
+        "affordance:click",
+        "rules:changed",
         "ext:ready",
         "ext:editor:shutdown"
       ]
@@ -58,7 +60,8 @@
     "dialogs": true,
     "commands": true,
     "shortcuts": true,
-    "settings": true
+    "settings": true,
+    "rules": true
   },
   "commands": [
     {

@@ -955,3 +955,81 @@ body {
 .qs-block.folded .qs-block-body {
   display: none;
 }
+
+/* Block rows: shared affordance column on the left, title and body to its right. */
+.qs-block.qs-block-columns {
+  display: flex;
+  gap: 8px;
+}
+
+.qs-block-left {
+  flex: none;
+  width: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 1px;
+}
+
+.qs-block-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.qs-block-columns .qs-block-body {
+  white-space: normal;
+}
+
+.qs-md > :first-child {
+  margin-top: 0;
+}
+
+.qs-md h1, .qs-md h2, .qs-md h3, .qs-md h4, .qs-md h5, .qs-md h6 {
+  margin: 0.6em 0 0.3em;
+  color: var(--base06);
+}
+
+.qs-md p, .qs-md ul, .qs-md blockquote, .qs-md pre {
+  margin: 0.4em 0;
+}
+
+.qs-md pre {
+  padding: 6px 8px;
+  background: var(--base00);
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+.qs-md code {
+  font-family: monospace;
+}
+
+.qs-md img, .qs-image {
+  max-width: 100%;
+  border-radius: 3px;
+}
+
+.qs-image {
+  display: block;
+  pointer-events: none;
+}
+
+.qs-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.qs-link .card-favicon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.qs-notes {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--base04);
+}
