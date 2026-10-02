@@ -312,13 +312,13 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       isDiscarded: (item) => deletedIds.has(item.id),
       // ArrowUp/ArrowDown at the edge of the open editor: select the neighbouring
       // block (the selection guard closes and saves this one) and open it, caret at
-      // the end when coming from below and at the start when coming from above.
-      onEdge: (dir, index) => {
+      // the same horizontal position on its first line (down) or last line (up).
+      onEdge: (dir, index, goalX) => {
         const target = dir === 'up' ? index - 1 : index + 1;
         if (target < 0 || target >= display.length || leaving.has(display[target]?.id)) return false;
         mounted.select(target);
         mounted.revealSelected();
-        guarded.open(target, { caretAtEnd: dir === 'up' });
+        guarded.open(target, { dir, goalX });
         return true;
       },
       onClosed: (item) => {

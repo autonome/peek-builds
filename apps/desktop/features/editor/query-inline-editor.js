@@ -75,13 +75,64 @@ export function caretLineEdges(view) {
 }
 
 /**
+ * The horizontal goal (x coordinate in pixels) for the next block crossing. It
+ * stays in force only while the caret is exactly where the previous crossing
+ * left it, in the same editor; any other caret movement, typing, click or
+ * reopening makes the caret's own x the new goal.
+ * @param {{x: number, view: any, head: number}|null} landing the previous crossing's goal and where it put the caret
+ * @param {any} view the editor the key was pressed in
+ * @param {number} head caret position now
+ * @param {number|null} caretX caret's x coordinate now, null when not measurable
+ * @returns {number|null}
+ */
+export function stickyGoal(landing, view, head, caretX) {
+  if (landing && landing.view === view && landing.head === head) return landing.x;
+  return typeof caretX === 'number' && Number.isFinite(caretX) ? caretX : null;
+}
+
+/**
+ * Where the caret lands in the block it crosses into: on its first line when
+ * moving down, its last line when moving up, at the goal x clamped to that
+ * line. Without a goal it is the start (down) or end (up) of the text.
+ * @param {'up'|'down'} dir
+ * @param {number} docLength length of the new block's text
+ * @param {number|null} goalX
+ * @param {(x: number, line: 'first'|'last') => number|null} posAtX document
+ *   position nearest x on that visual line, null when not measurable
+ * @returns {number}
+ */
+export function landingPos(dir, docLength, goalX, posAtX) {
+  const fallback = dir === 'down' ? 0 : docLength;
+  if (goalX == null) return fallback;
+  const pos = posAtX(goalX, dir === 'down' ? 'first' : 'last');
+  if (typeof pos !== 'number' || !Number.isFinite(pos)) return fallback;
+  return Math.max(0, Math.min(docLength, pos));
+}
+
+/** The caret's x coordinate in the view, or null when the view is not laid out. */
+function caretX(view) {
+  try {
+    return view.coordsAtPos(view.state.selection.main.head)?.left ?? null;
+  } catch { return null; }
+}
+
+/** Document position nearest `x` on the first or last visual line of the view, or null. */
+function posAtLineX(view, x, line) {
+  try {
+    const c = view.coordsAtPos(line === 'first' ? 0 : view.state.doc.length);
+    if (!c) return null;
+    return view.posAtCoords({ x, y: (c.top + c.bottom) / 2 });
+  } catch { return null; }
+}
+
+/**
  * Key bindings added to the inline editor. `run` returns true so CodeMirror
  * treats the key as handled and inserts no newline. With `onEdge`, ArrowUp and
- * ArrowDown at the text's edge call it with 'up' or 'down'; it returns true when
- * it moved to another block, false (or when the caret is not at the edge) lets
- * the key move the caret as usual.
+ * ArrowDown at the text's edge call it with 'up' or 'down' and the editor view;
+ * it returns true when it moved to another block, false (or when the caret is
+ * not at the edge) lets the key move the caret as usual.
  * @param {() => void} onSave
- * @param {(dir: 'up'|'down') => boolean} [onEdge]
+ * @param {(dir: 'up'|'down', view: any) => boolean} [onEdge]
  */
 export function inlineKeymap(onSave, onEdge) {
   const keys = [{ key: SAVE_KEY, run: () => { onSave(); return true; } }];
@@ -93,7 +144,7 @@ export function inlineKeymap(onSave, onEdge) {
           const { from, to } = view.state.selection.main;
           const { first, last } = caretLineEdges(view);
           if (!isAtEdge(dir, { from, to }, first, last)) return false;
-          return onEdge(dir) === true;
+          return onEdge(dir, view) === true;
         },
       });
     }
@@ -156,14 +207,17 @@ function applyEdit(item, text) {
  * @param {(item: object) => void} [deps.onClosed] called after the editor closed
  * @param {(item: object) => boolean} [deps.isDiscarded] true when the item no
  *   longer exists, so closing drops the pending text instead of writing it
- * @param {(dir: 'up'|'down', index: number) => boolean} [deps.onEdge] arrow key at
- *   the editor's edge; returns true when it moved to the neighbouring block
+ * @param {(dir: 'up'|'down', index: number, goalX: number|null) => boolean} [deps.onEdge]
+ *   arrow key at the editor's edge; returns true when it moved to the neighbouring
+ *   block. It opens that block with `open(target, {goalX, dir})` so the caret keeps
+ *   its horizontal position.
  */
 export function createInlineEditor({ api, surface, items, statusLine, vimMode, onBlockChanged, onClosed, isDiscarded, onEdge }) {
   let cm = null; // codemirror.js module, loaded on first open
   let session = null; // the open editor, or null
   let opening = false;
   let savedStatus = null;
+  let landing = null; // {x, view, head}: goal x of the last block crossing and where it left the caret
 
   async function save(s, text) {
     s.savedText = text;
@@ -210,7 +264,12 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     savedStatus = null;
   }
 
-  /** @param {{caretAtEnd?: boolean}} [opts] caretAtEnd: caret after the last character (opened by a click) */
+  /**
+   * @param {{caretAtEnd?: boolean, goalX?: number|null, dir?: 'up'|'down'}} [opts]
+   *   caretAtEnd: caret after the last character (opened by a click);
+   *   goalX + dir: opened by crossing from a neighbour, caret at x on its first
+   *   (down) or last (up) line
+   */
   async function open(index, opts = {}) {
     if (session || opening) return;
     const listed = items[index];
@@ -246,7 +305,11 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
         showLineNumbers: false,
         // Save now (the close path flushes the pending autosave) and leave edit mode;
         // the block stays selected.
-        extraKeys: inlineKeymap(() => { close(); }, onEdge && ((dir) => onEdge(dir, s.index))),
+        extraKeys: inlineKeymap(() => { close(); }, onEdge && ((dir, view) => {
+          const head = view.state.selection.main.head;
+          const goalX = stickyGoal(landing, view, head, caretX(view));
+          return onEdge(dir, s.index, goalX);
+        })),
         onChange: (content) => {
           if (s.timer) clearTimeout(s.timer);
           s.timer = setTimeout(() => {
@@ -262,7 +325,15 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
       session = s;
       // The rendered block does not map back to a source offset, so a click puts the caret at the end.
       // Coming from the block below (ArrowUp) also lands at the end; from above, at the start.
-      if (opts.caretAtEnd) s.view.dispatch({ selection: { anchor: s.view.state.doc.length } });
+      if (opts.dir) {
+        const len = s.view.state.doc.length;
+        const pos = landingPos(opts.dir, len, opts.goalX ?? null, (x, line) => posAtLineX(s.view, x, line));
+        s.view.dispatch({ selection: { anchor: pos } });
+        landing = opts.goalX == null ? null : { x: opts.goalX, view: s.view, head: pos };
+      } else {
+        landing = null;
+        if (opts.caretAtEnd) s.view.dispatch({ selection: { anchor: s.view.state.doc.length } });
+      }
       cm.focus(s.view);
     } finally {
       opening = false;

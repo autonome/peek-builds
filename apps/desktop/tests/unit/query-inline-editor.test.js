@@ -11,6 +11,8 @@ import {
   inlineKeymap,
   isAtEdge,
   caretLineEdges,
+  stickyGoal,
+  landingPos,
 } from '../../features/editor/query-inline-editor.js';
 import { queryKey } from '../../features/editor/query-keys.js';
 
@@ -53,6 +55,47 @@ describe('inlineKeymap', () => {
     const [, up] = inlineKeymap(() => {}, () => false);
     const state = { selection: { main: { from: 0, to: 0, head: 0 } }, doc: { length: 5, lines: 1, lineAt: () => ({ number: 1 }) } };
     assert.equal(up.run({ state }), false);
+  });
+});
+
+describe('stickyGoal', () => {
+  const view = {};
+  test('a fresh crossing takes the caret x', () => {
+    assert.equal(stickyGoal(null, view, 4, 120), 120);
+  });
+  test('right after a crossing the earlier goal stays, even if the caret was clamped', () => {
+    assert.equal(stickyGoal({ x: 300, view, head: 2 }, view, 2, 40), 300);
+  });
+  test('any other caret position, or another editor, starts over from the caret x', () => {
+    assert.equal(stickyGoal({ x: 300, view, head: 2 }, view, 3, 55), 55);
+    assert.equal(stickyGoal({ x: 300, view, head: 2 }, {}, 2, 55), 55);
+  });
+  test('no measurement means no goal', () => {
+    assert.equal(stickyGoal(null, view, 0, null), null);
+    assert.equal(stickyGoal(null, view, 0, NaN), null);
+  });
+});
+
+describe('landingPos', () => {
+  const at = (x) => Math.round(x / 10); // 10px per character
+  test('without a goal: down lands at the start, up at the end', () => {
+    assert.equal(landingPos('down', 20, null, at), 0);
+    assert.equal(landingPos('up', 20, null, at), 20);
+  });
+  test('with a goal: the position at that x on the first (down) or last (up) line', () => {
+    const lines = [];
+    const posAtX = (x, line) => { lines.push(line); return at(x); };
+    assert.equal(landingPos('down', 20, 50, posAtX), 5);
+    assert.equal(landingPos('up', 20, 0, posAtX), 0);
+    assert.deepEqual(lines, ['first', 'last']);
+  });
+  test('the result stays inside the text', () => {
+    assert.equal(landingPos('down', 3, 500, at), 3);
+    assert.equal(landingPos('up', 3, 0, () => -4), 0);
+  });
+  test('an unmeasurable line falls back to the start or end', () => {
+    assert.equal(landingPos('down', 9, 50, () => null), 0);
+    assert.equal(landingPos('up', 9, 50, () => null), 9);
   });
 });
 
