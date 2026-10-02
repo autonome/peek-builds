@@ -310,6 +310,17 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       vimMode,
       onBlockChanged: () => setOutline(mounted),
       isDiscarded: (item) => deletedIds.has(item.id),
+      // ArrowUp/ArrowDown at the edge of the open editor: select the neighbouring
+      // block (the selection guard closes and saves this one) and open it, caret at
+      // the end when coming from below and at the start when coming from above.
+      onEdge: (dir, index) => {
+        const target = dir === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= display.length || leaving.has(display[target]?.id)) return false;
+        mounted.select(target);
+        mounted.revealSelected();
+        guarded.open(target, { caretAtEnd: dir === 'up' });
+        return true;
+      },
       onClosed: (item) => {
         // A new item closed without any text is removed again.
         if (addedIds.delete(item.id) && shouldDiscard(item)) discardItem(api, item.id);

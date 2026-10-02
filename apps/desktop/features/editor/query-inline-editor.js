@@ -37,12 +37,42 @@ export function escapeAction(state) {
 export const SAVE_KEY = 'Mod-Enter';
 
 /**
- * Key bindings added to the inline editor. `run` returns true so CodeMirror
- * treats the key as handled and inserts no newline.
- * @param {() => void} onSave
+ * Whether an arrow key at this caret leaves the editor for the neighbouring
+ * block: ArrowUp with the caret at the very start of the text, ArrowDown at the
+ * very end, and no selection. Anywhere else the key moves the caret as usual.
+ * @param {'up'|'down'} dir
+ * @param {{from: number, to: number}} selection main selection range
+ * @param {number} docLength
  */
-export function inlineKeymap(onSave) {
-  return [{ key: SAVE_KEY, run: () => { onSave(); return true; } }];
+export function isAtEdge(dir, selection, docLength) {
+  if (!selection || selection.from !== selection.to) return false;
+  return dir === 'up' ? selection.from === 0 : selection.to === docLength;
+}
+
+/**
+ * Key bindings added to the inline editor. `run` returns true so CodeMirror
+ * treats the key as handled and inserts no newline. With `onEdge`, ArrowUp and
+ * ArrowDown at the text's edge call it with 'up' or 'down'; it returns true when
+ * it moved to another block, false (or when the caret is not at the edge) lets
+ * the key move the caret as usual.
+ * @param {() => void} onSave
+ * @param {(dir: 'up'|'down') => boolean} [onEdge]
+ */
+export function inlineKeymap(onSave, onEdge) {
+  const keys = [{ key: SAVE_KEY, run: () => { onSave(); return true; } }];
+  if (onEdge) {
+    for (const [key, dir] of [['ArrowUp', 'up'], ['ArrowDown', 'down']]) {
+      keys.push({
+        key,
+        run: (view) => {
+          const { from, to } = view.state.selection.main;
+          if (!isAtEdge(dir, { from, to }, view.state.doc.length)) return false;
+          return onEdge(dir) === true;
+        },
+      });
+    }
+  }
+  return keys;
 }
 
 /** True when text typed in the editor has not reached the datastore yet. */
@@ -100,8 +130,10 @@ function applyEdit(item, text) {
  * @param {(item: object) => void} [deps.onClosed] called after the editor closed
  * @param {(item: object) => boolean} [deps.isDiscarded] true when the item no
  *   longer exists, so closing drops the pending text instead of writing it
+ * @param {(dir: 'up'|'down', index: number) => boolean} [deps.onEdge] arrow key at
+ *   the editor's edge; returns true when it moved to the neighbouring block
  */
-export function createInlineEditor({ api, surface, items, statusLine, vimMode, onBlockChanged, onClosed, isDiscarded }) {
+export function createInlineEditor({ api, surface, items, statusLine, vimMode, onBlockChanged, onClosed, isDiscarded, onEdge }) {
   let cm = null; // codemirror.js module, loaded on first open
   let session = null; // the open editor, or null
   let opening = false;
@@ -188,7 +220,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
         showLineNumbers: false,
         // Save now (the close path flushes the pending autosave) and leave edit mode;
         // the block stays selected.
-        extraKeys: inlineKeymap(() => { close(); }),
+        extraKeys: inlineKeymap(() => { close(); }, onEdge && ((dir) => onEdge(dir, s.index))),
         onChange: (content) => {
           if (s.timer) clearTimeout(s.timer);
           s.timer = setTimeout(() => {
@@ -203,6 +235,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
       });
       session = s;
       // The rendered block does not map back to a source offset, so a click puts the caret at the end.
+      // Coming from the block below (ArrowUp) also lands at the end; from above, at the start.
       if (opts.caretAtEnd) s.view.dispatch({ selection: { anchor: s.view.state.doc.length } });
       cm.focus(s.view);
     } finally {
