@@ -12,10 +12,10 @@
 
 import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
-import { findTagByName } from 'peek://cmd/item-suggestions.js';
-import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
+import { parseTagQuery } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
-import { isBlockItem, createBlockRenderer } from './query-blocks.js';
+import { createBlockRenderer } from './query-blocks.js';
+import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys } from './query-keys.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
@@ -168,24 +168,19 @@ End of test document.
 async function renderTagQuery(rootEl, tagNames, vimMode) {
   document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
 
-  const unknownTags = [];
-  const itemLists = [];
-  try {
-    const tagsResult = await api.datastore.getTagsByFrecency();
-    const allTags = tagsResult?.success ? (tagsResult.data || []) : [];
-    for (const name of tagNames) {
-      const tag = findTagByName(allTags, name);
-      if (!tag) {
-        unknownTags.push(name);
-        continue;
-      }
-      const itemsResult = await api.datastore.getItemsByTag(tag.id);
-      itemLists.push(itemsResult?.success ? (itemsResult.data || []) : []);
-    }
-  } catch (err) {
-    console.error('[editor] Failed to resolve tag query:', err);
-  }
-  const items = unknownTags.length > 0 ? [] : intersectItems(itemLists).filter(isBlockItem);
+  const resolved = await resolveTagQuery(api, tagNames);
+  // Window state: the items in the query now (unsorted), their tag names, and the
+  // blocks on screen, which also hold items that just left the query.
+  let items = resolved.items;
+  let unknownTags = resolved.unknownTags;
+  let itemTags = resolved.itemTags;
+  let shown = [];
+  const leaving = new Map(); // id -> { item, tags, since, index, timer }
+  const deletedIds = new Set(); // items known deleted while their inline editor was open
+  let pending = null; // newest query result held back while an inline editor is open
+  let rebuildPending = false;
+  let rebuilding = false;
+  let lastSignature = null;
 
   const wrap = document.createElement('div');
   wrap.className = 'tag-query-list';
@@ -194,37 +189,25 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   heading.textContent = tagNames.map(t => '#' + t).join(' ');
   wrap.appendChild(heading);
 
-  if (unknownTags.length > 0) {
-    const notice = document.createElement('p');
-    notice.className = 'tag-query-notice';
+  const notice = document.createElement('p');
+  notice.className = 'tag-query-notice';
+  const empty = document.createElement('p');
+  empty.className = 'tag-query-empty';
+  empty.textContent = 'No items match this query.';
+  const updateNotices = () => {
     notice.textContent = `Unknown tag${unknownTags.length > 1 ? 's' : ''}: ${unknownTags.map(t => '#' + t).join(' ')}`;
-    wrap.appendChild(notice);
-  }
+    notice.remove();
+    empty.remove();
+    if (unknownTags.length > 0) heading.after(notice);
+    if (shown.length === 0) (unknownTags.length > 0 ? notice : heading).after(empty);
+  };
 
   editorLayout = new EditorLayout({ container: rootEl, textEditor: false });
   editorLayout.setCenterContent(wrap);
 
-  if (items.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'tag-query-empty';
-    empty.textContent = 'No items match this query.';
-    wrap.appendChild(empty);
-    return;
-  }
-
   const { mountDomSurface } = await import('./query-surface-dom.js');
 
   // Tag bindings come from the shared affordance rules and each item's tags.
-  const itemTags = new Map();
-  try {
-    const allTagsResult = await api.datastore.getAllItemTags();
-    const allTagsMap = allTagsResult?.success ? (allTagsResult.data || {}) : {};
-    for (const item of items) {
-      itemTags.set(item.id, (allTagsMap[item.id] || []).map(t => t.name));
-    }
-  } catch (err) {
-    console.error('[editor] Failed to load item tags:', err);
-  }
   const rulesCache = createActionRulesCache(api);
   for (let waited = 0; !rulesCache.isLoaded() && waited < 1000; waited += 25) {
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -232,37 +215,171 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   const renderBlock = await createBlockRenderer({
     api,
     getRules: () => rulesCache.getRules(),
-    getTagNames: (id) => itemTags.get(id) || [],
+    getTagNames: (id) => itemTags.get(id) || leaving.get(id)?.tags || [],
   });
 
   let sortOption = DEFAULT_SORT_OPTION; // window state only
   let surface = null;
   let detachKeys = null;
   let inline = null;
+
+  /** Sorted items with the blocks that are leaving put back where they were. */
+  const displayList = () => {
+    const list = sortItems(items, sortOption);
+    const gone = [...leaving.values()].sort((a, b) => a.index - b.index);
+    for (const entry of gone) list.splice(Math.min(entry.index, list.length), 0, entry.item);
+    return list;
+  };
+
   const mountSorted = () => {
+    rebuilding = true;
+    rebuildPending = false;
+    // Selection, folds and scroll position survive the rebuild.
+    let keep = null;
+    if (surface) {
+      const selected = surface.selectedIndex();
+      keep = {
+        selectedId: shown[selected]?.id,
+        selectedIndex: selected,
+        folded: new Set(shown.filter((_, i) => surface.isFolded(i)).map(item => item.id)),
+        scrollTop: surface.element.scrollTop,
+        focused: surface.element.contains(document.activeElement),
+      };
+    }
     inline?.close(); // flush an open inline editor before its block goes away
+    rebuilding = false;
     detachKeys?.();
     surface?.element.remove();
-    const sorted = sortItems(items, sortOption);
+    const display = displayList();
+    shown = display;
     // Moving selection off the open block, or folding it, closes the inline editor
     // (and writes its text).
-    const mounted = mountDomSurface(wrap, sorted, {
+    const mounted = mountDomSurface(wrap, display, {
       renderBlock,
       onSelect: (next) => { if (inline?.isOpen() && inline.openIndex() !== next) inline.close(); },
       onFold: (index) => { if (inline?.isOpen() && inline.openIndex() === index) inline.close(); },
     });
     surface = mounted;
     // The editor's one status line is borrowed by the inline editor while it is open.
-    inline = createInlineEditor({
+    const editor = createInlineEditor({
       api,
       surface: mounted,
-      items: sorted,
+      items: display,
       statusLine: editorLayout.statusLine,
       vimMode,
       onBlockChanged: () => setOutline(mounted),
+      isDiscarded: (item) => deletedIds.has(item.id),
+      onClosed: () => {
+        if (rebuilding) return;
+        // After the current event finishes: the close may sit inside a selection change.
+        setTimeout(() => {
+          if (inline?.isOpen()) return;
+          if (pending) {
+            const held = pending;
+            pending = null;
+            applyResult(held);
+          } else if (rebuildPending) {
+            mountSorted();
+          }
+        }, 0);
+      },
     });
-    detachKeys = attachQueryKeys(mounted, document, inline);
+    inline = editor;
+    // A block that is leaving cannot be opened for editing.
+    const guarded = {
+      isOpen: () => editor.isOpen(),
+      open: (index) => { if (!leaving.has(display[index]?.id)) return editor.open(index); },
+    };
+    detachKeys = attachQueryKeys(mounted, document, guarded);
+
+    if (keep) {
+      let at = display.findIndex(item => item.id === keep.selectedId);
+      if (at < 0) at = Math.min(keep.selectedIndex, display.length - 1);
+      if (at > 0) mounted.select(at);
+      display.forEach((item, i) => { if (keep.folded.has(item.id)) mounted.fold(i); });
+      mounted.element.scrollTop = keep.scrollTop;
+      if (keep.focused) mounted.element.focus();
+    }
+    // Leavers stay as last shown, controls off, fading from where their fade had got to.
+    const now = Date.now();
+    display.forEach((item, i) => {
+      const entry = leaving.get(item.id);
+      if (!entry) return;
+      const block = mounted.blockElement(i);
+      block.classList.add('qs-leaving');
+      block.setAttribute('aria-disabled', 'true');
+      block.style.animationDelay = `-${now - entry.since}ms`;
+    });
     setOutline(mounted);
+    updateNotices();
+  };
+
+  /** Remove a block once its fade has finished. */
+  const finishLeaving = (id) => {
+    if (!leaving.delete(id)) return;
+    deletedIds.delete(id);
+    if (inline?.isOpen()) rebuildPending = true;
+    else mountSorted();
+  };
+
+  /** Changes whenever a block would render differently (items, tags, order, rules). */
+  const signatureOf = (result) => JSON.stringify([
+    sortItems(result.items, sortOption).map(item => blockSignature(item, result.itemTags.get(item.id))),
+    result.unknownTags,
+    rulesCache.getRules(),
+  ]);
+
+  /** Show a fresh query result: new items appear, leavers freeze and fade. */
+  const applyResult = async (result) => {
+    // Rule changes take effect with the next rebuild, which reads the fresh rules.
+    await rulesCache.refresh();
+    const openId = inline?.isOpen() ? shown[inline.openIndex()]?.id : undefined;
+    if (inline?.isOpen()) {
+      // The open block keeps its text and the document stays as it is until the
+      // editor closes; the held result is applied then.
+      const stillThere = result.items.some(item => item.id === openId);
+      const action = liveAction({ open: true }, stillThere ? 'changed' : 'left');
+      if (action === 'keep-editor' || action === 'freeze-fade-on-close') {
+        pending = result;
+        if (openId && !stillThere) {
+          api.datastore.getItem(openId).then((res) => {
+            if (!res?.success || !res.data || res.data.deletedAt) deletedIds.add(openId);
+          }).catch(() => {});
+        }
+        return;
+      }
+    }
+
+    const liveIds = shown.filter(item => !leaving.has(item.id)).map(item => item.id);
+    const diff = diffBlocks(liveIds, result.items);
+    let restored = false;
+    for (const item of result.items) {
+      const entry = leaving.get(item.id);
+      if (entry) {
+        clearTimeout(entry.timer);
+        leaving.delete(item.id);
+        restored = true;
+      }
+    }
+    const signature = signatureOf(result);
+    if (diff.removed.length === 0 && !restored && signature === lastSignature) return;
+
+    const since = Date.now();
+    for (const id of diff.removed) {
+      const index = shown.findIndex(item => item.id === id);
+      leaving.set(id, {
+        item: shown[index],
+        tags: itemTags.get(id) || [],
+        since,
+        index,
+        timer: setTimeout(() => finishLeaving(id), LEAVE_MS),
+      });
+    }
+    lastSignature = signature;
+    items = result.items;
+    unknownTags = result.unknownTags;
+    itemTags = result.itemTags;
+    mountSorted();
   };
   const setOutline = (mounted) => {
     editorLayout.setOutlineEntries(mounted.blockTitles(), (index) => {
@@ -271,6 +388,13 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     });
   };
   mountSorted();
+  lastSignature = signatureOf(resolved);
+
+  const live = await startQueryLive({ api, tagNames, onResult: applyResult });
+  window.addEventListener('beforeunload', () => {
+    live.destroy();
+    for (const entry of leaving.values()) clearTimeout(entry.timer);
+  });
 
   // <Esc> reaches the window through the preload, not as a DOM keydown. Inner
   // layers first: vim insert/visual -> normal, then close the inline editor; with

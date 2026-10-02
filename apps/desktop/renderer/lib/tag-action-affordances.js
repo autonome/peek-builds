@@ -210,7 +210,7 @@ const createToggleButton = (itemId, aff, api, options = {}) => {
  * when `rules:changed` fires.
  *
  * @param {object} api - The window.app API object
- * @returns {{ getRules: () => object[], isLoaded: () => boolean, destroy: () => void }}
+ * @returns {{ getRules: () => object[], isLoaded: () => boolean, refresh: () => Promise<void>, destroy: () => void }}
  */
 export const createActionRulesCache = (api) => {
   let rules = [];
@@ -237,6 +237,7 @@ export const createActionRulesCache = (api) => {
   return {
     getRules: () => rules,
     isLoaded: () => loaded,
+    refresh,
     destroy: () => {
       try { if (typeof unsub === 'function') unsub(); }
       catch { /* swallow */ }

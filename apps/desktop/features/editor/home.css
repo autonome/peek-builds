@@ -948,6 +948,19 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A block whose item left the query: shown as it was, controls off, then fades. The
+   animation holds for the first half, then fades; it is shifted when a rebuild
+   recreates the block mid-fade. */
+.qs-block.qs-leaving {
+  pointer-events: none;
+  animation: qs-leave 1200ms linear forwards;
+}
+
+@keyframes qs-leave {
+  0%, 40% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .qs-block.folded {
   contain-intrinsic-size: auto 36px;
 }

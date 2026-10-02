@@ -84,8 +84,11 @@ function applyEdit(item, text) {
  * @param {boolean} deps.vimMode
  * @param {(index: number) => void} [deps.onBlockChanged] called after a block
  *   was re-rendered with edited text (the outline refreshes its titles)
+ * @param {(item: object) => void} [deps.onClosed] called after the editor closed
+ * @param {(item: object) => boolean} [deps.isDiscarded] true when the item no
+ *   longer exists, so closing drops the pending text instead of writing it
  */
-export function createInlineEditor({ api, surface, items, statusLine, vimMode, onBlockChanged }) {
+export function createInlineEditor({ api, surface, items, statusLine, vimMode, onBlockChanged, onClosed, isDiscarded }) {
   let cm = null; // codemirror.js module, loaded on first open
   let session = null; // the open editor, or null
   let opening = false;
@@ -193,7 +196,16 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     const s = session;
     if (!s) return Promise.resolve();
     session = null;
-    const flushed = flushSession(s);
+    let flushed;
+    if (isDiscarded?.(s.item)) {
+      if (s.timer) {
+        clearTimeout(s.timer);
+        s.timer = null;
+      }
+      flushed = Promise.resolve();
+    } else {
+      flushed = flushSession(s);
+    }
     const text = cm.getContent(s.view);
     cm.destroy(s.view);
     s.holder.remove();
@@ -203,6 +215,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     onBlockChanged?.(s.index);
     giveBackStatusLine();
     surface.element.focus();
+    onClosed?.(s.item);
     return flushed;
   }
 
