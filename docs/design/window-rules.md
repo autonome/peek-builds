@@ -219,14 +219,26 @@ for the purpose.
   workspace, just with the opposite meaning ("this window follows you everywhere," not "this
   window is local to here").
 
-### The workspace panel
+### The workspace panel — removed
 
-The workspace panel (`2a07c0ac`) — shown while a workspace is active, naming the current
-workspace, with close and switch controls — is a **global HUD window**: pinned across workspaces,
-so it is visible whichever workspace the user is in, not just one. A workspace-pinned reading
-(visible only in one workspace, gone on switch) would make it disappear exactly when it is
-supposed to orient the user during a switch; naming the *current* workspace, rather than being
-scoped to one, is itself evidence for the global-HUD reading.
+The workspace panel (`2a07c0ac`) — a corner window shown while a workspace is active, naming the
+current workspace, with close and switch controls — was removed in `59bbe921`, along with
+`features/spaces/panel.html`, `panel.js` and `panel.css`. Nothing renders it and nothing can
+reopen it; `tests/desktop/spaces-window-locking.spec.ts` asserts that no `spaces/panel.html`
+window appears. The reasoning below is kept because the *global HUD window* classification it
+established still governs any such window, and because the rest of this section refers to it as
+the worked example of one: it was pinned across workspaces, so it stayed visible whichever
+workspace the user was in. A workspace-pinned reading (visible only in one workspace, gone on
+switch) would have made it disappear exactly when it was supposed to orient the user during a
+switch; naming the *current* workspace, rather than being scoped to one, is itself evidence for
+the global-HUD reading.
+
+What replaced its controls: the active workspace is named by the right-edge accent and its label
+(`features/spaces/border.html`), by the command palette's mode indicator
+(`renderer/cmd/panel.js updateModeIndicator`) and by the page chrome's space widget
+(`renderer/page/overlay.js buildSpaceModeContent`) — all read-only. Leaving a workspace goes
+through the `close space`, `open space` and `switch space` commands, and entering one also through
+a card click in the browse-all Spaces list (`features/spaces/home.js activateSpace`).
 
 ### Settling `57b89e6e`'s open questions
 
@@ -258,8 +270,12 @@ scoped to one, is itself evidence for the global-HUD reading.
   restore-session preference off, or the crash-recovery dialog declined). A live restore into any
   workspace skips a cross-workspace-pinned descriptor outright (it is assumed still open, since
   leaving a workspace never closes one). `features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
-  closes every window `api.context.getWindowsInSpace` reports for the outgoing workspace, skipping
-  one pinned across every workspace by an explicit check on its 'pin' context entry. A
+  closes every live content-role window (`WORKSPACE_CONTENT_ROLES`) rather than asking
+  `api.context.getWindowsInSpace` which ones carry the outgoing workspace's mode tag: only one
+  workspace's content windows are ever on screen at a time, and a live tag can lag or be
+  overwritten by an unrelated feature, so a window that failed the tag check was a window that
+  silently outlived every later switch. A window pinned across every workspace is skipped by an
+  explicit check on its 'pin' context entry. A
   workspace-pinned window that has no cross-workspace claim is closed by that same sweep like any
   other window in the workspace, and comes back from the workspace's saved snapshot — with its pin
   and badge intact — the next time that workspace is entered.
