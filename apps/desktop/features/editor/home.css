@@ -1027,6 +1027,29 @@ body {
   flex: none;
 }
 
+/* Inline editor: replaces the text rows (text items) or the notes (url, image). */
+.qs-block.editing-text .qs-block-title,
+.qs-block.editing-text .qs-block-body,
+.qs-block.editing-notes .qs-notes {
+  display: none;
+}
+
+.qs-inline-editor {
+  margin-top: 4px;
+  border: 1px solid var(--base02);
+  border-radius: 3px;
+  background: var(--base00);
+}
+
+.qs-inline-editor .cm-editor {
+  min-height: 80px;
+  max-height: 60vh;
+}
+
+.qs-inline-editor .cm-scroller {
+  overflow: auto;
+}
+
 .qs-notes {
   margin-top: 6px;
   white-space: pre-wrap;

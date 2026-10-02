@@ -54,6 +54,29 @@ Electron app: the status line showing the inline editor's mode and position and 
 `<Esc>` cascade order, and that the preload interception behaves as the tags view's comment says in this
 window (unverified so far).
 
+## Result
+
+- `query-inline-editor.js` `createInlineEditor()` opens one embedded editor in the selected block on
+  `<Enter>` (`query-keys.js` `attachQueryKeys` takes the controller; `queryKey` returns null while
+  `inlineOpen`). Text items edit their content; url and image items edit only their `notes` metadata
+  (title, link and picture stay rendered; tags stay editable through the left column).
+- Status line: the layout's existing `StatusLine` instance (in `EditorLayout` `statusLineContainer`,
+  hidden in query mode) is borrowed, not duplicated. `StatusLine` gained `saveState()` / `restoreState()`;
+  open shows the container and drives mode and position from the inline editor, close restores. Chosen
+  over creating a second instance because the layout already owns one and the design allows only one.
+- `<Esc>`: `home.js` registers `api.escape.onEscape` in query mode (it had none); the controller's
+  `handleEscape()` does vim insert/visual to normal, then close, then returns `handled: false` so the
+  window's default applies.
+- Flush: debounced 1500 ms write; flushed on close, on selection moving off the block (`mountDomSurface`
+  `onSelect`), on a fold of the open block (`onFold`), and on unload (`flush()`).
+- Checked live in a headless app on the reusable profile with the preload's real `<Esc>` path (input
+  events through `webContents.sendInputEvent`): vim on and off, insert to normal to closed, status line
+  showing INSERT/NORMAL and position then restored hidden, autosave landing 2 s after typing, flush when
+  clicking another block within the debounce, url and image notes writes leaving content intact,
+  `<Esc>` with nothing open answered `handled: false`. The fold-flush path has no key that reaches it
+  while the editor is open (`z` belongs to the editor), so it was checked with the real surface and
+  editor modules on a stub datastore.
+
 ## Working rules
 
 Run one command per Bash call. Never run the Electron gate without an explicit OK. Not landing within

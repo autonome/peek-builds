@@ -129,6 +129,42 @@ export class StatusLine {
   }
 
   /**
+   * Capture what the status line shows (mode, position, visibility, and the
+   * container's visibility) so another editor can borrow it and hand it back.
+   * @returns {object} opaque state for restoreState()
+   */
+  saveState() {
+    return {
+      mode: this.currentMode,
+      modeText: this.modeIndicator.textContent,
+      modeColor: this.modeIndicator.style.color,
+      originalModeText: this.originalModeText,
+      position: this.positionInfo.textContent,
+      display: this.element.style.display,
+      containerDisplay: this.container ? this.container.style.display : '',
+    };
+  }
+
+  /**
+   * Put back a state captured by saveState(), dropping any pending message.
+   * @param {object} state
+   */
+  restoreState(state) {
+    if (!state) return;
+    if (this.messageTimeout) {
+      clearTimeout(this.messageTimeout);
+      this.messageTimeout = null;
+    }
+    this.currentMode = state.mode;
+    this.modeIndicator.textContent = state.modeText;
+    this.modeIndicator.style.color = state.modeColor;
+    this.originalModeText = state.originalModeText;
+    this.positionInfo.textContent = state.position;
+    this.element.style.display = state.display;
+    if (this.container) this.container.style.display = state.containerDisplay;
+  }
+
+  /**
    * Show the status line.
    */
   show() {

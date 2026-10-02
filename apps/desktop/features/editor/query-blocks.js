@@ -35,7 +35,7 @@ function metadataOf(item) {
 }
 
 /** Notes of a url or image item: the `notes` metadata field. */
-function notesOf(item) {
+export function notesOf(item) {
   const notes = metadataOf(item).notes;
   return typeof notes === 'string' ? notes.trim() : '';
 }

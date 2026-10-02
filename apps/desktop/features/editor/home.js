@@ -17,6 +17,7 @@ import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
 import { isBlockItem, createBlockRenderer } from './query-blocks.js';
 import { attachQueryKeys } from './query-keys.js';
+import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
@@ -164,7 +165,7 @@ End of test document.
  * @param {HTMLElement} rootEl
  * @param {string[]} tagNames
  */
-async function renderTagQuery(rootEl, tagNames) {
+async function renderTagQuery(rootEl, tagNames, vimMode) {
   document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
 
   const unknownTags = [];
@@ -237,18 +238,48 @@ async function renderTagQuery(rootEl, tagNames) {
   let sortOption = DEFAULT_SORT_OPTION; // window state only
   let surface = null;
   let detachKeys = null;
+  let inline = null;
   const mountSorted = () => {
+    inline?.close(); // flush an open inline editor before its block goes away
     detachKeys?.();
     surface?.element.remove();
-    const mounted = mountDomSurface(wrap, sortItems(items, sortOption), { renderBlock });
+    const sorted = sortItems(items, sortOption);
+    // Moving selection off the open block, or folding it, closes the inline editor
+    // (and writes its text).
+    const mounted = mountDomSurface(wrap, sorted, {
+      renderBlock,
+      onSelect: (next) => { if (inline?.isOpen() && inline.openIndex() !== next) inline.close(); },
+      onFold: (index) => { if (inline?.isOpen() && inline.openIndex() === index) inline.close(); },
+    });
     surface = mounted;
-    detachKeys = attachQueryKeys(mounted);
+    // The editor's one status line is borrowed by the inline editor while it is open.
+    inline = createInlineEditor({
+      api,
+      surface: mounted,
+      items: sorted,
+      statusLine: editorLayout.statusLine,
+      vimMode,
+      onBlockChanged: () => setOutline(mounted),
+    });
+    detachKeys = attachQueryKeys(mounted, document, inline);
+    setOutline(mounted);
+  };
+  const setOutline = (mounted) => {
     editorLayout.setOutlineEntries(mounted.blockTitles(), (index) => {
       mounted.select(index);
       mounted.revealSelected();
     });
   };
   mountSorted();
+
+  // <Esc> reaches the window through the preload, not as a DOM keydown. Inner
+  // layers first: vim insert/visual -> normal, then close the inline editor; with
+  // none open, the window's default <Esc> applies.
+  if (api?.escape?.onEscape) {
+    api.escape.onEscape(() => (inline ? inline.handleEscape() : { handled: false }));
+  }
+  // The layout is torn down by cleanup() on unload, so only write the text here.
+  window.addEventListener('beforeunload', () => { inline?.flush(); });
 
   const select = document.createElement('select');
   select.className = 'editor-top-toolbar-select';
@@ -340,7 +371,7 @@ const init = async () => {
   }
   const queryTags = parseTagQuery((params.get('tags') || '').split(',').filter(Boolean).map(t => '#' + t).join(' '));
   if (queryTags) {
-    await renderTagQuery(rootEl, queryTags);
+    await renderTagQuery(rootEl, queryTags, vimMode);
     return;
   }
 

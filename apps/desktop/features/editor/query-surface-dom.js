@@ -69,9 +69,12 @@ export function blockTitle(item) {
  * Mount one block per item into `root`.
  * @param {HTMLElement} root
  * @param {Array<{id?:string,title?:string,content?:string,url?:string}>} items
- * @param {{renderBlock?: (item: object) => {left?: HTMLElement, title: HTMLElement, body: HTMLElement}}} [options]
+ * @param {{renderBlock?: (item: object) => {left?: HTMLElement, title: HTMLElement, body: HTMLElement},
+ *   onSelect?: (index: number, prev: number) => void,
+ *   onFold?: (index: number, folded: boolean) => void}} [options]
  *   renderBlock builds a block's left column, title row and body; without it a
- *   block shows a plain-text title and body
+ *   block shows a plain-text title and body. onSelect / onFold are called after
+ *   the selected or folded block changes.
  * @returns the surface interface plus `element` and `selectedIndex()`
  */
 export function mountDomSurface(root, items, options = {}) {
@@ -86,26 +89,23 @@ export function mountDomSurface(root, items, options = {}) {
       const el = blocks[next];
       el.classList.add('selected');
       el.scrollIntoView({ block: 'nearest' });
+      options.onSelect?.(next, prev);
     },
     onFold(i, value) {
       blocks[i].classList.toggle('folded', value);
+      options.onFold?.(i, value);
     },
   });
 
-  const frag = document.createDocumentFragment();
-  items.forEach((item, i) => {
-    const block = document.createElement('div');
-    block.className = 'qs-block';
-    block.dataset.index = String(i);
-    if (item.id) block.dataset.itemId = item.id;
-
+  /** Build (or rebuild) a block's children from its item. */
+  function fillBlock(block, item) {
     const rendered = options.renderBlock?.(item);
     if (rendered) {
       const main = document.createElement('div');
       main.className = 'qs-block-main';
       main.append(rendered.title, rendered.body);
       block.classList.add('qs-block-columns');
-      block.append(rendered.left || document.createElement('div'), main);
+      block.replaceChildren(rendered.left || document.createElement('div'), main);
     } else {
       const title = document.createElement('div');
       title.className = 'qs-block-title';
@@ -115,8 +115,17 @@ export function mountDomSurface(root, items, options = {}) {
       body.className = 'qs-block-body';
       body.textContent = item.content || item.url || '';
 
-      block.append(title, body);
+      block.replaceChildren(title, body);
     }
+  }
+
+  const frag = document.createDocumentFragment();
+  items.forEach((item, i) => {
+    const block = document.createElement('div');
+    block.className = 'qs-block';
+    block.dataset.index = String(i);
+    if (item.id) block.dataset.itemId = item.id;
+    fillBlock(block, item);
     blocks.push(block);
     frag.appendChild(block);
   });
@@ -142,6 +151,13 @@ export function mountDomSurface(root, items, options = {}) {
     /** Scroll the selected block into view (after folds move it). */
     revealSelected() {
       blocks[state.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    },
+    /** The block element at `index`. */
+    blockElement: (index) => blocks[index] || null,
+    /** Rebuild a block's rows from its (edited) item. */
+    rerender(index, item) {
+      const block = blocks[index];
+      if (block) fillBlock(block, item);
     },
     /** Each block's title text, in order (the outline's entries). */
     blockTitles: () => blocks.map(b => b.querySelector('.qs-block-title')?.textContent || ''),

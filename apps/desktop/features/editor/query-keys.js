@@ -14,6 +14,7 @@
  * @property {number} blockCount
  * @property {Set<number>} folded indices of folded blocks
  * @property {boolean} pendingZ true after a `z`, waiting for the second key
+ * @property {boolean} [inlineOpen] an inline editor is open; no key is handled here
  */
 
 const FOLD_KEYS = new Set(['c', 'o', 'a', 'M', 'R']);
@@ -26,6 +27,8 @@ const FOLD_KEYS = new Set(['c', 'o', 'a', 'M', 'R']);
  *   handled; null also ends a pending `z`
  */
 export function queryKey(key, state) {
+  // While an inline editor is open, every key belongs to it.
+  if (state.inlineOpen) return null;
   const { blockCount } = state;
   const folded = new Set(state.folded);
   const next = (patch) => ({
@@ -90,15 +93,27 @@ function isEditable(target) {
 /**
  * Handle block keys on `doc` for `surface` (the interface of query-surface-dom.js
  * mountDomSurface). Ignored while a text field or inline editor has the keys.
+ * @param {object} [inline] the inline editor controller: `isOpen()` and
+ *   `open(index)`. <Enter> opens the selected block in it.
  * @returns {() => void} detach function
  */
-export function attachQueryKeys(surface, doc = document) {
+export function attachQueryKeys(surface, doc = document, inline = null) {
   let pendingZ = false;
 
   const onKeyDown = (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
     if (isEditable(e.target)) return;
+    if (inline?.isOpen()) return;
+    if (e.key === 'Enter' && inline) {
+      const at = surface.selectedIndex();
+      pendingZ = false;
+      if (at >= 0 && at < surface.blockCount()) {
+        e.preventDefault();
+        inline.open(at);
+      }
+      return;
+    }
 
     const count = surface.blockCount();
     const folded = new Set();
