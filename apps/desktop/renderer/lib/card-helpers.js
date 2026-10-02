@@ -8,10 +8,10 @@
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
+export const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
 
 // Emoji SVG data URIs for item type icons
-const TYPE_ICONS = {
+export const TYPE_ICONS = {
   url:     GLOBE_FAVICON,
   text:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DD}</text></svg>',
   tag:     'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">#</text></svg>',
@@ -178,7 +178,7 @@ export const withClickDebounce = (card, handler, cooldown = 500) => {
  * @param {string} text
  * @returns {string|null}
  */
-const extractUrl = (text) => {
+export const extractUrl = (text) => {
   if (!text) return null;
   const trimmed = text.trim();
   if (/^https?:\/\//i.test(trimmed)) {
@@ -195,7 +195,7 @@ const extractUrl = (text) => {
  * @param {string} url
  * @returns {string|null}
  */
-const _googleFaviconFallback = (url) => {
+export const _googleFaviconFallback = (url) => {
   if (!url) return null;
   try {
     const domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname;

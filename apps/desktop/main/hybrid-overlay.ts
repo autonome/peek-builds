@@ -1126,7 +1126,7 @@ function installTestBridge(): void {
     /**
      * Tear down a fake hybrid host: destroy its BaseWindow (firing the 'closed'
      * cleanup that drops it from the hybrid registry). Lets a test return the
-     * registry to its empty (flag-off-equivalent) state and assert the
+     * registry to its empty state and assert the
      * windows-feature hybrid loop is then additive-empty. Routed through the
      * machine (§5 step 9 R2 cleanup): `WINDOW_DESTROY_REQUESTED` →
      * `DESTROY_WINDOW` effect → `electron-window-backend.ts destroyWindow`,

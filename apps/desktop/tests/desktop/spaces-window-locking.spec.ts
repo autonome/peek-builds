@@ -60,6 +60,14 @@ async function spaceTagId(name: string): Promise<string> {
   return id as string;
 }
 
+/** A tag's stored color — what a resolver persisted, not what a window shows. */
+async function tagColor(tagName: string): Promise<string | null> {
+  return bgWindow.evaluate(async (name: string) => {
+    const r = await (window as unknown as { app: any }).app.datastore.getOrCreateTag(name);
+    return (r?.data?.tag?.color ?? null) as string | null;
+  }, tagName);
+}
+
 /** Window ids whose mode context puts them in the given space. */
 async function windowsInSpace(tagId: string): Promise<number[]> {
   const r = await bgWindow.evaluate(
@@ -601,5 +609,116 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     }
 
     await runCommand('close space');
+  });
+
+  test('a space resolved by the browse-all list takes its accent from the active theme, like one resolved on entry', async () => {
+    // The vivid accent that replaces a grey placeholder is drawn from the
+    // ACTIVE theme's palette (`features/spaces/config.js resolveVividColor`),
+    // and two separate callers resolve it: the browse-all list
+    // (`features/spaces/home.js loadSpaces()`) and the workspace entry path
+    // (`features/spaces/background.js openSpace()`). Both then PERSIST what
+    // they picked onto the tag, and a persisted color has enough chroma that
+    // every later resolution returns it unchanged — so whichever resolved a
+    // space first decides its accent permanently.
+    //
+    // While the browse-all list resolved without the theme it always picked
+    // from the built-in palette. Under any other theme, a space the list had
+    // rendered kept a built-in-palette accent while a space entered without
+    // ever being listed got the theme's own: two non-default spaces, two
+    // palettes, which is the inconsistent accent this covers. The accent must
+    // not depend on which caller got there first.
+    const { resolveVividColor } = await import('../../features/spaces/config.js');
+
+    const themeState = await bgWindow.evaluate(
+      async () => await (window as unknown as { app: any }).app.theme.get(),
+    );
+    const originalTheme: string = themeState?.themeId ?? 'peek';
+    // Any theme other than the active one — the built-in pair is peek/basic.
+    const otherTheme = originalTheme === 'basic' ? 'peek' : 'basic';
+
+    const omicron = 'lock-omicron';
+    try {
+      const switched = await bgWindow.evaluate(
+        async (id: string) => await (window as unknown as { app: any }).app.theme.setTheme(id),
+        otherTheme,
+      );
+      expect(switched?.success, `switching the theme to "${otherTheme}" failed: ${switched?.error}`).toBe(true);
+
+      // Open the browse-all list BEFORE the tag exists, so its live query is
+      // what first sees the space (as `tag:created`/`tag:color-changed`) and
+      // the list is deterministically the first resolver.
+      if (browseAllPages().length === 0) await openBrowseAll();
+
+      const omicronId = await spaceTagId(omicron);
+      // Only a space whose two palettes disagree can tell the two resolvers
+      // apart; assert that before relying on it, so a name that happens to
+      // hash to the same swatch in both palettes fails loudly instead of
+      // passing vacuously.
+      const underOtherTheme = resolveVividColor('#999', omicronId, otherTheme);
+      const underOriginalTheme = resolveVividColor('#999', omicronId, originalTheme);
+      expect(
+        underOtherTheme,
+        `space "${omicron}" hashes to the same accent under both "${otherTheme}" and "${originalTheme}" — this test cannot tell the resolvers apart; rename the space`,
+      ).not.toBe(underOriginalTheme);
+
+      await bgWindow.evaluate(
+        async (arg: { tagId: string; color: string }) => {
+          await (window as unknown as { app: any }).app.datastore.updateTagColor(arg.tagId, arg.color);
+        },
+        { tagId: omicronId, color: '#999' },
+      );
+
+      // The list resolves the grey placeholder and writes the result back.
+      await expect
+        .poll(() => tagColor(`space:${omicron}`), {
+          timeout: 15000,
+          message: 'the browse-all list never resolved the grey placeholder into an accent',
+        })
+        .toBe(underOtherTheme);
+
+      // Entering the space must agree with what the list already stored, and
+      // the border and the space's windows must both show it.
+      const openResult = await runCommand('open space', omicron);
+      expect(openResult?.success, `open space "${omicron}" failed: ${openResult?.error}`).toBe(true);
+
+      let borderAccent = '';
+      await expect
+        .poll(
+          async () => {
+            try {
+              const page = await app.getWindow('spaces/border.html', 15000);
+              if ((await page.locator('#label').textContent()) !== omicron) return '';
+              borderAccent = await page.evaluate(() =>
+                getComputedStyle(document.documentElement).getPropertyValue('--color').trim(),
+              );
+            } catch {
+              borderAccent = '';
+            }
+            return borderAccent;
+          },
+          { timeout: 15000, message: `the border never showed an accent for "${omicron}"` },
+        )
+        .toBe(underOtherTheme);
+
+      const paletteWindowId = await openPageLikeThePalette('https://example.com/lock-omicron-palette-opened');
+      await expect
+        .poll(() => windowModeColor(paletteWindowId), {
+          timeout: 15000,
+          message: `a window opened inside "${omicron}" does not carry the accent the active theme resolves`,
+        })
+        .toBe(underOtherTheme);
+      for (const id of await windowsInSpace(omicronId)) {
+        expect(
+          await windowModeColor(id),
+          `window ${id} in "${omicron}" carries an accent from a different palette`,
+        ).toBe(underOtherTheme);
+      }
+    } finally {
+      await runCommand('close space');
+      await bgWindow.evaluate(
+        async (id: string) => await (window as unknown as { app: any }).app.theme.setTheme(id),
+        originalTheme,
+      );
+    }
   });
 });

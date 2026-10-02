@@ -151,7 +151,6 @@ export {
   attachWindowOpenPayload,
   getWindowInfo,
   findWindowsByKey,
-  findWindowsByUrl,
   removeWindow,
   getChildWindows,
   getAllWindows,

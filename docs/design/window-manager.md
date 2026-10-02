@@ -801,12 +801,16 @@ open time in the main process (`ipc.ts inheritedModeForNewWindow`, `docs/design/
 "Workspace membership"), so the browse-all page is swept on the switch away and restored once on
 return. Confirmed live: two alpha round trips from the default left exactly one browse-all window.
 
-**A single border flicker when the workspace panel first appears, open (found 2026-09-22).**
-Found by trace during the same track — not a symptom of it, not a loop (see the switch-space
-defect above for the loop this resembles). Opening the workspace panel (role `panel`) immediately
-dismisses the screen border (role `overlay`, a transient) — an `effect-close effect=DismissWindow`
-on the border right after the panel's `open-registry-set` — and `updateBorderVisibility()`
-recreates the border on the next focus event. One extra open/close, not a storm.
+**A single border flicker when the workspace panel first appears, moot (found 2026-09-22; the
+window it needed was removed 2026-09-23 in `59bbe921`).** Found by trace during the same track —
+not a symptom of it, not a loop (see the switch-space defect above for the loop this resembles).
+Opening the workspace panel (role `panel`) immediately dismissed the screen border (role
+`overlay`, a transient) — an `effect-close effect=DismissWindow` on the border right after the
+panel's `open-registry-set` — and `updateBorderVisibility()` recreated the border on the next
+focus event. One extra open/close, not a storm. There is no workspace panel any more
+(`docs/design/window-rules.md` "The workspace panel — removed"), so nothing opens a `panel`-role
+window beside the border and the flicker has no trigger. The underlying rule it illustrated is
+unchanged and still live: any window appearing beside a transient overlay dismisses it.
 
 ### First macOS evidence for this branch, 2026-08-17
 

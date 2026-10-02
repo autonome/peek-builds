@@ -2874,12 +2874,12 @@ export function registerTileIpcHandlers(): void {
     // URL governance is handled by checkWindowAllowed above via the
     // tile's declared `window.urls` allowlist (if any). Tiles without
     // a urls allowlist accept any URL — same policy as the legacy
-    // window-open channel. External http(s) URLs are rewritten to the
-    // page canvas by the window-open handler below.
+    // window-open channel. External http(s) URLs open in a hybrid
+    // page-host via the window-open handler below.
 
     // Delegate to the main window-open handler (registered by registerWindowHandlers()
     // in ipc.ts). This is the single source of truth for window creation — handles
-    // canvas rendering, mode inheritance, deduping, session registration, etc.
+    // the hybrid page-host, mode inheritance, deduping, session registration, etc.
     if (!invokeWindowOpen) {
       console.error('[tile:window:open] invokeWindowOpen not initialized — registerWindowHandlers() must be called before tile IPC is used');
       return { error: 'Window handler not initialized' };
@@ -2941,7 +2941,7 @@ export function registerTileIpcHandlers(): void {
     // app-switch / focus-autoclose dismissal paths use. Its hybrid branch
     // honors keepLive (hide) and otherwise closeHostWindow's the BaseWindow
     // (content WebContents destroyed first — the page-host close UAF guard).
-    // No-op (null) when the flag is off (registry empty).
+    // No-op (null) when args.id is not a hybrid window.
     if (args.id != null) {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
@@ -3054,8 +3054,8 @@ export function registerTileIpcHandlers(): void {
           preMaxBounds: presentation.preMaxBounds,
           // Hybrid windows DO have a registry payload (declared on their
           // machine registration in the hybrid open branch). Read it the same
-          // way the canvas branch above does, so parentWindowId/role/
-          // placement/escapeMode survive in the listed entry.
+          // way the getAllLiveWindows() loop above does, so parentWindowId/
+          // role/placement/escapeMode survive in the listed entry.
           params: getWindowInfo(h.windowId)?.params ?? {},
         });
       }
@@ -3174,7 +3174,8 @@ export function registerTileIpcHandlers(): void {
       if (!win) {
         // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Hide the
         // host BaseWindow directly so the windows-feature hide/unhide affordance
-        // works for a web-page window. No-op (null) when the flag is off.
+        // works for a web-page window. No-op (null) when args.id is not a
+        // hybrid window.
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           // Black-window fix: exit native fullscreen FIRST (awaited via the

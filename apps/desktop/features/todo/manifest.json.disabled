@@ -3,7 +3,7 @@
   "id": "todo",
   "shortname": "todo",
   "name": "Todo Commands",
-  "description": "Quick `todo` and `done` cmd-panel commands",
+  "description": "Quick `todo`, `todos` and `done` cmd-panel commands",
   "version": "1.0.0",
   "builtin": true,
   "tiles": [
@@ -19,6 +19,7 @@
       "topics": [
         "todo:*",
         "cmd:execute:todo",
+        "cmd:execute:todos",
         "cmd:execute:done",
         "cmd:register",
         "cmd:unregister",
@@ -45,11 +46,16 @@
       ]
     },
     {
+      "name": "todos",
+      "description": "List the outstanding #todo items, newest first.",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "done",
-      "description": "Mark a todo done. Matches the first #todo item whose title or content contains the search text.",
+      "description": "Mark a todo done. The list shows the outstanding #todo items; pick one, or type enough of its text to name it.",
       "action": { "type": "execute" },
       "params": [
-        { "name": "match", "type": "string", "required": true, "description": "Substring of the todo's title or content (case-insensitive)." }
+        { "name": "match", "type": "item", "tag": "todo", "required": true, "description": "The outstanding todo to mark done. Typing filters by title or content (case-insensitive)." }
       ]
     }
   ]
