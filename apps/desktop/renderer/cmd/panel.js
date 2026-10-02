@@ -2608,7 +2608,9 @@ function actionHandlers() {
       const outputData = result.output.data;
       const outputMimeType = result.output.mimeType;
 
-      if (outputMimeType === 'new-item') {
+      if (outputMimeType === 'tag-query') {
+        api.publish('editor:open', { tags: outputData.tags });
+      } else if (outputMimeType === 'new-item') {
         api.publish('editor:add', { type: outputData.type || 'text' });
       } else if (outputData.id) {
         api.publish('editor:open', { itemId: outputData.id });

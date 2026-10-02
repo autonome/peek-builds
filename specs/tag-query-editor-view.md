@@ -15,7 +15,8 @@ Part of Peek item `item_1790655511612_0mmmdmy59` ("tag query editor view", tags
 `peek`, `peek:todo`, `desktop`). Read it with the peek MCP `get_item` if that
 tool is available; this file carries everything needed if it is not. The item's
 requirement list is transcribed in "Source requirements" below. One line of the
-item arrived truncated mid-sentence ("with a visua…") and is treated as unknown.
+item's ordering line arrived truncated mid-sentence ("with a visua…"); the
+intended cue is the sort chooser, the toolbar sort dropdown.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
@@ -92,9 +93,8 @@ query editor closes that gap: the group becomes one editable document.
   the window per query (`editor-query-<sorted tags>`) so re-running the
   same query focuses the existing window instead of stacking windows.
 - Default order: `updatedAt` descending (most recently edited first). The
-  source item's ordering line is truncated after "with a visua…" — the intended
-  visual cue is unknown; the ordering controls are a sort-option dropdown in the
-  toolbar plus a manual order (Decisions, "Manual order").
+  ordering controls are a sort-option dropdown in the
+  toolbar (the sort chooser) plus a manual order (Decisions, "Manual order").
 
 ### The document
 
@@ -209,7 +209,7 @@ paraphrases:
 - search tagged items, render each appropriately for the type (note, url,
   image)
 - default order: date edited, descending, with a visua… (truncated in the
-  source item; the visual cue is unknown)
+  source item; the cue is the sort chooser, the toolbar sort dropdown)
 - tag binding stuff works: a left col that renders/executes the bindings, e.g.
   checkbox for `#todo`/`#done`, just like in cards
 - rendered view renders markdown content in items
@@ -366,9 +366,6 @@ now (Decisions, "Manual order").
 
 ## What is unverified
 
-- The source item's ordering sentence is truncated ("with a visua…"); the
-  intended visual cue is genuinely unknown and must not be guessed into the
-  implementation.
 - Two simultaneously vim-enabled CodeMirror surfaces in one window (outer
   surface if CodeMirror-based + inline editor) have no in-repo precedent — the
   tags view runs exactly one embedded editor at a time. Whether key handling

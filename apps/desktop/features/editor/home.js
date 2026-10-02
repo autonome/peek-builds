@@ -12,6 +12,8 @@
 
 import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
+import { findTagByName } from 'peek://cmd/item-suggestions.js';
+import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -153,6 +155,76 @@ End of test document.
 `;
 
 /**
+ * Title of an item for the tag query list: first content line without heading marker.
+ */
+function queryItemTitle(item) {
+  const firstLine = (item.content || '').split('\n').find(line => line.trim()) || '';
+  return item.title || firstLine.replace(/^#+\s*/, '').trim() || item.url || 'Untitled';
+}
+
+/**
+ * Resolve a tag query against the datastore (not from any id list passed in) and
+ * show the matching items as a plain list of titles.
+ * @param {HTMLElement} rootEl
+ * @param {string[]} tagNames
+ */
+async function renderTagQuery(rootEl, tagNames) {
+  document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
+  rootEl.textContent = '';
+
+  const unknownTags = [];
+  const itemLists = [];
+  try {
+    const tagsResult = await api.datastore.getTagsByFrecency();
+    const allTags = tagsResult?.success ? (tagsResult.data || []) : [];
+    for (const name of tagNames) {
+      const tag = findTagByName(allTags, name);
+      if (!tag) {
+        unknownTags.push(name);
+        continue;
+      }
+      const itemsResult = await api.datastore.getItemsByTag(tag.id);
+      itemLists.push(itemsResult?.success ? (itemsResult.data || []) : []);
+    }
+  } catch (err) {
+    console.error('[editor] Failed to resolve tag query:', err);
+  }
+  const items = unknownTags.length > 0 ? [] : intersectItems(itemLists);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tag-query-list';
+  wrap.style.cssText = 'padding: 16px; font-family: system-ui, sans-serif; color: var(--base05, inherit);';
+
+  const heading = document.createElement('h2');
+  heading.textContent = tagNames.map(t => '#' + t).join(' ');
+  wrap.appendChild(heading);
+
+  if (unknownTags.length > 0) {
+    const notice = document.createElement('p');
+    notice.className = 'tag-query-notice';
+    notice.textContent = `Unknown tag${unknownTags.length > 1 ? 's' : ''}: ${unknownTags.map(t => '#' + t).join(' ')}`;
+    wrap.appendChild(notice);
+  }
+
+  if (items.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'tag-query-empty';
+    empty.textContent = 'No items match this query.';
+    wrap.appendChild(empty);
+  } else {
+    const list = document.createElement('ul');
+    for (const item of items) {
+      const li = document.createElement('li');
+      li.textContent = queryItemTitle(item);
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+  }
+
+  rootEl.appendChild(wrap);
+}
+
+/**
  * Initialize the editor
  */
 const init = async () => {
@@ -194,6 +266,13 @@ const init = async () => {
   const contentParam = params.get('content');
   const fileParam = params.get('file');
   const itemIdParam = params.get('itemId');
+
+  // Tag query mode: show the items carrying every tag in the query
+  const queryTags = parseTagQuery((params.get('tags') || '').split(',').filter(Boolean).map(t => '#' + t).join(' '));
+  if (queryTags) {
+    await renderTagQuery(rootEl, queryTags);
+    return;
+  }
 
   let initialContent = '';
   let hasExplicitSource = false;

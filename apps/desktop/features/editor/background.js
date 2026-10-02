@@ -13,6 +13,7 @@
  */
 
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
+import { queryWindowKey } from 'peek://cmd/tag-query.js';
 
 // Feature detection
 const hasPeekAPI = typeof window.app !== 'undefined';
@@ -32,9 +33,12 @@ function openEditor(params) {
     // Use item-specific key so each item gets its own window.
     // If editing the same item again, the existing window is reused and focused.
     // Blank editors (no itemId) get a unique key so multiple can coexist.
-    const key = params?.itemId
-      ? `editor-${params.itemId}`
-      : `editor-${Date.now()}`;
+    // A tag query is keyed by its tag set, so re-running the same query focuses its window.
+    const key = params?.tags
+      ? queryWindowKey(params.tags.split(','))
+      : params?.itemId
+        ? `editor-${params.itemId}`
+        : `editor-${Date.now()}`;
 
     api.window.open(url, {
       role: 'workspace',
@@ -87,6 +91,9 @@ const extension = {
       }
       if (msg?.itemId) {
         params.itemId = msg.itemId;
+      }
+      if (Array.isArray(msg?.tags) && msg.tags.length > 0) {
+        params.tags = msg.tags.join(',');
       }
       openEditor(Object.keys(params).length > 0 ? params : undefined);
     });

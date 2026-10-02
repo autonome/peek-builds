@@ -71,6 +71,15 @@ Done when both report `fail 0`. Record the counts under **Result**. The panel ro
 `edit #todo #today` and seeing one window open, a second run focusing it) needs the Electron app and is
 not exercised here; say so under **Result**.
 
+## Result
+
+- `yarn workspace @peek/desktop build` succeeded.
+- `node --test` on `tag-query.test.js` and `cmd-state-machine.test.js`: tests 132, pass 132, fail 0.
+- A `tag-query` output type routes through `isEditorMimeType` (object data, so it skips output selection);
+  `cmd-state-machine.test.js` covers it.
+- Not exercised: the panel round trip (typing `edit #todo #today`, one window opens, a second run focuses it)
+  and the window's rendered list, which need the Electron app.
+
 ## Working rules
 
 Run one command per Bash call. Never run the Electron gate without an explicit OK.

@@ -905,6 +905,14 @@ describe('EXECUTING transitions', () => {
     assert.equal(machine.getState(), States.CLOSING);
   });
 
+  it('EXECUTING + command_complete (tag-query output) -> CLOSING, skipping output selection', () => {
+    machine.dispatch(Events.COMMAND_COMPLETE, {
+      result: { output: { data: { tags: ['todo'], itemIds: ['1', '2'], unknownTags: [] }, mimeType: 'tag-query' } },
+      name: 'edit'
+    });
+    assert.equal(machine.getState(), States.CLOSING);
+  });
+
   it('EXECUTING + command_complete (item output, array) -> OUTPUT_SELECTION', () => {
     machine.dispatch(Events.COMMAND_COMPLETE, {
       result: { output: { data: [{ id: '1' }, { id: '2' }], mimeType: 'item' } },

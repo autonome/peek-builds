@@ -11,6 +11,8 @@
  *   - On selection: panel auto-opens editor for 'item' mimeType
  */
 import api from 'peek://app/api.js';
+import { findTagByName } from '../item-suggestions.js';
+import { parseTagQuery, intersectItems } from '../tag-query.js';
 
 /**
  * Search notes by content
@@ -67,6 +69,34 @@ const commands = [
     params: [{ type: 'item', itemType: 'text' }],
 
     async execute(ctx) {
+      // `edit #todo #today`: every argument is a #tag, so open the tag query view
+      const queryTags = parseTagQuery(ctx.search || '');
+      if (queryTags) {
+        const tagsResult = await api.datastore.getTagsByFrecency();
+        const allTags = tagsResult?.success ? (tagsResult.data || []) : [];
+        const unknownTags = [];
+        const itemLists = [];
+        for (const name of queryTags) {
+          const tag = findTagByName(allTags, name);
+          if (!tag) {
+            unknownTags.push(name);
+            continue;
+          }
+          const itemsResult = await api.datastore.getItemsByTag(tag.id);
+          itemLists.push(itemsResult?.success ? (itemsResult.data || []) : []);
+        }
+        // An unknown tag matches nothing, so the AND of the query is empty
+        const items = unknownTags.length > 0 ? [] : intersectItems(itemLists);
+        return {
+          success: true,
+          output: {
+            data: { tags: queryTags, itemIds: items.map(item => item.id), unknownTags },
+            mimeType: 'tag-query',
+            title: `${items.length} items tagged ${queryTags.map(t => '#' + t).join(' ')}`
+          }
+        };
+      }
+
       // If a specific item was selected from autocomplete, use it directly
       // (avoids re-searching by text which could match the wrong item)
       if (ctx.selectedItem) {

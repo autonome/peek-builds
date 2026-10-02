@@ -285,7 +285,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     },
     isEditorMimeType: (payload) => {
       const mt = payload?.result?.output?.mimeType;
-      return mt === 'item' || mt === 'new-item';
+      // 'tag-query' carries an object, never an array, so it skips output selection
+      return mt === 'item' || mt === 'new-item' || mt === 'tag-query';
     },
     isNotExecuting: () => currentState !== States.EXECUTING,
     inputEmpty: (payload) => !payload?.value || payload.value.trim().length === 0,
