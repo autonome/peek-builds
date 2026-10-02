@@ -48,6 +48,11 @@ import {
 import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
+import {
+  getWindowNavHistory,
+  clearWindowNavHistory,
+  type NavHistoryEntry,
+} from './nav-history.js';
 import { saveSessionSnapshot } from './session.js';
 import {
   kernelWindowClosed,
@@ -369,6 +374,15 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
       const scrollX = windowData.params.scrollX as number | undefined;
       const scrollY = windowData.params.scrollY as number | undefined;
 
+      // Back/forward trail. Read from the per-window cache in nav-history.ts,
+      // never from a live webContents: a hybrid page-host's content webContents
+      // is destroyed before this tail runs (windows.ts closeHostWindow -> the
+      // kernel close effect -> electron-window-backend.ts
+      // destroyGuestsThenClose), so there is nothing left here to read it from.
+      // Spread only when a trail exists, so an entry without one carries no
+      // explicit `undefined` keys into the persisted JSON.
+      const trail = getWindowNavHistory(windowId);
+
       pushClosedWindow({
         url: currentUrl || address,
         originalUrl: currentUrl ? address : undefined,
@@ -378,10 +392,19 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
         role: role || undefined,
         scrollX: scrollX || undefined,
         scrollY: scrollY || undefined,
+        ...(trail
+          ? { navHistory: trail.navHistory, navHistoryIndex: trail.navHistoryIndex }
+          : {}),
         timestamp: Date.now(),
       });
     }
   }
+
+  // The cache is keyed by window id and ids are reused, so a trail must never
+  // outlive its window — cleared on every path through this tail, including the
+  // windows that were not reopenable and the quit-time pushes that skip (a)
+  // altogether.
+  clearWindowNavHistory(windowId);
 
   // (b) Retire the machine record, then publish the post-retire event — the
   // deterministic "the window is fully gone from the registry" signal.
@@ -490,6 +513,16 @@ export interface ClosedWindowEntry {
   // to come back unmaximized at `preMaximizeBounds`. New entries never set them.
   maximized?: boolean;
   preMaximizeBounds?: { x: number; y: number; width: number; height: number };
+  // Back/forward trail the window had at close, so undo-close brings the whole
+  // trail back instead of just the leaf URL (nav-history.ts owns the shape and
+  // the size rule). LOCAL MACHINE STATE: the `session`/`closed-window-stack`
+  // `feature_settings` row this stack persists into is not read by sync.ts, and
+  // a trail must never leave the device — it describes one machine's browsing
+  // and can carry query strings and one-time URLs. Both fields are optional
+  // because every entry persisted before they existed lacks them, and such an
+  // entry must keep reopening at its leaf URL.
+  navHistory?: NavHistoryEntry[];
+  navHistoryIndex?: number;
   timestamp: number;
 }
 

@@ -54,6 +54,14 @@ import {
   finalizeWindowClose,
 } from './main.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
+import {
+  readNavHistory,
+  refreshWindowNavHistory,
+  restoreNavHistory,
+  seedWindowNavHistory,
+  type NavHistoryReadTarget,
+  type NavHistorySnapshot,
+} from './nav-history.js';
 
 import {
   APP_DEF_WIDTH,
@@ -558,6 +566,16 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   if (entry.scrollX != null) options.scrollX = entry.scrollX;
   if (entry.scrollY != null) options.scrollY = entry.scrollY;
 
+  // Back/forward trail: hand it to the open as an open-time directive so the
+  // page-host replays it instead of landing on the leaf URL with dead Back.
+  // `entry.url` stays the URL to open — the trail's own active entry agrees with
+  // it, and an entry whose trail is missing or unusable still opens normally.
+  const trail = readNavHistory(entry);
+  if (trail) {
+    options.navHistory = trail.navHistory;
+    options.navHistoryIndex = trail.navHistoryIndex;
+  }
+
   const bgWin = getBackgroundWindow();
   if (!invokeWindowOpen || !bgWin) {
     console.error('[reopen] invokeWindowOpen or bgWindow not ready');
@@ -891,16 +909,54 @@ async function loadWithOutcome(
   url: string,
   baseWin: Electron.BaseWindow,
 ): Promise<'loaded' | 'failed' | 'timed-out'> {
-  const initialLoad = contentWC.loadURL(url).then(
+  return awaitLoadOutcome(beginPlainLoad(contentWC, url, baseWin), baseWin);
+}
+
+/**
+ * Re-read a page-host's back/forward trail into the nav-history cache.
+ *
+ * The cast is the one wart: `NavHistoryReadTarget` describes a history entry
+ * with an index signature so that unknown fields (notably Chromium's huge
+ * `pageState` blob) are explicitly allowed and dropped, and Electron's own
+ * `NavigationEntry` declares no index signature — so a real `WebContents`
+ * supplies every field the cache reads but does not structurally satisfy the
+ * parameter type. Kept in one named place rather than at each call site.
+ */
+function cacheNavHistory(hostWindowId: number, contentWC: Electron.WebContents): void {
+  refreshWindowNavHistory(hostWindowId, contentWC as unknown as NavHistoryReadTarget);
+}
+
+/**
+ * Start a plain navigation to `url` and report whether it landed. Split out of
+ * `loadWithOutcome` so a trail replay can share the same wait and the same
+ * unpainted-host fallback below.
+ */
+function beginPlainLoad(
+  contentWC: Electron.WebContents,
+  url: string,
+  baseWin: Electron.BaseWindow,
+): Promise<'loaded' | 'failed'> {
+  return contentWC.loadURL(url).then(
     (): 'loaded' => 'loaded',
     (err): 'failed' => {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] initial loadURL failed (window still opens; load-error overlay handles it):`, err);
       return 'failed';
     },
   );
+}
+
+/**
+ * Wait out an in-flight first navigation, capped at `HYBRID_OPEN_LOAD_WAIT_MS`,
+ * and make the host orderable whenever it did not land — otherwise a page that
+ * hangs or fails leaves the host unpainted and its chrome never attaches.
+ */
+async function awaitLoadOutcome(
+  begun: Promise<'loaded' | 'failed'>,
+  baseWin: Electron.BaseWindow,
+): Promise<'loaded' | 'failed' | 'timed-out'> {
   let loadWaitTimer: ReturnType<typeof setTimeout> | undefined;
   const outcome = await Promise.race([
-    initialLoad,
+    begun,
     new Promise<'timed-out'>((resolve) => {
       loadWaitTimer = setTimeout(() => resolve('timed-out'), HYBRID_OPEN_LOAD_WAIT_MS);
     }),
@@ -908,6 +964,31 @@ async function loadWithOutcome(
   if (loadWaitTimer) clearTimeout(loadWaitTimer);
   if (outcome !== 'loaded') markUnpaintedHostOrderable(baseWin);
   return outcome;
+}
+
+/**
+ * The one way a freshly opened hybrid page-host's content takes its first
+ * navigation.
+ *
+ * Without a trail this is exactly `loadWithOutcome`. With one — undo-close hands
+ * the trail it saved at close time over on the open options — the trail is
+ * replayed instead, so the window comes back with a live Back/Forward rather
+ * than just its leaf page. `navigationHistory.restore` navigates to the trail's
+ * active entry, which is the same page the plain load would have shown, so the
+ * user lands in the same place either way. A refused restore falls back to the
+ * plain load.
+ */
+async function loadHybridContent(
+  contentWC: Electron.WebContents,
+  url: string,
+  baseWin: Electron.BaseWindow,
+  trail: NavHistorySnapshot | null,
+): Promise<'loaded' | 'failed' | 'timed-out'> {
+  if (!trail) return loadWithOutcome(contentWC, url, baseWin);
+  const begun = restoreNavHistory(contentWC, trail).then(
+    (restored) => (restored ? ('loaded' as const) : beginPlainLoad(contentWC, url, baseWin)),
+  );
+  return awaitLoadOutcome(begun, baseWin);
 }
 
 /**
@@ -1177,6 +1258,13 @@ function assembleHybridPageHost(
   // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
   // session.ts, which drops it from old snapshots.)
   delete windowParams.restoreBlank;
+  // Same reasoning for the back/forward trail: it is an open-time directive the
+  // reopen path re-derives from the closed-window entry every time, and the
+  // live trail is tracked in the nav-history cache instead. Baking it into the
+  // registry params would freeze one moment's trail into every later snapshot
+  // and into the next close.
+  delete windowParams.navHistory;
+  delete windowParams.navHistoryIndex;
   // Register the page-host with the window-state machine (both window kinds
   // register — judgment call 2). The OS adapter attaches focus/blur/show/hide/
   // closed/enter-leave-fullscreen listeners + drives front/fullscreen/Esc.
@@ -1666,6 +1754,10 @@ export function wireHybridContentEvents(
         url: shownUrl(pageUrl),
         title,
       });
+      // A title arrives after the navigation that cached the trail, so the
+      // cached entry would otherwise keep the empty title the page had at
+      // commit time and the reopened window's trail would be unlabelled.
+      cacheNavHistory(hostWindowId, contentWC);
     }
   });
 
@@ -2480,6 +2572,10 @@ export function wireHybridContentEvents(
       const winInfo = getWindowInfo(hostWindowId);
       if (winInfo) winInfo.params.currentUrl = navUrl;
     }
+    // Keep the cached back/forward trail current too. The cache, not a live
+    // read, is what undo-close saves at close time — the content webContents is
+    // already destroyed by then.
+    cacheNavHistory(hostWindowId, contentWC);
     publishNavState();
     publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: shownUrl(navUrl), title: contentWC.getTitle() || '' });
 
@@ -2529,6 +2625,7 @@ export function wireHybridContentEvents(
       const winInfo = getWindowInfo(hostWindowId);
       if (winInfo) winInfo.params.currentUrl = navUrl;
     }
+    cacheNavHistory(hostWindowId, contentWC);
     publishNavState();
     publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: navUrl, title: contentWC.getTitle() || '' });
   });
@@ -3669,12 +3766,21 @@ export function registerWindowHandlers(): void {
         // content webContents stays un-navigated (the window shows its theme
         // background fill) until the first activation releases the load via
         // claimHybridDeferredLoad in onHybridHostFocus above.
+        // Back/forward trail carried by the open (undo-close). Seeded into the
+        // per-window cache BEFORE the load: the content reports its own entries
+        // only once it has navigated, and a window closed before that happens
+        // must still come back with the trail it was reopened with rather than
+        // losing it. `seedWindowNavHistory` treats a null trail as "clear", so
+        // an ordinary open needs no branch here.
+        const openTrail = readNavHistory(options);
+        seedWindowNavHistory(baseWin.id, openTrail);
+
         if (deferContentLoad) {
           // no-op — deferred to first activation
         } else if (options.skipTracking) {
           // Not awaited, but a restored page that hangs or fails still gets the
           // same outcome: the host is made orderable so the chrome attaches.
-          void loadWithOutcome(view.webContents, url, baseWin);
+          void loadHybridContent(view.webContents, url, baseWin, openTrail);
         } else {
           // A rejected loadURL (DNS failure, connection refused, etc.) must
           // NOT fail the open() call — the window is already constructed and
@@ -3697,7 +3803,7 @@ export function registerWindowHandlers(): void {
           // frame follows and orderability waits for it, see
           // session.ts installFirstFrameOrderableProducer), or 'failed' / 'timed-out'
           // (no frame is coming soon, so the host is made orderable without one).
-          await loadWithOutcome(view.webContents, url, baseWin);
+          await loadHybridContent(view.webContents, url, baseWin, openTrail);
         }
 
         // Explicit `spaceMode` option, same shape and meaning as the plain
