@@ -5,7 +5,7 @@
  * with optional vim mode support and folditall-style folding.
  */
 
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, Facet } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -302,17 +302,64 @@ function findFoldedRangeAt(state, pos) {
   return result;
 }
 
+/**
+ * Block-level fold provider. A surface whose document is a sequence of blocks
+ * (the tag-query outer surface) supplies (state, pos) => {from, to} | null, the
+ * range hidden when the block containing pos is folded, with an `all(state)`
+ * property returning every block's fold range. When present, the vim fold
+ * commands use it instead of the per-line folditall heuristics and the
+ * language's own section folds.
+ */
+export const blockFoldAt = Facet.define({ combine: (values) => values[0] });
+
+/** undefined: no block provider (line folds apply); null: provider, no fold here. */
+function blockFoldRange(view) {
+  const provider = view.state.facet(blockFoldAt);
+  if (!provider) return undefined;
+  return provider(view.state, view.state.selection.main.head) || null;
+}
+
+function isRangeFolded(state, range) {
+  let folded = false;
+  foldedRanges(state).between(range.from, range.to, (from) => {
+    if (from === range.from) folded = true;
+  });
+  return folded;
+}
+
 // Define vim fold commands using folditall-style region finding
 Vim.defineAction('foldAll', (cm) => {
-  foldAll(cm.cm6);
+  const view = cm.cm6;
+  const provider = view.state.facet(blockFoldAt);
+  if (provider) {
+    // The language's own section folds must not act on a block surface.
+    const effects = provider.all(view.state).map((r) => foldEffect.of(r));
+    if (effects.length) view.dispatch({ effects });
+    return;
+  }
+  foldAll(view);
 });
 
 Vim.defineAction('unfoldAll', (cm) => {
-  unfoldAll(cm.cm6);
+  const view = cm.cm6;
+  if (view.state.facet(blockFoldAt)) {
+    const effects = [];
+    foldedRanges(view.state).between(0, view.state.doc.length, (from, to) => {
+      effects.push(unfoldEffect.of({ from, to }));
+    });
+    if (effects.length) view.dispatch({ effects });
+    return;
+  }
+  unfoldAll(view);
 });
 
 Vim.defineAction('foldCode', (cm) => {
   const view = cm.cm6;
+  const block = blockFoldRange(view);
+  if (block !== undefined) {
+    if (block) view.dispatch({ effects: foldEffect.of(block) });
+    return;
+  }
   const pos = view.state.selection.main.head;
   const lineNum = view.state.doc.lineAt(pos).number;
 
@@ -332,6 +379,11 @@ Vim.defineAction('foldCode', (cm) => {
 
 Vim.defineAction('unfoldCode', (cm) => {
   const view = cm.cm6;
+  const block = blockFoldRange(view);
+  if (block !== undefined) {
+    if (block && isRangeFolded(view.state, block)) view.dispatch({ effects: unfoldEffect.of(block) });
+    return;
+  }
   const pos = view.state.selection.main.head;
   const line = view.state.doc.lineAt(pos);
   const lineNum = line.number;
@@ -379,6 +431,13 @@ Vim.defineAction('unfoldCode', (cm) => {
 
 Vim.defineAction('toggleFold', (cm) => {
   const view = cm.cm6;
+  const block = blockFoldRange(view);
+  if (block !== undefined) {
+    if (block) {
+      view.dispatch({ effects: (isRangeFolded(view.state, block) ? unfoldEffect : foldEffect).of(block) });
+    }
+    return;
+  }
   const pos = view.state.selection.main.head;
   const lineNum = view.state.doc.lineAt(pos).number;
 
@@ -692,7 +751,7 @@ const folditallFoldService = foldService.of((state, lineStart, lineEnd) => {
  * @param {Function} options.onFoldChange - Callback when fold state changes
  * @returns {EditorView} - CodeMirror EditorView instance
  */
-export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange, onScroll }) {
+export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, lineFolds = true, extraExtensions = [], onChange, onSelectionChange, onVimModeChange, onFoldChange, onScroll }) {
   // Track last known vim mode to detect changes
   let lastVimMode = 'normal';
 
@@ -720,7 +779,9 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
 
     // Folding support (required for vim fold commands)
     codeFolding(),
-    folditallFoldService,
+    // lineFolds=false: the caller owns folding (block-level), no per-line fold service.
+    lineFolds ? folditallFoldService : [],
+    ...extraExtensions,
 
     // Clickable links (Cmd+click to open URLs)
     clickableLinks(),
@@ -738,7 +799,7 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
     vimCompartment.of(vimMode ? vim() : []),
 
     // Line numbers and fold gutter (toggle via :set number / :set nonumber)
-    lineNumberCompartment.of(showLineNumbers ? [lineNumbers(), foldGutter()] : []),
+    lineNumberCompartment.of(showLineNumbers ? [lineNumbers(), lineFolds ? foldGutter() : []] : []),
 
     // Update listener for content, selection, and vim mode changes
     EditorView.updateListener.of(update => {

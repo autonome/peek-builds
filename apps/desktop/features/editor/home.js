@@ -209,10 +209,8 @@ async function renderTagQuery(rootEl, tagNames, surface = 'dom') {
   }
 
   if (surface === 'cm') {
-    const pending = document.createElement('p');
-    pending.className = 'tag-query-notice';
-    pending.textContent = 'The CodeMirror surface is not built yet.';
-    wrap.appendChild(pending);
+    const { mountCmSurface } = await import('./query-surface-cm.js');
+    window.__querySurface = await mountCmSurface(wrap, items);
     return;
   }
 
@@ -221,22 +219,23 @@ async function renderTagQuery(rootEl, tagNames, surface = 'dom') {
 }
 
 /**
- * Measurement hook (URL param syntheticBlocks=N): mount the DOM surface over generated items (no datastore writes)
+ * Measurement hook (URL param syntheticBlocks=N): mount the chosen surface over generated items (no datastore writes)
  * and record timings. The result is logged to main.log via perfLog and kept on
  * window.__syntheticBlocksResult for a live probe.
  * @param {HTMLElement} rootEl
  * @param {number} count
+ * @param {'dom'|'cm'} surfaceKind
  */
-async function runSyntheticBlocks(rootEl, count) {
+async function runSyntheticBlocks(rootEl, count, surfaceKind = 'dom') {
   rootEl.textContent = '';
   const wrap = document.createElement('div');
   wrap.className = 'tag-query-list';
   rootEl.appendChild(wrap);
-  const { measureSyntheticBlocks } = await import('./query-surface-dom.js');
-  const { surface, ...result } = measureSyntheticBlocks(wrap, count);
+  const { measureSyntheticBlocks } = await import(surfaceKind === 'cm' ? './query-surface-cm.js' : './query-surface-dom.js');
+  const { surface, ...result } = await measureSyntheticBlocks(wrap, count);
   window.__syntheticSurface = surface;
   window.__syntheticBlocksResult = result;
-  const line = `[query-surface-dom:measure] ${JSON.stringify(result)}`;
+  const line = `[query-surface-${surfaceKind}:measure] ${JSON.stringify(result)}`;
   console.log(line);
   try { api?.perfLog?.(line); } catch { /* instrumentation only */ }
 }
@@ -289,7 +288,7 @@ const init = async () => {
   // Measurement hook: generated items, no datastore reads or writes.
   const syntheticBlocks = parseInt(params.get('syntheticBlocks') || '', 10);
   if (Number.isFinite(syntheticBlocks) && syntheticBlocks > 0) {
-    await runSyntheticBlocks(rootEl, syntheticBlocks);
+    await runSyntheticBlocks(rootEl, syntheticBlocks, surfaceParam);
     return;
   }
   const queryTags = parseTagQuery((params.get('tags') || '').split(',').filter(Boolean).map(t => '#' + t).join(' '));

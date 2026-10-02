@@ -129,6 +129,15 @@ export function mountDomSurface(root, items) {
   };
 }
 
+/** Generated items shared by every surface's measurement harness. */
+export function syntheticItems(count) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `synthetic-${i}`,
+    title: `Synthetic item ${i}`,
+    content: `# Synthetic item ${i}\n\n` + Array.from({ length: 6 }, (_, l) => `Line ${l} of body text for item ${i}, long enough to wrap a little in a narrow window.`).join('\n'),
+  }));
+}
+
 /**
  * Dev-only measurement over `count` generated items (no datastore access).
  * Times initial mount, foldAll, unfoldAll and moving selection across 100 blocks.
@@ -137,11 +146,7 @@ export function mountDomSurface(root, items) {
  * @returns {{count:number, mountMs:number, foldAllMs:number, unfoldAllMs:number, select100Ms:number}}
  */
 export function measureSyntheticBlocks(root, count) {
-  const items = Array.from({ length: count }, (_, i) => ({
-    id: `synthetic-${i}`,
-    title: `Synthetic item ${i}`,
-    content: `# Synthetic item ${i}\n\n` + Array.from({ length: 6 }, (_, l) => `Line ${l} of body text for item ${i}, long enough to wrap a little in a narrow window.`).join('\n'),
-  }));
+  const items = syntheticItems(count);
   const timed = (fn) => {
     const t0 = performance.now();
     fn();
