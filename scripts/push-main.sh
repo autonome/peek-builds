@@ -27,9 +27,12 @@
 # their own Playwright project. This script is where they run instead: a push is
 # deliberate, human-initiated, and rare.
 #
-# It runs only with --yes (the default preview stays instant) and only when the
-# push range touches apps/desktop/. `--no-disruptive` skips it — for pushing from
-# a machine someone is actively using, or when the display is mid-presentation.
+# It runs only with --yes (the default preview stays instant), only on macOS, and
+# only when the push range touches apps/desktop/. Off macOS it is skipped with a
+# message, because Linux under Xvfb cannot produce native fullscreen and the
+# suite fails there regardless of the code. `--no-disruptive` skips it on macOS —
+# for pushing from a machine someone is actively using, or when the display is
+# mid-presentation.
 #
 # It lives HERE rather than in `.githooks/pre-push` deliberately: a push through
 # this script is human-initiated and rare, so gating it at the one chokepoint
@@ -113,6 +116,13 @@ fi
 # The disruptive suite (see header). Gated on the push actually touching the
 # desktop app: these specs only cover apps/desktop, and a docs- or server-only
 # push has no reason to hijack the display for a couple of minutes.
+if [ "$DISRUPTIVE" = 1 ] && [ "$(uname -s)" != "Darwin" ]; then
+  # The specs assert real native macOS fullscreen; Linux under Xvfb cannot
+  # produce it, so the suite fails there whatever the code does.
+  echo "" >&2
+  echo "Skipping the desktop-disruptive suite (it needs native macOS fullscreen; this is $(uname -s))." >&2
+  DISRUPTIVE=0
+fi
 if [ "$DISRUPTIVE" = 1 ]; then
   TOUCHES_DESKTOP=$(git diff --name-only "$TANGLED_REV" "$MAIN_REV" 2>/dev/null | grep -c '^apps/desktop/' || true)
   if [ "$TOUCHES_DESKTOP" -gt 0 ]; then
