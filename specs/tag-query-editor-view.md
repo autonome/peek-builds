@@ -4,10 +4,12 @@ touches: [apps/desktop/features/editor/editor-layout.js, apps/desktop/features/e
 depends-on: []
 ---
 
-**Status — design spec, no implementation.** Disabled until the open questions
-at the end are answered; nothing here is built. `touches` lists the files an
-implementation would most likely change — the final set depends on the
-outer-surface decision (see Open questions).
+**Status — design spec, no implementation.** This file is the design and stays
+disabled; nothing here is built. The design questions are settled in Decisions,
+and the work is sliced into the enabled implementation specs listed under
+"Implementation slices". `touches` lists the files an implementation would most
+likely change — the final set depends on the outer-surface trial (see
+Decisions, "Outer surface").
 
 Part of Peek item `item_1790655511612_0mmmdmy59` ("tag query editor view", tags
 `peek`, `peek:todo`, `desktop`). Read it with the peek MCP `get_item` if that
@@ -82,16 +84,17 @@ query editor closes that gap: the group becomes one editable document.
 - The panel routes the query output to the editor window, mirroring the
   `publishEditorOpen` seam in `renderer/cmd/panel.js` (today it branches on
   `mimeType === 'new-item'` → `editor:add`, single item → `editor:open`). The
-  exact new output shape / topic is Open question 2 (routing seam).
+  query output rides the existing `editor:open` topic with a `tags` field
+  (Decisions, "Routing").
 - The editor opens with the query as its source, the way `features/editor/home.js`
   `init()` today reads `content` / `file` / `itemId` URL params — a query param
   (e.g. `tags=todo,today`) is the natural extension, and `openEditor()` keys
-  the window per query (e.g. `editor-query-<sorted tags>`) so re-running the
+  the window per query (`editor-query-<sorted tags>`) so re-running the
   same query focuses the existing window instead of stacking windows.
 - Default order: `updatedAt` descending (most recently edited first). The
   source item's ordering line is truncated after "with a visua…" — the intended
-  visual cue (date separators? age badges like `search-result-card.js`
-  `formatAge`?) is a sort-option dropdown in the toolbar plus a manual order; see Open question 1.
+  visual cue is unknown; the ordering controls are a sort-option dropdown in the
+  toolbar plus a manual order (Decisions, "Manual order").
 
 ### The document
 
@@ -120,7 +123,8 @@ query editor closes that gap: the group becomes one editable document.
   the shared affordance module, not a copy.
 - Toggling a binding that removes an item from the query (e.g. checking
   `todo→done` in a `#todo` view) SHOULD animate the item leaving the document
-  rather than silently vanishing; open-editor cases are Open question 5.
+  rather than silently vanishing; open-editor cases are in Decisions ("Live
+  updates while editing").
 
 ### Top toolbar
 
@@ -205,7 +209,7 @@ paraphrases:
 - search tagged items, render each appropriately for the type (note, url,
   image)
 - default order: date edited, descending, with a visua… (truncated in the
-  source item; see Open question 1)
+  source item; the visual cue is unknown)
 - tag binding stuff works: a left col that renders/executes the bindings, e.g.
   checkbox for `#todo`/`#done`, just like in cards
 - rendered view renders markdown content in items
@@ -258,8 +262,8 @@ What exists today and MUST be reused rather than copied:
   panes and chrome while the center content area renders the block document
   instead of (or as a mode of) the single CodeMirror document. Whether the
   outer surface is itself CodeMirror with block decorations, plain DOM blocks,
-  or an adopted library is the central open decision (Open question 3) and is
-  exactly what the library review must answer.
+  or an adopted library is settled by the two trials in Decisions ("Outer
+  surface"); the library review ruled libraries out on paper.
 - **The single-document editor MUST NOT regress.** The existing editor test
   surface (`apps/desktop/tests/editor/editor-layout.spec.ts`,
   `editor-folding.spec.ts`, the Playwright `editor` project) stays green and
@@ -283,7 +287,7 @@ requirements: vim-mode compatibility or embeddability of CodeMirror instances
 per block, block-level fold/collapse APIs, j/k selection hooks, markdown
 rendering per block, license/size/maintenance, and theming against the
 existing CSS variables the editor and `StatusLine` use (`--base00`…). Outcome
-recorded against Open question 3.
+recorded in "Library review findings" and Decisions ("Outer surface").
 
 ## Library review findings
 
@@ -344,13 +348,10 @@ What remains unverified:
 - Whether the editor tests for the single-document path stay untouched when the
   center area is swapped.
 
-Manual order (Open question 1): the filed notes about a lists feature could not
-be read, because the peek tools were not available in this run, so nothing
-here is drawn from them. From the design alone: an order stored on the query
-(its sorted tag set) would be lost when the tags change, while an order stored
-as an ordered membership of a saved list survives; whichever the lists feature
-chooses should be the one used here, so that question should be answered after
-reading those notes and before the routing decision.
+Manual order: an order stored on the query (its sorted tag set) is lost when
+the tags change, while an order stored as an ordered membership of a saved list
+survives. The lists feature is undesigned, so the order is stored per query for
+now (Decisions, "Manual order").
 
 ## Non-goals
 
@@ -361,7 +362,7 @@ reading those notes and before the routing decision.
   block-level only).
 - Full vim parity on the outer surface beyond navigation + the folding subset
   (what else the outer surface needs — searching, marks, `:` commands — is part
-  of Open question 3's criteria).
+  of the outer-surface comparison criteria in Decisions).
 
 ## What is unverified
 
@@ -379,11 +380,14 @@ reading those notes and before the routing decision.
   editor home tile's window behaves identically.
 - The panel-routing description (`publishEditorOpen` branches, output-selection
   guards) reflects `renderer/cmd/panel.js` / `state-machine.js` as read for
-  this spec; the exact new output shape (question 2) will need those guards
-  re-read at implementation time.
+  this spec; the guards need re-reading when the query output is wired in.
 - Scale is unmeasured: no data on how many items a typical `#tag` query
-  matches or how a single-document block view behaves at that size. The
-  visibility-gate mechanism is the existing lazy-render answer if needed.
+  matches or how a block view behaves at that size. Measuring at about 1000
+  blocks is a task inside each surface trial, not an open question.
+- Which of the two outer surfaces wins is unknown until the trials are
+  compared; every slice after the comparison assumes the pick.
+- Where a per-query manual order is persisted (which datastore or settings
+  call) is not chosen; the manual-order slice picks it from what exists.
 - The library review was desk-only (registry metadata and general knowledge of
   each design); see "Library review findings" for what remains unchecked.
 
@@ -411,28 +415,51 @@ reading those notes and before the routing decision.
 - **Liveness (10):** the document updates live as items and tags change.
 - **Mobile (12):** out of scope.
 
-## Open questions
+- **Manual order:** stored per query, keyed by its sorted tag set. This is the
+  simplest option, and the lists feature is undesigned, so a saved-list model is
+  a later change. Consequence: renaming or changing a query's tags starts a
+  fresh order.
+- **Routing:** a `tags` field on the existing `editor:open` topic, with window
+  key `editor-query-<sorted tags>`. It is the smallest change to the
+  panel/background seam and is cheap to replace later.
+- **Outer surface:** both plain DOM blocks and CodeMirror with block decorations
+  are built as trials, compared, and one is picked. The library review ruled
+  out block-editor libraries on paper; its DOM-blocks recommendation is a
+  hypothesis the trials test, not a decision. Comparison criteria:
+  - `j`/`k` and block folding.
+  - One vim command area taken over by the inline editor.
+  - Search, `:` commands and marks.
+  - Behavior at about 1000 blocks, measured (the DOM-block trial starts with
+    `content-visibility: auto`).
+  - The single-document editor tests stay unaffected.
+- **Scale:** measuring at about 1000 blocks is a task inside each trial. The
+  virtualizer options in "Library review findings" are reached for only if the
+  measurement shows a stall.
+- **Live updates while editing:** when an open block's item is retagged out of
+  the query or deleted, the block freezes visually and fades out. Edits made
+  elsewhere to an open item are not merged in v1: the open inline editor keeps
+  its text until it is closed.
+- **Add item:** a control in the query view creates a new text item pre-tagged
+  with all of the query's tags and opens it in the inline editor. This lets a
+  group be extended without leaving the document.
 
-1. **Sort and manual order:** the view needs several sort orders, chosen from a
-   dropdown in the toolbar (date edited descending is the default), and a
-   manual, curated order. Where does a manual order live (per query, per saved
-   list), and how does it relate to the "lists" feature filed as issues? This
-   is an open design problem; the routing decision (question 2) may inform it.
-2. **Routing seam:** new output type routed by `publishEditorOpen`, a `tags`
-   field on `editor:open`, or a new topic? Window key per query
-   (`editor-query-<tags>`)? Decided by reviewing the tradeoffs at
-   implementation time.
-3. **Outer surface representation:** CodeMirror with block decorations, DOM
-   blocks with an embedded editor each, or a block-editor library. Needs the
-   library review against the requirements, and probably a few trial
-   implementations. Narrowed by "Library review findings": block-editor
-   libraries are ruled out on paper; still open is DOM blocks versus CodeMirror
-   with block decorations, which needs a trial.
-4. **Scale and virtualization:** review virtualization options first, since
-   the answer may constrain the surface choice in question 3. Narrowed by
-   "Library review findings": the repo has no virtualizer, and DOM blocks with
-   `content-visibility: auto` is the starting point; still open is a
-   measurement at about a thousand blocks.
-5. **Live updates while editing:** what happens to an open inline editor when
-   its item is edited elsewhere, retagged out of the query, or deleted? Is
-   there an add-item flow that pre-tags a new note with the query's tags?
+## Implementation slices
+
+Each slice is its own enabled spec under `specs/`, landable on its own with its
+own verify, in this dependency order:
+
+1. `tag-query-open` — `edit #tags` command, query resolution, `editor:open`
+   `tags` field and window key.
+2. `editor-top-toolbar` — top toolbar in `EditorLayout` with the sort dropdown.
+3. `tag-query-dom-surface-trial` — plain DOM block outer surface, with
+   measurements.
+4. `tag-query-codemirror-surface-trial` — CodeMirror block-decoration outer
+   surface, with measurements.
+5. `tag-query-surface-pick` — comparison against the criteria and the pick.
+6. `tag-query-block-rows` — affordance left column, per-type rendering.
+7. `tag-query-block-nav-folding` — `j`/`k` and block folding.
+8. `tag-query-inline-editor` — inline editor, single vim command area takeover,
+   `<Esc>` cascade.
+9. `tag-query-live-updates` — live document with freeze-and-fade.
+10. `tag-query-add-item` — add a new item pre-tagged with the query's tags.
+11. `tag-query-manual-order` — manual order per query.
