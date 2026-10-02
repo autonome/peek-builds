@@ -1106,7 +1106,9 @@ body {
   border: 0;
   border-radius: 0;
   outline: none;
-  background: transparent;
+  /* Same surface and text colour as the regular editor (peekTheme in codemirror.js). */
+  background: var(--base01);
+  color: var(--base05);
   font: inherit;
   line-height: inherit;
 }
