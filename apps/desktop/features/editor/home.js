@@ -12,8 +12,9 @@
 
 import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
-import { parseTagQuery } from 'peek://cmd/tag-query.js';
-import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
+import { parseTagQuery, queryKey } from 'peek://cmd/tag-query.js';
+import { SORT_OPTIONS, DEFAULT_SORT_OPTION, MANUAL_SORT_OPTION, sortItems } from './sort-options.js';
+import { loadOrder, saveOrder, ensureOrder, moveBlock } from './manual-order.js';
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys } from './query-keys.js';
@@ -256,10 +257,14 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   let surface = null;
   let detachKeys = null;
   let inline = null;
+  // Manual order: stored ids per query, read here and written on every move. It is
+  // used only while the sort option is manual and kept when another option is chosen.
+  const orderKey = queryKey(tagNames);
+  let manualOrder = loadOrder(orderKey, localStorage);
 
   /** Sorted items with the blocks that are leaving put back where they were. */
   const displayList = () => {
-    const list = sortItems(items, sortOption);
+    const list = sortItems(items, sortOption, manualOrder);
     const gone = [...leaving.values()].sort((a, b) => a.index - b.index);
     for (const entry of gone) list.splice(Math.min(entry.index, list.length), 0, entry.item);
     return list;
@@ -330,7 +335,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         return editor.open(index);
       },
     };
-    detachKeys = attachQueryKeys(mounted, document, guarded, { add: () => addItem() });
+    detachKeys = attachQueryKeys(mounted, document, guarded, { add: () => addItem(), move: moveSelected });
 
     if (keep) {
       let at = display.findIndex(item => item.id === keep.selectedId);
@@ -353,6 +358,28 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     setOutline(mounted);
     updateNotices();
     if (awaitingAdd && display.some(item => item.id === awaitingAdd.id)) awaitingAdd.done();
+  };
+
+  /**
+   * Move the selected block one place up or down in manual order and store the
+   * new order. Only in manual order, and not for a block that is leaving. The
+   * stored list is first reconciled with the items now in the query, which also
+   * drops ids that no longer match anything. Selection and folds follow the
+   * block by id through the rebuild.
+   */
+  const moveSelected = (delta) => {
+    if (sortOption !== MANUAL_SORT_OPTION || !surface || inline?.isOpen()) return;
+    const selected = shown[surface.selectedIndex()];
+    if (!selected || leaving.has(selected.id) || !items.some(item => item.id === selected.id)) return;
+    const current = sortItems(items, MANUAL_SORT_OPTION, manualOrder).map(item => item.id);
+    const reconciled = ensureOrder(current, manualOrder);
+    const moved = moveBlock(reconciled, selected.id, delta);
+    if (moved.join('\n') === reconciled.join('\n')) return;
+    manualOrder = moved;
+    saveOrder(orderKey, moved, localStorage);
+    mountSorted();
+    lastSignature = signatureOf({ items, unknownTags, itemTags });
+    surface.revealSelected();
   };
 
   /** Resolve true once the live update has shown a block for `id`, false on timeout. */
@@ -403,7 +430,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
 
   /** Changes whenever a block would render differently (items, tags, order, rules). */
   const signatureOf = (result) => JSON.stringify([
-    sortItems(result.items, sortOption).map(item => blockSignature(item, result.itemTags.get(item.id))),
+    sortItems(result.items, sortOption, manualOrder).map(item => blockSignature(item, result.itemTags.get(item.id))),
     result.unknownTags,
     rulesCache.getRules(),
   ]);

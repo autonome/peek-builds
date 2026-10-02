@@ -19,8 +19,8 @@ const items = [
 const ids = (list) => list.map(i => i.id);
 
 describe('SORT_OPTIONS', () => {
-  it('lists the five options with labels, default first', () => {
-    assert.deepEqual(SORT_OPTIONS.map(o => o.id), ['updated-desc', 'updated-asc', 'created-desc', 'created-asc', 'title-asc']);
+  it('lists the six options with labels, default first, manual last', () => {
+    assert.deepEqual(SORT_OPTIONS.map(o => o.id), ['updated-desc', 'updated-asc', 'created-desc', 'created-asc', 'title-asc', 'manual']);
     assert.ok(SORT_OPTIONS.every(o => typeof o.label === 'string' && o.label));
     assert.equal(DEFAULT_SORT_OPTION, 'updated-desc');
   });
@@ -62,6 +62,12 @@ describe('sortItems', () => {
   it('unknown id falls back to updated-desc', () => {
     assert.deepEqual(ids(sortItems(items, 'nope')), ids(sortItems(items, 'updated-desc')));
     assert.deepEqual(ids(sortItems(items, undefined)), ids(sortItems(items, 'updated-desc')));
+  });
+
+  it('manual follows the stored order, with unlisted items first by newest edit', () => {
+    assert.deepEqual(ids(sortItems(items, 'manual', ['c', 'a', 'gone'])), ['b', 'c', 'a']);
+    assert.deepEqual(ids(sortItems(items, 'manual', [])), ['b', 'c', 'a']);
+    assert.deepEqual(ids(sortItems(items, 'manual')), ['b', 'c', 'a']);
   });
 
   it('returns a copy and does not mutate the input', () => {

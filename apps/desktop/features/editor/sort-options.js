@@ -4,6 +4,7 @@
  */
 
 import { blockTitle } from './query-surface-dom.js';
+import { applyManualOrder } from './manual-order.js';
 
 export const DEFAULT_SORT_OPTION = 'updated-desc';
 
@@ -14,7 +15,11 @@ export const SORT_OPTIONS = [
   { id: 'created-desc', label: 'Date created, newest first' },
   { id: 'created-asc', label: 'Date created, oldest first' },
   { id: 'title-asc', label: 'Title, A to Z' },
+  { id: 'manual', label: 'Manual order' },
 ];
+
+/** The option whose order is stored per query rather than computed from the items. */
+export const MANUAL_SORT_OPTION = 'manual';
 
 /** Timestamp in ms; missing or unparseable values count as 0 (oldest). */
 function time(value) {
@@ -36,8 +41,13 @@ const COMPARATORS = {
  * like the default.
  * @param {Array<object>} items
  * @param {string} optionId
+ * @param {string[]} [orderedIds] stored order, used by the `manual` option; items
+ *   not in it come first, newest edited first
  */
-export function sortItems(items, optionId) {
+export function sortItems(items, optionId, orderedIds = []) {
+  if (optionId === MANUAL_SORT_OPTION) {
+    return applyManualOrder(items, orderedIds, (fresh) => sortItems(fresh, DEFAULT_SORT_OPTION));
+  }
   const compare = COMPARATORS[optionId] || COMPARATORS[DEFAULT_SORT_OPTION];
   return items
     .map((item, index) => ({ item, index }))

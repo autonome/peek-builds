@@ -20,6 +20,10 @@
 /** The key that adds a new item to the query. */
 export const ADD_KEY = 'o';
 
+/** Keys that move the selected block down and up in manual order. */
+export const MOVE_DOWN_KEY = 'J';
+export const MOVE_UP_KEY = 'K';
+
 const FOLD_KEYS =new Set(['c', 'o', 'a', 'M', 'R']);
 
 /**
@@ -98,7 +102,9 @@ function isEditable(target) {
  * mountDomSurface). Ignored while a text field or inline editor has the keys.
  * @param {object} [inline] the inline editor controller: `isOpen()` and
  *   `open(index)`. <Enter> opens the selected block in it.
- * @param {{add?: () => void}} [actions] `add` runs on `o` (add a new item, as
+ * @param {{add?: () => void, move?: (delta: number) => void}} [actions] `move`
+ *   runs on Shift+j / Shift+k with +1 / -1 (the caller ignores it outside manual
+ *   order). `add` runs on `o` (add a new item, as
  *   vim's `o` opens a new line). Plain `o` is free here: the outer surface has no
  *   vim instance, and Cmd/Ctrl+O (open file) is excluded by the modifier check.
  * @returns {() => void} detach function
@@ -125,6 +131,15 @@ export function attachQueryKeys(surface, doc = document, inline = null, actions 
       pendingZ = false;
       e.preventDefault();
       actions.add();
+      return;
+    }
+
+    // Move the selected block: Shift+j down, Shift+k up. Plain j/k select, and no
+    // other binding in the view uses the capitals.
+    if (actions.move && (e.key === MOVE_DOWN_KEY || e.key === MOVE_UP_KEY)) {
+      pendingZ = false;
+      e.preventDefault();
+      actions.move(e.key === MOVE_DOWN_KEY ? 1 : -1);
       return;
     }
 

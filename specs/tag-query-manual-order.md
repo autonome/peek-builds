@@ -14,8 +14,9 @@ Part of Peek item `item_1790655511612_0mmmdmy59`; design in `tag-query-editor-vi
 
 New `features/editor/manual-order.js`, pure functions:
 
-- `applyManualOrder(items, orderedIds)`: items listed in `orderedIds` first in that order, the rest
-  after them in `updated-desc` order; ids that no longer exist are ignored.
+- `applyManualOrder(items, orderedIds, sortFresh)`: items not listed in `orderedIds` first (ordered by
+  `sortFresh`, `updated-desc` from `sortItems`), then the listed items in that order; ids that no longer
+  exist are ignored.
 - `moveBlock(orderedIds, id, delta)`: new id list with one block moved up or down by `delta`.
 - `ensureOrder(currentIds, orderedIds)`: the stored list reconciled with the current items.
 
@@ -53,3 +54,33 @@ app and are not exercised here; say so under **Result**.
 ## Working rules
 
 Run one command per Bash call. Never run the Electron gate without an explicit OK.
+
+## Result
+
+Built.
+
+- **Storage:** `localStorage` on the editor's origin under `editor:query-order:<queryKey>` (JSON array of
+  item ids). It is the same mechanism `editor-layout.js` uses for `editor:layout-prefs` and the per-document
+  highlights; no table and no settings schema entry. `manual-order.js` `loadOrder` / `saveOrder` take the
+  Storage, so they are unit-tested with an in-memory one.
+- **Keys:** `Shift+j` moves the selected block down, `Shift+k` up (`query-keys.js` `MOVE_DOWN_KEY` /
+  `MOVE_UP_KEY`, handled in `attachQueryKeys` through `actions.move`). The capitals collide with nothing in
+  the view: plain `j`/`k` select, `o` adds, `z` prefixes folds, Enter opens the editor, and `Alt` is ignored
+  by `attachQueryKeys`. `home.js` `moveSelected` ignores them unless the sort option is `manual`, while an
+  inline editor is open, or for a block that is leaving.
+- **Where new items go:** first. Items missing from the stored list (new ones, including from add-item)
+  come first, newest edited first, above the stored order. They are not written to storage until the next
+  move, which first reconciles the stored list with the current items (`ensureOrder`) and so also drops
+  stored ids that match nothing.
+- **Sort option is window state:** a reopened window starts on the default sort; choosing `manual` shows the
+  stored order again. Switching to another option and back leaves the stored list untouched.
+- Live updates, folds, selection and the held inline editor go through the existing `mountSorted` path;
+  `signatureOf` and `displayList` use the stored order so a result that only reorders is detected.
+
+Verified: build, all `tests/unit/*.test.js` (946 pass, 0 fail), `editor-layout.spec.ts` and
+`editor-folding.spec.ts` (91 pass, `--project=editor`), and a live headless run on profile `agent-tqds`:
+real `Shift+J` / `Shift+K` keys, no effect outside manual, selection and fold follow the moved block, order
+survives closing and reopening the window and a full app relaunch, a new item added with `o` lands first,
+a deleted item is pruned from storage on the next move, switching sort away and back keeps the order, and a
+second query has its own order. Not verified: sorting while an inline editor is open with a result held back
+(covered only by reading the code path), and a real-OS keyboard layout where `Shift+j` differs.
