@@ -924,21 +924,27 @@ body {
   outline: none;
 }
 
+/* Blocks read as one continuous document: no card, a thin rule between items, and a
+   left bar that marks the selected block. */
 .qs-block {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  background: var(--base01);
-  border: 1px solid var(--base02);
-  border-left: 3px solid var(--base03);
-  border-radius: 4px;
+  margin: 0;
+  padding: 3px 8px;
+  background: transparent;
+  border-bottom: 1px solid var(--base01);
+  border-left: 3px solid transparent;
   /* Skip layout and paint of off-screen blocks; keep them in the DOM. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 140px;
+  contain-intrinsic-size: auto 80px;
 }
 
 .qs-block.selected {
   border-left-color: var(--base0D);
-  background: var(--base02);
+  background: var(--base01);
+}
+
+/* Edit state is a ring that takes no space, so the text does not move. */
+.qs-block.editing {
+  box-shadow: inset 0 0 0 1px var(--base0D);
 }
 
 .qs-block-title {
@@ -967,11 +973,37 @@ body {
 }
 
 .qs-block.folded {
-  contain-intrinsic-size: auto 36px;
+  contain-intrinsic-size: auto 28px;
 }
 
 .qs-block.folded .qs-block-body {
   display: none;
+}
+
+/* A text block has no title row: its title element stays for the outline but is not
+   shown, and its body is the content itself. Folded, it shows only the first row. */
+.qs-block-title.qs-title-hidden {
+  display: none;
+}
+
+.qs-block-body.qs-body-text {
+  margin-top: 0;
+  min-height: 1.4em;
+}
+
+.qs-block.folded .qs-block-body.qs-body-text {
+  display: block;
+}
+
+.qs-block.folded .qs-body-text .qs-md > :not(:first-child) {
+  display: none;
+}
+
+.qs-block.folded .qs-body-text .qs-md > :first-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
 }
 
 /* Block rows: shared affordance column on the left, title and body to its right. */
@@ -1002,13 +1034,17 @@ body {
   margin-top: 0;
 }
 
+.qs-md > :last-child {
+  margin-bottom: 0;
+}
+
 .qs-md h1, .qs-md h2, .qs-md h3, .qs-md h4, .qs-md h5, .qs-md h6 {
-  margin: 0.6em 0 0.3em;
+  margin: 0.4em 0 0.2em;
   color: var(--base06);
 }
 
 .qs-md p, .qs-md ul, .qs-md blockquote, .qs-md pre {
-  margin: 0.4em 0;
+  margin: 0.25em 0;
 }
 
 .qs-md pre {
@@ -1052,20 +1088,45 @@ body {
   display: none;
 }
 
+/* The editor's text starts exactly where the rendered text did: no margin, border,
+   padding or gutter, and the same font and line height as the rendered rows. */
 .qs-inline-editor {
-  margin-top: 4px;
-  border: 1px solid var(--base02);
-  border-radius: 3px;
-  background: var(--base00);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.qs-block.editing-notes .qs-inline-editor {
+  margin-top: 6px;
 }
 
 .qs-inline-editor .cm-editor {
-  min-height: 80px;
+  min-height: 1.4em;
   max-height: 60vh;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+}
+
+.qs-inline-editor .cm-editor.cm-focused {
+  outline: none;
 }
 
 .qs-inline-editor .cm-scroller {
   overflow: auto;
+  font: inherit;
+  line-height: inherit;
+}
+
+.qs-inline-editor .cm-editor .cm-content {
+  padding: 0;
+}
+
+.qs-inline-editor .cm-editor .cm-line {
+  padding: 0;
 }
 
 .qs-notes {

@@ -61,8 +61,9 @@ export function isBlockItem(item) {
 /**
  * What a block holds for an item. Returns null for a type that is left out.
  *
- * `rows` lists the rows in order, title first; a folded block shows only that
- * first row. Titles: text uses the stored title, else the first content line
+ * `rows` lists the rows in order; a folded block shows only the first row. Url
+ * and image blocks start with a 'title' row; a text block is one 'body' row of
+ * its full content (its title only feeds the outline). Titles: text uses the stored title, else the first content line
  * without its heading marker; url uses the stored title, else the first line
  * of its notes, else the URL; image uses the stored title, else the first line
  * of its notes, else 'Image'. An empty text item is 'Untitled'.
@@ -85,20 +86,13 @@ export function blockRowsModel(item, extractTitle) {
 
   if (item.type === 'text') {
     const content = typeof item.content === 'string' ? item.content : '';
-    const first = firstLine(content);
-    const title = ownTitle || stripHeading(first) || 'Untitled';
-    // The title row already shows the first line when it supplied the title.
-    let bodyMarkdown = content;
-    if (!ownTitle && first) {
-      const at = content.indexOf(first);
-      bodyMarkdown = content.slice(at + first.length);
-    }
-    bodyMarkdown = bodyMarkdown.trim();
+    const title = ownTitle || stripHeading(firstLine(content)) || 'Untitled';
+    // The title is only for the outline; the body shows the whole content.
     return {
       type: 'text',
       title,
-      rows: bodyMarkdown ? ['title', 'body'] : ['title'],
-      bodyMarkdown,
+      rows: ['body'],
+      bodyMarkdown: content.trim(),
     };
   }
 
@@ -154,10 +148,11 @@ export async function createBlockRenderer({ api, getRules, getTagNames }) {
     const affordances = createAffordanceElements(item.id, getTagNames(item.id), getRules(), api);
     if (affordances) left.appendChild(affordances);
 
-    const title = el('div', 'qs-block-title', model.title);
+    const isText = model.type === 'text';
+    const title = el('div', isText ? 'qs-block-title qs-title-hidden' : 'qs-block-title', model.title);
 
-    const body = el('div', 'qs-block-body');
-    for (const row of model.rows.slice(1)) {
+    const body = el('div', isText ? 'qs-block-body qs-body-text' : 'qs-block-body');
+    for (const row of model.rows.filter(r => r !== 'title')) {
       if (row === 'body') {
         const md = el('div', 'qs-md');
         md.innerHTML = renderMarkdown(model.bodyMarkdown);

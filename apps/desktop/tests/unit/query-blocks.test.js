@@ -8,39 +8,40 @@ import { strict as assert } from 'node:assert';
 import { blockRowsModel, isBlockItem, imageSource } from '../../features/editor/query-blocks.js';
 
 describe('blockRowsModel: text', () => {
-  it('uses the first content line without its heading marker as the title', () => {
+  it('shows the whole content as one body row; the heading-free first line is the outline title', () => {
     const m = blockRowsModel({ type: 'text', content: '## Buy milk\n\nTwo litres, **whole**.' });
     assert.equal(m.type, 'text');
     assert.equal(m.title, 'Buy milk');
-    assert.deepEqual(m.rows, ['title', 'body']);
-    assert.equal(m.bodyMarkdown, 'Two litres, **whole**.');
+    assert.deepEqual(m.rows, ['body']);
+    assert.equal(m.bodyMarkdown, '## Buy milk\n\nTwo litres, **whole**.');
   });
 
-  it('shows plain first line as title when there is no heading', () => {
+  it('uses a plain first line as the title when there is no heading', () => {
     const m = blockRowsModel({ type: 'text', content: 'just a line\nsecond line' });
     assert.equal(m.title, 'just a line');
-    assert.equal(m.bodyMarkdown, 'second line');
+    assert.equal(m.bodyMarkdown, 'just a line\nsecond line');
   });
 
-  it('has only a title row when the content is a single line', () => {
+  it('keeps a single-line content as the body', () => {
     const m = blockRowsModel({ type: 'text', content: '# Only a heading' });
     assert.equal(m.title, 'Only a heading');
-    assert.deepEqual(m.rows, ['title']);
-    assert.equal(m.bodyMarkdown, '');
+    assert.deepEqual(m.rows, ['body']);
+    assert.equal(m.bodyMarkdown, '# Only a heading');
   });
 
-  it('prefers the stored title and keeps the whole content as the body', () => {
+  it('prefers the stored title for the outline and keeps the whole content as the body', () => {
     const m = blockRowsModel({ type: 'text', title: '# Stored', content: 'line one\nline two' });
     assert.equal(m.title, 'Stored');
     assert.equal(m.bodyMarkdown, 'line one\nline two');
-    assert.deepEqual(m.rows, ['title', 'body']);
+    assert.deepEqual(m.rows, ['body']);
   });
 
   it('falls back to Untitled for empty content', () => {
     for (const content of ['', '  \n \n', undefined]) {
       const m = blockRowsModel({ type: 'text', content });
       assert.equal(m.title, 'Untitled');
-      assert.deepEqual(m.rows, ['title']);
+      assert.deepEqual(m.rows, ['body']);
+      assert.equal(m.bodyMarkdown, '');
     }
   });
 
@@ -52,7 +53,7 @@ describe('blockRowsModel: text', () => {
   it('treats the extractor fallback as no title', () => {
     const m = blockRowsModel({ type: 'text', content: 'first\nrest' }, (item, fallback) => fallback);
     assert.equal(m.title, 'first');
-    assert.equal(m.bodyMarkdown, 'rest');
+    assert.equal(m.bodyMarkdown, 'first\nrest');
   });
 });
 
