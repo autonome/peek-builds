@@ -159,9 +159,8 @@ End of test document.
  * show the matching items as a plain list of titles.
  * @param {HTMLElement} rootEl
  * @param {string[]} tagNames
- * @param {'dom'|'cm'} surface which outer surface to use (trial switch)
  */
-async function renderTagQuery(rootEl, tagNames, surface = 'dom') {
+async function renderTagQuery(rootEl, tagNames) {
   document.title = `Editor: ${tagNames.map(t => '#' + t).join(' ')}`;
   rootEl.textContent = '';
 
@@ -208,34 +207,27 @@ async function renderTagQuery(rootEl, tagNames, surface = 'dom') {
     return;
   }
 
-  if (surface === 'cm') {
-    const { mountCmSurface } = await import('./query-surface-cm.js');
-    window.__querySurface = await mountCmSurface(wrap, items);
-    return;
-  }
-
   const { mountDomSurface } = await import('./query-surface-dom.js');
   mountDomSurface(wrap, items);
 }
 
 /**
- * Measurement hook (URL param syntheticBlocks=N): mount the chosen surface over generated items (no datastore writes)
+ * Measurement hook (URL param syntheticBlocks=N): mount the block surface over generated items (no datastore writes)
  * and record timings. The result is logged to main.log via perfLog and kept on
  * window.__syntheticBlocksResult for a live probe.
  * @param {HTMLElement} rootEl
  * @param {number} count
- * @param {'dom'|'cm'} surfaceKind
  */
-async function runSyntheticBlocks(rootEl, count, surfaceKind = 'dom') {
+async function runSyntheticBlocks(rootEl, count) {
   rootEl.textContent = '';
   const wrap = document.createElement('div');
   wrap.className = 'tag-query-list';
   rootEl.appendChild(wrap);
-  const { measureSyntheticBlocks } = await import(surfaceKind === 'cm' ? './query-surface-cm.js' : './query-surface-dom.js');
+  const { measureSyntheticBlocks } = await import('./query-surface-dom.js');
   const { surface, ...result } = await measureSyntheticBlocks(wrap, count);
   window.__syntheticSurface = surface;
   window.__syntheticBlocksResult = result;
-  const line = `[query-surface-${surfaceKind}:measure] ${JSON.stringify(result)}`;
+  const line = `[query-surface-dom:measure] ${JSON.stringify(result)}`;
   console.log(line);
   try { api?.perfLog?.(line); } catch { /* instrumentation only */ }
 }
@@ -284,16 +276,15 @@ const init = async () => {
   const itemIdParam = params.get('itemId');
 
   // Tag query mode: show the items carrying every tag in the query
-  const surfaceParam = params.get('surface') === 'cm' ? 'cm' : 'dom';
   // Measurement hook: generated items, no datastore reads or writes.
   const syntheticBlocks = parseInt(params.get('syntheticBlocks') || '', 10);
   if (Number.isFinite(syntheticBlocks) && syntheticBlocks > 0) {
-    await runSyntheticBlocks(rootEl, syntheticBlocks, surfaceParam);
+    await runSyntheticBlocks(rootEl, syntheticBlocks);
     return;
   }
   const queryTags = parseTagQuery((params.get('tags') || '').split(',').filter(Boolean).map(t => '#' + t).join(' '));
   if (queryTags) {
-    await renderTagQuery(rootEl, queryTags, surfaceParam);
+    await renderTagQuery(rootEl, queryTags);
     return;
   }
 

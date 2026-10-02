@@ -419,16 +419,50 @@ now (Decisions, "Manual order").
 - **Routing:** a `tags` field on the existing `editor:open` topic, with window
   key `editor-query-<sorted tags>`. It is the smallest change to the
   panel/background seam and is cheap to replace later.
-- **Outer surface:** both plain DOM blocks and CodeMirror with block decorations
-  are built as trials, compared, and one is picked. The library review ruled
-  out block-editor libraries on paper; its DOM-blocks recommendation is a
-  hypothesis the trials test, not a decision. Comparison criteria:
-  - `j`/`k` and block folding.
-  - One vim command area taken over by the inline editor.
-  - Search, `:` commands and marks.
-  - Behavior at about 1000 blocks, measured (the DOM-block trial starts with
-    `content-visibility: auto`).
-  - The single-document editor tests stay unaffected.
+- **Outer surface:** plain DOM blocks (`features/editor/query-surface-dom.js`),
+  with `content-visibility: auto` on each block. Both plain DOM blocks and
+  CodeMirror with block decorations were built as trials and compared; the
+  CodeMirror surface and the options it added to `codemirror.js` were removed.
+  Block-editor libraries were ruled out on paper by the library review.
+  Comparison, from the trial results (headless Electron 43, Apple M4, 1000
+  generated blocks):
+  - `j`/`k` and block folding: DOM blocks map selection and fold to blocks
+    directly through `select`/`fold`/`unfold`. CodeMirror moves `j`/`k` by
+    document line (heading, blank line, each body line) and `j` from a folded
+    block steps into the hidden body and reveals it, so it needs a custom
+    block-wise `j`/`k`; its `zc zo za zM zR` needed a facet added to
+    `codemirror.js` so they fold blocks rather than markdown heading sections.
+  - One vim command area taken over by the inline editor: DOM blocks have no
+    outer vim instance, so the inline editor is the only one and owns the
+    status line while open. Two vim-enabled CodeMirror instances coexist with
+    separate state, but each opens its own `.cm-vim-panel`, so two prompts can
+    be open at once; sharing one status line needs a takeover that was not
+    built.
+  - Search, `:` commands and marks: CodeMirror gets `/`, `n`, `:` and marks
+    from vim (not exercised live; `:w`/`:q` would act on the outer surface
+    unless overridden). DOM blocks have none of them: search is Chromium
+    find-in-page (sees every block despite `content-visibility`), and `:`
+    commands and marks need a small key handler and table. This is the one
+    criterion CodeMirror wins; it is new code for DOM blocks, accepted because
+    the nav/folding slice already adds that handler.
+  - About 1000 blocks: mount, fold-all, unfold-all and selection across 100
+    blocks took 3.2-4.6, 1.8-2.2, 1.4-1.8 and 20.5-22.4 ms for DOM blocks, and
+    3.7-16.6, 7.8-18.3, 6.1-13.6 and 38.0-46.5 ms for CodeMirror. Neither
+    stalls, so no virtualizer is indicated. Selection costs about 0.2 ms per
+    step for DOM against 0.4 for CodeMirror. Not measured for either: real
+    scrolling, rendered markdown, the affordance column.
+  - Single-document editor tests: the CodeMirror trial changed `codemirror.js`
+    (`lineFolds`, `extraExtensions`, a `blockFoldAt` facet) with defaults kept;
+    `editor-folding.spec.ts` was not run against it. DOM blocks touch none of
+    it.
+  - Pick and reason: DOM blocks. Block navigation and fold are native to it,
+    it adds no second vim instance and no second status line, selection is
+    cheaper, and it does not touch the single-document editor. CodeMirror's
+    advantage (vim search, `:` and marks for free) is outweighed by having to
+    rework `j`/`k`, block folds and the status line anyway.
+  - Kept: the `syntheticBlocks=N` measurement hook in `home.js`, which drives
+    the DOM surface and is needed for the later measurement at scale with
+    rendered markdown.
 - **Scale:** measuring at about 1000 blocks is a task inside each trial. The
   virtualizer options in "Library review findings" are reached for only if the
   measurement shows a stall.
