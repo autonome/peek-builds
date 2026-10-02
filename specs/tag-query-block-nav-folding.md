@@ -47,6 +47,22 @@ NODE_ENV=test node --test apps/desktop/tests/unit/query-keys.test.js apps/deskto
 Done when the run reports `fail 0`. Live key handling in the window needs the Electron app and is not
 exercised here; say so under **Result**.
 
+## Result
+
+- `query-keys.js` `queryKey()` holds the key logic; `attachQueryKeys()` listens on the document and
+  ignores keys while an input, select or inline editor has focus. The block version of selection is
+  written beside `grid-nav.js` `updateSelection` (the card function is untouched): `mountDomSurface`
+  `select` toggles the `selected` class and scrolls the block into view with `block: 'nearest'`.
+  `zM`/`zR`/`zc`/`zo`/`za` call the surface's `fold`/`unfold` and scroll the selected block into view.
+- Outline: `EditorLayout.setOutlineEntries(titles, onSelect)` shows the flat list of block titles
+  (`OutlineSidebar.setEntries`) and makes the outline pane available when there is no text editor;
+  the single-document path is unchanged. Clicking an entry selects and reveals that block.
+- Checked live in a headless app (reusable profile, real key events): `j`/`k`/arrows move and clamp,
+  the selected block scrolls into view, `zc`/`zo`/`za`/`zM`/`zR` change fold state without opening an
+  editor, `z` followed by another key cancels the prefix, keys do nothing while the sort dropdown has
+  focus, and outline clicks select the block. The left column and selection highlight look right in
+  screenshots, folded and expanded.
+
 ## Working rules
 
 Run one command per Bash call. Never run the Electron gate without an explicit OK.

@@ -377,6 +377,20 @@ export class EditorLayout {
     this.topToolbar.style.display = list.length > 0 ? '' : 'none';
   }
 
+  /**
+   * Fill the outline with a flat list of entries and call `onSelect(index)` when
+   * one is clicked. For a layout without a text editor, this is what makes the
+   * outline pane available.
+   * @param {string[]} titles
+   * @param {(index: number) => void} onSelect
+   */
+  setOutlineEntries(titles, onSelect) {
+    this.outlineEntries = true;
+    this.outlineSidebar.onHeaderClick = (header) => onSelect(header.line - 1);
+    this.outlineSidebar.setEntries(titles);
+    this._applyPaneState();
+  }
+
   /** Collapse or expand the top toolbar; the state persists with the layout prefs. */
   toggleTopToolbar() {
     this.topToolbarCollapsed = !this.topToolbarCollapsed;
@@ -606,7 +620,7 @@ export class EditorLayout {
    * left untouched so the single-document editor keeps its own choices.
    */
   _isPaneVisible(name) {
-    if (!this.hasTextEditor && name !== 'editor') return false;
+    if (!this.hasTextEditor && name !== 'editor' && !(name === 'outline' && this.outlineEntries)) return false;
     return !!this.paneVisible[name];
   }
 

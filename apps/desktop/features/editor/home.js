@@ -16,6 +16,7 @@ import { findTagByName } from 'peek://cmd/item-suggestions.js';
 import { parseTagQuery, intersectItems } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, sortItems } from './sort-options.js';
 import { isBlockItem, createBlockRenderer } from './query-blocks.js';
+import { attachQueryKeys } from './query-keys.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
@@ -235,9 +236,17 @@ async function renderTagQuery(rootEl, tagNames) {
 
   let sortOption = DEFAULT_SORT_OPTION; // window state only
   let surface = null;
+  let detachKeys = null;
   const mountSorted = () => {
+    detachKeys?.();
     surface?.element.remove();
-    surface = mountDomSurface(wrap, sortItems(items, sortOption), { renderBlock });
+    const mounted = mountDomSurface(wrap, sortItems(items, sortOption), { renderBlock });
+    surface = mounted;
+    detachKeys = attachQueryKeys(mounted);
+    editorLayout.setOutlineEntries(mounted.blockTitles(), (index) => {
+      mounted.select(index);
+      mounted.revealSelected();
+    });
   };
   mountSorted();
 

@@ -239,6 +239,18 @@ export class OutlineSidebar {
   }
 
   /**
+   * Show a flat list of entries instead of parsed headers. Each entry is a
+   * header at level 1 whose `line` is its 1-based position in the list.
+   * @param {string[]} titles
+   */
+  setEntries(titles) {
+    this.headers = titles.map((text, i) => ({ level: 1, text, line: i + 1, offset: 0 }));
+    this.parentSet = new Set();
+    this.collapsedSections = new Set();
+    this.render();
+  }
+
+  /**
    * Render the outline items.
    */
   render() {

@@ -138,6 +138,13 @@ export function mountDomSurface(root, items, options = {}) {
     unfoldAll: state.unfoldAll,
     blockCount: state.blockCount,
     selectedIndex: state.selectedIndex,
+    isFolded: state.isFolded,
+    /** Scroll the selected block into view (after folds move it). */
+    revealSelected() {
+      blocks[state.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    },
+    /** Each block's title text, in order (the outline's entries). */
+    blockTitles: () => blocks.map(b => b.querySelector('.qs-block-title')?.textContent || ''),
   };
 }
 
