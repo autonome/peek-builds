@@ -93,6 +93,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "move to space",
+      "description": "Move the active window to a space",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "open spaces",
       "description": "Browse all spaces",
       "action": {

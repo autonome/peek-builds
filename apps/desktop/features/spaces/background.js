@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder
+  resolveVividColor, shouldShowBorder, planMoveToSpace
 } from './config.js';
 
 const api = window.app;
@@ -661,6 +661,29 @@ async function unpinWindow() {
   return setPinState(windowId, null);
 }
 
+/**
+ * Put the focused window in the named space. Only the active space is
+ * supported (see `planMoveToSpace`); a workspace-pinned window is
+ * re-associated, a globally pinned one is refused.
+ */
+async function moveToSpace(targetName) {
+  await defaultSpaceReady;
+  const windowId = await api.window.getFocusedVisibleWindowId();
+  if (!windowId) return { success: false, error: 'No active window to move' };
+  const pinResult = await api.context.get('pin', windowId);
+  const plan = planMoveToSpace({
+    targetName,
+    activeSpaceName,
+    pinScope: pinResult?.data?.value || null,
+  });
+  if (plan.action === 'error') return { success: false, error: plan.error };
+  await api.context.setMode('space', {
+    windowId,
+    metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
+  });
+  return { success: true, windowId, spaceId: activeSpaceId, spaceName: activeSpaceName };
+}
+
 // ===== Command Registration =====
 
 const initCommands = () => {
@@ -709,6 +732,24 @@ const initCommands = () => {
   api.pubsub.publish('cmd:register', {
     name: 'switch space',
     description: 'Close current space and open another',
+    source: 'spaces',
+    scope: 'global',
+    params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
+  });
+
+  // "move to space <name>"
+  api.pubsub.subscribe('cmd:execute:move to space', async (msg) => {
+    const result = await moveToSpace(msg.search?.trim());
+    if (!result?.success) {
+      console.warn('[ext:spaces] move to space refused:', result?.error);
+    }
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+  api.pubsub.publish('cmd:register', {
+    name: 'move to space',
+    description: 'Move the active window to a space',
     source: 'spaces',
     scope: 'global',
     params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
@@ -766,7 +807,7 @@ const initCommands = () => {
 
 const uninitCommands = () => {
   for (const name of [
-    'open space', 'close space', 'switch space',
+    'open space', 'close space', 'switch space', 'move to space',
     'pin to this workspace', 'pin across workspaces', 'unpin window',
   ]) {
     api.pubsub.publish('cmd:unregister', { name });

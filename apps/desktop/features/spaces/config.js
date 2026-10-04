@@ -186,7 +186,27 @@ const formatWindowCount = (count) => {
   return `${count} ${count === 1 ? 'window' : 'windows'}`;
 };
 
+/**
+ * What `move to space` does with the focused window. Only the active space is a
+ * valid target: an inactive space's saved snapshot is written only by saving the
+ * windows currently tagged for it, so adding a window to it would replace the
+ * windows it already holds. A globally pinned window belongs to every space
+ * already, so it is left alone.
+ */
+const planMoveToSpace = ({ targetName, activeSpaceName, pinScope }) => {
+  const target = typeof targetName === 'string' ? targetName.trim() : '';
+  if (!target) return { action: 'error', error: 'Usage: move to space <name>' };
+  if (pinScope === 'global') {
+    return { action: 'error', error: 'This window is pinned across every workspace; unpin it first to move it' };
+  }
+  if (!activeSpaceName || toSpaceTagName(target) !== toSpaceTagName(activeSpaceName)) {
+    return { action: 'error', error: `"${target}" is not the active space; moving a window to an inactive space is not supported yet` };
+  }
+  return { action: 'set-membership' };
+};
+
 export {
+  planMoveToSpace,
   shouldShowBorder,
   countSpaceWindows,
   initialSelectedIndex,
