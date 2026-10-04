@@ -18,7 +18,7 @@ import {
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
-import { resolveVividColor } from './config.js';
+import { resolveVividColor, countSpaceWindows, formatWindowCount } from './config.js';
 
 const api = window.app;
 
@@ -117,8 +117,8 @@ const sortSpaces = (spaces) => {
       case 'name':
         return dir * getSpaceDisplayName(a).localeCompare(getSpaceDisplayName(b));
       case 'count': {
-        const ca = a.itemCount || 0;
-        const cb = b.itemCount || 0;
+        const ca = a.windowCount || 0;
+        const cb = b.windowCount || 0;
         return dir * (ca - cb);
       }
       case 'recent': {
@@ -248,6 +248,24 @@ const loadSpaces = async () => {
       } else {
         tag.itemCount = 0;
       }
+    }
+    // Count windows per space: live windows for the active workspace, else the
+    // saved snapshot. The default workspace's snapshot is not readable by
+    // tiles, so while inactive it has no count.
+    for (const tag of spaceTags) {
+      let live = [];
+      try {
+        const r = await api.context.getWindowsInSpace(tag.id);
+        if (r?.success && Array.isArray(r.data)) live = r.data;
+      } catch { /* leave empty */ }
+      let snapshotWindows = null;
+      if (live.length === 0 && getSpaceDisplayName(tag) !== 'default') {
+        try {
+          const r = await api.session.getWorkspaceSnapshotInfo(tag.id);
+          if (r?.success && Array.isArray(r.windows)) snapshotWindows = r.windows;
+        } catch { /* no snapshot */ }
+      }
+      tag.windowCount = countSpaceWindows(live, snapshotWindows);
     }
     // Resolve vivid colors for spaces with default/grey color
     for (const tag of spaceTags) {
@@ -761,8 +779,7 @@ const createSpaceCard = (space) => {
   const footer = document.createElement('div');
   footer.slot = 'footer';
   footer.className = 'card-meta';
-  const count = space.itemCount || 0;
-  footer.textContent = `${count} ${count === 1 ? 'page' : 'pages'}`;
+  footer.textContent = formatWindowCount(space.windowCount);
   card.appendChild(footer);
 
   card.addEventListener('card-click', () => activateSpace(space));

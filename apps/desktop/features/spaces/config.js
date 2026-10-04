@@ -148,7 +148,27 @@ const resolveVividColor = (color, spaceId, themeId = 'peek') => {
   return pushVivid(palette[0]);
 };
 
+/**
+ * Number of windows a space holds. Open windows win (the active workspace);
+ * otherwise the saved workspace snapshot's window list. `null` when neither
+ * is available (nothing open and no readable snapshot, e.g. the default
+ * workspace while another is active), so the caller can show no count rather
+ * than a wrong 0.
+ */
+const countSpaceWindows = (liveWindowIds, snapshotWindows) => {
+  if (Array.isArray(liveWindowIds) && liveWindowIds.length > 0) return liveWindowIds.length;
+  if (Array.isArray(snapshotWindows)) return snapshotWindows.length;
+  return null;
+};
+
+const formatWindowCount = (count) => {
+  if (count == null) return '';
+  return `${count} ${count === 1 ? 'window' : 'windows'}`;
+};
+
 export {
+  countSpaceWindows,
+  formatWindowCount,
   id,
   labels,
   schemas,
