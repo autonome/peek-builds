@@ -6,6 +6,18 @@
  */
 
 /**
+ * Split the `todo` command's argument text into the todo body and the extra
+ * tags that end it. `splitTrailing` is `splitTrailingTags` from
+ * `peek://app/lib/note-tags.js`, passed in so this module stays free of
+ * `peek://` imports and runs under node. Tags earlier in the text stay in the
+ * body. Input with only tags (or nothing) has an empty body.
+ */
+export const parseTodoArgs = (raw, splitTrailing) => {
+  const { body, tags } = splitTrailing(raw || '');
+  return { body: body.trim(), extraTags: tags };
+};
+
+/**
  * Keep the items whose title or content contains `needle` (case-insensitive
  * substring), in input order. A blank needle keeps everything.
  */

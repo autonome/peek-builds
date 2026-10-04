@@ -1,5 +1,5 @@
 /**
- * Unit tests for renderer/cmd/commands/note-tags.js — splitting trailing hashtags off note text.
+ * Unit tests for renderer/lib/note-tags.js — splitting trailing hashtags off note text.
  *
  * Run via: node --test tests/unit/note-tags.test.js
  */
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { splitTrailingTags } = await import(
-  join(__dirname, '../../renderer/cmd/commands/note-tags.js')
+  join(__dirname, '../../renderer/lib/note-tags.js')
 );
 
 describe('splitTrailingTags', () => {

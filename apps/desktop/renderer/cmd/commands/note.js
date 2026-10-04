@@ -6,7 +6,7 @@
  * If input is text → saves as text item tagged with 'note' and 'from:cmd'
  */
 import api from 'peek://app/api.js';
-import { splitTrailingTags } from './note-tags.js';
+import { splitTrailingTags } from 'peek://app/lib/note-tags.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
 

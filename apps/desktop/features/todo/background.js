@@ -3,7 +3,7 @@
  *
  * Three cmd-panel commands:
  *   - `todo {text} [#tag …]`  — creates a text item, auto-tags with `todo`
- *     plus any inline `#tag` words.
+ *     plus any `#tag` words that end the text (removed from the text).
  *   - `todos`                 — lists the outstanding `todo`-tagged items,
  *     newest first, as `item` output the panel turns into a selection list.
  *   - `done {match}`          — marks one `todo`-tagged item done: the item
@@ -18,34 +18,13 @@
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
-import { matchTodos, pickDoneTarget, todosListResult } from './todo-items.js';
+import { splitTrailingTags } from 'peek://app/lib/note-tags.js';
+import { matchTodos, parseTodoArgs, pickDoneTarget, todosListResult } from './todo-items.js';
 
 const api = window.app;
 
 const TODO_TAG = 'todo';
 const DONE_TAG = 'done';
-
-// ===== Parsing =====
-
-/**
- * Split a `todo` command argument string into the body text and any
- * trailing `#tag` words. Inline tags can appear anywhere — the body is
- * non-tag tokens concatenated by single spaces.
- */
-const parseTodoArgs = (raw) => {
-  const text = (raw || '').trim();
-  if (!text) return { body: '', extraTags: [] };
-  const extraTags = [];
-  const bodyParts = [];
-  for (const tok of text.split(/\s+/)) {
-    if (tok.startsWith('#') && tok.length > 1) {
-      extraTags.push(tok.slice(1));
-    } else {
-      bodyParts.push(tok);
-    }
-  }
-  return { body: bodyParts.join(' ').trim(), extraTags };
-};
 
 // ===== Tag helpers (mirrors features/tags/background.js patterns) =====
 
@@ -82,7 +61,7 @@ const untagWithName = async (itemId, name) => {
 // ===== Command handlers =====
 
 const handleTodo = async (rawArgs) => {
-  const { body, extraTags } = parseTodoArgs(rawArgs);
+  const { body, extraTags } = parseTodoArgs(rawArgs, splitTrailingTags);
   if (!body) {
     return { output: 'Usage: todo <text> [#tag ...]', mimeType: 'text/plain' };
   }

@@ -11,7 +11,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'todo', 'todo-items.js');
-const { matchTodos, sortNewestFirst, todosListResult, pickDoneTarget } = await import(modulePath);
+const { matchTodos, sortNewestFirst, todosListResult, pickDoneTarget, parseTodoArgs } = await import(modulePath);
+const { splitTrailingTags } = await import(join(__dirname, '..', '..', 'renderer', 'lib', 'note-tags.js'));
 
 const item = (id, fields = {}) => ({ id, title: id, content: '', updatedAt: '2026-01-01T00:00:00Z', ...fields });
 
@@ -117,5 +118,33 @@ describe('pickDoneTarget', () => {
   it('returns null when nothing matches', () => {
     assert.equal(pickDoneTarget(items, { match: 'zzz' }), null);
     assert.equal(pickDoneTarget([], {}), null);
+  });
+});
+
+describe('parseTodoArgs', () => {
+  const parse = (raw) => parseTodoArgs(raw, splitTrailingTags);
+
+  it('takes plain text as the body with no tags', () => {
+    assert.deepEqual(parse('buy milk'), { body: 'buy milk', extraTags: [] });
+  });
+
+  it('moves trailing tags off the body', () => {
+    assert.deepEqual(parse('buy milk #shop #urgent'), { body: 'buy milk', extraTags: ['shop', 'urgent'] });
+  });
+
+  it('keeps tags that are not at the end in the body', () => {
+    assert.deepEqual(parse('call #bob about it'), { body: 'call #bob about it', extraTags: [] });
+    assert.deepEqual(parse('call #bob about it #work'), { body: 'call #bob about it', extraTags: ['work'] });
+  });
+
+  it('gives an empty body for tags-only, blank and missing input', () => {
+    assert.deepEqual(parse('#a #b'), { body: '', extraTags: ['a', 'b'] });
+    assert.deepEqual(parse('   '), { body: '', extraTags: [] });
+    assert.deepEqual(parse(undefined), { body: '', extraTags: [] });
+    assert.deepEqual(parse(null), { body: '', extraTags: [] });
+  });
+
+  it('deduplicates repeated trailing tags', () => {
+    assert.deepEqual(parse('x #a #a'), { body: 'x', extraTags: ['a'] });
   });
 });
