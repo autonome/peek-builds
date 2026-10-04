@@ -8,6 +8,8 @@
  *     (ruleId, activeTag, completedTag) and `checked` the state it moved the item to.
  *   { kind: 'move', previousOrder }
  *     a block was moved; `previousOrder` is the id list before the move.
+ *   { kind: 'delete', itemId, previousOrder }
+ *     an item was soft-deleted; undo restores it and puts the manual order back.
  */
 
 /** Most entries kept; the oldest is dropped past it. */

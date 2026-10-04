@@ -59,6 +59,7 @@ import {
   findUrlItem as dsFindUrlItem,
   updateItem as dsUpdateItem,
   deleteItem as dsDeleteItem,
+  restoreItem as dsRestoreItem,
   queryItems as dsQueryItems,
   tagItem as dsTagItem,
   untagItem as dsUntagItem,
@@ -6202,6 +6203,26 @@ export function registerTileIpcHandlers(): void {
       const result = dsDeleteItem(args.id);
       if (result) {
         publish('system', 'item:deleted', {
+          itemId: args.id,
+          itemType: item?.type,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:datastore:restore-item', { mode: 'handle' }, async (event, args: {
+    token: string;
+    id: string;
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:restore-item', check.error); return { error: check.error }; }
+    try {
+      const result = dsRestoreItem(args.id);
+      if (result) {
+        const item = getDb().prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
+        publish('system', 'item:restored', {
           itemId: args.id,
           itemType: item?.type,
         });

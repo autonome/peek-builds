@@ -401,6 +401,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         recordTagAction(item.id, aff, checked);
         return true;
       },
+      remove: (index) => deleteBlock(display[index]),
       undo: undoLast,
     });
 
@@ -477,9 +478,24 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   };
 
   /**
-   * Undo the last tag action or move. A tag action is undone by publishing the
+   * Soft-delete the item behind `item`'s block. The block leaves through the live
+   * update (red slide-out); undo restores the item and the manual order.
+   */
+  const deleteBlock = async (item) => {
+    if (!item || leaving.has(item.id)) return;
+    const isManual = sortOption === MANUAL_SORT_OPTION;
+    const current = sortItems(items, sortOption, manualOrder).map(other => other.id);
+    const previousOrder = reorderBase(current, manualOrder, isManual);
+    const res = await api.datastore.deleteItem(item.id);
+    if (!res?.success || !res.data) { say('The item could not be deleted'); return; }
+    undoStack.push({ kind: 'delete', itemId: item.id, previousOrder });
+  };
+
+  /**
+   * Undo the last tag action, move or delete. A tag action is undone by publishing the
    * inverse swap through the same tag-action layer; the block comes back through
-   * the live update. A move restores the previous order.
+   * the live update. A move restores the previous order. A delete restores the
+   * item (its tags were never removed) and the order it had.
    */
   const undoLast = () => {
     if (!surface || inline?.isOpen()) return;
@@ -489,6 +505,10 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       triggerAffordance(entry.itemId, inverseAffordance(entry), api);
     } else if (entry.kind === 'move') {
       applyOrder(entry.previousOrder);
+    } else if (entry.kind === 'delete') {
+      manualOrder = entry.previousOrder;
+      saveOrder(orderKey, manualOrder, localStorage);
+      api.datastore.restoreItem(entry.itemId);
     }
   };
 

@@ -390,6 +390,21 @@ describe('Desktop Datastore Tests', () => {
       assert.strictEqual(datastore.getItem(id), null);
     });
 
+    it('should restore a soft-deleted item with its tags', () => {
+      const { id } = datastore.addItem('text', { content: 'Restore me' });
+      const { tag } = datastore.getOrCreateTag('restore-tag');
+      datastore.tagItem(id, tag.id);
+
+      assert.strictEqual(datastore.restoreItem(id), false, 'a live item is not restored');
+      assert.strictEqual(datastore.deleteItem(id), true);
+      assert.strictEqual(datastore.getItem(id), null);
+
+      assert.strictEqual(datastore.restoreItem(id), true);
+      assert.strictEqual(datastore.getItem(id)?.id, id);
+      assert.ok(datastore.getItemsByTag(tag.id).some((item: { id: string }) => item.id === id));
+      assert.strictEqual(datastore.restoreItem(id), false, 'a second restore changes nothing');
+    });
+
     it('should hard delete an item', () => {
       const { id } = datastore.addItem('text', { content: 'Hard delete me' });
       const { tag } = datastore.getOrCreateTag('delete-tag');

@@ -27,6 +27,9 @@ export const MOVE_UP_KEY = 'K';
 /** Key that undoes the last tag action or move (Cmd/Ctrl+Z does too). */
 export const UNDO_KEY = 'u';
 
+/** Key that deletes the selected block's item (soft delete; `u` restores it). */
+export const DELETE_KEY = 'd';
+
 const FOLD_KEYS =new Set(['c', 'o', 'a', 'M', 'R']);
 
 /**
@@ -123,8 +126,9 @@ function isEditable(target) {
  * @param {object} [inline] the inline editor controller: `isOpen()` and
  *   `open(index)`. <Enter> opens the selected block in it.
  * @param {{add?: () => void, move?: (delta: number) => void,
- *   tagKey?: (key: string, index: number) => boolean, undo?: () => void}} [actions]
- *   `undo` runs on `u` and Cmd/Ctrl+Z. `tagKey` offers a
+ *   tagKey?: (key: string, index: number) => boolean, undo?: () => void,
+ *   remove?: (index: number) => void}} [actions]
+ *   `remove` runs on `d` with the selected block's index. `undo` runs on `u` and Cmd/Ctrl+Z. `tagKey` offers a
  *   key to the tag actions for the selected block (index); true when one ran. `move`
  *   runs on Shift+j / Shift+k with +1 / -1 (the caller switches to manual
  *   order first when another sort option is showing). `add` runs on `o` (add a new item, as
@@ -187,6 +191,16 @@ export function attachQueryKeys(surface, doc = document, inline = null, actions 
       const at = surface.selectedIndex();
       if (at >= 0 && at < surface.blockCount() && actions.tagKey(e.key, at)) {
         e.preventDefault();
+        return;
+      }
+    }
+
+    // `d` deletes the selected block's item (after tag action keys, so a declared `d` wins).
+    if (actions.remove && e.key === DELETE_KEY && !pendingZ) {
+      const at = surface.selectedIndex();
+      if (at >= 0 && at < surface.blockCount()) {
+        e.preventDefault();
+        actions.remove(at);
         return;
       }
     }

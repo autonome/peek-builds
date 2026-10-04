@@ -18,6 +18,7 @@ export const LIVE_TOPICS = [
   'item:created',
   'item:updated',
   'item:deleted',
+  'item:restored',
   'sync:pull-completed',
   'rules:changed',
 ];

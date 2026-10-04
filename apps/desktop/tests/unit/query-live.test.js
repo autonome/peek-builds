@@ -67,7 +67,7 @@ test('blockSignature: differs with the item or its tags', () => {
 });
 
 test('LIVE_TOPICS: covers item, tag and rule changes', () => {
-  for (const topic of ['item:updated', 'item:deleted', 'tag:item-added', 'tag:item-removed', 'rules:changed']) {
+  for (const topic of ['item:updated', 'item:deleted', 'item:restored', 'tag:item-added', 'tag:item-removed', 'rules:changed']) {
     assert.ok(LIVE_TOPICS.includes(topic), topic);
   }
 });

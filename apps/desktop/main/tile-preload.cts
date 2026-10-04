@@ -1197,6 +1197,8 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:datastore:update-item', { token: tileToken, id, options }),
     deleteItem: (id: string) =>
       ipcRenderer.invoke('tile:datastore:delete-item', { token: tileToken, id }),
+    restoreItem: (id: string) =>
+      ipcRenderer.invoke('tile:datastore:restore-item', { token: tileToken, id }),
     hardDeleteItem: (id: string) =>
       ipcRenderer.invoke('tile:datastore:hard-delete-item', { token: tileToken, id }),
     updateItemTitle: (url: string, title: string) =>

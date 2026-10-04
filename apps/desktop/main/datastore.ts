@@ -4036,6 +4036,17 @@ export function deleteItem(itemId: string): boolean {
 }
 
 /**
+ * Undo a soft delete (clears deletedAt). Tags were never removed, so the item
+ * comes back with them. updatedAt moves so sync carries the restore.
+ */
+export function restoreItem(itemId: string): boolean {
+  const result = getDb().prepare(
+    'UPDATE items SET deletedAt = 0, updatedAt = ? WHERE id = ? AND deletedAt != 0'
+  ).run(now(), itemId);
+  return result.changes > 0;
+}
+
+/**
  * Permanently delete an item and its tags
  */
 export function hardDeleteItem(itemId: string): boolean {

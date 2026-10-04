@@ -97,3 +97,50 @@ describe('attachQueryKeys: undo keys', () => {
     assert.equal(n, 0);
   });
 });
+
+describe('delete key and delete undo entry', () => {
+  const surface = {
+    selectedIndex: () => 1,
+    blockCount: () => 3,
+    isFolded: () => false,
+    select() {},
+    revealSelected() {},
+    fold() {},
+    unfold() {},
+  };
+  const attach = (actions, s = surface) => {
+    let handler;
+    const doc = { addEventListener: (_, fn) => { handler = fn; }, removeEventListener() {} };
+    attachQueryKeys(s, doc, { isOpen: () => false, open() {} }, actions);
+    return (key, extra = {}) => handler({ key, target: { tagName: 'DIV' }, preventDefault() {}, ...extra });
+  };
+
+  it('d removes the selected block; a tag action declaring d wins', () => {
+    const removed = [];
+    attach({ remove: (i) => removed.push(i) })('d');
+    assert.deepEqual(removed, [1]);
+
+    const removed2 = [];
+    attach({ remove: (i) => removed2.push(i), tagKey: (k) => k === 'd' })('d');
+    assert.deepEqual(removed2, []);
+  });
+
+  it('d does nothing with no selection, after z, or with a modifier', () => {
+    const removed = [];
+    attach({ remove: (i) => removed.push(i) }, { ...surface, selectedIndex: () => -1 })('d');
+    const press = attach({ remove: (i) => removed.push(i) });
+    press('z');
+    press('d');
+    press('d', { metaKey: true });
+    assert.deepEqual(removed, []);
+  });
+
+  it('a delete entry keeps the item id and the previous order for undo', () => {
+    const s = createUndoStack();
+    s.push({ kind: 'delete', itemId: 'i1', previousOrder: ['a', 'i1', 'b'] });
+    const entry = s.pop();
+    assert.equal(entry.kind, 'delete');
+    assert.equal(entry.itemId, 'i1');
+    assert.deepEqual(entry.previousOrder, ['a', 'i1', 'b']);
+  });
+});
