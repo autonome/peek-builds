@@ -874,12 +874,20 @@ const initCommands = () => {
   publishSpaceNameCommands();
   refreshSpaceNameCommands();
 
-  // "pin to this workspace"
-  api.pubsub.subscribe('cmd:execute:pin to this workspace', async (msg) => {
-    const result = await pinWindow('workspace');
+  // A command invocation has no result surface of its own, so a refused pin
+  // would otherwise be indistinguishable from a click that never arrived.
+  const finishPinCommand = (commandName, msg, result) => {
+    if (!result?.success) {
+      console.warn(`[ext:spaces] ${commandName} refused:`, result?.error);
+    }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
+  };
+
+  // "pin to this workspace"
+  api.pubsub.subscribe('cmd:execute:pin to this workspace', async (msg) => {
+    finishPinCommand('pin to this workspace', msg, await pinWindow('workspace'));
   });
   api.pubsub.publish('cmd:register', {
     name: 'pin to this workspace',
@@ -890,10 +898,7 @@ const initCommands = () => {
 
   // "pin across workspaces"
   api.pubsub.subscribe('cmd:execute:pin across workspaces', async (msg) => {
-    const result = await pinWindow('global');
-    if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true });
-    }
+    finishPinCommand('pin across workspaces', msg, await pinWindow('global'));
   });
   api.pubsub.publish('cmd:register', {
     name: 'pin across workspaces',
@@ -908,10 +913,7 @@ const initCommands = () => {
   // cmd:execute:unpin and race groups' own result onto this command's
   // result topic.
   api.pubsub.subscribe('cmd:execute:unpin window', async (msg) => {
-    const result = await unpinWindow();
-    if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true });
-    }
+    finishPinCommand('unpin window', msg, await unpinWindow());
   });
   api.pubsub.publish('cmd:register', {
     name: 'unpin window',
