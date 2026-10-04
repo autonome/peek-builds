@@ -376,6 +376,9 @@ process.stdin.on('data', (chunk) => {
       )) });
     } else if (req.op === 'place') {
       say({ id: req.id, ok: true, result: { attempted: false, desktops: ['7'] } });
+    } else if (req.op === 'show') {
+      if (req.desktop === '404') say({ id: req.id, ok: false, error: 'no-such-desktop' });
+      else say({ id: req.id, ok: true, result: { attempted: true, current: req.desktop === '9' ? null : req.desktop } });
     } else {
       say({ id: req.id, ok: false, error: 'unknown-op' });
     }
@@ -468,6 +471,54 @@ describe('desktop-provider: macOS provider (fake helper)', () => {
     assert.deepStrictEqual(await h.mac.probePlace(10, '3'), { attempted: false, desktops: ['7'] });
     assert.strictEqual(await h.provider.placeWindow(10, '3'), false);
     assert.strictEqual(h.provider.onFallback, false);
+    h.provider.stop();
+  });
+
+  it('places a window through the injected mover and trusts only what the helper reads back', async () => {
+    const moves: Array<[number, string]> = [];
+    const movers = [true, false, true];
+    const mac = new MacDesktopProvider({
+      command: process.execPath,
+      args: [fakeHelper(), 'ok'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      moveWindow: (win, desktop) => {
+        moves.push([win, desktop]);
+        return movers.shift() ?? false;
+      },
+    });
+    await mac.start(() => {});
+    assert.strictEqual(mac.canPlaceWindows, true);
+    // The fake helper reads every window back on desktop 7.
+    assert.strictEqual(await mac.placeWindow(10, '7'), true);
+    assert.strictEqual(await mac.placeWindow(10, '3'), false, 'mover said false: not asked to read back');
+    assert.strictEqual(await mac.placeWindow(100, '7'), false, 'a window on every desktop is not placed');
+    assert.deepStrictEqual(moves, [[10, '7'], [10, '3'], [100, '7']]);
+    mac.stop();
+  });
+
+  it('cannot place windows without a mover, and a move that did not land reads false', async () => {
+    const mac = new MacDesktopProvider({
+      command: process.execPath,
+      args: [fakeHelper(), 'ok'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      moveWindow: () => true,
+    });
+    await mac.start(() => {});
+    assert.strictEqual(await mac.placeWindow(10, '3'), false, 'the window reads back on 7, not 3');
+    mac.stop();
+    const bare = new MacDesktopProvider({ command: process.execPath });
+    assert.strictEqual(bare.canPlaceWindows, false);
+  });
+
+  it('shows a desktop through the helper and reports whether it became current', async () => {
+    const h = macHarness('ok');
+    await h.provider.start(h.onChange);
+    assert.strictEqual(h.mac.canShowDesktops, true);
+    assert.strictEqual(await h.provider.showDesktop('3'), true);
+    assert.strictEqual(await h.provider.showDesktop('9'), false, 'not current after the call');
+    assert.strictEqual(await h.provider.showDesktop('404'), false, 'a refusal is not a helper failure');
+    assert.strictEqual(h.provider.onFallback, false);
+    assert.strictEqual(h.fallbackLines().length, 0);
     h.provider.stop();
   });
 

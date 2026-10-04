@@ -25,6 +25,8 @@ import {
   isFlaggedNonActivating,
   makeKeyWithoutActivating,
   moveToActiveDesktopOnShow,
+  moveWindowNumberToDesktop,
+  ordinaryNonActivatingSupported,
   unflagNonActivating,
 } from './nonactivating-window.js';
 
@@ -342,7 +344,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     const mac =
       process.platform === 'darwin'
-        ? new MacDesktopProvider({ command: macHelperPath(app.isPackaged, process.resourcesPath) })
+        ? new MacDesktopProvider({
+            command: macHelperPath(app.isPackaged, process.resourcesPath),
+            // The window server honours a move only from the window's own process, so it runs
+            // through the addon in this one. Without the addon the provider cannot place.
+            ...(ordinaryNonActivatingSupported() ? { moveWindow: moveWindowNumberToDesktop } : {}),
+          })
         : null;
     const provider = new FailSafeDesktopProvider({ primary: mac, fallback });
     this.desktopProvider = provider;

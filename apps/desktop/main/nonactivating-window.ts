@@ -23,6 +23,7 @@ interface NonActivatingAddon {
   makeKey(handle: Buffer): boolean;
   focusContent(handle: Buffer): boolean;
   isKey(handle: Buffer): boolean;
+  moveWindowToDesktop(windowNumber: number, desktop: string): boolean;
 }
 
 interface HandleWindow {
@@ -100,6 +101,17 @@ export function moveToActiveDesktopOnShow(win: HandleWindow): boolean {
 export function makeKeyWithoutActivating(win: HandleWindow): boolean {
   const handle = win.getNativeWindowHandle?.();
   return handle !== undefined && addon != null && addon.makeKey(handle);
+}
+
+/**
+ * Asks the window server to put one of this app's windows (by window-server number) on the
+ * desktop with the given id. Runs in this process because the window server ignores the call
+ * from any other process. True when the call was made; read the window's desktop back to
+ * learn whether it moved. False without the addon.
+ */
+export function moveWindowNumberToDesktop(windowNumber: number, desktop: string): boolean {
+  const a = loadAddon();
+  return a !== null && a.moveWindowToDesktop(windowNumber, desktop);
 }
 
 /** Makes a flagged window's web content its first responder. */
