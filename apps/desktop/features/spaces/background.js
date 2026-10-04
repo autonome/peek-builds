@@ -12,7 +12,7 @@ import {
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, planMoveToSpace,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
-  emptySpaceWindowOptions
+  emptySpaceWindowOptions, createSerialRunner
 } from './config.js';
 
 const api = window.app;
@@ -519,7 +519,18 @@ async function closeCurrentWorkspaceWindows() {
   }
 }
 
-async function openSpace(spaceName) {
+// Switches run one at a time. A second switch that started while the first was
+// still entering its space would save the space still recorded as active
+// (`activeSpaceId` only changes in `enterWorkspace()`) after the first had
+// closed that space's windows, overwriting its saved windows with an empty
+// list, and its close sweep would close the first switch's new window.
+const runSwitchExclusively = createSerialRunner();
+
+function openSpace(spaceName) {
+  return runSwitchExclusively(() => openSpaceNow(spaceName));
+}
+
+async function openSpaceNow(spaceName) {
   if (!spaceName) return { success: false, error: 'Usage: open space <name>' };
   await defaultSpaceReady;
 

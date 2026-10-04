@@ -268,7 +268,22 @@ const emptySpaceWindowOptions = (tag, spaceName, color) => ({
   spaceMode: { spaceId: tag.id, spaceName, color },
 });
 
+/**
+ * Returns a function that runs the async callbacks it is given one at a time,
+ * in call order. A failure rejects only its own call; later calls still run.
+ * Used so two switch commands arriving together do not interleave.
+ */
+const createSerialRunner = () => {
+  let tail = Promise.resolve();
+  return (fn) => {
+    const result = tail.then(fn);
+    tail = result.catch(() => {});
+    return result;
+  };
+};
+
 export {
+  createSerialRunner,
   emptySpaceWindowOptions,
   spaceNameFromCommandMessage,
   validateNewSpaceName,
