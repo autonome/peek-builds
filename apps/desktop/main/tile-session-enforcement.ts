@@ -40,6 +40,10 @@ import { DEFAULT_WORKSPACE_KEY } from './session-projection.js';
  *   `readForeign: ["session"]` grant would also expose the app's own
  *   default-workspace snapshot and crash-recovery metadata). The default
  *   workspace's own key is refused for this op — see `checkSessionAllowed`.
+ * - `get-workspace-snapshot-window-count` — read only the NUMBER of windows a
+ *   workspace's snapshot holds. Unlike the layout read it is allowed for the
+ *   default workspace's key, since a count exposes none of the saved URLs.
+ *   Used by features/spaces to label an inactive space card.
  * - `begin-workspace-switch` / `set-active-workspace` — the spaces feature
  *   reports which workspace is active (and brackets a switch) so the app's
  *   own ambient saves write the active workspace's row. See
@@ -49,6 +53,7 @@ export type SessionOp =
   | 'save-workspace-snapshot'
   | 'restore-workspace-snapshot'
   | 'get-workspace-snapshot-info'
+  | 'get-workspace-snapshot-window-count'
   | 'begin-workspace-switch'
   | 'set-active-workspace';
 
@@ -94,6 +99,7 @@ export function checkSessionAllowed(
     case 'save-workspace-snapshot':
     case 'restore-workspace-snapshot':
     case 'get-workspace-snapshot-info':
+    case 'get-workspace-snapshot-window-count':
     case 'begin-workspace-switch':
     case 'set-active-workspace': {
       return { ok: true };

@@ -155,10 +155,20 @@ const resolveVividColor = (color, spaceId, themeId = 'peek') => {
  * workspace while another is active), so the caller can show no count rather
  * than a wrong 0.
  */
-const countSpaceWindows = (liveWindowIds, snapshotWindows) => {
+const countSpaceWindows = (liveWindowIds, snapshotCount) => {
   if (Array.isArray(liveWindowIds) && liveWindowIds.length > 0) return liveWindowIds.length;
-  if (Array.isArray(snapshotWindows)) return snapshotWindows.length;
+  if (typeof snapshotCount === 'number') return snapshotCount;
   return null;
+};
+
+/**
+ * Index of the card to select when the window opens: the active space's, else
+ * the first. `spaceIds` is the rendered card order.
+ */
+const initialSelectedIndex = (spaceIds, activeSpaceId) => {
+  if (activeSpaceId == null) return 0;
+  const i = spaceIds.findIndex((id) => String(id) === String(activeSpaceId));
+  return i >= 0 ? i : 0;
 };
 
 const formatWindowCount = (count) => {
@@ -168,6 +178,7 @@ const formatWindowCount = (count) => {
 
 export {
   countSpaceWindows,
+  initialSelectedIndex,
   formatWindowCount,
   id,
   labels,

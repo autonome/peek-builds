@@ -98,6 +98,21 @@ describe('checkSessionAllowed — the default workspace\'s own snapshot is never
   });
 });
 
+describe('checkSessionAllowed — get-workspace-snapshot-window-count', () => {
+  // Reports only how many windows a workspace's snapshot holds, so unlike the
+  // layout read it may answer for the default workspace (no URLs are exposed).
+  it('answers for the default key and named keys with the session capability', () => {
+    const grant = makeGrant({ session: true });
+    assert.strictEqual(checkSessionAllowed(grant, 'get-workspace-snapshot-window-count', { key: DEFAULT_WORKSPACE_KEY }).ok, true);
+    assert.strictEqual(checkSessionAllowed(grant, 'get-workspace-snapshot-window-count', { key: 'tag-42' }).ok, true);
+  });
+
+  it('refuses without the session capability', () => {
+    const grant = makeGrant({});
+    assert.strictEqual(checkSessionAllowed(grant, 'get-workspace-snapshot-window-count', { key: 'tag-42' }).ok, false);
+  });
+});
+
 describe('resolveCapabilities — session shape preservation', () => {
   it('preserves session: true across resolution', () => {
     const grant = resolveCapabilities('t', { session: true }, false);

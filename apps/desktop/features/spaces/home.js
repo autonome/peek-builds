@@ -18,7 +18,7 @@ import {
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
-import { resolveVividColor, countSpaceWindows, formatWindowCount } from './config.js';
+import { resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex } from './config.js';
 
 const api = window.app;
 
@@ -229,6 +229,21 @@ const updateToolbarSortOptions = () => {
   toolbar.sortOptions = state.view === VIEW_SPACES ? SORT_OPTIONS_SPACES : SORT_OPTIONS_ITEMS;
 };
 
+let activeSpaceId = null;
+
+/**
+ * The workspace this window belongs to: its own `mode` context's space id,
+ * else the space that has windows open (only the active workspace does).
+ */
+const resolveActiveSpaceId = async (spaceTags) => {
+  try {
+    const m = await api.context.getMode();
+    const id = m?.success && m.data?.value === 'space' ? m.data.metadata?.spaceId : null;
+    if (id != null && spaceTags.some(t => String(t.id) === String(id))) return id;
+  } catch { /* fall through */ }
+  return spaceTags.find(t => t.hasLiveWindows)?.id ?? null;
+};
+
 /**
  * Load all space tags (filtered to space: prefix)
  */
@@ -258,15 +273,20 @@ const loadSpaces = async () => {
         const r = await api.context.getWindowsInSpace(tag.id);
         if (r?.success && Array.isArray(r.data)) live = r.data;
       } catch { /* leave empty */ }
-      let snapshotWindows = null;
-      if (live.length === 0 && getSpaceDisplayName(tag) !== 'default') {
+      tag.hasLiveWindows = live.length > 0;
+      let snapshotCount = null;
+      if (live.length === 0) {
+        // The default workspace's snapshot is stored under the key 'default';
+        // every other space under its tag id.
+        const key = getSpaceDisplayName(tag) === 'default' ? 'default' : tag.id;
         try {
-          const r = await api.session.getWorkspaceSnapshotInfo(tag.id);
-          if (r?.success && Array.isArray(r.windows)) snapshotWindows = r.windows;
+          const r = await api.session.getWorkspaceSnapshotWindowCount(key);
+          if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
         } catch { /* no snapshot */ }
       }
-      tag.windowCount = countSpaceWindows(live, snapshotWindows);
+      tag.windowCount = countSpaceWindows(live, snapshotCount);
     }
+    activeSpaceId = await resolveActiveSpaceId(spaceTags);
     // Resolve vivid colors for spaces with default/grey color
     for (const tag of spaceTags) {
       const vivid = resolveVividColor(tag.color, tag.id, activeThemeId);
@@ -534,7 +554,10 @@ const renderSpaces = () => {
     state.selectedIndex = targetIndex >= 0 ? targetIndex : 0;
     state.lastViewedSpaceId = null;
   } else {
-    state.selectedIndex = 0;
+    state.selectedIndex = initialSelectedIndex(
+      Array.from(container.querySelectorAll('peek-card')).map(card => card.dataset.tagId),
+      activeSpaceId
+    );
   }
   updateSelection();
 };
@@ -788,18 +811,19 @@ const createSpaceCard = (space) => {
 };
 
 /**
- * Click or Enter on a space card: enter that workspace AND browse its items.
+ * Click or Enter on a space card: switch to that workspace.
  * Activation goes through the same `switch space` command the palette
  * uses — one path into `background.js openSpace()`, not a parallel one.
  * `grid-nav.js activateSelected()` implements Enter as a `.click()` on the
- * selected card, so both gestures land here.
+ * selected card, so both gestures land here. The in-window item view
+ * (`showItems`) is no longer reachable from here: it rendered empty for a
+ * non-empty space.
  */
 const activateSpace = (space) => {
   api.pubsub.publish('cmd:execute:switch space', {
     search: getSpaceDisplayName(space),
     params: [getSpaceDisplayName(space)],
   });
-  return showItems(space);
 };
 
 /**

@@ -4323,6 +4323,28 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  registerTileIpc('tile:session:get-workspace-snapshot-window-count', { mode: 'handle' }, async (event, args: {
+    token: string;
+    key: string;
+  }, _grant) => {
+    const grant = _grant;
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+    const check = checkSessionAllowed(grant, 'get-workspace-snapshot-window-count', { key: args.key });
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:get-workspace-snapshot-window-count', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      const { getWorkspaceSnapshotWindowCount } = await import('./session.js');
+      return { success: true, count: getWorkspaceSnapshotWindowCount(args.key) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── Network Fetch ──
 
   registerTileIpc('tile:network:fetch', { mode: 'handle' }, async (event, args: {
