@@ -119,7 +119,9 @@ function isEditable(target) {
  * mountDomSurface). Ignored while a text field or inline editor has the keys.
  * @param {object} [inline] the inline editor controller: `isOpen()` and
  *   `open(index)`. <Enter> opens the selected block in it.
- * @param {{add?: () => void, move?: (delta: number) => void}} [actions] `move`
+ * @param {{add?: () => void, move?: (delta: number) => void,
+ *   tagKey?: (key: string, index: number) => boolean}} [actions] `tagKey` offers a
+ *   key to the tag actions for the selected block (index); true when one ran. `move`
  *   runs on Shift+j / Shift+k with +1 / -1 (the caller switches to manual
  *   order first when another sort option is showing). `add` runs on `o` (add a new item, as
  *   vim's `o` opens a new line). Plain `o` is free here: the outer surface has no
@@ -158,6 +160,15 @@ export function attachQueryKeys(surface, doc = document, inline = null, actions 
       e.preventDefault();
       actions.move(e.key === MOVE_DOWN_KEY ? 1 : -1);
       return;
+    }
+
+    // A key declared by a tag action (display.key) runs it on the selected block.
+    if (actions.tagKey && !pendingZ && e.key.length === 1) {
+      const at = surface.selectedIndex();
+      if (at >= 0 && at < surface.blockCount() && actions.tagKey(e.key, at)) {
+        e.preventDefault();
+        return;
+      }
     }
 
     const count = surface.blockCount();

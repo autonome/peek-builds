@@ -96,11 +96,44 @@ export const resolveAffordances = (itemTagNames, rules) => {
         checkedIcon: display.checkedIcon || 'checked',
         color: display.color || '#007aff',
         checkedColor: display.checkedColor || '#34c759',
+        // Optional single key a surface with a selected item may bind to this action.
+        key: typeof display.key === 'string' && display.key.length === 1 ? display.key : null,
       });
     }
   }
 
   return affordances;
+};
+
+/**
+ * The affordance a key press triggers for an item: the first resolved
+ * affordance whose rule declares `display.key` equal to `key`.
+ *
+ * @param {string[]} itemTagNames
+ * @param {object[]} rules
+ * @param {string} key KeyboardEvent.key
+ * @returns {object|null}
+ */
+export const findAffordanceByKey = (itemTagNames, rules, key) => {
+  if (typeof key !== 'string' || key.length !== 1) return null;
+  return resolveAffordances(itemTagNames, rules).find(aff => aff.key === key) || null;
+};
+
+/**
+ * Trigger an affordance as a click on it would: publish `affordance:click`
+ * with the affordance's new state. The rule engine routes it to the rule's
+ * script. Returns the new checked state.
+ */
+export const triggerAffordance = (itemId, aff, api) => {
+  const nowChecked = !aff.checked;
+  api.pubsub.publish('affordance:click', {
+    ruleId: aff.ruleId,
+    itemId,
+    checked: nowChecked,
+    activeTag: aff.activeTag,
+    completedTag: aff.completedTag,
+  });
+  return nowChecked;
 };
 
 // ── DOM Element Creation ──────────────────────────────────────────────────
@@ -175,14 +208,7 @@ const createToggleButton = (itemId, aff, api, options = {}) => {
     btn.dataset.executing = 'true';
     btn.style.opacity = '0.4';
 
-    const nowChecked = !aff.checked;
-    api.pubsub.publish('affordance:click', {
-      ruleId: aff.ruleId,
-      itemId,
-      checked: nowChecked,
-      activeTag: aff.activeTag,
-      completedTag: aff.completedTag,
-    });
+    const nowChecked = triggerAffordance(itemId, aff, api);
 
     // Optimistic visual update.
     btn.className = 'tag-action-toggle ' + (nowChecked ? 'checked' : '');

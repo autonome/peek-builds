@@ -20,7 +20,7 @@ import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature
 import { attachQueryKeys, isEditClick } from './query-keys.js';
 import { createTaggedItem, discardItem, shouldDiscard } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
-import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
+import { createActionRulesCache, findAffordanceByKey, triggerAffordance } from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -247,10 +247,11 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   for (let waited = 0; !rulesCache.isLoaded() && waited < 1000; waited += 25) {
     await new Promise(resolve => setTimeout(resolve, 25));
   }
+  const getTagNamesOf = (id) => itemTags.get(id) || leaving.get(id)?.tags || [];
   const renderBlock = await createBlockRenderer({
     api,
     getRules: () => rulesCache.getRules(),
-    getTagNames: (id) => itemTags.get(id) || leaving.get(id)?.tags || [],
+    getTagNames: getTagNamesOf,
   });
 
   let sortOption = DEFAULT_SORT_OPTION; // window state only
@@ -355,7 +356,19 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     clickOpen = (index, e) => {
       if (isEditClick(e, !window.getSelection()?.isCollapsed)) guarded.open(index, { caretAtEnd: true });
     };
-    detachKeys = attachQueryKeys(mounted, document, guarded, { add: () => addItem(), move: moveSelected });
+    detachKeys = attachQueryKeys(mounted, document, guarded, {
+      add: () => addItem(),
+      move: moveSelected,
+      // Tag actions declare their own keys; the tag change comes back through the live update.
+      tagKey: (key, index) => {
+        const item = display[index];
+        if (!item || leaving.has(item.id)) return false;
+        const aff = findAffordanceByKey(getTagNamesOf(item.id), rulesCache.getRules(), key);
+        if (!aff) return false;
+        triggerAffordance(item.id, aff, api);
+        return true;
+      },
+    });
 
     if (keep) {
       let at = display.findIndex(item => item.id === keep.selectedId);

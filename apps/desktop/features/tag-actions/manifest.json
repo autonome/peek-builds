@@ -64,7 +64,8 @@
         "checkedIcon": "checked",
         "color": "#007aff",
         "checkedColor": "#34c759",
-        "iconPair": "checkbox"
+        "iconPair": "checkbox",
+        "key": "x"
       }
     },
     {
