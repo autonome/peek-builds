@@ -6,6 +6,7 @@
  * If input is text → saves as text item tagged with 'note' and 'from:cmd'
  */
 import api from 'peek://app/api.js';
+import { splitTrailingTags } from './note-tags.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
 
@@ -45,7 +46,9 @@ const saveItem = async (input) => {
 
   // For tagsets, store the tag names as comma-separated content
   const tagNames = type === 'tagset' ? parseTagset(input) : null;
-  const opts = { content: type === 'tagset' ? tagNames.join(', ') : input };
+  // Text notes keep trailing #tags out of the body and tag the item instead
+  const split = type === 'text' ? splitTrailingTags(input) : null;
+  const opts = { content: type === 'tagset' ? tagNames.join(', ') : type === 'text' ? split.body : input };
   if (type === 'url') opts.url = input;
 
   const result = await api.datastore.addItem(type, opts);
@@ -57,14 +60,14 @@ const saveItem = async (input) => {
 
   // Tag text notes with 'note' and 'from:cmd'
   if (type === 'text') {
-    for (const tagName of NOTE_TAGS) {
+    // Trailing hashtags were trimmed from the body; mid-text hashtags are
+    // still extracted automatically by the datastore layer
+    for (const tagName of [...NOTE_TAGS, ...split.tags]) {
       const tagResult = await api.datastore.getOrCreateTag(tagName);
       if (tagResult.success) {
         await api.datastore.tagItem(itemId, tagResult.data.tag.id);
       }
     }
-
-    // Inline hashtags are extracted automatically by the datastore layer
   }
 
   // For tagsets, add each parsed tag and the 'from:cmd' origin tag
@@ -81,7 +84,7 @@ const saveItem = async (input) => {
     }
   }
 
-  return { itemId, type };
+  return { itemId, type, content: opts.content };
 };
 
 /**
@@ -191,7 +194,7 @@ const commands = [
       if (ctx.search) {
         // Save the provided content
         try {
-          const { itemId, type } = await saveItem(ctx.search);
+          const { itemId, type, content } = await saveItem(ctx.search);
           console.log(`Saved ${type} item:`, itemId);
 
           // Return the saved item through the connector pattern
@@ -210,7 +213,7 @@ const commands = [
             success: true,
             message: `${typeLabel} saved`,
             output: {
-              data: { id: itemId, type, content: ctx.search },
+              data: { id: itemId, type, content },
               mimeType: 'item',
               title: `Saved ${typeLabel.toLowerCase()}`,
               // Flag to indicate this is a newly created item (for editor:changed)
