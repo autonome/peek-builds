@@ -10,7 +10,28 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'spaces', 'config.js');
-const { planMoveToSpace } = await import(modulePath);
+const { planMoveToSpace, spaceNameFromCommandMessage } = await import(modulePath);
+
+describe('spaceNameFromCommandMessage', () => {
+  it('uses the search text', () => {
+    assert.equal(spaceNameFromCommandMessage({ search: ' two ' }, 'move to space'), 'two');
+  });
+
+  it('falls back to the argument words when search is empty', () => {
+    assert.equal(spaceNameFromCommandMessage({ search: null, params: ['my', 'space'] }, 'move to space'), 'my space');
+  });
+
+  it('falls back to the typed text without the command name', () => {
+    assert.equal(spaceNameFromCommandMessage({ typed: 'Move to space two ' }, 'move to space'), 'two');
+    assert.equal(spaceNameFromCommandMessage({ value: 'move to space two' }, 'move to space'), 'two');
+  });
+
+  it('is empty when no field carries a name', () => {
+    assert.equal(spaceNameFromCommandMessage({ typed: 'move to space' }, 'move to space'), '');
+    assert.equal(spaceNameFromCommandMessage({}, 'move to space'), '');
+    assert.equal(spaceNameFromCommandMessage(null, 'move to space'), '');
+  });
+});
 
 describe('planMoveToSpace', () => {
   it('asks for a name when none is given', () => {

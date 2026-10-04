@@ -230,7 +230,30 @@ const spaceNameOptions = (tags) =>
     .sort((a, b) => a.localeCompare(b))
     .map((name) => ({ value: name, title: name }));
 
+/**
+ * The space name a command message carries: the search text, else the argument
+ * words, else the typed text with the command name removed. Empty when none.
+ */
+const spaceNameFromCommandMessage = (msg, commandName) => {
+  if (!msg) return '';
+  const fromSearch = typeof msg.search === 'string' ? msg.search.trim() : '';
+  if (fromSearch) return fromSearch;
+  const fromParams = Array.isArray(msg.params) ? msg.params.join(' ').trim() : '';
+  if (fromParams) return fromParams;
+  const lowerName = commandName.toLowerCase();
+  for (const text of [msg.typed, msg.value]) {
+    if (typeof text !== 'string') continue;
+    const trimmed = text.trim();
+    if (trimmed.toLowerCase().startsWith(lowerName)) {
+      const rest = trimmed.slice(commandName.length).trim();
+      if (rest) return rest;
+    }
+  }
+  return '';
+};
+
 export {
+  spaceNameFromCommandMessage,
   validateNewSpaceName,
   spaceNameOptions,
   planMoveToSpace,

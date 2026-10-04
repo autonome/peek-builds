@@ -2433,6 +2433,7 @@ function actionHandlers() {
       const name = state.paramCommand || state.matches[state.matchIndex];
       const typed = state.typed;
       if (!name) return;
+      console.log('[cmd:panel] executeCommandWithParams', JSON.stringify({ name, typed, paramIndex: state.paramIndex }));
       doExecute(name, typed);
       const input = commandInput();
       if (input) { input.value = ''; }

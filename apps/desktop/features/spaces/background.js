@@ -11,7 +11,7 @@ import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, planMoveToSpace,
-  validateNewSpaceName, spaceNameOptions
+  validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage
 } from './config.js';
 
 const api = window.app;
@@ -700,6 +700,7 @@ async function createSpace(name) {
 async function moveToSpace(targetName) {
   await defaultSpaceReady;
   const windowId = await api.window.getFocusedVisibleWindowId();
+  console.log('[ext:spaces] moveToSpace target:', JSON.stringify(targetName), 'focused window:', windowId, 'active space:', activeSpaceName);
   if (!windowId) return { success: false, error: 'No active window to move' };
   const pinResult = await api.context.get('pin', windowId);
   const plan = planMoveToSpace({
@@ -836,7 +837,10 @@ const initCommands = () => {
 
   // "move to space <name>"
   api.pubsub.subscribe('cmd:execute:move to space', async (msg) => {
-    const result = await moveToSpace(msg.search?.trim());
+    console.log('[ext:spaces] move to space received:', JSON.stringify({
+      search: msg.search, params: msg.params, typed: msg.typed, value: msg.value, name: msg.name,
+    }));
+    const result = await moveToSpace(spaceNameFromCommandMessage(msg, 'move to space'));
     if (!result?.success) {
       console.warn('[ext:spaces] move to space refused:', result?.error);
     }
@@ -896,7 +900,7 @@ const initCommands = () => {
   });
 
   console.log('[ext:spaces] Commands registered: open space, close space, switch space, ' +
-    'pin to this workspace, pin across workspaces, unpin window');
+    'move to space, create space, pin to this workspace, pin across workspaces, unpin window');
 };
 
 const uninitCommands = () => {
