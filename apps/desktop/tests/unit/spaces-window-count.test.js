@@ -27,9 +27,14 @@ describe('countSpaceWindows', () => {
     assert.equal(countSpaceWindows([], 0), 0);
   });
 
-  it('returns null when nothing is live and no snapshot count exists', () => {
-    assert.equal(countSpaceWindows([], null), null);
-    assert.equal(countSpaceWindows(undefined, undefined), null);
+  it('returns null for the default space when nothing is live and no snapshot count is readable', () => {
+    assert.equal(countSpaceWindows([], null, true), null);
+    assert.equal(countSpaceWindows(undefined, undefined, true), null);
+  });
+
+  it('returns 0 for another space that has nothing live and no saved snapshot', () => {
+    assert.equal(countSpaceWindows([], null), 0);
+    assert.equal(countSpaceWindows(undefined, undefined), 0);
   });
 });
 

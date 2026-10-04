@@ -284,7 +284,7 @@ const loadSpaces = async () => {
           if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
         } catch { /* no snapshot */ }
       }
-      tag.windowCount = countSpaceWindows(live, snapshotCount);
+      tag.windowCount = countSpaceWindows(live, snapshotCount, getSpaceDisplayName(tag) === 'default');
     }
     activeSpaceId = await resolveActiveSpaceId(spaceTags);
     // Resolve vivid colors for spaces with default/grey color

@@ -160,15 +160,16 @@ const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
 
 /**
  * Number of windows a space holds. Open windows win (the active workspace);
- * otherwise the saved workspace snapshot's window list. `null` when neither
- * is available (nothing open and no readable snapshot, e.g. the default
- * workspace while another is active), so the caller can show no count rather
+ * otherwise the saved workspace snapshot's window list. A space with no saved
+ * snapshot holds none, so it counts 0. `null` only for the default workspace
+ * with nothing open and no readable snapshot (tiles cannot read its snapshot
+ * while another workspace is active), so the caller shows no count rather
  * than a wrong 0.
  */
-const countSpaceWindows = (liveWindowIds, snapshotCount) => {
+const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false) => {
   if (Array.isArray(liveWindowIds) && liveWindowIds.length > 0) return liveWindowIds.length;
   if (typeof snapshotCount === 'number') return snapshotCount;
-  return null;
+  return isDefaultSpace ? null : 0;
 };
 
 /**
