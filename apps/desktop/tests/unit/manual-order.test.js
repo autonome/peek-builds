@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '../../features/editor/manual-order.js');
-const { applyManualOrder, moveBlock, moveBlockTo, reorderBase, ensureOrder, loadOrder, saveOrder, orderStorageKey } = await import(modulePath);
+const { applyManualOrder, moveBlock, moveBlockTo, reorderBase, ensureOrder, loadOrder, saveOrder, orderStorageKey, loadSort, saveSort } = await import(modulePath);
 
 const items = ['a', 'b', 'c', 'd'].map(id => ({ id }));
 const ids = (list) => list.map(i => i.id);
@@ -108,6 +108,21 @@ describe('loadOrder / saveOrder', () => {
     const broken = { getItem() { throw new Error('no'); }, setItem() { throw new Error('no'); } };
     assert.deepEqual(loadOrder('q', broken), []);
     saveOrder('q', ['a'], broken);
+  });
+});
+
+describe('loadSort / saveSort', () => {
+  it('a fresh view for the same query starts in the saved sort', () => {
+    const storage = memory();
+    assert.equal(loadSort('a,b', storage), null);
+    saveSort('a,b', 'manual', storage);
+    assert.equal(loadSort('a,b', storage), 'manual');
+    assert.equal(loadSort('c', storage), null);
+  });
+  it('survives a storage that throws', () => {
+    const broken = { getItem() { throw new Error('no'); }, setItem() { throw new Error('no'); } };
+    assert.equal(loadSort('q', broken), null);
+    saveSort('q', 'manual', broken);
   });
 });
 

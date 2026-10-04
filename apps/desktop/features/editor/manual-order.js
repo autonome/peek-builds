@@ -129,6 +129,34 @@ export function loadOrder(key, storage) {
   }
 }
 
+/** localStorage key prefix for the sort option a query was last left in. */
+export const SORT_KEY_PREFIX = 'editor:query-sort:';
+
+/**
+ * Saved sort option id for a query, or null when none is saved or storage is unreadable.
+ * @param {string} key query key
+ * @param {Pick<Storage, 'getItem'>} storage
+ * @returns {string | null}
+ */
+export function loadSort(key, storage) {
+  try {
+    return storage.getItem(SORT_KEY_PREFIX + key) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} key query key
+ * @param {string} optionId
+ * @param {Pick<Storage, 'setItem'>} storage
+ */
+export function saveSort(key, optionId, storage) {
+  try {
+    storage.setItem(SORT_KEY_PREFIX + key, optionId);
+  } catch { /* storage unavailable: the sort lasts for this window only */ }
+}
+
 /**
  * @param {string} key query key
  * @param {string[]} orderedIds

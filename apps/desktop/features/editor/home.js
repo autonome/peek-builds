@@ -14,7 +14,7 @@ import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
 import { parseTagQuery, queryKey } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, MANUAL_SORT_OPTION, sortItems } from './sort-options.js';
-import { loadOrder, saveOrder, reorderBase, moveBlock, moveBlockTo } from './manual-order.js';
+import { loadOrder, saveOrder, loadSort, saveSort, reorderBase, moveBlock, moveBlockTo } from './manual-order.js';
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
@@ -259,14 +259,17 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     onToggle: (itemId, aff) => recordTagAction(itemId, aff, aff.checked),
   });
 
-  let sortOption = DEFAULT_SORT_OPTION; // window state only
+  // The sort starts as the one this query was last left in (a manual reorder saves
+  // manual), so a reopened window, including one restored by undoing a close, matches.
+  const orderKey = queryKey(tagNames);
+  const savedSort = loadSort(orderKey, localStorage);
+  let sortOption = SORT_OPTIONS.some(option => option.id === savedSort) ? savedSort : DEFAULT_SORT_OPTION;
   let surface = null;
   let detachKeys = null;
   let inline = null;
   let clickOpen = null; // opens a clicked block; set once its inline editor exists
   // Manual order: stored ids per query, read here and written on every move. It is
   // used only while the sort option is manual and kept when another option is chosen.
-  const orderKey = queryKey(tagNames);
   let manualOrder = loadOrder(orderKey, localStorage);
   // Undo history lives as long as this view, which is bound to one query.
   const undoStack = createUndoStack();
@@ -471,6 +474,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     manualOrder = ids;
     saveOrder(orderKey, ids, localStorage);
     sortOption = MANUAL_SORT_OPTION;
+    saveSort(orderKey, sortOption, localStorage);
     select.value = sortOption;
     mountSorted();
     lastSignature = signatureOf({ items, unknownTags, itemTags });
@@ -679,6 +683,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   select.value = sortOption;
   select.addEventListener('change', () => {
     sortOption = select.value;
+    saveSort(orderKey, sortOption, localStorage);
     mountSorted();
   });
   editorLayout.setTopToolbar([addBtn, select]);
