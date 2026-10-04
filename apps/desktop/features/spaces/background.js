@@ -798,7 +798,10 @@ async function refreshSpaceNameCommands() {
 const initCommands = () => {
   // "open space <name>"
   api.pubsub.subscribe('cmd:execute:open space', async (msg) => {
-    const result = await openSpace(msg.search?.trim());
+    const result = await openSpace(spaceNameFromCommandMessage(msg, 'open space'));
+    if (!result?.success) {
+      console.warn('[ext:spaces] open space refused:', result?.error);
+    }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
@@ -826,7 +829,10 @@ const initCommands = () => {
 
   // "switch space <name>"
   api.pubsub.subscribe('cmd:execute:switch space', async (msg) => {
-    const result = await switchSpace(msg.search?.trim());
+    const result = await switchSpace(spaceNameFromCommandMessage(msg, 'switch space'));
+    if (!result?.success) {
+      console.warn('[ext:spaces] switch space refused:', result?.error);
+    }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
@@ -834,7 +840,7 @@ const initCommands = () => {
 
   // "create space <name>"
   api.pubsub.subscribe('cmd:execute:create space', async (msg) => {
-    const result = await createSpace(msg.search?.trim());
+    const result = await createSpace(spaceNameFromCommandMessage(msg, 'create space'));
     if (!result?.success) {
       console.warn('[ext:spaces] create space refused:', result?.error);
     }
