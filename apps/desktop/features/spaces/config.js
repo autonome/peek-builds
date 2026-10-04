@@ -204,7 +204,35 @@ const planMoveToSpace = ({ targetName, activeSpaceName, pinScope }) => {
   return { action: 'set-membership' };
 };
 
+/**
+ * Check a name for a new space. `existingNames` are the display names of the
+ * spaces that exist; the default space's name is always taken.
+ */
+const validateNewSpaceName = (name, existingNames, defaultName) => {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  if (!trimmed) return { ok: false, error: 'Usage: create space <name>' };
+  const lower = trimmed.toLowerCase();
+  const taken = [defaultName, ...(existingNames || [])].some(
+    (n) => typeof n === 'string' && n.trim().toLowerCase() === lower
+  );
+  if (taken) return { ok: false, exists: true, error: `Space "${trimmed}" already exists` };
+  return { ok: true, name: trimmed };
+};
+
+/**
+ * Command-panel suggestions for a space-name argument: one entry per space tag,
+ * shown by display name (no internal tag prefix), sorted by name.
+ */
+const spaceNameOptions = (tags) =>
+  (Array.isArray(tags) ? tags : [])
+    .filter((t) => t && isSpaceTag(t.name))
+    .map((t) => getSpaceDisplayName(t))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({ value: name, title: name }));
+
 export {
+  validateNewSpaceName,
+  spaceNameOptions,
   planMoveToSpace,
   shouldShowBorder,
   countSpaceWindows,
