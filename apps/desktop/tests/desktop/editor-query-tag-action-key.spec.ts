@@ -83,4 +83,50 @@ test.describe('Editor query view tag action key @desktop', () => {
       await bgWindow.evaluate(async (id: number) => (window as any).app.window.close(id), open.id);
     } catch { /* may already be closed */ }
   });
+
+  test('u after x puts the tags back and the block returns', async () => {
+    const stamp = Date.now();
+    const itemId: string = await bgWindow.evaluate(async (text: string) => {
+      const api = (window as any).app;
+      const todo = await api.datastore.getOrCreateTag('todo');
+      const item = await api.datastore.addItem('text', { content: text });
+      await api.datastore.tagItem(item.data.id, todo.data.tag.id);
+      return item.data.id;
+    }, `undo test ${stamp}`);
+
+    const open = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://editor/home.html?tags=todo', {
+        width: 900, height: 700, key: 'editor-query-tag-key-undo',
+      });
+    });
+    expect(open.success).toBe(true);
+
+    const win = await app.getWindow('editor/home.html', 10000);
+    await win.waitForLoadState('domcontentloaded');
+    const blocks = win.locator('.qs-block', { hasText: `undo test ${stamp}` });
+    await expect(blocks).toHaveCount(1, { timeout: 10000 });
+    // The first block is selected, and it is the only open todo.
+    await expect(win.locator('.qs-block')).toHaveCount(1);
+
+    await win.keyboard.press('x');
+
+    // Immediate feedback: the row is tinted before the update removes it.
+    await expect(blocks.first()).toHaveClass(/qs-acted/, { timeout: 2000 });
+
+    const tagsOf = async () => bgWindow.evaluate(async (id: string) => {
+      const res = await (window as any).app.datastore.getItemTags(id);
+      return res.success ? res.data.map((t: any) => t.name).sort() : null;
+    }, itemId);
+    await expect.poll(tagsOf, { timeout: 10000 }).toEqual(['done']);
+    await expect(blocks).toHaveCount(0, { timeout: 10000 });
+
+    await win.keyboard.press('u');
+
+    await expect.poll(tagsOf, { timeout: 10000 }).toEqual(['todo']);
+    await expect(blocks).toHaveCount(1, { timeout: 10000 });
+
+    try {
+      await bgWindow.evaluate(async (id: number) => (window as any).app.window.close(id), open.id);
+    } catch { /* may already be closed */ }
+  });
 });

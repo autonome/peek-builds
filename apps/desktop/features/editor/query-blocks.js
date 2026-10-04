@@ -126,8 +126,10 @@ export function blockRowsModel(item, extractTitle) {
  * @param {object} deps.api window.app
  * @param {() => object[]} deps.getRules current affordance rules
  * @param {(itemId: string) => string[]} deps.getTagNames the item's tag names
+ * @param {(itemId: string, affordance: object) => void} [deps.onToggle] runs after a
+ *   checkbox click published its tag action; `affordance.checked` is the new state
  */
-export async function createBlockRenderer({ api, getRules, getTagNames }) {
+export async function createBlockRenderer({ api, getRules, getTagNames, onToggle }) {
   const { extractTitle, getItemDisplayInfo, createUrlSpan, createFaviconEl } =
     await import('peek://app/lib/card-helpers.js');
   const { createAffordanceElements } = await import('peek://app/lib/tag-action-affordances.js');
@@ -145,7 +147,7 @@ export async function createBlockRenderer({ api, getRules, getTagNames }) {
     if (!model) return null;
 
     const left = el('div', 'qs-block-left');
-    const affordances = createAffordanceElements(item.id, getTagNames(item.id), getRules(), api);
+    const affordances = createAffordanceElements(item.id, getTagNames(item.id), getRules(), api, { onToggle });
     if (affordances) left.appendChild(affordances);
 
     const isText = model.type === 'text';

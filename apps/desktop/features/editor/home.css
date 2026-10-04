@@ -968,8 +968,26 @@ body {
 }
 
 @keyframes qs-leave {
-  0%, 40% { opacity: 1; }
-  100% { opacity: 0; }
+  0%, 40% { opacity: 1; max-height: var(--qs-leave-h, 400px); }
+  100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; }
+}
+
+/* A row just acted on (key or checkbox): tinted at once with the action's colour,
+   before the update removes or keeps it. */
+.qs-block.qs-acted {
+  background: color-mix(in srgb, var(--qs-act-color, var(--base0B)) 22%, transparent);
+  transition: background 120ms ease-out;
+}
+
+/* A deleted block: red, and it slides out sideways and shrinks, unlike the plain fade. */
+.qs-block.qs-leaving.qs-deleted {
+  background: color-mix(in srgb, var(--base08, #e5484d) 30%, transparent);
+  animation: qs-delete 900ms ease-in forwards;
+}
+
+@keyframes qs-delete {
+  0%, 25% { opacity: 1; transform: translateX(0); max-height: var(--qs-leave-h, 400px); }
+  100% { opacity: 0; transform: translateX(60px) scaleY(0.6); max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; }
 }
 
 .qs-block.folded {

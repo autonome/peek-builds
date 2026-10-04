@@ -178,7 +178,9 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   let unknownTags = resolved.unknownTags;
   let itemTags = resolved.itemTags;
   let shown = [];
-  const leaving = new Map(); // id -> { item, tags, since, index, timer }
+  const leaving = new Map(); // id -> { item, tags, since, index, timer, deleted }
+  const acting = new Map(); // id -> { color, timer }: rows highlighted after an action, before the update lands
+  const ACTING_MS = 3000;
   const deletedIds = new Set(); // items known deleted while their inline editor was open
   let pending = null; // newest query result held back while an inline editor is open
   let rebuildPending = false;
@@ -253,6 +255,8 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     api,
     getRules: () => rulesCache.getRules(),
     getTagNames: getTagNamesOf,
+    // A checkbox click records the same undo entry as the key does.
+    onToggle: (itemId, aff) => recordTagAction(itemId, aff, aff.checked),
   });
 
   let sortOption = DEFAULT_SORT_OPTION; // window state only
@@ -266,6 +270,31 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   let manualOrder = loadOrder(orderKey, localStorage);
   // Undo history lives as long as this view, which is bound to one query.
   const undoStack = createUndoStack();
+
+  /** Remember a tag action for undo and show the row as acted on right away. */
+  const recordTagAction = (itemId, aff, checked) => {
+    undoStack.push({ kind: 'tag', itemId, affordance: { ...aff }, checked });
+    const color = checked ? aff.checkedColor : aff.color;
+    const prior = acting.get(itemId);
+    if (prior) clearTimeout(prior.timer);
+    acting.set(itemId, {
+      color,
+      // Cleared when the block does not leave (the action failed or it stays in the query).
+      timer: setTimeout(() => { acting.delete(itemId); paintActing(itemId); }, ACTING_MS),
+    });
+    paintActing(itemId);
+  };
+
+  /** Apply (or clear) the acted-on highlight on the block currently showing `id`. */
+  const paintActing = (id) => {
+    const at = shown.findIndex(item => item.id === id);
+    const block = at >= 0 ? surface?.blockElement(at) : null;
+    if (!block) return;
+    const entry = acting.get(id);
+    block.classList.toggle('qs-acted', !!entry);
+    if (entry) block.style.setProperty('--qs-act-color', entry.color);
+    else block.style.removeProperty('--qs-act-color');
+  };
 
   /** Sorted items with the blocks that are leaving put back where they were. */
   const displayList = () => {
@@ -369,7 +398,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         const aff = findAffordanceByKey(getTagNamesOf(item.id), rulesCache.getRules(), key);
         if (!aff) return false;
         const checked = triggerAffordance(item.id, aff, api);
-        undoStack.push({ kind: 'tag', itemId: item.id, affordance: aff, checked });
+        recordTagAction(item.id, aff, checked);
         return true;
       },
       undo: undoLast,
@@ -387,9 +416,12 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     const now = Date.now();
     display.forEach((item, i) => {
       const entry = leaving.get(item.id);
+      if (acting.has(item.id)) paintActing(item.id);
       if (!entry) return;
       const block = mounted.blockElement(i);
+      block.style.setProperty('--qs-leave-h', `${block.offsetHeight}px`);
       block.classList.add('qs-leaving');
+      if (entry.deleted) block.classList.add('qs-deleted');
       block.setAttribute('aria-disabled', 'true');
       block.style.animationDelay = `-${now - entry.since}ms`;
     });
@@ -566,7 +598,16 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         since,
         index,
         timer: setTimeout(() => finishLeaving(id), LEAVE_MS),
+        deleted: false,
       });
+      // A deleted item gets the red slide-out instead of the plain fade.
+      api.datastore.getItem(id).then((res) => {
+        const entry = leaving.get(id);
+        if (!entry || (res?.success && res.data && !res.data.deletedAt)) return;
+        entry.deleted = true;
+        const at = shown.findIndex(item => item.id === id);
+        surface?.blockElement(at)?.classList.add('qs-deleted');
+      }).catch(() => {});
     }
     lastSignature = signature;
     items = result.items;
@@ -587,6 +628,7 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   window.addEventListener('beforeunload', () => {
     live.destroy();
     for (const entry of leaving.values()) clearTimeout(entry.timer);
+    for (const entry of acting.values()) clearTimeout(entry.timer);
   });
 
   // <Esc> reaches the window through the preload, not as a DOM keydown. Inner
