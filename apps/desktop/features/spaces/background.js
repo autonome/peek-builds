@@ -10,7 +10,8 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder, planMoveToSpace
+  resolveVividColor, shouldShowBorder, planMoveToSpace,
+  validateNewSpaceName, spaceNameOptions
 } from './config.js';
 
 const api = window.app;
@@ -661,6 +662,33 @@ async function unpinWindow() {
   return setPinState(windowId, null);
 }
 
+async function listSpaceTags() {
+  const result = await api.datastore.getTagsByFrecency();
+  if (!result?.success || !Array.isArray(result.data)) return [];
+  return result.data.filter((t) => t?.name && isSpaceTag(t.name));
+}
+
+/**
+ * Create a space without switching to it. Reports `exists` when the name is
+ * already taken (case-insensitive) or is the default space's.
+ */
+async function createSpace(name) {
+  await defaultSpaceReady;
+  const existing = (await listSpaceTags()).map((t) => getSpaceDisplayName(t));
+  const check = validateNewSpaceName(name, existing, DEFAULT_SPACE_NAME);
+  if (!check.ok) return { success: false, error: check.error, exists: !!check.exists };
+
+  const tagResult = await api.datastore.getOrCreateTag(toSpaceTagName(check.name));
+  if (!tagResult.success) return { success: false, error: 'Failed to create space tag' };
+  const tag = tagResult.data.tag;
+  const vividColor = resolveVividColor(tag.color, tag.id, activeThemeId);
+  if (vividColor !== tag.color) {
+    tag.color = vividColor;
+    await api.datastore.updateTagColor(tag.id, vividColor);
+  }
+  return { success: true, spaceId: tag.id, spaceName: getSpaceDisplayName(tag), created: true };
+}
+
 /**
  * Put the focused window in the named space. Only the active space is
  * supported (see `planMoveToSpace`); a workspace-pinned window is
@@ -762,6 +790,24 @@ const initCommands = () => {
     params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
   });
 
+  // "create space <name>"
+  api.pubsub.subscribe('cmd:execute:create space', async (msg) => {
+    const result = await createSpace(msg.search?.trim());
+    if (!result?.success) {
+      console.warn('[ext:spaces] create space refused:', result?.error);
+    }
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+  api.pubsub.publish('cmd:register', {
+    name: 'create space',
+    description: 'Create a space without switching to it',
+    source: 'spaces',
+    scope: 'global',
+    params: [{ name: 'name', type: 'string', required: true, description: 'New space name' }]
+  });
+
   // "move to space <name>"
   api.pubsub.subscribe('cmd:execute:move to space', async (msg) => {
     const result = await moveToSpace(msg.search?.trim());
@@ -832,7 +878,7 @@ const initCommands = () => {
 
 const uninitCommands = () => {
   for (const name of [
-    'open space', 'close space', 'switch space', 'move to space',
+    'open space', 'close space', 'switch space', 'move to space', 'create space',
     'pin to this workspace', 'pin across workspaces', 'unpin window',
   ]) {
     api.pubsub.publish('cmd:unregister', { name });

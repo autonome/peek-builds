@@ -93,6 +93,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "create space",
+      "description": "Create a space without switching to it",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "move to space",
       "description": "Move the active window to a space",
       "action": { "type": "execute" }
