@@ -643,6 +643,12 @@ interface TileSession {
    * own row). Requires `session` capability.
    */
   getWorkspaceSnapshotInfo(key: string): Promise<{ success: boolean; windows?: { url: string; bounds: { x: number; y: number; width: number; height: number }; zOrder: number }[]; error?: string }>;
+  /**
+   * Number of windows a workspace's saved snapshot holds (`count` is null when
+   * no snapshot exists). Allowed for the default workspace too: it exposes no
+   * URLs. Requires `session` capability.
+   */
+  getWorkspaceSnapshotWindowCount(key: string): Promise<{ success: boolean; count?: number | null; error?: string }>;
   /** Save the full session. Requires trustedBuiltin. */
   save(): Promise<{ success: boolean; error?: string }>;
   /** Restore the saved session interactively. Requires trustedBuiltin. */

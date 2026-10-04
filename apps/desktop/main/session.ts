@@ -1981,3 +1981,26 @@ export function getWorkspaceSnapshotWindowInfo(
     return null;
   }
 }
+
+/**
+ * How many windows a workspace's saved snapshot holds — the default
+ * workspace included, since a bare count exposes none of the saved URLs
+ * (`getWorkspaceSnapshotWindowInfo` refuses the default key for that reason).
+ * Counts the same windows a restore would reopen. Returns `null` for a
+ * missing/invalid snapshot or a read error.
+ */
+export function getWorkspaceSnapshotWindowCount(key: string): number | null {
+  if (!key) return null;
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotRowKey(key)) as { value: string } | undefined;
+    if (!row?.value) return null;
+    const snapshot: SessionSnapshot = JSON.parse(row.value);
+    if (snapshot.version !== 1 || !Array.isArray(snapshot.windows)) return null;
+    return snapshot.windows.filter((d) => isValidDescriptor(d) && d.url).length;
+  } catch {
+    return null;
+  }
+}
