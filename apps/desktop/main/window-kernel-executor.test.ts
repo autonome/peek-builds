@@ -18,6 +18,7 @@ import {
   planRaise,
   planRaiseRealization,
   planRestoreFocus,
+  planRestoreActivation,
   stackingLevelForLayer,
   type FsSettleOutcome,
 } from './window-kernel-executor.js';
@@ -1804,6 +1805,18 @@ describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8
 
   it('headless never activates on a workspace switch', () => {
     assert.strictEqual(planRestoreFocus(false, true, false, true), false);
+  });
+
+  // planRaise suppresses a raise without a user intent while the app is inactive, so a restore
+  // that proceeds while inactive (cold start or a switch begun while active) must carry it.
+  // Without it the focus decision said yes and the raise silently did nothing.
+  it('restore carries a user intent on cold start and on a switch begun while active', () => {
+    assert.strictEqual(planRestoreActivation(true, false), 'user');
+    assert.strictEqual(planRestoreActivation(false, true), 'user');
+  });
+
+  it('an ordinary in-session restore carries no intent', () => {
+    assert.strictEqual(planRestoreActivation(false, false), undefined);
   });
 
   // Headless with appActive true still activates (appActive dominates) — but in

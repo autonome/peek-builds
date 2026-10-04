@@ -14,6 +14,7 @@ import type { IpcMainEvent } from 'electron';
 import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getWindowIdFor, getAppActive, getKernelExecutorForApp } from './window-machine.js';
+import { planRestoreActivation } from './window-kernel-executor.js';
 import type { State, WindowId } from './window-kernel.js';
 import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
@@ -1678,10 +1679,8 @@ export async function restoreSessionSnapshot(
       // injected fact. This seam supplies the one thing neither of them knows —
       // which restore this is — and reads back the answer.
       const appActive = getAppActive();
-      const willActivate = getKernelExecutorForApp().shouldRestoreFocus(
-        isColdStart,
-        isWorkspaceSwitch && _workspaceSwitchInFlight && _appActiveAtSwitchStart,
-      );
+      const activeBeforeSwitch = isWorkspaceSwitch && _workspaceSwitchInFlight && _appActiveAtSwitchStart;
+      const willActivate = getKernelExecutorForApp().shouldRestoreFocus(isColdStart, activeBeforeSwitch);
       // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
       // ABSENCE of logs (the gated block was silently skipped). Make the
       // decision self-evident in prod main.log for any future occurrence.
@@ -1769,7 +1768,8 @@ export async function restoreSessionSnapshot(
         // in-session restore never reaches this branch unless the app is
         // already active (`planRestoreFocus`), so leaving it unstolen there
         // changes nothing.
-        const activation = isColdStart ? ({ activation: 'user' as const }) : undefined;
+        const restoreIntent = planRestoreActivation(isColdStart, activeBeforeSwitch);
+        const activation = restoreIntent ? ({ activation: restoreIntent }) : undefined;
         if (focusWin) {
           showWindowHeadlessSafe(focusWin, { active: true, ...activation });
           _restoreFocusCount++;

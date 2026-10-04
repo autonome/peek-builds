@@ -84,6 +84,14 @@ export function planRestoreFocus(
   return appActive || ((coldStart || activeBeforeSwitch) && !headless);
 }
 
+// The raise of the restored focused window must carry a user intent whenever the restore is
+// allowed to run while the app is inactive (cold start, or a switch begun while the app was
+// active): `planRaise` suppresses a machine-triggered raise outright while the app is inactive,
+// so without the intent `planRestoreFocus` says yes and nothing happens.
+export function planRestoreActivation(coldStart: boolean, activeBeforeSwitch: boolean): 'user' | undefined {
+  return coldStart || activeBeforeSwitch ? 'user' : undefined;
+}
+
 export interface WindowKernelExecutorOptions {
   // Starting state; defaults to `initialState()`. Replay/tests supply their own.
   initial?: State;
