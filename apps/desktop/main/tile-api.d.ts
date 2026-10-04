@@ -649,6 +649,13 @@ interface TileSession {
    * URLs. Requires `session` capability.
    */
   getWorkspaceSnapshotWindowCount(key: string): Promise<{ success: boolean; count?: number | null; error?: string }>;
+  /**
+   * Append an open window to a workspace's saved snapshot, keeping the windows
+   * it already holds (a window already there is not added twice). Creates the
+   * snapshot when none exists. Write-only: returns no saved URLs. The window
+   * must already carry that workspace's space membership.
+   */
+  addWindowToWorkspaceSnapshot(key: string, windowId: number): Promise<{ success: boolean; added?: boolean; error?: string }>;
   /** Save the full session. Requires trustedBuiltin. */
   save(): Promise<{ success: boolean; error?: string }>;
   /** Restore the saved session interactively. Requires trustedBuiltin. */

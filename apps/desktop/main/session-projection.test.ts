@@ -74,6 +74,7 @@ import * as assert from 'node:assert';
 
 import {
   serializeSession,
+  addDescriptorsToSnapshot,
   restorableBoundsFromRecord,
   readPreMaxBounds,
   readStackIndex,
@@ -1337,6 +1338,52 @@ describe('serializeSession — workspace-keyed snapshots', () => {
       records: [makeRecord('w1')],
     };
     assert.strictEqual(serializeSession(inputFor(world)).snapshot.windows.length, 0);
+  });
+});
+
+describe('addDescriptorsToSnapshot', () => {
+  const desc = (url: string, over: Partial<WindowDescriptor> = {}): WindowDescriptor => ({
+    url,
+    key: undefined,
+    title: url,
+    bounds: { x: 0, y: 0, width: 100, height: 100 },
+    source: 'test',
+    params: {},
+    zOrder: 0,
+    focused: false,
+    ...over,
+  });
+
+  it('creates a snapshot holding just the added windows when there is no saved row', () => {
+    const snap = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 5);
+    assert.strictEqual(snap.version, 1);
+    assert.strictEqual(snap.workspaceKey, 'tag-1');
+    assert.strictEqual(snap.createdAt, 5);
+    assert.deepStrictEqual(snap.windows.map((d) => d.url), ['https://a.test/']);
+  });
+
+  it('keeps the existing windows and appends the new one', () => {
+    const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
+    const snap = addDescriptorsToSnapshot(existing, [desc('https://b.test/')], 'tag-1', 'workspace-switch', 2);
+    assert.deepStrictEqual(snap.windows.map((d) => d.url), ['https://a.test/', 'https://b.test/']);
+  });
+
+  it('does not add a window already in the row (same url and key)', () => {
+    const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
+    const snap = addDescriptorsToSnapshot(existing, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 2);
+    assert.strictEqual(snap.windows.length, 1);
+  });
+
+  it('treats the same url under a different window key as a different window', () => {
+    const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/', { key: 'k1' })], 'tag-1', 'workspace-switch', 1);
+    const snap = addDescriptorsToSnapshot(existing, [desc('https://a.test/', { key: 'k2' })], 'tag-1', 'workspace-switch', 2);
+    assert.strictEqual(snap.windows.length, 2);
+  });
+
+  it('does not mutate the existing snapshot', () => {
+    const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
+    addDescriptorsToSnapshot(existing, [desc('https://b.test/')], 'tag-1', 'workspace-switch', 2);
+    assert.strictEqual(existing.windows.length, 1);
   });
 });
 

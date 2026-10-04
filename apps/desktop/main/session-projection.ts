@@ -395,6 +395,30 @@ export function sanitizeParams(params: Record<string, unknown>): Record<string, 
  * pre-extraction `saveSessionSnapshot` loop; only their INPUTS changed (machine
  * reads instead of OS reads).
  */
+/**
+ * Add window descriptors to a workspace's saved snapshot, keeping every window
+ * it already holds. A descriptor already present (same url and window key) is
+ * not added again. With no saved snapshot, the result holds just the additions.
+ * Pure: returns a new snapshot, never mutates `existing`.
+ */
+export function addDescriptorsToSnapshot(
+  existing: SessionSnapshot | null,
+  additions: readonly WindowDescriptor[],
+  workspaceKey: string,
+  reason: SessionSnapshot['reason'],
+  createdAt: number,
+): SessionSnapshot {
+  const windows = existing && Array.isArray(existing.windows) ? [...existing.windows] : [];
+  const identity = (d: WindowDescriptor) => `${d.url}\u0000${d.key ?? ''}`;
+  const seen = new Set(windows.map(identity));
+  for (const d of additions) {
+    if (seen.has(identity(d))) continue;
+    seen.add(identity(d));
+    windows.push(d);
+  }
+  return { version: 1, createdAt, reason, workspaceKey, windows };
+}
+
 export function serializeSession(input: SerializeSessionInput): SessionProjection {
   const notices: SessionSaveNotice[] = [];
 

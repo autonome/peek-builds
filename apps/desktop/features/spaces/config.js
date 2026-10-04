@@ -187,11 +187,10 @@ const formatWindowCount = (count) => {
 };
 
 /**
- * What `move to space` does with the focused window. Only the active space is a
- * valid target: an inactive space's saved snapshot is written only by saving the
- * windows currently tagged for it, so adding a window to it would replace the
- * windows it already holds. A globally pinned window belongs to every space
- * already, so it is left alone.
+ * What `move to space` does with the focused window. The active space only needs
+ * its membership set; an inactive one also needs the window added to its saved
+ * snapshot and closed, so it reappears when that space is next opened. A
+ * globally pinned window belongs to every space already, so it is left alone.
  */
 const planMoveToSpace = ({ targetName, activeSpaceName, pinScope }) => {
   const target = typeof targetName === 'string' ? targetName.trim() : '';
@@ -200,7 +199,7 @@ const planMoveToSpace = ({ targetName, activeSpaceName, pinScope }) => {
     return { action: 'error', error: 'This window is pinned across every workspace; unpin it first to move it' };
   }
   if (!activeSpaceName || toSpaceTagName(target) !== toSpaceTagName(activeSpaceName)) {
-    return { action: 'error', error: `"${target}" is not the active space; moving a window to an inactive space is not supported yet` };
+    return { action: 'move-to-inactive', targetName: target };
   }
   return { action: 'set-membership' };
 };

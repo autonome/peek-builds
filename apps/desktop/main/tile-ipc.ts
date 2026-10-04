@@ -4345,6 +4345,32 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  registerTileIpc('tile:session:add-window-to-workspace-snapshot', { mode: 'handle' }, async (event, args: {
+    token: string;
+    key: string;
+    windowId: number;
+  }, _grant) => {
+    const grant = _grant;
+    if (typeof args.key !== 'string' || !args.key) {
+      return { success: false, error: 'key is required' };
+    }
+    if (typeof args.windowId !== 'number') {
+      return { success: false, error: 'windowId is required' };
+    }
+    const check = checkSessionAllowed(grant, 'add-window-to-workspace-snapshot', { key: args.key });
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:add-window-to-workspace-snapshot', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      const { addWindowToWorkspaceSnapshot } = await import('./session.js');
+      return addWindowToWorkspaceSnapshot(args.key, args.windowId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── Network Fetch ──
 
   registerTileIpc('tile:network:fetch', { mode: 'handle' }, async (event, args: {

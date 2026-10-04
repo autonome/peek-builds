@@ -677,6 +677,31 @@ async function moveToSpace(targetName) {
     pinScope: pinResult?.data?.value || null,
   });
   if (plan.action === 'error') return { success: false, error: plan.error };
+
+  if (plan.action === 'move-to-inactive') {
+    const tagResult = await api.datastore.getOrCreateTag(toSpaceTagName(plan.targetName));
+    if (!tagResult.success) return { success: false, error: 'Failed to get/create space tag' };
+    const tag = tagResult.data.tag;
+    const displayName = getSpaceDisplayName(tag);
+    const color = tag.id === defaultSpaceId ? tag.color : resolveSpaceBorderColor(tag.color, tag.id);
+    // Membership first: the snapshot save keeps only windows scoped to the target.
+    await api.context.setMode('space', {
+      windowId,
+      metadata: { spaceId: tag.id, spaceName: displayName, color }
+    });
+    const added = await api.session.addWindowToWorkspaceSnapshot(workspaceSnapshotKey(tag.id), windowId);
+    if (!added?.success) {
+      // Put the window back where it was rather than leave it tagged for a space that never recorded it.
+      await api.context.setMode('space', {
+        windowId,
+        metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
+      });
+      return { success: false, error: added?.error || 'Failed to add the window to the space' };
+    }
+    await api.window.close(windowId);
+    return { success: true, windowId, spaceId: tag.id, spaceName: displayName, closed: true };
+  }
+
   await api.context.setMode('space', {
     windowId,
     metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }

@@ -113,6 +113,20 @@ describe('checkSessionAllowed — get-workspace-snapshot-window-count', () => {
   });
 });
 
+describe('checkSessionAllowed — add-window-to-workspace-snapshot', () => {
+  // A write-only op: it appends one window to a workspace's row and returns no URLs.
+  it('is allowed for named keys and the default key with the session capability', () => {
+    const grant = makeGrant({ session: true });
+    assert.strictEqual(checkSessionAllowed(grant, 'add-window-to-workspace-snapshot', { key: 'tag-42' }).ok, true);
+    assert.strictEqual(checkSessionAllowed(grant, 'add-window-to-workspace-snapshot', { key: DEFAULT_WORKSPACE_KEY }).ok, true);
+  });
+
+  it('refuses without the session capability', () => {
+    const grant = makeGrant({});
+    assert.strictEqual(checkSessionAllowed(grant, 'add-window-to-workspace-snapshot', { key: 'tag-42' }).ok, false);
+  });
+});
+
 describe('resolveCapabilities — session shape preservation', () => {
   it('preserves session: true across resolution', () => {
     const grant = resolveCapabilities('t', { session: true }, false);

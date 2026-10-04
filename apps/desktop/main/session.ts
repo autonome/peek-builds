@@ -23,7 +23,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
+import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -777,6 +777,68 @@ export function saveSessionSnapshot(
     }
   } catch (error) {
     console.error('[session] Failed to save session snapshot:', error);
+  }
+}
+
+/**
+ * Append one open window to a workspace's saved snapshot row, keeping the
+ * windows the row already holds. The window must already carry that
+ * workspace's space membership (the save projection under a named key keeps
+ * only windows scoped to it); a window that does not, or a window pinned
+ * across every workspace, adds nothing. Creates the row when none exists.
+ * Writes the row only — returns no saved URLs.
+ */
+export function addWindowToWorkspaceSnapshot(
+  key: string,
+  nativeWindowId: number,
+): { success: boolean; added?: boolean; error?: string } {
+  if (!key) return { success: false, error: 'key is required' };
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return { success: false, error: 'Database not available' };
+  }
+
+  const saveWindows = buildSessionSaveWindows(getAllWindows()).filter((w) => w.nativeId === nativeWindowId);
+  if (saveWindows.length === 0) return { success: false, error: `Window ${nativeWindowId} not found` };
+
+  const { kernelState, kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
+  const createdAt = Date.now();
+  const projection = serializeSession({
+    snapshot: kernelState,
+    windows: saveWindows,
+    getPresentation: (nativeId: number) => getWindowPresentation(nativeId),
+    getContext: readSaveContext,
+    registeredTileIds: getRegisteredTileIds(),
+    reason: 'workspace-switch',
+    createdAt,
+    kernelOrder,
+    topmostContentWindowId,
+    workspaceKey: key,
+  });
+  if (projection.snapshot.windows.length === 0) {
+    return { success: false, error: 'Window is not saveable into that workspace' };
+  }
+
+  const rowKey = snapshotRowKey(key);
+  try {
+    let existing: SessionSnapshot | null = null;
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(rowKey) as { value: string } | undefined;
+    if (row?.value) {
+      const parsed: SessionSnapshot = JSON.parse(row.value);
+      if (parsed.version === 1 && Array.isArray(parsed.windows)) existing = parsed;
+    }
+    const merged = addDescriptorsToSnapshot(existing, projection.snapshot.windows, key, 'workspace-switch', createdAt);
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES (?, 'session', ?, ?, ?)
+    `).run(`session-${rowKey}`, rowKey, JSON.stringify(merged), Date.now());
+    return { success: true, added: merged.windows.length > (existing?.windows.length ?? 0) };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

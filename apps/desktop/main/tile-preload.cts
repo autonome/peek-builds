@@ -2223,6 +2223,16 @@ function buildAPI(): Record<string, unknown> {
         key,
       });
     },
+    addWindowToWorkspaceSnapshot: (key: string, windowId: number) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.addWindowToWorkspaceSnapshot requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:add-window-to-workspace-snapshot', {
+        token: tileToken,
+        key,
+        windowId,
+      });
+    },
     // trustedBuiltin only.
     save: () => {
       if (!trustedBuiltin) {

@@ -42,9 +42,20 @@ describe('planMoveToSpace', () => {
     assert.match(plan.error, /every workspace/);
   });
 
-  it('refuses an inactive target, since its saved snapshot cannot take the window yet', () => {
+  it('adds the window to the saved snapshot when the target is an inactive space', () => {
     const plan = planMoveToSpace({ targetName: 'Play', activeSpaceName: 'Work', pinScope: null });
-    assert.equal(plan.action, 'error');
-    assert.match(plan.error, /not the active space/);
+    assert.equal(plan.action, 'move-to-inactive');
+    assert.equal(plan.targetName, 'Play');
+  });
+
+  it('trims the inactive target name', () => {
+    const plan = planMoveToSpace({ targetName: ' Play ', activeSpaceName: 'Work', pinScope: 'workspace' });
+    assert.equal(plan.action, 'move-to-inactive');
+    assert.equal(plan.targetName, 'Play');
+  });
+
+  it('treats everything as inactive when no space is active yet', () => {
+    const plan = planMoveToSpace({ targetName: 'Play', activeSpaceName: null, pinScope: null });
+    assert.equal(plan.action, 'move-to-inactive');
   });
 });
