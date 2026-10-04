@@ -12,6 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
+import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
@@ -2605,18 +2606,11 @@ function actionHandlers() {
     publishEditorOpen(payload) {
       const result = payload?.result;
       if (!result || !result.output) return;
-      const outputData = result.output.data;
-      const outputMimeType = result.output.mimeType;
-
-      if (outputMimeType === 'tag-query') {
-        api.publish('editor:open', { tags: outputData.tags });
-      } else if (outputMimeType === 'new-item') {
-        api.publish('editor:add', { type: outputData.type || 'text' });
-      } else if (outputData.id) {
-        api.publish('editor:open', { itemId: outputData.id });
-        if (result.output.isNew) {
-          api.publish('editor:changed', { action: 'add', itemId: outputData.id });
-        }
+      const message = editorMessageForOutput(result.output);
+      if (!message) return;
+      api.publish(message.topic, message.payload);
+      if (message.alsoChanged) {
+        api.publish(message.alsoChanged.topic, message.alsoChanged.payload);
       }
     },
 

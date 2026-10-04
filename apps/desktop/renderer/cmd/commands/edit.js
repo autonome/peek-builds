@@ -6,9 +6,10 @@
  * - Panel layer handles routing to editor based on mimeType
  *
  * Usage:
- *   cmd:edit {search} - search for notes and open in editor
- *   - Shows matching notes in dropdown (via output selection mode)
- *   - On selection: panel auto-opens editor for 'item' mimeType
+ *   cmd:edit - list recent notes (output selection mode), picking one opens it
+ *   cmd:edit {text} - open the editor with text as its starting content
+ *   cmd:edit #tag ... - open the tag query view
+ *   - A note picked from the autocomplete dropdown opens directly
  */
 import api from 'peek://app/api.js';
 import { findTagByName } from '../item-suggestions.js';
@@ -112,6 +113,19 @@ const commands = [
       }
 
       const query = ctx.search || '';
+
+      // `edit some text`: open the editor with the text as its starting content
+      if (query.trim()) {
+        return {
+          success: true,
+          message: 'Opening editor',
+          output: {
+            data: { type: 'text', content: query },
+            mimeType: 'new-item',
+            title: 'New note'
+          }
+        };
+      }
 
       // Search for matching notes
       const notes = await searchNotes(query, 20);

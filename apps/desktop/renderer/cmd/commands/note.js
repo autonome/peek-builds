@@ -4,9 +4,13 @@
  * If input is a URL → saves as url item
  * If input is hashtags (#foo #bar) → saves as tagset item with those tags
  * If input is text → saves as text item tagged with 'note' and 'from:cmd'
+ *
+ * With input the command saves and shows a "saved" notification; it does not
+ * open the editor. With no input it opens an empty editor.
  */
 import api from 'peek://app/api.js';
 import { splitTrailingTags } from 'peek://app/lib/note-tags.js';
+import { noteSavedNotice } from '../note-notice.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
 
@@ -197,28 +201,19 @@ const commands = [
           const { itemId, type, content } = await saveItem(ctx.search);
           console.log(`Saved ${type} item:`, itemId);
 
-          // Return the saved item through the connector pattern
-          // Panel will handle editor:changed notification and routing
-          const typeLabel = type === 'url' ? 'URL' : type === 'tagset' ? 'Tagset' : 'Note';
-
-          // Tagsets should not open in the editor — just confirm and close
-          if (type === 'tagset') {
-            return {
-              success: true,
-              message: `${typeLabel} saved: ${ctx.search}`
-            };
+          // Saving never opens the editor (`edit {str}` does that); confirm
+          // with a notification and close
+          const notice = noteSavedNotice(type, content);
+          try {
+            new Notification(notice.title, { body: notice.body });
+          } catch (e) {
+            console.warn('Could not show saved notification:', e);
           }
+          api.publish('editor:changed', { action: 'add', itemId });
 
           return {
             success: true,
-            message: `${typeLabel} saved`,
-            output: {
-              data: { id: itemId, type, content },
-              mimeType: 'item',
-              title: `Saved ${typeLabel.toLowerCase()}`,
-              // Flag to indicate this is a newly created item (for editor:changed)
-              isNew: true
-            }
+            message: notice.title
           };
         } catch (error) {
           console.error('Failed to save:', error);
