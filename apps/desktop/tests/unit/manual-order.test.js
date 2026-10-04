@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '../../features/editor/manual-order.js');
-const { applyManualOrder, moveBlock, ensureOrder, loadOrder, saveOrder, orderStorageKey } = await import(modulePath);
+const { applyManualOrder, moveBlock, moveBlockTo, ensureOrder, loadOrder, saveOrder, orderStorageKey } = await import(modulePath);
 
 const items = ['a', 'b', 'c', 'd'].map(id => ({ id }));
 const ids = (list) => list.map(i => i.id);
@@ -108,5 +108,34 @@ describe('loadOrder / saveOrder', () => {
     const broken = { getItem() { throw new Error('no'); }, setItem() { throw new Error('no'); } };
     assert.deepEqual(loadOrder('q', broken), []);
     saveOrder('q', ['a'], broken);
+  });
+});
+
+describe('moveBlockTo', () => {
+  const list = ['a', 'b', 'c', 'd'];
+
+  it('puts the block before the target', () => {
+    assert.deepEqual(moveBlockTo(list, 'd', 'b', false), ['a', 'd', 'b', 'c']);
+    assert.deepEqual(moveBlockTo(list, 'a', 'c', false), ['b', 'a', 'c', 'd']);
+  });
+
+  it('puts the block after the target', () => {
+    assert.deepEqual(moveBlockTo(list, 'a', 'c', true), ['b', 'c', 'a', 'd']);
+    assert.deepEqual(moveBlockTo(list, 'b', 'd', true), ['a', 'c', 'd', 'b']);
+  });
+
+  it('moves to either end', () => {
+    assert.deepEqual(moveBlockTo(list, 'c', 'a', false), ['c', 'a', 'b', 'd']);
+    assert.deepEqual(moveBlockTo(list, 'a', 'd', true), ['b', 'c', 'd', 'a']);
+  });
+
+  it('leaves the list alone for a drop on itself or an unknown id', () => {
+    assert.deepEqual(moveBlockTo(list, 'b', 'b', true), list);
+    assert.deepEqual(moveBlockTo(list, 'x', 'b', true), list);
+    assert.deepEqual(moveBlockTo(list, 'b', 'x', false), list);
+  });
+
+  it('returns a copy', () => {
+    assert.notEqual(moveBlockTo(list, 'b', 'b', true), list);
   });
 });

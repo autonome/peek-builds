@@ -14,7 +14,7 @@ import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
 import { parseTagQuery, queryKey } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, MANUAL_SORT_OPTION, sortItems } from './sort-options.js';
-import { loadOrder, saveOrder, ensureOrder, moveBlock } from './manual-order.js';
+import { loadOrder, saveOrder, ensureOrder, moveBlock, moveBlockTo } from './manual-order.js';
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
@@ -299,6 +299,10 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       onSelect: (next) => { if (inline?.isOpen() && inline.openIndex() !== next) inline.close(); },
       onFold: (index) => { if (inline?.isOpen() && inline.openIndex() === index) inline.close(); },
       onBlockClick: (index, e) => clickOpen?.(index, e),
+      // Handles exist only in manual order.
+      reorder: sortOption === MANUAL_SORT_OPTION
+        ? { canStart: (index) => canReorder(display[index]), onDrop: dropBlock }
+        : undefined,
     });
     surface = mounted;
     // The editor's one status line is borrowed by the inline editor while it is open.
@@ -386,18 +390,42 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
    * block by id through the rebuild.
    */
   const moveSelected = (delta) => {
-    if (sortOption !== MANUAL_SORT_OPTION || !surface || inline?.isOpen()) return;
+    if (!surface) return;
     const selected = shown[surface.selectedIndex()];
-    if (!selected || leaving.has(selected.id) || !items.some(item => item.id === selected.id)) return;
-    const current = sortItems(items, MANUAL_SORT_OPTION, manualOrder).map(item => item.id);
+    reorder(selected, (reconciled) => moveBlock(reconciled, selected.id, delta));
+  };
+
+  /** Whether `item`'s block may be moved now: manual order, no open inline editor, not leaving. */
+  const canReorder = (item) =>
+    sortOption === MANUAL_SORT_OPTION && !inline?.isOpen() && !!item && !leaving.has(item.id)
+    && items.some(other => other.id === item.id);
+
+  /**
+   * Store a new manual order for `item`'s move. `compute` gets the stored list
+   * reconciled with the items now in the query (which drops ids that no longer
+   * match anything) and returns the new list. Selection and folds follow the
+   * block by id through the rebuild.
+   */
+  const reorder = (item, compute) => {
+    if (!surface || !canReorder(item)) return;
+    const current = sortItems(items, MANUAL_SORT_OPTION, manualOrder).map(other => other.id);
     const reconciled = ensureOrder(current, manualOrder);
-    const moved = moveBlock(reconciled, selected.id, delta);
+    const moved = compute(reconciled);
     if (moved.join('\n') === reconciled.join('\n')) return;
     manualOrder = moved;
     saveOrder(orderKey, moved, localStorage);
     mountSorted();
     lastSignature = signatureOf({ items, unknownTags, itemTags });
     surface.revealSelected();
+  };
+
+  /** A handle dropped on another block: move the dragged block there and keep it selected. */
+  const dropBlock = (from, to, after) => {
+    const dragged = shown[from];
+    const target = shown[to];
+    if (!dragged || !target || leaving.has(target.id)) return;
+    surface.select(from);
+    reorder(dragged, (reconciled) => moveBlockTo(reconciled, dragged.id, target.id, after));
   };
 
   /** Resolve true once the live update has shown a block for `id`, false on timeout. */

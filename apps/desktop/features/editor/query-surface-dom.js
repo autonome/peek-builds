@@ -72,7 +72,11 @@ export function blockTitle(item) {
  * @param {{renderBlock?: (item: object) => {left?: HTMLElement, title: HTMLElement, body: HTMLElement},
  *   onSelect?: (index: number, prev: number) => void,
  *   onFold?: (index: number, folded: boolean) => void,
- *   onBlockClick?: (index: number, event: MouseEvent) => void}} [options]
+ *   onBlockClick?: (index: number, event: MouseEvent) => void,
+ *   reorder?: {canStart?: (index: number) => boolean,
+ *     onDrop: (from: number, to: number, after: boolean) => void}}} [options]
+ *   reorder, when given, puts a drag handle on each block; dropping a handle on
+ *   a block calls onDrop with both indexes and whether it landed in the lower half.
  *   renderBlock builds a block's left column, title row and body; without it a
  *   block shows a plain-text title and body. onSelect / onFold are called after
  *   the selected or folded block changes; onBlockClick after every click on a
@@ -108,6 +112,14 @@ export function mountDomSurface(root, items, options = {}) {
       main.append(rendered.title, rendered.body);
       block.classList.add('qs-block-columns');
       block.replaceChildren(rendered.left || document.createElement('div'), main);
+      if (options.reorder) {
+        const handle = document.createElement('div');
+        handle.className = 'qs-drag-handle';
+        handle.draggable = true;
+        handle.title = 'Drag to reorder';
+        handle.textContent = '⋮⋮';
+        block.prepend(handle);
+      }
     } else {
       const title = document.createElement('div');
       title.className = 'qs-block-title';
@@ -142,6 +154,63 @@ export function mountDomSurface(root, items, options = {}) {
     state.select(index);
     options.onBlockClick?.(index, e);
   });
+
+  // Drag to reorder: only a block's handle starts a drag; the block text and the
+  // inline editor never do. The drop reports which block went where.
+  if (options.reorder) {
+    let dragIndex = -1;
+    let overBlock = null;
+    const clearMarks = () => {
+      overBlock?.classList.remove('qs-drop-before', 'qs-drop-after');
+      overBlock = null;
+    };
+    const blockOf = (e) => e.target.closest?.('.qs-block');
+    const isAfter = (block, e) => {
+      const rect = block.getBoundingClientRect();
+      return e.clientY > rect.top + rect.height / 2;
+    };
+
+    scroller.addEventListener('dragstart', (e) => {
+      const block = e.target.closest?.('.qs-drag-handle') && blockOf(e);
+      if (!block || !(options.reorder.canStart?.(Number(block.dataset.index)) ?? true)) {
+        e.preventDefault();
+        return;
+      }
+      dragIndex = Number(block.dataset.index);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', block.dataset.itemId || String(dragIndex));
+      e.dataTransfer.setDragImage(block, 0, 0);
+      block.classList.add('qs-dragging');
+    });
+    scroller.addEventListener('dragover', (e) => {
+      const block = blockOf(e);
+      if (dragIndex < 0 || !block) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (overBlock && overBlock !== block) clearMarks();
+      overBlock = block;
+      const after = isAfter(block, e);
+      block.classList.toggle('qs-drop-after', after);
+      block.classList.toggle('qs-drop-before', !after);
+    });
+    scroller.addEventListener('dragleave', (e) => {
+      if (!scroller.contains(e.relatedTarget)) clearMarks();
+    });
+    scroller.addEventListener('drop', (e) => {
+      const block = blockOf(e);
+      const from = dragIndex;
+      if (from < 0 || !block) return;
+      e.preventDefault();
+      const after = isAfter(block, e);
+      clearMarks();
+      options.reorder.onDrop(from, Number(block.dataset.index), after);
+    });
+    scroller.addEventListener('dragend', () => {
+      clearMarks();
+      blocks[dragIndex]?.classList.remove('qs-dragging');
+      dragIndex = -1;
+    });
+  }
 
   return {
     element: scroller,

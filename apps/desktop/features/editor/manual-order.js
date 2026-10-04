@@ -82,6 +82,25 @@ export function moveBlock(orderedIds, id, delta) {
 }
 
 /**
+ * New id list with `id` taken out and put just before (or, with `after`, just
+ * after) `targetId`. Either id missing from the list, or `id` being `targetId`,
+ * leaves the list unchanged.
+ * @param {string[]} orderedIds
+ * @param {string} id the dragged block
+ * @param {string} targetId the block dropped on
+ * @param {boolean} after place after the target instead of before it
+ * @returns {string[]}
+ */
+export function moveBlockTo(orderedIds, id, targetId, after) {
+  if (id === targetId || !orderedIds.includes(id) || !orderedIds.includes(targetId)) {
+    return orderedIds.slice();
+  }
+  const out = orderedIds.filter(other => other !== id);
+  out.splice(out.indexOf(targetId) + (after ? 1 : 0), 0, id);
+  return out;
+}
+
+/**
  * Stored order for a query; an empty list when nothing is stored or it is unreadable.
  * @param {string} key query key
  * @param {Pick<Storage, 'getItem'>} storage
