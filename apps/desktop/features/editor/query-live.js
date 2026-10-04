@@ -23,7 +23,7 @@ export const LIVE_TOPICS = [
 ];
 
 /** How long a block that left the query stays on screen, frozen and fading. */
-export const LEAVE_MS = 1200;
+export const LEAVE_MS = 600;
 
 /**
  * Compare the blocks on screen with a fresh query result.

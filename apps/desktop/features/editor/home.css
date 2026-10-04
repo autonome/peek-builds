@@ -964,12 +964,24 @@ body {
    recreates the block mid-fade. */
 .qs-block.qs-leaving {
   pointer-events: none;
-  animation: qs-leave 1200ms linear forwards;
+  /* Clipped from the first frame, so content never spills over the rows below while
+     the height collapses. */
+  overflow: hidden;
+  animation: qs-leave 450ms linear forwards;
 }
 
+/* A short hold, then fade and collapse together on an ease-out curve. The curve is set
+   on the hold's last keyframe so it applies to the whole fade segment. */
 @keyframes qs-leave {
-  0%, 40% { opacity: 1; max-height: var(--qs-leave-h, 400px); }
-  100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; }
+  0% { opacity: 1; transform: translateY(0); max-height: var(--qs-leave-h, 400px); }
+  20% {
+    opacity: 1; transform: translateY(0); max-height: var(--qs-leave-h, 400px);
+    animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  100% {
+    opacity: 0; transform: translateY(-6px); max-height: 0;
+    padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0;
+  }
 }
 
 /* A row just acted on (key or checkbox): tinted at once with the action's colour,
@@ -982,12 +994,19 @@ body {
 /* A deleted block: red, and it slides out sideways and shrinks, unlike the plain fade. */
 .qs-block.qs-leaving.qs-deleted {
   background: color-mix(in srgb, var(--base08, #e5484d) 30%, transparent);
-  animation: qs-delete 900ms ease-in forwards;
+  animation: qs-delete 600ms linear forwards;
 }
 
 @keyframes qs-delete {
-  0%, 25% { opacity: 1; transform: translateX(0); max-height: var(--qs-leave-h, 400px); }
-  100% { opacity: 0; transform: translateX(60px) scaleY(0.6); max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; }
+  0% { opacity: 1; transform: translateX(0); max-height: var(--qs-leave-h, 400px); }
+  15% {
+    opacity: 1; transform: translateX(0); max-height: var(--qs-leave-h, 400px);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.7, 0.4);
+  }
+  100% {
+    opacity: 0; transform: translateX(60px) scaleY(0.6); max-height: 0;
+    padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0;
+  }
 }
 
 .qs-block.folded {

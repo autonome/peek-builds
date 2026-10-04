@@ -84,6 +84,62 @@ test.describe('Editor query view tag action key @desktop', () => {
     } catch { /* may already be closed */ }
   });
 
+  test('a leaving row is clipped from its first frame and its animation never goes backwards', async () => {
+    const stamp = Date.now();
+    await bgWindow.evaluate(async (text: string) => {
+      const api = (window as any).app;
+      const todo = await api.datastore.getOrCreateTag('todo');
+      const item = await api.datastore.addItem('text', { content: text });
+      await api.datastore.tagItem(item.data.id, todo.data.tag.id);
+    }, `leave test ${stamp}`);
+
+    const open = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://editor/home.html?tags=todo', {
+        width: 900, height: 700, key: 'editor-query-tag-key-leave',
+      });
+    });
+    expect(open.success).toBe(true);
+
+    const win = await app.getWindow('editor/home.html', 10000);
+    await win.waitForLoadState('domcontentloaded');
+    const blocks = win.locator('.qs-block', { hasText: `leave test ${stamp}` });
+    await expect(blocks).toHaveCount(1, { timeout: 10000 });
+
+    // Record, every frame, whether a leaving row is clipped and how far its animation has run.
+    await win.evaluate(() => {
+      const log: { overflow: string; time: number }[] = [];
+      (window as any).__leaveLog = log;
+      const tick = () => {
+        const row = document.querySelector('.qs-block.qs-leaving');
+        if (row) {
+          const anim = row.getAnimations().find(a => (a as CSSAnimation).animationName === 'qs-leave');
+          log.push({
+            overflow: getComputedStyle(row).overflow,
+            time: Number(anim?.currentTime ?? -1),
+          });
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await win.keyboard.press('x');
+    await expect(blocks).toHaveCount(0, { timeout: 10000 });
+
+    const log: { overflow: string; time: number }[] = await win.evaluate(() => (window as any).__leaveLog);
+    expect(log.length).toBeGreaterThan(0);
+    expect(log.every(s => s.overflow === 'hidden')).toBe(true);
+    // The animation resumes where it was if a live update re-mounts the row; it never restarts.
+    const times = log.map(s => s.time).filter(t => t >= 0);
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i]).toBeGreaterThanOrEqual(times[i - 1] - 50);
+    }
+
+    try {
+      await bgWindow.evaluate(async (id: number) => (window as any).app.window.close(id), open.id);
+    } catch { /* may already be closed */ }
+  });
+
   test('u after x puts the tags back and the block returns', async () => {
     const stamp = Date.now();
     const itemId: string = await bgWindow.evaluate(async (text: string) => {
