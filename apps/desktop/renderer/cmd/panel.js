@@ -11,6 +11,7 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
+import { commandTextWithSuggestion } from './param-fill.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -2380,6 +2381,18 @@ function actionHandlers() {
     setParamIndexFromClick(payload) {
       if (payload?.index !== undefined) {
         state.paramIndex = payload.index;
+        // A click on a single-value suggestion executes with that value, not
+        // with whatever (possibly nothing) was typed after the command name.
+        const cmd = state.commands[state.paramCommand];
+        const paramDef = cmd && cmd.params && cmd.params[0];
+        const text = commandTextWithSuggestion(
+          state.paramCommand, state.typed || '', paramDef, state.paramSuggestions[payload.index]
+        );
+        if (text !== state.typed) {
+          state.typed = text;
+          const input = commandInput();
+          if (input) input.value = text;
+        }
       }
     },
 
