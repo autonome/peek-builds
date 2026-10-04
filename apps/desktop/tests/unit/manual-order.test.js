@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '../../features/editor/manual-order.js');
-const { applyManualOrder, moveBlock, moveBlockTo, ensureOrder, loadOrder, saveOrder, orderStorageKey } = await import(modulePath);
+const { applyManualOrder, moveBlock, moveBlockTo, reorderBase, ensureOrder, loadOrder, saveOrder, orderStorageKey } = await import(modulePath);
 
 const items = ['a', 'b', 'c', 'd'].map(id => ({ id }));
 const ids = (list) => list.map(i => i.id);
@@ -108,6 +108,27 @@ describe('loadOrder / saveOrder', () => {
     const broken = { getItem() { throw new Error('no'); }, setItem() { throw new Error('no'); } };
     assert.deepEqual(loadOrder('q', broken), []);
     saveOrder('q', ['a'], broken);
+  });
+});
+
+describe('reorderBase', () => {
+  it('reconciles the stored list in manual order', () => {
+    assert.deepEqual(reorderBase(['a', 'b', 'c'], ['c', 'x', 'a'], true), ['b', 'c', 'a']);
+  });
+
+  it('seeds from the displayed order in another sort option, ignoring the stored list', () => {
+    assert.deepEqual(reorderBase(['b', 'c', 'a'], ['a', 'b', 'c'], false), ['b', 'c', 'a']);
+  });
+
+  it('seeded order then a move puts the block where it was dropped on screen', () => {
+    const base = reorderBase(['d', 'c', 'b', 'a'], ['a', 'b', 'c', 'd'], false);
+    assert.deepEqual(moveBlockTo(base, 'a', 'd', false), ['a', 'd', 'c', 'b']);
+    assert.deepEqual(moveBlock(base, 'c', -1), ['c', 'd', 'b', 'a']);
+  });
+
+  it('returns a copy', () => {
+    const shown = ['a', 'b'];
+    assert.notEqual(reorderBase(shown, [], false), shown);
   });
 });
 

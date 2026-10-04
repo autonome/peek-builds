@@ -20,7 +20,7 @@
 /** The key that adds a new item to the query. */
 export const ADD_KEY = 'o';
 
-/** Keys that move the selected block down and up in manual order. */
+/** Keys that move the selected block down and up (in any sort option; outside manual order the view switches to it). */
 export const MOVE_DOWN_KEY = 'J';
 export const MOVE_UP_KEY = 'K';
 
@@ -120,8 +120,8 @@ function isEditable(target) {
  * @param {object} [inline] the inline editor controller: `isOpen()` and
  *   `open(index)`. <Enter> opens the selected block in it.
  * @param {{add?: () => void, move?: (delta: number) => void}} [actions] `move`
- *   runs on Shift+j / Shift+k with +1 / -1 (the caller ignores it outside manual
- *   order). `add` runs on `o` (add a new item, as
+ *   runs on Shift+j / Shift+k with +1 / -1 (the caller switches to manual
+ *   order first when another sort option is showing). `add` runs on `o` (add a new item, as
  *   vim's `o` opens a new line). Plain `o` is free here: the outer surface has no
  *   vim instance, and Cmd/Ctrl+O (open file) is excluded by the modifier check.
  * @returns {() => void} detach function

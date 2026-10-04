@@ -1012,7 +1012,7 @@ body {
   gap: 8px;
 }
 
-/* Reorder handle (manual order only): left of the affordance column, shown on hover
+/* Reorder handle (every sort option): left of the affordance column, shown on hover
    or when the block is selected. */
 .qs-drag-handle {
   flex: none;

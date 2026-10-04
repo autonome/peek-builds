@@ -64,6 +64,20 @@ export function ensureOrder(currentIds, orderedIds) {
 }
 
 /**
+ * The id list a reorder starts from. In manual order it is the stored list
+ * reconciled with the current items. In any other sort option the stored list
+ * is not what is on screen, so the list is seeded from the displayed order and
+ * the stored one is replaced.
+ * @param {string[]} displayedIds ids now displayed, in display order
+ * @param {string[]} orderedIds stored order
+ * @param {boolean} isManual whether the view is in manual order
+ * @returns {string[]}
+ */
+export function reorderBase(displayedIds, orderedIds, isManual) {
+  return isManual ? ensureOrder(displayedIds, orderedIds) : displayedIds.slice();
+}
+
+/**
  * New id list with `id` moved by `delta` places (negative is up), stopping at
  * either end. An id that is not in the list leaves it unchanged.
  * @param {string[]} orderedIds

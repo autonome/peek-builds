@@ -14,7 +14,7 @@ import { EditorLayout } from './editor-layout.js';
 import { getCM, Vim, onVimSetOption } from './codemirror.js';
 import { parseTagQuery, queryKey } from 'peek://cmd/tag-query.js';
 import { SORT_OPTIONS, DEFAULT_SORT_OPTION, MANUAL_SORT_OPTION, sortItems } from './sort-options.js';
-import { loadOrder, saveOrder, ensureOrder, moveBlock, moveBlockTo } from './manual-order.js';
+import { loadOrder, saveOrder, reorderBase, moveBlock, moveBlockTo } from './manual-order.js';
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
@@ -299,10 +299,8 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
       onSelect: (next) => { if (inline?.isOpen() && inline.openIndex() !== next) inline.close(); },
       onFold: (index) => { if (inline?.isOpen() && inline.openIndex() === index) inline.close(); },
       onBlockClick: (index, e) => clickOpen?.(index, e),
-      // Handles exist only in manual order.
-      reorder: sortOption === MANUAL_SORT_OPTION
-        ? { canStart: (index) => canReorder(display[index]), onDrop: dropBlock }
-        : undefined,
+      // Handles exist in every sort option; reordering outside manual order switches to it.
+      reorder: { canStart: (index) => canReorder(display[index]), onDrop: dropBlock },
     });
     surface = mounted;
     // The editor's one status line is borrowed by the inline editor while it is open.
@@ -383,11 +381,9 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   };
 
   /**
-   * Move the selected block one place up or down in manual order and store the
-   * new order. Only in manual order, and not for a block that is leaving. The
-   * stored list is first reconciled with the items now in the query, which also
-   * drops ids that no longer match anything. Selection and folds follow the
-   * block by id through the rebuild.
+   * Move the selected block one place up or down and store the new manual order,
+   * switching to manual order first when another sort option is showing (see
+   * `reorder`). Not for a block that is leaving.
    */
   const moveSelected = (delta) => {
     if (!surface) return;
@@ -395,25 +391,30 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     reorder(selected, (reconciled) => moveBlock(reconciled, selected.id, delta));
   };
 
-  /** Whether `item`'s block may be moved now: manual order, no open inline editor, not leaving. */
+  /** Whether `item`'s block may be moved now: any sort option, no open inline editor, not leaving. */
   const canReorder = (item) =>
-    sortOption === MANUAL_SORT_OPTION && !inline?.isOpen() && !!item && !leaving.has(item.id)
+    !inline?.isOpen() && !!item && !leaving.has(item.id)
     && items.some(other => other.id === item.id);
 
   /**
-   * Store a new manual order for `item`'s move. `compute` gets the stored list
+   * Store a new manual order for `item`'s move. `compute` gets the starting list
+   * and returns the new one. In manual order the start is the stored list
    * reconciled with the items now in the query (which drops ids that no longer
-   * match anything) and returns the new list. Selection and folds follow the
-   * block by id through the rebuild.
+   * match anything). In another sort option it is the order on screen, and the
+   * view switches to manual order (the dropdown follows) so the block stays where
+   * it was put. Selection and folds follow the block by id through the rebuild.
    */
   const reorder = (item, compute) => {
     if (!surface || !canReorder(item)) return;
-    const current = sortItems(items, MANUAL_SORT_OPTION, manualOrder).map(other => other.id);
-    const reconciled = ensureOrder(current, manualOrder);
-    const moved = compute(reconciled);
-    if (moved.join('\n') === reconciled.join('\n')) return;
+    const isManual = sortOption === MANUAL_SORT_OPTION;
+    const current = sortItems(items, sortOption, manualOrder).map(other => other.id);
+    const base = reorderBase(current, manualOrder, isManual);
+    const moved = compute(base);
+    if (moved.join('\n') === base.join('\n')) return;
     manualOrder = moved;
     saveOrder(orderKey, moved, localStorage);
+    sortOption = MANUAL_SORT_OPTION;
+    select.value = sortOption;
     mountSorted();
     lastSignature = signatureOf({ items, unknownTags, itemTags });
     surface.revealSelected();
