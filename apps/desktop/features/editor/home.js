@@ -18,6 +18,7 @@ import { loadOrder, saveOrder, reorderBase, moveBlock, moveBlockTo } from './man
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
+import { createUndoStack, inverseAffordance } from './undo-stack.js';
 import { createTaggedItem, discardItem, shouldDiscard } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache, findAffordanceByKey, triggerAffordance } from 'peek://app/lib/tag-action-affordances.js';
@@ -263,6 +264,8 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
   // used only while the sort option is manual and kept when another option is chosen.
   const orderKey = queryKey(tagNames);
   let manualOrder = loadOrder(orderKey, localStorage);
+  // Undo history lives as long as this view, which is bound to one query.
+  const undoStack = createUndoStack();
 
   /** Sorted items with the blocks that are leaving put back where they were. */
   const displayList = () => {
@@ -365,9 +368,11 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         if (!item || leaving.has(item.id)) return false;
         const aff = findAffordanceByKey(getTagNamesOf(item.id), rulesCache.getRules(), key);
         if (!aff) return false;
-        triggerAffordance(item.id, aff, api);
+        const checked = triggerAffordance(item.id, aff, api);
+        undoStack.push({ kind: 'tag', itemId: item.id, affordance: aff, checked });
         return true;
       },
+      undo: undoLast,
     });
 
     if (keep) {
@@ -424,13 +429,35 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     const base = reorderBase(current, manualOrder, isManual);
     const moved = compute(base);
     if (moved.join('\n') === base.join('\n')) return;
-    manualOrder = moved;
-    saveOrder(orderKey, moved, localStorage);
+    undoStack.push({ kind: 'move', previousOrder: base });
+    applyOrder(moved);
+  };
+
+  /** Store `ids` as the manual order, show it, and keep the selection in view. */
+  const applyOrder = (ids) => {
+    manualOrder = ids;
+    saveOrder(orderKey, ids, localStorage);
     sortOption = MANUAL_SORT_OPTION;
     select.value = sortOption;
     mountSorted();
     lastSignature = signatureOf({ items, unknownTags, itemTags });
     surface.revealSelected();
+  };
+
+  /**
+   * Undo the last tag action or move. A tag action is undone by publishing the
+   * inverse swap through the same tag-action layer; the block comes back through
+   * the live update. A move restores the previous order.
+   */
+  const undoLast = () => {
+    if (!surface || inline?.isOpen()) return;
+    const entry = undoStack.pop();
+    if (!entry) return;
+    if (entry.kind === 'tag') {
+      triggerAffordance(entry.itemId, inverseAffordance(entry), api);
+    } else if (entry.kind === 'move') {
+      applyOrder(entry.previousOrder);
+    }
   };
 
   /** A handle dropped on another block: move the dragged block there and keep it selected. */
