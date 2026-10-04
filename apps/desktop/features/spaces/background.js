@@ -570,6 +570,8 @@ async function openSpace(spaceName) {
     }
   }
 
+  // `open space <new name>` creates the space, so the suggestions may be stale.
+  refreshSpaceNameCommands();
   console.log(`[ext:spaces] Opened space "${displayName}"`);
   return { success: true, spaceId: tag.id, spaceName: displayName };
 }
@@ -686,6 +688,7 @@ async function createSpace(name) {
     tag.color = vividColor;
     await api.datastore.updateTagColor(tag.id, vividColor);
   }
+  refreshSpaceNameCommands();
   return { success: true, spaceId: tag.id, spaceName: getSpaceDisplayName(tag), created: true };
 }
 
@@ -739,6 +742,43 @@ async function moveToSpace(targetName) {
 
 // ===== Command Registration =====
 
+// The existing spaces, as suggestion options for the commands that take a
+// space name. Re-published when a space is created or entered.
+let spaceNameSuggestions = [];
+
+const SPACE_NAME_COMMANDS = [
+  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name' },
+  { name: 'switch space', description: 'Close current space and open another', param: 'Target space name' },
+  { name: 'move to space', description: 'Move the active window to a space', param: 'Target space name' },
+];
+
+function publishSpaceNameCommands() {
+  for (const cmd of SPACE_NAME_COMMANDS) {
+    api.pubsub.publish('cmd:register', {
+      name: cmd.name,
+      description: cmd.description,
+      source: 'spaces',
+      scope: 'global',
+      params: [{
+        name: 'name',
+        type: 'enum',
+        options: spaceNameSuggestions,
+        required: true,
+        description: cmd.param,
+      }],
+    });
+  }
+}
+
+async function refreshSpaceNameCommands() {
+  try {
+    spaceNameSuggestions = spaceNameOptions(await listSpaceTags());
+    publishSpaceNameCommands();
+  } catch (err) {
+    console.error('[ext:spaces] Failed to refresh space name suggestions:', err);
+  }
+}
+
 const initCommands = () => {
   // "open space <name>"
   api.pubsub.subscribe('cmd:execute:open space', async (msg) => {
@@ -746,13 +786,6 @@ const initCommands = () => {
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  });
-  api.pubsub.publish('cmd:register', {
-    name: 'open space',
-    description: 'Open a space (restore saved state or show home)',
-    source: 'spaces',
-    scope: 'global',
-    params: [{ name: 'name', type: 'string', required: true, description: 'Space name' }]
   });
 
   // "close space"
@@ -781,13 +814,6 @@ const initCommands = () => {
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  });
-  api.pubsub.publish('cmd:register', {
-    name: 'switch space',
-    description: 'Close current space and open another',
-    source: 'spaces',
-    scope: 'global',
-    params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
   });
 
   // "create space <name>"
@@ -818,13 +844,10 @@ const initCommands = () => {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
   });
-  api.pubsub.publish('cmd:register', {
-    name: 'move to space',
-    description: 'Move the active window to a space',
-    source: 'spaces',
-    scope: 'global',
-    params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
-  });
+
+  // open / switch / move take a space name; the panel suggests existing spaces.
+  publishSpaceNameCommands();
+  refreshSpaceNameCommands();
 
   // "pin to this workspace"
   api.pubsub.subscribe('cmd:execute:pin to this workspace', async (msg) => {
