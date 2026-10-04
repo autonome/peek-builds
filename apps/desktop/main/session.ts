@@ -23,7 +23,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
+import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -1085,6 +1085,36 @@ export function readSessionCrashState(): { cleanShutdown: boolean; crashCount: n
   return { cleanShutdown: true, crashCount: 0 };
 }
 
+/**
+ * Put each restored window on the desktop its snapshot recorded and, when the
+ * space has no window on the active desktop, make the desktop of its focused
+ * window the active one. The decision is `planDesktopRestore`; this only runs
+ * it against the kernel's layout and issues the writes.
+ *
+ * Does nothing unless the backend can place windows (today's macOS and the
+ * fallback provider cannot), so a restore on those behaves as it always did.
+ * A switch is also skipped when the backend can place but not switch.
+ */
+async function applyDesktopRestore(
+  restored: ReadonlyArray<{ id: number; desktop?: string; focused: boolean }>,
+): Promise<void> {
+  const executor = getKernelExecutorForApp();
+  if (restored.length === 0 || !executor.canPlaceWindows()) return;
+  const state = executor.getState();
+  const activeDesktop = state.screens[0]?.current ?? null;
+  const plan = planDesktopRestore(restored, state, activeDesktop);
+  for (let i = 0; i < restored.length; i++) {
+    const target = plan.targets[i];
+    if (target === null || target === activeDesktop) continue;
+    const machineId = getWindowIdFor(restored[i].id);
+    if (machineId == null) continue;
+    await executor.placeWindowOnDesktop(machineId, target);
+  }
+  if (plan.switchTo !== null && executor.canShowDesktops()) {
+    await executor.showDesktop(plan.switchTo);
+  }
+}
+
 export async function restoreSessionSnapshot(
   prefs: Record<string, unknown>,
   crashState?: { cleanShutdown: boolean; crashCount: number },
@@ -1356,6 +1386,8 @@ export async function restoreSessionSnapshot(
   // STACK_ORDER_IMPORTED (the saved stack replayed) in the willActivate block
   // below.
   const restoredWindows: RestoredStackEntry[] = [];
+  // The same windows with the desktop each recorded, for `applyDesktopRestore`.
+  const restoredDesktops: Array<{ id: number; desktop?: string; focused: boolean }> = [];
   // Subset of restoredWindows that are hybrid page-hosts (BaseWindow +
   // WebContentsView). Only these hit the compositing race (see the
   // `hybrid:first-frame` producer at the top of this file): their saved-order
@@ -1539,6 +1571,11 @@ export async function restoreSessionSnapshot(
         if (descriptor.context?.pinScope === 'global') result.globalPinsRestored++;
         if (openResult.id != null) {
           restoredWindows.push({ id: openResult.id, stackIndex: readStackIndex(descriptor) });
+          restoredDesktops.push({
+            id: openResult.id,
+            ...(descriptor.desktop !== undefined ? { desktop: descriptor.desktop } : {}),
+            focused: descriptor.focused === true,
+          });
         }
 
         // Attach did-finish-load / did-fail-load listeners to measure the
@@ -1697,6 +1734,15 @@ export async function restoreSessionSnapshot(
   console.log(`[session:perf] restore-end total_ms=${restoreTotalMs} n=${perWindowTimings.length} restored=${result.restored} failed=${result.failed} avg_ms=${avgMs} max_ms=${maxMs}`);
   for (const s of slowest) {
     console.log(`[session:perf] slow-window ms=${s.ms} ok=${s.ok} url=${s.url.substring(0, 100)}`);
+  }
+
+  // Windows go to their saved desktops, and the user to the space's desktop,
+  // before the focus block below raises the focused window. Best-effort: a
+  // failed write leaves the window where it opened.
+  try {
+    await applyDesktopRestore(restoredDesktops);
+  } catch (err) {
+    console.warn('[session] desktop restore failed:', err);
   }
 
   // Focus the window that was focused at save time — but only if Peek is

@@ -47,7 +47,7 @@ import {
   type StackingLevel,
   type WindowRegistrationDecision,
 } from './izui-roles.js';
-import type { DesktopMembership, FocusCause, ScreenId, WindowId, WindowKind, Rectangle } from './window-kernel.js';
+import type { DesktopId, DesktopMembership, FocusCause, ScreenId, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { WindowBackend, WindowSpec } from './window-backend.js';
 import {
   destroyGuestsAndWait,
@@ -352,6 +352,33 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     void provider
       .start((change) => this.onDesktopTrigger(`provider-${change.kind}`))
       .then(() => this.onDesktopTrigger('start'));
+  }
+
+  // The capabilities are the provider's own, read each time: the fail-safe wrapper may have
+  // switched to the fallback provider, which can do neither.
+  get canPlaceWindows(): boolean {
+    return this.desktopProvider?.canPlaceWindows === true;
+  }
+
+  get canShowDesktops(): boolean {
+    return this.desktopProvider?.canShowDesktops === true;
+  }
+
+  async placeWindowOnDesktop(id: WindowId, desktop: DesktopId): Promise<boolean> {
+    const provider = this.desktopProvider;
+    const win = this.windows.get(id)?.win;
+    if (!provider || !win || !provider.canPlaceWindows) return false;
+    const pid = this.platformWindowIdOf(win);
+    if (pid === null) return false;
+    const placed = await provider.placeWindow(pid, desktop);
+    if (placed) this.onDesktopTrigger('place-window');
+    return placed;
+  }
+
+  async showDesktop(desktop: DesktopId): Promise<boolean> {
+    const provider = this.desktopProvider;
+    if (!provider || !provider.canShowDesktops) return false;
+    return provider.showDesktop(desktop);
   }
 
   private stopDesktopProvider(): void {

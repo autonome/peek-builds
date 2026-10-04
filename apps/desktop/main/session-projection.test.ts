@@ -81,6 +81,7 @@ import {
   orderRestoredWindowsBottomToTop,
   sanitizeParams,
   mirrorPlacementIntent,
+  planDesktopRestore,
   type SerializeSessionInput,
   type SessionSaveWindow,
   type SessionSavePresentation,
@@ -1404,6 +1405,49 @@ describe('addDescriptorsToSnapshot', () => {
     const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
     addDescriptorsToSnapshot(existing, [desc('https://b.test/')], 'tag-1', 'workspace-switch', 2);
     assert.strictEqual(existing.windows.length, 1);
+  });
+});
+
+describe('planDesktopRestore — which desktop each window goes to and whether to switch', () => {
+  const layout = { desktops: [{ id: '1' }, { id: '2' }, { id: '3' }] };
+
+  it('a window goes to its saved desktop when that desktop still exists', () => {
+    const plan = planDesktopRestore([{ desktop: '2' }], layout, '1');
+    assert.deepStrictEqual(plan.targets, ['2']);
+  });
+
+  it('a window whose saved desktop is gone, or never recorded, goes to the active desktop', () => {
+    const plan = planDesktopRestore([{ desktop: '9' }, {}], layout, '1');
+    assert.deepStrictEqual(plan.targets, ['1', '1']);
+  });
+
+  it('stays when the active desktop holds any of the windows', () => {
+    const plan = planDesktopRestore([{ desktop: '2', focused: true }, { desktop: '1' }], layout, '1');
+    assert.strictEqual(plan.switchTo, null);
+  });
+
+  it('switches to the desktop of the focused window when none is on the active desktop', () => {
+    const plan = planDesktopRestore([{ desktop: '2' }, { desktop: '3', focused: true }], layout, '1');
+    assert.strictEqual(plan.switchTo, '3');
+  });
+
+  it('switches to the desktop of the first window when none is focused', () => {
+    const plan = planDesktopRestore([{ desktop: '3' }, { desktop: '2' }], layout, '1');
+    assert.strictEqual(plan.switchTo, '3');
+  });
+
+  it('a window whose saved desktop is gone counts as on the active desktop, so the space stays', () => {
+    const plan = planDesktopRestore([{ desktop: '9' }, { desktop: '2' }], layout, '1');
+    assert.deepStrictEqual(plan, { targets: ['1', '2'], switchTo: null });
+  });
+
+  it('with no active desktop known, nothing is placed or switched', () => {
+    const plan = planDesktopRestore([{ desktop: '2' }], layout, null);
+    assert.deepStrictEqual(plan, { targets: [null], switchTo: null });
+  });
+
+  it('with no windows there is nothing to switch to', () => {
+    assert.deepStrictEqual(planDesktopRestore([], layout, '1'), { targets: [], switchTo: null });
   });
 });
 

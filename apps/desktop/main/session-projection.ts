@@ -271,6 +271,29 @@ export function readStackIndex(descriptor: WindowDescriptor): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Where a restored space's windows go and whether the user is taken along.
+ *
+ * `targets[i]` is the desktop window `i` belongs on: its saved desktop when the
+ * layout still lists it, otherwise `activeDesktop` (a window with no saved
+ * desktop opens where the user is). `switchTo` is `null` when the active desktop
+ * holds any of the windows, otherwise the target of the focused window, else of
+ * the first window. With no active desktop known (no layout report yet) nothing
+ * can be placed, so every target and `switchTo` are `null`.
+ */
+export function planDesktopRestore(
+  windows: ReadonlyArray<{ desktop?: string; focused?: boolean }>,
+  layout: { desktops: ReadonlyArray<{ id: string }> },
+  activeDesktop: string | null,
+): { targets: Array<string | null>; switchTo: string | null } {
+  if (activeDesktop === null) return { targets: windows.map(() => null), switchTo: null };
+  const known = new Set(layout.desktops.map((d) => d.id));
+  const targets = windows.map((w) => (w.desktop !== undefined && known.has(w.desktop) ? w.desktop : activeDesktop));
+  if (targets.length === 0 || targets.includes(activeDesktop)) return { targets, switchTo: null };
+  const focusedAt = windows.findIndex((w) => w.focused === true);
+  return { targets, switchTo: targets[focusedAt >= 0 ? focusedAt : 0] };
+}
+
 /** One restored window, paired with the stacking position its descriptor carried. */
 export interface RestoredStackEntry {
   /** The live window id the restore loop got back from the window-open handler. */

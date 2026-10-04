@@ -1129,6 +1129,47 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('setDesktopMembership'), []);
   });
 
+  describe('desktop writes', () => {
+    class DesktopBackend extends RecordingBackend {
+      readonly canPlaceWindows = true;
+      readonly canShowDesktops = true;
+      async placeWindowOnDesktop(id: BackendWindowId, desktop: string): Promise<boolean> {
+        this.calls.push({ name: 'placeWindowOnDesktop', args: [id, desktop] });
+        return true;
+      }
+      async showDesktop(desktop: string): Promise<boolean> {
+        this.calls.push({ name: 'showDesktop', args: [desktop] });
+        return true;
+      }
+    }
+
+    it('a backend without the capability gets no call and reports false', async () => {
+      const { exec, backend } = makeExecutor();
+      assert.strictEqual(exec.canPlaceWindows(), false);
+      assert.strictEqual(exec.canShowDesktops(), false);
+      assert.strictEqual(await exec.placeWindowOnDesktop(wid(1), '2'), false);
+      assert.strictEqual(await exec.showDesktop('2'), false);
+      assert.deepStrictEqual(backend.of('placeWindowOnDesktop').concat(backend.of('showDesktop')), []);
+    });
+
+    it('a backend with the capability is asked to place and to switch', async () => {
+      const backend = new DesktopBackend();
+      const exec = new WindowKernelExecutor(backend, { headless: false });
+      assert.strictEqual(await exec.placeWindowOnDesktop(wid(1), '2'), true);
+      assert.strictEqual(await exec.showDesktop('3'), true);
+      assert.deepStrictEqual(backend.of('placeWindowOnDesktop')[0].args, [wid(1), '2']);
+      assert.deepStrictEqual(backend.of('showDesktop')[0].args, ['3']);
+    });
+
+    it('under headless nothing is written, whatever the backend can do', async () => {
+      const backend = new DesktopBackend();
+      const exec = new WindowKernelExecutor(backend, { headless: true });
+      assert.strictEqual(await exec.placeWindowOnDesktop(wid(1), '2'), false);
+      assert.strictEqual(await exec.showDesktop('3'), false);
+      assert.deepStrictEqual(backend.of('placeWindowOnDesktop').concat(backend.of('showDesktop')), []);
+    });
+  });
+
   it('holds a page above other apps on an inactive raise request, and releases it on activation', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch({ type: 'AppResigned' });

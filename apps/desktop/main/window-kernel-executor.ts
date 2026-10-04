@@ -23,6 +23,7 @@ import {
   spendPlatformFocusExpectation,
   traceTransientAutoclose,
   type Command,
+  type DesktopId,
   type Effect,
   type Event,
   type Rectangle,
@@ -126,6 +127,30 @@ export class WindowKernelExecutor {
 
   shouldRestoreFocus(coldStart: boolean, activeBeforeSwitch: boolean = false): boolean {
     return planRestoreFocus(coldStart, this.headless, this.state.appActive, activeBeforeSwitch);
+  }
+
+  // Desktop writes the backend can make. Both are false for a backend that lacks the capability
+  // (today's macOS and fallback providers) and under headless, where a desktop switch would move
+  // the user's real desktop.
+  canPlaceWindows(): boolean {
+    return !this.headless && this.backend.canPlaceWindows === true;
+  }
+
+  canShowDesktops(): boolean {
+    return !this.headless && this.backend.canShowDesktops === true;
+  }
+
+  // Resolves false when the capability is missing or the write did not take.
+  async placeWindowOnDesktop(id: WindowId, desktop: DesktopId): Promise<boolean> {
+    if (!this.canPlaceWindows() || !this.backend.placeWindowOnDesktop) return false;
+    wmLog('effect-place-window', { id, desktop });
+    return this.backend.placeWindowOnDesktop(id, desktop);
+  }
+
+  async showDesktop(desktop: DesktopId): Promise<boolean> {
+    if (!this.canShowDesktops() || !this.backend.showDesktop) return false;
+    wmLog('effect-show-desktop', { desktop });
+    return this.backend.showDesktop(desktop);
   }
 
   subscribe(listener: (state: State) => void): () => void {
@@ -578,9 +603,14 @@ export class WindowKernelExecutor {
         return;
       }
       case 'ShowDesktop': {
-        // No backend can switch desktops yet (macOS gets no writes; the X11 provider is
-        // unscheduled), so there is no port call: on macOS the raise that follows takes the user
-        // to the window's desktop. Logged so a live check can see the request.
+        // A backend that can switch desktops does so before the raise that follows; one that
+        // cannot (today's macOS, which gets no writes, and the fallback provider) makes no port
+        // call, and the raise takes the user to the window's desktop. Logged either way so a
+        // live check can see the request.
+        if (this.canShowDesktops()) {
+          this.trackAsyncEffect(this.showDesktop(effect.desktop));
+          return;
+        }
         wmLog('effect-show-desktop', { desktop: effect.desktop });
         return;
       }

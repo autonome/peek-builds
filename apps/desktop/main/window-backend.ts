@@ -4,7 +4,7 @@
 // window-manager module allowed to import Electron. Contract, shape and
 // constraints: docs/design/window-manager.md.
 
-import type { WindowId, WindowKind, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
+import type { WindowId, WindowKind, DesktopId, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
 
 export type EscapeMode = 'ignore';
@@ -124,4 +124,12 @@ export interface WindowBackend {
   // attachment agrees with stacking order, so a backend may decline it.
   // `hostId: null` means detach.
   attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void;
+
+  // Desktop writes. A backend whose platform cannot move a window to a desktop or make a desktop
+  // current leaves these absent or false, and a caller then does nothing (the platform's own
+  // behaviour stands). The methods resolve false when the write did not take.
+  readonly canPlaceWindows?: boolean;
+  readonly canShowDesktops?: boolean;
+  placeWindowOnDesktop?(id: WindowId, desktop: DesktopId): Promise<boolean>;
+  showDesktop?(desktop: DesktopId): Promise<boolean>;
 }
