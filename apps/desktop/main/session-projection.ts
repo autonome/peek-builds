@@ -622,6 +622,10 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       // undefined value, and restore reads an absent position as "not
       // recorded".
       stackIndex: w.machineId != null ? kernelOrderIndexById.get(w.machineId) : undefined,
+      // The desktop the kernel last placed this window on (`WindowRecord.desktop`);
+      // the key is omitted when unknown so older readers and the byte shape of
+      // desktop-less saves are unchanged.
+      ...(rec?.desktop !== undefined ? { desktop: rec.desktop } : {}),
       // The saved-focused descriptor drives restore's head-start:
       // `topmostContentWindowId`, not `keyWindow` — see `SerializeSessionInput
       // .topmostContentWindowId`.

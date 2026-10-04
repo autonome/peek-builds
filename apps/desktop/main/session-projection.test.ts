@@ -878,6 +878,26 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.strictEqual(JSON.parse(JSON.stringify(out[1])).stackIndex, undefined, 'and JSON drops it entirely');
   });
 
+  it('the desktop a window was last on is saved from its record; no key when unknown', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
+      records: [makeRecord('w1', { desktop: '3' }), makeRecord('w2')],
+    };
+    const out = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(out[0].desktop, '3');
+    assert.strictEqual('desktop' in out[1], false, 'an unknown desktop leaves the key absent');
+    assert.strictEqual(JSON.parse(JSON.stringify(out[0])).desktop, '3');
+  });
+
+  it('a snapshot written before the desktop field existed still reads back', () => {
+    const old = JSON.parse(JSON.stringify({
+      url: 'https://example.com/', key: undefined, title: 't', bounds: { x: 0, y: 0, width: 1, height: 1 },
+      source: 's', params: {}, zOrder: 0, stackIndex: 0, focused: false,
+    }));
+    assert.strictEqual('desktop' in old, false);
+    assert.strictEqual(readStackIndex(old), 0);
+  });
+
   it('saved positions are the stack own indices — a skipped window leaves a gap', () => {
     // The machine's stack holds an overlay between two saved windows. Save skips
     // the overlay, so its index is simply unused; only relative order matters.
