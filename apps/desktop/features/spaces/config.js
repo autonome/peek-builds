@@ -252,7 +252,23 @@ const spaceNameFromCommandMessage = (msg, commandName) => {
   return '';
 };
 
+/**
+ * Options for the one window opened when a space with no saved windows is
+ * entered. It answers a deliberate switch, so it is `regular`: not registered
+ * as a transient window (which the kernel dismisses once the app comes
+ * forward, since the close sweep before it leaves the app inactive) and it
+ * brings the app forward with user intent.
+ */
+const emptySpaceWindowOptions = (tag, spaceName, color) => ({
+  role: 'workspace',
+  regular: true,
+  width: 1024,
+  height: 768,
+  spaceMode: { spaceId: tag.id, spaceName, color },
+});
+
 export {
+  emptySpaceWindowOptions,
   spaceNameFromCommandMessage,
   validateNewSpaceName,
   spaceNameOptions,

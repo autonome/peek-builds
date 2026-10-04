@@ -11,7 +11,8 @@ import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, planMoveToSpace,
-  validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage
+  validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
+  emptySpaceWindowOptions
 } from './config.js';
 
 const api = window.app;
@@ -453,12 +454,7 @@ async function enterWorkspace(tag, spaceName) {
   if (!restored && !isDefault) {
     // No saved state, and this isn't the default — open one empty group.
     const homeUrl = `peek://spaces/home.html?spaceId=${encodeURIComponent(tag.id)}&spaceName=${encodeURIComponent(spaceName)}`;
-    await api.window.open(homeUrl, {
-      role: 'workspace',
-      width: 1024,
-      height: 768,
-      spaceMode: { spaceId: tag.id, spaceName, color: windowColor },
-    });
+    await api.window.open(homeUrl, emptySpaceWindowOptions(tag, spaceName, windowColor));
   }
 
   activeSpaceId = tag.id;
