@@ -671,7 +671,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         {
           // Non-item param or no suggestions — execute with typed text
           target: States.EXECUTING,
-          actions: ['recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
+          actions: ['fillHighlightedParam', 'recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.CLICK_PARAM]: [

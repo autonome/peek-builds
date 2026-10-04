@@ -1159,6 +1159,20 @@ function showExecutionError(commandName, errorMsg) {
 
 // ===== Execute Command =====
 
+// Put the suggestion at `index` into the command text (and the input box).
+function fillParamSuggestion(index) {
+  const cmd = state.commands[state.paramCommand];
+  const paramDef = cmd && cmd.params && cmd.params[0];
+  const text = commandTextWithSuggestion(
+    state.paramCommand, state.typed || '', paramDef, state.paramSuggestions[index]
+  );
+  if (text !== state.typed) {
+    state.typed = text;
+    const input = commandInput();
+    if (input) input.value = text;
+  }
+}
+
 async function doExecute(name, typed, extra = {}) {
   log('cmd:panel', 'execute() called with:', name, typed);
   if (!state.commands[name]) {
@@ -2383,17 +2397,13 @@ function actionHandlers() {
         state.paramIndex = payload.index;
         // A click on a single-value suggestion executes with that value, not
         // with whatever (possibly nothing) was typed after the command name.
-        const cmd = state.commands[state.paramCommand];
-        const paramDef = cmd && cmd.params && cmd.params[0];
-        const text = commandTextWithSuggestion(
-          state.paramCommand, state.typed || '', paramDef, state.paramSuggestions[payload.index]
-        );
-        if (text !== state.typed) {
-          state.typed = text;
-          const input = commandInput();
-          if (input) input.value = text;
-        }
+        fillParamSuggestion(payload.index);
       }
+    },
+
+    // Enter on a highlighted suggestion runs with that value, like a click.
+    fillHighlightedParam() {
+      if (state.paramIndex >= 0) fillParamSuggestion(state.paramIndex);
     },
 
     recordFrecency(payload) {
