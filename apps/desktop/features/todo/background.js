@@ -66,10 +66,8 @@ const handleTodo = async (rawArgs) => {
     return { output: 'Usage: todo <text> [#tag ...]', mimeType: 'text/plain' };
   }
 
-  const result = await api.datastore.addItem('text', {
-    title: body,
-    content: body
-  });
+  // Text items store only `content`; a `title` field is dropped by the datastore.
+  const result = await api.datastore.addItem('text', { content: body });
   if (!result.success) {
     console.error('[ext:todo] addItem failed:', result.error);
     return { output: 'Failed to create todo', mimeType: 'text/plain' };
