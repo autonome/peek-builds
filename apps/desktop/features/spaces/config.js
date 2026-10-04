@@ -148,7 +148,18 @@ const resolveVividColor = (color, spaceId, themeId = 'peek') => {
   return pushVivid(palette[0]);
 };
 
+/**
+ * Whether the screen border should be open. Opening the border window while
+ * the app is in the background brings the app to the front: with the app
+ * inactive, the last-focused window still reads as focused, so a close of the
+ * border (on app resign) re-opened it a moment later, each time activating the
+ * app again and stealing focus from whatever the user had switched to.
+ */
+const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
+  appFocused === true && focusedWindowInNamedSpace === true;
+
 export {
+  shouldShowBorder,
   id,
   labels,
   schemas,

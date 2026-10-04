@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor
+  resolveVividColor, shouldShowBorder
 } from './config.js';
 
 const api = window.app;
@@ -254,7 +254,16 @@ function normalizeUrl(url) {
 
 // ===== Border Visibility (focus-based) =====
 
+// Updated from `app:focus-changed`. Starts true: the feature wakes while the
+// app is running, and the first focus change corrects it.
+let appFocused = true;
+
 async function updateBorderVisibility() {
+  if (!shouldShowBorder(appFocused, true)) {
+    // Backgrounded: never open the border (it would activate the app).
+    scheduleHideBorder();
+    return;
+  }
   if (!activeSpaceId) {
     scheduleHideBorder();
     return;
@@ -814,6 +823,7 @@ const init = async () => {
   api.pubsub.subscribe('window:focused', () => updateBorderVisibility());
   api.pubsub.subscribe('window:closed', () => updateBorderVisibility());
   api.pubsub.subscribe('app:focus-changed', (msg) => {
+    appFocused = !!msg?.focused;
     if (!msg?.focused) {
       // App lost focus — hide border
       scheduleHideBorder();

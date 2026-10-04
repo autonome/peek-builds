@@ -1792,6 +1792,20 @@ describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8
     assert.strictEqual(planRestoreFocus(true, true, false), false);
   });
 
+  // Workspace switch: closing the outgoing windows resigns the app mid-switch, so appActive is
+  // false at restore time though the user never left. Activate if it was active at switch start.
+  it('workspace switch activates when the app was active at switch start, even if appActive is now false', () => {
+    assert.strictEqual(planRestoreFocus(false, false, false, true), true);
+  });
+
+  it('workspace switch does not activate when the app was not active at switch start', () => {
+    assert.strictEqual(planRestoreFocus(false, false, false, false), false);
+  });
+
+  it('headless never activates on a workspace switch', () => {
+    assert.strictEqual(planRestoreFocus(false, true, false, true), false);
+  });
+
   // Headless with appActive true still activates (appActive dominates) — but in
   // headless the real OS focus calls are gated downstream by `planRaise`, which
   // turns every raise into an inactive show. This predicate only encodes the

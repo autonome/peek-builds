@@ -71,8 +71,17 @@ export function planRaiseRealization(alreadyVisible: boolean, alreadyKey: boolea
   return 'take-key';
 }
 
-export function planRestoreFocus(coldStart: boolean, headless: boolean, appActive: boolean): boolean {
-  return appActive || (coldStart && !headless);
+// `activeBeforeSwitch`: the app was active when a workspace switch began. Closing the outgoing
+// workspace's last windows makes macOS resign the app mid-switch, so `appActive` is false by the
+// time the target's session is restored even though the user never left; without this term the
+// restore skips activation and the app ends up with no key window.
+export function planRestoreFocus(
+  coldStart: boolean,
+  headless: boolean,
+  appActive: boolean,
+  activeBeforeSwitch: boolean = false,
+): boolean {
+  return appActive || ((coldStart || activeBeforeSwitch) && !headless);
 }
 
 export interface WindowKernelExecutorOptions {
@@ -107,8 +116,8 @@ export class WindowKernelExecutor {
 
   private readonly retiredPresentation = new Map<WindowId, { maximized: boolean; preMaxBounds: Rectangle | null }>();
 
-  shouldRestoreFocus(coldStart: boolean): boolean {
-    return planRestoreFocus(coldStart, this.headless, this.state.appActive);
+  shouldRestoreFocus(coldStart: boolean, activeBeforeSwitch: boolean = false): boolean {
+    return planRestoreFocus(coldStart, this.headless, this.state.appActive, activeBeforeSwitch);
   }
 
   subscribe(listener: (state: State) => void): () => void {

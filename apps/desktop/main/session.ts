@@ -532,16 +532,21 @@ function snapshotRowKey(workspaceKey: string): string {
 
 let _activeWorkspaceKey: string = DEFAULT_WORKSPACE_KEY;
 let _workspaceSwitchInFlight = false;
+// Whether the app was the active app when the in-flight switch began; read by the restore's
+// focus decision (see `planRestoreFocus`).
+let _appActiveAtSwitchStart = false;
 
 /** Suppress ambient saves until `setActiveWorkspaceKey` names the new workspace. */
 export function beginWorkspaceSwitch(): void {
   _workspaceSwitchInFlight = true;
+  _appActiveAtSwitchStart = getAppActive();
 }
 
 /** Record which workspace is active (ending any in-flight switch). */
 export function setActiveWorkspaceKey(key: string): void {
   _activeWorkspaceKey = key;
   _workspaceSwitchInFlight = false;
+  _appActiveAtSwitchStart = false;
 }
 
 export function getActiveWorkspaceKey(): string {
@@ -1673,7 +1678,10 @@ export async function restoreSessionSnapshot(
       // injected fact. This seam supplies the one thing neither of them knows —
       // which restore this is — and reads back the answer.
       const appActive = getAppActive();
-      const willActivate = getKernelExecutorForApp().shouldRestoreFocus(isColdStart);
+      const willActivate = getKernelExecutorForApp().shouldRestoreFocus(
+        isColdStart,
+        isWorkspaceSwitch && _workspaceSwitchInFlight && _appActiveAtSwitchStart,
+      );
       // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
       // ABSENCE of logs (the gated block was silently skipped). Make the
       // decision self-evident in prod main.log for any future occurrence.

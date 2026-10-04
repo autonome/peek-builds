@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'spaces', 'config.js');
-const { resolveVividColor, pushVivid, THEME_PALETTES, VIVID_SPACE_COLORS } = await import(modulePath);
+const { resolveVividColor, pushVivid, shouldShowBorder, THEME_PALETTES, VIVID_SPACE_COLORS } = await import(modulePath);
 
 describe('resolveVividColor', () => {
   it('keeps a tag color with enough chroma as-is, regardless of theme', () => {
@@ -41,6 +41,20 @@ describe('resolveVividColor', () => {
 
   it('VIVID_SPACE_COLORS stays an alias of the peek palette (back-compat)', () => {
     assert.deepEqual(VIVID_SPACE_COLORS, THEME_PALETTES.peek);
+  });
+});
+
+describe('shouldShowBorder', () => {
+  it('shows only when the app is focused and the focused window is in a named space', () => {
+    assert.equal(shouldShowBorder(true, true), true);
+  });
+
+  it('never shows while the app is in the background (opening it would steal focus)', () => {
+    assert.equal(shouldShowBorder(false, true), false);
+  });
+
+  it('does not show for a window outside a named space', () => {
+    assert.equal(shouldShowBorder(true, false), false);
   });
 });
 
