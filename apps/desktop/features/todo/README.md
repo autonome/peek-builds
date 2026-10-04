@@ -1,40 +1,23 @@
-# Todo Commands — DISABLED
+# Todo Commands
 
-This feature is checked in but **disabled by design**. Discovery skips it
-because the manifest is named `manifest.json.disabled` — no `manifest.json`
-means `discoverFeatures()` walks past the directory.
+Three cmd-panel commands, loaded from `manifest.json` (lazy: the tile boots on
+the first `cmd:execute:todo`, `cmd:execute:todos` or `cmd:execute:done`).
 
-## Why disabled
+- `todo {text} [#tag ...]` — creates a text item tagged `todo`. Trailing
+  `#tags` are removed from the text and added as extra tags; tags earlier in
+  the text stay in it. Input made only of tags creates nothing.
+- `todos` — lists the outstanding `todo` items, newest first, as a selection
+  list. Enter opens the selected item in the editor.
+- `done {match}` — swaps `todo` for `done` on one item: the row picked in the
+  list (Tab or Enter), else the first `todo` item whose title or content
+  contains `match` (case-insensitive).
 
-The two cmd-panel commands in `background.js` (`todo`, `done`) work, but
-they're not enough to be daily-use:
+## Files
 
-- No way to **list** outstanding todos without opening the tags grid and
-  filtering by `#todo` manually.
-- No way to **search** todos from the cmd panel — `done <match>` does a
-  blind first-match-wins lookup with no suggestion UI.
-- No **inline editing** — once a todo's body is set you have to open the
-  item in the editor like any other text item.
-- The original task spec called for `todo <text> <tab>/<down>` to search
-  existing todos and open one in the editor; that needs cmd-panel
-  suggestion-source plumbing this feature doesn't have yet.
-
-## Re-enabling
-
-When the listing / search / inline-edit flows land, rename:
-
-```
-mv manifest.json.disabled manifest.json
-```
-
-…and the feature picks up automatically on next app start.
-
-## What's here
-
-- `manifest.json.disabled` — declares `todo` and `done` commands.
-- `background.html` / `background.js` — handlers using `getOrCreateTag` →
-  `tagItem`/`untagItem` and `getItemsByTag` for the `done` lookup.
+- `manifest.json` — declares the three commands and the pubsub topics the
+  background tile subscribes to.
+- `background.html` / `background.js` — command handlers, using
+  `getOrCreateTag` → `tagItem`/`untagItem` and `getItemsByTag`.
+- `todo-items.js` — the pure decisions (matching, ordering, list result,
+  which item `done` acts on); unit-tested in `tests/unit/todo-items.test.js`.
 - `config.js` — id/labels stub.
-
-The handlers wire to `cmd:execute:todo` and `cmd:execute:done`. Reactivate
-by restoring the manifest filename — no code changes needed.
