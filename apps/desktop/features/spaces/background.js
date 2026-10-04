@@ -692,6 +692,12 @@ async function createSpace(name) {
   return { success: true, spaceId: tag.id, spaceName: getSpaceDisplayName(tag), created: true };
 }
 
+// Neither a re-tag nor a snapshot write publishes anything, so the Spaces
+// window would keep showing stale window counts without this.
+function publishMembershipChanged(windowId, spaceId) {
+  api.pubsub.publish('spaces:membership-changed', { windowId, spaceId });
+}
+
 /**
  * Put the focused window in the named space. Only the active space is
  * supported (see `planMoveToSpace`); a workspace-pinned window is
@@ -731,6 +737,7 @@ async function moveToSpace(targetName) {
       return { success: false, error: added?.error || 'Failed to add the window to the space' };
     }
     await api.window.close(windowId);
+    publishMembershipChanged(windowId, tag.id);
     return { success: true, windowId, spaceId: tag.id, spaceName: displayName, closed: true };
   }
 
@@ -738,6 +745,7 @@ async function moveToSpace(targetName) {
     windowId,
     metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
   });
+  publishMembershipChanged(windowId, activeSpaceId);
   return { success: true, windowId, spaceId: activeSpaceId, spaceName: activeSpaceName };
 }
 

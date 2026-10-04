@@ -976,6 +976,7 @@ const init = async () => {
       'item:deleted',
       'item:updated',
       'sync:pull-completed',
+      'spaces:membership-changed',
     ],
     runImmediately: false,
     onUpdate: async () => {
