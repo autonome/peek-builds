@@ -59,6 +59,13 @@ selection latch (`kernelArmSelectionFocus`), and the switcher window's
 `lastFocusAssert` with `switcherPick: true` → `SWITCHER_PICK` in `react()`).
 Nothing in the spaces feature can issue a named raise yet.
 
+**Decided: space entry is a second legitimate named-raise initiator.**
+Opening a space is explicit user intent to go where that space's windows are
+— the same "the user named this very window" quality `FocusRequester.named`
+encodes for a switcher pick — so the switch-desktops privilege extends to the
+space-entry path rather than staying specific to the switcher. Experiment E3
+builds that path.
+
 ### 1.3 Where "which desktop a space lives on" is actually recorded
 
 - Every snapshot row records each window's kernel desktop:
@@ -84,18 +91,40 @@ Nothing in the spaces feature can issue a named raise yet.
   (`applyDesktopRestore` returns at its `canPlaceWindows()` guard, logging
   `desktop-restore-skipped`).
 
-### 1.4 What follows for the signal-window idea
+### 1.4 The desktop-choice rule, and what it means for the signal window
 
-The signal window is the only window of a space that survives on another
-desktop between visits, so it is the only possible anchor for a native
-switch-by-raise. But its desktop is "where the user left", not "where the
-space's windows were" — those coincide only when the user leaves a space from
-the desktop its windows are on. If experiment E2 below shows a named raise
-switches desktops, the follow-up design question is whether that
-approximation is acceptable, with the per-window `desktop=` record available
-to detect (not fix) the mismatch. If E2 fails, no raise-based mechanism exists
-and step 5 of the handoff applies (remove the spike, land the useful commits,
-keep the safe behaviour: a space opens on whichever desktop the user is on).
+**Decided: which desktop opening a space goes to.** The target desktop is
+derived from the snapshot's recorded per-window desktops (the `desktop=`
+values `saveSessionSnapshot` writes), never from where the signal window
+happens to sit:
+
+- If any of the target space's recorded windows are on the current desktop,
+  no switch — the space is (at least partly) already here, and a switch
+  would move the user away from windows they are about to get back.
+- Otherwise, switch to the desktop holding the most of the space's recorded
+  windows; ties break to the nearest desktop in swipe order (the helper's
+  `layout()` desktop order). Most-windows wins because it minimises the
+  number of the space's windows ending up off the user's desktop after the
+  restore opens the rest where the user lands.
+- Noted alternative, not taken: nearest-in-swipe-order as the primary rule
+  (cheapest gesture to undo). Kept here in case most-windows proves
+  disorienting in use.
+
+The signal window remains the only *mechanism* — the one window of a space
+that survives on another desktop between visits, hence the only thing a
+native raise can target — but it is not the *record*. Its desktop is "where
+the user left", which matches the rule's target only when the user left the
+space from the desktop its windows were on. So the raise is gated: compute
+the target from the snapshot, and raise the signal window only when the
+kernel places it on that target desktop (`pushRaise()` can only ever emit
+`ShowDesktop` for the raised window's own recorded desktop, so raising it
+anywhere else could not reach the target anyway). When the gate fails — the
+signal window sits elsewhere, or there is no signal window — no switch
+happens and the space opens on the current desktop, the safe behaviour.
+
+If experiment E2 fails, no raise-based mechanism exists at all and the
+handoff's fallback applies (remove the spike, land the useful commits, keep
+the safe behaviour: a space opens on whichever desktop the user is on).
 
 ## 2. Code paths end to end
 
@@ -267,12 +296,10 @@ never reach main.log.
   the space's windows on the switched-to desktop.
   Setup: expose a named raise to the spaces path (smallest honest shape: a
   kernel command variant carrying `named` intent, mirrored through a
-  `tile:window:` handler gated like `focus`; the design question of whether
-  `named` may exist outside a switcher pick is part of this experiment's
-  review, not something to decide silently). `raiseSignalWindow()` uses it;
-  replace the 1.5 s sleep with a wait for the next `sync-desktops-end`
-  covering the switch (`awaitDesktopSwitchRead` already exists on the
-  executor).
+  `tile:window:` handler gated like `focus`) — space entry is an approved
+  named-raise initiator, see 1.2. `raiseSignalWindow()` uses it; replace the
+  1.5 s sleep with a wait for the next `sync-desktops-end` covering the
+  switch (`awaitDesktopSwitchRead` already exists on the executor).
   Gesture: person leaves space alpha while on desktop 2 (its windows also on
   desktop 2 — dimension 1 equal case), moves to desktop 1, runs `open space
   alpha`.
@@ -282,17 +309,24 @@ never reach main.log.
   Fail: desktop unchanged, or restored windows land on desktop 1 (raise
   switched too late / restore raced the switch).
 
-- **E4 — the wrong-desktop signal window (only if E3 passes; one gesture).**
-  Hypothesis: when the user leaves a space from a desktop other than the one
-  its windows are on, the signal mechanism returns them to the leave desktop,
-  not the windows' desktop — the designed-in approximation of 1.4.
+- **E4 — the raise gate holds when the signal window sits off-target (only
+  if E3 passes; one gesture).**
+  The desktop-choice rule of 1.4 derives the target desktop from the
+  snapshot's recorded per-window desktops; the raise is gated on the signal
+  window actually being on that target.
+  Hypothesis: when the signal window's desktop disagrees with the
+  snapshot-derived target (the user left the space from a different
+  desktop), the gate skips the raise, no switch happens, and the space's
+  windows open on the current desktop.
   Gesture: person has alpha's windows on desktop 2, moves to desktop 3,
   opens another space from there (alpha's signal window lands on 3), then
   re-opens alpha from desktop 1.
-  Pass/fail is a measurement, not a defect test: log shows which desktop the
-  switch lands on (expected: 3). The result feeds the design decision: accept
-  the approximation, or detect the mismatch via the snapshot's `desktop=`
-  values and skip the raise when the signal window disagrees with them.
+  Pass: log shows the gate's skip line (target=2, signal-window desktop=3),
+  no `CurrentDesktopChanged`, and the restored windows' `show-outcome` with
+  `desktopAfter` = desktop 1's id.
+  Fail: a switch to desktop 3 (the gate did not hold) or to desktop 2 (a
+  switch happened without a raisable window there — would mean a write
+  leaked in somewhere).
 
 - **E5 — run-3 symptom: no windows on screen after `close space` (no new
   gesture; first action of the next sitting).**
@@ -328,8 +362,8 @@ pass/fail line is named here.
 - E2 passes, E3 fails → the mechanism exists but the spaces wiring is wrong;
   E3's log decides whether the switch or the restore ordering is at fault
   before any redesign.
-- E3 passes → decide E4's approximation question, then replace the spike
-  with reviewed code: signal window creation stays in
-  `closeCurrentWorkspaceWindows()`, the raise becomes the named variant, the
-  sleep becomes the switch-read wait, and the snapshot's `desktop=` record
-  gates the raise.
+- E3 passes → confirm the gate with E4, then replace the spike with
+  reviewed code implementing the decided desktop-choice rule of 1.4: signal
+  window creation stays in `closeCurrentWorkspaceWindows()`, the raise
+  becomes the named variant gated on the snapshot-derived target desktop,
+  and the sleep becomes the switch-read wait.
