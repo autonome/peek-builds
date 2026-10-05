@@ -103,6 +103,12 @@ export class MacDesktopProvider implements DesktopProvider {
   }
 
   async start(onChange: (change: DesktopChange) => void): Promise<void> {
+    // A start after a stop or a failure (the fail-safe wrapper probes a failed helper again)
+    // begins a fresh session; events of the earlier child are ignored below.
+    this.stop();
+    this.ended = false;
+    this.started = false;
+    this.hello = null;
     this.onChange = onChange;
     if (!existsSync(this.opts.command)) throw new Error('helper-missing');
     const child = spawn(this.opts.command, [...(this.opts.args ?? [])], {
@@ -112,12 +118,18 @@ export class MacDesktopProvider implements DesktopProvider {
     this.child = child;
     // A write to a helper that already exited must not throw in the main process.
     child.stdin?.on('error', () => {});
-    child.on('error', (err) => this.end(`helper-spawn-failed:${err.message}`));
-    child.on('exit', (code, signal) =>
-      this.end(signal ? `helper-exit signal=${signal}` : `helper-exit code=${code ?? 'null'}`),
-    );
+    child.on('error', (err) => {
+      if (this.child === child) this.end(`helper-spawn-failed:${err.message}`);
+    });
+    child.on('exit', (code, signal) => {
+      if (this.child === child) {
+        this.end(signal ? `helper-exit signal=${signal}` : `helper-exit code=${code ?? 'null'}`);
+      }
+    });
     if (child.stdout) {
-      createInterface({ input: child.stdout }).on('line', (line) => this.onLine(line));
+      createInterface({ input: child.stdout }).on('line', (line) => {
+        if (this.child === child) this.onLine(line);
+      });
     }
 
     const hello = (await this.request('hello', {})) as Partial<MacHelperHello> | null;

@@ -81,9 +81,36 @@ class FakeProvider implements DesktopProvider {
   }
 }
 
-function harness(primary: FakeProvider | null) {
+/** A timer the test fires by hand: records each scheduled call and its delay. */
+function manualTimer() {
+  const scheduled: Array<{ fn: () => void; ms: number; cancelled: boolean }> = [];
+  return {
+    scheduled,
+    schedule: (fn: () => void, ms: number) => {
+      const entry = { fn, ms, cancelled: false };
+      scheduled.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    },
+    /** Runs the oldest pending call, if any; true when one ran. */
+    fire: async (): Promise<boolean> => {
+      const entry = scheduled.find((e) => !e.cancelled);
+      if (!entry) return false;
+      entry.cancelled = true;
+      entry.fn();
+      await flush();
+      await flush();
+      return true;
+    },
+    pendingMs: () => scheduled.filter((e) => !e.cancelled).map((e) => e.ms),
+  };
+}
+
+function harness(primary: FakeProvider | null, extra: { reprobeBackoffMs?: number[] } = {}) {
   const lines: string[] = [];
   const changes: DesktopChange[] = [];
+  const timer = manualTimer();
   const fallback = new FallbackDesktopProvider(stubScreens(['1', '2'], { 10: '2' }, [11]));
   const provider = new FailSafeDesktopProvider({
     primary,
@@ -91,9 +118,19 @@ function harness(primary: FakeProvider | null) {
     log: (line) => lines.push(line),
     handshakeTimeoutMs: 20,
     requestTimeoutMs: 20,
+    retryTimeoutMs: 20,
+    schedule: timer.schedule,
+    ...extra,
   });
   const fallbackLines = () => lines.filter((l) => l.startsWith('desktop-provider fallback '));
-  return { provider, lines, changes, fallbackLines, onChange: (c: DesktopChange) => changes.push(c) };
+  return {
+    provider,
+    lines,
+    changes,
+    timer,
+    fallbackLines,
+    onChange: (c: DesktopChange) => changes.push(c),
+  };
 }
 
 const FALLBACK_LAYOUT: ProviderLayout = {
@@ -328,6 +365,175 @@ describe('desktop-provider: fail-safe', () => {
     assert.strictEqual(reached, false);
     assert.strictEqual(h.fallbackLines().length, 0);
   });
+
+  it('a one-off slow reply is retried with a longer timeout and does not cause fallback', async () => {
+    const fake = new FakeProvider();
+    let calls = 0;
+    fake.layoutImpl = async () => {
+      calls += 1;
+      if (calls === 1) return new Promise<unknown>(() => {});
+      return PLATFORM_LAYOUT;
+    };
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), PLATFORM_LAYOUT);
+    await flush();
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(h.fallbackLines().length, 0);
+    assert.deepStrictEqual(h.lines, [
+      'desktop-provider started name=fake',
+      'desktop-provider retry op=layout',
+    ]);
+    assert.strictEqual(h.provider.name, 'fake');
+    assert.strictEqual(h.provider.onFallback, false);
+    assert.deepStrictEqual(h.changes, []);
+    assert.strictEqual(fake.stopped, false);
+  });
+
+  it('the retry waits longer than the first attempt', async () => {
+    const fake = new FakeProvider();
+    let calls = 0;
+    fake.layoutImpl = async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 60));
+      return PLATFORM_LAYOUT;
+    };
+    const lines: string[] = [];
+    const provider = new FailSafeDesktopProvider({
+      primary: fake,
+      fallback: new FallbackDesktopProvider(stubScreens(['1'])),
+      log: (line) => lines.push(line),
+      requestTimeoutMs: 20,
+      retryTimeoutMs: 500,
+      schedule: manualTimer().schedule,
+    });
+    await provider.start(() => {});
+    assert.deepStrictEqual(await provider.layout(), PLATFORM_LAYOUT);
+    assert.strictEqual(calls, 2);
+    assert.ok(lines.every((l) => !l.startsWith('desktop-provider fallback ')));
+  });
+
+  it('a request slow twice falls back, naming the request timeout', async () => {
+    const fake = new FakeProvider();
+    fake.layoutImpl = never;
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_LAYOUT);
+    assert.deepStrictEqual(h.lines.slice(1), [
+      'desktop-provider retry op=layout',
+      'desktop-provider fallback reason=request-timeout:layout',
+    ]);
+  });
+
+  it('a dead helper falls back at once, without a retry', async () => {
+    const fake = new FakeProvider();
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    fake.emit?.({ kind: 'failed', reason: 'helper-exit code=1' });
+    await flush();
+    assert.strictEqual(h.provider.name, 'fallback');
+    assert.ok(h.lines.every((l) => !l.startsWith('desktop-provider retry')));
+  });
+
+  it('a request rejected by a dead helper falls back at once, without a retry', async () => {
+    const fake = new FakeProvider();
+    fake.layoutImpl = async () => {
+      throw new Error('helper-exit code=1');
+    };
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_LAYOUT);
+    assert.deepStrictEqual(h.lines.slice(1), [
+      'desktop-provider fallback reason=request-failed:layout:helper-exit_code=1',
+    ]);
+  });
+
+  it('after a failure the platform provider is probed again after the backoff and recovers', async () => {
+    const fake = new FakeProvider();
+    let healthy = false;
+    fake.layoutImpl = async () => (healthy ? PLATFORM_LAYOUT : new Promise<unknown>(() => {}));
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(await h.provider.layout(), FALLBACK_LAYOUT);
+    await flush();
+    assert.deepStrictEqual(h.timer.pendingMs(), [5_000]);
+    assert.strictEqual(h.provider.name, 'fallback');
+    assert.deepStrictEqual(h.changes, [{ kind: 'layout-changed' }]);
+
+    healthy = true;
+    assert.strictEqual(await h.timer.fire(), true);
+    assert.strictEqual(h.provider.name, 'fake');
+    assert.strictEqual(h.provider.onFallback, false);
+    assert.deepStrictEqual(await h.provider.layout(), PLATFORM_LAYOUT);
+    assert.deepStrictEqual(h.changes, [{ kind: 'layout-changed' }, { kind: 'layout-changed' }]);
+    assert.ok(h.lines.includes('desktop-provider recovered name=fake'));
+    assert.deepStrictEqual(h.timer.pendingMs(), []);
+    // Changes reported by the recovered provider reach the backend again.
+    fake.emit?.({ kind: 'current-desktop-changed', display: '69733378' });
+    assert.deepStrictEqual(h.changes[h.changes.length - 1], {
+      kind: 'current-desktop-changed',
+      display: '69733378',
+    });
+  });
+
+  it('a failed probe backs off 5s, then 30s, and stays at 30s', async () => {
+    const fake = new FakeProvider();
+    fake.layoutImpl = never;
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    await h.provider.layout();
+    assert.deepStrictEqual(h.timer.pendingMs(), [5_000]);
+    fake.startImpl = async () => {
+      throw new Error('still-down');
+    };
+    await h.timer.fire();
+    assert.deepStrictEqual(h.timer.pendingMs(), [30_000]);
+    await h.timer.fire();
+    assert.deepStrictEqual(h.timer.pendingMs(), [30_000]);
+    await h.timer.fire();
+    assert.deepStrictEqual(h.timer.pendingMs(), [30_000]);
+    assert.strictEqual(h.provider.name, 'fallback');
+    assert.strictEqual(h.fallbackLines().length, 1);
+    // It comes back once the helper answers.
+    fake.startImpl = async () => {};
+    fake.layoutImpl = async () => PLATFORM_LAYOUT;
+    await h.timer.fire();
+    assert.strictEqual(h.provider.name, 'fake');
+  });
+
+  it('a helper that dies later is probed again too', async () => {
+    const fake = new FakeProvider();
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    fake.emit?.({ kind: 'failed', reason: 'helper-exit code=1' });
+    await flush();
+    assert.deepStrictEqual(h.timer.pendingMs(), [5_000]);
+    await h.timer.fire();
+    assert.strictEqual(h.provider.name, 'fake');
+  });
+
+  it('a platform provider that cannot start at all is not probed again', async () => {
+    const fake = new FakeProvider();
+    fake.startImpl = async () => {
+      throw new Error('helper-missing');
+    };
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    assert.deepStrictEqual(h.timer.pendingMs(), []);
+    const none = harness(null);
+    await none.provider.start(none.onChange);
+    assert.deepStrictEqual(none.timer.pendingMs(), []);
+  });
+
+  it('stopping the provider cancels a pending probe', async () => {
+    const fake = new FakeProvider();
+    fake.layoutImpl = never;
+    const h = harness(fake);
+    await h.provider.start(h.onChange);
+    await h.provider.layout();
+    h.provider.stop();
+    assert.deepStrictEqual(h.timer.pendingMs(), []);
+  });
 });
 
 // ─── macOS provider against a fake helper ────────────────────────────────────
@@ -409,6 +615,8 @@ function macHarness(mode: string, timeouts: { handshake?: number; request?: numb
     log: (line) => lines.push(line),
     handshakeTimeoutMs: timeouts.handshake ?? 10_000,
     requestTimeoutMs: timeouts.request ?? 5_000,
+    retryTimeoutMs: timeouts.request ?? 5_000,
+    schedule: () => () => {},
   });
   const fallbackLines = () => lines.filter((l) => l.startsWith('desktop-provider fallback '));
   return { mac, provider, lines, changes, fallbackLines, onChange: (c: DesktopChange) => changes.push(c) };
@@ -539,6 +747,7 @@ describe('desktop-provider: macOS provider (fake helper)', () => {
       primary: mac,
       fallback: new FallbackDesktopProvider(stubScreens(['1'])),
       log: (line) => lines.push(line),
+    schedule: () => () => {},
     });
     await provider.start(() => {});
     assert.deepStrictEqual(lines, ['desktop-provider fallback reason=start-failed:helper-missing']);
@@ -583,6 +792,33 @@ describe('desktop-provider: macOS provider (fake helper)', () => {
     await h.provider.start(h.onChange);
     assert.deepStrictEqual(await h.provider.layout(), FALLBACK_TWO_SCREENS);
     assert.deepStrictEqual(h.fallbackLines(), ['desktop-provider fallback reason=request-timeout:layout']);
+  });
+
+  it('starts again after a stop with a fresh helper, and the stopped one cannot fail the new session', async () => {
+    const changes: DesktopChange[] = [];
+    const mac = new MacDesktopProvider({
+      command: process.execPath,
+      args: [fakeHelper(), 'ok'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    await mac.start((c) => changes.push(c));
+    mac.stop();
+    await mac.start((c) => changes.push(c));
+    // Give the first helper time to report its exit.
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepStrictEqual(await mac.layout(), {
+      screens: [
+        { display: '1', current: '3' },
+        { display: '4', current: '9' },
+      ],
+      desktops: [
+        { id: '3', display: '1' },
+        { id: '7', display: '1' },
+        { id: '9', display: '4' },
+      ],
+    });
+    assert.deepStrictEqual(changes, []);
+    mac.stop();
   });
 
   it('helper exit after start: fallback, backend told to re-read', async () => {

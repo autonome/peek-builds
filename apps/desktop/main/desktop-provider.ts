@@ -7,9 +7,10 @@
  * OS call and no Electron type, so any backend (Electron, Tauri, …) can own a provider, and
  * `scripts/check-platform-leak.mjs` scans it.
  *
- * Also here: the fail-safe wrapper every backend starts its platform provider through. Any
- * failure of the platform provider switches the session to the fallback provider for good,
- * logged once as `desktop-provider fallback reason=<…>`.
+ * Also here: the fail-safe wrapper every backend starts its platform provider through. A failure
+ * of the platform provider switches the session to the fallback provider, logged once as
+ * `desktop-provider fallback reason=<…>`; the platform provider is then probed again after a
+ * backoff and the session returns to it when it answers (`desktop-provider recovered`).
  */
 import type { DesktopId } from './window-kernel.js';
 
@@ -81,6 +82,13 @@ export interface DesktopProvider {
 export const PROVIDER_HANDSHAKE_TIMEOUT_MS = 1000;
 /** Spec, "Fail-safe": any later request must answer within 250ms. */
 export const PROVIDER_REQUEST_TIMEOUT_MS = 250;
+/**
+ * A request that missed the 250ms budget is asked once more with this longer one before it counts
+ * as a failure: a busy window server makes a healthy helper miss the short budget now and then.
+ */
+export const PROVIDER_RETRY_TIMEOUT_MS = 1500;
+/** Waits before each re-probe of a failed platform provider; the last value repeats. */
+export const PROVIDER_REPROBE_BACKOFF_MS: readonly number[] = [5_000, 30_000];
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 // A provider's answers cross a process boundary on some platforms, so they are checked here,
@@ -138,10 +146,12 @@ export function isPlacementList(v: unknown, asked: readonly PlatformWindowId[]):
 // ─── Fail-safe wrapper ───────────────────────────────────────────────────────
 
 class ProviderFailure extends Error {}
+/** The one failure worth another try: a dead or lying provider will not do better. */
+class RequestTimeout extends ProviderFailure {}
 
 function withTimeout<T>(p: Promise<T>, ms: number, reason: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new ProviderFailure(reason)), ms);
+    const timer = setTimeout(() => reject(new RequestTimeout(reason)), ms);
     p.then(
       (v) => {
         clearTimeout(timer);
@@ -174,18 +184,36 @@ export interface FailSafeOptions {
   readonly log?: (line: string) => void;
   readonly handshakeTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** Timeout of the one retry after a request timeout. */
+  readonly retryTimeoutMs?: number;
+  /** Waits before each re-probe of a failed platform provider; the last value repeats. */
+  readonly reprobeBackoffMs?: readonly number[];
+  /** Runs `fn` after `ms`; returns the cancel function. Defaults to an unref'd `setTimeout`. */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
+
+const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
+  const timer = setTimeout(fn, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
 
 const defaultLog = (line: string): void => {
   console.log(`[wm] t=${Date.now()} ${line}`);
 };
 
 /**
- * The provider a backend owns. Answers from the platform provider while it behaves; on the first
- * failure (no provider, start rejected, handshake timeout, request timeout, malformed answer, a
- * `failed` change) it stops the platform provider, starts the fallback, logs
- * `desktop-provider fallback reason=<…>` once, answers the failing request from the fallback and
- * sends `layout-changed` so the backend re-reads everything from the fallback. No retry.
+ * The provider a backend owns. Answers from the platform provider while it behaves. A request
+ * that times out is asked once more with a longer timeout (logged `desktop-provider retry`). On a
+ * failure (no provider, start rejected, handshake timeout, a request timing out twice, malformed
+ * answer, a `failed` change) it stops the platform provider, starts the fallback, logs
+ * `desktop-provider fallback reason=<…>`, answers the failing request from the fallback and sends
+ * `layout-changed` so the backend re-reads everything from the fallback.
+ *
+ * A platform provider that had started, or whose handshake timed out, is probed again after a
+ * backoff (5s, then 30s, repeating): when it answers, the session returns to it, logs
+ * `desktop-provider recovered` and sends `layout-changed`. A provider that cannot start at all
+ * (missing binary, unavailable symbols) or the absence of one is final for the session.
  */
 export class FailSafeDesktopProvider implements DesktopProvider {
   private active: DesktopProvider;
@@ -194,6 +222,10 @@ export class FailSafeDesktopProvider implements DesktopProvider {
   private readonly log: (line: string) => void;
   private readonly handshakeTimeoutMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly retryTimeoutMs: number;
+  private readonly reprobeBackoffMs: readonly number[];
+  private readonly schedule: (fn: () => void, ms: number) => () => void;
+  private cancelReprobe: (() => void) | null = null;
   private onChange: ((change: DesktopChange) => void) | null = null;
   private fellBack = false;
   private stopped = false;
@@ -205,6 +237,10 @@ export class FailSafeDesktopProvider implements DesktopProvider {
     this.log = opts.log ?? defaultLog;
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? PROVIDER_HANDSHAKE_TIMEOUT_MS;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS;
+    this.retryTimeoutMs = opts.retryTimeoutMs ?? PROVIDER_RETRY_TIMEOUT_MS;
+    const backoff = opts.reprobeBackoffMs ?? PROVIDER_REPROBE_BACKOFF_MS;
+    this.reprobeBackoffMs = backoff.length > 0 ? backoff : PROVIDER_REPROBE_BACKOFF_MS;
+    this.schedule = opts.schedule ?? defaultSchedule;
   }
 
   get name(): string {
@@ -280,6 +316,8 @@ export class FailSafeDesktopProvider implements DesktopProvider {
   stop(): void {
     this.stopped = true;
     this.onChange = null;
+    this.cancelReprobe?.();
+    this.cancelReprobe = null;
     this.active.stop();
   }
 
@@ -302,7 +340,15 @@ export class FailSafeDesktopProvider implements DesktopProvider {
     if (provider === this.fallback) return run(provider);
     let value: unknown;
     try {
-      value = await withTimeout(run(provider), this.requestTimeoutMs, `request-timeout:${op}`);
+      try {
+        value = await withTimeout(run(provider), this.requestTimeoutMs, `request-timeout:${op}`);
+      } catch (err) {
+        // Only a miss of the short budget is retried, and only while this provider is still the one
+        // in use; a provider that died or was replaced meanwhile has nothing to retry.
+        if (!(err instanceof RequestTimeout) || this.active !== provider || this.stopped) throw err;
+        this.log(`desktop-provider retry op=${op}`);
+        value = await withTimeout(run(provider), this.retryTimeoutMs, `request-timeout:${op}`);
+      }
     } catch (err) {
       await this.switchToFallback(reasonOf(err, `request-failed:${op}`), { notify: true });
       return run(this.fallback);
@@ -332,9 +378,55 @@ export class FailSafeDesktopProvider implements DesktopProvider {
     await this.fallback.start((change) => {
       if (!this.stopped && change.kind !== 'failed') this.onChange?.(change);
     });
+    if (primary && !reason.startsWith('start-failed')) this.scheduleReprobe(0);
     if (notify && !this.stopped) {
       const onChange = this.onChange;
       queueMicrotask(() => onChange?.({ kind: 'layout-changed' }));
     }
+  }
+
+  /** Probes the platform provider again after the backoff for `attempt` (0-based). */
+  private scheduleReprobe(attempt: number): void {
+    if (this.stopped || !this.primary) return;
+    const wait = this.reprobeBackoffMs[Math.min(attempt, this.reprobeBackoffMs.length - 1)];
+    this.cancelReprobe = this.schedule(() => {
+      this.cancelReprobe = null;
+      void this.reprobe(attempt);
+    }, wait);
+  }
+
+  private async reprobe(attempt: number): Promise<void> {
+    const primary = this.primary;
+    if (!primary || this.stopped || !this.fellBack) return;
+    try {
+      await withTimeout(
+        primary.start((change) => this.fromPrimary(primary, change)),
+        this.handshakeTimeoutMs,
+        'handshake-timeout',
+      );
+      const layout = await withTimeout(primary.layout(), this.retryTimeoutMs, 'request-timeout:layout');
+      if (!isProviderLayout(layout)) throw new Error('malformed:layout');
+    } catch (err) {
+      try {
+        primary.stop();
+      } catch {
+        // A provider that fails to stop is already out of the session.
+      }
+      if (!this.stopped) {
+        this.log(`desktop-provider reprobe-failed reason=${logToken(reasonOf(err, 'start-failed'))}`);
+        this.scheduleReprobe(attempt + 1);
+      }
+      return;
+    }
+    if (this.stopped) {
+      primary.stop();
+      return;
+    }
+    this.fellBack = false;
+    this.active = primary;
+    this.fallback.stop();
+    this.log(`desktop-provider recovered name=${logToken(primary.name)}`);
+    const onChange = this.onChange;
+    queueMicrotask(() => onChange?.({ kind: 'layout-changed' }));
   }
 }
