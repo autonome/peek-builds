@@ -357,6 +357,42 @@ never reach main.log.
   Pass (hypothesis confirmed): `restore-begin n=0` for the default row.
   Fail: n>0 with failures — different bug, diagnose before E3 builds on the
   close-space path.
+  **Result: hypothesis REFUTED — the default row was not empty, and the
+  restore succeeded.** The log (2026-10-05T06:50:45–06:58:42Z segment, no
+  rotation) shows the full third run:
+  - `close space` ran at 06:51:28 with the user on kernel desktop `1` (the
+    signal window wm-18 opened there, the palette wm-7 placed there), while
+    the outgoing space's windows wm-16/wm-17 sat on desktop `3`; the sweep
+    closed them from the other desktop without issue (desktop-blind close,
+    as section 2 states).
+  - The default restore was `restore-begin n=3 … restored=3 failed=0`:
+    `peek://spaces/home.html`, `peek://spaces/home.html?signal=1`,
+    `peek://app/settings/settings.html`. All three opened on desktop `1`
+    (`show-outcome … desktopBefore=1 desktopAfter=1`, then
+    `sync-desktops-end … wm-19:1,wm-20:1,wm-21:1`), all three finished
+    loading (`all-loaded n=3 finished=3`), and the focused one was raised
+    (`raise-realized id=wm-19 … plan=take-key intent=user`).
+  - `switchesSeen` stayed at 2 from 06:50:46.7 to the end, so no desktop
+    switch happened after the restore: user and windows were on the same
+    desktop, per every reading available.
+  So "no windows of any kind on screen" is not explained by an empty
+  snapshot, a failed restore, or a wrong desktop. What the log does show:
+  Peek resigned active 2 s after the restore (`trigger=app-resign`
+  06:51:32.7), so another app's windows may simply have buried the three
+  restored ones; nothing further is decidable from this log. Two defects it
+  DOES prove, both to fix in the real implementation:
+  1. **The default snapshot had been polluted by the spike**: the default
+     key saves everything on screen, so a stale signal window
+     (`home.html?signal=1`) was captured by an ambient save and restored as
+     an ordinary window. Session saves must exclude role `signal` windows
+     (or the real implementation's equivalent) from every snapshot.
+  2. A `raise-dropped` diagnostic already exists in
+     `window-kernel-executor.ts` (fields: via, appActive,
+     desktopSwitchCount/Read, onCurrentDesktop, recordDesktop,
+     currentDesktop) — the run's one dropped raise (`id=wm-18 …
+     alreadyKey=true`) was logged by it. The logging step before the live
+     experiments only needs the request side (`tile-ipc.ts
+     tile:window:focus`), not a new drop log.
 
 Unattended vs person: E1 fully unattended (unit test). E5 unattended (log
 reading / scratch-profile CLI drive). E2–E4 need a person once per
