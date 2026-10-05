@@ -378,12 +378,12 @@ never reach main.log.
   The desktop-choice rule of 1.4 derives the target desktop from the
   snapshot's recorded per-window desktops; the raise is gated on the signal
   window actually being on that target.
-  Status: waiting on its code — the named-raise change deliberately did NOT
-  include the 1.4 gate, so `raiseSignalWindow()` currently raises the
-  signal window wherever it is. The gate (read the target space's snapshot
-  `desktop=` values, compare with the signal window's kernel desktop, skip
-  the raise and log the decision on mismatch) is its own commit-sized
-  change and must land before this experiment's pass line can exist.
+  The gate's code: `space-desktop-choice.ts chooseSpaceDesktopTarget`
+  (pure, electron-free, own unit suite), `session.ts
+  getWorkspaceSnapshotDesktops`, and the `named`+`snapshotKey` branch of
+  `tile-ipc.ts tile:window:focus`, which logs `[wm] space-desktop-gate …
+  verdict=raise|skip-mismatch|skip-no-target` and dispatches nothing on a
+  skip.
   Hypothesis: when the signal window's desktop disagrees with the
   snapshot-derived target (the user left the space from a different
   desktop), the gate skips the raise, no switch happens, and the space's
@@ -397,6 +397,19 @@ never reach main.log.
   Fail: a switch to desktop 3 (the gate did not hold) or to desktop 2 (a
   switch happened without a raisable window there — would mean a write
   leaked in somewhere).
+  **Result: PASS.** Live run decided from `main.log` at 09:18:50.859Z:
+  `space-desktop-gate key=tag_1791178789684_qq202aovv current=1
+  recorded=3,3,3,3 target=3 namedDesktop=181 verdict=skip-mismatch` —
+  alpha's row recorded all four windows on kernel desktop 3 (the second
+  desktop), its signal window sat on the freshly created third desktop
+  (kernel id 181), so the gate skipped the raise. No `effect-show-desktop`
+  and no `space-changed` followed for that command, and the restore
+  (`restore-begin n=4` / `restore-end restored=4 failed=0`) opened all four
+  windows with `show-outcome … desktopBefore=1 desktopAfter=1` — on the
+  desktop the command ran on, the safe behaviour. Observed to match: no
+  visible switch, windows appeared on the first desktop. The gate holds:
+  a signal window stranded on the wrong desktop cannot drag the user
+  there.
 
 - **E5 — run-3 symptom: no windows on screen after `close space` (no new
   gesture; first action of the next sitting).**
@@ -473,3 +486,18 @@ pass/fail line is named here.
   window creation stays in `closeCurrentWorkspaceWindows()`, the raise
   becomes the named variant gated on the snapshot-derived target desktop,
   and the sleep becomes the switch-read wait.
+
+All five experiments are done: E1 pass (existing kernel coverage), E2 pass
+with the activation constraint, E3 pass, E4 pass, E5 hypothesis refuted
+(results in each entry). The mechanism, the gate and the switch-read wait
+are in the tree; what remains to reach reviewable shape:
+- exclude `signal`-role windows from session saves (E5 proved the default
+  row captures them; stale 2x2 windows restore as ordinary windows until
+  this lands);
+- sweep the spike's remnants: `[ext:spaces]` console logging that never
+  reaches `main.log`, the signal-window map's behaviour across app
+  relaunches (the map is renderer state and empties on boot, so the first
+  entry after a relaunch never switches — decide whether to persist or
+  accept), and the E2-noted residual unknown (activation drop treated as a
+  hard rule);
+- re-run the relevant suites and take the branch through review/landing.
