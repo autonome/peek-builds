@@ -115,6 +115,7 @@ import {
   registerDownloadHandler,
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
+import { installDesktopMarkerManager } from './desktop-marker-manager.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -1545,6 +1546,11 @@ const onReady = async () => {
         // No session restore pending — signal immediately
         notifySessionRestoreDone();
       }
+
+      // Per-desktop markers: mint on the launch desktop now (the boot
+      // restore above guaranteed invokeWindowOpen + the background window
+      // exist) and on every later arrival via kernel notifications.
+      installDesktopMarkerManager();
 
       // Start periodic autosave timer (Phase 3)
       const autosaveInterval = (typeof prefsMsg.prefs.sessionAutosaveInterval === 'number')
