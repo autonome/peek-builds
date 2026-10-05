@@ -354,12 +354,36 @@ never reach main.log.
   with `desktopAfter` = desktop 2's id.
   Fail: desktop unchanged, or restored windows land on desktop 1 (raise
   switched too late / restore raced the switch).
+  **Result: PASS.** Code landed as the named-raise change (`window-kernel.ts`
+  `named` intent → `SWITCHER_PICK`; `tile:window:focus {named:true}` with
+  the bounded app-active wait and the `awaitDesktopSwitchRead` settle;
+  `raiseSignalWindow()` uses it, no fixed sleep). Live run decided from
+  `main.log` at 09:05:20.573Z: `raise-requested via=tile:window:focus id=22
+  machineId=wm-22 named=true` → `effect-show-desktop desktop=3` →
+  `raise-realized id=wm-22 … intent=user` → `space-changed` with
+  `switchesSeen` 6→7 and `appActive=true` → `raise-named-settled
+  appActiveAtDispatch=true outcome=read` → `restore-begin n=4` /
+  `restore-end restored=4 failed=0`, all four restored windows'
+  `show-outcome` with `desktopBefore=3 desktopAfter=3`. So the full chain
+  holds: entering a space raises its tiny 2x2 signal window as a named
+  request, macOS switches to its desktop (a 2x2 transparent window is
+  enough — the E2 open question about window size is closed), the restore
+  waits for the switch read and opens the space's windows on the
+  switched-to desktop. The `close space` leg of the same run also switched
+  (the earlier `space-changed` sequence in the log), so both directions of
+  a round-trip work.
 
 - **E4 — the raise gate holds when the signal window sits off-target (only
   if E3 passes; one gesture).**
   The desktop-choice rule of 1.4 derives the target desktop from the
   snapshot's recorded per-window desktops; the raise is gated on the signal
   window actually being on that target.
+  Status: waiting on its code — the named-raise change deliberately did NOT
+  include the 1.4 gate, so `raiseSignalWindow()` currently raises the
+  signal window wherever it is. The gate (read the target space's snapshot
+  `desktop=` values, compare with the signal window's kernel desktop, skip
+  the raise and log the decision on mismatch) is its own commit-sized
+  change and must land before this experiment's pass line can exist.
   Hypothesis: when the signal window's desktop disagrees with the
   snapshot-derived target (the user left the space from a different
   desktop), the gate skips the raise, no switch happens, and the space's
