@@ -549,7 +549,7 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
 
     notices.push({
       level: 'info',
-      message: `[session:save] Window ${w.nativeId} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasMaximized ? " [maximized]" : ""} url=${realUrl.substring(0, 80)}`,
+      message: `[session:save] Window ${w.nativeId} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasMaximized ? " [maximized]" : ""}${rec?.desktop !== undefined ? ` desktop=${rec.desktop}` : ""} url=${realUrl.substring(0, 80)}`,
     });
 
     // Capture context state for this window

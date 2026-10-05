@@ -890,6 +890,18 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.strictEqual(JSON.parse(JSON.stringify(out[0])).desktop, '3');
   });
 
+  it('the save log line names the desktop when known and is unchanged when not', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
+      records: [makeRecord('w1', { desktop: '3' }), makeRecord('w2')],
+    };
+    const lines = serializeSession(inputFor(world)).notices
+      .filter((n) => n.message.startsWith('[session:save] Window'))
+      .map((n) => n.message);
+    assert.match(lines[0], / desktop=3 url=/);
+    assert.doesNotMatch(lines[1], /desktop=/);
+  });
+
   it('a snapshot written before the desktop field existed still reads back', () => {
     const old = JSON.parse(JSON.stringify({
       url: 'https://example.com/', key: undefined, title: 't', bounds: { x: 0, y: 0, width: 1, height: 1 },
