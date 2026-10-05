@@ -505,3 +505,16 @@ are in the tree; what remains to reach reviewable shape:
   windows where the user is, and the switch re-arms once the space is next
   left. Rediscovery was considered and has nothing to rediscover;
 - re-run the relevant suites and take the branch through review/landing.
+
+Remnant review of the spike commits (`f3fbca53`, `267a8416`), done: every
+surviving line is load-bearing — the map, open/raise/close trio, the entry
+ordering (raise before restore, close after), and the leave-side open. The
+experiment-only parts were already removed by the fold-up (the fixed 1.5 s
+sleep by the named-raise change, the success-path renderer logging and the
+spike wording by the logging sweep). One deliberate leftover, kept because
+changing it is not clearly experiment-only: the marker window loads the
+full spaces home UI (`peek://spaces/home.html?signal=1`) although nothing
+reads the `signal` param — the param only distinguishes marker windows in
+`main.log` URLs. A minimal dedicated page would be cheaper per space but
+changes what the window loads and how the tile system treats it; worth
+revisiting if the per-space cost ever shows up, not before.
