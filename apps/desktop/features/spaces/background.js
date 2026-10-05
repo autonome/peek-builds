@@ -480,7 +480,9 @@ async function enterWorkspace(tag, spaceName) {
   // declareActiveWorkspaceForNewWindows()).
   await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
 
+  await raiseSignalWindow();
   const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
+  await closeSignalWindow();
   // `restored` counts the windows that actually opened — not `total`, the
   // number the snapshot asked for, which is set before any open is attempted.
   // A workspace whose saved windows all failed to open has nothing on screen
@@ -533,6 +535,56 @@ async function enterWorkspace(tag, spaceName) {
  * badge intact — from the saved workspace row on re-entry (see
  * `enterWorkspace()`).
  */
+// Spike: a tiny window left on the desktop the user is on when leaving a space.
+// Raising it on entry shows whether macOS switches back to that desktop.
+let signalWindowId = null;
+
+async function openSignalWindow() {
+  try {
+    if (signalWindowId != null) await api.window.close(signalWindowId);
+    const result = await api.window.open('peek://spaces/home.html?signal=1', {
+      role: 'signal',
+      width: 2,
+      height: 2,
+      x: 0,
+      y: 0,
+      transparent: true,
+      focusable: true,
+      skipTaskbar: true,
+      show: true,
+    });
+    signalWindowId = result?.id ?? null;
+    console.log(`[ext:spaces] signal-window-open id=${signalWindowId}`);
+  } catch (err) {
+    signalWindowId = null;
+    console.error('[ext:spaces] signal-window-open failed:', err);
+  }
+}
+
+async function raiseSignalWindow() {
+  if (signalWindowId == null) {
+    console.log('[ext:spaces] signal-window-raise none');
+    return;
+  }
+  try {
+    await api.window.focus(signalWindowId);
+    console.log(`[ext:spaces] signal-window-raise id=${signalWindowId}`);
+    // Give macOS time to switch desktops before the space's windows open.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  } catch (err) {
+    console.error('[ext:spaces] signal-window-raise failed:', err);
+  }
+}
+
+async function closeSignalWindow() {
+  if (signalWindowId == null) return;
+  try {
+    await api.window.close(signalWindowId);
+  } catch {
+  }
+  signalWindowId = null;
+}
+
 async function closeCurrentWorkspaceWindows() {
   if (!activeSpaceId) return;
 
@@ -541,6 +593,8 @@ async function closeCurrentWorkspaceWindows() {
   } catch (err) {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
+
+  await openSignalWindow();
 
   const listResult = await api.window.list();
   if (!listResult?.success || !Array.isArray(listResult.windows)) return;
