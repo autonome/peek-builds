@@ -535,9 +535,18 @@ async function enterWorkspace(tag, spaceName) {
  * badge intact — from the saved workspace row on re-entry (see
  * `enterWorkspace()`).
  */
-// Spike: one tiny window per space, left on the desktop the user was on when
-// leaving it and kept until the space is entered again. Raising it on entry
-// shows whether macOS switches back to that desktop.
+// One tiny window per space, left on the desktop the user was on when
+// leaving it and kept until the space is entered again: the desktop anchor
+// that lets re-entering the space switch macOS back there by raising it
+// (docs/design/space-desktop-return-plan.md). Raises are reads-only safe —
+// no window-server write exists anywhere on this path.
+//
+// Diagnostics live in main.log, not here: the open is visible as
+// `open-registry-set … role=signal` + `show-outcome`, the raise as
+// `raise-requested … named=true` → `space-desktop-gate` (the target
+// verdict) → `raise-named-settled`. An `open space` with NO
+// `raise-requested` line means no signal window existed for the target —
+// this map is renderer state and empties on an app relaunch.
 const signalWindows = new Map(); // spaceId -> window id
 
 async function closeSignalWindow(spaceId) {
@@ -565,7 +574,6 @@ async function openSignalWindow(spaceId) {
       show: true,
     });
     if (result?.id != null) signalWindows.set(spaceId, result.id);
-    console.log(`[ext:spaces] signal-window-open space=${spaceId} id=${result?.id}`);
   } catch (err) {
     console.error('[ext:spaces] signal-window-open failed:', err);
   }
@@ -573,10 +581,7 @@ async function openSignalWindow(spaceId) {
 
 async function raiseSignalWindow(spaceId) {
   const id = signalWindows.get(spaceId);
-  if (id == null) {
-    console.log(`[ext:spaces] signal-window-raise none space=${spaceId}`);
-    return;
-  }
+  if (id == null) return;
   try {
     // A named raise: entering the space names its signal window as where
     // the user wants to be, so macOS may switch to its desktop. The call
@@ -588,7 +593,6 @@ async function raiseSignalWindow(spaceId) {
     // the raise is skipped when the two disagree (`[wm]
     // space-desktop-gate` logs the verdict).
     await api.window.focus(id, { named: true, snapshotKey: workspaceSnapshotKey(spaceId) });
-    console.log(`[ext:spaces] signal-window-raise space=${spaceId} id=${id}`);
   } catch (err) {
     console.error('[ext:spaces] signal-window-raise failed:', err);
   }
