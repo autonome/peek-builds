@@ -18,10 +18,11 @@
  *   features/spaces/background.js, which now only issues the keyed raise —
  *   `switchToSpaceDesktop()`).
  *
- * Markers load `peek://spaces/signal.html` with the window options the
- * per-space lifecycle used (role `signal` keeps them out of session
- * saves — session-projection.ts serializeSession; signal.html, never the
- * home UI's URL, which collided with URL-keyed selectors, see `3818282e`).
+ * Markers load `peek://spaces/signal.html` (role `signal` keeps them out of
+ * session saves — session-projection.ts serializeSession; signal.html, never
+ * the home UI's URL, which collided with URL-keyed selectors, see
+ * `3818282e`). Unlike the retired per-space signal windows they are
+ * non-focusable — see the mint options below for why.
  *
  * Same executor-subscription pattern as `session.ts installHeldRestore()`.
  * Under test runs with no desktop provider the kernel state carries no
@@ -110,7 +111,19 @@ async function syncMarkers(state: State): Promise<void> {
           x: 0,
           y: 0,
           transparent: true,
-          focusable: true,
+          // Non-focusable, deliberately: a marker takes no input, and the
+          // kernel's accounting follows from that declaration. A focusable
+          // marker's open hands it kernel key (the fresh-open shown/focused
+          // report), so with another app frontmost every later page open read
+          // as "key held while app inactive" and opened TRANSIENT — then the
+          // next marker mint's show swept it mid-load (destroying a user's
+          // window; caught by session-restore-focus.spec cold-start). A
+          // non-focusable window is never transient, never holds key, and its
+          // show sweeps nothing. OPEN QUESTION for live verification: whether
+          // the space-entry raise of a non-focusable window still pulls a
+          // macOS desktop switch — if the switch needs the marker to take
+          // focus, this needs a different inertness mechanism, not focusable.
+          focusable: false,
           skipTaskbar: true,
           show: true,
         },

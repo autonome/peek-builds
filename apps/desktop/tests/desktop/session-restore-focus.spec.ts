@@ -96,7 +96,7 @@ test.describe('Session Restore Focus @desktop', () => {
     const result = await bgWindow.evaluate(async (u: string) => {
       return await (window as any).app.window.open(u, { width: 800, height: 600 });
     }, url);
-    expect(result.success).toBe(true);
+    expect(result.success, `window.open failed: ${result.error}`).toBe(true);
     // Block on slug to ensure the page is fully open before next steps.
     const slug = new URL(url).pathname.slice(1);
     await app.getWindow(slug, 15000);
