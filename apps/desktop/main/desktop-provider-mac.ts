@@ -3,9 +3,8 @@
  *
  * A Node client of the desktop helper (`native/desktop-helper/main.swift`, protocol in its
  * header): spawns it, speaks one JSON object per line, and answers `DesktopProvider` requests
- * from it. Reads, and switching the shown desktop through the helper. Placing a window is
- * done by the injected `moveWindow` (in the app's own process) because the window server
- * ignores the move from any other process; `probePlace` is the helper's own diagnostic move.
+ * from it. Reads only: both capability flags are false; `probePlace` exists for the live
+ * acceptance check's write test and nothing else.
  *
  * Failure reporting, for `FailSafeDesktopProvider`: `start` rejects when the helper is missing,
  * fails to spawn, exits before answering `hello`, or reports a required private symbol
@@ -64,11 +63,6 @@ export interface MacProviderOptions {
   readonly command: string;
   readonly args?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
-  /**
-   * Asks the window server, from this process, to put one of this app's windows on a desktop.
-   * True when the call was made; `placeWindow` reads the result back.
-   */
-  readonly moveWindow?: (win: PlatformWindowId, desktop: DesktopId) => boolean;
 }
 
 /** What `hello` answered, kept for diagnostics. */
@@ -84,7 +78,8 @@ interface Pending {
 
 export class MacDesktopProvider implements DesktopProvider {
   readonly name = 'mac';
-  readonly canShowDesktops = true;
+  readonly canPlaceWindows = false;
+  readonly canShowDesktops = false;
   /** `hello`'s answer once started. */
   hello: MacHelperHello | null = null;
 
@@ -96,11 +91,6 @@ export class MacDesktopProvider implements DesktopProvider {
   private onChange: ((change: DesktopChange) => void) | null = null;
 
   constructor(private readonly opts: MacProviderOptions) {}
-
-  /** Placing needs a mover: without one this provider only reads. */
-  get canPlaceWindows(): boolean {
-    return this.opts.moveWindow !== undefined;
-  }
 
   async start(onChange: (change: DesktopChange) => void): Promise<void> {
     // A start after a stop or a failure (the fail-safe wrapper probes a failed helper again)
@@ -160,36 +150,12 @@ export class MacDesktopProvider implements DesktopProvider {
     return (await this.request('placements', { windows })) as Placement[];
   }
 
-  /**
-   * Moves the window with the injected mover (the window server honours the move only from the
-   * window's own process, so the helper cannot do it) and answers whether the helper reads it on
-   * `desktop` afterwards. A window on every desktop never reads as on one.
-   */
-  async placeWindow(win: PlatformWindowId, desktop: DesktopId): Promise<boolean> {
-    const move = this.opts.moveWindow;
-    if (!move || !move(win, desktop)) return false;
-    // The window server applies the move asynchronously; allow it a few reads.
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const [placement] = (await this.placements([win])) ?? [];
-      if (placement?.desktop === desktop) return true;
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    }
+  async placeWindow(_win: PlatformWindowId, _desktop: DesktopId): Promise<boolean> {
     return false;
   }
 
-  /**
-   * Makes `desktop` the one its display shows, through the helper: the window server honours
-   * that from any process. True when the helper then reads it as shown; a refusal is false.
-   */
-  async showDesktop(desktop: DesktopId): Promise<boolean> {
-    try {
-      const result = (await this.request('show', { desktop })) as { current?: unknown } | null;
-      return result?.current === desktop;
-    } catch (err) {
-      // A refusal for this desktop is not a failed helper; only a dead one rejects otherwise.
-      if (err instanceof Error && err.message.startsWith('helper-error:')) return false;
-      throw err;
-    }
+  async showDesktop(_desktop: DesktopId): Promise<boolean> {
+    return false;
   }
 
   /**

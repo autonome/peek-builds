@@ -36,7 +36,6 @@
 #import <AppKit/AppKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
-#include <dlfcn.h>
 #include <node_api.h>
 
 static char kNonActivatingFlag;
@@ -149,43 +148,8 @@ static napi_value IsKey(napi_env env, napi_callback_info info) {
   return JsBool(env, window != nil && [window isKeyWindow]);
 }
 
-// moveWindowToDesktop(windowNumber, desktopId) -> true when the call was made.
-// Puts one of this process's windows on the desktop with that window-server id
-// (a decimal string) through the window server's private move call. The call
-// takes effect only for windows of the calling process: the same call from
-// another process (the desktop helper) leaves the window where it was, on
-// macOS 26. The caller reads the window's desktop back to learn whether it moved.
-typedef int (*MainConnectionFn)(void);
-typedef void (*MoveWindowsFn)(int, CFArrayRef, uint64_t);
-
-static napi_value MoveWindowToDesktop(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value args[2];
-  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-  int64_t number = 0;
-  char text[32];
-  size_t length = 0;
-  if (argc < 2 || napi_get_value_int64(env, args[0], &number) != napi_ok || number <= 0 ||
-      napi_get_value_string_utf8(env, args[1], text, sizeof(text), &length) != napi_ok || length == 0) {
-    return JsBool(env, false);
-  }
-  char* end = nullptr;
-  uint64_t desktop = strtoull(text, &end, 10);
-  if (end == text || *end != '\0' || desktop == 0) return JsBool(env, false);
-  void* connectionSymbol = dlsym(RTLD_DEFAULT, "SLSMainConnectionID");
-  if (connectionSymbol == nullptr) connectionSymbol = dlsym(RTLD_DEFAULT, "CGSMainConnectionID");
-  void* moveSymbol = dlsym(RTLD_DEFAULT, "SLSMoveWindowsToManagedSpace");
-  if (moveSymbol == nullptr) moveSymbol = dlsym(RTLD_DEFAULT, "CGSMoveWindowsToManagedSpace");
-  if (connectionSymbol == nullptr || moveSymbol == nullptr) return JsBool(env, false);
-  int connection = reinterpret_cast<MainConnectionFn>(connectionSymbol)();
-  NSArray* windows = @[ @(number) ];
-  reinterpret_cast<MoveWindowsFn>(moveSymbol)(connection, (__bridge CFArrayRef)windows, desktop);
-  return JsBool(env, true);
-}
-
 static napi_value Init(napi_env env, napi_value exports) {
   struct { const char* name; napi_callback fn; } exported[] = {
-    {"moveWindowToDesktop", MoveWindowToDesktop},
     {"setNonActivating", SetNonActivating},
     {"setMoveToActiveDesktop", SetMoveToActiveDesktop},
     {"makeKey", MakeKey},

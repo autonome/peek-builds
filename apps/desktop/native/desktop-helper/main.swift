@@ -6,7 +6,7 @@
 // diagnostic write attempt for the live acceptance check and is never used by the app.
 //
 // Protocol: one JSON object per line on stdin, one answer per line on stdout, in order.
-//   request  {"id": <n>, "op": "hello" | "layout" | "placements" | "place" | "show", ...args}
+//   request  {"id": <n>, "op": "hello" | "layout" | "placements" | "place", ...args}
 //   answer   {"id": <n>, "ok": true, "result": <value>}  or  {"id": <n>, "ok": false, "error": "<text>"}
 //   hello       → {"version": 1, "symbols": {"<name>": true|false, ...}}
 //   layout      → {"screens": [{"display": "<CGDirectDisplayID>"|null, "current": "<id>"}],
@@ -16,10 +16,6 @@
 //                   "onEveryDesktop": <bool>}, ...]   (one per window, in the order asked)
 //   place {"window": <n>, "desktop": "<id>"}
 //               → {"attempted": <bool>, "desktops": ["<id>", ...]}  (the window's desktops after)
-//               The window server ignores this from any process but the window's own, so the app
-//               moves windows from its own process and this op is a diagnostic only.
-//   show {"desktop": "<id>"}
-//               → {"attempted": <bool>, "current": "<id>"|null}  (null: not shown after ~1s)
 // `display: null` means desktops are shared across every display. A desktop id is the window
 // server's numeric space id as a decimal string. A missing private symbol is reported `false` in
 // `hello` and makes the requests that need it answer an error; it never stops the helper.
@@ -38,7 +34,6 @@ typealias MainConnectionFn = @convention(c) () -> Int32
 typealias CopyManagedDisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
 typealias CopySpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
 typealias MoveWindowsToManagedSpaceFn = @convention(c) (Int32, CFArray, UInt64) -> Void
-typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Int32
 
 let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
 _ = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
@@ -67,9 +62,6 @@ let copySpacesForWindows = load(
   ["CGSCopySpacesForWindows", "SLSCopySpacesForWindows"], as: CopySpacesForWindowsFn.self)
 let moveWindowsToManagedSpace = load(
   ["CGSMoveWindowsToManagedSpace", "SLSMoveWindowsToManagedSpace"], as: MoveWindowsToManagedSpaceFn.self)
-
-let setCurrentSpace = load(
-  ["CGSManagedDisplaySetCurrentSpace", "SLSManagedDisplaySetCurrentSpace"], as: SetCurrentSpaceFn.self)
 
 let connection: Int32? = mainConnection?()
 
@@ -174,38 +166,6 @@ func place(window: Int, desktop: String) throws -> [String: Any] {
   return ["attempted": attempted, "desktops": try spacesOf(window: window)]
 }
 
-/// Makes `desktop` the one its display shows. Unlike `place`, the window server honours this
-/// from any process (macOS 26, no extra permission). Answers the desktop shown afterwards.
-func show(desktop: String) throws -> [String: Any] {
-  guard let cid = connection, let copy = copyManagedDisplaySpaces, let set = setCurrentSpace else {
-    throw HelperError(text: "unavailable")
-  }
-  guard let space = UInt64(desktop) else { throw HelperError(text: "bad-desktop") }
-  guard let raw = copy(cid)?.takeRetainedValue() as? [[String: Any]] else {
-    throw HelperError(text: "no-display-spaces")
-  }
-  // The call names the display by its identifier as the window server lists it.
-  guard
-    let entry = raw.first(where: { e in
-      ((e["Spaces"] as? [[String: Any]]) ?? []).contains { spaceId($0) == desktop }
-    }),
-    let ident = entry["Display Identifier"] as? String
-  else { throw HelperError(text: "no-such-desktop") }
-  let rc = set(cid, ident as CFString, space)
-  var current: Any = NSNull()
-  // The switch lands asynchronously; give it up to a second before reading back.
-  for _ in 0..<20 {
-    usleep(50_000)
-    if let after = try? readLayout(),
-      let screen = after.screens.first(where: { ($0["current"] as? String) == desktop })
-    {
-      current = screen["current"] ?? NSNull()
-      break
-    }
-  }
-  return ["attempted": rc == 0, "current": current]
-}
-
 // MARK: - Loop
 
 func answer(_ obj: [String: Any]) {
@@ -232,9 +192,6 @@ func handle(_ req: [String: Any]) throws -> Any {
     guard let window = (req["window"] as? NSNumber)?.intValue, let desktop = req["desktop"] as? String
     else { throw HelperError(text: "bad-place") }
     return try place(window: window, desktop: desktop)
-  case "show":
-    guard let desktop = req["desktop"] as? String else { throw HelperError(text: "bad-show") }
-    return try show(desktop: desktop)
   default:
     throw HelperError(text: "unknown-op")
   }
