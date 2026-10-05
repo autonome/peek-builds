@@ -5,13 +5,22 @@ on, with **no private window-server write** — the mac desktop provider is
 reads-only (`desktop-provider-mac.ts`: `canPlaceWindows = false`,
 `canShowDesktops = false`), and stays that way. The only switching mechanism
 allowed is macOS itself switching when an existing window on another desktop is
-raised. Whether macOS actually does that, and on which raise path, is the open
-question this plan's experiments decide.
+raised. Whether macOS actually does that, and on which raise path, was the
+open question this plan's experiments decided: it does, for a named raise
+while the app is already active (E2, E3).
+
+A second outcome rides the same constraint: after an app relaunch, a
+session's windows come back on the virtual desktops they were saved on — not
+by placing them, but by holding each off-desktop group until the user arrives
+on its desktop (the lazy restore, 1.3).
 
 Vocabulary: "desktop" is the kernel's word for a macOS Space;
 `DesktopId` values are the kernel ids the helper reports (e.g. `1`, `3`).
-"Signal window" is the spike's 2x2 transparent window
-(`features/spaces/background.js openSignalWindow()`, role `signal`).
+"Signal window" in the experiment records below is the spike's per-space 2x2
+transparent window (role `signal`); that lifecycle is retired. Its successor
+is the per-desktop **marker window** — one per visited desktop, minted and
+swept by `main/desktop-marker-manager.ts`, loading its own page
+`peek://spaces/signal.html` (see the closing section on the URL).
 
 ## 1. What reading the code settles before any live run
 
@@ -53,12 +62,13 @@ the native raise do the switching. Experiment E2 confirmed macOS honours
 that while the app is active, and drops the switch when the raise fires
 during the app's own activation — see E2's result.
 
-Today exactly one user-reachable path issues a named raise: the window
-switcher. `tile-ipc.ts` handler `tile:window:set-overlay-focus-target` arms the
-selection latch (`kernelArmSelectionFocus`), and the switcher window's
-`WindowClosed` spends it (`window-kernel.ts evolve()`, `WindowClosed` arm →
-`lastFocusAssert` with `switcherPick: true` → `SWITCHER_PICK` in `react()`).
-Nothing in the spaces feature can issue a named raise yet.
+Before this plan's changes, exactly one user-reachable path issued a named
+raise: the window switcher. `tile-ipc.ts` handler
+`tile:window:set-overlay-focus-target` arms the selection latch
+(`kernelArmSelectionFocus`), and the switcher window's `WindowClosed` spends
+it (`window-kernel.ts evolve()`, `WindowClosed` arm → `lastFocusAssert` with
+`switcherPick: true` → `SWITCHER_PICK` in `react()`). The spaces feature had
+no named-raise path.
 
 **Decided: space entry is a second legitimate named-raise initiator.**
 Opening a space is explicit user intent to go where that space's windows are
@@ -74,29 +84,42 @@ builds that path.
   `refreshDesktopsBeforeSave()` on the deliberate paths) projects
   `WindowRecord.desktop` into the descriptor, and the save log line carries
   `desktop=` per window. This is the durable record.
-- The signal window records something else: the desktop the **user was on at
-  the moment of leaving** (`desktopOnShow()` stamps the current desktop at
-  show; the placements read then reports the truth). When the user wanders to
-  another desktop before switching spaces, the signal window is on the wrong
-  desktop by construction — the handoff's recorded design flaw.
-- With a reads-only provider nothing can move a window between desktops, so a
-  signal window can never be *placed* on the space's recorded desktop; it can
-  only ever be *created* where the user happens to be. Consequence, worth
-  stating plainly: **under the reads-only constraint, the reachable goal is
-  "return the user to the desktop where the space's windows actually sit",
-  and the only windows that can sit anywhere other than the current desktop
-  are windows that survived there from an earlier visit.** Restored windows
-  always open on the desktop the user is on (nothing places them), so after a
-  restore the space lives wherever the user ran the command. The saved
-  `desktop=` values are recorded but nothing acts on them
-  (`applyDesktopRestore` returns at its `canPlaceWindows()` guard, logging
-  `desktop-restore-skipped`).
+- The raisable anchor on another desktop is per-desktop, not per-space: one
+  marker window per visited desktop, minted on arrival (the desktop-change
+  read) and at startup on the launch desktop, swept when its desktop leaves
+  the helper's layout (`main/desktop-markers.ts shouldMintMarker()` /
+  `markersToSweep()`, wired in `main/desktop-marker-manager.ts
+  installDesktopMarkerManager()`). A marker belongs to the desktop it was
+  minted on and never needs to be anywhere else, which removes the spike-era
+  flaw of a per-space anchor recording "where the user was at leave time".
+  Markers are excluded from session saves (role `signal`), so a restore
+  never recreates one as content. The spike's per-space version stamped the
+  desktop the user was on at the moment of leaving — wrong by construction
+  whenever the user wandered before switching; the E4 gate existed to
+  contain exactly that.
+- With a reads-only provider nothing can move a window between desktops, so
+  no window can ever be *placed* on a recorded desktop; it can only ever be
+  *created* where the user happens to be. The restore turns that constraint
+  around (**lazy restore**): `main/restore-hold.ts planLazyRestore()` splits
+  the valid descriptors — those recorded on the current desktop (or
+  unrecorded, or on a desktop no longer in the layout) open now, the rest
+  are **held**, grouped by recorded desktop. When a desktop-change read
+  reports the user arrived on a held group's desktop, that group opens there
+  (`session.ts installHeldRestore()` / `maybeReleaseHeldGroup()` /
+  `openHeldGroup()`) — being present at open time is the only placement
+  mechanism that exists. A save while groups are still held folds the held
+  descriptors back in with their recorded desktops
+  (`restore-hold.ts mergeHeldIntoSave()`, log `save-merged-held`), so the
+  record survives a quit mid-hold. The saved `desktop=` values thus drive
+  the restore; the old placement loop (`applyDesktopRestore`, guarded by
+  `canPlaceWindows()`, logging `desktop-restore-skipped`) stays inert and
+  now only ever sees windows already opening on the current desktop.
 
-### 1.4 The desktop-choice rule, and what it means for the signal window
+### 1.4 The desktop-choice rule, and what it means for the marker
 
 **Decided: which desktop opening a space goes to.** The target desktop is
 derived from the snapshot's recorded per-window desktops (the `desktop=`
-values `saveSessionSnapshot` writes), never from where the signal window
+values `saveSessionSnapshot` writes), never from where any marker window
 happens to sit:
 
 - If any of the target space's recorded windows are on the current desktop,
@@ -111,23 +134,29 @@ happens to sit:
   (cheapest gesture to undo). Kept here in case most-windows proves
   disorienting in use.
 
-The signal window remains the only *mechanism* — the one window of a space
-that survives on another desktop between visits, hence the only thing a
-native raise can target — but it is not the *record*. Its desktop is "where
-the user left", which matches the rule's target only when the user left the
-space from the desktop its windows were on. So the raise is gated: compute
-the target from the snapshot, and raise the signal window only when the
-kernel places it on that target desktop (`pushRaise()` can only ever emit
-`ShowDesktop` for the raised window's own recorded desktop, so raising it
-anywhere else could not reach the target anyway). When the gate fails — the
-signal window sits elsewhere, or there is no signal window — no switch
-happens and the space opens on the current desktop, the safe behaviour.
+The marker window remains the only *mechanism* — a window that survives on
+another desktop between visits, hence the only thing a native raise can
+target — but it is not the *record*. With one marker per visited desktop the
+gate is a lookup, not a comparison: compute the target from the snapshot
+(`main/space-desktop-choice.ts chooseSpaceDesktopTarget()`), then raise the
+TARGET desktop's marker (`main/desktop-markers.ts planSpaceMarkerRaise()`
+against `desktop-marker-manager.ts getDesktopMarkers()`). The verdicts the
+`space-desktop-gate` log line carries: `raise` (the target desktop has been
+visited, its marker exists), `skip-no-target` (no usable recorded desktops
+— first entry, or every recorded window already here), `skip-no-marker`
+(the target desktop has not been visited this run, so no raisable anchor
+exists). The spike-era `skip-mismatch` verdict — a per-space anchor sitting
+on a desktop other than the target, the case experiment E4 proved the gate
+contains — cannot arise, because the lookup is by target desktop. On any
+skip no switch happens and the space opens on the current desktop, the safe
+behaviour (`pushRaise()` can only ever emit `ShowDesktop` for the raised
+window's own recorded desktop, so raising anything elsewhere could not
+reach the target anyway).
 
 Experiment E2 passed for the active-app case (see its result), so the
-raise-based mechanism exists and the fallback (remove the spike, keep the
-safe behaviour) applies only if E3's wiring cannot be made to work. The
-E2-found constraint carries into E3: the raise must not fire during the
-app's own activation, or macOS drops the switch.
+raise-based mechanism exists. The E2-found constraint carried into E3 and
+stands as a hard rule: the raise must not fire during the app's own
+activation, or macOS drops the switch.
 
 ## 2. Code paths end to end
 
@@ -142,34 +171,59 @@ Each entry names the path and what it does with a window on another desktop.
 - `features/spaces/background.js closeCurrentWorkspaceWindows()` — saves the
   outgoing space (`tile:session:save-workspace-snapshot`, which awaits
   `refreshDesktopsBeforeSave()` so the saved `desktop=` values are current),
-  opens the signal window (spike), then closes every visible content-role
-  window regardless of desktop (`api.window.close` does not ask where the
-  window is — a content window parked on another desktop is closed too).
+  then closes every visible content-role window regardless of desktop
+  (`api.window.close` does not ask where the window is — a content window
+  parked on another desktop is closed too). Opens nothing on leave: markers
+  belong to desktops, not spaces, and already exist wherever the user has
+  been.
 - `features/spaces/background.js enterWorkspace()` — declares the incoming
-  space for new windows, `raiseSignalWindow()` (spike; dropped per 1.1 when
-  the signal window is off-desktop), restores the snapshot
-  (`tile:session:restore-workspace-snapshot`), `closeSignalWindow()` (spike),
-  empty-space fallback window if nothing restored.
+  space for new windows, calls `switchToSpaceDesktop()` — a bare
+  `api.window.focus(null, { named: true, snapshotKey })`, the gated named
+  raise of the target desktop's marker (1.4) — then restores the snapshot
+  (`tile:session:restore-workspace-snapshot`), empty-space fallback window
+  if nothing restored.
 - `main/tile-ipc.ts` session handlers — thin gates:
   `tile:session:save-workspace-snapshot` (refresh desktops + keyed save),
   `tile:session:restore-workspace-snapshot` (keyed
   `restoreSessionSnapshot(..., isWorkspaceSwitch: true)`),
   `begin-workspace-switch` / `set-active-workspace` (ambient-save bracket).
   No desktop logic of their own.
+- `main/tile-ipc.ts` handler `tile:window:focus`, named branch — with a
+  `snapshotKey`, resolves the raise through `planSpaceMarkerRaise` (1.4)
+  and dispatches the named raise of the target desktop's marker. `args.id`
+  is optional in this keyed mode (no caller window exists); a marker window
+  the machine has no id for logs `space-desktop-gate-unmapped-marker` and
+  skips.
+- `main/desktop-marker-manager.ts` — mints a marker on arrival at an
+  unmarked in-layout desktop (and once at install for the launch desktop),
+  sweeps markers whose desktop left the layout; subscribes to the kernel
+  executor, same pattern as `session.ts installHeldRestore()`. Logs
+  `marker-minted` / `marker-swept`; `getDesktopMarkers()` is the gate's
+  map.
 - `main/session.ts saveSessionSnapshot()` — projects kernel state; each
   descriptor carries the kernel's last known desktop for the window, wherever
   it is. A window on another desktop is saved like any other (visibility, not
-  desktop, decides membership).
-- `main/session.ts restoreSessionSnapshot()` — opens every descriptor's window
-  on the current desktop (no placement writes exist), collects
-  `restoredDesktops`, calls `applyDesktopRestore()` before the focus block.
-  The focused-descriptor raise at the end goes through machine-routed show
-  dispatches; a freshly opened window is on the current desktop, so the
-  off-desktop drop rule does not bite here.
+  desktop, decides membership). Descriptors still held by the lazy restore
+  are folded back into the written snapshot with their recorded desktops
+  (`mergeHeldIntoSave`, log `save-merged-held`); role `signal` windows are
+  excluded from every snapshot.
+- `main/session.ts restoreSessionSnapshot()` — partitions the valid
+  descriptors by recorded desktop (`restore-hold.ts planLazyRestore()`),
+  opens only the current-desktop (or unplaceable) set now, and hands the
+  held groups to `installHeldRestore()`; each group opens on first arrival
+  at its desktop (`maybeReleaseHeldGroup()` → `openHeldGroup()`, wrapped in
+  `markRestoreInFlight()` so ambient saves cannot record half-loaded
+  windows). Logs `lazy-restore-partition` / `lazy-restore-held` /
+  `lazy-restore-release` / `lazy-restore-opened`. The focused-descriptor
+  raise at the end goes through machine-routed show dispatches; a freshly
+  opened window is on the current desktop, so the off-desktop drop rule
+  does not bite here. When the focused descriptor is held, a `focused:true`
+  copy of the top-zOrder open-now descriptor takes focus; the held original
+  keeps its flag for its group's open.
 - `main/session.ts applyDesktopRestore()` — returns immediately
-  (`desktop-restore-skipped`) because `canPlaceWindows()` is false. The
-  placement loop and `ShowDesktop`-wait logic (`awaitDesktopSwitchRead`) are
-  inert until a backend with writes exists.
+  (`desktop-restore-skipped`) because `canPlaceWindows()` is false, and now
+  receives only windows already opening on the current desktop. Superseded
+  by the lazy-restore hold; removal candidate.
 - `main/session.ts refreshDesktopsBeforeSave()` — one provider read via
   `getKernelExecutor().refreshDesktops('before-save')`; read-only.
 - `main/window-kernel.ts` raise rules — `admitsFocus` / `withinReach` /
@@ -212,20 +266,22 @@ handoff).
 For each action: D_user = desktop the user is on when the command runs (the
 command palette runs where the user is, so this is also the desktop the
 command executes on); D_out = desktop(s) of the outgoing space's windows;
-D_saved = per-window `desktop=` in the target's snapshot; D_sig = desktop of
-the target's signal window (spike only).
+D_saved = per-window `desktop=` in the target's snapshot. (The spike-era
+experiments also used D_sig, the per-space signal window's desktop; with
+per-desktop markers that dimension is gone — a marker is always on the
+desktop it names.)
 
 | Action | Path | Desktop behaviour today |
 |---|---|---|
-| open space (default → named, first entry) | `openSpaceNow` → `enterWorkspace` fallback window | Home window opens on D_user. No snapshot, no signal window for the target. |
-| open space (re-entry) | `openSpaceNow` → restore | All windows open on D_user regardless of D_saved; `applyDesktopRestore` skipped. Signal raise dropped if D_sig ≠ D_user (1.1). |
+| open space (default → named, first entry) | `openSpaceNow` → `enterWorkspace` fallback window | Home window opens on D_user. No snapshot, so the gate logs `skip-no-target` and no switch happens. |
+| open space (re-entry) | `openSpaceNow` → gated marker raise → restore | `switchToSpaceDesktop()` raises the D_saved-derived target desktop's marker (verdict `raise`) and macOS switches there; the restore then opens the descriptors recorded on the arrival desktop and holds the rest per desktop. On a skip verdict (1.4) the space opens on D_user. |
 | switch space (named → named) | `switchSpace` → `openSpace` | Same as open; outgoing windows on any desktop are closed (sweep is desktop-blind). |
-| close space | `closeSpace` → `openSpace(default)` | Same path with the default as target; the default's snapshot restores on D_user. |
+| close space | `closeSpace` → `openSpace(default)` | Same path with the default as target: gated marker raise against the default row's recorded desktops, then restore (open-now set plus per-desktop holds). |
 | create space | `createSpace` | Tag work only — no window or desktop interaction at all. |
 | move to space (inactive target) | `moveToSpace` | Retag + `addWindowToWorkspaceSnapshot` + close. The snapshot row keeps the window's kernel desktop as of the last save of that window; the close removes the only live anchor. |
 | move to space (active target) | `moveToSpace` | Retag only. |
-| quit | `entry.ts` before-quit → `saveSessionSnapshot` | Ambient save writes the ACTIVE workspace's row (named space included), `desktop=` recorded per window. |
-| relaunch / boot restore | `entry.ts` → `restoreSessionSnapshot(isColdStart, default key)` | Restores the DEFAULT row only, on the desktop the app launches on. A named space active at quit comes back only via its own row on next entry. |
+| quit | `entry.ts` before-quit → `saveSessionSnapshot` | Ambient save writes the ACTIVE workspace's row (named space included), `desktop=` recorded per window; descriptors still held by the lazy restore are merged back in with their recorded desktops (`save-merged-held`). |
+| relaunch / boot restore | `entry.ts` → `restoreSessionSnapshot(isColdStart, default key)` | Restores the DEFAULT row only: descriptors recorded on the launch desktop (or unplaceable) open now, the rest are held grouped by desktop and open on first arrival there. A marker is minted for the launch desktop at install and for each other desktop on first arrival, so space entry can switch to any visited desktop. A named space active at quit comes back only via its own row on next entry. |
 
 ## 4. Permutations that matter
 
@@ -383,7 +439,8 @@ never reach main.log.
   getWorkspaceSnapshotDesktops`, and the `named`+`snapshotKey` branch of
   `tile-ipc.ts tile:window:focus`, which logs `[wm] space-desktop-gate …
   verdict=raise|skip-mismatch|skip-no-target` and dispatches nothing on a
-  skip.
+  skip. (Gate as of this experiment; it has since moved to the per-desktop
+  marker lookup of 1.4, under which `skip-mismatch` cannot arise.)
   Hypothesis: when the signal window's desktop disagrees with the
   snapshot-derived target (the user left the space from a different
   desktop), the gate skips the raise, no switch happens, and the space's
@@ -485,33 +542,44 @@ pass/fail line is named here.
   reviewed code implementing the decided desktop-choice rule of 1.4: signal
   window creation stays in `closeCurrentWorkspaceWindows()`, the raise
   becomes the named variant gated on the snapshot-derived target desktop,
-  and the sleep becomes the switch-read wait.
+  and the sleep becomes the switch-read wait. (As built, creation moved
+  further than this plan line: markers became per-desktop, owned by the
+  marker manager — see the closing notes below.)
 
 All five experiments are done: E1 pass (existing kernel coverage), E2 pass
 with the activation constraint, E3 pass, E4 pass, E5 hypothesis refuted
-(results in each entry). The mechanism, the gate and the switch-read wait
-are in the tree; what remains to reach reviewable shape:
-- exclude `signal`-role windows from session saves (E5 proved the default
-  row captures them; stale 2x2 windows restore as ordinary windows until
-  this lands);
-- sweep the spike's remnants: `[ext:spaces]` console logging that never
-  reaches `main.log` (done — the success-path lines are removed and the
-  `main.log` signatures documented at the `signalWindows` map), and the
-  E2-noted residual unknown (activation drop treated as a hard rule);
-- relaunch behaviour, settled as a fact rather than a choice: after an app
-  relaunch no signal window exists for any space — windows die with the
-  process, and session saves exclude the `signal` role, so a restore never
-  recreates one. The first open of each space after a relaunch opens its
-  windows where the user is, and the switch re-arms once the space is next
-  left. Rediscovery was considered and has nothing to rediscover;
-- re-run the relevant suites and take the branch through review/landing.
+(results in each entry). The spike then became the reviewed implementation,
+which closed the follow-ups and superseded two spike-era conclusions:
 
-Remnant review of the spike commits (`f3fbca53`, `267a8416`), done: every
-surviving line is load-bearing — the map, open/raise/close trio, the entry
-ordering (raise before restore, close after), and the leave-side open. The
-experiment-only parts were already removed by the fold-up (the fixed 1.5 s
-sleep by the named-raise change, the success-path renderer logging and the
-spike wording by the logging sweep).
+- Session saves exclude `signal`-role windows (the E5 defect — the default
+  row had captured a stale 2x2 window and restored it as content).
+- The spike's remnants are swept: the success-path `[ext:spaces]` console
+  lines are gone, and the E2 activation drop is treated as a hard rule.
+- **Superseded: per-space signal windows.** Markers are per-visited-desktop,
+  owned by `main/desktop-marker-manager.ts` — minted on arrival and at
+  startup on the launch desktop, swept when their desktop leaves the layout.
+  The per-space lifecycle in `features/spaces/background.js` (the
+  `signalWindows` map and its open/raise/close trio, the leave-side open) is
+  retired; space entry issues a keyed no-id `tile:window:focus` via
+  `switchToSpaceDesktop()` and the gate raises the TARGET desktop's marker.
+  Gate verdicts are now `raise` / `skip-no-target` / `skip-no-marker`; E4's
+  `skip-mismatch` cannot arise under the per-desktop lookup, because the
+  stranded-anchor case it contained no longer exists.
+- **Superseded: relaunch as "opens where the user is, by design".** The boot
+  restore holds descriptors recorded on other desktops
+  (`restore-hold.ts planLazyRestore()`, `session.ts installHeldRestore()`)
+  and opens each group on the user's first arrival at its desktop; a quit
+  with groups still held re-saves them with their recorded desktops
+  (`mergeHeldIntoSave()`). Space entry after a relaunch switches to any
+  desktop already visited this run — its marker exists — and a never-visited
+  target logs `skip-no-marker`, opening the space where the user is.
+
+Still pending: live verification of the hold/release and marker
+mint/sweep/raise paths on real desktops (neither has run under a real
+desktop provider; the suites run with no current-desktop read, so no marker
+is ever minted under them), the empty-launch decision (every restored window
+held → no window at all until the first swipe; currently accepted), and the
+suite re-run before review/landing.
 
 The marker window's URL, first kept as `home.html?signal=1` and then
 changed: carrying the home UI's URL made the marker match every selector,
