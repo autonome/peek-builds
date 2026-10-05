@@ -85,6 +85,10 @@ async function showBorder(color, name) {
     try {
       const exists = await api.window.exists(border.windowId);
       if (exists?.exists) {
+        // The window may have been hidden since (the app resigning active
+        // hides overlays); the creation path shows it, so re-show it here
+        // too — without activating the app.
+        await api.window.show(border.windowId, { inactive: true });
         api.pubsub.publish('spaces:border-update', { color: safeColor, name });
         return;
       }
@@ -1001,6 +1005,9 @@ const uninit = () => {
   cancelHideTimer();
   hideBorder();
 };
+
+// Seam for tests/unit/spaces-border-reshow.test.js.
+export const __test = { showBorder, border };
 
 export default {
   defaults,

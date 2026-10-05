@@ -796,10 +796,11 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Show a hidden window. Requires `window.manage` (or trustedBuiltin).
      */
-    show: (id: number) => {
+    show: (id: number, opts?: { inactive?: boolean }) => {
       return ipcRenderer.invoke('tile:window:show', {
         token: tileToken,
         id,
+        inactive: opts?.inactive === true,
       });
     },
 

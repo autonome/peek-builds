@@ -3116,6 +3116,7 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:window:show', { mode: 'handle' }, async (event, args: {
     token: string;
     id: number;
+    inactive?: boolean;
   }, _grant) => {
     const grant = _grant;
     const check = checkWindowAllowed(grant, 'show');
@@ -3145,7 +3146,7 @@ export function registerTileIpcHandlers(): void {
         }
         return { success: false, error: 'Window not found' };
       }
-      showWindowHeadlessSafe(win, { active: true });
+      showWindowHeadlessSafe(win, { active: args.inactive !== true });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

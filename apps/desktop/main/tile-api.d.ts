@@ -126,7 +126,7 @@ interface TileWindow {
    * Show a hidden window.
    * Requires `window.manage` capability.
    */
-  show(id: number): Promise<{ success: boolean; error?: string }>;
+  show(id: number, opts?: { inactive?: boolean }): Promise<{ success: boolean; error?: string }>;
 
   /**
    * Hide a visible window.
