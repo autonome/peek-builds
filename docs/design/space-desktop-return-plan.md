@@ -511,10 +511,14 @@ surviving line is load-bearing — the map, open/raise/close trio, the entry
 ordering (raise before restore, close after), and the leave-side open. The
 experiment-only parts were already removed by the fold-up (the fixed 1.5 s
 sleep by the named-raise change, the success-path renderer logging and the
-spike wording by the logging sweep). One deliberate leftover, kept because
-changing it is not clearly experiment-only: the marker window loads the
-full spaces home UI (`peek://spaces/home.html?signal=1`) although nothing
-reads the `signal` param — the param only distinguishes marker windows in
-`main.log` URLs. A minimal dedicated page would be cheaper per space but
-changes what the window loads and how the tile system treats it; worth
-revisiting if the per-space cost ever shows up, not before.
+spike wording by the logging sweep).
+
+The marker window's URL, first kept as `home.html?signal=1` and then
+changed: carrying the home UI's URL made the marker match every selector,
+count and page pick that means "the spaces home window" — the full gate
+caught nine such collisions at once across the pin, workspace-default,
+space-workspace-page-host and spaces-window-locking specs (counts off by
+the marker; `app.getWindow('spaces/home.html')` handing a spec the marker
+instead of the real home, so the pin commands pinned "the wrong id"). The
+marker now loads its own minimal `peek://spaces/signal.html`, which also
+drops the full home UI render per marker.

@@ -569,7 +569,11 @@ async function closeSignalWindow(spaceId) {
 async function openSignalWindow(spaceId) {
   await closeSignalWindow(spaceId);
   try {
-    const result = await api.window.open('peek://spaces/home.html?signal=1', {
+    // signal.html, never home.html: a marker carrying the home UI's URL
+    // matched every "the spaces home window" selector, count and page pick
+    // — in specs and in any URL-keyed tooling — and so stood in for the
+    // real home window (the gate caught nine such collisions at once).
+    const result = await api.window.open('peek://spaces/signal.html', {
       role: 'signal',
       width: 2,
       height: 2,

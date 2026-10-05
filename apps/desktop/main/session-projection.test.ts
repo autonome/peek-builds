@@ -769,7 +769,7 @@ describe('session-projection — skip rules', () => {
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', { address: 'https://kept.example/' }),
-        contentFixture(2, 'w2', { params: { role: 'signal' }, address: 'peek://spaces/home.html?signal=1' }),
+        contentFixture(2, 'w2', { params: { role: 'signal' }, address: 'peek://spaces/signal.html' }),
       ],
       records: [makeRecord('w1'), makeRecord('w2')],
     };
