@@ -25,8 +25,10 @@
  * non-focusable — see the mint options below for why.
  *
  * Same executor-subscription pattern as `session.ts installHeldRestore()`.
- * Under test runs with no desktop provider the kernel state carries no
- * desktops, so nothing is ever minted.
+ * Headless runs (Playwright, CI) mint nothing — see the guard in
+ * `installDesktopMarkerManager()`. (On macOS the real desktop helper runs
+ * even under the test harness, so "no desktop provider in tests" is NOT a
+ * safety net; the headless gate is.)
  */
 import { shouldMintMarker, markersToSweep } from './desktop-markers.js';
 import { getKernelExecutorForApp } from './window-machine.js';
@@ -35,7 +37,7 @@ import { invokeWindowOpen } from './ipc.js';
 import { getBackgroundWindow } from './main.js';
 import { getLiveWindow } from './window-registry.js';
 import { closeOrHideWindow } from './windows.js';
-import { WEB_CORE_ADDRESS } from './config.js';
+import { WEB_CORE_ADDRESS, isHeadless } from './config.js';
 
 const MARKER_URL = 'peek://spaces/signal.html';
 
@@ -70,6 +72,13 @@ function pruneDeadMarkers(): void {
  */
 export function installDesktopMarkerManager(): void {
   if (_installed) return;
+  // Headless runs mint nothing: a marker exists solely to be raised so macOS
+  // pulls the user to its desktop, and a headless (CI/agent) run has no user
+  // to pull and suppresses every other OS-focus surface by the same contract
+  // (headless-policy.ts). Minting there only perturbed the suite — the boot
+  // inventory counted the marker as a new resident window, and marker churn
+  // interleaved with transient sweeps in focus-sensitive specs.
+  if (isHeadless()) return;
   _installed = true;
   const executor = getKernelExecutorForApp();
   executor.subscribe((state) => {
