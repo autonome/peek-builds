@@ -98,7 +98,13 @@ export interface WindowKernelExecutorOptions {
   initial?: State;
   // Whether this process runs focus-free; defaults to `isHeadless()`, injected so tests can set it directly.
   headless?: boolean;
+  // Millisecond clock for the post-switch hold; defaults to `Date.now`, injected so tests do not sleep.
+  now?: () => number;
 }
+
+// How long after a desktop switch a report naming a different current desktop is treated as the
+// layout read catching the animation mid-way, not as a new user-driven change.
+export const DESKTOP_SWITCH_HOLD_MS = 1500;
 
 export type CommandOutcome = { applied: true; events: readonly Event[] } | { rejected: Rejection };
 
@@ -111,6 +117,34 @@ export class WindowKernelExecutor {
     this.backend = backend;
     this.state = opts.initial ?? initialState();
     this.headless = opts.headless ?? isHeadless();
+    this.now = opts.now ?? Date.now;
+  }
+
+  private readonly now: () => number;
+
+  // Set by `noteDesktopShown`; cleared when a report agrees with the target or `until` passes.
+  private desktopHold: { screen: string; desktop: DesktopId; until: number } | null = null;
+
+  // True when `event` names a different current desktop for the held screen inside the hold window.
+  private isStaleDesktopReport(event: Event): boolean {
+    const hold = this.desktopHold;
+    if (hold === null) return false;
+    if (this.now() >= hold.until) {
+      this.desktopHold = null;
+      return false;
+    }
+    let reported: DesktopId | undefined;
+    if (event.type === 'DesktopLayoutReported') {
+      reported = event.screens.find((s) => s.id === hold.screen)?.current;
+    } else if (event.type === 'CurrentDesktopChanged' && event.screen === hold.screen) {
+      reported = event.desktop;
+    }
+    if (reported === undefined) return false;
+    if (reported === hold.desktop) {
+      this.desktopHold = null;
+      return false;
+    }
+    return true;
   }
 
   getState(): State {
@@ -163,8 +197,11 @@ export class WindowKernelExecutor {
     const owner = desktops.find((d) => d.id === desktop)?.screen ?? null;
     const screenId = owner ?? screens[0]?.id ?? null;
     if (screenId === null) return;
-    if (screens.find((s) => s.id === screenId)?.current === desktop) return;
-    this.dispatch({ type: 'CurrentDesktopChanged', screen: screenId, desktop });
+    this.desktopHold = null;
+    if (screens.find((s) => s.id === screenId)?.current !== desktop) {
+      this.dispatch({ type: 'CurrentDesktopChanged', screen: screenId, desktop });
+    }
+    this.desktopHold = { screen: screenId, desktop, until: this.now() + DESKTOP_SWITCH_HOLD_MS };
   }
 
   subscribe(listener: (state: State) => void): () => void {
@@ -231,6 +268,10 @@ export class WindowKernelExecutor {
   }
 
   dispatch(event: Event): void {
+    if (this.isStaleDesktopReport(event)) {
+      wmLog('desktop-report-ignored', { type: event.type });
+      return;
+    }
     this.pump(event);
   }
 

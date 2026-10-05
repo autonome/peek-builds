@@ -1174,6 +1174,48 @@ describe('effect performance', () => {
       assert.strictEqual(exec.getState().screens[0].current, '2');
     });
 
+    describe('layout reports right after a switch', () => {
+      const layout = (current: string) =>
+        ({
+          type: 'DesktopLayoutReported',
+          screens: [{ id: 's1', current }],
+          desktops: [{ id: '1', screen: 's1' }, { id: '2', screen: 's1' }, { id: '3', screen: 's1' }],
+        }) as const;
+
+      async function switched() {
+        let clock = 1000;
+        const backend = new DesktopBackend();
+        const exec = new WindowKernelExecutor(backend, { headless: false, now: () => clock });
+        exec.dispatch(layout('1'));
+        assert.strictEqual(await exec.showDesktop('3'), true);
+        return { exec, advance: (ms: number) => (clock += ms) };
+      }
+
+      it('a report naming the old desktop inside the window leaves the switch target current', async () => {
+        const { exec, advance } = await switched();
+        advance(300);
+        exec.dispatch(layout('1'));
+        assert.strictEqual(exec.getState().screens[0].current, '3');
+      });
+
+      it('the same report after the window is accepted as a later user switch', async () => {
+        const { exec, advance } = await switched();
+        advance(2000);
+        exec.dispatch(layout('1'));
+        assert.strictEqual(exec.getState().screens[0].current, '1');
+      });
+
+      it('a report naming the target clears the hold, so a later report is accepted', async () => {
+        const { exec, advance } = await switched();
+        advance(100);
+        exec.dispatch(layout('3'));
+        assert.strictEqual(exec.getState().screens[0].current, '3');
+        advance(100);
+        exec.dispatch(layout('1'));
+        assert.strictEqual(exec.getState().screens[0].current, '1');
+      });
+    });
+
     it('under headless nothing is written, whatever the backend can do', async () => {
       const backend = new DesktopBackend();
       const exec = new WindowKernelExecutor(backend, { headless: true });
