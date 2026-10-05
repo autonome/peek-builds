@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder, planMoveToSpace,
+  resolveVividColor, shouldShowBorder, shouldHideBorder, planMoveToSpace,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
   emptySpaceWindowOptions, createSerialRunner
 } from './config.js';
@@ -169,9 +169,11 @@ function hideBorder() {
 
 function scheduleHideBorder() {
   if (!borderHideTimer) {
-    borderHideTimer = setTimeout(() => {
+    borderHideTimer = setTimeout(async () => {
       borderHideTimer = null;
-      hideBorder();
+      const visible = appFocused ? false : await hasVisibleSpaceWindow();
+      // Re-check after the await: the app may have become active meanwhile.
+      if (shouldHideBorder(appFocused, visible)) hideBorder();
     }, BORDER_HIDE_DELAY_MS);
   }
 }
@@ -299,6 +301,36 @@ async function updateBorderVisibility() {
       scheduleHideBorder();
     }
   } catch {
+    scheduleHideBorder();
+  }
+}
+
+/**
+ * True when a window of the active space is currently visible. The window list
+ * reports `visible` per window but not which desktop it is on, so a space
+ * window that is visible is treated as "on the current desktop".
+ */
+async function hasVisibleSpaceWindow() {
+  if (!activeSpaceId) return false;
+  try {
+    const inSpace = await api.context.getWindowsInSpace(activeSpaceId);
+    if (!inSpace?.success || !Array.isArray(inSpace.data) || inSpace.data.length === 0) return false;
+    const listResult = await api.window.list();
+    if (!listResult?.success || !Array.isArray(listResult.windows)) return false;
+    const ids = new Set(inSpace.data);
+    return listResult.windows.some((w) => w?.id && w.visible && ids.has(w.id));
+  } catch {
+    return false;
+  }
+}
+
+// The app resigns active on every desktop switch or window move, so losing
+// focus alone must not close the border while a space window is still showing.
+function handleAppFocusChanged(msg) {
+  appFocused = !!msg?.focused;
+  if (appFocused) {
+    updateBorderVisibility();
+  } else {
     scheduleHideBorder();
   }
 }
@@ -988,15 +1020,7 @@ const init = async () => {
   // Subscribe to focus events for border visibility
   api.pubsub.subscribe('window:focused', () => updateBorderVisibility());
   api.pubsub.subscribe('window:closed', () => updateBorderVisibility());
-  api.pubsub.subscribe('app:focus-changed', (msg) => {
-    appFocused = !!msg?.focused;
-    if (!msg?.focused) {
-      // App lost focus — hide border
-      scheduleHideBorder();
-    } else {
-      updateBorderVisibility();
-    }
-  });
+  api.pubsub.subscribe('app:focus-changed', handleAppFocusChanged);
 };
 
 const uninit = () => {
@@ -1007,7 +1031,12 @@ const uninit = () => {
 };
 
 // Seam for tests/unit/spaces-border-reshow.test.js.
-export const __test = { showBorder, border };
+export const __test = {
+  showBorder,
+  border,
+  handleAppFocusChanged,
+  setActiveSpaceId: (id) => { activeSpaceId = id; },
+};
 
 export default {
   defaults,
