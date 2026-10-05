@@ -365,7 +365,15 @@ const initCommandRegistry = () => {
 /**
  * Open the command panel window
  */
-const openPanelWindow = (prefs) => {
+const openPanelWindow = (prefs, source = 'unknown') => {
+  // One [wm] line into main.log (api.perfLog -> peek:perf-log). Diagnostic only.
+  try {
+    if (typeof api.perfLog === 'function') {
+      api.perfLog(`[wm] t=${Date.now()} event=cmd-open-panel source=${source}`);
+    }
+  } catch {
+    /* diagnostics only */
+  }
   // Initial height just for the command bar (~50px visible)
   // Window will resize when results appear
   const initialHeight = 60;
@@ -450,17 +458,17 @@ const initShortcut = (prefs) => {
 
   registeredShortcut = prefs.shortcutKey;
   api.shortcuts.register(prefs.shortcutKey, () => {
-    openPanelWindow(prefs);
+    openPanelWindow(prefs, 'global-shortcut');
   }, { global: true });
 
   // Also register as local so it works on Linux Wayland where global shortcuts may fail
   api.shortcuts.register(prefs.shortcutKey, () => {
-    openPanelWindow(prefs);
+    openPanelWindow(prefs, 'local-shortcut');
   });
 
   // Local shortcut (Cmd+K) — works when a Peek window is focused
   api.shortcuts.register(LOCAL_SHORTCUT, () => {
-    openPanelWindow(prefs);
+    openPanelWindow(prefs, 'cmd-k');
   });
 
   // URL mode shortcut (Cmd+L) — opens panel in URL-only navigation mode
@@ -469,7 +477,7 @@ const initShortcut = (prefs) => {
   // so this only fires from non-page windows.
   api.shortcuts.register(URL_MODE_SHORTCUT, () => {
     api.pubsub.publish('cmd:url-mode', {});
-    openPanelWindow(prefs);
+    openPanelWindow(prefs, 'cmd-l-url-mode');
   });
 
   log('ext:cmd', 'Registered shortcuts:', prefs.shortcutKey, '(global),', LOCAL_SHORTCUT, '(local),', URL_MODE_SHORTCUT, '(url-mode)');
@@ -611,7 +619,7 @@ const init = async () => {
   // docs/global-hotkeys-on-wayland.md.
   api.pubsub.subscribe('cli:cmd-open', () => {
     log('ext:cmd', 'cli:cmd-open');
-    openPanelWindow(currentSettings.prefs);
+    openPanelWindow(currentSettings.prefs, 'cli-cmd-open');
   });
 
   // 4b. Save command cache after all extensions have loaded

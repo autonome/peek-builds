@@ -150,9 +150,11 @@ export const Events = Object.freeze({
  * @param {Object} guards - Object of guard functions.
  *   Each guard receives (payload, state) and returns a boolean.
  * @param {Function} [logger] - Optional logging function (tag, ...args)
+ * @param {Function} [onClosing] - Optional diagnostic hook (prevState, event, actions),
+ *   called after any transition into CLOSING.
  * @returns {Object} State machine interface
  */
-export function createStateMachine(actions = {}, guards = {}, logger = null) {
+export function createStateMachine(actions = {}, guards = {}, logger = null, onClosing = null) {
   // ===== Internal State =====
   let currentState = States.IDLE;
 
@@ -981,6 +983,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       enforceInvariants();
 
       log('transition', `${prevState} + ${event} → ${currentState}`, payload?.value !== undefined ? `(input: "${payload.value}")` : '');
+      if (target === States.CLOSING && typeof onClosing === 'function') {
+        try { onClosing(prevState, event, transition.actions || []); } catch { /* diagnostics only */ }
+      }
 
       return { handled: true, prevState, nextState: currentState };
     }

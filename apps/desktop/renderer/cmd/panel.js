@@ -90,7 +90,25 @@ const saveAdaptiveData = async (feedback, counts) => {
 // ===== State Machine Setup =====
 
 // Create the state machine with action handlers and guards
-const machine = createStateMachine(actionHandlers(), {}, (...args) => log(...args));
+// One [wm] line into main.log (api.perfLog -> peek:perf-log -> console.log in main). Diagnostic
+// only: never throws, no-op where the bridge is absent.
+function mainLog(event, fields = {}) {
+  try {
+    const parts = ['[wm]', `t=${Date.now()}`, `event=${event}`];
+    for (const [k, v] of Object.entries(fields)) parts.push(`${k}=${v}`);
+    parts.push(`vis=${document.visibilityState}`, `focus=${document.hasFocus()}`);
+    if (typeof api.perfLog === 'function') api.perfLog(parts.join(' '));
+  } catch {
+    /* diagnostics only */
+  }
+}
+
+const machine = createStateMachine(
+  actionHandlers(),
+  {},
+  (...args) => log(...args),
+  (prevState, event, actions) => mainLog('cmd-panel-closing', { from: prevState, trigger: event, actions: actions.join('+') }),
+);
 const state = machine.getMutableData();
 
 // Load adaptive data on startup
@@ -874,7 +892,7 @@ function doSelectOutputItem() {
     log('cmd:panel', 'Opening editor for selected item:', selectedItem.id);
     api.publish('editor:open', { itemId: selectedItem.id });
     machine.setState(States.CLOSING);
-    setTimeout(shutdown, 100);
+    scheduleShutdown('output-selection');
     return;
   }
 
@@ -1953,6 +1971,17 @@ function updateResultsUI() {
 
 // ===== Shutdown =====
 
+// Schedules shutdown 100ms out and logs when it was scheduled and when it fired; a gap well past
+// 100ms means the timer was throttled while the window was hidden.
+function scheduleShutdown(trigger) {
+  const scheduledAt = Date.now();
+  mainLog('cmd-panel-shutdown-scheduled', { trigger });
+  setTimeout(() => {
+    mainLog('cmd-panel-shutdown-fired', { trigger, lateMs: Date.now() - scheduledAt - 100 });
+    shutdown();
+  }, 100);
+}
+
 async function shutdown() {
   // Route through api.window.close() so the panel's keepLive:true flag
   // HIDES the window (closeOrHideWindow in windows.ts:411) instead of
@@ -2551,12 +2580,15 @@ function actionHandlers() {
       // while the window sat hidden and fired ~760ms later, landing on the
       // palette after the user had already reopened it and setting off a
       // show/dismiss loop.
-      if (payload?.kernelCloses === true) return;
-      setTimeout(shutdown, 100);
+      if (payload?.kernelCloses === true) {
+        mainLog('cmd-panel-shutdown-skipped', { trigger: 'escape-kernel-closes' });
+        return;
+      }
+      scheduleShutdown(`state-machine:${machine.getState?.() ?? '?'}`);
     },
 
     shutdownDelayed() {
-      setTimeout(shutdown, 100);
+      scheduleShutdown('shutdownDelayed');
     },
 
     showSpinner(payload) {

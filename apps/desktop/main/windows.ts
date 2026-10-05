@@ -223,6 +223,13 @@ export function addEscHandler(bw: BrowserWindow): void {
     wc.once('destroyed', () => clearRendererHandledEscapeForWc(wc.id));
     wc.on('before-input-event', async (e, i) => {
       if (i.key === 'Escape' && i.type === 'keyDown') {
+        wmLog('esc-input', {
+          id: bw.id,
+          key: i.key,
+          autoRepeat: i.isAutoRepeat,
+          focused: bw.isDestroyed() ? false : bw.isFocused(),
+          appActive: app.isActive(),
+        });
         // keyDown, not keyUp, so the IPC fires before DOM keydown handlers — otherwise a dialog
         // that closes on DOM keydown leaves the keyUp-timed IPC seeing no open dialog.
         const now = Date.now();
@@ -356,7 +363,7 @@ export function applyDockPreference(): void {
 // dispatches it into the kernel's CloseOrHideWindow command. Whether that closes, hides,
 // refuses, or cascades onto other windows is decided entirely by window-kernel.ts decide; a
 // fullscreen-exit preamble for the hybrid branch is the only policy left here.
-export async function closeOrHideWindow(id: number): Promise<void> {
+export async function closeOrHideWindow(id: number, source: string = 'unknown'): Promise<void> {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
 
   try {
@@ -383,7 +390,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         }
         if (hybrid.baseWin.isDestroyed()) return;
         if (machineId != null) {
-          wmLog('close-or-hide-dispatch', { id, machineId });
+          wmLog('close-or-hide-dispatch', { id, machineId, source });
           kernelCloseOrHideRequested(machineId);
         } else {
           // Not machine-registered: route through closeHostWindow so the content WebContents
@@ -418,7 +425,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // window-kernel.ts decide — this seam only resolves the machine id and dispatches into it.
     const wmId = getWindowIdFor(id);
     if (wmId != null) {
-      wmLog('close-or-hide-dispatch', { id, wmId });
+      wmLog('close-or-hide-dispatch', { id, wmId, source });
       kernelCloseOrHideRequested(wmId);
     } else {
       DEBUG && console.log('Window entry has no machine id, closing directly');
@@ -454,7 +461,7 @@ export function closeFocusedWindow(): number | null {
   if (id == null) return null;
   // Fire-and-forget: closeOrHideWindow is async (its hybrid branch awaits a fullscreen exit),
   // but this stays sync so menu/shortcut callers and tests keep reading the id it acted on.
-  void closeOrHideWindow(id);
+  void closeOrHideWindow(id, 'closeFocusedWindow');
   return id;
 }
 

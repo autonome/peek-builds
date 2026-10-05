@@ -2747,7 +2747,7 @@ export function registerTileIpcHandlers(): void {
     try {
       // Import dynamically to avoid loading windows.js at test time.
       const { closeOrHideWindow } = await import('./windows.js');
-      await closeOrHideWindow(win.id);
+      await closeOrHideWindow(win.id, 'tile-ipc:izui-close-self');
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2932,7 +2932,7 @@ export function registerTileIpcHandlers(): void {
       // invocation stalls" that the repeat-invocation spec catches.
       // Fire-and-forget: closeOrHideWindow is async (hybrid branch awaits a
       // fullscreen exit) but never rejects; this handler is mode:'on' (no result).
-      void closeOrHideWindow(target.id);
+      void closeOrHideWindow(target.id, 'tile-ipc:window-close');
       return;
     }
     // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route through
@@ -2947,7 +2947,7 @@ export function registerTileIpcHandlers(): void {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
         // Fire-and-forget (async, never rejects) — mode:'on' handler.
-        void closeOrHideWindow(args.id);
+        void closeOrHideWindow(args.id, 'tile-ipc:window-close-hybrid');
       }
     }
   });

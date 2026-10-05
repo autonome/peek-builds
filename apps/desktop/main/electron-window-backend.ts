@@ -58,7 +58,7 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
-import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, windowById } from './window-kernel.js';
+import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization } from './window-kernel-executor.js';
 import {
@@ -956,7 +956,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   closeOrHide(id: WindowId): Promise<void> {
     const osId = this.osWindowIdOf(id);
     if (osId == null) return Promise.resolve();
-    return closeOrHideWindow(osId);
+    return closeOrHideWindow(osId, 'backend:closeOrHide');
   }
 
   // A page-host's content view loads an arbitrary web page with no preload
@@ -1163,9 +1163,31 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       path: !osActivate ? 'showInactive' : isFlaggedNonActivating(win) ? 'showInactive+makeKey' : 'show',
       kernelActive: getAppActive(),
     });
+    const desktopBefore = record?.desktop ?? null;
     this.performOsShow(id, win, osActivate, opts.opSeq);
     kernelWindowShown(id, opts.activate, opts.opSeq);
+    this.logShowOutcome(id, win, desktopBefore);
     this.onDesktopTrigger('window-shown');
+  }
+
+  // One diagnostic line after a show: whether the OS reports the window visible, whether the
+  // kernel places it on a current desktop, its bounds, and the desktop the kernel had recorded
+  // for it before and after. Diagnostic only.
+  private logShowOutcome(id: WindowId, win: NativeWindow, desktopBefore: DesktopId | null): void {
+    try {
+      const after = windowById(getKernelExecutor().getState(), id);
+      const b = win.isDestroyed() ? null : win.getBounds();
+      wmLog('show-outcome', {
+        id,
+        visible: win.isDestroyed() ? false : win.isVisible(),
+        onCurrentDesktop: after ? onCurrentDesktop(getKernelExecutor().getState(), after) : null,
+        bounds: b ? `${b.x},${b.y},${b.width}x${b.height}` : null,
+        desktopBefore,
+        desktopAfter: after?.desktop ?? null,
+      });
+    } catch {
+      /* diagnostics must never break a show */
+    }
   }
 
   // Every show this backend performs funnels here. Opacity is zeroed before

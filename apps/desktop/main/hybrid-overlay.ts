@@ -3076,7 +3076,7 @@ function installTestBridge(): void {
      * really does cover the full close, not just the dispatch that started it.
      */
     async closeOrHideHybrid(id: number): Promise<void> {
-      await closeOrHideWindow(id);
+      await closeOrHideWindow(id, 'hybrid-overlay:test-bridge');
       await waitForPendingWindowEffects();
     },
     /**
