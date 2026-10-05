@@ -1216,6 +1216,60 @@ describe('effect performance', () => {
       });
     });
 
+    describe('waiting for the kernel to read a switch', () => {
+      const layout = {
+        type: 'DesktopLayoutReported',
+        screens: [{ id: 's1', current: '1' }],
+        desktops: [{ id: '1', screen: 's1' }, { id: '3', screen: 's1' }],
+      } as const;
+
+      function setup() {
+        const backend = new DesktopBackend();
+        const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+        const exec = new WindowKernelExecutor(backend, {
+          headless: false,
+          setTimer: (fn, ms) => {
+            const t = { fn, ms, live: true };
+            timers.push(t);
+            return () => {
+              t.live = false;
+            };
+          },
+        });
+        exec.dispatch(layout);
+        exec.dispatch(register(wid(1)));
+        exec.dispatch({ type: 'WindowShown', id: wid(1) });
+        return { exec, timers };
+      }
+
+      it('a restore raise asked for after the switch notice but before the read emits nothing; after the read it raises', async () => {
+        const { exec, timers } = setup();
+        const before = exec.getState().desktopSwitchCount;
+        assert.strictEqual(await exec.showDesktop('3'), true);
+        let settled = false;
+        const wait = exec.awaitDesktopSwitchRead(before).then(() => {
+          settled = true;
+        });
+        // The notice lands after showDesktop resolved: the read is still pending.
+        exec.dispatch({ type: 'DesktopSwitchObserved' });
+        await Promise.resolve();
+        assert.strictEqual(settled, false, 'the switch is noticed but not yet read');
+        exec.dispatch({ type: 'DesktopsRead', switchesSeen: exec.getState().desktopSwitchCount });
+        await wait;
+        assert.strictEqual(settled, true);
+        assert.strictEqual(timers.every((t) => !t.live), true, 'the timeout is cancelled once read');
+      });
+
+      it('gives up after the bound when no switch notice ever arrives', async () => {
+        const { exec, timers } = setup();
+        const wait = exec.awaitDesktopSwitchRead(exec.getState().desktopSwitchCount);
+        assert.strictEqual(timers.filter((t) => t.live).length, 1);
+        assert.strictEqual(timers[0].ms, 1500);
+        timers[0].fn();
+        await wait;
+      });
+    });
+
     it('under headless nothing is written, whatever the backend can do', async () => {
       const backend = new DesktopBackend();
       const exec = new WindowKernelExecutor(backend, { headless: true });

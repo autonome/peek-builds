@@ -442,9 +442,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // notice left uncovered would keep every window off the current desktop.
   private async syncDesktops(trigger: string): Promise<void> {
     const switchesSeen = getKernelExecutor().getState().desktopSwitchCount;
+    wmLog('sync-desktops-start', { trigger, switchesSeen });
     const provider = this.desktopProvider;
     if (!provider) {
       kernelDesktopsRead(switchesSeen);
+      wmLog('sync-desktops-end', { trigger, switchesSeen, provider: false });
       return;
     }
     try {
@@ -483,9 +485,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         if (changed) kernelWindowPlacementReported(id, screenId, p.desktop, p.onEveryDesktop);
       }
       kernelDesktopsRead(switchesSeen);
+      wmLog('sync-desktops-end', { trigger, switchesSeen });
     } catch (err) {
       wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
       kernelDesktopsRead(switchesSeen);
+      wmLog('sync-desktops-end', { trigger, switchesSeen, failed: true });
     }
   }
 

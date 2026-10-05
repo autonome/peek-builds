@@ -1111,7 +1111,15 @@ async function applyDesktopRestore(
     await executor.placeWindowOnDesktop(machineId, target);
   }
   if (plan.switchTo !== null && executor.canShowDesktops()) {
-    await executor.showDesktop(plan.switchTo);
+    const switchesBefore = executor.getState().desktopSwitchCount;
+    const shown = await executor.showDesktop(plan.switchTo);
+    // The OS notice for the switch lands after the switch call resolves, and the kernel treats
+    // every window as off-desktop until its layout read covers it, so the focus raise that
+    // follows would be dropped. Wait for the read (bounded) before returning.
+    if (shown) {
+      const outcome = await executor.awaitDesktopSwitchRead(switchesBefore);
+      console.log(`[session] desktop-switch-settle outcome=${outcome} desktop=${plan.switchTo}`);
+    }
   }
 }
 
@@ -1792,7 +1800,7 @@ export async function restoreSessionSnapshot(
       // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
       // ABSENCE of logs (the gated block was silently skipped). Make the
       // decision self-evident in prod main.log for any future occurrence.
-      console.log(`[session] restore-focus-decision coldStart=${isColdStart} appActive=${appActive} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId}`);
+      console.log(`[session] restore-focus-decision coldStart=${isColdStart} appActive=${appActive} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId} activeBeforeSwitch=${activeBeforeSwitch} planRestoreActivation=${planRestoreActivation(isColdStart, activeBeforeSwitch) ?? 'none'}`);
 
       // Arm the one-shot cold-start re-raise latch BEFORE touching windows: a
       // trailing did-resign-active could re-strand Peek after this block runs.

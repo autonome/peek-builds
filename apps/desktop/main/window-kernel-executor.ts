@@ -17,7 +17,9 @@ import {
   initialState,
   isStaleSelfEcho,
   isStaleWindowEcho,
+  desktopUnread,
   keyWindow,
+  onCurrentDesktop,
   platformChoseFocus,
   react,
   spendPlatformFocusExpectation,
@@ -100,6 +102,8 @@ export interface WindowKernelExecutorOptions {
   headless?: boolean;
   // Millisecond clock for the post-switch hold; defaults to `Date.now`, injected so tests do not sleep.
   now?: () => number;
+  // Schedules a one-shot timeout and returns its canceller; defaults to `setTimeout`, injected so tests do not sleep.
+  setTimer?: (fn: () => void, ms: number) => () => void;
 }
 
 // How long after a desktop switch a report naming a different current desktop is treated as the
@@ -118,9 +122,51 @@ export class WindowKernelExecutor {
     this.state = opts.initial ?? initialState();
     this.headless = opts.headless ?? isHeadless();
     this.now = opts.now ?? Date.now;
+    this.setTimer =
+      opts.setTimer ??
+      ((fn, ms) => {
+        const t = setTimeout(fn, ms);
+        return () => clearTimeout(t);
+      });
   }
 
   private readonly now: () => number;
+
+  private readonly setTimer: (fn: () => void, ms: number) => () => void;
+
+  // Resolves once the kernel has read a desktop switch noticed after `switchesBefore` (the
+  // `desktopSwitchCount` taken before the switch was requested): the OS notice follows the
+  // switch call by tens of milliseconds, and until the layout read covers it no window counts as
+  // on a current desktop, so a raise asked for in between is dropped. Resolves at once when the
+  // kernel already shows a read switch, and after `timeoutMs` when no notice or read comes.
+  awaitDesktopSwitchRead(switchesBefore: number, timeoutMs: number = DESKTOP_SWITCH_HOLD_MS): Promise<'read' | 'timed-out'> {
+    const read = (): boolean =>
+      this.state.desktopSwitchCount > switchesBefore && !desktopUnread(this.state);
+    if (read()) return Promise.resolve('read');
+    return new Promise((resolve) => {
+      let done = false;
+      let unsub: () => void = () => {};
+      let cancel: () => void = () => {};
+      const finish = (outcome: 'read' | 'timed-out') => {
+        if (done) return;
+        done = true;
+        cancel();
+        unsub();
+        resolve(outcome);
+      };
+      unsub = this.subscribe(() => {
+        if (read()) finish('read');
+      });
+      cancel = this.setTimer(() => {
+        wmLog('desktop-switch-read-timeout', {
+          switchesBefore,
+          desktopSwitchCount: this.state.desktopSwitchCount,
+          desktopSwitchesRead: this.state.desktopSwitchesRead,
+        });
+        finish('timed-out');
+      }, timeoutMs);
+    });
+  }
 
   // Set by `noteDesktopShown`; cleared when a report agrees with the target or `until` passes.
   private desktopHold: { screen: string; desktop: DesktopId; until: number } | null = null;
@@ -354,11 +400,36 @@ export class WindowKernelExecutor {
       holdsFocus: !this.headless,
     });
     this.logTransition(event, prev, next);
+    this.logRaiseDropped(prev, next, effects);
     this.recordTimeline(event, prev, next, effects);
     this.logDismissalDecisions(event, prev, next);
     this.runEffects(effects);
     this.reconcileEscGrab();
     this.notify();
+  }
+
+  // A raise or focus assert that `react` turned into no `RaiseWindow` is otherwise invisible:
+  // `raise-suppressed` only covers a raise the executor's own plan refuses.
+  private logRaiseDropped(prev: State, next: State, effects: readonly Effect[]): void {
+    const request = next.lastRaiseRequest;
+    const assert = next.lastFocusAssert;
+    const raiseAsked = request !== null && request.seq !== prev.lastRaiseRequest?.seq;
+    const assertAsked = assert !== null && assert.seq !== prev.lastFocusAssert?.seq;
+    if (!raiseAsked && !assertAsked) return;
+    if (effects.some((e) => e.type === 'RaiseWindow')) return;
+    const id = raiseAsked ? request.id : (assert as { id: WindowId }).id;
+    const record = next.order.find((w) => w.id === id);
+    wmLog('raise-dropped', {
+      id,
+      via: raiseAsked ? 'raise-request' : 'focus-assert',
+      appActive: next.appActive,
+      desktopSwitchCount: next.desktopSwitchCount,
+      desktopSwitchesRead: next.desktopSwitchesRead,
+      onCurrentDesktop: record === undefined ? undefined : onCurrentDesktop(next, record),
+      recordDesktop: record?.desktop,
+      currentDesktop: next.screens[0]?.current,
+      alreadyKey: next.key === id,
+    });
   }
 
   private escGrabArmed: boolean | null = null;
