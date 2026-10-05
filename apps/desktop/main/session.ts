@@ -2122,6 +2122,33 @@ export function getWorkspaceSnapshotWindowInfo(
 }
 
 /**
+ * The desktops a workspace's saved windows were recorded on — one entry per
+ * saved window that carries a `desktop` (the kernel's last placement at save
+ * time, written by `serializeSession`). Duplicates kept: the desktop-choice
+ * rule counts windows per desktop. The default key is allowed — unlike
+ * `getWorkspaceSnapshotWindowInfo` this exposes no URLs or bounds, and it is
+ * read main-side by the raise gate, never returned to a tile. `null` for a
+ * missing/invalid snapshot or a read error.
+ */
+export function getWorkspaceSnapshotDesktops(key: string): string[] | null {
+  if (!key) return null;
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotRowKey(key)) as { value: string } | undefined;
+    if (!row?.value) return null;
+    const snapshot: SessionSnapshot = JSON.parse(row.value);
+    if (snapshot.version !== 1 || !Array.isArray(snapshot.windows)) return null;
+    return snapshot.windows
+      .filter((d) => isValidDescriptor(d) && typeof (d as { desktop?: unknown }).desktop === 'string')
+      .map((d) => (d as unknown as { desktop: string }).desktop);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * How many windows a workspace's saved snapshot holds — the default
  * workspace included, since a bare count exposes none of the saved URLs
  * (`getWorkspaceSnapshotWindowInfo` refuses the default key for that reason).

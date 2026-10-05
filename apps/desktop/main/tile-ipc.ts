@@ -147,7 +147,7 @@ import {
   kernelSetLayer,
   kernelArmSelectionFocus,
 } from './window-kernel-dispatch.js';
-import { BASE_LAYER } from './window-kernel.js';
+import { BASE_LAYER, windowById } from './window-kernel.js';
 import { FLOATING_LAYER } from './izui-roles.js';
 import {
   registerGlobalShortcut,
@@ -3277,6 +3277,13 @@ export function registerTileIpcHandlers(): void {
     // (window-kernel.ts FocusRequester `named`). Plain focus stays held to
     // the current desktop.
     named?: boolean;
+    // With `named`, the workspace snapshot key whose recorded per-window
+    // desktops decide WHERE the user should be taken (`session.ts
+    // chooseSpaceDesktopTarget`). The raise is skipped — no switch — when
+    // the rule yields no target or the named window is not on it: the
+    // window records only where the user last left, and raising it
+    // anywhere else could not reach the right desktop anyway.
+    snapshotKey?: string;
   }, _grant) => {
     const grant = _grant;
     const check = checkWindowAllowed(grant, 'focus');
@@ -3322,6 +3329,38 @@ export function registerTileIpcHandlers(): void {
       if (machineId != null) {
         if (args.named === true) {
           const executor = getKernelExecutorForApp();
+          // Desktop-choice gate (docs/design/space-desktop-return-plan.md,
+          // section 1.4): the snapshot's recorded desktops — not where the
+          // named window happens to sit — decide the target. No target, or
+          // the named window elsewhere → skip the raise entirely; the
+          // space opens on the current desktop instead of switching to a
+          // desktop that is wrong either way.
+          if (typeof args.snapshotKey === 'string' && args.snapshotKey) {
+            const { getWorkspaceSnapshotDesktops } = await import('./session.js');
+            const { chooseSpaceDesktopTarget } = await import('./space-desktop-choice.js');
+            const state = executor.getState();
+            const current = state.screens[0]?.current ?? null;
+            const order = state.desktops.map((d) => d.id);
+            const recorded = getWorkspaceSnapshotDesktops(args.snapshotKey) ?? [];
+            const target = chooseSpaceDesktopTarget(recorded, current, order);
+            const namedRecord = windowById(state, machineId);
+            const namedDesktop = namedRecord?.desktop ?? null;
+            const verdict =
+              target === null ? 'skip-no-target' : namedDesktop === target ? 'raise' : 'skip-mismatch';
+            wmLog('space-desktop-gate', {
+              key: args.snapshotKey,
+              current,
+              recorded: recorded.join(',') || 'none',
+              target,
+              namedDesktop,
+              verdict,
+            });
+            if (verdict !== 'raise') {
+              // Nothing dispatched: the named window stays where it is and
+              // nothing can switch desktops; the caller proceeds at once.
+              return { success: true };
+            }
+          }
           // A named raise fired during the app's own activation succeeds as
           // a raise, but macOS drops the desktop switch (live finding,
           // docs/design/space-desktop-return-plan.md E2). Wait, bounded, for

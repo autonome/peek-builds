@@ -823,11 +823,12 @@ function buildAPI(): Record<string, unknown> {
      * has read the resulting desktop switch, so windows opened next land
      * on the switched-to desktop.
      */
-    focus: (id: number, opts?: { named?: boolean }) => {
+    focus: (id: number, opts?: { named?: boolean; snapshotKey?: string }) => {
       return ipcRenderer.invoke('tile:window:focus', {
         token: tileToken,
         id,
         ...(opts?.named === true ? { named: true } : {}),
+        ...(typeof opts?.snapshotKey === 'string' && opts.snapshotKey ? { snapshotKey: opts.snapshotKey } : {}),
       });
     },
 

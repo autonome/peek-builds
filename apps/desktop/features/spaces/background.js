@@ -582,8 +582,12 @@ async function raiseSignalWindow(spaceId) {
     // the user wants to be, so macOS may switch to its desktop. The call
     // resolves after the window manager has read the switch (or its
     // bounded wait passes), so the restore that follows opens the space's
-    // windows on the switched-to desktop — no fixed sleep.
-    await api.window.focus(id, { named: true });
+    // windows on the switched-to desktop — no fixed sleep. The snapshot
+    // key hands the main process the space's recorded per-window desktops:
+    // they, not the signal window's own position, decide the target, and
+    // the raise is skipped when the two disagree (`[wm]
+    // space-desktop-gate` logs the verdict).
+    await api.window.focus(id, { named: true, snapshotKey: workspaceSnapshotKey(spaceId) });
     console.log(`[ext:spaces] signal-window-raise space=${spaceId} id=${id}`);
   } catch (err) {
     console.error('[ext:spaces] signal-window-raise failed:', err);
