@@ -761,6 +761,21 @@ describe('session-projection — skip rules', () => {
     assert.deepStrictEqual(urlsOf(world), ['https://kept.example/', 'https://settings.example/']);
   });
 
+  it('a signal-role window (a space’s desktop marker) is never saved', () => {
+    // The per-space 2x2 marker window is a desktop anchor, not session
+    // content; captured once by an ambient save under the default key, it
+    // restored as an ordinary window on every boot
+    // (docs/design/space-desktop-return-plan.md, experiment E5).
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1', { address: 'https://kept.example/' }),
+        contentFixture(2, 'w2', { params: { role: 'signal' }, address: 'peek://spaces/home.html?signal=1' }),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2')],
+    };
+    assert.deepStrictEqual(urlsOf(world), ['https://kept.example/']);
+  });
+
   it('visibility comes from the machine record, and a record-less window defaults to visible', () => {
     const world: World = {
       fixtures: [

@@ -518,6 +518,17 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       continue;
     }
 
+    // Skip signal-role windows: the tiny per-space marker a workspace leaves
+    // on its desktop so re-entering it can switch there by raising it
+    // (`features/spaces/background.js openSignalWindow()`). It is a desktop
+    // anchor, never session content — saved once under the default key
+    // (which saves everything on screen), it restored as an ordinary 2x2
+    // window on every boot (docs/design/space-desktop-return-plan.md, E5).
+    if (w.params.role === 'signal') {
+      notices.push({ level: 'debug', message: `[session:save] Skipping signal window ${w.nativeId}` });
+      continue;
+    }
+
     // The window presenter owns the canonical user-facing URL/title (the
     // page-host's two-layer URL shape lives there, not here).
     const presentation = input.getPresentation(w.nativeId);
