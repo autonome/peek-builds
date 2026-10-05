@@ -579,6 +579,17 @@ export function getActiveWorkspaceKey(): string {
  * it ALSO bypasses the mid-restore guard and the invisible-window filter, and
  * only test bridges may pass it.
  */
+// A snapshot records the desktop the kernel last saw each window on, and a window dragged to
+// another desktop fires no event. A caller that can wait reads the real desktops first; a
+// failed read leaves the last known ones.
+export async function refreshDesktopsBeforeSave(): Promise<void> {
+  try {
+    await getKernelExecutor().refreshDesktops('before-save');
+  } catch {
+    /* save with what the kernel knows */
+  }
+}
+
 export function saveSessionSnapshot(
   reason: SessionSnapshot['reason'],
   opts?: { cleanShutdown?: boolean; _forceForTest?: boolean; allowInTestProfile?: boolean; key?: string },
@@ -2002,7 +2013,7 @@ export function startAutosaveTimer(intervalMinutes: number): void {
   const intervalMs = intervalMinutes * 60 * 1000;
   _autosaveTimer = setInterval(() => {
     DEBUG && console.log('[session] Autosave timer fired');
-    saveSessionSnapshot('autosave');
+    void refreshDesktopsBeforeSave().then(() => saveSessionSnapshot('autosave'));
   }, intervalMs);
 
   DEBUG && console.log(`[session] Autosave timer started: every ${intervalMinutes} minute(s)`);

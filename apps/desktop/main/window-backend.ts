@@ -132,4 +132,8 @@ export interface WindowBackend {
   readonly canShowDesktops?: boolean;
   placeWindowOnDesktop?(id: WindowId, desktop: DesktopId): Promise<boolean>;
   showDesktop?(desktop: DesktopId): Promise<boolean>;
+  // Re-reads where the platform says every window is and reports it to the kernel. A user can
+  // move a window to another desktop without any event reaching the backend. Absent when the
+  // platform has no desktops.
+  refreshDesktops?(trigger: string): Promise<void>;
 }

@@ -15,8 +15,8 @@ import type { WebContents } from 'electron';
 import {
   FailSafeDesktopProvider,
   type PlatformWindowId,
-  type ProviderDisplayId,
 } from './desktop-provider.js';
+import { syncDesktops as syncDesktopsRead } from './desktop-sync.js';
 import { FallbackDesktopProvider } from './desktop-provider-fallback.js';
 import { MacDesktopProvider, macHelperPath, windowNumberFromSourceId } from './desktop-provider-mac.js';
 import {
@@ -90,13 +90,6 @@ function requestGuestDestroy(guest: TeardownGuest): void {
 }
 
 const APP_RESIGN_SETTLE_MS = 500;
-
-// A screen is an Electron display, named by its id; the providers name displays
-// by the same number, so the mapping is the identity. A provider screen that
-// stands for every display at once (`null`) is the one screen `shared`.
-function screenIdOf(display: ProviderDisplayId | null): ScreenId {
-  return display ?? 'shared';
-}
 
 // STACKING_TAKES_FOCUS is a claim never checked off macOS — see the design
 // doc's "Open design decisions" section.
@@ -261,10 +254,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       wmLog('app-did-become-active', { kernelActive: getAppActive() });
       kernelAppActivated();
+      this.onDesktopTriggerCoalesced('app-active');
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       wmLog('app-did-resign-active', { kernelActive: getAppActive() });
       kernelAppResigned();
+      this.onDesktopTriggerCoalesced('app-resign');
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       // Whether this settle sweeps anything is the kernel's decision
       // (`AppResignSettled` is inert after an overlay transition).
@@ -438,59 +433,44 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     this.desktopSync = this.desktopSync.then(() => this.syncDesktops(trigger));
   }
 
-  // Every path ends with `kernelDesktopsRead`, a failed read included: a switch
-  // notice left uncovered would keep every window off the current desktop.
-  private async syncDesktops(trigger: string): Promise<void> {
-    const switchesSeen = getKernelExecutor().getState().desktopSwitchCount;
-    wmLog('sync-desktops-start', { trigger, switchesSeen });
-    const provider = this.desktopProvider;
-    if (!provider) {
-      kernelDesktopsRead(switchesSeen);
-      wmLog('sync-desktops-end', { trigger, switchesSeen, provider: false });
-      return;
-    }
-    try {
-      const layout = await provider.layout();
-      const screens = layout.screens.map((s) => ({ id: screenIdOf(s.display), current: s.current }));
-      const desktops = layout.desktops.map((d) => ({ id: d.id, screen: d.display === null ? null : screenIdOf(d.display) }));
-      // A change of screens or desktops is a layout report; a change of only
-      // which desktop a screen shows is a `CurrentDesktopChanged`.
-      const before = getKernelExecutor().getState();
-      const sameLayout =
-        JSON.stringify(before.desktops) === JSON.stringify(desktops) &&
-        JSON.stringify(before.screens.map((s) => s.id)) === JSON.stringify(screens.map((s) => s.id));
-      if (!sameLayout) kernelDesktopLayoutReported(screens, desktops);
-      for (const s of screens) {
-        const known = getKernelExecutor().getState().screens.find((k) => k.id === s.id);
-        if (known?.current !== s.current) kernelCurrentDesktopChanged(s.id, s.current);
-      }
+  // Triggers that fire in bursts (window moves) share one queued read: while one waits behind
+  // the running read, another adds nothing.
+  private desktopSyncQueued = false;
+  private onDesktopTriggerCoalesced(trigger: string): void {
+    if (this.desktopSyncQueued) return;
+    this.desktopSyncQueued = true;
+    this.desktopSync = this.desktopSync.then(() => {
+      this.desktopSyncQueued = false;
+      return this.syncDesktops(trigger);
+    });
+  }
 
-      // Placements go before `kernelDesktopsRead`: the kernel ends a transient
-      // window left on another desktop on that event, from these placements.
-      const ids = new Map<PlatformWindowId, WindowId>();
-      for (const [id, { win }] of this.windows) {
-        const pid = this.platformWindowIdOf(win);
-        if (pid !== null) ids.set(pid, id);
-      }
-      const placements = await provider.placements([...ids.keys()]);
-      for (const p of placements) {
-        const id = ids.get(p.window);
-        const record = id === undefined ? null : windowById(getKernelExecutor().getState(), id);
-        if (id === undefined || record === null) continue;
-        const screenId = p.display === null ? null : screenIdOf(p.display);
-        const changed =
-          (screenId !== null && screenId !== record.screen) ||
-          (p.desktop !== null && p.desktop !== record.desktop) ||
-          p.onEveryDesktop !== (record.onEveryDesktop === true);
-        if (changed) kernelWindowPlacementReported(id, screenId, p.desktop, p.onEveryDesktop);
-      }
-      kernelDesktopsRead(switchesSeen);
-      wmLog('sync-desktops-end', { trigger, switchesSeen });
-    } catch (err) {
-      wmLog('desktop-sync-failed', { trigger, error: err instanceof Error ? err.message : String(err) });
-      kernelDesktopsRead(switchesSeen);
-      wmLog('sync-desktops-end', { trigger, switchesSeen, failed: true });
-    }
+  private syncDesktops(trigger: string): Promise<void> {
+    return syncDesktopsRead(trigger, {
+      provider: this.desktopProvider,
+      getState: () => getKernelExecutor().getState(),
+      platformIds: () => {
+        const ids = new Map<PlatformWindowId, WindowId>();
+        for (const [id, { win }] of this.windows) {
+          const pid = this.platformWindowIdOf(win);
+          if (pid !== null) ids.set(pid, id);
+        }
+        return ids;
+      },
+      layoutReported: kernelDesktopLayoutReported,
+      currentDesktopChanged: kernelCurrentDesktopChanged,
+      placementReported: kernelWindowPlacementReported,
+      desktopsRead: kernelDesktopsRead,
+      log: wmLog,
+    });
+  }
+
+  // Resolves once a read queued by this call has been reported. A user's drag of a window to
+  // another desktop fires nothing, so a caller that needs the real desktops (a snapshot save)
+  // reads first.
+  refreshDesktops(trigger: string): Promise<void> {
+    this.onDesktopTrigger(trigger);
+    return this.desktopSync;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -620,6 +600,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     rendererWC: NativeWebContents | null,
   ): void {
     win.on('focus', () => {
+      this.onDesktopTriggerCoalesced('window-focus');
       wmLog('native-focus-arrived', { id, producer: 'host-window', ...this.describeInFlightOps() });
       this.cancelBlurSettle();
       // Taking focus instead of closing means a beforeunload prompt this
@@ -708,6 +689,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('resize', emitBounds);
     win.on('move', emitBounds);
     win.on('moved', emitBounds);
+    // A drag between desktops is not a switch; only a read finds where the window now is.
+    win.on('moved', () => this.onDesktopTriggerCoalesced('window-moved'));
     // Every kind of window, not only page-hosts: any renderer can register a
     // beforeunload handler, and never preventDefault()s — this only watches.
     if (rendererWC) {

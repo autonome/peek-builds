@@ -4205,7 +4205,8 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      const { saveSessionSnapshot } = await import('./session.js');
+      const { saveSessionSnapshot, refreshDesktopsBeforeSave } = await import('./session.js');
+      await refreshDesktopsBeforeSave();
       // A deliberate, user-initiated save: it runs under the test profile the
       // desktop specs drive real workspace switches in (`allowInTestProfile`),
       // and nothing more — the mid-restore guard and the invisible-window

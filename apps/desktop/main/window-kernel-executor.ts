@@ -227,6 +227,11 @@ export class WindowKernelExecutor {
     return this.backend.placeWindowOnDesktop(id, desktop);
   }
 
+  // Resolves once the backend's fresh read of every window's desktop has reached the kernel.
+  async refreshDesktops(trigger: string): Promise<void> {
+    await this.backend.refreshDesktops?.(trigger);
+  }
+
   async showDesktop(desktop: DesktopId): Promise<boolean> {
     if (!this.canShowDesktops() || !this.backend.showDesktop) return false;
     wmLog('effect-show-desktop', { desktop });
