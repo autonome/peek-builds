@@ -31,6 +31,7 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
+import { planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -70,6 +71,15 @@ export { mirrorPlacementIntent, DEFAULT_WORKSPACE_KEY } from './session-projecti
 // the same numbers, read the same way, for a different purpose (staging load
 // order here vs. rebuilding the on-screen stack there).
 const SESSION_EAGER_RESTORE_COUNT = 5;
+
+// Params stripped from a saved descriptor before reopening it — shared by the
+// boot restore loop and the lazy-restore group open. Per-key reasons are on
+// the boot loop's strip comment in `restoreSessionSnapshot`.
+const RESTORE_STRIP_KEYS = new Set([
+  'x', 'y', 'width', 'height',
+  'address', 'transient', 'parentWindowId', 'skipTracking',
+  'openDevTools', 'detachedDevTools', 'restoreBlank',
+]);
 
 // ============================================================================
 // Restore-complete flag (mid-restore corruption guard)
@@ -123,6 +133,196 @@ export function markRestoreComplete(): void {
  */
 export function setRestoreCompleteForTest(value: boolean): void {
   _restoreComplete = value;
+}
+
+// ============================================================================
+// Lazy-restore hold (docs/design/space-desktop-return-plan.md)
+//
+// Under public APIs a window's desktop is decided by where the user is when it
+// opens, so a restore opens immediately only the descriptors whose recorded
+// desktop is the current one (`planLazyRestore`, restore-hold.ts). The rest
+// wait here, grouped by desktop, and a group opens when a kernel desktop read
+// reports the user arrived on its desktop. Module state, not window state:
+// these descriptors have no window yet — that is the point.
+// ============================================================================
+
+interface HeldRestoreState {
+  /** The workspace whose restore held these; a save under the same key re-saves them. */
+  workspaceKey: string;
+  groups: Map<string, WindowDescriptor[]>;
+  unsubscribe: () => void;
+  /** True while a released group's open loop runs — one release at a time. */
+  releaseInFlight: boolean;
+}
+
+let _heldRestore: HeldRestoreState | null = null;
+
+function clearHeldRestore(): void {
+  if (_heldRestore === null) return;
+  _heldRestore.unsubscribe();
+  _heldRestore = null;
+}
+
+/** Still-held descriptors a save under `workspaceKey` must carry forward. */
+function heldDescriptorsFor(workspaceKey: string): WindowDescriptor[] {
+  if (_heldRestore === null || _heldRestore.workspaceKey !== workspaceKey) return [];
+  const out: WindowDescriptor[] = [];
+  for (const group of _heldRestore.groups.values()) out.push(...group);
+  return out;
+}
+
+/**
+ * Replace any previous hold with this restore's held groups and watch kernel
+ * state for arrival on one of their desktops. A restore defines the session's
+ * composition, so an older hold (a previous workspace's, say) is discarded —
+ * its descriptors were re-saved to that workspace's row by the save that
+ * preceded the restore.
+ */
+function installHeldRestore(workspaceKey: string, groups: Map<string, WindowDescriptor[]>): void {
+  clearHeldRestore();
+  if (groups.size === 0) return;
+  const state: HeldRestoreState = { workspaceKey, groups, unsubscribe: () => {}, releaseInFlight: false };
+  state.unsubscribe = getKernelExecutorForApp().subscribe((kernelState) => {
+    maybeReleaseHeldGroup(state, kernelState);
+  });
+  _heldRestore = state;
+  const total = [...groups.values()].reduce((n, g) => n + g.length, 0);
+  console.log(
+    `[session] lazy-restore-held workspace=${workspaceKey} desktops=${[...groups.keys()].join(',')} windows=${total}`,
+  );
+}
+
+/**
+ * Open the group recorded on the kernel's current desktop, if one is held.
+ * Runs on every kernel notification (and once right after a restore
+ * completes), so it must be cheap and idempotent: a non-matching state is a
+ * no-op, and a matching group is removed before its open loop starts.
+ */
+function maybeReleaseHeldGroup(state: HeldRestoreState, kernelState: State): void {
+  if (_heldRestore !== state || state.releaseInFlight) return;
+  // Mid-restore (boot loop or an earlier group's open) — the finally below and
+  // later kernel notifications re-check.
+  if (!_restoreComplete) return;
+  // Mid workspace switch the hold is about to be replaced by the target
+  // workspace's restore; opening the outgoing workspace's windows now would
+  // put them in the wrong workspace.
+  if (_workspaceSwitchInFlight) return;
+  const current = kernelState.screens[0]?.current ?? null;
+  if (current === null) return;
+  const group = state.groups.get(current);
+  if (group === undefined) return;
+  state.groups.delete(current);
+  state.releaseInFlight = true;
+  console.log(`[session] lazy-restore-release desktop=${current} n=${group.length}`);
+  void openHeldGroup(group, current)
+    .catch((err) => console.error('[session] lazy-restore open failed:', err))
+    .finally(() => {
+      state.releaseInFlight = false;
+      if (_heldRestore === state && state.groups.size === 0) clearHeldRestore();
+    });
+}
+
+/**
+ * Open a released group on the desktop the user just arrived on. A slimmed
+ * copy of the boot restore loop (same descriptor cleaning, same staged
+ * eager/deferred split, same context re-apply) without boot-only machinery:
+ * no focused-head-start, no perf tail tracking, no desktop placement (the
+ * user's presence IS the placement). Wrapped in the restore-in-flight guard
+ * so an ambient save during the open cannot record half-loaded windows —
+ * the group was already removed from the hold, so such a save would
+ * otherwise drop them.
+ */
+async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): Promise<void> {
+  if (!invokeWindowOpen) {
+    console.error('[session] lazy-restore open skipped — invokeWindowOpen not initialized');
+    return;
+  }
+  const bgWin = getBackgroundWindow();
+  if (!bgWin || bgWin.isDestroyed()) {
+    console.error('[session] lazy-restore open skipped — background window not available');
+    return;
+  }
+  markRestoreInFlight();
+  try {
+    const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+    const ordered = [...descriptors].sort((a, b) => b.zOrder - a.zOrder);
+    const eagerCount = Math.min(SESSION_EAGER_RESTORE_COUNT, ordered.length);
+    let focusedWindowId: number | null = null;
+    let opened = 0;
+    for (let i = 0; i < ordered.length; i++) {
+      const original = ordered[i];
+      try {
+        const collapsed = collapseToPrimaryDisplay(original, primaryWorkArea);
+        const descriptor =
+          collapsed === original
+            ? original
+            : { ...original, bounds: collapsed.bounds, params: collapsed.params };
+        const boundsOptions = buildRestoreBoundsOptions(descriptor, isPointOnScreen);
+        const cleanParams: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(descriptor.params)) {
+          if (!RESTORE_STRIP_KEYS.has(key)) cleanParams[key] = value;
+        }
+        const options: Record<string, unknown> = {
+          ...cleanParams,
+          ...boundsOptions,
+          skipTracking: true,
+          chrome: false,
+          show: false,
+        };
+        if (i >= eagerCount) {
+          options.restoreBlank = true;
+          options.title = descriptor.title;
+        }
+        if (descriptor.key) options.key = descriptor.key;
+        if (descriptor.context?.pinScope) {
+          options.alwaysOnTop = true;
+          options.pinScope = descriptor.context.pinScope;
+        }
+        const openResult = (await invokeWindowOpen(
+          { sender: bgWin.webContents },
+          { source: descriptor.source || WEB_CORE_ADDRESS, url: descriptor.url, options },
+        )) as { success: boolean; id?: number; error?: string };
+        if (!openResult?.success || openResult.id == null) {
+          console.warn(`[session] lazy-restore window failed: ${descriptor.url}`, openResult?.error);
+          continue;
+        }
+        opened++;
+        // BrowserWindows opened show:false need the explicit inactive show; a
+        // hybrid page-host was already shown inactive by its open path.
+        const win = getLiveWindow(openResult.id);
+        if (win && !win.isDestroyed()) showWindowHeadlessSafe(win);
+        if (descriptor.context?.mode) {
+          try {
+            addContextEntry('mode', descriptor.context.mode, {
+              windowId: openResult.id,
+              source: 'session-restore',
+              metadata: descriptor.context.modeMetadata || { url: descriptor.url },
+            });
+          } catch {
+            // Context restore is best-effort
+          }
+        }
+        if (descriptor.focused === true) focusedWindowId = openResult.id;
+      } catch (err) {
+        console.error(`[session] lazy-restore error opening ${original.url}:`, err);
+      }
+    }
+    console.log(`[session] lazy-restore-opened desktop=${desktop} n=${opened}/${descriptors.length}`);
+    // The held focus applies now that its group is open — but only under the
+    // warm-restore rule (app active, not headless), so a user who arrived on
+    // this desktop in another app is not yanked into Peek.
+    if (focusedWindowId != null && getKernelExecutorForApp().shouldRestoreFocus(false, false)) {
+      const focusWin = getLiveWindow(focusedWindowId);
+      const hybridFocus = focusWin ? null : getHybridWindow(focusedWindowId);
+      if (focusWin && !focusWin.isDestroyed()) {
+        showWindowHeadlessSafe(focusWin, { active: true });
+      } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
+        showHybridHost(hybridFocus.baseWin);
+      }
+    }
+  } finally {
+    markRestoreComplete();
+  }
 }
 
 // Test observability, NOT window state — these count what the restore DID, and
@@ -668,7 +868,19 @@ export function saveSessionSnapshot(
     else DEBUG && console.log(notice.message);
   }
 
-  const snapshot = projection.snapshot;
+  // Descriptors still held by lazy restore (never opened this session) have no
+  // window for the projection to see, but they are part of the workspace's
+  // session: fold them back in with their recorded desktops so a quit while
+  // groups are held does not drop them. The live set's focus wins (see
+  // `mergeHeldIntoSave`).
+  const heldForSave = heldDescriptorsFor(workspaceKey);
+  const snapshot =
+    heldForSave.length === 0
+      ? projection.snapshot
+      : { ...projection.snapshot, windows: mergeHeldIntoSave(projection.snapshot.windows, heldForSave) };
+  if (heldForSave.length > 0) {
+    console.log(`[session] save-merged-held n=${heldForSave.length} key=${workspaceKey}`);
+  }
   DEBUG && console.log(`[session] Captured ${snapshot.windows.length} window(s) (${projection.windowCount - snapshot.windows.length} filtered)`);
 
   // ── Write ───────────────────────────────────────────────────────────────
@@ -1375,8 +1587,32 @@ export async function restoreSessionSnapshot(
     DEBUG && console.log(`[session] Filtered ${snapshot.windows.length - validWindows.length} invalid window(s)`);
   }
 
+  // Lazy restore: only the descriptors whose recorded desktop is the current
+  // one (or unrecorded, or gone from the layout) open now; the rest are held,
+  // grouped by desktop, and open when a desktop read reports arrival there
+  // (see the hold section above). With no desktop reads (no provider,
+  // headless, tests) the kernel knows no current desktop and everything opens
+  // now — the pre-lazy behavior, unchanged. When the focused descriptor is
+  // held, `planLazyRestore` hands focus to the top-of-stack openNow window;
+  // the held descriptor applies its own focus when its group opens.
+  const kernelStateAtRestore = getKernelExecutorForApp().getState();
+  const currentDesktopAtRestore = kernelStateAtRestore.screens[0]?.current ?? null;
+  const { openNow, held } = planLazyRestore(
+    validWindows,
+    currentDesktopAtRestore,
+    kernelStateAtRestore.desktops.map((d) => d.id),
+  );
+  installHeldRestore(key, held);
+  if (held.size > 0) {
+    console.log(
+      `[session] lazy-restore-partition current=${currentDesktopAtRestore} openNow=${openNow.length} held=${validWindows.length - openNow.length}`,
+    );
+  }
+
+  // `total` counts the whole valid session (held included); `restored`/`failed`
+  // count only this pass's open attempts — a held window is neither.
   result.total = validWindows.length;
-  DEBUG && console.log(`[session] Restoring ${result.total} window(s) from snapshot`);
+  DEBUG && console.log(`[session] Restoring ${openNow.length} of ${result.total} window(s) from snapshot`);
 
   // Wait for background window to be ready (needed for IPC)
   const bgWin = getBackgroundWindow();
@@ -1397,7 +1633,7 @@ export async function restoreSessionSnapshot(
   // replayed from `stackIndex` after the loop, so a window that was visually in
   // front but low in the loading order still loads late and still comes back
   // in front.
-  const zOrderSorted = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
+  const zOrderSorted = [...openNow].sort((a, b) => b.zOrder - a.zOrder);
   const focusedDescriptor = zOrderSorted.find((w) => w.focused) ?? null;
   const orderedWindows = focusedDescriptor
     ? [focusedDescriptor, ...zOrderSorted.filter((w) => w !== focusedDescriptor)]
@@ -1504,9 +1740,8 @@ export async function restoreSessionSnapshot(
       // eagerCount` below). A stale restoreBlank baked into an older
       // snapshot's params must not override that — it would pin the window to
       // deferred restore forever.
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking', 'openDevTools', 'detachedDevTools', 'restoreBlank']);
       for (const [key, value] of Object.entries(descriptor.params)) {
-        if (!stripKeys.has(key)) {
+        if (!RESTORE_STRIP_KEYS.has(key)) {
           cleanParams[key] = value;
         }
       }
@@ -1990,6 +2225,12 @@ export async function restoreSessionSnapshot(
     // (autosave, window-close debounce, next quit) work normally.
     markRestoreComplete();
     DEBUG && console.log('[session] markRestoreComplete: saves re-enabled');
+    // The user may have arrived on a held group's desktop while the loop was
+    // still running (releases are refused mid-restore and only re-checked on
+    // kernel notifications) — check once against the current state now.
+    if (_heldRestore !== null) {
+      maybeReleaseHeldGroup(_heldRestore, getKernelExecutorForApp().getState());
+    }
   }
 }
 

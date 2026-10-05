@@ -3,7 +3,7 @@
 // real implementation — the module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { partitionRestoreByDesktop } from './restore-hold.js';
+import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
 
 const d = (id: number, desktop?: string) =>
   desktop === undefined ? { id } : { id, desktop };
@@ -79,5 +79,86 @@ describe('partitionRestoreByDesktop (lazy-restore open-now vs held split)', () =
     const descriptor = { id: 7, desktop: '3', url: 'https://example.com', focused: true };
     const { held } = partitionRestoreByDesktop([descriptor], '1', ['1', '3']);
     assert.strictEqual(held.get('3')![0], descriptor);
+  });
+});
+
+const f = (id: number, desktop: string | undefined, zOrder: number, focused: boolean) => ({
+  id,
+  ...(desktop === undefined ? {} : { desktop }),
+  zOrder,
+  focused,
+});
+
+describe('planLazyRestore (partition + held-focus promotion)', () => {
+  it('focused descriptor held → top-of-stack openNow window takes focus, as a copy', () => {
+    const low = f(1, '1', 1, false);
+    const top = f(2, undefined, 9, false);
+    const heldFocused = f(3, '3', 5, true);
+    const { openNow, held } = planLazyRestore([low, top, heldFocused], '1', ['1', '3']);
+    assert.deepStrictEqual(ids(openNow), [1, 2]);
+    const promoted = openNow.find((w) => w.id === 2)!;
+    assert.strictEqual(promoted.focused, true);
+    assert.notStrictEqual(promoted, top); // copy — the snapshot object is untouched
+    assert.strictEqual(top.focused, false);
+    assert.strictEqual(openNow.find((w) => w.id === 1)!.focused, false);
+    // the held descriptor keeps its own focus for when its group opens
+    assert.strictEqual(held.get('3')![0].focused, true);
+  });
+
+  it('focused descriptor opens now → nothing is promoted', () => {
+    const openFocused = f(1, '1', 1, true);
+    const heldOne = f(2, '3', 9, false);
+    const { openNow } = planLazyRestore([openFocused, heldOne], '1', ['1', '3']);
+    assert.strictEqual(openNow[0], openFocused);
+  });
+
+  it('no focused descriptor anywhere → nothing is promoted', () => {
+    const { openNow } = planLazyRestore([f(1, '1', 1, false), f(2, '3', 9, false)], '1', ['1', '3']);
+    assert.strictEqual(openNow.every((w) => w.focused === false), true);
+  });
+
+  it('everything held → openNow stays empty (no window to promote)', () => {
+    const { openNow, held } = planLazyRestore([f(1, '3', 1, true)], '1', ['1', '3']);
+    assert.deepStrictEqual(openNow, []);
+    assert.strictEqual(held.get('3')![0].focused, true);
+  });
+
+  it('no current desktop → everything opens now with flags untouched', () => {
+    const a = f(1, '3', 1, true);
+    const { openNow, held } = planLazyRestore([a], null, ['1', '3']);
+    assert.strictEqual(openNow[0], a);
+    assert.strictEqual(held.size, 0);
+  });
+});
+
+describe('mergeHeldIntoSave (held descriptors fold back into a save)', () => {
+  it('appends held descriptors after the live set', () => {
+    const live = [f(1, undefined, 1, false)];
+    const held = [f(2, '3', 2, false), f(3, '5', 3, false)];
+    assert.deepStrictEqual(ids(mergeHeldIntoSave(live, held)), [1, 2, 3]);
+  });
+
+  it('live focus wins: a held focused flag is demoted when the live set has one', () => {
+    const live = [f(1, undefined, 1, true)];
+    const held = [f(2, '3', 2, true)];
+    const merged = mergeHeldIntoSave(live, held);
+    assert.strictEqual(merged.filter((w) => w.focused === true).length, 1);
+    assert.strictEqual(merged.find((w) => w.id === 2)!.focused, false);
+    assert.strictEqual(held[0].focused, true); // demotion is on a copy
+  });
+
+  it('held focus survives when the live set has none', () => {
+    const live = [f(1, undefined, 1, false)];
+    const held = [f(2, '3', 2, true)];
+    const merged = mergeHeldIntoSave(live, held);
+    assert.strictEqual(merged.find((w) => w.id === 2)!.focused, true);
+    assert.strictEqual(merged.find((w) => w.id === 2)!, held[0]); // untouched → same object
+  });
+
+  it('nothing held → the live set unchanged (fresh array)', () => {
+    const live = [f(1, undefined, 1, true)];
+    const merged = mergeHeldIntoSave(live, []);
+    assert.deepStrictEqual(ids(merged), [1]);
+    assert.notStrictEqual(merged, live);
   });
 });

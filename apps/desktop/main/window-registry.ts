@@ -46,8 +46,8 @@ export interface WindowDescriptor {
   // Indices may have gaps (a skipped overlay/stale tile), and it's absent for pre-field snapshots.
   stackIndex?: number;
   // The virtual desktop the window was last on, an opaque id from the desktop provider. Absent for
-  // snapshots written before the field existed and for windows with no known desktop. Saved only;
-  // restore does not read it yet.
+  // snapshots written before the field existed and for windows with no known desktop. Restore reads
+  // it to hold the window until the user arrives on that desktop (session.ts lazy-restore hold).
   desktop?: string;
   focused: boolean;
   context?: WindowContext;
