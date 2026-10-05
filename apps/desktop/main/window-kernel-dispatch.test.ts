@@ -697,6 +697,66 @@ describe('window-kernel-dispatch: activating show feed (peek 7fffa286)', () => {
   });
 });
 
+describe('window-kernel-dispatch: a shown-and-focused report for a window that cannot take key', () => {
+  beforeEach(() => {
+    _resetKernelForTests();
+  });
+
+  // The command panel opened while another app is frontmost, then the space
+  // border (non-focusable, visible at creation) is registered and reported
+  // shown-and-focused by the window open path.
+  const openPanelFromAnotherApp = (panel: WindowId): void => {
+    kernelRegisterWindow({
+      id: panel,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'palette',
+      role: 'palette',
+      transient: true,
+      nonActivating: true,
+    });
+    kernelAppResigned();
+    kernelShowRequested(panel, true, { activation: 'user' });
+    kernelOsFocusGained(panel);
+  };
+  const registerBorder = (border: WindowId): void => {
+    kernelRegisterWindow({
+      id: border,
+      kind: 'browser',
+      layer: BASE_LAYER + 1,
+      canBecomeKey: false,
+      acceptsInput: true,
+      class: 'hud',
+      role: 'workspace',
+    });
+  };
+
+  it('does not take key from the command panel or end it', () => {
+    const [panel, border] = [wid(140), wid(141)];
+    openPanelFromAnotherApp(panel);
+    assert.strictEqual(getKernelExecutor().getState().key, panel, 'precondition: the panel holds key');
+
+    registerBorder(border);
+    kernelWindowShown(border, true);
+
+    const state = getKernelExecutor().getState();
+    assert.strictEqual(state.key, panel, 'a window that cannot become key does not take it');
+    const record = state.order.find((w) => w.id === panel);
+    assert.strictEqual(record?.visible, true);
+    assert.notStrictEqual(record?.pendingHidden, true, 'the panel is not dismissed');
+    assert.strictEqual(state.order.find((w) => w.id === border)?.visible, true, 'the border itself is shown');
+  });
+
+  it('still takes key when the report names the op the backend issued', () => {
+    const border = wid(142);
+    registerBorder(border);
+    kernelWindowShown(border, true, 7);
+    assert.strictEqual(getKernelExecutor().getState().key, border);
+  });
+});
+
 describe('window-kernel-dispatch: overlay attach/detach feed (peek 7fffa286)', () => {
   beforeEach(() => {
     _resetKernelForTests();

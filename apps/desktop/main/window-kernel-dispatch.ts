@@ -206,7 +206,12 @@ export function kernelOsFocusSettled(): void {
 // kernelWindowShown's focused parameter is idempotent with the real OS focus echo.
 export function kernelWindowShown(id: WindowId, focused = false, opSeq?: number): void {
   kernelDispatch({ type: 'WindowShown', id, opSeq });
-  if (focused) {
+  // A show no backend op asked for (a window visible at creation, reported at
+  // registration and at the open handler) cannot make a window key when it was
+  // declared unable to become key. Taken as a focus it would move key off the
+  // window that really holds it and end a transient one (the command panel).
+  const record = opSeq === undefined ? getKernelExecutor().getState().order.find((w) => w.id === id) : undefined;
+  if (focused && record?.canBecomeKey !== false) {
     kernelDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
   }
 }
