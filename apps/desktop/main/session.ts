@@ -1110,16 +1110,28 @@ async function applyDesktopRestore(
   restored: ReadonlyArray<{ id: number; desktop?: string; focused: boolean }>,
 ): Promise<void> {
   const executor = getKernelExecutorForApp();
-  if (restored.length === 0 || !executor.canPlaceWindows()) return;
+  if (restored.length === 0 || !executor.canPlaceWindows()) {
+    console.log(`[session] desktop-restore-skipped n=${restored.length} canPlace=${executor.canPlaceWindows()}`);
+    return;
+  }
   const state = executor.getState();
   const activeDesktop = state.screens[0]?.current ?? null;
   const plan = planDesktopRestore(restored, state, activeDesktop);
+  console.log(
+    `[session] desktop-restore-plan active=${activeDesktop} known=${state.desktops.map((d) => d.id).join(',')} ` +
+      `saved=${restored.map((r) => r.desktop ?? '-').join(',')} targets=${plan.targets.map((t) => t ?? '-').join(',')} ` +
+      `switchTo=${plan.switchTo} canShow=${executor.canShowDesktops()}`,
+  );
   for (let i = 0; i < restored.length; i++) {
     const target = plan.targets[i];
     if (target === null || target === activeDesktop) continue;
     const machineId = getWindowIdFor(restored[i].id);
-    if (machineId == null) continue;
-    await executor.placeWindowOnDesktop(machineId, target);
+    if (machineId == null) {
+      console.log(`[session] desktop-restore-place id=${restored[i].id} target=${target} result=no-machine-id`);
+      continue;
+    }
+    const placed = await executor.placeWindowOnDesktop(machineId, target);
+    console.log(`[session] desktop-restore-place id=${restored[i].id} target=${target} result=${placed}`);
   }
   if (plan.switchTo !== null && executor.canShowDesktops()) {
     const switchesBefore = executor.getState().desktopSwitchCount;
