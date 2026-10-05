@@ -816,12 +816,18 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * Raise a window to the front. Requires `window.manage` (or
-     * trustedBuiltin).
+     * trustedBuiltin). `opts.named` declares the caller names this very
+     * window as where the user wants to be, so the raise may take the user
+     * to the window's virtual desktop (plain focus stays held to the
+     * current one); the call then resolves only after the window manager
+     * has read the resulting desktop switch, so windows opened next land
+     * on the switched-to desktop.
      */
-    focus: (id: number) => {
+    focus: (id: number, opts?: { named?: boolean }) => {
       return ipcRenderer.invoke('tile:window:focus', {
         token: tileToken,
         id,
+        ...(opts?.named === true ? { named: true } : {}),
       });
     },
 

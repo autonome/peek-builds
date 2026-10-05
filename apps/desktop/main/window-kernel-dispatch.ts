@@ -412,15 +412,17 @@ export function kernelSetLayer(id: WindowId, layer: number): void {
   });
 }
 
-// kernelShowRequested with activate is ShowWindow then RaiseWindow, and opts.activation === 'user' puts intent on the raise.
-export function kernelShowRequested(id: WindowId, activate: boolean, opts?: { activation?: 'user' }): void {
+// kernelShowRequested with activate is ShowWindow then RaiseWindow, and opts.activation puts intent on
+// the raise: 'user' for a user act, 'named' when the user named this very window (the raise may then
+// take the user to its desktop — window-kernel.ts FocusRequester).
+export function kernelShowRequested(id: WindowId, activate: boolean, opts?: { activation?: 'user' | 'named' }): void {
   kernelExecute({ type: 'ShowWindow', id, expectedVersion: getKernelExecutor().getState().version });
   if (activate) {
     kernelExecute({
       type: 'RaiseWindow',
       id,
       expectedVersion: getKernelExecutor().getState().version,
-      ...(opts?.activation === 'user' ? { intent: 'user' } : {}),
+      ...(opts?.activation !== undefined ? { intent: opts.activation } : {}),
     });
   }
 }

@@ -138,8 +138,12 @@ interface TileWindow {
    * Raise a window to the front.
    * Requires `window.manage` capability.
    * No-op under headless test runs.
+   * `opts.named` declares the caller names this very window as where the
+   * user wants to be, so the raise may take the user to the window's
+   * virtual desktop; the call then resolves only after the window manager
+   * has read the resulting desktop switch.
    */
-  focus(id: number): Promise<{ success: boolean; error?: string }>;
+  focus(id: number, opts?: { named?: boolean }): Promise<{ success: boolean; error?: string }>;
 
   /**
    * Center a window on its display. Omit id for calling window.

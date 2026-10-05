@@ -3271,6 +3271,12 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:window:focus', { mode: 'handle' }, async (event, args: {
     token: string;
     id: number;
+    // The caller names this very window as where the user wants to be (a
+    // space's own window on entry), so the raise may take the user to its
+    // desktop — the same privilege a switcher pick carries
+    // (window-kernel.ts FocusRequester `named`). Plain focus stays held to
+    // the current desktop.
+    named?: boolean;
   }, _grant) => {
     const grant = _grant;
     const check = checkWindowAllowed(grant, 'focus');
@@ -3311,9 +3317,39 @@ export function registerTileIpcHandlers(): void {
         via: 'tile:window:focus',
         id: args.id,
         machineId: machineId === undefined || machineId === null ? null : String(machineId),
+        ...(args.named === true ? { named: true } : {}),
       });
       if (machineId != null) {
-        kernelShowRequested(machineId, true);
+        if (args.named === true) {
+          const executor = getKernelExecutorForApp();
+          // A named raise fired during the app's own activation succeeds as
+          // a raise, but macOS drops the desktop switch (live finding,
+          // docs/design/space-desktop-return-plan.md E2). Wait, bounded, for
+          // the app to be active before dispatching; dispatch anyway on
+          // timeout — the raise still lands, only the switch may not.
+          const activeDeadline = Date.now() + 1000;
+          while (!executor.getState().appActive && Date.now() < activeDeadline) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          const appActiveAtDispatch = executor.getState().appActive;
+          const switchesBefore = executor.getState().desktopSwitchCount;
+          kernelShowRequested(machineId, true, { activation: 'named' });
+          // The OS switch notice trails the raise, and until the kernel's
+          // layout read covers it every window counts as off-desktop — so a
+          // caller about to open windows (space entry restores right after
+          // this) must not proceed before the read. Resolves on timeout too:
+          // no switch happens when the window is already on the current
+          // desktop.
+          const outcome = await executor.awaitDesktopSwitchRead(switchesBefore);
+          wmLog('raise-named-settled', {
+            id: args.id,
+            machineId: String(machineId),
+            appActiveAtDispatch,
+            outcome,
+          });
+        } else {
+          kernelShowRequested(machineId, true);
+        }
       }
       return { success: true };
     } catch (err) {

@@ -210,7 +210,10 @@ export interface FocusAssertRequest {
 export interface FocusRaiseRequest {
   id: WindowId;
   seq: number;
-  intent?: 'user';
+  // `user`: the user acted. `named`: the user named this very window (a
+  // switcher pick names it by selection; entering a space names its signal
+  // window by the space), so the raise may take the user to its desktop.
+  intent?: 'user' | 'named';
 }
 
 export interface Attention {
@@ -310,14 +313,14 @@ export type Event =
   // Quit teardown: destroy every registered page-host guest WC, process-wide. Names no window.
   | { type: 'GuestTeardownRequested' }
   | { type: 'FocusAssertRequested'; id: WindowId }
-  | { type: 'FocusRaiseRequested'; id: WindowId; intent?: 'user' }
+  | { type: 'FocusRaiseRequested'; id: WindowId; intent?: 'user' | 'named' }
   | { type: 'ColdStartFocusArmed'; id: WindowId | null }
   | { type: 'SelectionFocusArmed'; armer: WindowId; target: WindowId | null };
 
 // Commands — rejectable requests; every variant carries `expectedVersion`, and `decide` rejects on a mismatch.
 
 export type Command =
-  | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' }
+  | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number; intent?: 'user' | 'named' }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
   | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
   // The keepLive branch point: hide if keepLive, else close. Decided in `decide`, never `evolve`.
@@ -1154,7 +1157,9 @@ function evolveEvent(state: State, ev: Event): State {
       // Only while the raised window is still key and on screen.
       const raised = state.lastRaiseRequest;
       const raisedRecord =
-        raised?.intent === 'user' && state.key === raised.id ? state.order.find((w) => w.id === raised.id) : undefined;
+        (raised?.intent === 'user' || raised?.intent === 'named') && state.key === raised.id
+          ? state.order.find((w) => w.id === raised.id)
+          : undefined;
       const userRaisedWhileInactive =
         !state.appActive &&
         latched === null &&
@@ -1716,15 +1721,18 @@ function evolveEvent(state: State, ev: Event): State {
     case 'FocusRaiseRequested': {
       // Stamps `lastOpSeq` without touching `key`, `order` or `lastAttention`; `key` moves only on the backend's confirming `OsFocusGained`.
       const targetRecord = state.order.find((w) => w.id === ev.id);
+      // A named request carries user intent AND names the window, so it is
+      // the one raise `withinReach` admits to another desktop (rule 5).
+      const requester = ev.intent === 'named' ? SWITCHER_PICK : ev.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST;
       // Same "already key is not evidence the ask was honoured" exception
       // `react`'s raise-request diff applies below — kept in sync with it so
       // an op this arm decides to issue also gets a fresh `opSeq` to stamp,
       // rather than colliding with whichever op last touched the counter.
-      const alreadyKeyButUnhonoured = state.key === ev.id && ev.intent === 'user' && !state.appActive;
+      const alreadyKeyButUnhonoured = state.key === ev.id && requester.user && !state.appActive;
       const issuesRaiseRequest =
         (state.key !== ev.id || alreadyKeyButUnhonoured) &&
         targetRecord !== undefined &&
-        admitsFocus(state, targetRecord, ev.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST);
+        admitsFocus(state, targetRecord, requester);
       const requestOpSeq = issuesRaiseRequest ? state.opSeqCounter + 1 : state.opSeqCounter;
       // An inactive app cannot honour a raise by coming forward unless the
       // raise carries user intent, and an ordinary-level window of an inactive
@@ -1736,14 +1744,14 @@ function evolveEvent(state: State, ev: Event): State {
       // forward either — it takes key over the other app — so it holds too,
       // and the app activating later returns it to ordinary stacking like any
       // other held window rather than leaving it above every app for good.
-      const raiseLeavesAppInactive = ev.intent !== 'user' || targetRecord?.nonActivating === true;
+      const raiseLeavesAppInactive = !requester.user || targetRecord?.nonActivating === true;
       // A window on another desktop is not held: holding stands in for a raise, and the raise could not reach it.
       const holds =
         !state.appActive &&
         raiseLeavesAppInactive &&
         targetRecord !== undefined &&
         admitsHoldAboveOtherApps(targetRecord) &&
-        withinReach(state, targetRecord, ev.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST);
+        withinReach(state, targetRecord, requester);
       return {
         ...state,
         order: state.order.map((w) =>
@@ -1757,7 +1765,7 @@ function evolveEvent(state: State, ev: Event): State {
         // non-activating window never is, so the next activation is asked to
         // put the held window in front — the same one-shot latch a restore arms.
         ...(holds ? { pendingColdStartFocus: ev.id } : {}),
-        lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent === 'user' ? { intent: 'user' as const } : {}) },
+        lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent !== undefined ? { intent: ev.intent } : {}) },
         version: state.version + 1,
       };
     }
@@ -2138,8 +2146,9 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   const raiseRequest = next.lastRaiseRequest;
   if (raiseRequest !== null && raiseRequest.seq !== prev.lastRaiseRequest?.seq) {
     const record = next.order.find((w) => w.id === raiseRequest.id);
-    const alreadyKeyButUnhonoured = next.key === raiseRequest.id && raiseRequest.intent === 'user' && !next.appActive;
-    const requester = raiseRequest.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST;
+    const requester =
+      raiseRequest.intent === 'named' ? SWITCHER_PICK : raiseRequest.intent === 'user' ? USER_REQUEST : MACHINE_REQUEST;
+    const alreadyKeyButUnhonoured = next.key === raiseRequest.id && requester.user && !next.appActive;
     if (record !== undefined && (next.key !== raiseRequest.id || alreadyKeyButUnhonoured) && admitsFocus(next, record, requester)) {
       pushRaise(effects, next, record, requester);
       // Key alone does not make the window's contents the first responder, so a raised window
@@ -2291,7 +2300,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       // `decide` translates the command onto `FocusRaiseRequested` instead;
       // `key` moves only later, off the backend's own confirming echo.
       return {
-        events: [{ type: 'FocusRaiseRequested', id: cmd.id, ...(cmd.intent === 'user' ? { intent: 'user' } : {}) }],
+        events: [{ type: 'FocusRaiseRequested', id: cmd.id, ...(cmd.intent !== undefined ? { intent: cmd.intent } : {}) }],
       };
     case 'ShowWindow':
       return { events: [{ type: 'WindowShown', id: cmd.id }] };

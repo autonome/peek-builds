@@ -578,10 +578,13 @@ async function raiseSignalWindow(spaceId) {
     return;
   }
   try {
-    await api.window.focus(id);
+    // A named raise: entering the space names its signal window as where
+    // the user wants to be, so macOS may switch to its desktop. The call
+    // resolves after the window manager has read the switch (or its
+    // bounded wait passes), so the restore that follows opens the space's
+    // windows on the switched-to desktop — no fixed sleep.
+    await api.window.focus(id, { named: true });
     console.log(`[ext:spaces] signal-window-raise space=${spaceId} id=${id}`);
-    // Give macOS time to switch desktops before the space's windows open.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
   } catch (err) {
     console.error('[ext:spaces] signal-window-raise failed:', err);
   }
