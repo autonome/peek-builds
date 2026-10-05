@@ -1161,6 +1161,19 @@ describe('effect performance', () => {
       assert.deepStrictEqual(backend.of('showDesktop')[0].args, ['3']);
     });
 
+    it('a switch that resolves before any layout report still leaves the kernel on the target desktop', async () => {
+      const backend = new DesktopBackend();
+      const exec = new WindowKernelExecutor(backend, { headless: false });
+      exec.dispatch({
+        type: 'DesktopLayoutReported',
+        screens: [{ id: 's1', current: '1' }],
+        desktops: [{ id: '1', screen: 's1' }, { id: '2', screen: 's1' }],
+      });
+      assert.strictEqual(exec.getState().screens[0].current, '1');
+      assert.strictEqual(await exec.showDesktop('2'), true);
+      assert.strictEqual(exec.getState().screens[0].current, '2');
+    });
+
     it('under headless nothing is written, whatever the backend can do', async () => {
       const backend = new DesktopBackend();
       const exec = new WindowKernelExecutor(backend, { headless: true });

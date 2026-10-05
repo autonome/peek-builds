@@ -150,7 +150,21 @@ export class WindowKernelExecutor {
   async showDesktop(desktop: DesktopId): Promise<boolean> {
     if (!this.canShowDesktops() || !this.backend.showDesktop) return false;
     wmLog('effect-show-desktop', { desktop });
-    return this.backend.showDesktop(desktop);
+    const shown = await this.backend.showDesktop(desktop);
+    if (shown) this.noteDesktopShown(desktop);
+    return shown;
+  }
+
+  // The backend's switch resolves before its layout read lands, so until then the kernel still
+  // names the old desktop as current and rejects a raise as off-desktop. Record the switch now;
+  // the layout read that follows reports the same fact or corrects it.
+  private noteDesktopShown(desktop: DesktopId): void {
+    const { screens, desktops } = this.state;
+    const owner = desktops.find((d) => d.id === desktop)?.screen ?? null;
+    const screenId = owner ?? screens[0]?.id ?? null;
+    if (screenId === null) return;
+    if (screens.find((s) => s.id === screenId)?.current === desktop) return;
+    this.dispatch({ type: 'CurrentDesktopChanged', screen: screenId, desktop });
   }
 
   subscribe(listener: (state: State) => void): () => void {
