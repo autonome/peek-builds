@@ -3298,10 +3298,20 @@ export function registerTileIpcHandlers(): void {
         // consult the hybrid registry for the existence check.
         const hybrid = getHybridWindow(args.id);
         if (!hybrid || hybrid.baseWin.isDestroyed()) {
+          wmLog('raise-requested', { via: 'tile:window:focus', id: args.id, result: 'not-found' });
           return { success: false, error: 'Window not found' };
         }
       }
       const machineId = getWindowIdFor(args.id);
+      // Request-side log: pairs with the executor's `raise-dropped` and the
+      // backend's `raise-realized`, so a raise the kernel declines (e.g. a
+      // window on another desktop) shows up as a request with neither — no
+      // raise outcome depends on renderer console output.
+      wmLog('raise-requested', {
+        via: 'tile:window:focus',
+        id: args.id,
+        machineId: machineId === undefined || machineId === null ? null : String(machineId),
+      });
       if (machineId != null) {
         kernelShowRequested(machineId, true);
       }
