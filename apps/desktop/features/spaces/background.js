@@ -545,8 +545,15 @@ async function enterWorkspace(tag, spaceName) {
 // `open-registry-set … role=signal` + `show-outcome`, the raise as
 // `raise-requested … named=true` → `space-desktop-gate` (the target
 // verdict) → `raise-named-settled`. An `open space` with NO
-// `raise-requested` line means no signal window existed for the target —
-// this map is renderer state and empties on an app relaunch.
+// `raise-requested` line means no signal window existed for the target.
+//
+// After an app relaunch no signal window exists for any space — windows die
+// with the process, and session saves exclude the `signal` role
+// (`session-projection.ts serializeSession`), so a restore never recreates
+// one. The first open of each space after a relaunch therefore opens its
+// windows on whichever desktop the user is on, and the switch re-arms once
+// the space is next left. This is not a choice this map could make
+// differently: there is nothing to rediscover.
 const signalWindows = new Map(); // spaceId -> window id
 
 async function closeSignalWindow(spaceId) {

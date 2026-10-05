@@ -495,9 +495,13 @@ are in the tree; what remains to reach reviewable shape:
   row captures them; stale 2x2 windows restore as ordinary windows until
   this lands);
 - sweep the spike's remnants: `[ext:spaces]` console logging that never
-  reaches `main.log`, the signal-window map's behaviour across app
-  relaunches (the map is renderer state and empties on boot, so the first
-  entry after a relaunch never switches — decide whether to persist or
-  accept), and the E2-noted residual unknown (activation drop treated as a
-  hard rule);
+  reaches `main.log` (done — the success-path lines are removed and the
+  `main.log` signatures documented at the `signalWindows` map), and the
+  E2-noted residual unknown (activation drop treated as a hard rule);
+- relaunch behaviour, settled as a fact rather than a choice: after an app
+  relaunch no signal window exists for any space — windows die with the
+  process, and session saves exclude the `signal` role, so a restore never
+  recreates one. The first open of each space after a relaunch opens its
+  windows where the user is, and the switch re-arms once the space is next
+  left. Rediscovery was considered and has nothing to rediscover;
 - re-run the relevant suites and take the branch through review/landing.
