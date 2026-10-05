@@ -246,6 +246,8 @@ const READ_ALLOWLIST = [
     why: 'the `focused` field of the tile:window:info response — reporting a window\'s current state back to a tile that asked. No branch' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'isFocusable', count: 1, kind: 'reported',
     why: 'the last-resort candidate filter in tile:theme:setWindowColorScheme, reached only when neither an explicit windowId nor the machine front resolves (headless). It picks a THEME target, not window behaviour — nothing about show/focus/stacking changes. Weakest "reported" claim on this list: if the decision class ever widens, this is the first entry to re-examine (the machine already knows which windows are satellites)' },
+  { file: 'apps/desktop/main/windows.ts', call: 'isFocused', count: 1, kind: 'reported',
+    why: 'the `focused` field of the wmLog esc-input line in the before-input-event Escape handler — diagnostic output only (destroyed-guarded); the escape decision itself is taken downstream by the machine. No branch' },
   { file: 'apps/desktop/main/entry.ts', call: 'isFocused', count: 1, kind: 'reported',
     why: 'the Cmd+W ("Close Window") menu handler\'s DEVTOOLS guard: wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused()). A detached devtools window is not a machine window, so the machine cannot know it holds OS focus — this read exists precisely because the fact is outside the machine\'s model (isDevToolsFocused() alone returns false in Electron 40 when devtools is OS-focused, hence the !isFocused() half). Accepted: the target of the close is still resolved by the machine front, this only detects "the keystroke went to devtools"' },
 
