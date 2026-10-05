@@ -816,17 +816,19 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * Raise a window to the front. Requires `window.manage` (or
-     * trustedBuiltin). `opts.named` declares the caller names this very
-     * window as where the user wants to be, so the raise may take the user
+     * trustedBuiltin). `opts.named` declares the caller names this window
+     * as where the user wants to be, so the raise may take the user
      * to the window's virtual desktop (plain focus stays held to the
      * current one); the call then resolves only after the window manager
      * has read the resulting desktop switch, so windows opened next land
-     * on the switched-to desktop.
+     * on the switched-to desktop. With `named` + `snapshotKey`, `id` may be
+     * null: the raised window is the recorded target desktop's own marker
+     * (main-side `desktop-marker-manager.ts`), so no caller window exists.
      */
-    focus: (id: number, opts?: { named?: boolean; snapshotKey?: string }) => {
+    focus: (id: number | null, opts?: { named?: boolean; snapshotKey?: string }) => {
       return ipcRenderer.invoke('tile:window:focus', {
         token: tileToken,
-        id,
+        ...(typeof id === 'number' ? { id } : {}),
         ...(opts?.named === true ? { named: true } : {}),
         ...(typeof opts?.snapshotKey === 'string' && opts.snapshotKey ? { snapshotKey: opts.snapshotKey } : {}),
       });

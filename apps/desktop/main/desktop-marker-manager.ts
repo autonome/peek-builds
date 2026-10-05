@@ -13,11 +13,13 @@
  * - raised on space entry: the `tile:window:focus` named branch
  *   (tile-ipc.ts) resolves the TARGET desktop's marker via
  *   `planSpaceMarkerRaise` and raises it — markers are never closed on space
- *   entry, unlike the per-space signal windows they replace
- *   (features/spaces/background.js).
+ *   entry; they replaced the per-space signal windows the spaces feature
+ *   used to open and close around each switch (removed from
+ *   features/spaces/background.js, which now only issues the keyed raise —
+ *   `switchToSpaceDesktop()`).
  *
- * Markers load `peek://spaces/signal.html` with the same window options as
- * the per-space lifecycle used (role `signal` keeps them out of session
+ * Markers load `peek://spaces/signal.html` with the window options the
+ * per-space lifecycle used (role `signal` keeps them out of session
  * saves — session-projection.ts serializeSession; signal.html, never the
  * home UI's URL, which collided with URL-keyed selectors, see `3818282e`).
  *

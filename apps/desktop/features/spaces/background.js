@@ -480,9 +480,8 @@ async function enterWorkspace(tag, spaceName) {
   // declareActiveWorkspaceForNewWindows()).
   await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
 
-  await raiseSignalWindow(tag.id);
+  await switchToSpaceDesktop(tag.id);
   const restoreResult = await api.session.restoreWorkspaceSnapshot(workspaceSnapshotKey(tag.id));
-  await closeSignalWindow(tag.id);
   // `restored` counts the windows that actually opened — not `total`, the
   // number the snapshot asked for, which is set before any open is attempted.
   // A workspace whose saved windows all failed to open has nothing on screen
@@ -535,77 +534,26 @@ async function enterWorkspace(tag, spaceName) {
  * badge intact — from the saved workspace row on re-entry (see
  * `enterWorkspace()`).
  */
-// One tiny window per space, left on the desktop the user was on when
-// leaving it and kept until the space is entered again: the desktop anchor
-// that lets re-entering the space switch macOS back there by raising it
-// (docs/design/space-desktop-return-plan.md). Raises are reads-only safe —
-// no window-server write exists anywhere on this path.
+// Entering a space may switch macOS to the desktop its windows were saved
+// on. The mechanism is main-side: the workspace's snapshot key hands the
+// main process the space's recorded per-window desktops; it picks the
+// target and raises that DESKTOP's own persistent marker window
+// (`main/desktop-marker-manager.ts`, one per visited desktop —
+// docs/design/space-desktop-return-plan.md). Raises are reads-only safe —
+// no window-server write exists anywhere on this path. The call resolves
+// after the window manager has read the resulting switch (or its bounded
+// wait passes), so the restore that follows opens the space's windows on
+// the switched-to desktop — no fixed sleep.
 //
-// Diagnostics live in main.log, not here: the open is visible as
-// `open-registry-set … role=signal` + `show-outcome`, the raise as
-// `raise-requested … named=true` → `space-desktop-gate` (the target
-// verdict) → `raise-named-settled`. An `open space` with NO
-// `raise-requested` line means no signal window existed for the target.
-//
-// After an app relaunch no signal window exists for any space — windows die
-// with the process, and session saves exclude the `signal` role
-// (`session-projection.ts serializeSession`), so a restore never recreates
-// one. The first open of each space after a relaunch therefore opens its
-// windows on whichever desktop the user is on, and the switch re-arms once
-// the space is next left. This is not a choice this map could make
-// differently: there is nothing to rediscover.
-const signalWindows = new Map(); // spaceId -> window id
-
-async function closeSignalWindow(spaceId) {
-  const id = signalWindows.get(spaceId);
-  signalWindows.delete(spaceId);
-  if (id == null) return;
+// Diagnostics live in main.log, not here: `raise-requested … named=true` →
+// `space-desktop-gate` (the target verdict: `raise`, `skip-no-target`, or
+// `skip-no-marker` when the target desktop has not been visited since
+// launch) → `raise-named-settled`.
+async function switchToSpaceDesktop(spaceId) {
   try {
-    await api.window.close(id);
-  } catch {
-  }
-}
-
-async function openSignalWindow(spaceId) {
-  await closeSignalWindow(spaceId);
-  try {
-    // signal.html, never home.html: a marker carrying the home UI's URL
-    // matched every "the spaces home window" selector, count and page pick
-    // — in specs and in any URL-keyed tooling — and so stood in for the
-    // real home window (the gate caught nine such collisions at once).
-    const result = await api.window.open('peek://spaces/signal.html', {
-      role: 'signal',
-      width: 2,
-      height: 2,
-      x: 0,
-      y: 0,
-      transparent: true,
-      focusable: true,
-      skipTaskbar: true,
-      show: true,
-    });
-    if (result?.id != null) signalWindows.set(spaceId, result.id);
+    await api.window.focus(null, { named: true, snapshotKey: workspaceSnapshotKey(spaceId) });
   } catch (err) {
-    console.error('[ext:spaces] signal-window-open failed:', err);
-  }
-}
-
-async function raiseSignalWindow(spaceId) {
-  const id = signalWindows.get(spaceId);
-  if (id == null) return;
-  try {
-    // A named raise: entering the space names its signal window as where
-    // the user wants to be, so macOS may switch to its desktop. The call
-    // resolves after the window manager has read the switch (or its
-    // bounded wait passes), so the restore that follows opens the space's
-    // windows on the switched-to desktop — no fixed sleep. The snapshot
-    // key hands the main process the space's recorded per-window desktops:
-    // they, not the signal window's own position, decide the target, and
-    // the raise is skipped when the two disagree (`[wm]
-    // space-desktop-gate` logs the verdict).
-    await api.window.focus(id, { named: true, snapshotKey: workspaceSnapshotKey(spaceId) });
-  } catch (err) {
-    console.error('[ext:spaces] signal-window-raise failed:', err);
+    console.error('[ext:spaces] space-desktop-switch failed:', err);
   }
 }
 
@@ -617,8 +565,6 @@ async function closeCurrentWorkspaceWindows() {
   } catch (err) {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
-
-  await openSignalWindow(activeSpaceId);
 
   const listResult = await api.window.list();
   if (!listResult?.success || !Array.isArray(listResult.windows)) return;

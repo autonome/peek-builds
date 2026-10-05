@@ -3270,9 +3270,12 @@ export function registerTileIpcHandlers(): void {
   // instances.
   registerTileIpc('tile:window:focus', { mode: 'handle' }, async (event, args: {
     token: string;
-    id: number;
-    // The caller names this very window as where the user wants to be (a
-    // space's own window on entry), so the raise may take the user to its
+    // Optional when `named` and `snapshotKey` are both present: a keyed
+    // raise targets the snapshot's desktop marker, so no caller window is
+    // needed. Required for every other mode.
+    id?: number;
+    // The caller names this window as where the user wants to be (a
+    // space on entry), so the raise may take the user to its
     // desktop — the same privilege a switcher pick carries
     // (window-kernel.ts FocusRequester `named`). Plain focus stays held to
     // the current desktop.
@@ -3280,7 +3283,7 @@ export function registerTileIpcHandlers(): void {
     // With `named`, the workspace snapshot key whose recorded per-window
     // desktops decide WHERE the user should be taken. The raised window is
     // then the TARGET desktop's own marker (`desktop-markers.ts
-    // planSpaceMarkerRaise`), not `args.id`: a marker belongs to its desktop
+    // planSpaceMarkerRaise`): a marker belongs to its desktop
     // by construction, so raising it always reaches the right place. The
     // raise is skipped — no switch — when the rule yields no target or the
     // target desktop has no marker (not visited since launch).
@@ -3294,7 +3297,9 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      if (typeof args.id !== 'number') {
+      const keyed = args.named === true
+        && typeof args.snapshotKey === 'string' && !!args.snapshotKey;
+      if (typeof args.id !== 'number' && !keyed) {
         return { success: false, error: 'Window ID is required' };
       }
       // Route the raise through the machine (§5 step 8e): one
@@ -3306,96 +3311,101 @@ export function registerTileIpcHandlers(): void {
       // {focused:true}, so the machine's `front` intent is recorded in both
       // modes and the closing front assertion drives the raise plus the
       // first-responder half (FOCUS_CONTENT for page-hosts).
-      const win = getLiveWindow(args.id);
-      if (!win) {
-        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow;
-        // consult the hybrid registry for the existence check.
-        const hybrid = getHybridWindow(args.id);
-        if (!hybrid || hybrid.baseWin.isDestroyed()) {
-          wmLog('raise-requested', { via: 'tile:window:focus', id: args.id, result: 'not-found' });
-          return { success: false, error: 'Window not found' };
+      if (typeof args.id === 'number') {
+        const win = getLiveWindow(args.id);
+        if (!win) {
+          // Hybrid page-host (BaseWindow) — invisible to getLiveWindow;
+          // consult the hybrid registry for the existence check.
+          const hybrid = getHybridWindow(args.id);
+          if (!hybrid || hybrid.baseWin.isDestroyed()) {
+            wmLog('raise-requested', { via: 'tile:window:focus', id: args.id, result: 'not-found' });
+            return { success: false, error: 'Window not found' };
+          }
         }
       }
-      const machineId = getWindowIdFor(args.id);
+      const machineId = typeof args.id === 'number' ? getWindowIdFor(args.id) : null;
       // Request-side log: pairs with the executor's `raise-dropped` and the
       // backend's `raise-realized`, so a raise the kernel declines (e.g. a
       // window on another desktop) shows up as a request with neither — no
       // raise outcome depends on renderer console output.
       wmLog('raise-requested', {
         via: 'tile:window:focus',
-        id: args.id,
+        id: typeof args.id === 'number' ? args.id : null,
         machineId: machineId === undefined || machineId === null ? null : String(machineId),
         ...(args.named === true ? { named: true } : {}),
       });
-      if (machineId != null) {
-        if (args.named === true) {
-          const executor = getKernelExecutorForApp();
-          // Desktop-choice gate (docs/design/space-desktop-return-plan.md,
-          // section 1.4): the snapshot's recorded desktops — not the caller's
-          // window — decide the target, and the window raised is the TARGET
-          // desktop's own marker (`desktop-marker-manager.ts`), which belongs
-          // there by construction. No target, or no marker on it (that
-          // desktop not visited since launch) → skip the raise entirely; the
-          // space opens on the current desktop instead.
-          let raiseMachineId = machineId;
-          if (typeof args.snapshotKey === 'string' && args.snapshotKey) {
-            const { getWorkspaceSnapshotDesktops } = await import('./session.js');
-            const { planSpaceMarkerRaise } = await import('./desktop-markers.js');
-            const { getDesktopMarkers } = await import('./desktop-marker-manager.js');
-            const state = executor.getState();
-            const current = state.screens[0]?.current ?? null;
-            const order = state.desktops.map((d) => d.id);
-            const recorded = getWorkspaceSnapshotDesktops(args.snapshotKey) ?? [];
-            const plan = planSpaceMarkerRaise(recorded, current, order, getDesktopMarkers());
-            wmLog('space-desktop-gate', {
-              key: args.snapshotKey,
-              current,
-              recorded: recorded.join(',') || 'none',
-              target: plan.target,
-              verdict: plan.verdict,
-            });
-            if (plan.verdict !== 'raise') {
-              // Nothing dispatched: nothing can switch desktops; the caller
-              // proceeds at once on the current desktop.
-              return { success: true };
-            }
-            const markerMachineId = getWindowIdFor(plan.marker);
-            if (markerMachineId == null) {
-              // The marker window exists but the machine does not know it —
-              // nothing raisable, same outcome as no marker.
-              wmLog('space-desktop-gate-unmapped-marker', { target: plan.target, window: plan.marker });
-              return { success: true };
-            }
-            raiseMachineId = markerMachineId;
-          }
-          // A named raise fired during the app's own activation succeeds as
-          // a raise, but macOS drops the desktop switch (live finding,
-          // docs/design/space-desktop-return-plan.md E2). Wait, bounded, for
-          // the app to be active before dispatching; dispatch anyway on
-          // timeout — the raise still lands, only the switch may not.
-          const activeDeadline = Date.now() + 1000;
-          while (!executor.getState().appActive && Date.now() < activeDeadline) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-          }
-          const appActiveAtDispatch = executor.getState().appActive;
-          const switchesBefore = executor.getState().desktopSwitchCount;
-          kernelShowRequested(raiseMachineId, true, { activation: 'named' });
-          // The OS switch notice trails the raise, and until the kernel's
-          // layout read covers it every window counts as off-desktop — so a
-          // caller about to open windows (space entry restores right after
-          // this) must not proceed before the read. Resolves on timeout too:
-          // no switch happens when the window is already on the current
-          // desktop.
-          const outcome = await executor.awaitDesktopSwitchRead(switchesBefore);
-          wmLog('raise-named-settled', {
-            id: args.id,
-            machineId: String(raiseMachineId),
-            appActiveAtDispatch,
-            outcome,
+      if (args.named === true) {
+        const executor = getKernelExecutorForApp();
+        // Desktop-choice gate (docs/design/space-desktop-return-plan.md,
+        // section 1.4): the snapshot's recorded desktops — not any caller
+        // window — decide the target, and the window raised is the TARGET
+        // desktop's own marker (`desktop-marker-manager.ts`), which belongs
+        // there by construction. No target, or no marker on it (that
+        // desktop not visited since launch) → skip the raise entirely; the
+        // space opens on the current desktop instead.
+        let raiseMachineId = machineId;
+        if (keyed && typeof args.snapshotKey === 'string') {
+          const { getWorkspaceSnapshotDesktops } = await import('./session.js');
+          const { planSpaceMarkerRaise } = await import('./desktop-markers.js');
+          const { getDesktopMarkers } = await import('./desktop-marker-manager.js');
+          const state = executor.getState();
+          const current = state.screens[0]?.current ?? null;
+          const order = state.desktops.map((d) => d.id);
+          const recorded = getWorkspaceSnapshotDesktops(args.snapshotKey) ?? [];
+          const plan = planSpaceMarkerRaise(recorded, current, order, getDesktopMarkers());
+          wmLog('space-desktop-gate', {
+            key: args.snapshotKey,
+            current,
+            recorded: recorded.join(',') || 'none',
+            target: plan.target,
+            verdict: plan.verdict,
           });
-        } else {
-          kernelShowRequested(machineId, true);
+          if (plan.verdict !== 'raise') {
+            // Nothing dispatched: nothing can switch desktops; the caller
+            // proceeds at once on the current desktop.
+            return { success: true };
+          }
+          const markerMachineId = getWindowIdFor(plan.marker);
+          if (markerMachineId == null) {
+            // The marker window exists but the machine does not know it —
+            // nothing raisable, same outcome as no marker.
+            wmLog('space-desktop-gate-unmapped-marker', { target: plan.target, window: plan.marker });
+            return { success: true };
+          }
+          raiseMachineId = markerMachineId;
         }
+        if (raiseMachineId == null) {
+          // Unkeyed named raise of a window the machine does not know —
+          // nothing raisable.
+          return { success: true };
+        }
+        // A named raise fired during the app's own activation succeeds as
+        // a raise, but macOS drops the desktop switch (live finding,
+        // docs/design/space-desktop-return-plan.md E2). Wait, bounded, for
+        // the app to be active before dispatching; dispatch anyway on
+        // timeout — the raise still lands, only the switch may not.
+        const activeDeadline = Date.now() + 1000;
+        while (!executor.getState().appActive && Date.now() < activeDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const appActiveAtDispatch = executor.getState().appActive;
+        const switchesBefore = executor.getState().desktopSwitchCount;
+        kernelShowRequested(raiseMachineId, true, { activation: 'named' });
+        // The OS switch notice trails the raise, and until the kernel's
+        // layout read covers it every window counts as off-desktop — so a
+        // caller about to open windows (space entry restores right after
+        // this) must not proceed before the read. Resolves on timeout too:
+        // no switch happens when the window is already on the current
+        // desktop.
+        const outcome = await executor.awaitDesktopSwitchRead(switchesBefore);
+        wmLog('raise-named-settled', {
+          id: typeof args.id === 'number' ? args.id : null,
+          machineId: String(raiseMachineId),
+          appActiveAtDispatch,
+          outcome,
+        });
+      } else if (machineId != null) {
+        kernelShowRequested(machineId, true);
       }
       return { success: true };
     } catch (err) {

@@ -518,9 +518,9 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       continue;
     }
 
-    // Skip signal-role windows: the tiny per-space marker a workspace leaves
-    // on its desktop so re-entering it can switch there by raising it
-    // (`features/spaces/background.js openSignalWindow()`). It is a desktop
+    // Skip signal-role windows: the tiny per-desktop marker left on each
+    // visited desktop so space entry can switch there by raising it
+    // (`desktop-marker-manager.ts`). It is a desktop
     // anchor, never session content — saved once under the default key
     // (which saves everything on screen), it restored as an ordinary 2x2
     // window on every boot (docs/design/space-desktop-return-plan.md, E5).
