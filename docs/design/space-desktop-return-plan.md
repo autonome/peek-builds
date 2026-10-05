@@ -49,8 +49,9 @@ request to an off-desktop window, and `pushRaise()` then emits `ShowDesktop`
 (`window-kernel-executor.ts`, `ShowDesktop` case) documents the design: a
 backend that cannot switch desktops "makes no port call, and **the raise takes
 the user to the window's desktop**" — it logs `effect-show-desktop` and lets
-the native raise do the switching. Whether macOS honours that is precisely
-what no run has yet tested.
+the native raise do the switching. Experiment E2 confirmed macOS honours
+that while the app is active, and drops the switch when the raise fires
+during the app's own activation — see E2's result.
 
 Today exactly one user-reachable path issues a named raise: the window
 switcher. `tile-ipc.ts` handler `tile:window:set-overlay-focus-target` arms the
@@ -122,9 +123,11 @@ anywhere else could not reach the target anyway). When the gate fails — the
 signal window sits elsewhere, or there is no signal window — no switch
 happens and the space opens on the current desktop, the safe behaviour.
 
-If experiment E2 fails, no raise-based mechanism exists at all and the
-handoff's fallback applies (remove the spike, land the useful commits, keep
-the safe behaviour: a space opens on whichever desktop the user is on).
+Experiment E2 passed for the active-app case (see its result), so the
+raise-based mechanism exists and the fallback (remove the spike, keep the
+safe behaviour) applies only if E3's wiring cannot be made to work. The
+E2-found constraint carries into E3: the raise must not fire during the
+app's own activation, or macOS drops the switch.
 
 ## 2. Code paths end to end
 
@@ -185,7 +188,9 @@ Each entry names the path and what it does with a window on another desktop.
   `showWindow()` → `performOsShow()` (logs `os-show`, then `show-outcome`
   with `desktopBefore`/`desktopAfter`/`onCurrentDesktop`, then triggers a
   desktop read). What AppKit does when these native calls land on a window
-  assigned to another Space is the untested OS behaviour.
+  assigned to another Space was settled by experiment E2: it switches to
+  that Space when the app is already active, and drops the switch when the
+  raise fires during the app's own activation.
 - `main/desktop-provider-mac.ts` — spawns the helper, reads `layout` and
   `placements`. Reads only; `placeWindow`/`showDesktop` return false without
   calling the helper. `probePlace` exists for a write test and must stay
@@ -301,6 +306,34 @@ never reach main.log.
   `sync-desktops-end` still shows the old current desktop.
   Variant (same sitting): repeat with Peek NOT the active app (click another
   app first, trigger the switcher by global shortcut) to cover dimension 5.
+  **Result: PASS when the app is active; the switch is dropped by macOS when
+  the raise fires during activation.** Three picks of wm-11
+  (`https://en.wikipedia.org`, dragged to kernel desktop 3), decided from
+  `main.log`:
+  - Active variant (Peek frontmost, pick at 08:31:21.731Z): PASS —
+    `effect-show-desktop desktop=3` + `raise-realized id=wm-11 …
+    intent=user`, then `sync-desktops-end trigger=space-changed` with
+    `switchesSeen` 0→1 at 08:31:22.355Z. macOS switched to the target
+    desktop (~0.6 s pick-to-switch).
+  - Inactive variant, first pick (Peek not active, 08:33:48.750Z): FAIL —
+    the same `effect-show-desktop` + `raise-realized` pair fired, with
+    `activation-decision kernelActive=false appFocusCalled=true` and
+    `app-did-become-active` following, but `switchesSeen` stayed at 4, no
+    `space-changed`, nothing visible happened.
+  - Inactive variant, immediate retry (08:33:54.480Z — Peek now active from
+    the first attempt's app activation): PASS — same pair with
+    `kernelActive=true`, `space-changed` with `switchesSeen` 4→5 at
+    08:33:54.891Z, switch and focus both landed.
+  Conclusion: **the native named raise is a working switch mechanism, but
+  only while the app is already active.** A raise fired during the app's own
+  activation succeeds as a raise (and the activation succeeds) yet macOS
+  drops the desktop switch. Consequences for E3's design: palette-driven
+  space entry always runs with Peek active, so the primary path needs no
+  change; an entry driven from the CLI or any background path must defer
+  the named raise until activation completes (candidate gate: dispatch the
+  raise only once the app-active report has landed — the backend's
+  `app-did-become-active` / the kernel's `appActive` — rather than
+  alongside the activation). E3 proceeds.
 
 - **E3 — named raise wired into space entry (only if E2 passes; code change,
   then one person-gesture).**
