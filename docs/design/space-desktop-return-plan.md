@@ -268,6 +268,19 @@ never reach main.log.
   already be green.
   Pass: effects as hypothesized. Fail: the 1.1 analysis is wrong — stop and
   re-read before any live run.
+  **Result: PASS, via existing coverage.** `window-kernel.test.ts` suite
+  "a focus the manager makes stays on the current desktop" already holds the
+  exact hypothesis: "a raise request without user intent for a window on
+  another desktop is not emitted and mints no token", "a raise request with
+  user intent for a window on another desktop is not emitted: user intent
+  does not name the window (rule 5)", "a switcher pick of a window on
+  another desktop asks for its desktop, then raises it with user intent and
+  a token" (asserts the `ShowDesktop` + `RaiseWindow {intent: 'user'}` pair
+  in order), and "a switcher pick of a window on the current desktop asks
+  for no desktop". All green against the built `dist/main/
+  window-kernel.test.js` (`--test-name-pattern 'another desktop'`: 10 pass,
+  0 fail; `'switcher pick'`: 2 pass, 0 fail). The 1.1 analysis stands; no
+  new test needed.
 
 - **E2 — does a native named raise switch desktops? (needs a person on a
   second desktop; the decisive experiment).**
