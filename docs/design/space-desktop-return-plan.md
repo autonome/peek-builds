@@ -598,13 +598,29 @@ Live findings on the launch desktop's marker (2026-10-07):
   later; the app's last-focused real window takes key and stays frontmost
   for the whole 3 s sample. A no-op eval against the app does not activate
   it, so the open itself is the trigger. `focusable: false` therefore does
-  not make a mint focus-safe. The arrival mint runs the same open, so a
-  first arrival on a desktop while another app is frontmost is expected to
-  pull Peek to the front (*unverified* for a real arrival).
+  not make a mint focus-safe.
 
-Still pending: a fix for the activating mint (above), the desktop-3 marker
-checks (they need one person-made first visit to the second desktop in a
-visible run), the empty-launch decision (every restored window held → no
+Live findings on the second desktop's marker (same day, first arrival by a
+swipe while a terminal was frontmost):
+
+- The arrival mint steals the front: `space-changed` → mint `os-show …
+  path=showInactive` 44 ms later → `app-did-become-active` 3 ms after
+  that. A front-app sampler saw Peek frontmost from the arrival until the
+  swipe back (about 1.6 s). With no real Peek window on that desktop, the
+  kernel's key holder became the marker itself (`space-changed … key=` the
+  marker on the swipe back) — the same state that, for a focusable
+  marker, made later page opens transient.
+- Visibility: same shape as the first desktop's marker — layer 0, alpha 1,
+  2x2 at (0,33), listed by the window server as off-screen while that
+  desktop is not shown; the accessibility list (current desktop only) does
+  not include it from the first desktop.
+- Not re-run: the switch-by-raise. The test space's saved row no longer
+  records any window on the second desktop (gate `recorded=none verdict=
+  skip-no-target`), so entering it opened on the current desktop. The earlier live
+  confirmation of the switch through a non-focusable marker's raise
+  stands, unrepeated.
+
+Still pending: a fix for the activating mint (above), the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
 re-run before review/landing.
 
