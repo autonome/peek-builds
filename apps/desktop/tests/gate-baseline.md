@@ -742,3 +742,29 @@ fresh failure of either as a flake, not a regression):
 |---|---|---|
 | `hybrid-close-two-hosts-hang.spec.ts` | closing a peek over two surviving page hosts stays within a sane transition bound | intermittent — did not fail in the `3818282e` gate |
 | `hybrid-show-activate.spec.ts` | overlay hides when the app resigns active, re-shows on become-active (R6) | intermittent focus flake — did not fail in the `3818282e` gate |
+
+### Intermittent failures from the `desktop-lazy-restore` and `move-to-space-scope` gates
+
+Full gates on the `desktop-lazy-restore` and `move-to-space-scope` branches, macOS arm64. The two
+runs matched apart from which `desktop` tests failed:
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 4028 | 0 | — |
+| node unit | 1103 | 0 | — |
+| desktop | 532–533 | 2 | 22 |
+| desktop-serial | 40 | 0 | — |
+| components | 66 | 0 | — |
+| editor | 91 | 0 | — |
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `hybrid-overlay.spec.ts` | a hybrid window becoming active while the app is INACTIVE must not reveal the chrome | intermittent — failed in both gates; already noted as intermittent in the paragraph before "Causes", but missing from the carried-forward table above |
+| `page-host-blocked-renderer.spec.ts` | alert: chrome attaches, open reports, navigate and close work | intermittent — failed in the `desktop-lazy-restore` gate only; passes alone |
+| `hybrid-overlay.spec.ts` | real switch between two hybrid windows still retargets (A → B) | intermittent — failed in the `move-to-space-scope` gate only; passes alone |
+
+The full intermittent set later gates are judged against is this table plus the two carried forward
+in the previous section (`hybrid-close-two-hosts-hang.spec.ts`, `hybrid-show-activate.spec.ts` R6).
+Treat a failure of any of them as a flake rather than a regression until a recording catches it on
+an unchanged tree twice. The INACTIVE case failed in two consecutive gates, but on different trees,
+so it stays intermittent.
