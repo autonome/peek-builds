@@ -632,10 +632,26 @@ activation), and the kernel never activates on a `ShowWindow` effect
 construct-time activation landing, not the kernel's show. Fix: a marker
 opens `show: false` and is then put on screen by a non-activating kernel
 show request (`desktop-markers.ts markerOpenOptions()` / `MARKER_SHOW`,
-used by `desktop-marker-manager.ts`). *Unverified live*: the re-run of the
-Finder-frontmost re-mint sample and a first-arrival swipe.
+used by `desktop-marker-manager.ts`).
 
-Still pending: live confirmation of that fix, the empty-launch decision (every restored window held → no
+Live check of that fix (2026-10-07, build of `ed961295`): PASS on both
+cases that failed before it.
+
+- Re-mint with Finder frontmost: closing the launch desktop's marker
+  re-minted it (`os-show … path=showInactive kernelActive=false` then
+  `marker-minted desktop=1 … shown=true` 6 ms later); Finder stayed
+  frontmost in all 30 samples over 4.5 s and no `app-did-become-active`
+  followed.
+- First arrival on the second desktop (a person's swipe there and back,
+  another app frontmost): `space-changed screensBefore=1:1 … appActive=false`
+  → mint `os-show … path=showInactive kernelActive=false` 95 ms later →
+  `marker-minted desktop=3 … shown=true`; the swipe back logged
+  `space-changed screensBefore=1:3 key=null appActive=false` — the marker
+  did not take kernel key. No `app-did-become-active` anywhere between
+  them, and a front-app sampler at 0.2 s saw no sample naming the build
+  across the whole swipe.
+
+Still pending: the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
 re-run before review/landing.
 
