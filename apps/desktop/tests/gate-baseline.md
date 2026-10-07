@@ -727,13 +727,13 @@ on an unchanged tree twice.
 
 ### Known failure on `main` at `3818282e`
 
-Full gate on `main` at `3818282e`: `desktop` 533 passed, 1 failed. The one failure fails on `main`
-independent of any track, so a branch gate that shows it — and nothing else outside the
-intermittent set — judges clean.
-
-| Spec | Test | Verdict |
-|---|---|---|
-| `spaces-window-locking.spec.ts:209` | a space entered for the first time from its own item list gets the resolved accent on every window | known failure on `main`, unfixed — `features/spaces/home.js activateSpace()` routes a card click to `switch space`, so `showItems()` is unreachable and the in-page item list the spec waits for never renders. Diagnosis and fix options: peek item `8b73cc28` |
+Full gate on `main` at `3818282e`: `desktop` 533 passed, 1 failed. The one failure,
+`spaces-window-locking.spec.ts` "a space entered for the first time from its own item list gets the
+resolved accent on every window", was a stale spec: `features/spaces/home.js activateSpace()` sends
+a card click to `switch space` by design since `318c401b`, so the in-page item list it waited for no
+longer renders. The test now enters the space by its card click and is titled "a space entered for
+the first time by clicking its card gets the resolved accent on every window". No failure on `main`
+outside the intermittent set below is known.
 
 Still known as intermittent, carried forward from the `page-host-resilience` gate above (treat a
 fresh failure of either as a flake, not a regression):

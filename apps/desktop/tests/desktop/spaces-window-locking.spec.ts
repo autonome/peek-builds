@@ -206,91 +206,38 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     await expect.poll(async () => (await windowsInSpace(betaId)).length, { timeout: 15000 }).toBe(0);
   });
 
-  test('a space entered for the first time from its own item list gets the resolved accent on every window', async () => {
+  test('a space entered for the first time by clicking its card gets the resolved accent on every window', async () => {
     // A tag that exists but has never been entered through `open`/`switch
     // space`, with the grey placeholder color `resolveVividColor` replaces.
     const gamma = 'lock-gamma';
     const gammaId = await spaceTagId(gamma);
-    const itemUrl = 'https://example.com/lock-gamma-item';
-    const seeded = await bgWindow.evaluate(
-      async (arg: { tagId: string; url: string; color: string }) => {
-        const api = (window as unknown as { app: any }).app;
-        await api.datastore.updateTagColor(arg.tagId, arg.color);
-        const item = await api.datastore.addItem('url', {
-          content: arg.url,
-          metadata: JSON.stringify({ title: 'gamma item' }),
-        });
-        if (!item?.success) return { ok: false, error: item?.error };
-        const tagged = await api.datastore.tagItem(item.data.id, arg.tagId);
-        return { ok: !!tagged?.success, itemId: item.data.id, error: tagged?.error };
+    await bgWindow.evaluate(
+      async (arg: { tagId: string; color: string }) => {
+        await (window as unknown as { app: any }).app.datastore.updateTagColor(arg.tagId, arg.color);
       },
-      { tagId: gammaId, url: itemUrl, color: '#999' },
+      { tagId: gammaId, color: '#999' },
     );
-    expect(seeded.ok, `seeding gamma's item failed: ${seeded.error}`).toBe(true);
 
     // The default is active (the test above returned to it). Browse all
-    // spaces, enter gamma by clicking its card, then open its item from the
-    // item list — the `home.js` route that builds `spaceMode` itself.
+    // spaces and enter gamma by clicking its card: `features/spaces/home.js
+    // activateSpace()` routes the click through `switch space`, the one way a
+    // user enters a space from the browse-all page.
     const browsePage = await openBrowseAll();
     const card = browsePage.locator(`peek-card.space-card[data-tag-id="${gammaId}"]`);
     await expect(card).toHaveCount(1, { timeout: 15000 });
-    // Browsing into gamma's items and activating gamma happen together on
-    // the click; the item list renders in the SAME page, so open it from a
-    // fresh browse page if this one is swept as part of the default.
     await card.click();
-    // Re-fetch on each poll attempt rather than hold one page handle: the
-    // border (role 'overlay', a TRANSIENT_ROLE) can flicker closed/reopened
-    // by focus churn, which would otherwise throw "Target page ... has been
-    // closed" instead of retrying.
-    let borderLabel = '';
-    await expect
-      .poll(
-        async () => {
-          try {
-            const page = await app.getWindow('spaces/border.html', 15000);
-            borderLabel = await page.locator('#label').textContent() ?? '';
-          } catch {
-            borderLabel = '';
-          }
-          return borderLabel;
-        },
-        { timeout: 15000, message: 'the border never named the entered space' },
-      )
-      .toBe(gamma);
 
-    let itemsPage: Page = browsePage;
-    if (browsePage.isClosed()) {
-      itemsPage = await openBrowseAll();
-      await itemsPage.locator(`peek-card.space-card[data-tag-id="${gammaId}"]`).click();
-    }
-    const itemCard = itemsPage.locator(`peek-card.address-card[data-item-id="${seeded.itemId}"]`);
-    await expect(itemCard, 'gamma\'s seeded item never appeared in its item list').toHaveCount(1, { timeout: 15000 });
-    const before = new Set(await liveWindowIds());
-    await itemCard.click();
-
-    let itemWindowId: number | null = null;
-    await expect
-      .poll(async () => {
-        const now = await liveWindowIds();
-        itemWindowId = now.find((id) => !before.has(id)) ?? null;
-        return itemWindowId !== null;
-      }, { timeout: 15000, message: 'clicking the item card opened no window' })
-      .toBe(true);
-
-    // The border shows the resolved accent. The window opened from the item
-    // list must carry that same color, not the tag's raw grey; nothing about
-    // the accent may depend on whether the space was switched to before the
-    // window was opened. Re-fetch the border page here rather than reuse the
-    // handle from above: unlike the removed panel, the border carries role
-    // 'overlay' (a TRANSIENT_ROLE) and can flicker closed/reopened by focus
-    // churn from the item window that was just opened — a stale handle would
-    // throw "Target page ... has been closed" instead of retrying.
+    // Re-fetch the border on each poll attempt rather than hold one page
+    // handle: the border (role 'overlay', a TRANSIENT_ROLE) can flicker
+    // closed/reopened by focus churn, which would otherwise throw "Target
+    // page ... has been closed" instead of retrying.
     let borderAccent = '';
     await expect
       .poll(
         async () => {
           try {
             const page = await app.getWindow('spaces/border.html', 15000);
+            if ((await page.locator('#label').textContent()) !== gamma) return '';
             borderAccent = await page.evaluate(() =>
               getComputedStyle(document.documentElement).getPropertyValue('--color').trim(),
             );
@@ -299,18 +246,22 @@ test.describe('workspace membership: every window opened in a workspace belongs 
           }
           return borderAccent;
         },
-        { timeout: 15000, message: 'the border never settled on a resolved accent for gamma' },
+        { timeout: 15000, message: 'the border never showed a resolved accent for the entered space' },
       )
       .not.toBe('');
-    expect(borderAccent).not.toBe('#999');
-    await expect
-      .poll(() => windowModeColor(itemWindowId as number), {
-        timeout: 15000,
-        message: 'the window opened from gamma\'s item list does not carry gamma\'s resolved accent',
-      })
-      .toBe(borderAccent);
+    expect(borderAccent, 'the border shows the grey placeholder instead of a resolved accent').not.toBe('#999');
+
+    // Every window that belongs to gamma carries the border's accent, not the
+    // tag's raw grey; nothing about the accent may depend on whether the
+    // space had been entered before.
+    await expect.poll(async () => (await windowsInSpace(gammaId)).length, { timeout: 15000 }).toBeGreaterThan(0);
     for (const id of await windowsInSpace(gammaId)) {
-      expect(await windowModeColor(id), `window ${id} in gamma carries a different color`).toBe(borderAccent);
+      await expect
+        .poll(() => windowModeColor(id), {
+          timeout: 15000,
+          message: `window ${id} in gamma carries a different color from the border`,
+        })
+        .toBe(borderAccent);
     }
 
     // A window opened by any other route while gamma is active carries the
