@@ -19,6 +19,25 @@
  * can import the real implementation.
  */
 import { chooseSpaceDesktopTarget } from './space-desktop-choice.js';
+import type { State } from './window-kernel.js';
+
+/** The slice of the window kernel executor the marker sync listens to. */
+export interface MarkerSyncSource {
+  subscribe(listener: (state: State) => void): unknown;
+  getState(): State;
+}
+
+/**
+ * Wire a marker sync pass to the kernel: once on every notification, and
+ * once now against the current state (the launch desktop — the kernel's
+ * first layout read may already have landed, so no notification is coming).
+ */
+export function subscribeMarkerSync(source: MarkerSyncSource, sync: (state: State) => void): void {
+  source.subscribe((state) => {
+    sync(state);
+  });
+  sync(source.getState());
+}
 
 /**
  * Whether arriving on `current` should mint a marker there: a current

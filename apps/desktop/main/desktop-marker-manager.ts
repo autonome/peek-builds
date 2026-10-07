@@ -32,7 +32,14 @@
  * even under the test harness, so "no desktop provider in tests" is NOT a
  * safety net; the headless gate is.)
  */
-import { shouldMintMarker, markersToSweep, markerOpenOptions, MARKER_SHOW, MARKER_URL } from './desktop-markers.js';
+import {
+  shouldMintMarker,
+  markersToSweep,
+  markerOpenOptions,
+  subscribeMarkerSync,
+  MARKER_SHOW,
+  MARKER_URL,
+} from './desktop-markers.js';
 import { getKernelExecutorForApp } from './window-machine.js';
 import type { State } from './window-kernel.js';
 import { invokeWindowOpen } from './ipc.js';
@@ -90,11 +97,9 @@ export function installDesktopMarkerManager(): void {
   // interleaved with transient sweeps in focus-sensitive specs.
   if (isHeadless()) return;
   _installed = true;
-  const executor = getKernelExecutorForApp();
-  executor.subscribe((state) => {
+  subscribeMarkerSync(getKernelExecutorForApp(), (state) => {
     void syncMarkers(state);
   });
-  void syncMarkers(executor.getState());
 }
 
 /**
