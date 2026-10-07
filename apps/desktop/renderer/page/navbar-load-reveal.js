@@ -21,5 +21,8 @@ export const SHOWN_BY_USER = 'user';
  * @returns {{ action: 'show'|'hide'|'none', shownBy: string|null }}
  */
 export function navbarRevealOnLoad(shownBy, loading) {
+  if (shownBy === SHOWN_BY_USER) return { action: 'none', shownBy };
+  if (loading) return { action: 'show', shownBy: SHOWN_BY_LOAD };
+  if (shownBy === SHOWN_BY_LOAD) return { action: 'hide', shownBy: null };
   return { action: 'none', shownBy };
 }

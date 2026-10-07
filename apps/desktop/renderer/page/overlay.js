@@ -83,6 +83,7 @@
 import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost } from './page-widgets.js';
+import { navbarRevealOnLoad, SHOWN_BY_USER } from './navbar-load-reveal.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -317,6 +318,7 @@ function clearChrome() {
   navbar.loading = false;
   navbar.pageTitle = '';
   navbar.favicon = '';
+  navbarShownBy = null;
   navbar.classList.remove('visible');
   document.body.classList.remove('panels-visible');
   document.body.classList.add('no-active');
@@ -383,6 +385,11 @@ api.subscribe('page-overlay:active', (msg) => {
   navbar.loading = false;
   hideFindBar();
   paintFromSnapshot(msg);
+  // A freshly opened page is usually still loading when the chrome reaches it
+  // (its load-start was published before it became the active window), so the
+  // handoff's loading state drives the on-load reveal too. A switch to a window
+  // that is not loading takes down a reveal the previous window's load held.
+  applyLoadReveal(!!msg.loading);
   // Recover any request main still holds pending for this window that this
   // renderer never received — the publish predates our subscription, or a
   // previous overlay renderer got it and this one started empty. Purely
@@ -425,6 +432,7 @@ api.subscribe('page:favicon', (msg) => {
 api.subscribe('page:loading', (msg) => {
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
+  applyLoadReveal(!!msg.loading);
 });
 
 api.subscribe('page:nav-state', (msg) => {
@@ -471,14 +479,32 @@ navbar.addEventListener('dismiss',() => { hideNavbar(); });
 
 // ── Navbar show/hide (trigger-zone hover), mirrors page.js behavior ───────────
 let hideTimer = null;
+// Who holds the navbar visible: the active page's load (navbar-load-reveal.js
+// SHOWN_BY_LOAD), the user (SHOWN_BY_USER), or null while it is hidden. Only a
+// load-held navbar hides when the load settles.
+let navbarShownBy = null;
 function cancelHide() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   // E2E-only deterministic signal: no hide is pending (consumed by the
   // hybrid-overlay test bridge's moveOffChromeSchedulesHide). No-op in prod.
   window.__overlayHidePending = false;
 }
+/** A user reveal (hover, Cmd+L, panel hover): the bar stays until they leave. */
 function showNavbar() {
   if (activeWindowId == null) return;
+  revealNavbar();
+  navbarShownBy = SHOWN_BY_USER;
+}
+/** Show the bar on the active page's load and hide it once that load settles,
+ *  unless the user is holding it (navbar-load-reveal.js). */
+function applyLoadReveal(loading) {
+  if (activeWindowId == null) return;
+  const { action, shownBy } = navbarRevealOnLoad(navbarShownBy, loading);
+  if (action === 'show') revealNavbar();
+  else if (action === 'hide') hideNavbar();
+  navbarShownBy = shownBy;
+}
+function revealNavbar() {
   cancelHide();
   navbar.classList.add('visible');
   // P1.4b-3: arm the drag-zone (window move) only while the chrome is visible.
@@ -491,6 +517,7 @@ function showNavbar() {
   updateOverlayPositions();
 }
 function hideNavbar() {
+  navbarShownBy = null;
   navbar.classList.remove('visible');
   document.body.classList.remove('chrome-visible');
   document.body.classList.remove('panels-visible');
