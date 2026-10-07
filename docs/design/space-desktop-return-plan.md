@@ -574,12 +574,39 @@ which closed the follow-ups and superseded two spike-era conclusions:
   desktop already visited this run — its marker exists — and a never-visited
   target logs `skip-no-marker`, opening the space where the user is.
 
-Still pending: live verification of the hold/release and marker
-mint/sweep/raise paths on real desktops (neither has run under a real
-desktop provider; the suites run with no current-desktop read, so no marker
-is ever minted under them), the empty-launch decision (every restored window
-held → no window at all until the first swipe; currently accepted), and the
-suite re-run before review/landing.
+Live runs on real desktops have confirmed the hold/release round trip
+(relaunch holds the second desktop's window, the first arrival there opens
+it, a quit re-saves it) and the space-entry switch through a raise of a
+NON-focusable marker. Markers never mint in headless runs
+(`installDesktopMarkerManager()` returns on `isHeadless()`), so no suite
+exercises them.
+
+Live findings on the launch desktop's marker (2026-10-07):
+
+- Visibility: the marker is an ordinary window to the window server —
+  layer 0 (normal), alpha 1, on screen, 2x2 at (0,33) (pushed below the
+  menu bar), titled "space marker". The accessibility tree lists it as an
+  `AXWindow` with subrole `AXDialog` (the app's real windows are
+  `AXStandardWindow`). Whether Mission Control and window cycling (Cmd+\`)
+  present it is *unverified*; a layer-0 on-screen window is normally
+  eligible for Mission Control, and a window that cannot become key is
+  normally skipped by Cmd+\`.
+- Focus theft: a bare mint ACTIVATES the app. With Finder frontmost, a
+  marker re-mint (and, as a control, a fresh open of the same non-focusable
+  2x2 `peek://spaces/signal.html` window with nothing closed) logs
+  `os-show … path=showInactive` and then `app-did-become-active` about 5 ms
+  later; the app's last-focused real window takes key and stays frontmost
+  for the whole 3 s sample. A no-op eval against the app does not activate
+  it, so the open itself is the trigger. `focusable: false` therefore does
+  not make a mint focus-safe. The arrival mint runs the same open, so a
+  first arrival on a desktop while another app is frontmost is expected to
+  pull Peek to the front (*unverified* for a real arrival).
+
+Still pending: a fix for the activating mint (above), the desktop-3 marker
+checks (they need one person-made first visit to the second desktop in a
+visible run), the empty-launch decision (every restored window held → no
+window at all until the first swipe; currently accepted), and the suite
+re-run before review/landing.
 
 The marker window's URL, first kept as `home.html?signal=1` and then
 changed: carrying the home UI's URL made the marker match every selector,
