@@ -18,6 +18,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { waitOverlayReady } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -57,6 +58,23 @@ async function modeSpaceId(id: number): Promise<string | null> {
     const r = await (window as unknown as { app: any }).app.context.get('mode', wid);
     return (r?.data?.metadata?.spaceId ?? null) as string | null;
   }, id);
+}
+
+/** Make a page host the one the shared chrome overlay frames. */
+async function setActiveHost(id: number): Promise<void> {
+  const ok = await app.evaluateMain!(
+    ((_e: unknown, wid: number) =>
+      (globalThis as any).__peekHybridOverlayTest.setActive(wid)) as any,
+    id,
+  );
+  expect(ok, `could not make window ${id} the active page host`).toBe(true);
+}
+
+/** The space name the page-host chrome's SPACE widget shows, or null when it shows none. */
+async function spaceWidgetText(): Promise<string | null> {
+  const overlay = app.windows().find((p) => !p.isClosed() && p.url().includes('page/overlay.html'));
+  if (!overlay) return null;
+  return overlay.evaluate(() => document.querySelector('.space-mode-name')?.textContent ?? null);
 }
 
 async function tagId(name: string): Promise<string> {
@@ -127,6 +145,12 @@ test.describe('move to space scope @desktop', () => {
       expect(await modeSpaceId(id), `window ${id} is not in the default workspace`).toBe(defaultId);
     }
 
+    // Before the move the shared page-host chrome's SPACE widget names the
+    // default space on a page in it — proves the widget read below works.
+    await setActiveHost(ids[0]);
+    await waitOverlayReady(app);
+    await expect.poll(() => spaceWidgetText(), { timeout: 10000 }).toBe('default');
+
     // Focus the middle page and move it.
     const movedId = ids[1];
     await bgWindow.evaluate(async (id: number) => {
@@ -147,6 +171,17 @@ test.describe('move to space scope @desktop', () => {
       expect(await windowExists(id), `window ${id} was closed by moving a different window`).toBe(true);
       expect(await modeSpaceId(id), `window ${id} changed workspace when a different window moved`).toBe(defaultId);
     }
+
+    // Chrome: the page-host chrome's SPACE widget on a page that stayed must
+    // still name the default space, not the target.
+    await setActiveHost(ids[0]);
+    await waitOverlayReady(app);
+    await expect
+      .poll(() => spaceWidgetText(), {
+        timeout: 10000,
+        message: 'the SPACE widget on a page that was not moved names the wrong space',
+      })
+      .toBe('default');
 
     // Saved row: the target workspace holds the moved page and nothing else.
     const info = await bgWindow.evaluate(
