@@ -587,10 +587,8 @@ Live findings on the launch desktop's marker (2026-10-07):
   layer 0 (normal), alpha 1, on screen, 2x2 at (0,33) (pushed below the
   menu bar), titled "space marker". The accessibility tree lists it as an
   `AXWindow` with subrole `AXDialog` (the app's real windows are
-  `AXStandardWindow`). Whether Mission Control and window cycling (Cmd+\`)
-  present it is *unverified*; a layer-0 on-screen window is normally
-  eligible for Mission Control, and a window that cannot become key is
-  normally skipped by Cmd+\`.
+  `AXStandardWindow`). Window cycling (Cmd+\`) skips it and Mission Control
+  shows no visible tile for it — see the `close space` live check below.
 - Focus theft: a bare mint ACTIVATES the app. With Finder frontmost, a
   marker re-mint (and, as a control, a fresh open of the same non-focusable
   2x2 `peek://spaces/signal.html` window with nothing closed) logs
@@ -695,6 +693,11 @@ desktop=3`).
   screensBefore=1:3` 383 ms later → `raise-named-settled machineId=wm-7 …
   outcome=read` (wm-7 is the first desktop's marker). The default row's three
   windows then showed with `desktopBefore=1 desktopAfter=1`.
+- Window cycling and Mission Control, same run: Cmd+\` moved world focus
+  through the three page windows (`focus-cause-taken … kind=world` for
+  wm-15, wm-16, wm-14) and never to either marker (wm-7, wm-10). No marker
+  was visible in Mission Control by eye; a 2x2 window may simply be too small
+  to see there, so this rules out a visible tile, not the window's presence.
 
 Still pending: the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
