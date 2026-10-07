@@ -50,16 +50,17 @@ export function diffBlocks(currentIds, nextItems) {
  * @param {{open: boolean}} block `open`: its inline editor is open
  * @param {'changed'|'left'|'deleted'} change `changed`: the item is still in the
  *   query with new data; `left`: retagged out of the query; `deleted`: gone
- * @returns {'update'|'keep-editor'|'freeze-fade'|'freeze-fade-on-close'|'none'}
+ * @returns {'update'|'keep-editor'|'freeze-fade'|'freeze-fade-on-close'|'drop-edit-freeze-fade'|'none'}
  *   `keep-editor`: the open editor keeps its text, the stored version shows once
  *   it is closed; `freeze-fade-on-close`: the open editor stays until closed, then
- *   the block fades (the pending text is written first, unless deleted)
+ *   the block fades (the pending text is written first);
+ *   `drop-edit-freeze-fade`: the item is gone, so the open editor closes now
+ *   without writing its pending text and the block freezes and fades at once
  */
 export function liveAction(block, change) {
   if (change === 'changed') return block.open ? 'keep-editor' : 'update';
-  if (change === 'left' || change === 'deleted') {
-    return block.open ? 'freeze-fade-on-close' : 'freeze-fade';
-  }
+  if (change === 'deleted') return block.open ? 'drop-edit-freeze-fade' : 'freeze-fade';
+  if (change === 'left') return block.open ? 'freeze-fade-on-close' : 'freeze-fade';
   return 'none';
 }
 

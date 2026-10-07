@@ -584,18 +584,30 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     await rulesCache.refresh();
     const openId = inline?.isOpen() ? shown[inline.openIndex()]?.id : undefined;
     if (inline?.isOpen()) {
-      // The open block keeps its text and the document stays as it is until the
-      // editor closes; the held result is applied then.
+      // An open block whose item left the query: deleted items freeze and fade at
+      // once; retagged-out ones (and changed ones) keep the document as it is until
+      // the editor closes, and the held result is applied then.
       const stillThere = result.items.some(item => item.id === openId);
-      const action = liveAction({ open: true }, stillThere ? 'changed' : 'left');
+      let change = 'changed';
+      if (!stillThere) {
+        change = 'left';
+        if (openId) {
+          try {
+            const res = await api.datastore.getItem(openId);
+            if (!res?.success || !res.data || res.data.deletedAt) change = 'deleted';
+          } catch { /* unknown: treat as left */ }
+        }
+      }
+      const action = liveAction({ open: true }, change);
       if (action === 'keep-editor' || action === 'freeze-fade-on-close') {
         pending = result;
-        if (openId && !stillThere) {
-          api.datastore.getItem(openId).then((res) => {
-            if (!res?.success || !res.data || res.data.deletedAt) deletedIds.add(openId);
-          }).catch(() => {});
-        }
         return;
+      }
+      if (action === 'drop-edit-freeze-fade') {
+        // The rebuild below closes the editor; marking the item deleted makes that
+        // close drop the pending autosave instead of writing to a deleted item.
+        deletedIds.add(openId);
+        pending = null;
       }
     }
 
@@ -622,8 +634,9 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         since,
         index,
         timer: setTimeout(() => finishLeaving(id), LEAVE_MS),
-        deleted: false,
+        deleted: deletedIds.has(id),
       });
+      if (deletedIds.has(id)) continue;
       // A deleted item gets the red slide-out instead of the plain fade.
       api.datastore.getItem(id).then((res) => {
         const entry = leaving.get(id);
