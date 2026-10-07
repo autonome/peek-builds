@@ -52,7 +52,10 @@ test('liveAction: an item that left or was deleted fades, after the editor close
   assert.equal(liveAction({ open: false }, 'left'), 'freeze-fade');
   assert.equal(liveAction({ open: false }, 'deleted'), 'freeze-fade');
   assert.equal(liveAction({ open: true }, 'left'), 'freeze-fade-on-close');
-  assert.equal(liveAction({ open: true }, 'deleted'), 'freeze-fade-on-close');
+});
+
+test('liveAction: a deleted item with its editor open closes the editor without saving and fades at once', () => {
+  assert.equal(liveAction({ open: true }, 'deleted'), 'drop-edit-freeze-fade');
 });
 
 test('liveAction: an unknown change does nothing', () => {
