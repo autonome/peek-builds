@@ -651,6 +651,34 @@ cases that failed before it.
   them, and a front-app sampler at 0.2 s saw no sample naming the build
   across the whole swipe.
 
+Re-check of the switch-by-raise with hidden-opening markers (2026-10-07,
+build of `b6eb0bf2`, profile holding space `alpha`): PASS for the switch;
+the switch back on `close space` was not exercised.
+
+- Setup: a page opened inside `alpha` on the second desktop after a
+  person's swipe there (opened from the core background page so it is a
+  top-level content window), and `alpha`'s row saved with only that page,
+  `"desktop":"3"`. A page opened from the Spaces home window instead becomes
+  that window's `child-content` (`ipc.ts` treats a `workspace`-role opener
+  as a real parent) and closes with it.
+- `open space alpha` from the first desktop:
+  `space-desktop-gate … current=1 recorded=3 target=3 verdict=raise` →
+  `effect-show-desktop desktop=3` → `space-changed screensBefore=1:1` 438 ms
+  later → `raise-named-settled machineId=wm-13 … outcome=read`; the restore
+  then opened the page on the arrival desktop (`show-outcome … desktopAfter=3`,
+  saved again with `desktop=3`).
+- The raise activated the app (`activation-decision id=wm-13 intent=user …
+  appFocusCalled=true` → `app-did-become-active`), as a named raise does by
+  design; this is the switch, not a mint.
+- Unexplained: about 2.1 s after arriving, the screen went back to the
+  first desktop with no command issued (`effect-hide id=wm-1` (the page
+  overlay) then `space-changed screensBefore=1:3 key=wm-20 appActive=true`
+  1 ms later). `close space` therefore started on the first desktop and
+  logged `space-desktop-gate key=default current=1 recorded=1,1,1
+  verdict=skip-no-target`, so the return-by-raise on leaving a space is
+  untested here. Whether a person's swipe or the app caused that return is
+  not decidable from the log.
+
 Still pending: the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
 re-run before review/landing.
