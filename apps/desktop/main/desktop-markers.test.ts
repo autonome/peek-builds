@@ -3,7 +3,14 @@
 // module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { shouldMintMarker, markersToSweep, planSpaceMarkerRaise } from './desktop-markers.js';
+import {
+  shouldMintMarker,
+  markersToSweep,
+  planSpaceMarkerRaise,
+  markerOpenOptions,
+  MARKER_SHOW,
+} from './desktop-markers.js';
+import { initialState, evolve, react, decide, keyWindow, BASE_LAYER, type State, type Event, type Effect, type WindowId } from './window-kernel.js';
 
 const marked = (...desktops: string[]) => new Set(desktops);
 
@@ -94,5 +101,65 @@ describe('planSpaceMarkerRaise (space entry raises the target desktop\'s marker)
     // only failure left is the marker not existing at all.
     const plan = planSpaceMarkerRaise(['3', '3'], '1', ['1', '2', '3'], markers({ '2': 22 }));
     assert.deepStrictEqual(plan, { verdict: 'skip-no-marker', target: '3' });
+  });
+});
+
+describe('a marker mint never brings the app to the front', () => {
+  it('the marker opens hidden, so no construct-time show can activate the app', () => {
+    // A window opened shown is shown by the platform at construction, which on
+    // macOS activates the app before the kernel decides anything (live run 4:
+    // the front app flipped to Peek on every mint).
+    assert.strictEqual(markerOpenOptions().show, false);
+  });
+
+  it('the marker is declared unable to take key', () => {
+    assert.strictEqual(markerOpenOptions().focusable, false);
+  });
+
+  it('the show that puts it on screen asks for no activation and carries no user-gesture intent', () => {
+    assert.deepStrictEqual({ ...MARKER_SHOW }, { active: false });
+    assert.ok(!('activation' in MARKER_SHOW), 'a user-gesture intent would let the kernel raise past another app');
+  });
+
+  // The kernel side of the same rule: the request `MARKER_SHOW` becomes
+  // (`kernelShowRequested(id, false)` → a bare `ShowWindow` command) shows the
+  // marker and does nothing else — no raise, no key change, no content focus —
+  // while another app is frontmost.
+  it('the kernel turns the marker show into a bare show while another app is frontmost', () => {
+    const page = 'wk-1' as WindowId;
+    const marker = 'wk-2' as WindowId;
+    let state: State = initialState();
+    const apply = (events: Event[]): Effect[] => {
+      const effects: Effect[] = [];
+      for (const ev of events) {
+        const next = evolve(state, ev);
+        effects.push(...react(state, ev, next));
+        state = next;
+      }
+      return effects;
+    };
+    apply([
+      { type: 'WindowRegistered', id: page, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: page },
+      { type: 'OsFocusGained', id: page },
+      { type: 'AppResigned' },
+      { type: 'WindowRegistered', id: marker, kind: 'browser', layer: BASE_LAYER, canBecomeKey: false, acceptsInput: true, class: 'primary', role: 'signal' },
+    ]);
+    const keyBefore = keyWindow(state)?.id ?? null;
+
+    const decided = decide(state, { type: 'ShowWindow', id: marker, expectedVersion: state.version });
+    assert.ok('events' in decided, 'the show is accepted');
+    const effects = apply(decided.events);
+
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'ShowWindow').map((e) => (e as { id: WindowId }).id),
+      [marker],
+    );
+    const activating = effects.filter((e) =>
+      ['RaiseWindow', 'FocusContent', 'ShowDesktop', 'HoldAboveOtherApps'].includes(e.type),
+    );
+    assert.deepStrictEqual(activating, [], 'a marker show raises, focuses, and switches nothing');
+    assert.strictEqual(keyWindow(state)?.id ?? null, keyBefore, 'key does not move to the marker');
+    assert.strictEqual(state.appActive, false, 'the kernel still reads the app as inactive');
   });
 });

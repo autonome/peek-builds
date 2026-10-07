@@ -620,7 +620,22 @@ swipe while a terminal was frontmost):
   confirmation of the switch through a non-focusable marker's raise
   stands, unrepeated.
 
-Still pending: a fix for the activating mint (above), the empty-launch decision (every restored window held → no
+Cause of the activating mint, read from the open path and the log
+timings: the marker was opened `show: true`, so Electron showed it at
+construction (`NativeWindowMac::Show()`, which calls
+`activateIgnoringOtherApps` before `makeKeyAndOrderFront`) — between the
+`window-open:actual` line and the kernel's own `os-show`. The kernel's show
+of the same window right after is `showInactive()` (order-front without
+activation), and the kernel never activates on a `ShowWindow` effect
+(`window-kernel-executor.ts performEffect` passes `activate: false`). The
+`app-did-become-active` notification arriving 3–5 ms after `os-show` is the
+construct-time activation landing, not the kernel's show. Fix: a marker
+opens `show: false` and is then put on screen by a non-activating kernel
+show request (`desktop-markers.ts markerOpenOptions()` / `MARKER_SHOW`,
+used by `desktop-marker-manager.ts`). *Unverified live*: the re-run of the
+Finder-frontmost re-mint sample and a first-arrival swipe.
+
+Still pending: live confirmation of that fix, the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
 re-run before review/landing.
 

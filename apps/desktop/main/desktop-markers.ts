@@ -54,6 +54,61 @@ export function markersToSweep<T>(
   return swept;
 }
 
+/** The page every marker loads (never the home UI's URL — see `3818282e`). */
+export const MARKER_URL = 'peek://spaces/signal.html';
+
+/**
+ * The window-open options a marker mints with. A marker never brings the app
+ * to the front, so it is opened HIDDEN and put on screen afterwards by a
+ * non-activating show request (`MARKER_SHOW`):
+ *
+ * - `show: false`: a window opened shown is put on screen by the platform's
+ *   own construct-time show, which on macOS activates the app
+ *   (`activateIgnoringOtherApps` + make-key-and-order-front) before the
+ *   window kernel has any say. A mint fires on bare arrival at a desktop,
+ *   usually while another app is frontmost, so that show stole the front on
+ *   every first visit to a desktop.
+ * - `focusable: false`: a marker takes no input. A focusable marker's open
+ *   handed it kernel key, so with another app frontmost every later page open
+ *   read as "key held while app inactive" and opened transient
+ *   (`izui-roles.ts pageOpensTransient`), and the next mint's show swept that
+ *   transient mid-load — a user window destroyed. A non-focusable window is
+ *   never transient, never holds key, and its show sweeps nothing.
+ *
+ * Role `signal` keeps markers out of session saves
+ * (`session-projection.ts serializeSession`).
+ */
+export function markerOpenOptions(): {
+  role: 'signal';
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  transparent: true;
+  focusable: false;
+  skipTaskbar: true;
+  show: false;
+} {
+  return {
+    role: 'signal',
+    width: 2,
+    height: 2,
+    x: 0,
+    y: 0,
+    transparent: true,
+    focusable: false,
+    skipTaskbar: true,
+    show: false,
+  };
+}
+
+/**
+ * The show request that puts a minted marker on screen: through the window
+ * kernel, never activating and never carrying a user-gesture intent, so the
+ * kernel shows it without raising it and the app stays wherever it was.
+ */
+export const MARKER_SHOW: Readonly<{ active: false }> = Object.freeze({ active: false });
+
 export type MarkerRaisePlan<T> =
   | { verdict: 'raise'; target: string; marker: T }
   | { verdict: 'skip-no-target'; target: null }

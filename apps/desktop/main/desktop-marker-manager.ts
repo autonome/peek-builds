@@ -22,7 +22,9 @@
  * session saves — session-projection.ts serializeSession; signal.html, never
  * the home UI's URL, which collided with URL-keyed selectors, see
  * `3818282e`). Unlike the retired per-space signal windows they are
- * non-focusable — see the mint options below for why.
+ * non-focusable, and they open hidden and are shown by a non-activating
+ * kernel show request so a mint never brings the app to the front — see
+ * `desktop-markers.ts markerOpenOptions()` for both reasons.
  *
  * Same executor-subscription pattern as `session.ts installHeldRestore()`.
  * Headless runs (Playwright, CI) mint nothing — see the guard in
@@ -30,16 +32,14 @@
  * even under the test harness, so "no desktop provider in tests" is NOT a
  * safety net; the headless gate is.)
  */
-import { shouldMintMarker, markersToSweep } from './desktop-markers.js';
+import { shouldMintMarker, markersToSweep, markerOpenOptions, MARKER_SHOW, MARKER_URL } from './desktop-markers.js';
 import { getKernelExecutorForApp } from './window-machine.js';
 import type { State } from './window-kernel.js';
 import { invokeWindowOpen } from './ipc.js';
 import { getBackgroundWindow } from './main.js';
 import { getLiveWindow } from './window-registry.js';
-import { closeOrHideWindow } from './windows.js';
+import { closeOrHideWindow, showWindowHeadlessSafe } from './windows.js';
 import { WEB_CORE_ADDRESS, isHeadless } from './config.js';
-
-const MARKER_URL = 'peek://spaces/signal.html';
 
 /** Desktop id → Electron window id of its marker. */
 const _markers = new Map<string, number>();
@@ -119,39 +119,17 @@ async function syncMarkers(state: State): Promise<void> {
   if (!bgWin || bgWin.isDestroyed()) return;
   _mintInFlight.add(current);
   try {
+    // Opened hidden, then shown by a non-activating kernel show request: see
+    // `markerOpenOptions()` for why a marker is never opened shown.
     const result = (await invokeWindowOpen(
       { sender: bgWin.webContents },
-      {
-        source: WEB_CORE_ADDRESS,
-        url: MARKER_URL,
-        options: {
-          role: 'signal',
-          width: 2,
-          height: 2,
-          x: 0,
-          y: 0,
-          transparent: true,
-          // Non-focusable, deliberately: a marker takes no input, and the
-          // kernel's accounting follows from that declaration. A focusable
-          // marker's open hands it kernel key (the fresh-open shown/focused
-          // report), so with another app frontmost every later page open read
-          // as "key held while app inactive" and opened TRANSIENT — then the
-          // next marker mint's show swept it mid-load (destroying a user's
-          // window; caught by session-restore-focus.spec cold-start). A
-          // non-focusable window is never transient, never holds key, and its
-          // show sweeps nothing. OPEN QUESTION for live verification: whether
-          // the space-entry raise of a non-focusable window still pulls a
-          // macOS desktop switch — if the switch needs the marker to take
-          // focus, this needs a different inertness mechanism, not focusable.
-          focusable: false,
-          skipTaskbar: true,
-          show: true,
-        },
-      },
+      { source: WEB_CORE_ADDRESS, url: MARKER_URL, options: markerOpenOptions() },
     )) as { success: boolean; id?: number; error?: string };
     if (result?.success && result.id != null) {
       _markers.set(current, result.id);
-      console.log(`[desktop-markers] marker-minted desktop=${current} window=${result.id}`);
+      const win = getLiveWindow(result.id);
+      if (win) showWindowHeadlessSafe(win, MARKER_SHOW);
+      console.log(`[desktop-markers] marker-minted desktop=${current} window=${result.id} shown=${win !== null}`);
     } else {
       console.warn(`[desktop-markers] marker open failed desktop=${current}:`, result?.error);
     }
