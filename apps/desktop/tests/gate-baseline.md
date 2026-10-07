@@ -724,3 +724,21 @@ regression: both are intermittent, and the full gate on `eef9e955` passed withou
 
 Treat a fresh failure of either as a flake rather than a regression until a recording catches it
 on an unchanged tree twice.
+
+### Known failure on `main` at `3818282e`
+
+Full gate on `main` at `3818282e`: `desktop` 533 passed, 1 failed. The one failure fails on `main`
+independent of any track, so a branch gate that shows it — and nothing else outside the
+intermittent set — judges clean.
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `spaces-window-locking.spec.ts:209` | a space entered for the first time from its own item list gets the resolved accent on every window | known failure on `main`, unfixed — `features/spaces/home.js activateSpace()` routes a card click to `switch space`, so `showItems()` is unreachable and the in-page item list the spec waits for never renders. Diagnosis and fix options: peek item `8b73cc28` |
+
+Still known as intermittent, carried forward from the `page-host-resilience` gate above (treat a
+fresh failure of either as a flake, not a regression):
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `hybrid-close-two-hosts-hang.spec.ts` | closing a peek over two surviving page hosts stays within a sane transition bound | intermittent — did not fail in the `3818282e` gate |
+| `hybrid-show-activate.spec.ts` | overlay hides when the app resigns active, re-shows on become-active (R6) | intermittent focus flake — did not fail in the `3818282e` gate |
