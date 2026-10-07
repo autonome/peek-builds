@@ -214,7 +214,15 @@ function maybeReleaseHeldGroup(state: HeldRestoreState, kernelState: State): voi
   state.groups.delete(current);
   state.releaseInFlight = true;
   console.log(`[session] lazy-restore-release desktop=${current} n=${group.length}`);
-  void openHeldGroup(group, current)
+  // The open starts only after this notification returns. A kernel
+  // notification runs inside the executor's event pump, which queues any
+  // command issued from it (`window-kernel-executor.ts pump()`): a window
+  // opened synchronously here has its registration queued, so the open path's
+  // show is decided against a state with no such window and rejected
+  // (`no-such-window`) — the window exists but never appears. The boot restore
+  // runs outside any notification, which is why its page hosts show.
+  void Promise.resolve()
+    .then(() => openHeldGroup(group, current))
     .catch((err) => console.error('[session] lazy-restore open failed:', err))
     .finally(() => {
       state.releaseInFlight = false;
@@ -288,7 +296,9 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
         }
         opened++;
         // BrowserWindows opened show:false need the explicit inactive show; a
-        // hybrid page-host was already shown inactive by its open path.
+        // hybrid page-host was already shown inactive by its open path (which
+        // holds only because this loop never runs inside a kernel
+        // notification — see `maybeReleaseHeldGroup()`).
         const win = getLiveWindow(openResult.id);
         if (win && !win.isDestroyed()) showWindowHeadlessSafe(win);
         if (descriptor.context?.mode) {

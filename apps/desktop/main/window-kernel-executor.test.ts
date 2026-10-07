@@ -20,6 +20,7 @@ import {
   planRestoreFocus,
   planRestoreActivation,
   stackingLevelForLayer,
+  type CommandOutcome,
   type FsSettleOutcome,
 } from './window-kernel-executor.js';
 import {
@@ -1598,6 +1599,55 @@ describe('state ownership and entry points', () => {
     // own notify — one pump at a time, in dispatch order.
     assert.deepStrictEqual(seen, ['applied v1', 'echo-queued', 'applied v2', 'applied v3']);
     assert.strictEqual(exec.getState().order[0].orderable, true);
+  });
+
+  // A window opened from inside a notification (a subscriber reacting to a
+  // desktop change, say) has its registration queued behind the current
+  // event, so a show issued in the same synchronous stretch names a window
+  // the state does not hold yet. `session.ts maybeReleaseHeldGroup()` starts
+  // its open after the notification returns for exactly this reason.
+  const openAndShow = (exec: WindowKernelExecutor, id: WindowId): CommandOutcome => {
+    exec.execute({
+      type: 'RegisterWindow',
+      id,
+      kind: 'page-host',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      expectedVersion: exec.getState().version,
+    });
+    return exec.execute({ type: 'ShowWindow', id, expectedVersion: exec.getState().version });
+  };
+
+  it('a window registered and shown inside a notification never shows — the show is decided before the registration lands', () => {
+    const { exec, backend } = makeExecutor();
+    let show: CommandOutcome | null = null;
+    exec.subscribe(() => {
+      if (show === null) show = openAndShow(exec, wid(2));
+    });
+    exec.dispatch(register(wid(1)));
+    assert.deepStrictEqual(show, { rejected: 'no-such-window' });
+    const record = exec.getState().order.find((w) => w.id === wid(2));
+    assert.ok(record, 'the queued registration still lands');
+    assert.strictEqual(record.visible, false);
+    assert.deepStrictEqual(backend.of('showWindow').map((c) => c.args[0]), []);
+  });
+
+  it('the same open started after the notification returns shows the window', async () => {
+    const { exec, backend } = makeExecutor();
+    let started = false;
+    let show: Promise<CommandOutcome> | null = null;
+    exec.subscribe(() => {
+      if (started) return;
+      started = true;
+      show = Promise.resolve().then(() => openAndShow(exec, wid(2)));
+    });
+    exec.dispatch(register(wid(1)));
+    const outcome = await show!;
+    assert.ok('applied' in outcome);
+    assert.strictEqual(exec.getState().order.find((w) => w.id === wid(2))?.visible, true);
+    assert.deepStrictEqual(backend.of('showWindow').map((c) => c.args[0]), [wid(2)]);
   });
 });
 
