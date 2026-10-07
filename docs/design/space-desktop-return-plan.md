@@ -678,6 +678,24 @@ the switch back on `close space` was not exercised.
   verdict=skip-no-target`, so the return-by-raise on leaving a space is
   untested since markers began opening hidden.
 
+Live check of the return on `close space` (2026-10-07, build of `f1f7c2c7`,
+same profile, `alpha`'s row holding its one page with `"desktop":"3"` and the
+default row three windows on desktop 1): PASS. Commands were sent from the core
+background page through `peek-cli debug-eval`; the only gesture was one swipe
+to the second desktop and back first, to mint its marker (`marker-minted
+desktop=3`).
+
+- `open space alpha` from the first desktop: `space-desktop-gate … current=1
+  recorded=3 target=3 verdict=raise` → `effect-show-desktop desktop=3` →
+  `space-changed screensBefore=1:1` 493 ms later → `raise-named-settled
+  machineId=wm-10 … outcome=read` (wm-10 is the second desktop's marker).
+- `close space` about 5 s later, still on the second desktop, no swipe:
+  `space-desktop-gate key=default current=3 recorded=1,1,1 target=1
+  verdict=raise` → `effect-show-desktop desktop=1` → `space-changed
+  screensBefore=1:3` 383 ms later → `raise-named-settled machineId=wm-7 …
+  outcome=read` (wm-7 is the first desktop's marker). The default row's three
+  windows then showed with `desktopBefore=1 desktopAfter=1`.
+
 Still pending: the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
 re-run before review/landing.
