@@ -46,6 +46,16 @@ const _markers = new Map<string, number>();
 /** Desktops whose marker open is still in flight — counts as marked. */
 const _mintInFlight = new Set<string>();
 let _installed = false;
+let _stopped = false;
+
+/**
+ * Stop minting for the rest of the process. Called at the start of quit: the
+ * quit closes every window, a marker-less current desktop then reads as
+ * "mint", and a marker opened mid-quit keeps the app alive.
+ */
+export function stopDesktopMarkerManager(): void {
+  _stopped = true;
+}
 
 /**
  * The live marker map for raise planning (`planSpaceMarkerRaise`). Pruned on
@@ -93,6 +103,7 @@ export function installDesktopMarkerManager(): void {
  * notification, so a non-matching state is a no-op.
  */
 async function syncMarkers(state: State): Promise<void> {
+  if (_stopped) return;
   const desktopOrder = state.desktops.map((d) => d.id);
   const current = state.screens[0]?.current ?? null;
   pruneDeadMarkers();

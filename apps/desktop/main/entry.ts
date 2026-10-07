@@ -115,7 +115,7 @@ import {
   registerDownloadHandler,
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
-import { installDesktopMarkerManager } from './desktop-marker-manager.js';
+import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop-marker-manager.js';
 import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -997,6 +997,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   // about to free — that deref faults the main process (peek 048997b2).
   try { markRuntimeExternalQuitting(); } catch (e) { DEBUG && console.error('[lifecycle] markRuntimeExternalQuitting error:', e); }
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
+  try { stopDesktopMarkerManager(); } catch (e) { DEBUG && console.error('[lifecycle] stopDesktopMarkerManager error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevTiles(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevTiles error:', e); }
