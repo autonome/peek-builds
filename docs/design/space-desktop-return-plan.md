@@ -670,14 +670,13 @@ the switch back on `close space` was not exercised.
 - The raise activated the app (`activation-decision id=wm-13 intent=user …
   appFocusCalled=true` → `app-did-become-active`), as a named raise does by
   design; this is the switch, not a mint.
-- Unexplained: about 2.1 s after arriving, the screen went back to the
-  first desktop with no command issued (`effect-hide id=wm-1` (the page
-  overlay) then `space-changed screensBefore=1:3 key=wm-20 appActive=true`
-  1 ms later). `close space` therefore started on the first desktop and
-  logged `space-desktop-gate key=default current=1 recorded=1,1,1
+- About 2.1 s after arriving, a person swiped back to the first desktop
+  (`effect-hide id=wm-1` (the page overlay hiding on the desktop change)
+  then `space-changed screensBefore=1:3 key=wm-20 appActive=true` 1 ms
+  later). `close space` therefore started on the first desktop and logged
+  `space-desktop-gate key=default current=1 recorded=1,1,1
   verdict=skip-no-target`, so the return-by-raise on leaving a space is
-  untested here. Whether a person's swipe or the app caused that return is
-  not decidable from the log.
+  untested since markers began opening hidden.
 
 Still pending: the empty-launch decision (every restored window held → no
 window at all until the first swipe; currently accepted), and the suite
