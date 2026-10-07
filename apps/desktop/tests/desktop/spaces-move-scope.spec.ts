@@ -3,11 +3,15 @@
  *
  * Several pages are open in the default workspace; "move to space <name>" is
  * run with one of them focused. Only that page may leave the default
- * workspace: the others stay open and stay in the default, the target
- * workspace's saved row holds that one page and nothing else, entering the
- * target workspace opens that one page, and no saved item gains the target
- * space's tag. Covers `features/spaces/background.js moveToSpace()` and
- * `main/session.ts addWindowToWorkspaceSnapshot()`.
+ * workspace: the others stay open and stay in the default, the SPACE widget in
+ * the shared page-host chrome still names the default on a page that stayed,
+ * the target workspace's saved row holds that one page and nothing else,
+ * entering the target workspace opens that one page, and no saved item gains
+ * the target space's tag. Covers `features/spaces/background.js
+ * moveToSpace()`, `main/session.ts addWindowToWorkspaceSnapshot()` and
+ * `renderer/page/overlay.js retargetSpaceModeWidget()` — one overlay frames
+ * every page host, so the widget must show the framed page's own mode, not
+ * the last mode written to any window.
  *
  * Network-free: content is served by a local loopback server.
  *

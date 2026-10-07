@@ -354,6 +354,7 @@ api.subscribe('page-overlay:active', (msg) => {
     // Queued requests are NOT dropped (never auto-deny) — they surface again
     // when their window becomes active.
     syncPermissionPrompt();
+    retargetSpaceModeWidget();
     DEBUG && console.log('[overlay] active → null (cleared)');
     return;
   }
@@ -397,6 +398,8 @@ api.subscribe('page-overlay:active', (msg) => {
   // prompt belonging to the previously-active window is taken down (but stays
   // queued — never auto-deny from the renderer).
   syncPermissionPrompt();
+  // The SPACE widget shows the newly-active window's own mode.
+  retargetSpaceModeWidget();
   DEBUG && console.log('[overlay] active →', activeWindowId, msg.url);
 });
 
@@ -2263,8 +2266,8 @@ function clearWidgets() {
   // render a card for the next active window after retarget.
   activeDiscoveryArmed = false;
   lastUnrenderedEngine = null;
-  // The space-mode widget is app-wide (mode context), not per-window: re-evaluate
-  // it after the clear so it reappears for the newly-active window if in a space.
+  // The space-mode widget is not a page widget: re-add it after the clear from
+  // the active window's mode (see retargetSpaceModeWidget()).
   syncWidgetContainerData();
   updateSpaceModeWidget();
 }
@@ -2363,10 +2366,38 @@ api.subscribe('websearch:engine-discovered', (msg) => {
   maybeRenderOpenSearchWidget();
 });
 
-// --- Space mode widget (ported from page.js; mode context, app-wide) ---
+// --- Space mode widget ---
+// One overlay frames every page host, so the widget shows the mode of the
+// window it is framing now (`activeWindowId`), never the last mode written to
+// any window. The active-window handoff re-reads it (`retargetSpaceModeWidget`);
+// a mode change is applied only when it is for the active window.
 const SPACE_MODE_WIDGET_ID = '__space-mode__';
 let currentMode = 'page';
 let currentModeMetadata = {};
+// Bumped on every retarget so a mode read that resolves after a later
+// retarget is dropped instead of painting the previous window's space.
+let spaceModeReadSeq = 0;
+
+function applySpaceMode(mode, metadata) {
+  currentMode = mode || 'page';
+  currentModeMetadata = metadata || {};
+  updateSpaceModeWidget();
+}
+
+async function retargetSpaceModeWidget() {
+  const windowId = activeWindowId;
+  const seq = ++spaceModeReadSeq;
+  // Nothing of the previous window's space may show while the read is in flight.
+  applySpaceMode('page', {});
+  if (windowId == null) return;
+  try {
+    const result = await api.context.get('mode', windowId);
+    if (seq !== spaceModeReadSeq || windowId !== activeWindowId) return;
+    if (result?.success && result.data) applySpaceMode(result.data.value, result.data.metadata);
+  } catch (err) {
+    console.error('[overlay] Failed to read the active window mode:', err);
+  }
+}
 
 function buildSpaceModeContent(metadata) {
   const container = document.createElement('div');
@@ -2402,26 +2433,15 @@ function updateSpaceModeWidget() {
   }
 }
 
-async function initModeContext() {
-  try {
-    const modeResult = await api.context.get('mode');
-    if (modeResult.success && modeResult.data) {
-      currentMode = modeResult.data.value || 'page';
-      currentModeMetadata = modeResult.data.metadata || {};
-      updateSpaceModeWidget();
-    }
-    api.context.watchMode((mode, entry) => {
-      if (mode) {
-        currentMode = mode;
-        currentModeMetadata = entry?.metadata || {};
-        updateSpaceModeWidget();
-      }
-    });
-  } catch (err) {
-    console.error('[overlay] Failed to initialize mode context:', err);
-  }
-}
-initModeContext();
+// `context:changed` carries the window the mode was written for. watchMode's
+// initial call reports the overlay's own window, which is never the active
+// page, so the same filter drops it.
+api.context.watchMode((mode, entry) => {
+  if (activeWindowId == null || entry?.windowId !== activeWindowId) return;
+  // A write supersedes any read still in flight for this window.
+  spaceModeReadSeq++;
+  applySpaceMode(mode, entry?.metadata);
+});
 
 window.addEventListener('beforeunload', () => {
   try { pageWidgetHost.destroy(); } catch { /* ignore */ }
