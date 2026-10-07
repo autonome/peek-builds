@@ -31,10 +31,21 @@ export interface MarkerSyncSource {
  * Wire a marker sync pass to the kernel: once on every notification, and
  * once now against the current state (the launch desktop — the kernel's
  * first layout read may already have landed, so no notification is coming).
+ *
+ * A notification-driven pass starts only after the notification returns,
+ * for the reason `session.ts maybeReleaseHeldGroup()` defers its open: a
+ * notification runs inside the executor's event pump, which queues any
+ * command issued from it, so a marker opened synchronously there would have
+ * its registration queued and its show rejected (`no-such-window`). The
+ * deferred pass reads the kernel's state when it runs, not the state of the
+ * notification that scheduled it. The install-time pass runs outside any
+ * notification, so it runs at once.
  */
 export function subscribeMarkerSync(source: MarkerSyncSource, sync: (state: State) => void): void {
-  source.subscribe((state) => {
-    sync(state);
+  source.subscribe(() => {
+    void Promise.resolve()
+      .then(() => sync(source.getState()))
+      .catch((err) => console.error('[desktop-markers] marker sync failed:', err));
   });
   sync(source.getState());
 }

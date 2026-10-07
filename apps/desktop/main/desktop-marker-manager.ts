@@ -82,7 +82,8 @@ function pruneDeadMarkers(): void {
 }
 
 /**
- * Subscribe to kernel notifications and run one sync against the current
+ * Subscribe to kernel notifications (each pass deferred until the
+ * notification returns — see `subscribeMarkerSync()`) and run one sync against the current
  * state (the launch desktop's mint — the kernel's first layout read may
  * already have landed, in which case no further notification is coming).
  * Idempotent; the subscription lives for the process.
