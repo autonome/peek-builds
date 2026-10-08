@@ -973,6 +973,42 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
       .toEqual(expect.objectContaining({ tags: false, ext: false }));
   });
 
+  test('tags panel shows tags of a url item stored without the trailing slash', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // Seed the item BEFORE the page is active so the tag load sees it. The item is
+    // stored slash-less; the page URL carries the trailing slash.
+    await makeActiveWithUrl('https://seed.example.com/warmup');
+    await waitOverlayReady();
+    const itemId = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.evalInOverlay(`
+        (async () => {
+          const ds = window.app.datastore;
+          const created = await ds.addItem('url', { content: 'https://slashless.example.com/some-post' });
+          const id = created && created.data && created.data.id;
+          if (!id) return null;
+          const tag = await ds.getOrCreateTag('slashtag');
+          await ds.tagItem(id, tag.data.tag.id);
+          return id;
+        })()
+      `);
+    });
+    expect(itemId).toBeTruthy();
+
+    await makeActiveWithUrl('https://slashless.example.com/some-post/');
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s?.tags?.text ?? '';
+        }),
+      )
+      .toContain('slashtag');
+  });
+
   test('panels become visible with the chrome and are in the click-capture set', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
