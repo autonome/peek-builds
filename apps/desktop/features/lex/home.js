@@ -1061,6 +1061,17 @@ function setupEventListeners() {
 
   // Keyboard navigation in search results
   handleInput.addEventListener('keydown', (e) => {
+    // The suggestion list only knows accounts on the public bsky index, so a
+    // handle on any other server never appears there. Enter with no suggestion
+    // highlighted logs in with the handle exactly as typed.
+    if (e.key === 'Enter' && state.activeIndex < 0) {
+      const typed = (e.target.value || '').trim().replace(/^@/, '');
+      if (typed.includes('.')) {
+        e.preventDefault();
+        selectActor({ handle: typed, did: null, displayName: null, avatar: null });
+        return;
+      }
+    }
     if (!state.searchVisible) return;
 
     if (e.key === 'ArrowDown') {
