@@ -585,6 +585,27 @@ interface AtUriParts {
   rkey: string;
 }
 
+/**
+ * Convert a decoded DAG-CBOR value into the JSON form the XRPC API returns:
+ * CID links become `{ $link: "<cid>" }` and byte strings become
+ * `{ $bytes: "<base64>" }`. A real PDS stores blob refs as CIDs, so without
+ * this the verified record has no `ref.$link` for callers to read.
+ */
+function ipldToJson(v: unknown): unknown {
+  const cid = CID.asCID(v);
+  if (cid) return { $link: cid.toString() };
+  if (v instanceof Uint8Array) {
+    return { $bytes: Buffer.from(v).toString('base64').replace(/=+$/, '') };
+  }
+  if (Array.isArray(v)) return v.map(ipldToJson);
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) out[k] = ipldToJson(val);
+    return out;
+  }
+  return v;
+}
+
 // ─── Public entry point ─────────────────────────────────────────────
 
 /** A verified record, shape-compatible with the old getRecord result. */
@@ -716,7 +737,7 @@ export async function fetchAndVerifyRecord(
       `but the MST leaf pointed at ${recordKey}`
     );
   }
-  const value = dagCbor.decode<Record<string, unknown>>(recordBytes);
+  const value = ipldToJson(dagCbor.decode<Record<string, unknown>>(recordBytes)) as Record<string, unknown>;
 
   return {
     uri: atUri,

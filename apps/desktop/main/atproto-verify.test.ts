@@ -29,6 +29,7 @@ import {
   SignatureVerificationError,
   __setFetchForTest,
 } from './atproto-verify.js';
+import { buildSignedProof } from './atproto-bundle-fixture.js';
 import {
   BURRITO_DID,
   BURRITO_PDS,
@@ -525,5 +526,38 @@ describe('Phase 2 — adversarial: rotated-out key cannot forge a current commit
     );
     assert.ok(result.cid);
     assert.strictEqual(result.value['name'], 'synthetic-feature');
+  });
+});
+
+describe('fetchAndVerifyRecord — blob refs from a real PDS', () => {
+  it('returns blob refs as JSON { $link } objects, as the XRPC JSON API does', async () => {
+    // A real PDS stores blob refs as DAG-CBOR CIDs (tag 42), so decoding the
+    // record block yields CID objects. Callers read `ref.$link`.
+    const blobCid = CID.create(1, 0x55, await sha256.digest(new TextEncoder().encode('blob bytes')));
+    const did = 'did:web:blobref.example.com';
+    const proof = await buildSignedProof(did, 'rk1', {
+      $type: 'space.peek.feature.release',
+      featureId: 'f',
+      manifest: { $type: 'blob', ref: blobCid, mimeType: 'application/json', size: 10 },
+      bundle: { files: [{ path: 'a.html', blob: { $type: 'blob', ref: blobCid, mimeType: 'text/html', size: 10 } }] },
+    });
+    __setFetchForTest((async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url === 'https://blobref.example.com/.well-known/did.json') {
+        return new Response(JSON.stringify({
+          verificationMethod: [{ id: `${did}#atproto`, type: 'Multikey', controller: did, publicKeyMultibase: proof.publicKeyMultibase }],
+        }), { status: 200 });
+      }
+      if (url.includes('com.atproto.sync.getRecord')) return new Response(new Uint8Array(proof.car), { status: 200 });
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+    const result = await fetchAndVerifyRecord(
+      'https://pds.example',
+      { did, collection: 'space.peek.feature.release', rkey: 'rk1' },
+      `at://${did}/space.peek.feature.release/rk1`
+    );
+    const value = result.value as any;
+    assert.deepStrictEqual(value.manifest.ref, { $link: blobCid.toString() });
+    assert.deepStrictEqual(value.bundle.files[0].blob.ref, { $link: blobCid.toString() });
   });
 });
