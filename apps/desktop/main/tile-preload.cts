@@ -1303,6 +1303,15 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Who the stored session belongs to: { signedIn, handle, did } or
+     * { error }. Never returns token material.
+     */
+    sessionInfo: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:atproto:session-info', { token: tileToken });
+    },
+
+    /**
      * Binary blob upload (com.atproto.repo.uploadBlob). Bytes travel as
      * base64 over IPC. `url` is the fully qualified uploadBlob endpoint.
      */

@@ -339,7 +339,8 @@ function renderStep2() {
 
 // ─── Step 3: Confirm & Publish ─────────────────────────────────────
 
-function renderStep3() {
+async function renderStep3() {
+  await loadLexSession();
   // Check session
   if (!lexSession) {
     noSessionPanel.style.display = '';
@@ -685,22 +686,17 @@ async function doPublish() {
 async function loadLexSession() {
   if (!hasPeekAPI) return;
 
-  // Try to get the session from lex settings.
-  // NOTE: `api.settings.getExtKey` is not part of the strict tile-preload API;
-  // cross-tile settings access is pending a pubsub-based replacement
-  // (docs `lex:get-session` / `lex:session-state`). Until implemented, we rely
-  // on the `lex:session-changed` pubsub broadcast (subscribed below) to
-  // populate `lexSession` after any lex login/logout.
-  if (typeof api.settings.getExtKey === 'function') {
-    try {
-      const result = await api.settings.getExtKey('lex', 'session');
-      if (result && result.success && result.data) {
-        lexSession = result.data;
-        console.log('[features-manager:publish] Loaded lex session for', lexSession.handle);
-      }
-    } catch (err) {
-      console.warn('[features-manager:publish] Could not load lex session:', err);
-    }
+  // Ask main who the stored session belongs to. This is the same row the
+  // publish proxy signs with, so "signed in" here means a publish can run.
+  // Called again each time step 3 renders, because Lex publishes no event
+  // when the user logs in after this page opened.
+  try {
+    const info = await api.atproto.sessionInfo();
+    console.log('[features-manager:publish] session info:', JSON.stringify(info));
+    lexSession = info && info.signedIn ? { handle: info.handle || '', did: info.did || '' } : null;
+  } catch (err) {
+    console.warn('[features-manager:publish] Could not load session info:', err);
+    lexSession = null;
   }
 }
 

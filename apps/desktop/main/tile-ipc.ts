@@ -4611,6 +4611,22 @@ export function registerTileIpcHandlers(): void {
     });
   });
 
+  // Who the proxy would act as: handle + DID only, never token material.
+  // Reads the same stored session the proxy signs with, so "signed in" here
+  // means exactly "a request would be sent".
+  registerTileIpc('tile:atproto:session-info', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!_grant || !hasCapability(_grant, 'network')) {
+      handleViolation(_grant, 'network', 'atproto:session-info', 'network capability not granted', args.token);
+      return { error: 'Network capability not granted' };
+    }
+    const session = readAtprotoSession();
+    console.log('[tile-ipc] atproto session-info:', session ? `found ${session.handle ?? '?'}` : 'no usable session row');
+    if (!session) return { signedIn: false };
+    return { signedIn: true, handle: session.handle ?? null, did: session.did ?? null };
+  });
+
   registerTileIpc('tile:atproto:upload-blob', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
