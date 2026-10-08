@@ -70,12 +70,41 @@ test.describe('Page Navbar @desktop', () => {
       .poll(async () => (await overlayChromeState(app, h))?.loading)
       .toBe(false);
 
-    // The chrome is hidden by default after load — no navbar lingers visible
-    // (the canvas version asserted the navbar auto-hid after loading; in the
-    // hybrid model the navbar is only ever shown on hover / Cmd+L).
+    // The chrome is hidden after the load settles — the bar the load showed
+    // does not linger.
     const state = await overlayChromeState(app, h);
     expect(state).not.toBeNull();
     expect(state!.navbarVisible).toBe(false);
+
+    await closeHybridPage(app, h);
+  });
+
+  test('a loading page shows the navbar, the pointer moving over the page leaves it up, and the load settling hides it', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    const h = await openHybridPage(app, PAGE_HTML);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
+
+    // The active page starts loading → the bar shows.
+    await publishLoading(app, h, true);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(true);
+
+    // The pointer moves over the page while it loads (the overlay sees that
+    // move, forwarded, outside every chrome region). This used to start the
+    // 400 ms hover hide and take the bar down before anyone saw it.
+    const hidePending = await scheduleChromeHide(app, h);
+    expect(hidePending).toBe(false);
+    expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
+
+    // The load settles → the bar hides.
+    await publishLoading(app, h, false);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
 
     await closeHybridPage(app, h);
   });

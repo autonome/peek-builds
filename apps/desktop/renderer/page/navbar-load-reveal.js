@@ -20,6 +20,19 @@ export const SHOWN_BY_USER = 'user';
  * @param {boolean} loading whether the active page is loading
  * @returns {{ action: 'show'|'hide'|'none', shownBy: string|null }}
  */
+/**
+ * Whether the pointer moving off the chrome (over the page, or out of the top
+ * edge) starts the bar's hide. A bar the load is holding stays up while the
+ * pointer moves over the page: the pointer is almost always over the page while
+ * it loads, and the load settling is what takes that bar down.
+ *
+ * @param {string|null} shownBy who holds the bar visible now
+ * @returns {boolean}
+ */
+export function pointerLeaveHides(shownBy) {
+  return true;
+}
+
 export function navbarRevealOnLoad(shownBy, loading) {
   if (shownBy === SHOWN_BY_USER) return { action: 'none', shownBy };
   if (loading) return { action: 'show', shownBy: SHOWN_BY_LOAD };

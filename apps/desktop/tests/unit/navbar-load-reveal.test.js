@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   navbarRevealOnLoad,
+  pointerLeaveHides,
   SHOWN_BY_LOAD,
   SHOWN_BY_USER,
 } from '../../renderer/page/navbar-load-reveal.js';
@@ -31,6 +32,15 @@ test('a bar the user revealed is not taken over by a load', () => {
 
 test('a bar the user revealed stays up when a load settles', () => {
   assert.deepEqual(navbarRevealOnLoad(SHOWN_BY_USER, false), { action: 'none', shownBy: SHOWN_BY_USER });
+});
+
+test('the pointer moving over a loading page leaves the load-held bar up', () => {
+  assert.equal(pointerLeaveHides(SHOWN_BY_LOAD), false);
+});
+
+test('the pointer leaving a bar the user revealed starts its hide', () => {
+  assert.equal(pointerLeaveHides(SHOWN_BY_USER), true);
+  assert.equal(pointerLeaveHides(null), true);
 });
 
 test('a settled load with the bar hidden changes nothing', () => {
