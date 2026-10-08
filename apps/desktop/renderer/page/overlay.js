@@ -83,7 +83,7 @@
 import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost } from './page-widgets.js';
-import { navbarRevealOnLoad, SHOWN_BY_USER } from './navbar-load-reveal.js';
+import { navbarRevealOnLoad, pointerLeaveHides, SHOWN_BY_USER } from './navbar-load-reveal.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -536,6 +536,9 @@ function hideNavbar() {
 }
 function scheduleHide() {
   navDiag(`scheduleHide shownBy=${navbarShownBy} stack=${(new Error().stack || '').split('\n').slice(2, 5).join(' | ')}`);
+  // A bar the active page's load is holding stays up while the pointer moves
+  // over the page; the load settling takes it down (navbar-load-reveal.js).
+  if (!pointerLeaveHides(navbarShownBy)) return;
   cancelHide();
   hideTimer = setTimeout(() => {
     window.__overlayHidePending = false;

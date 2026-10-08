@@ -30,7 +30,7 @@ export const SHOWN_BY_USER = 'user';
  * @returns {boolean}
  */
 export function pointerLeaveHides(shownBy) {
-  return true;
+  return shownBy !== SHOWN_BY_LOAD;
 }
 
 export function navbarRevealOnLoad(shownBy, loading) {
