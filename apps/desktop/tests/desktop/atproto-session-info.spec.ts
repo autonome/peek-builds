@@ -84,7 +84,12 @@ test.describe('tile:atproto:session-info — registered IPC handler @desktop', (
   test('reports the stored account and no token material', async () => {
     await seedSessionRow(app, JSON.stringify(FAKE_SESSION));
     const res = await sessionInfo(bgWindow);
-    expect(res).toEqual({ signedIn: true, handle: FAKE_HANDLE, did: FAKE_DID });
+    expect(res).toEqual({
+      signedIn: true,
+      handle: FAKE_HANDLE,
+      did: FAKE_DID,
+      pdsUrl: 'https://pds.test.example',
+    });
     for (const key of ['accessToken', 'refreshToken', 'dpopKeyPairJwk']) {
       expect(Object.keys(res)).not.toContain(key);
     }

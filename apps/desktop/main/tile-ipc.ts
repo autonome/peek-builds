@@ -4624,7 +4624,12 @@ export function registerTileIpcHandlers(): void {
     const session = readAtprotoSession();
     console.log('[tile-ipc] atproto session-info:', session ? `found ${session.handle ?? '?'}` : 'no usable session row');
     if (!session) return { signedIn: false };
-    return { signedIn: true, handle: session.handle ?? null, did: session.did ?? null };
+    return {
+      signedIn: true,
+      handle: session.handle ?? null,
+      did: session.did ?? null,
+      pdsUrl: session.pdsUrl,
+    };
   });
 
   registerTileIpc('tile:atproto:upload-blob', { mode: 'handle' }, async (event, args: {

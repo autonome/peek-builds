@@ -693,7 +693,9 @@ async function loadLexSession() {
   try {
     const info = await api.atproto.sessionInfo();
     console.log('[features-manager:publish] session info:', JSON.stringify(info));
-    lexSession = info && info.signedIn ? { handle: info.handle || '', did: info.did || '' } : null;
+    lexSession = info && info.signedIn
+      ? { handle: info.handle || '', did: info.did || '', pdsUrl: info.pdsUrl }
+      : null;
   } catch (err) {
     console.warn('[features-manager:publish] Could not load session info:', err);
     lexSession = null;
