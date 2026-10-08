@@ -637,8 +637,6 @@ async function openSpaceNow(spaceName) {
     }
   }
 
-  // `open space <new name>` creates the space, so the suggestions may be stale.
-  refreshSpaceNameCommands();
   console.log(`[ext:spaces] Opened space "${displayName}"`);
   return { success: true, spaceId: tag.id, spaceName: displayName };
 }
@@ -755,7 +753,6 @@ async function createSpace(name) {
     tag.color = vividColor;
     await api.datastore.updateTagColor(tag.id, vividColor);
   }
-  refreshSpaceNameCommands();
   return { success: true, spaceId: tag.id, spaceName: getSpaceDisplayName(tag), created: true };
 }
 
@@ -819,7 +816,7 @@ async function moveToSpace(targetName) {
 // ===== Command Registration =====
 
 // The existing spaces, as suggestion options for the commands that take a
-// space name. Re-published when a space is created or entered.
+// space name. Re-published on every tag:created / tag:deleted / tag:renamed.
 let spaceNameSuggestions = [];
 
 const SPACE_NAME_COMMANDS = [
@@ -1034,6 +1031,12 @@ const init = async () => {
   api.theme.getInfo().then((info) => {
     if (info?.themeId) activeThemeId = info.themeId;
   }).catch(() => {});
+
+  // The space list changes from the Spaces page and from commands alike; the
+  // tag events are the one signal both produce.
+  api.pubsub.subscribe('tag:created', refreshSpaceNameCommands);
+  api.pubsub.subscribe('tag:deleted', refreshSpaceNameCommands);
+  api.pubsub.subscribe('tag:renamed', refreshSpaceNameCommands);
 
   // Subscribe to item:created for auto-tagging
   api.pubsub.subscribe('item:created', handleItemCreated);
