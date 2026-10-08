@@ -90,13 +90,6 @@ if (api.initialize) {
 }
 
 const DEBUG = false;
-// DIAG(addressbar-onload): temporary on-load reveal trace -> renderer.log + window.__navDiag.
-window.__navDiag = [];
-function navDiag(line) {
-  const l = `[diag-overlay] t=${Date.now()} ${line}`;
-  window.__navDiag.push(l);
-  console.log(l);
-}
 
 const navbar = document.getElementById('navbar');
 const triggerZone = document.getElementById('trigger-zone');
@@ -367,7 +360,6 @@ api.subscribe('page-overlay:active', (msg) => {
     DEBUG && console.log('[overlay] active → null (cleared)');
     return;
   }
-  navDiag(`active-handoff windowId=${msg.windowId} loading=${msg.loading} url=${msg.url}`);
   activeWindowId = msg.windowId;
   // P1.4b-5: seed the active URL for the side panels and refresh them for the
   // newly-active window (full swap — clears the prior window's panel data first).
@@ -438,7 +430,6 @@ api.subscribe('page:favicon', (msg) => {
 });
 
 api.subscribe('page:loading', (msg) => {
-  navDiag(`page:loading windowId=${msg && msg.windowId} loading=${msg && msg.loading} active=${activeWindowId} isActive=${isActive(msg)}`);
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
   applyLoadReveal(!!msg.loading);
@@ -501,7 +492,6 @@ function cancelHide() {
 /** A user reveal (hover, Cmd+L, panel hover): the bar stays until they leave. */
 function showNavbar() {
   if (activeWindowId == null) return;
-  if (navbarShownBy !== SHOWN_BY_USER) navDiag(`showNavbar(user) prev=${navbarShownBy}`);
   revealNavbar();
   navbarShownBy = SHOWN_BY_USER;
 }
@@ -510,7 +500,6 @@ function showNavbar() {
 function applyLoadReveal(loading) {
   if (activeWindowId == null) return;
   const { action, shownBy } = navbarRevealOnLoad(navbarShownBy, loading);
-  navDiag(`applyLoadReveal in shownBy=${navbarShownBy} loading=${loading} -> action=${action} shownBy=${shownBy}`);
   if (action === 'show') revealNavbar();
   else if (action === 'hide') hideNavbar();
   navbarShownBy = shownBy;
@@ -528,14 +517,12 @@ function revealNavbar() {
   updateOverlayPositions();
 }
 function hideNavbar() {
-  navDiag(`hideNavbar prev=${navbarShownBy} visible=${navbar.classList.contains('visible')} stack=${(new Error().stack || '').split('\n').slice(2, 4).join(' | ')}`);
   navbarShownBy = null;
   navbar.classList.remove('visible');
   document.body.classList.remove('chrome-visible');
   document.body.classList.remove('panels-visible');
 }
 function scheduleHide() {
-  navDiag(`scheduleHide shownBy=${navbarShownBy} stack=${(new Error().stack || '').split('\n').slice(2, 5).join(' | ')}`);
   // A bar the active page's load is holding stays up while the pointer moves
   // over the page; the load settling takes it down (navbar-load-reveal.js).
   if (!pointerLeaveHides(navbarShownBy)) return;
