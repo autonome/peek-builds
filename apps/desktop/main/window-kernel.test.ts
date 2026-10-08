@@ -6408,6 +6408,46 @@ describe('window-kernel: the focus assert', () => {
     assert.deepStrictEqual(hiddenResult.effects, []);
   });
 
+  it('a palette whose devtools just opened gets key back — the assert is not limited to content windows', () => {
+    // A debug launch opens detached devtools on the cmd panel (role palette) as it shows.
+    // `main.ts`'s devtools-opened listener asserts focus on that host, the window the user is
+    // about to type into; the devtools window has taken key from it. Dropping the assert because
+    // the host is not a content window leaves the typed keys going to devtools.
+    const palette = wid(2);
+    const devtools = wid(3);
+    const state = fold(
+      [
+        contentWindow(wid(1)),
+        { type: 'WindowShown', id: wid(1) },
+        paletteWindow(palette),
+        { type: 'WindowShown', id: palette },
+        { type: 'OsFocusGained', id: palette },
+        {
+          type: 'WindowRegistered',
+          id: devtools,
+          kind: 'browser',
+          layer: BASE_LAYER,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'devtools',
+          role: 'utility',
+          parentId: palette,
+        },
+        { type: 'WindowShown', id: devtools },
+        { type: 'OsFocusGained', id: devtools },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(state.key, devtools, 'precondition: devtools took key');
+
+    const result = run(state, { type: 'AssertFocus', id: palette, expectedVersion: state.version });
+    assert.deepStrictEqual(result.events, [{ type: 'FocusAssertRequested', id: palette }]);
+    assert.ok(
+      result.effects.some((e) => e.type === 'RaiseWindow' && e.id === palette),
+      `the palette is raised back to key: ${JSON.stringify(result.effects)}`,
+    );
+  });
+
   // An assert never carries user intent (`FocusAssertRequested` has no `intent` field), and
   // `admitsFocus` admits no machine request while the app is inactive, so `react` emits neither
   // the raise nor its paired FocusContent then: an inactive app cannot come forward on its own.
