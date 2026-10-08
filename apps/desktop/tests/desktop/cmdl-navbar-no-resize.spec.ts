@@ -94,9 +94,11 @@ test.describe('Cmd+L on a page-host @desktop', () => {
       expect(activated).toBe(true);
       await waitOverlayReady(sharedApp);
 
-      // Precondition: the chrome starts hidden — a page load reveals nothing.
-      const beforeState = await overlayChromeState(sharedApp);
-      expect(beforeState?.navbarVisible).toBe(false);
+      // Precondition: the chrome is hidden. The window appearing shows the bar
+      // for the load-reveal dwell (navbar-load-reveal.js), so wait it out.
+      await expect
+        .poll(async () => (await overlayChromeState(sharedApp))?.navbarVisible)
+        .toBe(false);
 
       const before = await findEntry(sharedBgWindow, windowId);
       expect(before?.maximized).toBe(false);

@@ -83,7 +83,7 @@
 import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost } from './page-widgets.js';
-import { navbarRevealOnLoad, pointerLeaveHides, SHOWN_BY_USER } from './navbar-load-reveal.js';
+import { navbarLoadReveal, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -309,6 +309,10 @@ let activeBounds = null;
 // affordance). preMaxBounds holds the bounds to restore to on unmaximize.
 let maximized = false;
 let preMaxBounds = null;
+// Page windows the chrome has framed at least once. The first handoff to a
+// window not in here is that window appearing (navbar-load-reveal.js
+// 'window-appeared'); later handoffs to it are switches.
+const framedWindowIds = new Set();
 
 /** Reset the navbar to empty (active→null or before painting a new window). */
 function clearChrome() {
@@ -319,6 +323,7 @@ function clearChrome() {
   navbar.pageTitle = '';
   navbar.favicon = '';
   navbarShownBy = null;
+  cancelLoadHide();
   navbar.classList.remove('visible');
   document.body.classList.remove('panels-visible');
   document.body.classList.add('no-active');
@@ -385,11 +390,15 @@ api.subscribe('page-overlay:active', (msg) => {
   navbar.loading = false;
   hideFindBar();
   paintFromSnapshot(msg);
-  // A freshly opened page is usually still loading when the chrome reaches it
-  // (its load-start was published before it became the active window), so the
-  // handoff's loading state drives the on-load reveal too. A switch to a window
-  // that is not loading takes down a reveal the previous window's load held.
-  applyLoadReveal(!!msg.loading);
+  // A page window the chrome has not framed before (new window, undo-close,
+  // reopen) shows the bar for the dwell even when its load already finished:
+  // its load-start was published before it became the active window, and a
+  // cached load can settle before the chrome arrives. A switch back to a window
+  // already framed reveals only if it is loading, and takes down a bar the
+  // previous window's load held.
+  const appeared = !framedWindowIds.has(msg.windowId);
+  framedWindowIds.add(msg.windowId);
+  applyLoadReveal(appeared ? 'window-appeared' : 'window-switched', !!msg.loading);
   // Recover any request main still holds pending for this window that this
   // renderer never received — the publish predates our subscription, or a
   // previous overlay renderer got it and this one started empty. Purely
@@ -432,7 +441,7 @@ api.subscribe('page:favicon', (msg) => {
 api.subscribe('page:loading', (msg) => {
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
-  applyLoadReveal(!!msg.loading);
+  applyLoadReveal(msg.loading ? 'load-start' : 'load-stop', !!msg.loading);
 });
 
 api.subscribe('page:nav-state', (msg) => {
@@ -481,8 +490,15 @@ navbar.addEventListener('dismiss',() => { hideNavbar(); });
 let hideTimer = null;
 // Who holds the navbar visible: the active page's load (navbar-load-reveal.js
 // SHOWN_BY_LOAD), the user (SHOWN_BY_USER), or null while it is hidden. Only a
-// load-held navbar hides when the load settles.
+// load-held navbar hides when the load settles and its dwell has run.
 let navbarShownBy = null;
+// When the current load reveal started (performance.now()), null otherwise.
+let navbarShownAt = null;
+// The pending end-of-dwell hide for a load-held navbar.
+let loadHideTimer = null;
+function cancelLoadHide() {
+  if (loadHideTimer) { clearTimeout(loadHideTimer); loadHideTimer = null; }
+}
 function cancelHide() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   // E2E-only deterministic signal: no hide is pending (consumed by the
@@ -493,16 +509,29 @@ function cancelHide() {
 function showNavbar() {
   if (activeWindowId == null) return;
   revealNavbar();
+  cancelLoadHide();
   navbarShownBy = SHOWN_BY_USER;
+  navbarShownAt = null;
 }
-/** Show the bar on the active page's load and hide it once that load settles,
- *  unless the user is holding it (navbar-load-reveal.js). */
-function applyLoadReveal(loading) {
+/** Show the bar when a page window appears or its page navigates, and hide it
+ *  once the load settles and the dwell has run, unless the user is holding it
+ *  (navbar-load-reveal.js). */
+function applyLoadReveal(event, loading) {
   if (activeWindowId == null) return;
-  const { action, shownBy } = navbarRevealOnLoad(navbarShownBy, loading);
-  if (action === 'show') revealNavbar();
-  else if (action === 'hide') hideNavbar();
-  navbarShownBy = shownBy;
+  const r = navbarLoadReveal(
+    { shownBy: navbarShownBy, shownAt: navbarShownAt }, event, performance.now(), loading);
+  cancelLoadHide();
+  if (r.show) revealNavbar();
+  navbarShownBy = r.shownBy;
+  navbarShownAt = r.shownAt;
+  if (r.hideAfterMs === 0) hideNavbar();
+  else if (r.hideAfterMs != null) {
+    loadHideTimer = setTimeout(() => {
+      loadHideTimer = null;
+      // The user may have taken the bar over during the dwell (hover, Cmd+L).
+      if (navbarShownBy === SHOWN_BY_LOAD) hideNavbar();
+    }, r.hideAfterMs);
+  }
 }
 function revealNavbar() {
   cancelHide();
@@ -518,6 +547,8 @@ function revealNavbar() {
 }
 function hideNavbar() {
   navbarShownBy = null;
+  navbarShownAt = null;
+  cancelLoadHide();
   navbar.classList.remove('visible');
   document.body.classList.remove('chrome-visible');
   document.body.classList.remove('panels-visible');
