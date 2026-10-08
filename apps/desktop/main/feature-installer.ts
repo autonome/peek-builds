@@ -77,6 +77,27 @@ export interface TileSource {
   resolve(uri: string): Promise<FeatureSourceMetadata>;
 }
 
+// ─── Publish Filtering ──────────────────────────────────────────────
+
+/**
+ * Whether a file (or directory) inside a feature dir belongs in a published
+ * release. Releases carry only what the tile loads at runtime, so dotfiles,
+ * node_modules, tests, docs and test/spec files are left out.
+ * relativePath uses `/` separators, relative to the feature dir.
+ */
+export function isPublishableFeatureFile(relativePath: string): boolean {
+  const segments = relativePath.split('/').filter(Boolean);
+  for (const segment of segments) {
+    if (segment.startsWith('.')) return false;
+    if (segment === 'node_modules') return false;
+    if (segment === 'tests') return false;
+  }
+  const base = segments[segments.length - 1] ?? '';
+  if (base.endsWith('.md')) return false;
+  if (/\.(test|spec)\./.test(base)) return false;
+  return true;
+}
+
 // ─── Content Hashing ────────────────────────────────────────────────
 
 /**

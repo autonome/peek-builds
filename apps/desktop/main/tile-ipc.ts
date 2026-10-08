@@ -114,7 +114,7 @@ import {
   type RulesDb,
 } from './rules.js';
 import type { TableName } from '../types/index.js';
-import { installFromBundle } from './feature-installer.js';
+import { installFromBundle, isPublishableFeatureFile } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -2415,9 +2415,9 @@ export function registerTileIpcHandlers(): void {
       function readDir(dirPath: string, prefix: string): void {
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
         for (const dirent of entries) {
-          if (dirent.name.startsWith('.') || dirent.name === 'node_modules') continue;
           const fullPath = path.join(dirPath, dirent.name);
           const relativePath = prefix ? `${prefix}/${dirent.name}` : dirent.name;
+          if (!isPublishableFeatureFile(relativePath)) continue;
           if (dirent.isDirectory()) {
             readDir(fullPath, relativePath);
           } else if (dirent.isFile()) {

@@ -17,6 +17,7 @@ import {
   installFromLocalDirectory,
   syncBuiltinFeatures,
   computeManifestHash,
+  isPublishableFeatureFile,
 } from './feature-installer.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -523,4 +524,27 @@ describe('syncBuiltinFeatures', () => {
     assert.ok(result.removed.includes('hollow'));
     assert.strictEqual(registry.getFeature('hollow'), undefined);
   });
+});
+
+describe('isPublishableFeatureFile', () => {
+  for (const p of ['home.js', 'manifest.json', 'lib/x.js', 'templates/raw/a.js']) {
+    it(`includes ${p}`, () => {
+      assert.strictEqual(isPublishableFeatureFile(p), true);
+    });
+  }
+
+  for (const p of [
+    'README.md',
+    'PLAN.md',
+    'server.test.js',
+    'store/remote-store.test.js',
+    'tests/background-logic.test.js',
+    'a.spec.ts',
+    '.DS_Store',
+    'node_modules/lit/index.js',
+  ]) {
+    it(`excludes ${p}`, () => {
+      assert.strictEqual(isPublishableFeatureFile(p), false);
+    });
+  }
 });
