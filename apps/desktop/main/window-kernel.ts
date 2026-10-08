@@ -2113,14 +2113,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const requester = focusAssert.switcherPick === true ? SWITCHER_PICK : MACHINE_REQUEST;
     if (record !== undefined && admitsFocus(next, record, requester)) {
       pushRaise(effects, next, record, requester);
-      // A non-content target (a palette or quick view whose devtools opened) gets the raise alone.
-      // Only a switcher pick carries user intent, so the
+      // The content focus goes to any key-capable target, content window or not, and regardless of
+      // whether it already holds key or reports its contents focused: a detached devtools window
+      // can take first responder without the kernel seeing a key change (it is not always
+      // resolvable to a registered window), so on a window already key the raise alone is a bare
+      // reorder and the user's keys keep going to devtools. Only a switcher pick carries user intent, so the
       // content focus paired with the raise above must follow F6 the same way the raise itself does:
       // the executor's `planRaise` answers `suppressed` for this raise while the app is inactive, and a
       // content focus that still reached the backend would take first responder and activate the app
       // out from under the suppressed raise. Emitting it only while the app is active keeps the
       // suppression decision in this one place instead of adding a second gate in the executor.
-      if (isContentWindow(record) && next.appActive) {
+      if (record.canBecomeKey && next.appActive) {
         effects.push({ type: 'FocusContent', id: focusAssert.id });
       }
     }
