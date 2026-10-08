@@ -1726,13 +1726,10 @@ function normalizeUrlForCompare(u) {
 async function resolveItemId(url) {
   if (!isHttp(url)) return null;
   try {
-    const result = await api.datastore.queryItems({ type: 'url', search: url });
-    if (result.success && result.data && result.data.length > 0) {
-      const normalUrl = normalizeUrlForCompare(url);
-      const exact = result.data.find((item) => normalizeUrlForCompare(item.content) === normalUrl);
-      if (exact) return exact.id;
-      return result.data[0].id;
-    }
+    // Canonical-URL lookup (same as addTagToPage); a substring search misses
+    // slash-terminated URLs whose stored item has no trailing slash.
+    const found = await api.datastore.findUrlItem(url);
+    if (found?.success && found.data) return found.data.id;
   } catch (err) {
     DEBUG && console.log('[overlay] resolveItemId failed:', err.message);
   }
