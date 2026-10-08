@@ -1554,9 +1554,20 @@ function installTestBridge(): void {
     loadFakeContent(id: number, url: string): Promise<boolean> {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(false);
-      return entry.contentWC
+      // Resolve once the load has fully stopped, not at loadURL's resolution
+      // (did-finish-load), when isLoading() can still be true. A fake host has no
+      // content-event wiring, so no `page:loading false` ever follows; an active
+      // handoff taken in that window would report the page as still loading and
+      // the overlay's on-load reveal would hold the address bar up for good.
+      const wc = entry.contentWC;
+      return wc
         .loadURL(url)
-        .then(() => true)
+        .then(async () => {
+          if (!wc.isDestroyed() && wc.isLoading()) {
+            await new Promise<void>((resolve) => wc.once('did-stop-loading', () => resolve()));
+          }
+          return true;
+        })
         .catch(() => false);
     },
     /** The current live URL of a fake hybrid window's content webContents. */
