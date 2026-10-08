@@ -535,6 +535,7 @@ function hideNavbar() {
   document.body.classList.remove('panels-visible');
 }
 function scheduleHide() {
+  navDiag(`scheduleHide shownBy=${navbarShownBy} stack=${(new Error().stack || '').split('\n').slice(2, 5).join(' | ')}`);
   cancelHide();
   hideTimer = setTimeout(() => {
     window.__overlayHidePending = false;
