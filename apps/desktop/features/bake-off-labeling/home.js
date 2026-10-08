@@ -196,8 +196,8 @@ function createPicker(host, workflow) {
         url = new URL(value).href;
         if (!['http:', 'https:'].includes(new URL(url).protocol)) continue;
       } catch { continue; }
-      const response = await api.datastore.queryItems({ type: 'url', search: url, limit: 10 });
-      const existing = asArray(response).find((item) => item.content === url || item.url === url);
+      const response = await api.datastore.findUrlItem(url);
+      const existing = response?.success ? response.data : null;
       addCandidate(workflow, existing || makeSyntheticUrlItem(url));
     }
     textarea.value = '';

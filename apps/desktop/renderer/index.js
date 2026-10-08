@@ -392,8 +392,8 @@ const registerCoreCommands = () => {
       // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
-        const item = items.data?.find(a => a.content === url);
+        const found = await api.datastore.findUrlItem(url);
+        const item = found?.success ? found.data : null;
         if (item) {
           const metadata = JSON.parse(item.metadata || '{}');
           metadata.colorScheme = 'light';
@@ -416,8 +416,8 @@ const registerCoreCommands = () => {
       // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
-        const item = items.data?.find(a => a.content === url);
+        const found = await api.datastore.findUrlItem(url);
+        const item = found?.success ? found.data : null;
         if (item) {
           const metadata = JSON.parse(item.metadata || '{}');
           metadata.colorScheme = 'dark';

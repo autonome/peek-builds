@@ -68,21 +68,9 @@ async function getPageContent(url) {
 
 async function enrichUrlItem(url, pageMetadata) {
   try {
-    const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
-    if (!items.success || !items.data) return;
-
-    const urlVariants = new Set([url]);
-    try {
-      const parsed = new URL(url);
-      urlVariants.add(parsed.toString());
-      if (parsed.pathname === '/') {
-        urlVariants.add(parsed.origin + '/' + parsed.search + parsed.hash);
-        urlVariants.add(parsed.origin + parsed.search + parsed.hash);
-      }
-    } catch { /* invalid URL */ }
-
-    const item = items.data.find(i => urlVariants.has(i.content));
-    if (!item) return;
+    const found = await api.datastore.findUrlItem(url);
+    if (!found?.success || !found.data) return;
+    const item = found.data;
 
     const fallbackTitle = pageMetadata.title || (() => {
       try { return new URL(url).hostname; } catch { return ''; }

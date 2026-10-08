@@ -546,11 +546,9 @@ const savePinnedItems = async (groupId, pinnedItemIds) => {
 // Note: normalizeUrlForCompare already defined in home.js (line ~519) — reused below.
 
 const getOrCreateUrlItem = async (url, title = '') => {
-  const result = await api.datastore.queryItems({ type: 'url', search: url, limit: 10 });
+  const result = await api.datastore.findUrlItem(url);
   if (!result.success) return null;
-  const normalizedUrl = normalizeUrlForCompare(url);
-  const existing = result.data.find(item => normalizeUrlForCompare(item.content) === normalizedUrl);
-  if (existing) return existing;
+  if (result.data) return result.data;
   const addResult = await api.datastore.addItem('url', {
     content: url,
     metadata: JSON.stringify({ title })
