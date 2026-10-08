@@ -1,37 +1,101 @@
 /**
- * The address bar shows when a page starts loading and hides once the load
- * settles, unless the user revealed it themselves.
+ * The address bar shows whenever a page window appears or its page navigates,
+ * stays up for a minimum dwell measured from when it was shown or until the
+ * load finishes (whichever is later), then hides — unless the user revealed it
+ * themselves.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  navbarRevealOnLoad,
+  navbarLoadReveal,
   pointerLeaveHides,
+  LOAD_REVEAL_DWELL_MS,
   SHOWN_BY_LOAD,
   SHOWN_BY_USER,
 } from '../../renderer/page/navbar-load-reveal.js';
 
-test('a page that starts loading shows the hidden address bar', () => {
-  assert.deepEqual(navbarRevealOnLoad(null, true), { action: 'show', shownBy: SHOWN_BY_LOAD });
+const HIDDEN = { shownBy: null, shownAt: null };
+
+test('the dwell is 1500 ms', () => {
+  assert.equal(LOAD_REVEAL_DWELL_MS, 1500);
 });
 
-test('the load that showed the bar hides it when it settles', () => {
-  assert.deepEqual(navbarRevealOnLoad(SHOWN_BY_LOAD, false), { action: 'hide', shownBy: null });
+test('a page that starts loading shows the hidden address bar and holds it', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN, 'load-start', 1000), {
+    show: true, hideAfterMs: null, shownBy: SHOWN_BY_LOAD, shownAt: 1000,
+  });
 });
 
-test('opening a page shows the bar and then hides it', () => {
-  const shown = navbarRevealOnLoad(null, true);
-  const settled = navbarRevealOnLoad(shown.shownBy, false);
-  assert.equal(shown.action, 'show');
-  assert.equal(settled.action, 'hide');
+test('a load that finishes before the dwell ends keeps the bar up for the rest of the dwell', () => {
+  const shown = navbarLoadReveal(HIDDEN, 'load-start', 1000);
+  const settled = navbarLoadReveal(shown, 'load-stop', 1030);
+  assert.equal(settled.show, false);
+  assert.equal(settled.hideAfterMs, LOAD_REVEAL_DWELL_MS - 30);
+  assert.equal(settled.shownBy, SHOWN_BY_LOAD);
 });
 
-test('a bar the user revealed is not taken over by a load', () => {
-  assert.deepEqual(navbarRevealOnLoad(SHOWN_BY_USER, true), { action: 'none', shownBy: SHOWN_BY_USER });
+test('a load that finishes after the dwell hides the bar at once', () => {
+  const shown = navbarLoadReveal(HIDDEN, 'load-start', 1000);
+  const settled = navbarLoadReveal(shown, 'load-stop', 1000 + LOAD_REVEAL_DWELL_MS + 2000);
+  assert.equal(settled.hideAfterMs, 0);
 });
 
-test('a bar the user revealed stays up when a load settles', () => {
-  assert.deepEqual(navbarRevealOnLoad(SHOWN_BY_USER, false), { action: 'none', shownBy: SHOWN_BY_USER });
+test('a second navigation restarts the dwell from when it starts', () => {
+  const first = navbarLoadReveal(HIDDEN, 'load-start', 1000);
+  const second = navbarLoadReveal(first, 'load-start', 1800);
+  assert.equal(second.show, true);
+  assert.equal(second.shownAt, 1800);
+  assert.equal(navbarLoadReveal(second, 'load-stop', 1900).hideAfterMs, LOAD_REVEAL_DWELL_MS - 100);
+});
+
+test('a window that appears with its page already loaded shows the bar for the full dwell', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN, 'window-appeared', 5000, false), {
+    show: true, hideAfterMs: LOAD_REVEAL_DWELL_MS, shownBy: SHOWN_BY_LOAD, shownAt: 5000,
+  });
+});
+
+test('a window that appears still loading shows the bar until its load settles', () => {
+  const appeared = navbarLoadReveal(HIDDEN, 'window-appeared', 5000, true);
+  assert.equal(appeared.show, true);
+  assert.equal(appeared.hideAfterMs, null);
+  assert.equal(navbarLoadReveal(appeared, 'load-stop', 5100).hideAfterMs, LOAD_REVEAL_DWELL_MS - 100);
+});
+
+test('switching to an existing window that is loading shows the bar', () => {
+  const r = navbarLoadReveal(HIDDEN, 'window-switched', 1000, true);
+  assert.equal(r.show, true);
+  assert.equal(r.shownBy, SHOWN_BY_LOAD);
+});
+
+test('switching to an existing idle window takes down a bar a load was holding', () => {
+  const held = navbarLoadReveal(HIDDEN, 'load-start', 1000);
+  const r = navbarLoadReveal(held, 'window-switched', 1100, false);
+  assert.equal(r.show, false);
+  assert.equal(r.hideAfterMs, 0);
+});
+
+test('switching to an existing idle window leaves a hidden bar hidden', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN, 'window-switched', 1000, false), {
+    show: false, hideAfterMs: null, shownBy: null, shownAt: null,
+  });
+});
+
+test('a settled load with the bar hidden changes nothing', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN, 'load-stop', 1000), {
+    show: false, hideAfterMs: null, shownBy: null, shownAt: null,
+  });
+});
+
+test('a bar the user revealed is not taken over by a load, a new window, or a load settling', () => {
+  const user = { shownBy: SHOWN_BY_USER, shownAt: null };
+  for (const [event, loading] of [
+    ['load-start', true], ['load-stop', false],
+    ['window-appeared', false], ['window-switched', false],
+  ]) {
+    assert.deepEqual(navbarLoadReveal(user, event, 1000, loading), {
+      show: false, hideAfterMs: null, shownBy: SHOWN_BY_USER, shownAt: null,
+    }, event);
+  }
 });
 
 test('the pointer moving over a loading page leaves the load-held bar up', () => {
@@ -41,8 +105,4 @@ test('the pointer moving over a loading page leaves the load-held bar up', () =>
 test('the pointer leaving a bar the user revealed starts its hide', () => {
   assert.equal(pointerLeaveHides(SHOWN_BY_USER), true);
   assert.equal(pointerLeaveHides(null), true);
-});
-
-test('a settled load with the bar hidden changes nothing', () => {
-  assert.deepEqual(navbarRevealOnLoad(null, false), { action: 'none', shownBy: null });
 });

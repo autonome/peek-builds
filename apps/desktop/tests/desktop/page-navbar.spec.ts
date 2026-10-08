@@ -8,8 +8,10 @@
  *
  * Behavior preserved from the canvas version:
  *  - Loading lifecycle: the navbar reflects the content `page:loading` state
- *    (shown-as-loading during load, cleared after), and the chrome is hidden by
- *    default (no auto-shown navbar lingering after load).
+ *    (shown-as-loading during load, cleared after).
+ *  - A page window appearing, or its page navigating, shows the navbar for at
+ *    least a 1500 ms dwell or until the load settles, whichever is later; then
+ *    it hides (no navbar lingering after load).
  *  - Cmd+L (forwarded as `page:show-navbar`) reveals the navbar AND focuses its
  *    URL field for typing.
  *  - The revealed navbar schedules an auto-hide when the pointer moves off the
@@ -70,13 +72,72 @@ test.describe('Page Navbar @desktop', () => {
       .poll(async () => (await overlayChromeState(app, h))?.loading)
       .toBe(false);
 
-    // The chrome is hidden after the load settles — the bar the load showed
-    // does not linger.
-    const state = await overlayChromeState(app, h);
-    expect(state).not.toBeNull();
-    expect(state!.navbarVisible).toBe(false);
+    // The chrome hides once the load has settled and the dwell has run — the
+    // bar the load showed does not linger.
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
 
     await closeHybridPage(app, h);
+  });
+
+  // The dwell (navbar-load-reveal.js LOAD_REVEAL_DWELL_MS) is 1500 ms. A check
+  // at 900 ms after the reveal is inside it with margin for bridge round trips.
+  const INSIDE_DWELL_MS = 900;
+
+  test('a page whose load finished before its window appeared still shows the navbar for the dwell', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    // openHybridPage loads the content to completion, then makes the window
+    // active: the chrome reaches a window whose page is no longer loading.
+    const h = await openHybridPage(app, PAGE_HTML);
+    expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
+    await new Promise((r) => setTimeout(r, INSIDE_DWELL_MS));
+    expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
+
+    // After the dwell it hides.
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
+
+    await closeHybridPage(app, h);
+  });
+
+  test('a fast navigation in the same window (link click, back) shows the navbar again for the dwell', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    const h = await openHybridPage(app, PAGE_HTML);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
+
+    // A cached navigation: the load starts and finishes almost at once.
+    await publishLoading(app, h, true);
+    await publishLoading(app, h, false);
+    expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
+    await new Promise((r) => setTimeout(r, INSIDE_DWELL_MS));
+    expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
+
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
+
+    await closeHybridPage(app, h);
+  });
+
+  test('a window reopened on the same page (undo close) shows the navbar', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    const first = await openHybridPage(app, PAGE_HTML);
+    await expect
+      .poll(async () => (await overlayChromeState(app, first))?.navbarVisible)
+      .toBe(false);
+    await closeHybridPage(app, first);
+
+    const reopened = await openHybridPage(app, PAGE_HTML);
+    expect((await overlayChromeState(app, reopened))?.navbarVisible).toBe(true);
+
+    await closeHybridPage(app, reopened);
   });
 
   test('a loading page shows the navbar, the pointer moving over the page leaves it up, and the load settling hides it', async () => {
@@ -100,7 +161,7 @@ test.describe('Page Navbar @desktop', () => {
     expect(hidePending).toBe(false);
     expect((await overlayChromeState(app, h))?.navbarVisible).toBe(true);
 
-    // The load settles → the bar hides.
+    // The load settles → the bar hides (once the dwell from its reveal has run).
     await publishLoading(app, h, false);
     await expect
       .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
