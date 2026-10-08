@@ -90,6 +90,7 @@ const publishError = document.getElementById('publish-error');
 const errorMessage = document.getElementById('error-message');
 const retryBtn = document.getElementById('retry-btn');
 const backToStep2 = document.getElementById('back-to-step-2');
+const doneBtn = document.getElementById('done-btn');
 
 // ─── State ─────────────────────────────────────────────────────────
 
@@ -408,6 +409,52 @@ async function renderStep3() {
   publishSuccess.style.display = 'none';
   publishError.style.display = 'none';
   publishBtn.disabled = false;
+  // Back is only meaningless after a successful publish; a fresh entry (or a
+  // second publish in this window) must start with Back and without Done.
+  backToStep2.style.display = '';
+  doneBtn.style.display = 'none';
+}
+
+/**
+ * Leave the wizard after a successful publish: clear everything the finished
+ * run left behind so the next feature starts fresh, then show the list.
+ */
+function finishPublish() {
+  publishProgress.style.display = 'none';
+  publishSuccess.style.display = 'none';
+  publishError.style.display = 'none';
+  progressBar.style.width = '0%';
+  progressLabel.textContent = '';
+  progressDetail.textContent = '';
+  successUri.value = '';
+  publishBtn.disabled = false;
+  isPublishing = false;
+  backToStep2.style.display = '';
+  doneBtn.style.display = 'none';
+  publishPanel.style.display = '';
+
+  selectedFeature = null;
+  featureFiles = null;
+  selectedCategories = new Set();
+
+  descriptionInput.value = '';
+  readmeInput.value = '';
+  licenseInput.value = '';
+  homepageInput.value = '';
+  for (const el of [descriptionError, categoriesError, readmeError, licenseError, homepageError, iconError, screenshotsError]) {
+    showMediaError(el, '');
+  }
+
+  // Preview object URLs would otherwise live until the window closes.
+  revokeSelection(iconSelection);
+  iconSelection = null;
+  screenshotSelections.forEach(revokeSelection);
+  screenshotSelections = [];
+  renderIconPreview();
+  renderScreenshotsPreview();
+
+  goToStep(1);
+  loadLocalFeatures();
 }
 
 /**
@@ -670,6 +717,9 @@ async function doPublish() {
     publishProgress.style.display = 'none';
     publishSuccess.style.display = '';
     successUri.value = createResp.uri;
+    // Going back to edit makes no sense once the release exists.
+    backToStep2.style.display = 'none';
+    doneBtn.style.display = '';
 
   } catch (err) {
     console.error('[features-manager:publish] Publish error:', err);
@@ -974,6 +1024,7 @@ nextToStep3.addEventListener('click', () => {
   goToStep(3);
 });
 backToStep2.addEventListener('click', () => goToStep(2));
+doneBtn.addEventListener('click', finishPublish);
 
 iconPickBtn.addEventListener('click', () => iconInput.click());
 iconInput.addEventListener('change', handleIconFileChange);
