@@ -40,8 +40,8 @@
       ]
     },
     "network": {
-      "comment": "Lex is builtin → trustedBuiltin grant, which bypasses isNetworkDomainAllowed; this list is advisory/defense-in-depth, not enforced for builtins. Only api.network.fetch hosts (those lacking CORS) go through the allowlist; CORS-present hosts (PDS, public bsky API, plc, OAuth) use plain fetch.",
-      "domains": ["lexidex.bsky.dev"]
+      "comment": "This list also becomes the tile page's CSP connect-src (buildCSPForTile), so it is enforced for builtins too. Login needs the public bsky API (handle suggestions), plc.directory, and whichever PDS and OAuth server the user's account lives on, which cannot be listed ahead of time.",
+      "domains": ["*"]
     },
     "window": {
       "create": true,
