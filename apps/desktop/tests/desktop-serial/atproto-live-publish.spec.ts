@@ -145,31 +145,11 @@ test.describe('live atproto login, publish, install @live', () => {
     // ── Step 2: OAuth login via auth window ──────────────────────────
     let authPage: Page;
     try {
-      // The public bsky typeahead does not index accounts on other PDSes, so the
-      // real handle never shows up as a suggestion. Append the test actor to the
-      // typeahead response only; the login itself (resolve, PAR, auth window,
-      // token exchange) is untouched.
-      await lex.evaluate(({ handle, did }) => {
-        const orig = window.fetch.bind(window);
-        window.fetch = (async (input: any, init?: any) => {
-          const res = await orig(input, init);
-          const url = typeof input === 'string' ? input : input.url;
-          if (!url.includes('searchActorsTypeahead')) return res;
-          const data = await res.clone().json().catch(() => ({ actors: [] }));
-          data.actors = [{ handle, did, displayName: 'live test account' }, ...(data.actors || [])];
-          return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
-        }) as typeof fetch;
-      }, { handle: HANDLE, did: DID });
+      // The public typeahead does not index accounts on other PDSes, so the
+      // handle is typed in full and submitted with Enter, as a user would.
       await lex.locator('#handle-input input').click();
       await lex.keyboard.type(HANDLE, { delay: 20 });
-      const item = lex.locator('.search-result-item', { hasText: HANDLE }).first();
-      try {
-        await item.waitFor({ timeout: 15000 });
-      } catch {
-        const shown = await lex.locator('.search-result-item').allInnerTexts().catch(() => []);
-        throw new Error(`typeahead did not offer ${HANDLE}; results shown: ${JSON.stringify(shown)}`);
-      }
-      await item.click();
+      await lex.keyboard.press('Enter');
 
       authPage = await app.getWindow(/^https?:\/\//, 30000);
       watch(authPage, 'auth');
