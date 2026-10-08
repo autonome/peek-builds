@@ -6268,17 +6268,24 @@ describe('window-kernel: the focus assert', () => {
     assert.strictEqual(result.state.order[0].lastOpSeq, raise.opSeq, 'evolve stamp and react token are one value');
   });
 
-  // ── The content / non-content split on FocusContent ───────────────────────
+  // ── FocusContent on a content and a non-content target ────────────────────
 
-  it('a non-content target gets no FocusContent — the split is real, not decorative', () => {
-    // `react`'s clause is what decides here: the raise reaches a palette, the
-    // paired content focus only a content window.
+  it('a palette target gets FocusContent too, though it already holds key', () => {
+    // The live shape of a debug launch: the cmd panel holds key and its contents are focused,
+    // then its detached devtools take first responder without the kernel ever seeing a key
+    // change (the devtools window is not always resolvable to a registered window). The raise
+    // alone then plans a bare reorder on a window already key, and the typed keys still go to
+    // devtools; only a content focus hands first responder back.
     const palette = fold(
       [paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }, { type: 'OsFocusGained', id: wid(2) }],
       initialState(),
     );
+    assert.strictEqual(palette.key, wid(2), 'precondition: the kernel believes the palette holds key');
     const result = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(2) }], palette);
-    assert.deepStrictEqual(result.effects, [{ type: 'RaiseWindow', id: wid(2), opSeq: result.state.opSeqCounter }]);
+    assert.deepStrictEqual(result.effects, [
+      { type: 'RaiseWindow', id: wid(2), opSeq: result.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(2) },
+    ]);
 
     // Same event, same shape of state, a content role: both halves.
     const content = frontContent();
