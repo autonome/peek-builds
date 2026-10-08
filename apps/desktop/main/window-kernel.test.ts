@@ -6271,9 +6271,8 @@ describe('window-kernel: the focus assert', () => {
   // ── The content / non-content split on FocusContent ───────────────────────
 
   it('a non-content target gets no FocusContent — the split is real, not decorative', () => {
-    // Reached by dispatching the EVENT, which bypasses `decide`: through the
-    // command path `decide`'s own `isContentWindow` gate answers first (below),
-    // so this is the path where `react`'s clause is what decides.
+    // `react`'s clause is what decides here: the raise reaches a palette, the
+    // paired content focus only a content window.
     const palette = fold(
       [paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }, { type: 'OsFocusGained', id: wid(2) }],
       initialState(),
@@ -6390,14 +6389,24 @@ describe('window-kernel: the focus assert', () => {
     assert.ok('events' in teardown);
   });
 
-  it('a target that is not the window the user works in is accepted and drives nothing', () => {
-    // The port of `applyRaiseRequest`'s `isEligibleFront(rec)` early return: an
-    // activating show onto a background surface would steal key.
+  it('a target that cannot take key is accepted and drives nothing', () => {
+    // An activating show onto a surface that never takes key would only pull
+    // it forward and steal key from the window that should have it.
+    const hud: Event = {
+      type: 'WindowRegistered',
+      id: wid(2),
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+      role: 'hud',
+    };
     const state = fold(
-      [contentWindow(wid(1)), { type: 'WindowShown', id: wid(1) }, paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }],
+      [contentWindow(wid(1)), { type: 'WindowShown', id: wid(1) }, hud, { type: 'WindowShown', id: wid(2) }],
       initialState(),
     );
-    assert.strictEqual(isContentWindow(state.order.find((w) => w.id === wid(2))!), false);
+    assert.strictEqual(state.order.find((w) => w.id === wid(2))?.visible, true, 'precondition: on screen');
     const result = run(state, { type: 'AssertFocus', id: wid(2), expectedVersion: state.version });
     assert.deepStrictEqual(result.events, [], 'no event');
     assert.deepStrictEqual(result.effects, [], 'and so no effect');

@@ -2113,7 +2113,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const requester = focusAssert.switcherPick === true ? SWITCHER_PICK : MACHINE_REQUEST;
     if (record !== undefined && admitsFocus(next, record, requester)) {
       pushRaise(effects, next, record, requester);
-      // `isContentWindow` earns its keep for an assert dispatched as a raw event, bypassing `decide`'s own gate.
+      // A non-content target (a palette or quick view whose devtools opened) gets the raise alone.
       // Only a switcher pick carries user intent, so the
       // content focus paired with the raise above must follow F6 the same way the raise itself does:
       // the executor's `planRaise` answers `suppressed` for this raise while the app is inactive, and a
@@ -2408,10 +2408,14 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       // Reached only after the unknown-window guard above — this command is
       // not exempt from it, unlike the teardown arms.
       //
-      // The remaining guard: a target that is not the kind of window the user
-      // works in is accepted and drives nothing, rather than being raised.
+      // The remaining guard: a target the user cannot type into — off screen,
+      // being hidden, or unable to take key — is accepted and drives nothing,
+      // rather than being raised. Not limited to content roles: the assert
+      // names the host whose devtools opened or closed, and that host is as
+      // often a palette or quick view (the cmd panel in a debug launch) as a
+      // page, and just as much the window the user's keys belong in.
       const rec = state.order.find((w) => w.id === cmd.id)!;
-      if (!isContentWindow(rec)) return { events: [] };
+      if (!rec.visible || rec.pendingHidden === true || !rec.canBecomeKey) return { events: [] };
       return { events: [{ type: 'FocusAssertRequested', id: cmd.id }] };
     }
   }
