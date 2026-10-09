@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const handlers = new Map();
 const registrations = [];
 let tags = [{ id: 't-default', name: 'space:default', color: '#123456' }];
+let lookupFails = false;
 
 globalThis.window = {
   app: {
@@ -25,7 +26,9 @@ globalThis.window = {
     },
     datastore: {
       getOrCreateTag: async () => ({ success: true, data: { tag: tags[0] } }),
-      getTagsByFrecency: async () => ({ success: true, data: tags }),
+      getTagsByFrecency: async () => (lookupFails
+        ? { success: false, error: 'datastore unavailable' }
+        : { success: true, data: tags }),
     },
     context: { setDefault: async () => ({ success: true }) },
     window: { list: async () => ({ success: true, windows: [] }) },
@@ -69,5 +72,23 @@ describe('space-name commands follow the space list', () => {
     await handlers.get('tag:renamed')({ tagId: 't-beta' });
     await settle();
     assert.deepEqual(lastOptions('open space'), ['default', 'gamma']);
+  });
+
+  it('keeps the known spaces when a lookup fails, and catches up on the next tag event', async () => {
+    const before = lastOptions('switch space');
+    assert.ok(before.length > 0);
+
+    lookupFails = true;
+    tags = [...tags, { id: 't-delta', name: 'space:delta', color: '#abcdef' }];
+    await handlers.get('tag:created')({ tagId: 't-delta' });
+    await settle();
+    assert.deepEqual(lastOptions('switch space'), before);
+    assert.deepEqual(lastOptions('open space'), before);
+    assert.deepEqual(lastOptions('move to space'), before);
+
+    lookupFails = false;
+    await handlers.get('tag:renamed')({ tagId: 't-delta' });
+    await settle();
+    assert.deepEqual(lastOptions('switch space'), ['default', 'delta', 'gamma']);
   });
 });
