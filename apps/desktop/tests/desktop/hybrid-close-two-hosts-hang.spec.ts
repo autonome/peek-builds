@@ -56,11 +56,18 @@ import http from 'http';
 // bites, small enough that draining it is instant.
 const BACKEND_CALL_CAP = 25;
 
-// A normal peek close over two surviving page hosts is about 10 kernel
-// transitions (the close itself, one overlay retarget, the settle show/hide and
-// late bounds/desktop echoes), with run-to-run jitter up to 12. The runaway this
-// guards against reaches about 25 or more before the circuit breaker silences it.
-const SANE_TRANSITION_BOUND = 16;
+// A normal peek close over two surviving page hosts is about 20 kernel
+// transitions: the close itself, one overlay retarget that hides and re-shows
+// the chrome over the surviving host, and the focus, bounds, shown and desktop
+// echoes that follow. The runaway this guards against issues a show and a hide
+// per round until the circuit breaker silences each backend method at
+// BACKEND_CALL_CAP, so it passes this backstop well before then; the precise
+// check is the show/hide count below.
+const SANE_TRANSITION_BOUND = 30;
+
+// One hide when the peek's overlay detaches and one show when it reattaches to
+// the surviving host. The runaway repeats the pair until the breaker caps it.
+const SANE_SHOW_HIDE_EFFECTS = 4;
 
 let app: DesktopApp;
 let bgWindow: Page;
@@ -185,9 +192,12 @@ test.describe('Hybrid two-host peek-close overlay runaway @desktop', () => {
     const transitionsAfterClose = timeline.length - markerIndex - 1;
 
     // CORE assertion: pre-fix, the AttachOverlayTo/ShowWindow/HideWindow
-    // ping-pong runs until the circuit breaker's cap silences the echo, so
-    // this count sits near BACKEND_CALL_CAP — far past a sane close. Post-fix
-    // a normal close stays in single digits.
-    expect(transitionsAfterClose).toBeLessThan(SANE_TRANSITION_BOUND);
+    // ping-pong runs until the circuit breaker's cap silences the echo, so the
+    // show/hide effect count climbs toward BACKEND_CALL_CAP per method. A
+    // normal close issues one of each.
+    const afterClose = timeline.slice(markerIndex + 1);
+    const showHideEffects = afterClose.join('\n').match(/\b(ShowWindow|HideWindow)\(/g)?.length ?? 0;
+    expect(showHideEffects, afterClose.join('\n')).toBeLessThanOrEqual(SANE_SHOW_HIDE_EFFECTS);
+    expect(transitionsAfterClose, afterClose.join('\n')).toBeLessThan(SANE_TRANSITION_BOUND);
   });
 });
