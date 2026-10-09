@@ -45,12 +45,22 @@ port for Electron/AppKit vocabulary and fails on a new one. Full rule and its ra
 
 ## Testing
 
-> The full gate (`yarn test:desktop:electron` and its `:bg`/`:x`/`:source` variants, or an
-> equivalent all-runner Playwright run) may be run at any time, on the agent's own
-> initiative — to confirm green before landing, because a handoff says to, or for any other
-> reason. Run it as needed rather than asking first.
+> **On macOS, Electron test launches take the user's focus.** Every Electron launched from
+> source — `yarn test:grep`, `test:desktop:electron:source`, `scripts/playwright-with-display.sh`
+> without `PACKAGED=1` — activates briefly at launch even with `HEADLESS=1` (the residual
+> launch blip described under Key Pitfalls). Only the packaged test build, whose `Info.plist`
+> `scripts/patch-test-plist.sh` marks `LSUIElement`, stays out of the way. So on a Mac:
 >
-> Fast single-test iteration (`yarn test:grep`) never needs to ask either, in any environment.
+> - The full gate (`yarn test:desktop:electron` and its `:bg`/`:x`/`:source` variants, or an
+>   equivalent all-runner Playwright run) runs **only on the user's explicit OK in the current
+>   turn** — never on the agent's own initiative, a handoff's say-so, or to confirm green
+>   before landing.
+> - Specs run against the packaged test build ("One spec without taking focus" below), one
+>   spec file at a time, never two Playwright runs at once, never a whole project or a
+>   directory of specs.
+>
+> On the Linux dev box (no display) none of this applies: the gate and any spec may run at
+> any time without asking.
 
 Main-process `console.log` output does not reach a `yarn test:grep` run's captured output. Only
 lines containing the literal `[wm]` do, through `tests/fixtures/desktop-app.ts forwardWmLines`. To
@@ -114,7 +124,7 @@ yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~31
 yarn test:desktop:electron:bg       # same, backgrounded → tail with yarn test:log
                                     #   pass/fail = the log's .exit sentinel, NOT the :bg exit code
                                     #   (path is worktree-tagged: scripts/tagged-path.sh test-electron.log)
-yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test
+yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test (Linux only: takes focus on macOS)
 yarn test:desktop:electron:source   # Escape hatch: source-only, no packaging (runners 3+4 only)
 yarn test:desktop:electron:x        # Packaged desktop project, stop on first failure
 yarn test:packaged                  # Re-run desktop project against existing out/mac-arm64/Peek.app
@@ -126,7 +136,8 @@ yarn test:extension:chrome          # SEPARATE env: Chrome extension UI suite (h
 `tests/components/` or `tests/editor/` matches nothing and Playwright reports **"No tests
 found"** — which exits non-zero but reads as "the spec is fine", and has already been recorded
 in a handoff as a real failure that did not exist. Confirm the collected count is what you
-expect. To grep another project, invoke the display wrapper with an explicit `--project`:
+expect. On Linux, to grep another project, invoke the display wrapper with an explicit
+`--project` (on macOS this is a source launch and takes focus — use the packaged route below):
 
 ```bash
 HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test \
@@ -134,10 +145,27 @@ HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test \
   --project=desktop-serial --workers=1 --grep '<pattern>'
 ```
 
-`yarn test:grep` iterates fast during editing. Validate with **`yarn test:desktop:electron`**
-(the full gate) before declaring done — source-only / single-project runs miss asar /
-asar.unpacked path bugs, electron-builder file-inclusion problems, and entire surfaces (unit,
-components, editor).
+### One spec without taking focus (macOS)
+
+Build, package, and mark the test build `LSUIElement`, then run one spec file, any project,
+detached. Rebuild and repackage after every source edit — the spec scripts run whatever
+`out/mac-arm64/Peek.app` holds.
+
+```bash
+yarn workspace @peek/desktop build
+npx electron-builder --dir
+scripts/patch-test-plist.sh out/mac-arm64/Peek.app
+echo 'apps/desktop/tests/desktop-serial/foo.spec.ts' > "$(scripts/tagged-path.sh test-spec)"
+yarn test:desktop:electron:spec:bg    # then: yarn test:log
+```
+
+Run each of these from the checkout being tested (a worktree builds its own `out/`). Wait for
+one spec run to finish before starting another.
+
+`yarn test:grep` iterates fast during editing on Linux. Validate with
+**`yarn test:desktop:electron`** (the full gate — on macOS only with the user's OK) before
+declaring done — source-only / single-project runs miss asar / asar.unpacked path bugs,
+electron-builder file-inclusion problems, and entire surfaces (unit, components, editor).
 
 ### Running the suite on Linux
 
