@@ -2240,11 +2240,13 @@ function actionHandlers() {
     },
 
     navigateParamDown() {
-      state.paramIndex++;
+      const n = state.paramSuggestions.length;
+      state.paramIndex = (state.paramIndex + 1) % n;
     },
 
     navigateParamUp() {
-      state.paramIndex--;
+      const n = state.paramSuggestions.length;
+      state.paramIndex = state.paramIndex <= 0 ? n - 1 : state.paramIndex - 1;
     },
 
     navigateOutputDown() {

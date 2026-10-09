@@ -301,8 +301,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     chainStackDeep: () => data.chainStack.length > 1,
     canNavigateDown: () => data.matchIndex + 1 < (data.matches.length + (data.urlMatches?.length || 0)),
     canNavigateUp: () => data.matchIndex > 0,
-    canNavigateParamDown: () => data.paramIndex + 1 < data.paramSuggestions.length,
-    canNavigateParamUp: () => data.paramIndex > 0,
+    // Param arrows wrap around the list ends (like Tab); the action does the wrapping
+    canNavigateParamDown: () => data.paramSuggestions.length > 0,
+    canNavigateParamUp: () => data.paramSuggestions.length > 0,
     canNavigateOutputDown: () => data.outputItemIndex + 1 < data.outputItems.length,
     canNavigateOutputUp: () => data.outputItemIndex > 0,
     isPromptAction: (payload) => payload?.result?.action === 'prompt',
