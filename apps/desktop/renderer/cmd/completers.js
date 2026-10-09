@@ -7,6 +7,7 @@
  * - value: text to insert into input
  */
 
+import { matchTier, NO_MATCH } from './enum-match.js';
 import { findTagByName, filterTaggedItems, toItemSuggestion } from './item-suggestions.js';
 
 const api = window.app;
@@ -88,37 +89,28 @@ export function completeEnum(partial, exclude, paramDef) {
     : lowerPartial;
 
   // Support both rich options [{value, title, subtitle}] and plain string values
-  if (options.length > 0) {
-    return options
-      .filter(opt => {
-        const val = typeof opt === 'string' ? opt : opt.value;
-        if (exclude.has(val.toLowerCase())) return false;
-        if (matchText && !val.toLowerCase().startsWith(matchText)) return false;
-        return true;
-      })
-      .map(opt => {
-        if (typeof opt === 'string') {
-          return { title: prefix + opt, subtitle: '', value: prefix + opt };
-        }
-        return {
-          title: prefix + (opt.title || opt.value),
-          subtitle: opt.subtitle || '',
-          value: prefix + opt.value
-        };
-      });
-  }
+  const candidates = (options.length > 0 ? options : values).map(opt => {
+    if (typeof opt === 'string') {
+      return { val: opt, name: opt, suggestion: { title: prefix + opt, subtitle: '', value: prefix + opt } };
+    }
+    return {
+      val: opt.value,
+      name: opt.title,
+      suggestion: {
+        title: prefix + (opt.title || opt.value),
+        subtitle: opt.subtitle || '',
+        value: prefix + opt.value
+      }
+    };
+  });
 
-  return values
-    .filter(val => {
-      if (exclude.has(val.toLowerCase())) return false;
-      if (matchText && !val.toLowerCase().startsWith(matchText)) return false;
-      return true;
-    })
-    .map(val => ({
-      title: prefix + val,
-      subtitle: '',
-      value: prefix + val
-    }));
+  // Match against value and title; best tier first, provider order within a tier (stable sort)
+  return candidates
+    .filter(c => !exclude.has(c.val.toLowerCase()))
+    .map(c => ({ c, tier: matchTier(matchText, c.val, c.name) }))
+    .filter(({ tier }) => tier !== NO_MATCH)
+    .sort((a, b) => a.tier - b.tier)
+    .map(({ c }) => c.suggestion);
 }
 
 /**
