@@ -4,9 +4,20 @@
  * item suggestion or a multi-value argument is handled elsewhere, so the typed
  * text is returned unchanged for those, and when there is no suggestion.
  */
+/**
+ * The text a parameter's suggestions are filtered on. Item parameters and
+ * single-value parameters (such as a space name, which can contain spaces) use
+ * everything typed after the command name; multi-value parameters use only the
+ * word being typed. A single-value parameter keeps a trailing space so it
+ * separates the words already typed from the rest of the name.
+ */
 export function paramFilterText(paramDef, completedTokens, partial) {
   if (paramDef && paramDef.type === 'item') {
     return [...completedTokens, partial].filter(Boolean).join(' ');
+  }
+  if (paramDef && !paramDef.multiple) {
+    const text = [...completedTokens, partial].filter(Boolean).join(' ');
+    return !partial && completedTokens.length > 0 ? text + ' ' : text;
   }
   return partial;
 }

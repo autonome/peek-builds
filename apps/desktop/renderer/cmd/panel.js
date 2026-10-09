@@ -11,7 +11,7 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
-import { commandTextWithSuggestion } from './param-fill.js';
+import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -570,10 +570,7 @@ async function doUpdateParamSuggestions() {
   const generation = ++state.paramGeneration;
   const { partial, completedTokens } = getParamTokens();
 
-  let searchPartial = partial;
-  if (paramDef.type === 'item') {
-    searchPartial = [...completedTokens, partial].filter(Boolean).join(' ');
-  }
+  const searchPartial = paramFilterText(paramDef, completedTokens, partial);
 
   const prefix = paramDef.prefix || '';
   const exclude = paramDef.multiple
@@ -1767,9 +1764,10 @@ function updateCommandUI() {
     const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
     const suggestion = state.paramSuggestions[idx];
     if (suggestion) {
-      const { partial } = getParamTokens();
+      const tokens = getParamTokens();
       const cmd = state.commands[state.paramCommand];
       const paramDef = cmd && cmd.params && cmd.params[0];
+      const partial = paramFilterText(paramDef, tokens.completedTokens, tokens.partial);
       const ghostSource = (paramDef && paramDef.type === 'item') ? suggestion.title : suggestion.value;
       if (partial && ghostSource.toLowerCase().startsWith(partial.toLowerCase())) {
         const ghostText = ghostSource.substring(partial.length);
