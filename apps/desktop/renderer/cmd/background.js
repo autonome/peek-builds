@@ -32,7 +32,37 @@ log('ext:cmd', 'background', labels.name);
 // ===== Command Registry (PROVIDER PATTERN) =====
 // This extension owns the command registry. Other extensions register
 // commands by publishing to cmd:register, and we store them here.
-const commandRegistry = new Map();
+//
+// Every change bumps `registryVersion` and schedules a broadcast of the full
+// state, so the panel can apply the newest state and drop older snapshots.
+let registryVersion = 0;
+let registryBroadcastTimer = null;
+
+const registryState = () => ({ version: registryVersion, commands: Array.from(commandRegistry.values()) });
+
+const scheduleRegistryBroadcast = () => {
+  registryVersion++;
+  if (registryBroadcastTimer) return;
+  registryBroadcastTimer = setTimeout(() => {
+    registryBroadcastTimer = null;
+    api.pubsub.publish('cmd:query-commands-response', registryState());
+  }, 0);
+};
+
+class VersionedRegistry extends Map {
+  set(key, value) {
+    super.set(key, value);
+    scheduleRegistryBroadcast();
+    return this;
+  }
+  delete(key) {
+    const had = super.delete(key);
+    if (had) scheduleRegistryBroadcast();
+    return had;
+  }
+}
+
+const commandRegistry = new VersionedRegistry();
 
 // Noun registry — stores noun metadata for regenerating commands
 const nounRegistry = new Map();
@@ -354,9 +384,8 @@ const initCommandRegistry = () => {
 
   // Handle command list queries from the panel
   api.pubsub.subscribe('cmd:query-commands', () => {
-    const commands = Array.from(commandRegistry.values());
     log('ext:cmd', 'cmd:query-commands received');
-    api.pubsub.publish('cmd:query-commands-response', { commands });
+    api.pubsub.publish('cmd:query-commands-response', registryState());
   });
 
   log('ext:cmd', 'Command registry initialized');

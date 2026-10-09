@@ -6,6 +6,7 @@
  */
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import commandsModule from './commands/index.js';
+import { createRegistryMirror } from './registry-state.js';
 
 console.log('[cmd:commands] loaded');
 
@@ -14,6 +15,10 @@ const api = window.app;
 
 // Command registry - uses an object map for legacy compatibility
 let commands = {};
+
+// Newest registry state seen, and the names of the commands it supplied
+const registryMirror = createRegistryMirror();
+let registryNames = new Set();
 
 // Debounce timer for UI updates
 let updateTimer = null;
@@ -185,41 +190,21 @@ function createProxyCommand(cmdData) {
  * Subscribe to dynamic command registration from extensions
  */
 function initializeCommandRegistration() {
-  // Listen for response to our query
+  // The core registry (background.js) owns command state and publishes its
+  // full, versioned state on every change and in reply to our query. The
+  // panel applies only state newer than what it has, so registrations,
+  // unregistrations and snapshots can arrive in any order.
   api.subscribe('cmd:query-commands-response', (msg) => {
-    debug && console.log('[cmd:commands] cmd:query-commands-response received', msg.commands?.length, 'commands');
-    if (msg.commands) {
-      msg.commands.forEach(cmdData => {
-        const command = createProxyCommand(cmdData);
-        addCommandSilent(command); // Use silent add for batch
-      });
-      onCommandsUpdated(); // Single update after batch
+    debug && console.log('[cmd:commands] registry state received', msg.version, msg.commands?.length, 'commands');
+    if (!registryMirror.apply(msg)) return;
+    // Replace the registry-provided commands wholesale; built-ins stay.
+    for (const name of registryNames) delete commands[name];
+    registryNames = new Set();
+    for (const cmdData of registryMirror.commands) {
+      addCommandSilent(createProxyCommand(cmdData));
+      registryNames.add(cmdData.name);
     }
-  });
-
-  // Handle batch registrations from preload batching
-  api.subscribe('cmd:register-batch', (msg) => {
-    debug && console.log('[cmd:commands] cmd:register-batch received', msg.commands?.length, 'commands');
-    if (msg.commands) {
-      msg.commands.forEach(cmdData => {
-        const command = createProxyCommand(cmdData);
-        addCommandSilent(command); // Use silent add for batch
-      });
-      onCommandsUpdated(); // Single update after batch
-    }
-  });
-
-  // Also listen for individual registrations while panel is open
-  api.subscribe('cmd:register', (msg) => {
-    debug && console.log('[cmd:commands] cmd:register received (live)', msg);
-    const command = createProxyCommand(msg);
-    addCommand(command);
-  });
-
-  // Listen for unregistrations while panel is open
-  api.subscribe('cmd:unregister', (msg) => {
-    debug && console.log('[cmd:commands] cmd:unregister received', msg);
-    removeCommand(msg.name);
+    onCommandsUpdated();
   });
 
   // Query the background process for currently registered commands
