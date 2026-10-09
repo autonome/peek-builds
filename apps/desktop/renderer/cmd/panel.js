@@ -14,6 +14,7 @@ import { getSuggestions, invalidateCache as invalidateCompleterCache } from './c
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, rankByUsage } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
+import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -104,6 +105,35 @@ const recordParamPick = (command, value) => {
 };
 
 loadParamUsage();
+
+// Top-level rows pairing a command with one of its enum options (see object-pairs.js). The row's
+// text sits in state.matches like a command name; this maps it back to the command and option.
+let pairRowTargets = new Map();
+
+// Command matches plus pair rows for text typed at the top level. Text that already starts with
+// a command name and a space is that command's parameter, so it offers no pair rows.
+function matchesWithPairRows(typed) {
+  const commandMatches = findMatchingCommands(typed);
+  const lower = typed.toLowerCase();
+  const committed = commandMatches.some(name => lower.startsWith(name.toLowerCase() + ' '));
+  const available = committed ? [] : Object.keys(state.commands)
+    .filter(name => isCommandAvailable(state.commands[name]))
+    .map(name => ({ name, params: state.commands[name].params }));
+  const pairs = pairRowsFor(typed, available, paramUsage, Date.now());
+  pairRowTargets = new Map(pairs.map(p => [p.name, p]));
+  return withPairRows(commandMatches, pairs);
+}
+
+// The pair row's command and option, or null for a plain command row.
+function pairRowTarget(rowName) {
+  return (!state.commands[rowName] && pairRowTargets.get(rowName)) || null;
+}
+
+// The command a row runs: the paired command for a pair row, else the row itself.
+function rowCommand(rowName) {
+  const pair = pairRowTarget(rowName);
+  return pair ? pair.command : rowName;
+}
 
 // ===== State Machine Setup =====
 
@@ -2153,7 +2183,7 @@ function actionHandlers() {
           state.matches = allMatches.filter(name => chainingNames.has(name));
           clearUrlGhost();
         } else {
-          state.matches = findMatchingCommands(typed);
+          state.matches = matchesWithPairRows(typed);
           if (payload?.isDeleting) {
             // Reject-on-delete (deterministic per-event signal, no timer): after
             // a Backspace/delete the native input has already removed the
@@ -2490,7 +2520,7 @@ function actionHandlers() {
     },
 
     recordFrecency(payload) {
-      const name = payload?.commandName || state.matches[state.matchIndex];
+      const name = rowCommand(payload?.commandName || state.matches[state.matchIndex]);
       if (!name) return;
       const typed = state.originalTyped || state.typed || '';
       const commandPart = typed.split(' ')[0];
@@ -2500,7 +2530,7 @@ function actionHandlers() {
     },
 
     recordFrecencyFromResults() {
-      const name = state.matches[state.matchIndex];
+      const name = rowCommand(state.matches[state.matchIndex]);
       if (!name) return;
       const typed = state.originalTyped || state.typed || '';
       const commandPart = typed.split(' ')[0];
@@ -2519,6 +2549,13 @@ function actionHandlers() {
       const name = payload?.commandName || state.matches[state.matchIndex];
       const typed = payload?.typed || state.typed;
       if (!name) return;
+      const pair = pairRowTarget(name);
+      if (pair) {
+        // A pair row runs its command with its option, and counts as a pick of that option.
+        recordParamPick(pair.command, pair.value);
+        doExecute(pair.command, `${pair.command} ${pair.value}`);
+        return;
+      }
       doExecute(name, typed);
     },
 
