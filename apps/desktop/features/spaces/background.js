@@ -729,9 +729,15 @@ async function unpinWindow() {
   return setPinState(windowId, null);
 }
 
+/**
+ * The space tags. A failed lookup throws rather than answering "no spaces",
+ * so a caller never mistakes a datastore error for an empty space list.
+ */
 async function listSpaceTags() {
   const result = await api.datastore.getTagsByFrecency();
-  if (!result?.success || !Array.isArray(result.data)) return [];
+  if (!result?.success || !Array.isArray(result.data)) {
+    throw new Error(`Space lookup failed: ${result?.error || 'no tag list returned'}`);
+  }
   return result.data.filter((t) => t?.name && isSpaceTag(t.name));
 }
 
@@ -741,7 +747,12 @@ async function listSpaceTags() {
  */
 async function createSpace(name) {
   await defaultSpaceReady;
-  const existing = (await listSpaceTags()).map((t) => getSpaceDisplayName(t));
+  let existing;
+  try {
+    existing = (await listSpaceTags()).map((t) => getSpaceDisplayName(t));
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
   const check = validateNewSpaceName(name, existing, DEFAULT_SPACE_NAME);
   if (!check.ok) return { success: false, error: check.error, exists: !!check.exists };
 
@@ -817,6 +828,7 @@ async function moveToSpace(targetName) {
 
 // The existing spaces, as suggestion options for the commands that take a
 // space name. Re-published on every tag:created / tag:deleted / tag:renamed.
+// A failed lookup keeps the last known list; the next tag event retries.
 let spaceNameSuggestions = [];
 
 const SPACE_NAME_COMMANDS = [
