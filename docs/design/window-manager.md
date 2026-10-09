@@ -1200,9 +1200,13 @@ or where a headless run diverged from a real one, are closed.
 - **The command panel's own focus-loss dismissal is gone.** `renderer/cmd/panel.js` no longer
   subscribes to `window:focused` to hide itself; the palette (`role: 'palette'`, in
   `TRANSIENT_ROLES`) is dismissed by the kernel's `selectTransientAutoclose` like every other
-  transient role. **Open question, not yet resolved either way:** macOS Cmd+` window cycling is
-  reported to skip panel-type windows, so the palette may receive no native blur event during a
-  Cmd+` cycle — whether the kernel's focus-driven sweep still catches that case is unverified.
+  transient role. Cmd+` and Cmd+Shift+` no longer go to native macOS window cycling: they are Window
+  menu items in `main/entry.ts` that call `window-machine.ts cycleContentWindow()`, which picks the
+  next or previous content window in open order (`window-cycle.ts cyclableWindowIds()` /
+  `cycleTarget()`, transients excluded) and raises it through the kernel
+  (`kernelShowRequested(..., { activation: 'user' })`). That raise is a kernel raise, so its focus
+  reaches `selectTransientAutoclose` like any other. *Unverified* live: that an open palette closes
+  on Cmd+`.
 - **Close/hide policy moved from `windows.ts` into the kernel reducer.** `windows.ts
   closeOrHideWindow` held three decisions that a caller could get answered differently
   depending on entry point: refusing to close the background window, force-closing the settings
@@ -1312,10 +1316,10 @@ behaviour the other three had.
 
 These are deliberate, and none of them should be filled outside the kernel.
 
-- **Unverified:** macOS Cmd+` cycling is reported to skip panel-type and `alwaysOnTop` windows, so
-  the command palette may receive no native blur on that gesture — which is why `renderer/cmd/panel.js`
-  carried its own subscriber. Whether the kernel's focus-driven sweep covers the Cmd+` case has
-  never been tested.
+- **Unverified:** Cmd+` / Cmd+Shift+` cycling is Peek's own kernel raise
+  (`window-machine.ts cycleContentWindow()`), not native macOS cycling, so the raise's focus reaches
+  `selectTransientAutoclose`. The only open item is a live check that an open command palette closes
+  on Cmd+`.
 - A keepLive tile closed by a native path is destroyed rather than hidden UNLESS
   `electron-window-backend.ts`'s `'close'` listener catches it. That listener is the only bridge;
   `decide` has always had the right rule (`record.keepLive ? WindowHidden : WindowClosed`).

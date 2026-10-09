@@ -238,7 +238,9 @@ Each entry names the path and what it does with a window on another desktop.
   `canShowDesktops()` are also false under headless.
 - `main/electron-window-backend.ts` — `raiseWindow()` (plan: reorder /
   take-key / show-and-take-key, `app.focus({steal: true})` only for a
-  user-intent raise of a non-panel, with 250/600 ms re-asserts) and
+  user-intent raise of a non-panel, with 250/600 ms re-asserts; a newer user-intent raise cancels the pending re-asserts of
+  an earlier one, `main/user-raise-reassert.ts UserRaiseReassert`, so fast window cycling no longer
+  bounces back) and
   `showWindow()` → `performOsShow()` (logs `os-show`, then `show-outcome`
   with `desktopBefore`/`desktopAfter`/`onCurrentDesktop`, then triggers a
   desktop read). What AppKit does when these native calls land on a window
