@@ -106,6 +106,7 @@ import {
   kernelDestroyWindow,
   kernelSetDesktopMembership,
   kernelWindowShown,
+  kernelOsFocusGained,
   kernelWindowHidden,
   kernelSetFullscreen,
   kernelShowRequested,
@@ -911,6 +912,19 @@ function installTestBridge(): void {
     if (wid == null) return;
     kernelWindowContentOrderable(wid);
   };
+  // The bridge's stand-in for "this window was shown and took focus". The focus
+  // is reported as the confirmation of the show op the machine just issued, not
+  // as a world focus: where restacking hands out focus by itself (the Electron
+  // backend's `restackingTakesFocus`, every platform but macOS), a world focus
+  // arriving straight after a show is read as the platform's own choice and
+  // dropped (`window-kernel.ts platformChoseFocus`), so the window never takes
+  // key and the overlay never attaches to it.
+  const showFocused = (wid: WindowId): void => {
+    kernelWindowShown(wid);
+    const record = getKernelExecutor().getState().order.find((w) => w.id === wid);
+    if (record === undefined || record.canBecomeKey === false) return;
+    kernelOsFocusGained(wid, record.lastOpSeq === undefined ? undefined : { kind: 'machine', opSeq: record.lastOpSeq });
+  };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
     makeFakeHybridWindow(bounds: { x: number; y: number; width: number; height: number }): number {
       const baseWin = new BaseWindowCtor({
@@ -1011,7 +1025,7 @@ function installTestBridge(): void {
       // that window lands as a world focus, raises it above the host, and
       // `topmostBaseLayerPageHost` answers null: the chrome detaches and the
       // handoff never paints. Skipping the target loses nothing, because the
-      // `kernelWindowShown(wid, true)` below dispatches `OsFocusGained`, which
+      // `showFocused(wid)` below dispatches `OsFocusGained`, which
       // moves the target to the top of `order` whether or not it already held
       // key.
       const wid = id == null ? null : getWindowIdFor(id);
@@ -1026,7 +1040,12 @@ function installTestBridge(): void {
         kernelWindowHidden(record.id);
       }
       if (wid != null) {
-        kernelWindowShown(wid, true);
+        // A real host (opened through `app.window.open`) keeps the world focus:
+        // the raise it issues is what puts the host above the window that holds
+        // real OS focus. Only a fake host, which no OS ever focuses, needs the
+        // show-confirming focus.
+        if (fakeHosts.has(id!)) showFocused(wid);
+        else kernelWindowShown(wid, true);
       }
       getKernelExecutor().markTimeline(`setActive(${String(wid)}) done`);
       return true;
@@ -1181,7 +1200,7 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(w);
         if (wid != null) {
-          kernelWindowShown(wid, true);
+          showFocused(wid);
         }
       }
       w.emit('focus');
@@ -1211,7 +1230,7 @@ function installTestBridge(): void {
       {
         const wid = getWindowIdFor(id);
         if (wid != null) {
-          kernelWindowShown(wid, true);
+          showFocused(wid);
         }
       }
       entry.contentWC.emit('focus');
@@ -1300,7 +1319,7 @@ function installTestBridge(): void {
       }
       const wid = getWindowIdFor(elsewhereWin);
       if (wid != null) {
-        kernelWindowShown(wid, true);
+        showFocused(wid);
       }
     },
     runDeferredBlur(_id: number): number | null {
