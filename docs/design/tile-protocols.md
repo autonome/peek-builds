@@ -116,6 +116,15 @@ them per tile until the tile signals ready, as `data.js` `listen()` does with
 `tiles-protocol-up-data-ready`, and then delivers the queue in order. The queue belongs to the
 host-side protocol registration, not to each protocol, so no protocol can omit it.
 
+## Core surfaces
+
+The cmd panel, page host and its overlay, HUD, settings and the background orchestrator are
+built-in tiles that are never published, installed or removed on their own. They ship with Peek,
+cannot be uninstalled, and keep privileges no published tile gets (`trustedBuiltin`, `api.invoke`
+and the other calls reserved for them). Protocols exist so tiles can move between hosts, which
+these never do, so they stay on `window.app` and nothing in this design requires moving them.
+They may still import a protocol where that is simpler than the `window.app` equivalent.
+
 ## Runtime constraints
 
 - **Serving a module is not the security gate.** A protocol module is page JavaScript, and the
@@ -140,9 +149,7 @@ host-side protocol registration, not to each protocol, so no protocol can omit i
 - **Values that are synchronous today** (`api.version`, `api.platform`, `api.getTileId()`)
   become available only after an `await`, so code that reads them at the top level of a module
   reorders.
-- **Core renderers stay on `window.app`.** The background orchestrator, cmd panel, page overlay
-  and HUD rely on `trustedBuiltin`-only calls such as `api.invoke`, so the two models coexist for
-  as long as those surfaces are not tiles.
+- **Core surfaces stay on `window.app`.** See "Core surfaces" below.
 - **Startup cost.** Each protocol a tile imports is one more `peek://` request and module
   evaluation when its window opens. Unmeasured; it matters most for lazy tiles opened by a
   hotkey, which already feel slow (Peek `9e6e91de`).
@@ -158,5 +165,3 @@ host-side protocol registration, not to each protocol, so no protocol can omit i
 - **Message source checks.** `@dasl/tile-server` `shuttle.js` relays `tiles-protocol-*` messages
   without checking the sender, and `data.js` posts to its parent with target origin `'*'`. When
   Peek hosts Web Tiles it checks the sender of every message itself.
-- **Trusted built-in surfaces.** `api.invoke` and the other `trustedBuiltin`-only calls serve core
-  renderers, not features. Whether they become protocols at all.
