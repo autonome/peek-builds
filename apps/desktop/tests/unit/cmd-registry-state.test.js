@@ -35,6 +35,15 @@ describe('createRegistryMirror', () => {
     assert.equal(mirror.apply({ version: 2, commands: [spaceCmd([])] }), false);
   });
 
+  it('accepts a restarted registry whose version is lower', () => {
+    const mirror = createRegistryMirror();
+    mirror.apply({ instance: 'one', version: 9, commands: [spaceCmd(['a'])] });
+    assert.equal(mirror.apply({ instance: 'two', version: 1, commands: [spaceCmd(['b'])] }), true);
+    assert.deepEqual(mirror.commands[0].params[0].options, ['b']);
+    assert.equal(mirror.apply({ instance: 'two', version: 1, commands: [spaceCmd([])] }), false);
+    assert.equal(mirror.apply({ instance: 'one', version: 10, commands: [spaceCmd([])] }), true);
+  });
+
   it('ignores a state without a numeric version', () => {
     const mirror = createRegistryMirror();
     assert.equal(mirror.apply({ commands: [spaceCmd(['a'])] }), false);
