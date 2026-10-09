@@ -116,12 +116,45 @@ them per tile until the tile signals ready, as `data.js` `listen()` does with
 `tiles-protocol-up-data-ready`, and then delivers the queue in order. The queue belongs to the
 host-side protocol registration, not to each protocol, so no protocol can omit it.
 
+## Runtime constraints
+
+- **Serving a module is not the security gate.** A protocol module is page JavaScript, and the
+  only way page JavaScript reaches the main process is through what `tile-preload.cts` exposes. So
+  every protocol module calls one generic bridge in the preload, and any tile can call that bridge
+  directly whatever modules it was served. The main process checks the tile's token and
+  capability on every call, as `tile-ipc.ts` does today; leaving a module unserved only gives
+  tiles a clean "not available". The call-time check also covers a grant revoked while the tile
+  runs.
+- **Two meanings of ready.** The preload sends `tile:lifecycle:ready` on the tick after it loads
+  (`tile-preload.cts api.initialize()`), and `main/tile-lazy.ts` delivers the event that woke a
+  lazy tile once that arrives. That is before any protocol `import` resolves. The per-protocol
+  queue in "Events from host to tile" is what makes this safe: the wake event waits for the
+  protocol's own ready signal rather than the preload's.
+- **A refused import sticks.** A module that failed to load stays failed in that page, so a
+  capability approved while a tile is open takes effect only when the tile reloads.
+- **Tests that reach into `window.app`.** Eleven test files under `apps/desktop/tests` evaluate
+  `window.app.*` in a page, and they move with their namespace. The move also removes a testing
+  limit: `window.app` is frozen by the context bridge and cannot be stubbed from a spec, while a
+  protocol module is ordinary page code that a spec can replace. That is why the publish wizard in
+  `features-manager/publish.js` has no spec today.
+- **Values that are synchronous today** (`api.version`, `api.platform`, `api.getTileId()`)
+  become available only after an `await`, so code that reads them at the top level of a module
+  reorders.
+- **Core renderers stay on `window.app`.** The background orchestrator, cmd panel, page overlay
+  and HUD rely on `trustedBuiltin`-only calls such as `api.invoke`, so the two models coexist for
+  as long as those surfaces are not tiles.
+- **Startup cost.** Each protocol a tile imports is one more `peek://` request and module
+  evaluation when its window opens. Unmeasured; it matters most for lazy tiles opened by a
+  hotkey, which already feel slow (Peek `9e6e91de`).
+
 ## Open questions
-- **Serving path and origin.** Feature tiles load from `peek://ext/<id>/`, so
-  `/.well-known/web-tiles/<name>.js` resolves to `peek://ext/.well-known/...`, which
-  `main/protocol.ts handleProtocolRequest()` currently treats as a tile named `.well-known` and
-  answers 404. All feature tiles also share the `peek://ext` origin, unlike the per-tile origin the
-  spec requires for Web Tiles, so step 5 needs its own origin scheme.
+- **Serving path.** A tile loaded from its own host, `peek://<tile-id>/`, resolves
+  `/.well-known/web-tiles/<name>.js` to `peek://<tile-id>/.well-known/web-tiles/<name>.js`, so
+  `main/protocol.ts handleProtocolRequest()` knows which tile is asking from the host alone and
+  can gate by that tile's grant. It currently looks for the file in the tile's own directory. A
+  page loaded through the older `peek://ext/<id>/` form would resolve to
+  `peek://ext/.well-known/...` instead, with no tile id in it; such pages move to their own host
+  before they can use protocols.
 - **Message source checks.** `@dasl/tile-server` `shuttle.js` relays `tiles-protocol-*` messages
   without checking the sender, and `data.js` posts to its parent with target origin `'*'`. When
   Peek hosts Web Tiles it checks the sender of every message itself.
