@@ -92,3 +92,12 @@ describe('space-name commands follow the space list', () => {
     assert.deepEqual(lastOptions('switch space'), ['default', 'delta', 'gamma']);
   });
 });
+
+describe('space-name commands name a create path', () => {
+  it('only open space offers to create a space that does not exist', () => {
+    const createCommandOf = (name) => [...registrations].reverse().find((r) => r.name === name)?.params?.[0]?.createCommand;
+    assert.equal(createCommandOf('open space'), 'create space');
+    assert.equal(createCommandOf('switch space'), undefined);
+    assert.equal(createCommandOf('move to space'), undefined);
+  });
+});
