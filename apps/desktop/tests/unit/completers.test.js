@@ -113,9 +113,43 @@ describe('completeEnum', () => {
       ]);
     });
 
-    it('matches the partial against opt.value, not the title', () => {
+    it('matches the partial against opt.value', () => {
       const results = completeEnum('ra', new Set(), richDef);
       assert.deepEqual(results.map(r => r.value), ['raw']);
+    });
+  });
+
+  describe('matching anywhere in the name', () => {
+    const projects = {
+      type: 'enum',
+      options: [
+        { value: 'p1', title: 'Client Projects' },
+        { value: 'p2', title: 'Projector Manuals' },
+        { value: 'p3', title: 'Side-project ideas' },
+        { value: 'p4', title: 'Reprojection' },
+        { value: 'p5', title: 'Taxes' },
+      ],
+    };
+
+    it('finds an option by a word inside its title', () => {
+      const results = completeEnum('proj', new Set(), projects);
+      assert.deepEqual(results.map(r => r.value), ['p2', 'p1', 'p3', 'p4']);
+    });
+
+    it('orders by tier, keeping the provider order within a tier', () => {
+      const def = { type: 'enum', values: ['xx-red', 'redo', 'bored', 'red', 'a_red'] };
+      const results = completeEnum('red', new Set(), def);
+      assert.deepEqual(results.map(r => r.value), ['red', 'redo', 'xx-red', 'a_red', 'bored']);
+    });
+
+    it('matches a plain value in the middle', () => {
+      const def = { type: 'enum', values: ['alpha', 'beta'] };
+      assert.deepEqual(completeEnum('lph', new Set(), def).map(r => r.value), ['alpha']);
+    });
+
+    it('still excludes used values', () => {
+      const results = completeEnum('proj', new Set(['p2']), projects);
+      assert.deepEqual(results.map(r => r.value), ['p1', 'p3', 'p4']);
     });
   });
 });
