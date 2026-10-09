@@ -602,7 +602,8 @@ async function doUpdateParamSuggestions() {
     : new Set();
 
   const suggestions = rankByUsage(
-    await getSuggestions(paramDef, searchPartial, exclude), paramUsage, state.paramCommand, Date.now()
+    await getSuggestions(paramDef, searchPartial, exclude), paramUsage, state.paramCommand, Date.now(),
+    searchPartial, prefix
   );
 
   if (generation !== state.paramGeneration) return;

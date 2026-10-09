@@ -35,18 +35,28 @@ export function recordPick(usage, command, value, now) {
   };
 }
 
+function withoutPrefix(text, prefix) {
+  const lower = String(text == null ? '' : text).toLowerCase();
+  const lowerPrefix = (prefix || '').toLowerCase();
+  return lowerPrefix && lower.startsWith(lowerPrefix) ? lower.slice(lowerPrefix.length) : lower;
+}
+
 /**
- * Suggestions with usage first, by score descending; unused ones follow in the order given.
- * Returns a new array.
+ * Suggestions with an exact match of the typed text first, then usage by score descending;
+ * unused ones follow in the order given. Exact means the value or title equals the typed text,
+ * case-insensitively and ignoring the param prefix. Returns a new array.
  */
-export function rankByUsage(suggestions, usage, command, now) {
+export function rankByUsage(suggestions, usage, command, now, typed, prefix) {
   const forCommand = usage && usage[command];
-  if (!forCommand) return suggestions.slice();
+  const query = withoutPrefix(typed, prefix);
+  if (!forCommand && !query) return suggestions.slice();
   const scored = suggestions.map((suggestion, index) => ({
     suggestion,
     index,
-    score: scoreAt(forCommand[String(suggestion.value).toLowerCase()], now),
+    exact: query !== '' && (withoutPrefix(suggestion.value, prefix) === query ||
+      withoutPrefix(suggestion.title, prefix) === query),
+    score: forCommand ? scoreAt(forCommand[String(suggestion.value).toLowerCase()], now) : 0,
   }));
-  scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  scored.sort((a, b) => (b.exact - a.exact) || (b.score - a.score) || (a.index - b.index));
   return scored.map(s => s.suggestion);
 }
