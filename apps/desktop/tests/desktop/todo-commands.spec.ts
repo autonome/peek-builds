@@ -12,10 +12,11 @@ import {
 //
 //   todo <text> [#tags]  -> text item tagged `todo` (+ trailing tags, removed from the text)
 //   todos                -> selection list of outstanding todos; Enter opens the editor
-//   done <match>         -> suggestion list of todos; Tab fills, Enter swaps `todo` for `done`
+//   complete <match>     -> suggestion list of todos; Tab fills, Enter swaps `todo` for `done`
+//   done                 -> selection list of finished todos; read-only
 //
-// Tests run in file order against one app: `done` with no todos goes first,
-// before any todo exists.
+// Tests run in file order against one app: `complete` with no todos goes
+// first, before any todo exists.
 // ============================================================================
 
 const PANEL_OPEN_OPTS = {
@@ -54,7 +55,7 @@ test.describe('Todo commands via the cmd panel @desktop', () => {
     await cmdWindow.waitForFunction(
       () => {
         const s = (window as any)._cmdState;
-        return s?.commands?.['todo'] && s.commands['todos'] && s.commands['done'];
+        return s?.commands?.['todo'] && s.commands['todos'] && s.commands['done'] && s.commands['complete'];
       },
       undefined,
       { timeout: 15000 }
@@ -111,8 +112,8 @@ test.describe('Todo commands via the cmd panel @desktop', () => {
     }, text);
   }
 
-  test('done with no todos changes nothing and the panel recovers', async () => {
-    await runCommand(`done nothing-${stamp}`);
+  test('complete with no todos changes nothing and the panel recovers', async () => {
+    await runCommand(`complete nothing-${stamp}`);
     expect(await itemsWithTag('done')).toEqual([]);
     expect(await itemsWithTag('todo')).toEqual([]);
   });
@@ -219,14 +220,14 @@ test.describe('Todo commands via the cmd panel @desktop', () => {
     }
   });
 
-  test('done picker: Tab fills the picked todo and Enter swaps todo for done', async () => {
+  test('complete picker: Tab fills the picked todo and Enter swaps todo for done', async () => {
     const title = `pick me ${stamp}`;
     const otherTitle = `leave me ${stamp}`;
     const pickedId = await addTodo(title);
     const otherId = await addTodo(otherTitle);
 
     const { cmdWindow, panelId } = await openPanel();
-    await cmdWindow.fill('input', 'done pick me');
+    await cmdWindow.fill('input', 'complete pick me');
 
     await cmdWindow.waitForFunction(
       (t: string) => {
@@ -255,19 +256,43 @@ test.describe('Todo commands via the cmd panel @desktop', () => {
     await closePanel(panelId);
   });
 
-  test('done with typed text and no pick marks the first match done', async () => {
+  test('complete with typed text and no pick marks the first match done', async () => {
     const id = await addTodo(`typed match ${stamp}`);
-    await runCommand(`done typed match ${stamp}`);
+    await runCommand(`complete typed match ${stamp}`);
 
     await expect.poll(async () => (await itemsWithTag('done')).map((i) => i.id)).toContain(id);
     expect((await itemsWithTag('todo')).map((i) => i.id)).not.toContain(id);
   });
 
-  test('done with text that matches no todo leaves everything as it was', async () => {
+  test('complete with text that matches no todo leaves everything as it was', async () => {
     const todoBefore = (await itemsWithTag('todo')).map((i) => i.id).sort();
     const doneBefore = (await itemsWithTag('done')).map((i) => i.id).sort();
-    await runCommand(`done zzz-no-such-todo-${stamp}`);
+    await runCommand(`complete zzz-no-such-todo-${stamp}`);
     expect((await itemsWithTag('todo')).map((i) => i.id).sort()).toEqual(todoBefore);
     expect((await itemsWithTag('done')).map((i) => i.id).sort()).toEqual(doneBefore);
+  });
+
+  test('done lists the finished todos and marks nothing', async () => {
+    const finished = (await itemsWithTag('done')).map((i) => i.id).sort();
+    expect(finished.length).toBeGreaterThan(0);
+    const todoBefore = (await itemsWithTag('todo')).map((i) => i.id).sort();
+
+    const { cmdWindow, panelId } = await openPanel();
+    await cmdWindow.fill('input', 'done');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Same signal the `todos` test waits on: the panel's output selection list is populated.
+    await cmdWindow.waitForFunction(
+      () => ((window as any)._cmdState?.outputItems?.length ?? 0) > 0,
+      undefined,
+      { timeout: 10000 }
+    );
+    const listed = await cmdWindow.evaluate(() =>
+      ((window as any)._cmdState.outputItems as any[]).map((i) => i.id)
+    );
+    expect([...listed].sort()).toEqual(finished);
+    expect((await itemsWithTag('todo')).map((i) => i.id).sort()).toEqual(todoBefore);
+
+    await closePanel(panelId);
   });
 });
