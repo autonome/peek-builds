@@ -56,6 +56,7 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
+import { UserRaiseReassert } from './user-raise-reassert.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization } from './window-kernel-executor.js';
@@ -214,6 +215,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
 
   private appResignSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // The delayed re-asserts of the latest user raise; a newer user raise or the
+  // target's close supersedes them.
+  private readonly userRaiseReassert = new UserRaiseReassert<WindowId>();
 
   private escGrabRegistered = false;
 
@@ -647,6 +652,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
+      this.userRaiseReassert.cancelFor(id);
       this.quitPromptPending.delete(id);
       this.pendingSelfCausedFocus.delete(id);
       this.pendingShowOpSeq.delete(id);
@@ -764,6 +770,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
     if (win.isDestroyed()) return;
+    // A newer user raise supersedes the re-asserts of an earlier one. A raise
+    // without user intent does not: it can be the machine following the very
+    // misdirected activation focus the re-assert exists to correct.
+    if (intent === 'user') this.userRaiseReassert.cancel();
     const visible = this.isVisibleSafe(win);
     const focused = this.isFocused(win);
     const plan = planRaiseRealization(visible, focused);
@@ -792,12 +802,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         // to the window that was key when the app last resigned, ahead of the
         // window this raise targeted. Re-assert the target once activation
         // has settled, if it did not end up key.
-        for (const delayMs of [250, 600]) {
-          setTimeout(() => {
-            wmLog('activation-reassert-timer', { id, delayMs, kernelActive: getAppActive(), focused: this.isFocused(win) });
-            this.reassertUserRaise(id, opSeq);
-          }, delayMs);
-        }
+        // A newer user raise cancels these (see `userRaiseReassert`).
+        this.userRaiseReassert.arm(id, opSeq, [250, 600], (_id, _opSeq, delayMs) => {
+          wmLog('activation-reassert-timer', { id, delayMs, kernelActive: getAppActive(), focused: this.isFocused(win) });
+          this.reassertUserRaise(id, opSeq);
+        });
       } catch {
         /* activation refused by the OS — the window calls below still run */
       }

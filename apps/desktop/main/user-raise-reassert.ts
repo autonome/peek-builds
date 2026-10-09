@@ -16,16 +16,26 @@ const realTimers: ReassertTimers = {
 
 export class UserRaiseReassert<Id> {
   private handles: unknown[] = [];
+  private targetId: Id | null = null;
 
   constructor(private readonly timers: ReassertTimers = realTimers) {}
 
-  arm(id: Id, opSeq: number, delaysMs: number[], fire: (id: Id, opSeq: number) => void): void {
+  // Replaces whatever was pending: there is one pending re-assert at a time.
+  arm(id: Id, opSeq: number, delaysMs: number[], fire: (id: Id, opSeq: number, delayMs: number) => void): void {
+    this.cancel();
+    this.targetId = id;
     for (const delayMs of delaysMs) {
-      this.handles.push(this.timers.set(() => fire(id, opSeq), delayMs));
+      this.handles.push(this.timers.set(() => fire(id, opSeq, delayMs), delayMs));
     }
   }
 
+  // Drops the pending re-assert only if it targets `id` (the window closed).
+  cancelFor(id: Id): void {
+    if (this.targetId === id) this.cancel();
+  }
+
   cancel(): void {
+    this.targetId = null;
     for (const handle of this.handles) this.timers.clear(handle);
     this.handles = [];
   }
