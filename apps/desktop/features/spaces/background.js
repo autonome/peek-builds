@@ -671,6 +671,9 @@ async function switchSpace(targetName) {
       toSpaceTagName(targetName.trim()) === toSpaceTagName(activeSpaceName)) {
     return { success: true, spaceId: activeSpaceId, spaceName: activeSpaceName, unchanged: true };
   }
+  // Unlike `open space`, switching never creates the target.
+  const missing = await missingSpaceError(targetName);
+  if (missing) return { success: false, error: missing };
   // Entering any workspace already closes whichever one is active — switching
   // is just entering a different target (see openSpace()).
   return openSpace(targetName);
@@ -742,6 +745,24 @@ async function listSpaceTags() {
 }
 
 /**
+ * The error for a space name that matches no existing space (case-insensitive;
+ * the default space always exists), or null when the space exists. A failed
+ * lookup is reported as its own error rather than as a missing space.
+ */
+async function missingSpaceError(name) {
+  const wanted = typeof name === 'string' ? name.trim().toLowerCase() : '';
+  if (wanted === DEFAULT_SPACE_NAME.toLowerCase()) return null;
+  let tags;
+  try {
+    tags = await listSpaceTags();
+  } catch (err) {
+    return err.message;
+  }
+  if (tags.some((t) => getSpaceDisplayName(t).trim().toLowerCase() === wanted)) return null;
+  return `No space named "${name.trim()}"`;
+}
+
+/**
  * Create a space without switching to it. Reports `exists` when the name is
  * already taken (case-insensitive) or is the default space's.
  */
@@ -792,6 +813,9 @@ async function moveToSpace(targetName) {
   if (plan.action === 'error') return { success: false, error: plan.error };
 
   if (plan.action === 'move-to-inactive') {
+    // Moving never creates the target space.
+    const missing = await missingSpaceError(plan.targetName);
+    if (missing) return { success: false, error: missing };
     const tagResult = await api.datastore.getOrCreateTag(toSpaceTagName(plan.targetName));
     if (!tagResult.success) return { success: false, error: 'Failed to get/create space tag' };
     const tag = tagResult.data.tag;

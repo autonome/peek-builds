@@ -118,6 +118,8 @@ test.describe('move to space scope @desktop', () => {
   test('moving one page to an inactive space moves only that page', async () => {
     const defaultId = await tagId('space:default');
     const targetName = 'move-scope-target';
+    // Moving never creates the target space, so it has to exist first.
+    await tagId(`space:${targetName}`);
 
     // Three pages in the default workspace, opened through the production
     // window-open path (each is born in the active workspace).
