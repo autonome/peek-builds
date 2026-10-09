@@ -38,8 +38,14 @@ function makeMachine(overrideActions = {}, overrideGuards = {}) {
   const functionalActions = {
     navigateDown(payload, data) { data.matchIndex++; },
     navigateUp(payload, data) { data.matchIndex--; },
-    navigateParamDown(payload, data) { data.paramIndex++; },
-    navigateParamUp(payload, data) { data.paramIndex--; },
+    navigateParamDown(payload, data) {
+      const n = data.paramSuggestions.length;
+      data.paramIndex = n ? (data.paramIndex + 1) % n : -1;
+    },
+    navigateParamUp(payload, data) {
+      const n = data.paramSuggestions.length;
+      data.paramIndex = n ? (data.paramIndex <= 0 ? n - 1 : data.paramIndex - 1) : -1;
+    },
     navigateOutputDown(payload, data) { data.outputItemIndex++; },
     navigateOutputUp(payload, data) { data.outputItemIndex--; },
     setMatchIndexFromClick(payload, data) {
@@ -831,6 +837,32 @@ describe('PARAM_MODE transitions', () => {
     assert.equal(machine.getState(), States.PARAM_MODE);
     // Invariant enforcement bounds the index
     assert.ok(machine.getData().paramIndex >= 0);
+  });
+
+  it('PARAM_MODE + ArrowDown on the last suggestion wraps to the first', () => {
+    machine.getMutableData().paramSuggestions = [{ title: 'a' }, { title: 'b' }];
+    machine.getMutableData().paramIndex = 1;
+    machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(machine.getState(), States.PARAM_MODE);
+    assert.equal(machine.getData().paramIndex, 0);
+  });
+
+  it('PARAM_MODE + ArrowUp on the first suggestion wraps to the last', () => {
+    machine.getMutableData().paramSuggestions = [{ title: 'a' }, { title: 'b' }];
+    machine.getMutableData().paramIndex = 0;
+    machine.dispatch(Events.ARROW_UP);
+    assert.equal(machine.getState(), States.PARAM_MODE);
+    assert.equal(machine.getData().paramIndex, 1);
+  });
+
+  it('PARAM_MODE + arrows with no suggestions do nothing', () => {
+    machine.getMutableData().paramSuggestions = [];
+    machine.getMutableData().paramIndex = -1;
+    machine._actionLog.length = 0;
+    machine.dispatch(Events.ARROW_DOWN);
+    machine.dispatch(Events.ARROW_UP);
+    assert.ok(!machine._actionLog.includes('navigateParamDown'));
+    assert.ok(!machine._actionLog.includes('navigateParamUp'));
   });
 
   it('PARAM_MODE + Tab -> fills suggestion (stays in PARAM_MODE)', () => {
