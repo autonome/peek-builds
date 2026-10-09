@@ -13,6 +13,7 @@ import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, rankByUsage } from './usage-rank.js';
+import { noMatchRow } from './no-match.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -610,6 +611,8 @@ async function doUpdateParamSuggestions() {
 
   state.paramSuggestions = suggestions;
   state.paramIndex = suggestions.length > 0 ? 0 : -1;
+  const row = suggestions.length === 0 ? noMatchRow(paramDef, searchPartial) : null;
+  state.paramNoMatch = row ? { ...row, command: state.paramCommand } : null;
 
   updateResultsUI();
   updateCommandUI();
@@ -1847,6 +1850,37 @@ function updateResultsUI() {
     return;
   }
 
+  const noMatch = isParamState && state.paramNoMatch && state.paramNoMatch.command === state.paramCommand
+    ? state.paramNoMatch : null;
+  if (noMatch) {
+    resultsContainer.classList.add('visible');
+    const item = document.createElement('div');
+    item.className = 'command-item';
+    if (noMatch.run) item.classList.add('selected');
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'cmd-name';
+    nameSpan.textContent = noMatch.title;
+    item.appendChild(nameSpan);
+
+    if (noMatch.subtitle) {
+      const descSpan = document.createElement('span');
+      descSpan.className = 'cmd-desc';
+      descSpan.textContent = noMatch.subtitle;
+      item.appendChild(descSpan);
+    }
+
+    if (noMatch.run) {
+      item.addEventListener('click', () => {
+        machine.dispatch(Events.CLICK_PARAM, { index: 0 });
+      });
+    }
+
+    resultsContainer.appendChild(item);
+    updateWindowSize();
+    return;
+  }
+
   if (isParamState) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
@@ -2495,7 +2529,13 @@ function actionHandlers() {
       const rest = typed.trim().slice(name.length).trim().toLowerCase();
       const picked = rest && state.paramSuggestions.find(s => String(s.value).toLowerCase() === rest);
       if (picked) recordParamPick(name, picked.value);
-      doExecute(name, typed);
+      const create = state.paramSuggestions.length === 0 && state.paramNoMatch
+        && state.paramNoMatch.command === name && state.paramNoMatch.run;
+      if (create) {
+        doExecute(state.paramNoMatch.subtitle, create);
+      } else {
+        doExecute(name, typed);
+      }
       const input = commandInput();
       if (input) { input.value = ''; }
       state.typed = '';

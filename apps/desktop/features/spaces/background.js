@@ -832,7 +832,7 @@ async function moveToSpace(targetName) {
 let spaceNameSuggestions = [];
 
 const SPACE_NAME_COMMANDS = [
-  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name' },
+  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name', createCommand: 'create space' },
   { name: 'switch space', description: 'Close current space and open another', param: 'Target space name' },
   { name: 'move to space', description: 'Move the active window to a space', param: 'Target space name' },
 ];
@@ -850,6 +850,7 @@ function publishSpaceNameCommands() {
         options: spaceNameSuggestions,
         required: true,
         description: cmd.param,
+        ...(cmd.createCommand ? { createCommand: cmd.createCommand } : {}),
       }],
     });
   }
