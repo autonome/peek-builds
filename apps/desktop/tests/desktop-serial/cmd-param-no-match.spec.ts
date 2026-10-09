@@ -96,6 +96,34 @@ test.describe('Command param with no match @desktop', () => {
     // Enter still runs the command itself, as before; it just never runs the create command.
     await bgWindow.waitForTimeout(1500);
     expect(await bgWindow.evaluate(() => (window as any).__createRuns.length)).toBe(0);
+    // Neither does the command itself create the typed space.
+    expect(await spaceTagNames()).not.toContain('space:zzzr');
     await closePanel(id);
+  });
+
+  async function runWithResult(command: string, name: string): Promise<any> {
+    return bgWindow.evaluate(async ({ command, name }) => {
+      const api = (window as any).app;
+      return await new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${command}:result:${Date.now()}`;
+        api.subscribe(resultTopic, (r: any) => resolve(r), { scope: 'global' });
+        api.publish(`cmd:execute:${command}`, { search: name, params: [name], expectResult: true, resultTopic });
+        setTimeout(() => resolve({ timedOut: true }), 20000);
+      });
+    }, { command, name });
+  }
+
+  test('switch space with an unknown name creates nothing and reports an error', async () => {
+    const result = await runWithResult('switch space', 'zzzs');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('No space named "zzzs"');
+    expect(await spaceTagNames()).not.toContain('space:zzzs');
+  });
+
+  test('move to space with an unknown name creates nothing and reports an error', async () => {
+    const result = await runWithResult('move to space', 'zzzt');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('No space named "zzzt"');
+    expect(await spaceTagNames()).not.toContain('space:zzzt');
   });
 });
