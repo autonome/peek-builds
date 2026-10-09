@@ -97,11 +97,26 @@ A tile lists the protocols it uses in a `protocols` field, mapping each name to 
   to tell up front whether it can run a tile. Peek uses it in its own manifest whether or not the
   proposal is taken up.
 
-## Open questions
+## Events from host to tile
 
-- **Events.** `pubsub`, `onVisible`, `onShutdown` and similar push from host to tile. Whether they
-  become handlers on a protocol module (in the style of `addDataHandler`) or stay outside the
-  protocol model.
+APIs that push from the host to the tile split three ways by kind:
+
+- **Lifecycle** (`onVisible`, `onShutdown`) maps onto standard web events, `visibilitychange` and
+  `pagehide`. They work in any host and need neither a protocol nor a queue. Before relying on
+  them, a test confirms Electron fires them when Peek hides, shows and closes a tile's window.
+- **Data events** (`pubsub` deliveries, settings changes) become handlers on a protocol module, in
+  the style of `data.js` `addDataHandler()`.
+- **Peek-only hooks** (`onNavigateDeferred`, `escape`) become protocols like any other and are
+  absent in other hosts.
+
+A protocol is loaded with a dynamic `import`, so a tile's handlers attach only after an `await`.
+A lazy tile that attaches them late misses the event that woke it (the init-ordering rule in
+`apps/desktop/CLAUDE.md`, "Lazy feature activation"). So every protocol that pushes events holds
+them per tile until the tile signals ready, as `data.js` `listen()` does with
+`tiles-protocol-up-data-ready`, and then delivers the queue in order. The queue belongs to the
+host-side protocol registration, not to each protocol, so no protocol can omit it.
+
+## Open questions
 - **Serving path and origin.** Feature tiles load from `peek://ext/<id>/`, so
   `/.well-known/web-tiles/<name>.js` resolves to `peek://ext/.well-known/...`, which
   `main/protocol.ts handleProtocolRequest()` currently treats as a tile named `.well-known` and
