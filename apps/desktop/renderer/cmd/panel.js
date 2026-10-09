@@ -12,6 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
+import { recordPick, rankByUsage } from './usage-rank.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -86,6 +87,22 @@ const saveAdaptiveData = async (feedback, counts) => {
     api.settings.set(STORAGE_KEY_COUNTS, counts),
   ]);
 };
+
+// Per-command parameter option usage (see usage-rank.js), stored beside the match counts.
+const STORAGE_KEY_PARAM_USAGE = 'paramUsage';
+let paramUsage = {};
+
+const loadParamUsage = async () => {
+  const res = await api.settings.get(STORAGE_KEY_PARAM_USAGE);
+  paramUsage = (res.success && res.data) || {};
+};
+
+const recordParamPick = (command, value) => {
+  paramUsage = recordPick(paramUsage, command, value, Date.now());
+  api.settings.set(STORAGE_KEY_PARAM_USAGE, paramUsage);
+};
+
+loadParamUsage();
 
 // ===== State Machine Setup =====
 
@@ -584,7 +601,9 @@ async function doUpdateParamSuggestions() {
       )
     : new Set();
 
-  const suggestions = await getSuggestions(paramDef, searchPartial, exclude);
+  const suggestions = rankByUsage(
+    await getSuggestions(paramDef, searchPartial, exclude), paramUsage, state.paramCommand, Date.now()
+  );
 
   if (generation !== state.paramGeneration) return;
 
@@ -2471,6 +2490,10 @@ function actionHandlers() {
       const typed = state.typed;
       if (!name) return;
       console.log('[cmd:panel] executeCommandWithParams', JSON.stringify({ name, typed, paramIndex: state.paramIndex }));
+      // The picked option is the suggestion whose value is everything typed after the command.
+      const rest = typed.trim().slice(name.length).trim().toLowerCase();
+      const picked = rest && state.paramSuggestions.find(s => String(s.value).toLowerCase() === rest);
+      if (picked) recordParamPick(name, picked.value);
       doExecute(name, typed);
       const input = commandInput();
       if (input) { input.value = ''; }

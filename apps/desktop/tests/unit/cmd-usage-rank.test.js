@@ -52,8 +52,8 @@ describe('recordPick', () => {
     const before = {};
     const after = recordPick(before, 'open space', 'Work', NOW);
     assert.deepEqual(before, {});
-    near(scoreAt(after['open space'].Work, NOW), 100);
-    assert.equal(after['open space'].Home, undefined);
+    near(scoreAt(after['open space'].work, NOW), 100);
+    assert.equal(after['open space'].home, undefined);
   });
 
   it('keeps a different command separate', () => {
