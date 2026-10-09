@@ -206,6 +206,38 @@ describe('completeTag', () => {
     assert.equal(results.length, 20);
   });
 
+  describe('matching anywhere in the name', () => {
+    const named = [
+      { name: 'bored', frequency: 9 },
+      { name: 'side-red', frequency: 8 },
+      { name: 'redo', frequency: 7 },
+      { name: 'red', frequency: 1 },
+      { name: 'a_red', frequency: 0 },
+    ];
+
+    it('orders by tier, keeping the frecency order within a tier', async () => {
+      useTags(named);
+      const results = await completeTag('red', new Set(), paramDef);
+      assert.deepEqual(results.map(r => r.value), ['red', 'redo', 'side-red', 'a_red', 'bored']);
+    });
+
+    it('applies the 20-result cap after tier ordering', async () => {
+      useTags([
+        ...Array.from({ length: 25 }, (_, i) => ({ name: `xred${i}`, frequency: 100 })),
+        { name: 'red', frequency: 0 },
+      ]);
+      const results = await completeTag('red', new Set(), paramDef);
+      assert.equal(results.length, 20);
+      assert.equal(results[0].value, 'red');
+    });
+
+    it('matches in the middle with the # prefix', async () => {
+      useTags(named);
+      const results = await completeTag('#ore', new Set(), { type: 'tag', prefix: '#' });
+      assert.deepEqual(results.map(r => r.value), ['#bored']);
+    });
+  });
+
   describe('with # prefix', () => {
     const hashDef = { type: 'tag', prefix: '#' };
 
