@@ -55,16 +55,14 @@ export async function completeTag(partial, exclude, paramDef) {
     ? lowerPartial.slice(prefix.length)
     : lowerPartial;
 
+  // Best tier first, frecency order within a tier (stable sort); cap applies after ordering
   return tags
-    .filter(tag => {
-      // Exclude already-used tags
-      if (exclude.has(tag.name.toLowerCase())) return false;
-      // Filter by partial match
-      if (matchText && !tag.name.toLowerCase().startsWith(matchText)) return false;
-      return true;
-    })
+    .filter(tag => !exclude.has(tag.name.toLowerCase()))
+    .map(tag => ({ tag, tier: matchTier(matchText, tag.name) }))
+    .filter(({ tier }) => tier !== NO_MATCH)
+    .sort((a, b) => a.tier - b.tier)
     .slice(0, 20)
-    .map(tag => ({
+    .map(({ tag }) => ({
       title: prefix + tag.name,
       subtitle: `used ${tag.frequency || 0}x`,
       value: prefix + tag.name
