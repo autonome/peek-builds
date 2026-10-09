@@ -99,4 +99,42 @@ describe('rankByUsage', () => {
   it('returns the list as is when there is no usage', () => {
     assert.deepEqual(values(rankByUsage(sug('B', 'A'), undefined, 'c', NOW)), ['B', 'A']);
   });
+
+  describe('exact match of the typed text', () => {
+    const used = recordPick(recordPick({}, 'c', 'homework', NOW), 'c', 'homework', NOW);
+
+    it('ranks first regardless of usage', () => {
+      const ranked = rankByUsage(sug('homework', 'work'), used, 'c', NOW, 'work');
+      assert.deepEqual(values(ranked), ['work', 'homework']);
+    });
+
+    it('matches the title, case-insensitively', () => {
+      const input = [
+        { title: 'Homework', subtitle: '', value: 'homework' },
+        { title: 'Work', subtitle: '', value: 'w1' },
+      ];
+      assert.deepEqual(values(rankByUsage(input, used, 'c', NOW, 'WORK')), ['w1', 'homework']);
+    });
+
+    it('ignores the param prefix on typed text and on options', () => {
+      assert.deepEqual(
+        values(rankByUsage(sug('#homework', '#work'), used, 'c', NOW, '#work', '#')),
+        ['#work', '#homework']
+      );
+      assert.deepEqual(
+        values(rankByUsage(sug('homework', 'work'), used, 'c', NOW, '#work', '#')),
+        ['work', 'homework']
+      );
+    });
+
+    it('applies when the command has no usage at all', () => {
+      assert.deepEqual(values(rankByUsage(sug('homework', 'work'), undefined, 'c', NOW, 'work')),
+        ['work', 'homework']);
+    });
+
+    it('changes nothing with no typed text', () => {
+      assert.deepEqual(values(rankByUsage(sug('work', 'homework'), used, 'c', NOW, '')),
+        ['homework', 'work']);
+    });
+  });
 });
