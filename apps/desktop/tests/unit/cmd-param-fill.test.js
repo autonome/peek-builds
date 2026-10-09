@@ -10,7 +10,24 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'param-fill.js');
-const { commandTextWithSuggestion } = await import(modulePath);
+const { commandTextWithSuggestion, paramFilterText } = await import(modulePath);
+
+describe('paramFilterText', () => {
+  it('filters a single-value enum on everything typed after the command', () => {
+    assert.equal(paramFilterText({ type: 'enum' }, ['Work'], 'Pr'), 'Work Pr');
+    assert.equal(paramFilterText({ type: 'enum' }, ['Work'], ''), 'Work ');
+    assert.equal(paramFilterText({ type: 'enum' }, [], 'Wo'), 'Wo');
+    assert.equal(paramFilterText({ type: 'enum' }, [], ''), '');
+  });
+
+  it('filters a multi-value parameter on the last word only', () => {
+    assert.equal(paramFilterText({ type: 'tag', multiple: true }, ['a', 'b'], 'c'), 'c');
+  });
+
+  it('filters an item parameter on the whole text without a trailing space', () => {
+    assert.equal(paramFilterText({ type: 'item' }, ['my'], ''), 'my');
+  });
+});
 
 describe('commandTextWithSuggestion', () => {
   const enumDef = { type: 'enum' };
