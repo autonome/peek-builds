@@ -78,11 +78,27 @@ Done looks like: `features-manager/publish.js` imports the `atproto` protocol an
 `api.atproto`; a tile without the capability gets a failed import; the existing live publish spec
 (`tests/desktop-serial/atproto-live-publish.spec.ts`) passes unchanged.
 
+## Declaring protocols in the manifest
+
+A tile lists the protocols it uses in a `protocols` field, mapping each name to `required` or
+`optional`:
+
+```json
+"protocols": { "atproto": "required", "data": "optional" }
+```
+
+- A host that lacks a `required` protocol can decline to run the tile before loading it, rather
+  than the tile failing partway through. An `optional` one is imported in a `try`, as the spec's
+  pattern already does.
+- In Peek, the field sits beside `capabilities`. `capabilities` keeps carrying configuration
+  (`network.domains`, `datastore.tables`); `protocols` names what the tile imports. A protocol
+  listed without its capability being granted is served as absent.
+- The same field is proposed for the MASL manifest, since Web Tiles otherwise gives a host no way
+  to tell up front whether it can run a tile. Peek uses it in its own manifest whether or not the
+  proposal is taken up.
+
 ## Open questions
 
-- **Where a tile declares the protocols it uses.** In Peek's manifest only (the `capabilities`
-  object already lists most of them), or also as a field proposed to the MASL manifest so any host
-  can tell up front whether it can run the tile.
 - **Events.** `pubsub`, `onVisible`, `onShutdown` and similar push from host to tile. Whether they
   become handlers on a protocol module (in the style of `addDataHandler`) or stay outside the
   protocol model.
