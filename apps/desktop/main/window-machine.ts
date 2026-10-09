@@ -15,8 +15,10 @@ import {
   kernelRegisterWindow,
   kernelWindowShown,
   kernelSetDesktopMembership,
+  kernelShowRequested,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
+import { cyclableWindowIds, cycleTarget, type CycleDirection } from './window-cycle.js';
 import { isContentWindow, windowById, reusableHere, frontWindowHere } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
@@ -193,6 +195,15 @@ export function pickReusableHere<T>(candidates: readonly T[], windowOf: (c: T) =
 // passes over both and falls back to the topmost content window on a current desktop.
 export function getTopmostContentWindowId(): WindowId | null {
   return frontWindowHere(getKernelExecutor().getState(), isContentWindow);
+}
+
+// Moves to the next or previous content window (see window-cycle.ts for the order). The raise is
+// the same user-intent raise a switcher pick makes; nothing is focused directly.
+export function cycleContentWindow(direction: CycleDirection): void {
+  const state = getKernelExecutor().getState();
+  const target = cycleTarget(cyclableWindowIds(state), getTopmostContentWindowId(), direction);
+  if (target === null) return;
+  kernelShowRequested(target, true, { activation: 'user' });
 }
 
 // THE target window for a developer surface that only means something over an http/https page

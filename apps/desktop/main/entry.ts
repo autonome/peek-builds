@@ -116,7 +116,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop-marker-manager.js';
-import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
+import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -1222,6 +1222,10 @@ const onReady = async () => {
               closeFocusedWindow();
           }},
           { role: 'minimize' },
+          // Peek owns window cycling: the OS cycle walks every native window, including the
+          // shared chrome overlay and background windows, so forward never visibly advanced.
+          { label: 'Next Window', accelerator: 'CommandOrControl+`', click: () => cycleContentWindow('forward') },
+          { label: 'Previous Window', accelerator: 'CommandOrControl+Shift+`', click: () => cycleContentWindow('reverse') },
         ]
       }
     ];
