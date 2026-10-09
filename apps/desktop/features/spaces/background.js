@@ -12,7 +12,7 @@ import {
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, shouldHideBorder, planMoveToSpace,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
-  emptySpaceWindowOptions, createSerialRunner
+  emptySpaceWindowOptions, createSerialRunner, countSpaceWindows
 } from './config.js';
 
 const api = window.app;
@@ -856,12 +856,57 @@ function publishSpaceNameCommands() {
   }
 }
 
+/**
+ * Window count per space tag id, the way the Spaces page counts: live windows
+ * of the active workspace, else the saved snapshot. A count that cannot be
+ * read is left out, so that space shows no subtitle.
+ */
+async function countWindowsBySpace(tags) {
+  const counts = {};
+  for (const tag of tags) {
+    const isDefault = getSpaceDisplayName(tag) === DEFAULT_SPACE_NAME;
+    let live = [];
+    try {
+      const r = await api.context.getWindowsInSpace(tag.id);
+      if (r?.success && Array.isArray(r.data)) live = r.data;
+    } catch { /* leave empty */ }
+    let snapshotCount = null;
+    if (live.length === 0) {
+      try {
+        const r = await api.session.getWorkspaceSnapshotWindowCount(isDefault ? 'default' : tag.id);
+        if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
+      } catch { /* no snapshot */ }
+    }
+    const count = countSpaceWindows(live, snapshotCount, isDefault);
+    if (count != null) counts[tag.id] = count;
+  }
+  return counts;
+}
+
+// Refreshes requested while one is running collapse into one rerun, so a burst
+// of window closes cannot publish stale counts after fresh ones.
+let spaceNameRefreshRunning = false;
+let spaceNameRefreshQueued = false;
+
 async function refreshSpaceNameCommands() {
+  if (spaceNameRefreshRunning) {
+    spaceNameRefreshQueued = true;
+    return;
+  }
+  spaceNameRefreshRunning = true;
   try {
-    spaceNameSuggestions = spaceNameOptions(await listSpaceTags());
-    publishSpaceNameCommands();
-  } catch (err) {
-    console.error('[ext:spaces] Failed to refresh space name suggestions:', err);
+    do {
+      spaceNameRefreshQueued = false;
+      try {
+        const tags = await listSpaceTags();
+        spaceNameSuggestions = spaceNameOptions(tags, await countWindowsBySpace(tags));
+        publishSpaceNameCommands();
+      } catch (err) {
+        console.error('[ext:spaces] Failed to refresh space name suggestions:', err);
+      }
+    } while (spaceNameRefreshQueued);
+  } finally {
+    spaceNameRefreshRunning = false;
   }
 }
 
@@ -1050,6 +1095,8 @@ const init = async () => {
   api.pubsub.subscribe('tag:created', refreshSpaceNameCommands);
   api.pubsub.subscribe('tag:deleted', refreshSpaceNameCommands);
   api.pubsub.subscribe('tag:renamed', refreshSpaceNameCommands);
+  // Window counts in the suggestions change with membership moves and closes.
+  api.pubsub.subscribe('spaces:membership-changed', refreshSpaceNameCommands);
 
   // Subscribe to item:created for auto-tagging
   api.pubsub.subscribe('item:created', handleItemCreated);
@@ -1059,7 +1106,10 @@ const init = async () => {
 
   // Subscribe to focus events for border visibility
   api.pubsub.subscribe('window:focused', () => updateBorderVisibility());
-  api.pubsub.subscribe('window:closed', () => updateBorderVisibility());
+  api.pubsub.subscribe('window:closed', () => {
+    updateBorderVisibility();
+    refreshSpaceNameCommands();
+  });
   api.pubsub.subscribe('app:focus-changed', handleAppFocusChanged);
 };
 

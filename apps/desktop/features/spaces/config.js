@@ -230,14 +230,20 @@ const validateNewSpaceName = (name, existingNames, defaultName) => {
 
 /**
  * Command-panel suggestions for a space-name argument: one entry per space tag,
- * shown by display name (no internal tag prefix), sorted by name.
+ * shown by display name (no internal tag prefix), sorted by name. `counts`
+ * maps a tag id to its window count; a space with no known count gets no
+ * subtitle.
  */
-const spaceNameOptions = (tags) =>
+const spaceNameOptions = (tags, counts) =>
   (Array.isArray(tags) ? tags : [])
     .filter((t) => t && isSpaceTag(t.name))
-    .map((t) => getSpaceDisplayName(t))
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ value: name, title: name }));
+    .map((t) => ({ name: getSpaceDisplayName(t), count: counts?.[t.id] }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(({ name, count }) => ({
+      value: name,
+      title: name,
+      ...(typeof count === 'number' ? { subtitle: count === 0 ? 'no windows' : formatWindowCount(count) } : {}),
+    }));
 
 /**
  * The space name a command message carries: the search text, else the argument
