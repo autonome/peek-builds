@@ -5,7 +5,7 @@
  * a unified API for managing the Electron application.
  */
 
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
+import { app, BaseWindow, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -854,7 +854,10 @@ export async function initialize(): Promise<void> {
     app.on('browser-window-blur', () => {
       // Only mark unfocused if NO window has focus (user switched to another app).
       // During window switches within Peek, one window blurs before another focuses.
-      if (!BrowserWindow.getFocusedWindow()) {
+      // Asked of `BaseWindow`, which covers a `BrowserWindow` too: a focused page
+      // host is a bare `BaseWindow`, invisible to `BrowserWindow.getFocusedWindow()`,
+      // and asking that would resign the app every time focus moves to a page.
+      if (!BaseWindow.getFocusedWindow()) {
         publish(getSystemAddress(), 'app:focus-changed', { focused: false });
         kernelAppResigned();
       }
