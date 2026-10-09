@@ -35,10 +35,13 @@ log('ext:cmd', 'background', labels.name);
 //
 // Every change bumps `registryVersion` and schedules a broadcast of the full
 // state, so the panel can apply the newest state and drop older snapshots.
+// The instance id is random per load: versions restart on reload, and the
+// panel orders by version only within one instance.
+const registryInstance = Math.random().toString(36).slice(2);
 let registryVersion = 0;
 let registryBroadcastTimer = null;
 
-const registryState = () => ({ version: registryVersion, commands: Array.from(commandRegistry.values()) });
+const registryState = () => ({ instance: registryInstance, version: registryVersion, commands: Array.from(commandRegistry.values()) });
 
 const scheduleRegistryBroadcast = () => {
   registryVersion++;
