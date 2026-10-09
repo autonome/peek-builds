@@ -17,6 +17,7 @@ const handlers = new Map();
 const registrations = [];
 let tags = [{ id: 't-default', name: 'space:default', color: '#123456' }];
 let lookupFails = false;
+let liveWindows = {};
 
 globalThis.window = {
   app: {
@@ -30,7 +31,11 @@ globalThis.window = {
         ? { success: false, error: 'datastore unavailable' }
         : { success: true, data: tags }),
     },
-    context: { setDefault: async () => ({ success: true }) },
+    context: {
+      setDefault: async () => ({ success: true }),
+      getWindowsInSpace: async (tagId) => ({ success: true, data: liveWindows[tagId] || [] }),
+    },
+    session: { getWorkspaceSnapshotWindowCount: async () => ({ success: true, count: 0 }) },
     window: { list: async () => ({ success: true, windows: [] }) },
     theme: { onChange: () => {}, getInfo: async () => ({ themeId: 'peek' }) },
   },
@@ -90,6 +95,29 @@ describe('space-name commands follow the space list', () => {
     await handlers.get('tag:renamed')({ tagId: 't-delta' });
     await settle();
     assert.deepEqual(lastOptions('switch space'), ['default', 'delta', 'gamma']);
+  });
+});
+
+describe('space-name commands show window counts', () => {
+  const subtitleOf = (commandName, value) => [...registrations].reverse()
+    .find((r) => r.name === commandName)?.params?.[0]?.options.find((o) => o.value === value)?.subtitle;
+
+  it('subtitles a space with its live window count and refreshes on membership changes', async () => {
+    tags = [{ id: 't-default', name: 'space:default' }, { id: 't-work', name: 'space:work' }];
+    liveWindows = { 't-work': ['w1', 'w2'] };
+    await handlers.get('tag:renamed')({ tagId: 't-work' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '2 windows');
+
+    liveWindows = { 't-work': ['w1'] };
+    await handlers.get('spaces:membership-changed')({ windowId: 'w2', spaceId: 't-work' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '1 window');
+
+    liveWindows = {};
+    await handlers.get('window:closed')({ windowId: 'w1' });
+    await settle();
+    assert.equal(subtitleOf('open space', 'work'), 'no windows');
   });
 });
 

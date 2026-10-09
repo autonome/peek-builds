@@ -52,6 +52,23 @@ describe('spaceNameOptions', () => {
     assert.ok(opts.every((o) => o.title === o.value));
   });
 
+  it('gives each space a window-count subtitle', () => {
+    const opts = spaceNameOptions(
+      [tag('space:Work'), tag('space:Play'), tag('space:Idle'), tag('space:Lone')],
+      { 'space:Work': 3, 'space:Lone': 1, 'space:Idle': 0 }
+    );
+    const subtitleOf = (value) => opts.find((o) => o.value === value).subtitle;
+    assert.equal(subtitleOf('Work'), '3 windows');
+    assert.equal(subtitleOf('Lone'), '1 window');
+    assert.equal(subtitleOf('Idle'), 'no windows');
+  });
+
+  it('has no subtitle for a space whose count is unknown', () => {
+    const opts = spaceNameOptions([tag('space:Work')], {});
+    assert.equal(opts[0].subtitle, undefined);
+    assert.equal(spaceNameOptions([tag('space:Work')])[0].subtitle, undefined);
+  });
+
   it('is empty for no tags', () => {
     assert.deepEqual(spaceNameOptions([]), []);
     assert.deepEqual(spaceNameOptions(null), []);
