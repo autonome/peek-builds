@@ -1978,6 +1978,17 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     assert.strictEqual(dup.opSeqCounter, first.opSeqCounter, 'no second token minted');
   });
 
+  it('a hide-provoked focus swallowed before the WindowHidden does not cost the successor raise', () => {
+    const A = wid(1);
+    const B = wid(2);
+    let state = keyAndSuccessor();
+    state = { ...state, expectedPlatformFocus: { stacking: [], hide: true, activation: null } };
+    state = fold([{ type: 'OsFocusGained', id: B }], state);
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }]);
+  });
+
   it('a key window hidden with no successor, its hide-provoked focus swallowed, is raised again when shown (not dropped as already key)', () => {
     const P = wid(1);
     const W = wid(2);

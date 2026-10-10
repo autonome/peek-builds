@@ -1004,7 +1004,13 @@ function evolveEvent(state: State, ev: Event): State {
         // focus to another window is the key window losing it. The report is not adopted as the
         // new key (the platform chose it), but `key` must stop naming the window that left the
         // screen, or a raise of it after its next show reads as "already key" and is dropped.
-        const keyLeftScreen = provoked === 'hide' && state.key !== null && state.key !== ev.id;
+        // Only when no successor will be raised: the hide's own `WindowHidden` is gated on `key`
+        // still naming the hidden window, and that raise is what returns key to the intended window.
+        const keyRecord = state.key === null ? undefined : state.order.find((w) => w.id === state.key);
+        const hasSuccessor =
+          keyRecord !== undefined &&
+          successorOnHide({ ...state, order: state.order.map((w) => (w.id === keyRecord.id ? { ...w, visible: false } : w)) }, keyRecord) !== null;
+        const keyLeftScreen = provoked === 'hide' && state.key !== null && state.key !== ev.id && !hasSuccessor;
         return { ...state, ...(keyLeftScreen ? { key: null } : {}), expectedPlatformFocus, version: state.version + 1 };
       }
       const idx = state.order.findIndex((w) => w.id === ev.id);
