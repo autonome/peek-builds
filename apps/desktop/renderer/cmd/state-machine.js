@@ -337,7 +337,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
   };
 
   // ===== Action Runner =====
-  function runAction(name, payload) {
+  // `fromState` is the state the transition left; currentState already holds its target.
+  function runAction(name, payload, fromState) {
     const internal = internalActions[name];
     if (internal) {
       try {
@@ -349,7 +350,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     const fn = actions[name];
     if (fn) {
       try {
-        fn(payload, data);
+        fn(payload, data, fromState);
       } catch (err) {
         log('error', `Action "${name}" threw:`, err);
       }
@@ -976,7 +977,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       // Run actions
       if (transition.actions) {
         for (const actionName of transition.actions) {
-          runAction(actionName, payload);
+          runAction(actionName, payload, prevState);
         }
       }
 

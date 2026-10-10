@@ -2656,12 +2656,14 @@ function actionHandlers() {
       });
     },
 
-    openSelectedUrlResult() {
+    openSelectedUrlResult(_payload, _data, fromState) {
       // ENTER opens the VISIBLY-selected row. Resolve through selectedRow — the
       // SAME owner the selectedRowIsUrl / selectedIsUrlResult guards use — so the
       // guard and the action can never disagree (matchIndex went stale after
       // RESULTS_OPEN --Escape--> TYPING; see state-machine.js selectedRow).
-      openUrlResultByRow(selectedRow(machine.getState(), state));
+      // The machine already holds the target state (CLOSING) while actions run,
+      // where no list is open, so the row is read against the state Enter left.
+      openUrlResultByRow(selectedRow(fromState ?? machine.getState(), state));
     },
 
     openClickedUrlResult(payload) {
