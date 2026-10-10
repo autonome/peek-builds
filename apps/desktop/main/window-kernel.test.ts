@@ -1977,6 +1977,37 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     assert.deepStrictEqual(dup.order, first.order, 'order is byte-identical to after the first hide');
     assert.strictEqual(dup.opSeqCounter, first.opSeqCounter, 'no second token minted');
   });
+
+  it('a key window hidden with no successor, its hide-provoked focus swallowed, is raised again when shown (not dropped as already key)', () => {
+    const P = wid(1);
+    const W = wid(2);
+    // P took key from nothing, so its hide has no prior holder to hand key back to.
+    let state = fold([
+      registerContent(P),
+      registerContent(W),
+      { type: 'WindowShown', id: P },
+      { type: 'WindowShown', id: W },
+      { type: 'OsFocusGained', id: P },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, P, 'precondition: P holds key');
+    // The hide effect `expectPlatformFocus` records for the key window's hide while the app is active.
+    state = { ...state, expectedPlatformFocus: { stacking: [], hide: true, activation: null } };
+    // The OS hands focus to W before the hide is confirmed; it is swallowed as hide-provoked.
+    state = fold([{ type: 'OsFocusGained', id: W }], state);
+    assert.strictEqual(state.key, P, 'precondition: the swallowed focus did not move key');
+    state = fold([{ type: 'WindowHidden', id: P }], state);
+    assert.notStrictEqual(state.key, P, 'a hidden window is never key');
+
+    const shown = fold([{ type: 'WindowShown', id: P }], state);
+    const ev: Event = { type: 'FocusRaiseRequested', id: P };
+    const next = evolve(shown, ev);
+    assert.deepStrictEqual(
+      raises(react(shown, ev, next)).map((e) => (e.type === 'RaiseWindow' ? e.id : null)),
+      [P],
+      'the raise of the reshown window is realized',
+    );
+  });
 });
 
 // ── Successor raise on WindowClosed ──────────────────────────────────────────
