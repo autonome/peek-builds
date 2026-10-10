@@ -737,7 +737,7 @@ describe('a focus the platform hands out by itself after a kernel effect', () =>
     const exec = twoWindows();
     hideKey(exec);
     exec.dispatch(worldFocus(wid(1)));
-    assert.strictEqual(exec.getState().key, wid(2), 'the reassigned focus is not the user choosing wk-1');
+    assert.strictEqual(exec.getState().key, null, 'the reassigned focus is not the user choosing wk-1, and the hidden wk-2 no longer holds key');
     exec.dispatch(worldFocus(wid(1)));
     assert.strictEqual(exec.getState().key, wid(1), 'the next click is the user');
   });

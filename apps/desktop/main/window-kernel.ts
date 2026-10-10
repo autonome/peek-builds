@@ -1000,7 +1000,12 @@ function evolveEvent(state: State, ev: Event): State {
       const provoked = platformChoseFocus(state, ev.id, ev.cause ?? WORLD_CAUSE);
       const expectedPlatformFocus = spendPlatformFocusExpectation(state.expectedPlatformFocus, ev.id, provoked);
       if (provoked !== null) {
-        return { ...state, expectedPlatformFocus, version: state.version + 1 };
+        // A hide only provokes a focus when the key window is the one hiding, so the OS handing
+        // focus to another window is the key window losing it. The report is not adopted as the
+        // new key (the platform chose it), but `key` must stop naming the window that left the
+        // screen, or a raise of it after its next show reads as "already key" and is dropped.
+        const keyLeftScreen = provoked === 'hide' && state.key !== null && state.key !== ev.id;
+        return { ...state, ...(keyLeftScreen ? { key: null } : {}), expectedPlatformFocus, version: state.version + 1 };
       }
       const idx = state.order.findIndex((w) => w.id === ev.id);
       if (idx === -1) {

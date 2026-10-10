@@ -1995,9 +1995,10 @@ describe('window-kernel: successor raise on WindowHidden', () => {
     state = { ...state, expectedPlatformFocus: { stacking: [], hide: true, activation: null } };
     // The OS hands focus to W before the hide is confirmed; it is swallowed as hide-provoked.
     state = fold([{ type: 'OsFocusGained', id: W }], state);
-    assert.strictEqual(state.key, P, 'precondition: the swallowed focus did not move key');
+    assert.notStrictEqual(state.key, W, 'the swallowed focus is the platform\'s choice, not adopted as key');
     state = fold([{ type: 'WindowHidden', id: P }], state);
-    assert.notStrictEqual(state.key, P, 'a hidden window is never key');
+    assert.strictEqual(state.order.find((w) => w.id === P)?.visible, false, 'precondition: P is hidden');
+    assert.notStrictEqual(state.key, P, 'a hidden window the OS moved focus off is no longer key');
 
     const shown = fold([{ type: 'WindowShown', id: P }], state);
     const ev: Event = { type: 'FocusRaiseRequested', id: P };
