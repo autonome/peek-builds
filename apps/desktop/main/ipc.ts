@@ -2268,8 +2268,14 @@ export function wireHybridContentEvents(
     } else if (t === 'mouseMove' && gesture.kind === 'resizing') {
       applyResize(input.globalX, input.globalY);
     } else if (t === 'mouseMove' && gesture.kind === 'dragging') {
+      // A move whose modifiers omit the left button means the release was lost
+      // (it landed off-host); end the drag instead of letting the window follow
+      // a cursor with no button held. An event without a modifiers array is not
+      // evidence either way and keeps the drag.
+      const leftHeld = !Array.isArray(input.modifiers) || input.modifiers.includes('leftbuttondown');
+      if (!leftHeld) endGesture();
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
-        windowId: hostWindowId, phase: 'move', screenX: input.globalX, screenY: input.globalY,
+        windowId: hostWindowId, phase: leftHeld ? 'move' : 'up', screenX: input.globalX, screenY: input.globalY,
       });
     } else if (t === 'mouseMove') {
       // Idle (no-button) move → top-border reveal AND edge/corner resize cursor.
