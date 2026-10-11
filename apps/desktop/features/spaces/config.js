@@ -282,6 +282,34 @@ const emptySpaceWindowOptions = (tag, spaceName, color) => ({
   spaceMode: { spaceId: tag.id, spaceName, color },
 });
 
+const isHttpUrl = (text) => {
+  try {
+    const { protocol } = new URL(text);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The web addresses a drop carries, in drag order and without repeats.
+ * `uriList` is `text/uri-list` (one URL per line, `#` lines are comments),
+ * `mozUrl` is `text/x-moz-url` (a URL line then a title line, per entry), and
+ * `plain` is `text/plain`, read only when the other two gave nothing and only
+ * when the whole text is one URL. Anything but http(s) is dropped.
+ */
+const urlsFromDrop = ({ uriList, plain, mozUrl } = {}) => {
+  const lines = (text) => (typeof text === 'string' ? text.split(/\r?\n/).map((l) => l.trim()) : []);
+  const candidates = [
+    ...lines(uriList).filter((l) => l && !l.startsWith('#')),
+    ...lines(mozUrl).filter((_, i) => i % 2 === 0),
+  ];
+  const urls = [...new Set(candidates.filter(isHttpUrl))];
+  if (urls.length > 0) return urls;
+  const single = typeof plain === 'string' ? plain.trim() : '';
+  return single && !/\s/.test(single) && isHttpUrl(single) ? [single] : [];
+};
+
 /**
  * Returns a function that runs the async callbacks it is given one at a time,
  * in call order. A failure rejects only its own call; later calls still run.
@@ -298,6 +326,7 @@ const createSerialRunner = () => {
 
 export {
   createSerialRunner,
+  urlsFromDrop,
   emptySpaceWindowOptions,
   spaceNameFromCommandMessage,
   validateNewSpaceName,
