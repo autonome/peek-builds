@@ -762,12 +762,12 @@ function applyPlacementOnReuse(
  *     - page:loading                 {windowId,loading}
  *     - page:nav-state               {windowId,url,canGoBack,canGoForward}
  */
-// Top-border reveal band geometry — mirrors the canvas trigger zone + navbar
-// reserve (CANVAS_TRIGGER_ZONE / CANVAS_NAVBAR_HEIGHT) and hybrid-overlay.ts's
-// GUTTER_TOP (= TRIGGER_ZONE + NAVBAR_HEIGHT). An idle move within this many px
-// below the content window's top edge reveals the overlay chrome.
-const TRIGGER_ZONE_PX = 8;
-const NAVBAR_HEIGHT_PX = 36;
+// Top-border reveal band geometry. An idle move within TRIGGER_ZONE_PX below the
+// content window's top edge reveals the overlay chrome (matches the overlay's
+// #trigger-zone strip); the reveal holds until the cursor leaves
+// REVEAL_EXIT_PX, which spans the revealed navbar (overlay-frame.ts GUTTER_TOP).
+const TRIGGER_ZONE_PX = 4;
+const REVEAL_EXIT_PX = 44;
 
 // Per-host content-cursor setters, keyed by host windowId. Each hybrid content WC
 // registers its `setContentCursor` (which feeds the SAME single-in-flight cursor
@@ -1951,13 +1951,12 @@ export function wireHybridContentEvents(
   // move) to avoid flooding pubsub.
   //
   // Asymmetric hysteresis — enter vs. exit use different thresholds:
-  //   ENTER (reveal): cursor must be within the 8px top-border strip (dy <= TRIGGER_ZONE_PX).
-  //     The old single-band check used TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX = 44px, which popped
-  //     the chrome when the cursor merely drifted near the top of a maximized page over real content.
+  //   ENTER (reveal): cursor must be within the 4px top-border strip (dy <= TRIGGER_ZONE_PX).
+  //     A wider band popped the chrome when the cursor merely drifted near the top of a
+  //     maximized page over real content.
   //   EXIT (reveal-out): stays revealed until the cursor leaves the full 44px band (past the
   //     revealed navbar). This prevents a hide-flicker while the cursor hovers the visible navbar.
-  const REVEAL_ENTER_PX = TRIGGER_ZONE_PX;                    // 8 — must hit the border strip
-  const REVEAL_EXIT_PX  = TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX; // 44 — hysteresis over revealed navbar
+  const REVEAL_ENTER_PX = TRIGGER_ZONE_PX; // 4 — must hit the border strip
   // ── Round-2 main-driven edge/corner RESIZE (cursor + drag) ──────────────────
   // The shared overlay can CAPTURE a press but never PAINTS a cursor — it is never
   // the macOS first responder, and cursor rendering belongs to the topmost

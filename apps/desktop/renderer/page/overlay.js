@@ -116,7 +116,7 @@ const findCloseBtn = document.getElementById('find-close');
 // WC (see ipc.ts wireHybridContentEvents). The overlay keeps ONLY its chrome role
 // (navbar / reveal / panels / hold-to-drag move), and stays click-through at the
 // edges so the content stays topmost and main's injected resize cursor shows.
-const TRIGGER_ZONE_PX = 8; // narrow border strip that triggers reveal in maximized mode
+const TRIGGER_ZONE_PX = 4; // thin strip on the content's top edge that triggers reveal
 const PANEL_WIDTH = 280;  // page.js PANEL_WIDTH
 const PANEL_OVERLAP = PANEL_WIDTH * 0.25;          // 70
 const PANEL_OVERHANG = PANEL_WIDTH - PANEL_OVERLAP; // 210
@@ -169,14 +169,13 @@ function updateOverlayPositions() {
   navbar.style.width = `${w}px`;
 
   triggerZone.style.left = `${left}px`;
-  triggerZone.style.top = `0px`;
   triggerZone.style.width = `${w}px`;
-  // In maximized mode the overlay frame == the content rect (no gutter), so the
-  // trigger zone would cover 44px of live content. Narrow it to the 8px border
-  // strip so reveal only fires when the cursor actually hits the top edge.
-  // In guttered (non-maximized) mode the trigger zone sits in the transparent
-  // gutter above the content — keep it at the full navOffset (44px) there.
-  triggerZone.style.height = `${maximized ? TRIGGER_ZONE_PX : navOffset}px`;
+  // A thin strip on the content's top edge in both modes, so reveal only fires
+  // when the cursor actually hits the edge. Maximized: the overlay frame == the
+  // content rect (no gutter), so the strip is the first rows of content.
+  // Guttered: the strip's bottom sits on the content top edge, in the gutter.
+  triggerZone.style.top = `${maximized ? 0 : Math.max(0, navOffset - TRIGGER_ZONE_PX)}px`;
+  triggerZone.style.height = `${TRIGGER_ZONE_PX}px`;
 
   // Drag-zone: invisible move strip in the top gutter over the content width.
   dragZone.style.left = `${left}px`;
@@ -598,7 +597,10 @@ navbar.addEventListener('mouseleave', scheduleHide);
 for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#extensions-panel', '#widget-container']) {
   const p = document.querySelector(sel);
   if (!p) continue;
-  p.addEventListener('mouseenter', () => { showNavbar(); });
+  // Hidden panels (opacity 0) are still hit-testable; only visible ones reveal.
+  p.addEventListener('mouseenter', () => {
+    if (document.body.classList.contains('panels-visible')) showNavbar();
+  });
   p.addEventListener('mouseleave', scheduleHide);
 }
 
@@ -671,7 +673,7 @@ function pointerOverChrome(x, y) {
   if (document.body.classList.contains('panels-visible')) {
     for (const p of document.querySelectorAll(
       '#page-info-panel.has-data, #tags-panel.has-data, #entities-panel.has-data, ' +
-      '#extensions-panel.has-data, #widget-container, .notes-panel.has-data',
+      '#extensions-panel.has-data, #widget-container.has-data, .notes-panel.has-data',
     )) {
       if (pointInRect(x, y, p.getBoundingClientRect())) return true;
     }
@@ -2184,7 +2186,9 @@ if (notesPanelAnchor) notesPanelAnchor.replaceWith(notesPanel);
 pageNotesPane.init();
 // Bind the chrome-hover keep-open behavior now that the element is mounted (the
 // earlier querySelectorAll loop ran before this replace).
-notesPanel.addEventListener('mouseenter', () => { showNavbar(); });
+notesPanel.addEventListener('mouseenter', () => {
+  if (document.body.classList.contains('panels-visible')) showNavbar();
+});
 notesPanel.addEventListener('mouseleave', scheduleHide);
 
 function loadNotesForUrl(token, url) {

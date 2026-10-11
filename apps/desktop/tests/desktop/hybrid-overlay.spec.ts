@@ -2080,7 +2080,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
     await resetHidden();
 
     // A real idle (no-button) move 4px below the host top edge — squarely inside
-    // the 8px enter strip — drives the content WC's input-event handler, which
+    // the 4px enter strip — drives the content WC's input-event handler, which
     // forwards `page-overlay:content-pointer {phase:'reveal'}`.
     const emitted = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -2107,10 +2107,10 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
     await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 100)));
     expect(await navbarVisible()).toBe(false);
 
-    // Now move INTO the band (5px below the top) → reveals.
+    // Now move INTO the band (3px below the top) → reveals.
     await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      b.emitContentTopEdgeHover((arg as any).id, 5);
+      b.emitContentTopEdgeHover((arg as any).id, 3);
     }, { id });
     await expect.poll(navbarVisible).toBe(true);
   });
@@ -2135,13 +2135,13 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
     await expect.poll(navbarVisible).toBe(true);
   });
 
-  test('idle move within the navbar band but past the 8px trigger strip does NOT reveal', async () => {
+  test('idle move within the navbar band but past the 4px trigger strip does NOT reveal', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
 
-    // 30px is inside the old 44px band but past the new 8px enter threshold — must stay hidden.
+    // 30px is inside the 44px exit band but past the 4px enter threshold — must stay hidden.
     await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.emitContentTopEdgeHover((arg as any).id, 30);
@@ -2150,16 +2150,16 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
     expect(await navbarVisible()).toBe(false);
   });
 
-  test('boundary: a move at the trigger strip edge (<=8px) reveals', async () => {
+  test('boundary: a move at the trigger strip edge (<=4px) reveals', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
 
-    // 6px — inside the 8px enter strip — should reveal.
+    // 4px — the last row of the 4px enter strip — should reveal.
     await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      b.emitContentTopEdgeHover((arg as any).id, 6);
+      b.emitContentTopEdgeHover((arg as any).id, 4);
     }, { id });
     await expect.poll(navbarVisible).toBe(true);
   });
@@ -2170,14 +2170,14 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
     const id = await makeActiveMaximized();
     await resetHidden();
 
-    // Reveal via the 8px strip.
+    // Reveal via the 4px strip.
     await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.emitContentTopEdgeHover((arg as any).id, 4);
     }, { id });
     await expect.poll(navbarVisible).toBe(true);
 
-    // 30px — past the 8px enter threshold but within the 44px exit threshold — navbar stays visible.
+    // 30px — past the 4px enter threshold but within the 44px exit threshold — navbar stays visible.
     await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.emitContentTopEdgeHover((arg as any).id, 30);
