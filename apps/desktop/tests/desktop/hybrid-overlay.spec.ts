@@ -6,7 +6,11 @@ import { createPerDescribeApp } from '../helpers/test-app';
 // a local zero-arg `waitOverlayReady()` bound to its own per-describe app. Eight
 // hand-rolled copies used to poll `__overlayReady` only, which does NOT prove the
 // handoff landed — the dropped-message flake in peek `5d9daf4e`.
-import { waitOverlayReady as waitOverlayUsable } from '../helpers/hybrid-page';
+import {
+  waitOverlayReady as waitOverlayUsable,
+  publishOverlayTopic,
+  widgetHostState,
+} from '../helpers/hybrid-page';
 
 /**
  * P1.4b-1 — singleton hybrid chrome overlay retarget/follow verification.
@@ -2653,5 +2657,130 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.simAppBecomeActive();
     });
+  });
+});
+
+/**
+ * The right-side widget container sits PANEL_OVERLAP (70px) inside the page's
+ * right edge, over live page content. The overlay is click-through except where
+ * it turns capture on, so a pointer over that strip must not capture unless a
+ * visible widget is actually there. Two faults captured it anyway: `.widget`
+ * was pointer-events:auto while its container was invisible, and
+ * pointerOverChrome counted `#widget-container` without `.has-data`.
+ *
+ * Focus-free: synthetic active-change, `mousemove` dispatched on the overlay
+ * document, capture read back from main via the bridge.
+ */
+test.describe('Hybrid Chrome Overlay right-edge strip stays click-through @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-edge-click'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const makeActive = async () => {
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 140, y: 140, width: 700, height: 460 });
+      await b.loadFakeContent(w, 'data:text/html,<body>edge target</body>');
+      b.setActive(w);
+    });
+    await waitOverlayUsable(app);
+  };
+
+  // Release capture, then move the pointer onto the widget container's strip (a
+  // few px inside its left edge, at its top edge) and report what the overlay
+  // did: whether the container has data, whether the chrome was revealed, the
+  // element under the pointer, and the capture state main sees afterwards.
+  const moveOverStrip = async (revealFirst: boolean) => {
+    const before = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.evalInOverlay(`
+        (() => {
+          if (${arg.revealFirst}) {
+            document.getElementById('trigger-zone').dispatchEvent(new Event('mouseenter'));
+          }
+          return true;
+        })()
+      `);
+      return b.evalInOverlay(`
+        (() => {
+          const wc = document.getElementById('widget-container');
+          const r = wc.getBoundingClientRect();
+          const x = r.left + 10;
+          const y = r.top + Math.min(r.height / 2, 10);
+          document.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true }));
+          const hit = document.elementFromPoint(x, y);
+          return {
+            hasData: wc.classList.contains('has-data'),
+            panelsVisible: document.body.classList.contains('panels-visible'),
+            overWidgetCard: !!(hit && hit.closest('.widget')),
+            width: r.width,
+          };
+        })()
+      `);
+    }, { revealFirst });
+    // Capture reaches main over pubsub; give the toggle time to land.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const capture = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.captureState();
+    });
+    return { ...(before as any), capture };
+  };
+
+  test('chrome visible, widget container empty: the strip does not capture', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    await makeActive();
+
+    const r = await moveOverStrip(true);
+    expect(r.width).toBeGreaterThan(0);
+    expect(r.hasData).toBe(false);
+    // Precondition: the chrome (and so the side panels) really is visible.
+    expect(r.panelsVisible).toBe(true);
+    expect(r.capture).toBe(false);
+  });
+
+  test('chrome hidden, widget card present: the strip does not capture or hit the card', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    await makeActive();
+    await publishOverlayTopic(app, 'widget:register', {
+      extensionId: 'edge-ext',
+      widgetId: 'edge-widget',
+      title: 'Edge Widget',
+    });
+    await publishOverlayTopic(app, 'widget:render', {
+      extensionId: 'edge-ext',
+      widgetId: 'edge-widget',
+      title: 'Edge Widget',
+      html: '<p>edge widget body</p>',
+    });
+    await expect
+      .poll(async () => (await widgetHostState(app))?.byId['edge-ext:edge-widget']?.present)
+      .toBe(true);
+
+    // Reset to a hidden chrome (no grace timer) so the card is invisible.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hideOverlayChrome();
+    });
+
+    const r = await moveOverStrip(false);
+    // Precondition: the container has data and a card, but the chrome is hidden.
+    expect(r.hasData).toBe(true);
+    expect(r.panelsVisible).toBe(false);
+    // The invisible card must not be what the pointer hits (it would capture
+    // the overlay on hover and swallow the page click).
+    expect(r.overWidgetCard).toBe(false);
+    expect(r.capture).toBe(false);
   });
 });
