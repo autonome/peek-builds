@@ -18,7 +18,7 @@ import {
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
-import { resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex } from './config.js';
+import { resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex, urlsFromDrop } from './config.js';
 
 const api = window.app;
 
@@ -849,6 +849,101 @@ const spaceModeFor = (space) => {
   };
 };
 
+/**
+ * Open a page as a member of `space`. The workspace on screen takes the page
+ * as a normal window. Any other space has no windows open, so the page is
+ * opened hidden, written into that space's saved windows (the same steps as
+ * `background.js moveToSpace()` for an inactive target) and closed again; it
+ * reappears when the space is next entered.
+ */
+const openUrlInSpace = async (space, url) => {
+  const inactive = String(space.id) !== String(activeSpaceId);
+  const result = await api.window.open(url, {
+    role: 'content',
+    key: url,
+    width: 1024,
+    height: 768,
+    spaceMode: spaceModeFor(space),
+    ...(inactive ? { show: false } : {})
+  });
+  if (!result?.success || !inactive) return result;
+
+  // The default workspace's snapshot is stored under the key 'default'.
+  const snapshotKey = getSpaceDisplayName(space) === 'default' ? 'default' : space.id;
+  const added = await api.session.addWindowToWorkspaceSnapshot(snapshotKey, result.id);
+  await api.window.close(result.id);
+  if (!added?.success) {
+    console.error('[spaces] Failed to add dropped page to space:', added?.error);
+    return { success: false, error: added?.error };
+  }
+  return result;
+};
+
+const DROP_TYPES = ['text/uri-list', 'text/x-moz-url', 'text/plain'];
+const DROP_HIGHLIGHT_CLASS = 'drop-target';
+
+const dragCarriesUrls = (e) => {
+  const types = Array.from(e.dataTransfer?.types || []);
+  return DROP_TYPES.some((t) => types.includes(t));
+};
+
+/**
+ * The space a drop lands in: the card under the cursor, else the space whose
+ * pages are being viewed. `element` is the highlighted node (or null).
+ */
+const dropTargetFor = (e) => {
+  const card = e.target?.closest?.('.space-card');
+  if (card) {
+    const space = state.spaces.find((s) => String(s.id) === card.dataset.tagId);
+    if (space) return { space, element: card };
+  }
+  if (state.view === VIEW_ITEMS && state.currentSpace) {
+    return { space: state.currentSpace, element: document.querySelector('.cards') };
+  }
+  return { space: null, element: null };
+};
+
+const clearDropHighlight = () => {
+  document.querySelectorAll(`.${DROP_HIGHLIGHT_CLASS}`).forEach((el) => el.classList.remove(DROP_HIGHLIGHT_CLASS));
+};
+
+const setupUrlDrop = () => {
+  document.addEventListener('dragover', (e) => {
+    if (!dragCarriesUrls(e)) return;
+    const { space, element } = dropTargetFor(e);
+    clearDropHighlight();
+    if (!space) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    element.classList.add(DROP_HIGHLIGHT_CLASS);
+  });
+
+  document.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) clearDropHighlight();
+  });
+
+  document.addEventListener('drop', async (e) => {
+    clearDropHighlight();
+    if (!dragCarriesUrls(e)) return;
+    const { space } = dropTargetFor(e);
+    if (!space) return;
+    e.preventDefault();
+    const urls = urlsFromDrop({
+      uriList: e.dataTransfer.getData('text/uri-list'),
+      mozUrl: e.dataTransfer.getData('text/x-moz-url'),
+      plain: e.dataTransfer.getData('text/plain')
+    });
+    for (const url of urls) {
+      try {
+        await openUrlInSpace(space, url);
+      } catch (err) {
+        console.error('[spaces] Failed to open dropped page:', url, err);
+      }
+    }
+    if (urls.length > 0) api.pubsub.publish('spaces:membership-changed', { spaceId: space.id });
+  });
+};
+
 const createItemCard = (item) => {
   const itemUrl = item.uri || item.content;
 
@@ -991,6 +1086,7 @@ const init = async () => {
   });
 
   setupCreateSpace();
+  setupUrlDrop();
 
   // Make sure the default workspace exists before the list renders for the
   // first time. The tag is created by the feature's lazy background tile

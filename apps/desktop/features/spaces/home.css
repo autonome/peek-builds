@@ -124,6 +124,17 @@ peek-card[selected]:hover {
   --peek-card-bg: var(--base03);
 }
 
+/* A card, or the open space's page area, under a dragged web address */
+peek-card.drop-target {
+  --peek-card-bg: var(--base02);
+  --peek-card-border: var(--base0D);
+}
+
+.cards.drop-target {
+  outline: 2px solid var(--base0D);
+  outline-offset: -2px;
+}
+
 /* Space card slotted content */
 .space-card .color-dot {
   display: inline-block;
