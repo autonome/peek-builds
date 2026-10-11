@@ -1,8 +1,9 @@
 /**
- * The address bar shows whenever a page window appears or its page navigates,
- * stays up for a minimum dwell measured from when it was shown or until the
- * load finishes (whichever is later), then hides — unless the user revealed it
- * themselves.
+ * The address bar shows only when a page window first appears (or its first
+ * load starts before the chrome reaches it), stays up for a minimum dwell
+ * measured from when it was shown or until the load finishes (whichever is
+ * later), then hides — unless the user revealed it themselves. Later loads in
+ * an already-revealed window do not show it.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,14 +16,27 @@ import {
 } from '../../renderer/page/navbar-load-reveal.js';
 
 const HIDDEN = { shownBy: null, shownAt: null };
+const HIDDEN_REVEALED = { shownBy: null, shownAt: null, revealed: true };
 
 test('the dwell is 1500 ms', () => {
   assert.equal(LOAD_REVEAL_DWELL_MS, 1500);
 });
 
-test('a page that starts loading shows the hidden address bar and holds it', () => {
+test('the first load of a window not yet revealed shows the hidden address bar and holds it', () => {
   assert.deepEqual(navbarLoadReveal(HIDDEN, 'load-start', 1000), {
     show: true, hideAfterMs: null, shownBy: SHOWN_BY_LOAD, shownAt: 1000,
+  });
+});
+
+test('a later load in an already-revealed window does not show the bar', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN_REVEALED, 'load-start', 1000), {
+    show: false, hideAfterMs: null, shownBy: null, shownAt: null,
+  });
+});
+
+test('a load settling in an already-revealed window with the bar hidden changes nothing', () => {
+  assert.deepEqual(navbarLoadReveal(HIDDEN_REVEALED, 'load-stop', 1000), {
+    show: false, hideAfterMs: null, shownBy: null, shownAt: null,
   });
 });
 
@@ -40,12 +54,12 @@ test('a load that finishes after the dwell hides the bar at once', () => {
   assert.equal(settled.hideAfterMs, 0);
 });
 
-test('a second navigation restarts the dwell from when it starts', () => {
+test('a second navigation while the first reveal is held does not restart the dwell', () => {
   const first = navbarLoadReveal(HIDDEN, 'load-start', 1000);
-  const second = navbarLoadReveal(first, 'load-start', 1800);
-  assert.equal(second.show, true);
-  assert.equal(second.shownAt, 1800);
-  assert.equal(navbarLoadReveal(second, 'load-stop', 1900).hideAfterMs, LOAD_REVEAL_DWELL_MS - 100);
+  const second = navbarLoadReveal({ ...first, revealed: true }, 'load-start', 1800);
+  assert.equal(second.show, false);
+  assert.equal(second.shownAt, 1000);
+  assert.equal(second.shownBy, SHOWN_BY_LOAD);
 });
 
 test('a window that appears with its page already loaded shows the bar for the full dwell', () => {
@@ -61,23 +75,21 @@ test('a window that appears still loading shows the bar until its load settles',
   assert.equal(navbarLoadReveal(appeared, 'load-stop', 5100).hideAfterMs, LOAD_REVEAL_DWELL_MS - 100);
 });
 
-test('switching to an existing window that is loading shows the bar', () => {
-  const r = navbarLoadReveal(HIDDEN, 'window-switched', 1000, true);
-  assert.equal(r.show, true);
-  assert.equal(r.shownBy, SHOWN_BY_LOAD);
+test('switching to an existing window never shows the bar, loading or not', () => {
+  for (const loading of [true, false]) {
+    assert.deepEqual(navbarLoadReveal(HIDDEN_REVEALED, 'window-switched', 1000, loading), {
+      show: false, hideAfterMs: null, shownBy: null, shownAt: null,
+    });
+  }
 });
 
-test('switching to an existing idle window takes down a bar a load was holding', () => {
+test('switching to an existing window takes down a bar another window\'s load was holding', () => {
   const held = navbarLoadReveal(HIDDEN, 'load-start', 1000);
-  const r = navbarLoadReveal(held, 'window-switched', 1100, false);
-  assert.equal(r.show, false);
-  assert.equal(r.hideAfterMs, 0);
-});
-
-test('switching to an existing idle window leaves a hidden bar hidden', () => {
-  assert.deepEqual(navbarLoadReveal(HIDDEN, 'window-switched', 1000, false), {
-    show: false, hideAfterMs: null, shownBy: null, shownAt: null,
-  });
+  for (const loading of [true, false]) {
+    const r = navbarLoadReveal(held, 'window-switched', 1100, loading);
+    assert.equal(r.show, false);
+    assert.equal(r.hideAfterMs, 0);
+  }
 });
 
 test('a settled load with the bar hidden changes nothing', () => {

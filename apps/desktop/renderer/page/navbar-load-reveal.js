@@ -1,12 +1,14 @@
 /**
  * The address bar's reveal on page load, as a pure decision.
  *
- * The bar shows whenever a page window appears or its page navigates — new
- * window, link click, back/forward, reload, undo-close/reopen — and stays up
- * for at least LOAD_REVEAL_DWELL_MS measured from when it was shown, or until
- * the load finishes, whichever is later. Then it hides. A fast or cached load
- * still gets the full dwell, and so does a window whose load finished before
- * the chrome reached it: its appearance is itself a reveal.
+ * The bar shows only for a page window's first load — when the window first
+ * appears, or when its first load starts before the chrome has framed it. It
+ * stays up for at least LOAD_REVEAL_DWELL_MS measured from when it was shown,
+ * or until the load finishes, whichever is later. Then it hides. A fast or
+ * cached load still gets the full dwell, and so does a window whose load
+ * finished before the chrome reached it: its appearance is itself a reveal.
+ * Later navigations (link click, back/forward, reload) and window switches do
+ * not reveal; a switch only takes down a bar another window's load was holding.
  *
  * A bar the user revealed (top-edge hover, pointer over the chrome, Cmd+L,
  * panel hover) is never taken over: their pointer or typing decides when it
@@ -24,9 +26,10 @@ export const SHOWN_BY_USER = 'user';
 export const LOAD_REVEAL_DWELL_MS = 1500;
 
 /**
- * @typedef {{ shownBy: string|null, shownAt: number|null }} RevealState
+ * @typedef {{ shownBy: string|null, shownAt: number|null, revealed?: boolean }} RevealState
+ *   revealed: the active window has already had its first-load reveal.
  * @typedef {'load-start'|'load-stop'|'window-appeared'|'window-switched'} RevealEvent
- *   load-start: the active page started loading (a navigation of any kind).
+ *   load-start: the active page started loading (reveals only if not `revealed`).
  *   load-stop: the active page's load settled.
  *   window-appeared: the chrome reached a page window it has not framed before.
  *   window-switched: the chrome moved to a page window it has framed before.
@@ -42,20 +45,20 @@ export const LOAD_REVEAL_DWELL_MS = 1500;
  *   many ms (0 = now); null = no hide scheduled, and any pending one is dropped.
  */
 export function navbarLoadReveal(state, event, now, loading = false) {
-  const { shownBy, shownAt } = state;
+  const { shownBy, shownAt, revealed = false } = state;
   const unchanged = { show: false, hideAfterMs: null, shownBy, shownAt };
   if (shownBy === SHOWN_BY_USER) return unchanged;
   const reveal = (hideAfterMs) => ({ show: true, hideAfterMs, shownBy: SHOWN_BY_LOAD, shownAt: now });
 
   switch (event) {
     case 'load-start':
-      return reveal(null);
+      // Only a window's first load reveals; later navigations leave the bar be.
+      return revealed ? unchanged : reveal(null);
     case 'window-appeared':
       return reveal(loading ? null : LOAD_REVEAL_DWELL_MS);
     case 'window-switched':
-      if (loading) return reveal(null);
-      // An idle window someone switched to: a bar another window's load was
-      // holding does not follow.
+      // A switch never reveals; a bar another window's load was holding does
+      // not follow.
       if (shownBy === SHOWN_BY_LOAD) return { show: false, hideAfterMs: 0, shownBy, shownAt };
       return unchanged;
     case 'load-stop':

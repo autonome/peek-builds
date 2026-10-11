@@ -390,12 +390,11 @@ api.subscribe('page-overlay:active', (msg) => {
   navbar.loading = false;
   hideFindBar();
   paintFromSnapshot(msg);
-  // A page window the chrome has not framed before (new window, undo-close,
-  // reopen) shows the bar for the dwell even when its load already finished:
-  // its load-start was published before it became the active window, and a
-  // cached load can settle before the chrome arrives. A switch back to a window
-  // already framed reveals only if it is loading, and takes down a bar the
-  // previous window's load held.
+  // A page window the chrome has not framed before (a new window) shows the
+  // bar for the dwell even when its load already finished: its load-start was
+  // published before it became the active window, and a cached load can settle
+  // before the chrome arrives. A switch back to a window already framed never
+  // reveals, and takes down a bar the previous window's load held.
   const appeared = !framedWindowIds.has(msg.windowId);
   framedWindowIds.add(msg.windowId);
   applyLoadReveal(appeared ? 'window-appeared' : 'window-switched', !!msg.loading);
@@ -513,13 +512,14 @@ function showNavbar() {
   navbarShownBy = SHOWN_BY_USER;
   navbarShownAt = null;
 }
-/** Show the bar when a page window appears or its page navigates, and hide it
- *  once the load settles and the dwell has run, unless the user is holding it
+/** Show the bar when a page window first appears, and hide it once its first
+ *  load settles and the dwell has run, unless the user is holding it
  *  (navbar-load-reveal.js). */
 function applyLoadReveal(event, loading) {
   if (activeWindowId == null) return;
   const r = navbarLoadReveal(
-    { shownBy: navbarShownBy, shownAt: navbarShownAt }, event, performance.now(), loading);
+    { shownBy: navbarShownBy, shownAt: navbarShownAt, revealed: framedWindowIds.has(activeWindowId) },
+    event, performance.now(), loading);
   cancelLoadHide();
   if (r.show) revealNavbar();
   navbarShownBy = r.shownBy;
