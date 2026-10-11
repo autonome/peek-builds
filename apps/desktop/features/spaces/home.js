@@ -866,12 +866,15 @@ const openUrlInSpace = async (space, url) => {
     spaceMode: spaceModeFor(space),
     ...(inactive ? { show: false } : {})
   });
-  if (!result?.success || !inactive) return result;
+  if (!result?.success || !inactive || result.id == null) return result;
 
   // The default workspace's snapshot is stored under the key 'default'.
   const snapshotKey = getSpaceDisplayName(space) === 'default' ? 'default' : space.id;
   const added = await api.session.addWindowToWorkspaceSnapshot(snapshotKey, result.id);
-  await api.window.close(result.id);
+  // A window already open on this address was reused rather than created: it
+  // belongs to the space on screen, so it is saved into the other space too
+  // but left open.
+  if (!result.reused) await api.window.close(result.id);
   if (!added?.success) {
     console.error('[spaces] Failed to add dropped page to space:', added?.error);
     return { success: false, error: added?.error };
