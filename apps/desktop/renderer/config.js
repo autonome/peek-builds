@@ -83,9 +83,9 @@ const prefsSchema = {
       "default": 5
     },
     "dragHoldDelay": {
-      "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Set to 0 for instant drag. Takes effect on new windows.",
+      "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Takes effect on new windows.",
       "type": "number",
-      "default": 0.3
+      "default": 1
     },
     "defaultWindowWidth": {
       "description": "Default width for new windows (pixels)",
@@ -180,7 +180,7 @@ const defaults = {
     hideTitleBar: true,
     restoreSession: true,
     sessionAutosaveInterval: 5,
-    dragHoldDelay: 0.3,
+    dragHoldDelay: 1,
     defaultWindowWidth: 1024,
     defaultWindowHeight: 768,
     persistWindowBounds: false,
