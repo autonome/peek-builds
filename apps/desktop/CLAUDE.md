@@ -177,11 +177,16 @@ instead of skipping, and `cmd-url-window-reuse.spec.ts` adds a real-focus assert
   `hybrid-content-window-gesture.spec.ts` also pass, but those two were not re-run without it at
   that head. Evidence: `tests/gate-baseline.md`, "Linux single-spec A/B of the bridge `setActive`
   fix".
-- **Still open for fake hosts** (`makeFakeHybridWindow`). About twenty `hybrid-overlay.spec.ts`
-  tests and two `permission-prompt.spec.ts` tests fail on Linux with and without that fix. The
-  first-load subscription race this signature once named is closed (`hybrid-overlay.ts
-  wireOverlayReady()` answers the renderer's own `page-overlay:ready`), so these belong to the
-  second, undiagnosed defect in `docs/design/window-manager.md` § 4.3 dim 3b.
+- **Fixed for fake hosts** (`makeFakeHybridWindow`). Off macOS the Electron backend's
+  `restackingTakesFocus` makes the kernel drop a world focus arriving straight after a show as the
+  platform's own choice (`window-kernel.ts platformChoseFocus`), so the bridge's synthetic focus
+  never made a fake host key and the overlay never attached. `hybrid-overlay.ts installTestBridge
+  showFocused()` reports that focus as the confirmation of the show op instead; `setActive` uses it
+  for fake hosts only, since a real host needs the world focus's raise.
+- **Fixed in production: a focused page host resigned the app off macOS.** `main.ts`'s
+  `browser-window-blur` handler asked `BrowserWindow.getFocusedWindow()`, which never returns a
+  bare `BaseWindow` page host, so every focus move to a page marked the app inactive and the chrome
+  could not reveal on attach. It now asks `BaseWindow.getFocusedWindow()`.
 
 **What Linux cannot verify at all:** native fullscreen, Spaces, key-window and app-activation
 behavior, and every live focus observation. A Linux-green result on a focus- or
