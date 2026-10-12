@@ -114,7 +114,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, getActiveWorkspaceKey } from './session.js';
 import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop-marker-manager.js';
 import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
@@ -195,6 +195,12 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * tests/desktop/session-restore-focus.spec.ts.
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
+  /**
+   * Which workspace's row an ambient save writes (`session.ts` "Active
+   * workspace"). Read by tests/desktop/restore-active-space.spec.ts to check
+   * that a cold-start restore leaves the workspace active at quit active again.
+   */
+  getActiveWorkspaceKeyForTest: () => getActiveWorkspaceKey(),
   // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
   // is kernel state (`pendingColdStartFocus`), spent by `AppActivated`. Drive it
   // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
