@@ -118,7 +118,7 @@ function matchesWithPairRows(typed) {
   const committed = commandMatches.some(name => lower.startsWith(name.toLowerCase() + ' '));
   const available = committed ? [] : Object.keys(state.commands)
     .filter(name => isCommandAvailable(state.commands[name]))
-    .map(name => ({ name, params: state.commands[name].params }));
+    .map(name => ({ name, params: state.commands[name].params, pairPriority: state.commands[name].pairPriority }));
   const pairs = pairRowsFor(typed, available, paramUsage, Date.now());
   pairRowTargets = new Map(pairs.map(p => [p.name, p]));
   return withPairRows(commandMatches, pairs);

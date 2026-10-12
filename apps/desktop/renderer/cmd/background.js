@@ -159,6 +159,7 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
         produces: cmd.produces,
         params: cmd.params || []
       };
+      if (cmd.pairPriority != null) entry.pairPriority = cmd.pairPriority;
       // Preserve noun routing metadata in cache
       if (cmd._nounName) entry._nounName = cmd._nounName;
       if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
@@ -291,6 +292,7 @@ const initCommandRegistry = () => {
         produces: (cmd.produces && cmd.produces.length > 0) ? cmd.produces : (existing.produces || []),
         params: (cmd.params && cmd.params.length > 0) ? cmd.params : (existing.params || []),
       };
+      if (cmd.pairPriority != null || existing.pairPriority != null) entry.pairPriority = cmd.pairPriority ?? existing.pairPriority;
       if (cmd._nounName || existing._nounName) entry._nounName = cmd._nounName || existing._nounName;
       if (cmd._nounCapability || existing._nounCapability) entry._nounCapability = cmd._nounCapability || existing._nounCapability;
       commandRegistry.set(cmd.name, entry);
@@ -316,6 +318,7 @@ const initCommandRegistry = () => {
       produces: (msg.produces && msg.produces.length > 0) ? msg.produces : (existing.produces || []),
       params: (msg.params && msg.params.length > 0) ? msg.params : (existing.params || []),
     };
+    if (msg.pairPriority != null || existing.pairPriority != null) entry.pairPriority = msg.pairPriority ?? existing.pairPriority;
     if (msg._nounName || existing._nounName) entry._nounName = msg._nounName || existing._nounName;
     if (msg._nounCapability || existing._nounCapability) entry._nounCapability = msg._nounCapability || existing._nounCapability;
     commandRegistry.set(msg.name, entry);
@@ -584,6 +587,7 @@ const init = async () => {
         produces: cmd.produces || [],
         params: cmd.params || []
       };
+      if (cmd.pairPriority != null) entry.pairPriority = cmd.pairPriority;
       // Restore noun routing metadata from cache
       if (cmd._nounName) entry._nounName = cmd._nounName;
       if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;

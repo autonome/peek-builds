@@ -925,7 +925,9 @@ async function moveToSpace(targetName) {
 let spaceNameSuggestions = [];
 
 const SPACE_NAME_COMMANDS = [
-  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name', createCommand: 'create space' },
+  // pairPriority: typing a space name offers "open space <name>" first, ahead of "move to space
+  // <name>" whatever their pick history, because moving takes the window away from where it is.
+  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name', createCommand: 'create space', pairPriority: 1 },
   { name: 'switch space', description: 'Close current space and open another', param: 'Target space name' },
   { name: 'move to space', description: 'Move the active window to a space', param: 'Target space name' },
 ];
@@ -937,6 +939,7 @@ function publishSpaceNameCommands() {
       description: cmd.description,
       source: 'spaces',
       scope: 'global',
+      ...(cmd.pairPriority != null ? { pairPriority: cmd.pairPriority } : {}),
       params: [{
         name: 'name',
         type: 'enum',

@@ -74,6 +74,45 @@ describe('pairRowsFor', () => {
   });
 });
 
+describe('pairRowsFor with pairPriority', () => {
+  const withPriority = (cmd, pairPriority) => ({ ...cmd, pairPriority });
+  const SPACES = [
+    withPriority(enumCmd('open space', 'work', 'home', 'workshop'), 1),
+    enumCmd('switch space', 'work', 'home', 'workshop'),
+    enumCmd('move to space', 'work', 'home', 'workshop'),
+  ];
+
+  it('puts the higher-priority command first for the same option, whatever the usage', () => {
+    let usage = {};
+    for (let i = 0; i < 20; i++) usage = recordPick(usage, 'move to space', 'work', NOW - i * 1000);
+    const pairs = pairRowsFor('work', SPACES, usage, NOW);
+    const merged = withPairRows(['workflow'], pairs);
+    assert.equal(merged[0], 'open space work');
+    assert.ok(merged.indexOf('open space work') < merged.indexOf('move to space work'));
+  });
+
+  it('still orders the other commands for that option by usage', () => {
+    const usage = recordPick({}, 'move to space', 'work', NOW);
+    const pairs = pairRowsFor('work', SPACES, usage, NOW);
+    assert.deepEqual(names(pairs).slice(0, 3), ['open space work', 'move to space work', 'switch space work']);
+  });
+
+  it('still orders different options by usage', () => {
+    const usage = recordPick({}, 'move to space', 'workshop', NOW);
+    const pairs = pairRowsFor('work', SPACES, usage, NOW);
+    // The used option keeps the top slot, and the priority command takes it. Each option's
+    // rows keep the slots usage gave them.
+    assert.deepEqual(names(pairs), [
+      'open space workshop',
+      'open space work',
+      'switch space work',
+      'move to space work',
+      'move to space workshop',
+      'switch space workshop',
+    ]);
+  });
+});
+
 describe('withPairRows', () => {
   it('puts pair rows after the command matches when no option name equals the typed text', () => {
     const pairs = pairRowsFor('wor', COMMANDS, {}, NOW);

@@ -4,6 +4,10 @@
  *
  * Only single-value enum parameters without a prefix take part. Pair usage is the per-command
  * parameter usage from usage-rank.js, so a pick here and a pick in parameter mode count the same.
+ *
+ * A command may declare `pairPriority` (a number, higher first, default 0). Among the rows for one
+ * option it decides the order before usage does, so a command that changes where a window lives
+ * ("move to space") cannot overtake the plain one ("open space") through its own pick history.
  */
 
 import { matchTier, NO_MATCH, TIER_EXACT } from './enum-match.js';
@@ -21,11 +25,31 @@ function enumOptions(paramDef) {
 }
 
 /**
+ * Reorders the rows of each option among the slots they already hold: higher `priority` first,
+ * the existing order otherwise. Different options keep the positions usage gave them.
+ */
+function applyPairPriority(rows) {
+  const slotsByValue = new Map();
+  rows.forEach((row, index) => {
+    const slots = slotsByValue.get(row.value) || [];
+    slots.push(index);
+    slotsByValue.set(row.value, slots);
+  });
+  const out = rows.slice();
+  for (const slots of slotsByValue.values()) {
+    if (slots.length < 2) continue;
+    const ranked = slots.map(i => rows[i]).sort((a, b) => b.priority - a.priority);
+    slots.forEach((slot, k) => { out[slot] = ranked[k]; });
+  }
+  return out;
+}
+
+/**
  * Pair rows for the typed text, best first: pair usage, then match tier, then option order,
- * then command order.
+ * then command order. Within one option, `pairPriority` comes before all of those.
  *
  * @param {string} typed - Text typed at the top level
- * @param {Array<{name: string, params?: Array}>} commands - Commands available right now
+ * @param {Array<{name: string, params?: Array, pairPriority?: number}>} commands - Commands available right now
  * @param {Object} usage - Per-command option usage (usage-rank.js)
  * @param {number} now - Current time in ms
  * @returns {Array<{name: string, command: string, value: string, exact: boolean}>}
@@ -50,12 +74,13 @@ export function pairRowsFor(typed, commands, usage, now) {
         score: forCommand ? scoreAt(forCommand[String(opt.value).toLowerCase()], now) : 0,
         optionIndex,
         commandIndex,
+        priority: Number(cmd.pairPriority) || 0,
       });
     });
   });
   found.sort((a, b) => (b.score - a.score) || (a.tier - b.tier) ||
     (a.optionIndex - b.optionIndex) || (a.commandIndex - b.commandIndex));
-  return found.map(({ name, command, value, exact }) => ({ name, command, value, exact }));
+  return applyPairPriority(found).map(({ name, command, value, exact }) => ({ name, command, value, exact }));
 }
 
 /**
