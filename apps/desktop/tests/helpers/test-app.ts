@@ -11,7 +11,7 @@
 
 import { DesktopApp, launchDesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
-import { waitForExtensionsReady } from './window-utils';
+import { waitForExtensionsReady, waitForStartupWindowOpened } from './window-utils';
 
 export async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; bgWindow: Page }> {
   // Profile MUST start with "test" — `isTestProfile()` in apps/desktop/main/config.ts
@@ -22,5 +22,6 @@ export async function createPerDescribeApp(label: string): Promise<{ app: Deskto
   const app = await launchDesktopApp(profile);
   const bgWindow = await app.getBackgroundWindow();
   await waitForExtensionsReady(bgWindow);
+  await waitForStartupWindowOpened(app);
   return { app, bgWindow };
 }

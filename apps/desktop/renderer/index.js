@@ -793,6 +793,10 @@ export const init = async () => {
   if (!sessionRestorePending) {
     await openStartupFeature();
   }
+  // Read by the test harness (`tests/helpers/test-app.ts createPerDescribeApp`):
+  // the startup window's open ends with a focus request about half a second
+  // after boot, and a window a test opens before it lands loses focus to it.
+  window.__peekStartupWindowOpened = true;
 
   // If session restore was pending but nothing was restored (user declined,
   // snapshot was empty, or restore failed), open the startup feature.

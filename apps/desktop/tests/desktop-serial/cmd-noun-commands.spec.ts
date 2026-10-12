@@ -18,6 +18,7 @@ import {
   waitForClass,
   waitForResultsWithContent,
   waitForExtensionsReady,
+  waitForStartupWindowOpened,
 } from '../helpers/window-utils';
 
 async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; bgWindow: Page }> {
@@ -25,6 +26,7 @@ async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; b
   const app = await launchDesktopApp(profile);
   const bgWindow = await app.getBackgroundWindow();
   await waitForExtensionsReady(bgWindow);
+  await waitForStartupWindowOpened(app);
   return { app, bgWindow };
 }
 

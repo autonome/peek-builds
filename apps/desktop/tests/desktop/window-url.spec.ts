@@ -13,7 +13,7 @@
 
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
-import { waitForExtensionsReady } from '../helpers/window-utils';
+import { waitForExtensionsReady, waitForStartupWindowOpened } from '../helpers/window-utils';
 
 // Shared app instance
 let sharedApp: DesktopApp;
@@ -23,6 +23,7 @@ test.beforeAll(async () => {
   sharedApp = await getSharedApp();
   sharedBgWindow = await sharedApp.getBackgroundWindow();
   await waitForExtensionsReady(sharedBgWindow);
+  await waitForStartupWindowOpened(sharedApp);
 });
 
 test.afterAll(async () => {

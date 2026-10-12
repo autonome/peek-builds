@@ -4,7 +4,8 @@
  * Shared helpers for finding and managing windows across backends.
  */
 
-import { Page } from '@playwright/test';
+import { Page, expect } from '@playwright/test';
+import type { DesktopApp } from '../fixtures/desktop-app';
 
 /**
  * Wait for a window/page matching a URL pattern
@@ -262,6 +263,35 @@ export async function waitForExtensionsReady(
     },
     { timeout }
   );
+}
+
+/**
+ * Wait until boot has opened the startup window (settings on a fresh profile)
+ * and its focus request has returned. A window a spec opens before that focus
+ * lands is taken for a window the user left: a transient one, such as the cmd
+ * panel, is dismissed mid-load and its open fails with ERR_FAILED. The flag is
+ * set in `renderer/index.js` right after `openStartupFeature`, on the core
+ * background page (`peek://app/background.html`) — not the test harness's
+ * background page that `getBackgroundWindow()` returns — so it is read through
+ * the main process.
+ */
+export async function waitForStartupWindowOpened(
+  app: DesktopApp,
+  timeout = 15000
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        app.evaluateMain!(async ({ webContents }) => {
+          const core = webContents
+            .getAllWebContents()
+            .find((wc) => !wc.isDestroyed() && wc.getURL() === 'peek://app/background.html');
+          if (!core) return false;
+          return core.executeJavaScript('window.__peekStartupWindowOpened === true').catch(() => false);
+        }),
+      { timeout }
+    )
+    .toBe(true);
 }
 
 /**
