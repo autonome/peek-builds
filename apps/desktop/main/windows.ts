@@ -27,6 +27,7 @@ import {
   getNativeWindowFor,
   listMachineWindowRecords,
   getKernelExecutorForApp,
+  getAppActive,
 } from './window-machine.js';
 import { wmLog } from './window-diag.js';
 import type { WindowClass } from './izui-roles.js';
@@ -228,7 +229,9 @@ export function addEscHandler(bw: BrowserWindow): void {
           key: i.key,
           autoRepeat: i.isAutoRepeat,
           focused: bw.isDestroyed() ? false : bw.isFocused(),
-          appActive: app.isActive(),
+          // Electron's app.isActive() exists only on macOS; elsewhere it throws here and the
+          // press is silently dropped.
+          appActive: getAppActive(),
         });
         // keyDown, not keyUp, so the IPC fires before DOM keydown handlers — otherwise a dialog
         // that closes on DOM keydown leaves the keyUp-timed IPC seeing no open dialog.
