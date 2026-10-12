@@ -35,7 +35,7 @@
  *   yarn test:grep "Peeks Lazy Wake"
  */
 
-import { test, expect, DesktopApp, closeSharedApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady } from '../helpers/window-utils';
@@ -84,11 +84,6 @@ const waitPeeksReady = (): Promise<unknown> =>
 
 test.describe('Peeks Lazy Wake @desktop', () => {
   test.beforeAll(async () => {
-    // A global hotkey is one OS-wide grab: while the worker's shared app
-    // (`getSharedApp`, left running by earlier spec files) holds `Option+0`,
-    // this app's registration of it fails and test (b) reads no source.
-    // Close it; the next spec that asks for it gets a fresh one.
-    await closeSharedApp();
     ({ app, bgWindow } = await createPerDescribeApp('peeks-lazy-wake'));
     // Gate on core/cmd readiness so the load-on-dispatch hook is wired
     // before we probe.

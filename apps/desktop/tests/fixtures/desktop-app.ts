@@ -800,6 +800,12 @@ export async function launchDesktopApp(profile?: string, options: LaunchOptions 
   const backend = (process.env.BACKEND || 'electron') as Backend;
   const testProfile = profile || getTestProfile();
 
+  // Any other launch closes the worker's shared app first. Two Peek instances
+  // on one display contend for OS-wide resources: a global hotkey is a single
+  // grab (the second app's registration fails), and either app's windows can
+  // take OS focus from the other's. The next getSharedApp() relaunches it.
+  if (testProfile !== SHARED_APP_PROFILE) await closeSharedApp();
+
   if (backend === 'electron') {
     return launchElectron(testProfile, options);
   } else if (backend === 'tauri') {
@@ -815,6 +821,7 @@ export async function launchDesktopApp(profile?: string, options: LaunchOptions 
  * Global shared app instance for tests that don't need isolation.
  * Use getSharedApp() to get or create, closeSharedApp() to cleanup.
  */
+const SHARED_APP_PROFILE = 'test-shared-instance';
 let sharedApp: DesktopApp | null = null;
 let sharedAppPromise: Promise<DesktopApp> | null = null;
 
@@ -836,7 +843,7 @@ export async function getSharedApp(): Promise<DesktopApp> {
     return sharedAppPromise;
   }
 
-  sharedAppPromise = launchDesktopApp('test-shared-instance');
+  sharedAppPromise = launchDesktopApp(SHARED_APP_PROFILE);
   sharedApp = await sharedAppPromise;
   sharedAppPromise = null;
   return sharedApp;
