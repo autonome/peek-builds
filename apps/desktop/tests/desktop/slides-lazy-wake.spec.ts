@@ -36,7 +36,7 @@
  *   yarn test:grep "Slides Lazy Wake"
  */
 
-import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady } from '../helpers/window-utils';
@@ -136,6 +136,11 @@ const closeWindowId = (id: number): Promise<void> =>
 
 test.describe('Slides Lazy Wake @desktop', () => {
   test.beforeAll(async () => {
+    // A global hotkey is one OS-wide grab: while the worker's shared app
+    // (`getSharedApp`, left running by earlier spec files) holds `Option+Up`,
+    // this app's registration of it fails and the hotkey test reads no
+    // source. Close it; the next spec that asks for it gets a fresh one.
+    await closeSharedApp();
     ({ app, bgWindow } = await createPerDescribeApp('slides-lazy-wake'));
 
     // Stand up a trivial local http server so test (d) has a LOADABLE,
