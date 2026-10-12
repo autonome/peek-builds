@@ -1713,7 +1713,8 @@ let openWindowIds = new Map();
 let openWindowQuery = 0;
 let openWindowRefreshTimer = null;
 
-// What the URL action button currently says: { url, action: 'switch'|'open', id }.
+// The page the URL action button switches to: { url, action: 'switch', id },
+// or null when the panel's address has no open window (the button is hidden).
 let urlAction = null;
 
 function renderUrlAction() {
@@ -1725,12 +1726,9 @@ function renderUrlAction() {
     return;
   }
   btn.hidden = false;
-  btn.dataset.action = urlAction.action;
-  const label = urlAction.action === 'switch' ? 'Switch to page' : 'Open in new window';
-  btn.title = `${label} (Cmd+Enter)`;
-  btn.setAttribute('aria-label', label);
-  const labelEl = btn.querySelector('.url-action-label');
-  if (labelEl) labelEl.textContent = urlAction.action === 'switch' ? 'Switch' : 'Open';
+  btn.dataset.action = 'switch';
+  btn.title = 'Switch to the window showing this page (Cmd+Enter)';
+  btn.setAttribute('aria-label', 'Switch to page');
 }
 
 // The marker on a Visited row whose page is open in a window (prior art:
@@ -1754,15 +1752,11 @@ function renderRowMarker(el, url) {
 }
 
 // Paint the button and every row's marker from the answers in hand. Until an
-// address has an answer it shows as "open" — the safe default.
+// address has an answer it counts as not open, so the button stays hidden.
 function applyOpenWindows() {
   const url = currentActionUrl();
-  if (isSwitchableUrl(url)) {
-    const id = openWindowIds.get(url);
-    urlAction = { url, action: typeof id === 'number' ? 'switch' : 'open', id: typeof id === 'number' ? id : null };
-  } else {
-    urlAction = null;
-  }
+  const id = isSwitchableUrl(url) ? openWindowIds.get(url) : undefined;
+  urlAction = typeof id === 'number' ? { url, action: 'switch', id } : null;
   renderUrlAction();
   document.querySelectorAll('#results .url-result-item[data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
@@ -3236,18 +3230,16 @@ async function render() {
       return;
     }
 
-    // Cmd+Enter: the URL action — switch to the window showing the panel's
-    // address, or open it in a new one (the button at the input's right end
-    // says which).
-    if (e.key === 'Enter' && e.metaKey && !e.altKey && !e.ctrlKey) {
+    // Cmd+Enter: switch to the window showing the panel's address when one is
+    // open (the "Switch to" button is up); otherwise it is plain Enter.
+    const cmdEnter = e.key === 'Enter' && e.metaKey && !e.altKey && !e.ctrlKey;
+    if (cmdEnter && urlAction && urlAction.url === currentActionUrl()) {
       e.preventDefault();
-      const url = currentActionUrl();
-      if (!isSwitchableUrl(url)) return;
-      machine.dispatch(Events.URL_ACTION, { url });
+      machine.dispatch(Events.URL_ACTION, { url: urlAction.url });
       return;
     }
 
-    if (e.key === 'Enter' && !hasModifier(e)) {
+    if (e.key === 'Enter' && (cmdEnter || !hasModifier(e))) {
       e.preventDefault();
       const trimmedText = commandInput.value.trim();
       const urlResult = getValidURL(trimmedText);

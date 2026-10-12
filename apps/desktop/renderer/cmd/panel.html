@@ -563,8 +563,8 @@
         padding: 3px 8px;
         height: 26px;
         box-sizing: border-box;
-        background: var(--cmd-badge-bg);
-        border: 1px solid var(--cmd-surface-divider);
+        background: rgba(0, 122, 255, 0.18);
+        border: 1px solid rgba(0, 122, 255, 0.45);
         border-radius: 6px;
         color: var(--theme-text, #333);
         font-family: inherit;
@@ -576,19 +576,7 @@
       #url-action[hidden] { display: none; }
       #url-action:hover { background: var(--cmd-surface-selected); }
       #url-action:active { transform: scale(0.98); }
-      #url-action .icon-switch,
-      #url-action .icon-open { display: none; }
-      #url-action[data-action="switch"] .icon-switch,
-      #url-action[data-action="open"] .icon-open { display: block; }
-      #url-action[data-action="switch"] {
-        background: rgba(0, 122, 255, 0.18);
-        border-color: rgba(0, 122, 255, 0.45);
-      }
-      #url-action kbd {
-        font-family: inherit;
-        font-size: 11px;
-        color: var(--theme-text-muted, #999);
-      }
+      #url-action .icon-window { display: block; }
 
       /* Chain steps - shows the pipe history */
       #chain-steps {
@@ -649,21 +637,16 @@
         <input id="command-input" type="text" autofocus spellcheck="false" autocomplete="off" placeholder="Feed meeeee" />
         <div id="command-text"></div>
       </div>
-      <!-- URL action: what Cmd+Enter does with the panel's web address.
-           panel.js updateUrlAction() sets data-action to "switch" (a window
-           showing it is open) or "open" (a new window), and hides it when the
-           panel holds no address. -->
+      <!-- URL action: switch to the window already showing the panel's web
+           address (also Cmd+Enter). panel.js renderUrlAction() shows it with
+           data-action="switch" only while such a window is open, and hides it
+           otherwise. -->
       <button id="url-action" type="button" data-no-drag hidden tabindex="-1">
-        <svg class="icon-switch" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-          <rect x="9" y="5" width="12" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M2 12h10m-3.5-3.5L12 12l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <span class="url-action-label">Switch to</span>
+        <svg class="icon-window" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M3 9h18" fill="none" stroke="currentColor" stroke-width="1.6"/>
         </svg>
-        <svg class="icon-open" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-          <rect x="3" y="7" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M11 3h8a2 2 0 0 1 2 2v8M14 10l7-7m-5 0h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="url-action-label"></span>
-        <kbd>⌘↵</kbd>
       </button>
     </div>
     <div id="results"></div>

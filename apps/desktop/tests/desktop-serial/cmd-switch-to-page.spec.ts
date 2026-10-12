@@ -5,23 +5,21 @@ import { waitForExtensionsReady, waitForAppReady, waitForPanelCommandsLoaded } f
 
 /**
  * The command panel's URL action. When the panel holds a web address (typed,
- * suggested or highlighted), a button at the right end of the input says what
- * Cmd+Enter will do:
- *   - `data-action="switch"` when a window showing that page is open;
- *   - `data-action="open"` when none is, including when the page exists only
- *     in the saved windows of a space that is not active (those windows are
- *     closed, so there is nothing to switch to).
- * Cmd+Enter on a "switch" address brings the open window forward without
- * creating another one.
+ * suggested or highlighted) and a window showing that page is open, a button
+ * at the right end of the input reads "Switch to", and Cmd+Enter brings that
+ * window forward without creating another one. With no such window the button
+ * is hidden, including when the page exists only in the saved windows of a
+ * space that is not active (those windows are closed, so there is nothing to
+ * switch to), and Cmd+Enter does what plain Enter does.
  *
  * The button follows windows opening, closing and navigating while the panel
  * stays up. Every Visited suggestion row whose page is open in a window carries
  * a marker, and picking that row switches to the window.
  *
- * Contract this spec pins: `button#url-action` inside `cmd/panel.html`, with
- * `data-action` set to `switch` or `open` for a URL; Visited rows are
- * `.url-result-item[data-url="<url>"]`, and an open page's row holds a
- * `.url-open-marker`.
+ * Contract this spec pins: `button#url-action` inside `cmd/panel.html`, shown
+ * with `data-action="switch"` and the text "Switch to" only for an open page;
+ * Visited rows are `.url-result-item[data-url="<url>"]`, and an open page's
+ * row holds a `.url-open-marker`.
  *
  * Run with:
  *   echo 'apps/desktop/tests/desktop-serial/cmd-switch-to-page.spec.ts' > "$(scripts/tagged-path.sh test-spec)"
@@ -97,11 +95,12 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     }, url);
   };
 
-  test('a URL with no open window offers opening a new one', async () => {
+  test('a URL with no open window shows no URL action', async () => {
     const panel = await openPanel(NOT_OPEN_URL);
     const action = panel.locator('button#url-action');
-    await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
-    await expect(action).toHaveAttribute('data-action', 'open', { timeout: 5000 });
+    // Let the open-window lookup answer before checking the button stays hidden.
+    await panel.waitForTimeout(500);
+    await expect(action, 'the URL action shows with no open window').toBeHidden({ timeout: 5000 });
     await closePanel(panel);
   });
 
@@ -128,6 +127,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     const action = panel.locator('button#url-action');
     await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
     await expect(action).toHaveAttribute('data-action', 'switch', { timeout: 5000 });
+    await expect(action).toHaveText('Switch to', { timeout: 5000 });
 
     // Cmd+Enter. Keydown only: switching moves focus away and the panel can
     // close before a keyup would be delivered.
@@ -171,7 +171,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     }, existingId);
   });
 
-  test('a URL saved only in an inactive space offers opening a new one', async () => {
+  test('a URL saved only in an inactive space shows no URL action', async () => {
     // Save the address into a space that is not active, by dropping it on that
     // space's card: the space's saved windows gain it, nothing opens.
     const spaceId = await bgWindow.evaluate(async (tagName: string) => {
@@ -219,19 +219,20 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
 
     const panel = await openPanel(SAVED_ONLY_URL);
     const action = panel.locator('button#url-action');
-    await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
-    await expect(action).toHaveAttribute('data-action', 'open', { timeout: 5000 });
+    await panel.waitForTimeout(500);
+    await expect(action, 'the URL action shows for a page saved only in an inactive space')
+      .toBeHidden({ timeout: 5000 });
     await closePanel(panel);
   });
 
   test('the URL action follows a window opening and closing while the panel stays up', async () => {
     const panel = await openPanel(LATE_URL);
     const action = panel.locator('button#url-action');
-    await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
-    await expect(action).toHaveAttribute('data-action', 'open', { timeout: 5000 });
+    await panel.waitForTimeout(500);
+    await expect(action, 'the URL action shows with no open window').toBeHidden({ timeout: 5000 });
 
     // A window opens on the address with the panel still showing it: the
-    // button turns to "switch" without any typing. It opens without taking
+    // button appears as "Switch to" without any typing. It opens without taking
     // focus, as a window opened in the background would; a focused one would
     // dismiss the panel.
     const opened = await bgWindow.evaluate(async (url: string) => {
@@ -242,15 +243,15 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
       .poll(async () => (await liveWindowsAt(LATE_URL)).length, { timeout: 15000 })
       .toBe(1);
     const [lateId] = await liveWindowsAt(LATE_URL);
-    await expect(action, 'the button did not notice the window opening').toHaveAttribute(
-      'data-action', 'switch', { timeout: 5000 });
+    await expect(action, 'the button did not notice the window opening').toBeVisible({ timeout: 5000 });
+    await expect(action).toHaveAttribute('data-action', 'switch', { timeout: 5000 });
+    await expect(action).toHaveText('Switch to', { timeout: 5000 });
 
-    // And back to "open" once that window closes.
+    // And hidden again once that window closes.
     await bgWindow.evaluate(async (id: number) => {
       await (window as any).app.window.close(id);
     }, lateId);
-    await expect(action, 'the button did not notice the window closing').toHaveAttribute(
-      'data-action', 'open', { timeout: 5000 });
+    await expect(action, 'the button did not notice the window closing').toBeHidden({ timeout: 5000 });
     await closePanel(panel);
   });
 
