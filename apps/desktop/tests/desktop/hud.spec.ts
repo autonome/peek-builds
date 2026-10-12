@@ -98,4 +98,42 @@ test.describe('memory hud @desktop', () => {
     expect(again?.success).toBe(true);
     expect(again.windowId, 'a second hud opened a new window').toBe(hudId);
   });
+
+  test('the HUD comes back after a restart, still pinned across workspaces and still the one hud reuses', async () => {
+    const opened = await runCommand('hud');
+    expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
+    const hudId = opened.windowId as number;
+
+    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    // Close it so the only way it can be on screen afterward is restore.
+    await bgWindow.evaluate(
+      async (id: number) => (window as unknown as { app: any }).app.window.close(id),
+      hudId,
+    );
+    await expect
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+        timeout: 15000,
+        message: 'the HUD never closed — restore would be unfalsifiable',
+      })
+      .toBe(0);
+
+    // A cold-start restore of the default snapshot is what boot runs; a live
+    // in-session restore skips windows pinned across workspaces on purpose.
+    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceColdStartRestoreSession()) as any);
+
+    const page = await app.getWindow('app/hud/hud.html', 15000);
+    const info = await page.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
+    expect(info?.error).toBeUndefined();
+    const restoredId = info.id as number;
+
+    const pinEntry = await getPinContext(restoredId);
+    expect(pinEntry?.value, 'the restored HUD is not recorded as pinned across workspaces').toBe('global');
+    await expect(page.locator('#memory-total')).toHaveText(/^[1-9][\d.]* (MB|GB)$/, { timeout: 15000 });
+
+    // The restored window keeps its key, so hud focuses it instead of opening a second.
+    const again = await runCommand('hud');
+    expect(again?.success).toBe(true);
+    expect(again.windowId, 'hud opened a second window beside the restored HUD').toBe(restoredId);
+  });
 });
