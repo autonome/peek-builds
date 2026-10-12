@@ -1,6 +1,8 @@
 /**
  * model-store catalogue tests, on a trimmed recording of Mozilla's `translations-models-v2`
- * collection (fixtures/translations-models-v2.json, records copied verbatim). The pairs kept:
+ * collection (page-translate/fixtures/translations-models-v2.json, records copied verbatim).
+ * The test sits at the top level of main/ so the shared `dist/main/*.test.js` glob runs it.
+ * The pairs kept:
  * es-en, en-de, de-en (plain pairs and the es→de pivot), en-ja (split srcvocab/trgvocab),
  * en-ko and en-ru (two models split by an Android/desktop filter), nb-en (a release model and a
  * nightly-only pre-release), nn-en (nightly-only, so missing on release), en-gl (3.1 and 3.0).
@@ -10,7 +12,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import * as path from 'node:path';
 
-import catalogue from './fixtures/translations-models-v2.json' with { type: 'json' };
+import catalogue from './page-translate/fixtures/translations-models-v2.json' with { type: 'json' };
 import {
   cachePath,
   candidatesForPair,
@@ -22,7 +24,7 @@ import {
   verifyDecompressed,
   type ModelRecord,
   type PairPlan,
-} from './model-store.js';
+} from './page-translate/model-store.js';
 
 const records = catalogue.data as ModelRecord[];
 
