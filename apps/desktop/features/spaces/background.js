@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder, shouldHideBorder, planMoveToSpace,
+  resolveVividColor, shouldShowBorder, planMoveToSpace,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
   emptySpaceWindowOptions, createSerialRunner, countSpaceWindows
 } from './config.js';
@@ -167,13 +167,13 @@ function hideBorder() {
   border.closeRequested = false;
 }
 
+// The delay absorbs a brief resign/activate pair (a desktop switch, the
+// startup activation dance): whatever re-shows the border cancels it first.
 function scheduleHideBorder() {
   if (!borderHideTimer) {
-    borderHideTimer = setTimeout(async () => {
+    borderHideTimer = setTimeout(() => {
       borderHideTimer = null;
-      const visible = appFocused ? false : await hasVisibleSpaceWindow();
-      // Re-check after the await: the app may have become active meanwhile.
-      if (shouldHideBorder(appFocused, visible)) hideBorder();
+      hideBorder();
     }, BORDER_HIDE_DELAY_MS);
   }
 }
@@ -285,6 +285,11 @@ async function updateBorderVisibility() {
     }
 
     const modeResult = await api.context.get('mode', focusedId);
+    // The app may have resigned active during the awaits above.
+    if (!appFocused) {
+      scheduleHideBorder();
+      return;
+    }
     // The default workspace shows no border — Goal (handoff.md): it is what
     // is open when nothing else is active, not a workspace the user "enters"
     // — so a window that happens to carry the default's spaceId is treated
@@ -305,27 +310,10 @@ async function updateBorderVisibility() {
   }
 }
 
-/**
- * True when a window of the active space is currently visible. The window list
- * reports `visible` per window but not which desktop it is on, so a space
- * window that is visible is treated as "on the current desktop".
- */
-async function hasVisibleSpaceWindow() {
-  if (!activeSpaceId) return false;
-  try {
-    const inSpace = await api.context.getWindowsInSpace(activeSpaceId);
-    if (!inSpace?.success || !Array.isArray(inSpace.data) || inSpace.data.length === 0) return false;
-    const listResult = await api.window.list();
-    if (!listResult?.success || !Array.isArray(listResult.windows)) return false;
-    const ids = new Set(inSpace.data);
-    return listResult.windows.some((w) => w?.id && w.visible && ids.has(w.id));
-  } catch {
-    return false;
-  }
-}
-
-// The app resigns active on every desktop switch or window move, so losing
-// focus alone must not close the border while a space window is still showing.
+// The border and its name chip are visible only while Peek is the focused
+// app: resigning active hides them (after the hide delay) even when windows
+// of the space are still showing behind the other app, and becoming active
+// again re-evaluates them from the focused window.
 function handleAppFocusChanged(msg) {
   appFocused = !!msg?.focused;
   if (appFocused) {

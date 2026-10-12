@@ -159,14 +159,6 @@ const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
   appFocused === true && focusedWindowInNamedSpace === true;
 
 /**
- * Whether a scheduled border hide should go ahead. An inactive app keeps the
- * border while a window of the active space is still visible (the app resigns
- * active on every desktop switch or window move); otherwise it hides.
- */
-const shouldHideBorder = (appFocused, spaceWindowVisible) =>
-  !(appFocused === false && spaceWindowVisible === true);
-
-/**
  * Number of windows a space holds. Open windows win (the active workspace);
  * otherwise the saved workspace snapshot's window list. A space with no saved
  * snapshot holds none, so it counts 0. `null` only for the default workspace
@@ -333,7 +325,6 @@ export {
   spaceNameOptions,
   planMoveToSpace,
   shouldShowBorder,
-  shouldHideBorder,
   countSpaceWindows,
   initialSelectedIndex,
   formatWindowCount,
