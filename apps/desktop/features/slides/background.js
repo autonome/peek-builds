@@ -48,9 +48,29 @@ const loadSettings = async () => {
   };
 };
 
+// The size each slide was last resized to, by edge: `{ [screenEdge]: { width,
+// height } }`. Kept in its own `sizes` setting rather than on the `items` rows,
+// so a resize never rewrites the rows the Features Manager Options panel edits.
+// Filled from the datastore in init(), updated on every settled resize main
+// reports as `window:resized`.
+let savedSizes = {};
+
+const loadSizes = async () => {
+  const result = await api.settings.get('sizes');
+  const value = result && !result.error && result.value;
+  return value && typeof value === 'object' ? value : {};
+};
+
+const sizeFor = (item) => {
+  const saved = savedSizes[item.screenEdge];
+  return {
+    width: (saved && saved.width) || item.width || 800,
+    height: (saved && saved.height) || item.height || 600,
+  };
+};
+
 const executeItem = (item) => {
-  const height = item.height || 600;
-  const width = item.width || 800;
+  const { width, height } = sizeFor(item);
 
   console.log('[ext:slides] execute slide', item.screenEdge);
 
@@ -296,8 +316,26 @@ const init = async () => {
     }
   });
 
+  // A slide window was resized and the resize settled (main reports it ~300 ms
+  // after the last resize, only to the tile that opened the window). The
+  // message's `key` is the open key executeItem built; save the new size under
+  // that slide's edge so the next open — even after a restart — uses it.
+  api.pubsub.subscribe('window:resized', async (msg) => {
+    await settingsLoaded;
+    const width = Number(msg?.width);
+    const height = Number(msg?.height);
+    if (!(width > 0) || !(height > 0)) return;
+    const item = (currentSettings.items || []).find(
+      i => `${i.address}:${i.screenEdge}` === msg?.key
+    );
+    if (!item) return;
+    savedSizes = { ...savedSizes, [item.screenEdge]: { width, height } };
+    await api.settings.set('sizes', savedSizes);
+  });
+
   // Load settings from datastore
   try {
+    savedSizes = await loadSizes();
     currentSettings = await loadSettings();
 
     // Always declare the wake set on boot — even with zero items — so an empty

@@ -73,10 +73,26 @@ const saveSettings = async (settings) => {
 /**
  * Open a peek window for the given item
  */
+// The size each peek was last resized to, by its window key (`peek:<keyNum>`):
+// `{ [key]: { width, height } }`. Kept in its own `sizes` setting rather than
+// on the `items` rows, so a resize never rewrites the rows the Features
+// Manager Options panel edits. Filled from the datastore in init(), updated on
+// every settled resize main reports as `window:resized`.
+let savedSizes = {};
+
+const loadSizes = async () => {
+  const result = await api.settings.get('sizes');
+  const value = result && result.success && result.data;
+  return value && typeof value === 'object' ? value : {};
+};
+
+const windowKeyFor = (item) => `peek:${item.keyNum}`;
+
 const executeItem = (item) => {
   console.log('[ext:peeks] executeItem', item);
-  const height = item.height || 600;
-  const width = item.width || 800;
+  const saved = savedSizes[windowKeyFor(item)];
+  const height = (saved && saved.height) || item.height || 600;
+  const width = (saved && saved.width) || item.width || 800;
 
   const params = {
     // IZUI role
@@ -107,7 +123,7 @@ const executeItem = (item) => {
     // Known gap: `ipc.ts windowOpenHandler`'s hybrid key-reuse branch shows the
     // existing window without navigating it, so editing a slot's address does
     // not move that slot's open window to the new address.
-    key: `peek:${item.keyNum}`,
+    key: windowKeyFor(item),
 
     // tracking
     trackingSource: 'peek',
@@ -262,8 +278,24 @@ const init = async () => {
     executeItem(item);
   });
 
+  // A peek window was resized and the resize settled (main reports it ~300 ms
+  // after the last resize, only to the tile that opened the window). Save the
+  // new size under the window's key so the next open of that peek — even after
+  // a restart — uses it.
+  api.pubsub.subscribe('window:resized', async (msg) => {
+    await settingsLoaded;
+    const key = msg?.key;
+    const width = Number(msg?.width);
+    const height = Number(msg?.height);
+    if (typeof key !== 'string' || !key.startsWith('peek:')) return;
+    if (!(width > 0) || !(height > 0)) return;
+    savedSizes = { ...savedSizes, [key]: { width, height } };
+    await api.settings.set('sizes', savedSizes);
+  });
+
   // Load settings from datastore
   try {
+    savedSizes = await loadSizes();
     currentSettings = await loadSettings();
 
     // Always declare the wake set on boot — even with zero items — so an empty

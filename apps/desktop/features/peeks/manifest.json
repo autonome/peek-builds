@@ -31,7 +31,8 @@
         "ext:ready",
         "app:shutdown",
         "ext:peeks:shutdown",
-        "cli:peek-open"
+        "cli:peek-open",
+        "window:resized"
       ]
     },
     "window": {

@@ -65,6 +65,7 @@ import {
 } from './window-kernel-dispatch.js';
 import type { WindowId } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
+import { createResizeReporter } from './window-resize-report.js';
 import {
   setWindowOpenPayload,
   getWindowOpenPayload,
@@ -235,6 +236,37 @@ function drainWindowClose(closedId: WindowId): void {
   // handed through as `knownWmId` for the same reason `windowData` above is
   // resolved off it directly.
   finalizeWindowClose(electronId, { bounds, presentation }, closedId);
+}
+
+const RESIZE_REPORT_DELAY_MS = 300;
+
+/**
+ * Deliver a pubsub message to the windows of the tile that opened a window,
+ * and to no other tile. `source` is the opening address `tile:window:open`
+ * records (`peek://<tileId>/background`), so every live window of that tile —
+ * matched on the `peek://<tileId>/` origin — receives it on the same
+ * `pubsub:<topic>` channel a broadcast would use; the tile still has to list
+ * the topic in its manifest's `pubsub.topics` to subscribe. A tile that is not
+ * loaded receives nothing: the message is not queued.
+ */
+function sendToOpener(source: string, topic: string, msg: Record<string, unknown>): void {
+  let origin: string;
+  try {
+    const u = new URL(source);
+    if (u.protocol !== 'peek:' || !u.host) return;
+    origin = `peek://${u.host}/`;
+  } catch {
+    return;
+  }
+  for (const tileWin of getAllTileWindows()) {
+    try {
+      if (tileWin.isDestroyed()) continue;
+      if (!tileWin.webContents.getURL().startsWith(origin)) continue;
+      unguardedWebContentsSend(tileWin.webContents, `pubsub:${topic}`, { ...msg, source: getSystemAddress() });
+    } catch {
+      // Window destroyed between check and send.
+    }
+  }
 }
 
 /**
@@ -802,7 +834,23 @@ export async function initialize(): Promise<void> {
   // ordering reason `subscribeAppActive`'s doc gives: `getKernelExecutor()`
   // only resolves to the live executor once `initWindowStateMachine()` has
   // pointed it there.
+  //
+  // The same notification feeds the settled-resize report
+  // (`window-resize-report.ts`): a keyed window's opener hears its new size
+  // ~300 ms after the last resize, as `window:resized`, so it can reopen the
+  // window at that size later.
   {
+    const resizeReporter = createResizeReporter({
+      delayMs: RESIZE_REPORT_DELAY_MS,
+      lookupOpener: (id) => {
+        const payload = getWindowOpenPayload(id);
+        return payload ? { source: payload.source, key: payload.params.key } : undefined;
+      },
+      send: ({ source, key, width, height }) => {
+        sendToOpener(source, 'window:resized', { key, width, height });
+      },
+    });
+    resizeReporter.observe(getKernelExecutor().getState().order);
     let lastOrderIds = new Set(getKernelExecutor().getState().order.map((w) => w.id));
     getKernelExecutor().subscribe((state) => {
       const nowIds = new Set(state.order.map((w) => w.id));
@@ -810,6 +858,7 @@ export async function initialize(): Promise<void> {
         if (!nowIds.has(id)) runWindowClosedBookkeeping(id);
       }
       lastOrderIds = nowIds;
+      resizeReporter.observe(state.order);
     });
   }
 

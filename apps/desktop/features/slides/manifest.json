@@ -29,6 +29,7 @@
       "topics": [
         "slides:settings-changed",
         "window:closed",
+        "window:resized",
         "cli:slide-open"
       ]
     },
