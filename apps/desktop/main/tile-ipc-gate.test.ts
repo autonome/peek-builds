@@ -44,6 +44,8 @@ import {
   setStateProbe,
   __clearStateProbeForTest,
   registerTileIpc,
+  canDeliverTo,
+  unguardedWebContentsSend,
   type GateRejectReason,
 } from './tile-ipc-gate.js';
 import { STATES } from './tile-fsm.js';
@@ -293,4 +295,52 @@ describe('tile-ipc-gate: registerTileIpc is a function', () => {
     // Clears without throwing — assertion is "no throw".
     assert.ok(true);
   });
+});
+
+describe('tile-ipc-gate: sends skip a WebContents whose frame is gone', () => {
+  /** A WebContents stub with a recording `send`. */
+  function fakeWc(opts: {
+    destroyed?: boolean;
+    frame?: { destroyed?: boolean; detached?: boolean } | null;
+    frameThrows?: boolean;
+  }): { wc: Electron.WebContents; sent: string[] } {
+    const sent: string[] = [];
+    const frame = opts.frame === null ? null : {
+      isDestroyed: () => opts.frame?.destroyed ?? false,
+      detached: opts.frame?.detached ?? false,
+    };
+    const wc = {
+      id: 900000 + Math.floor(Math.random() * 100000),
+      isDestroyed: () => opts.destroyed ?? false,
+      get mainFrame() {
+        if (opts.frameThrows) throw new Error('Render frame was disposed before WebFrameMain could be accessed');
+        return frame;
+      },
+      send: (channel: string) => { sent.push(channel); },
+    } as unknown as Electron.WebContents;
+    return { wc, sent };
+  }
+
+  it('a live WebContents with a live main frame receives the send', () => {
+    const { wc, sent } = fakeWc({ frame: {} });
+    assert.strictEqual(canDeliverTo(wc), true);
+    unguardedWebContentsSend(wc, 'pubsub:t', {});
+    assert.deepStrictEqual(sent, ['pubsub:t']);
+  });
+
+  const skipped: Array<[string, Parameters<typeof fakeWc>[0]]> = [
+    ['a destroyed WebContents', { destroyed: true, frame: {} }],
+    ['a disposed main frame', { frame: { destroyed: true } }],
+    ['a detached main frame', { frame: { detached: true } }],
+    ['no main frame', { frame: null }],
+    ['a main frame that throws on access', { frameThrows: true }],
+  ];
+  for (const [label, opts] of skipped) {
+    it(`${label} is skipped without a send`, () => {
+      const { wc, sent } = fakeWc(opts);
+      assert.strictEqual(canDeliverTo(wc), false);
+      unguardedWebContentsSend(wc, 'pubsub:t', {});
+      assert.deepStrictEqual(sent, []);
+    });
+  }
 });

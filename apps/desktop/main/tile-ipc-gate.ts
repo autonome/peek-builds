@@ -474,6 +474,29 @@ export function verifyTokenSender(
 // ─── Bypass detectors (dev-mode) ─────────────────────────────────────
 
 /**
+ * Whether a send to `wc` can reach a renderer. False once the WebContents
+ * is destroyed, and also while it is still alive but its main frame has
+ * been disposed or detached — the window-close and quit window, where
+ * `wc.isDestroyed()` is still false. Electron does not throw for a send
+ * in that state; `WebFrameMain.send` catches its own "Render frame was
+ * disposed" error and logs it, so a caller's try/catch never sees it and
+ * every send to every closing window lands in the log. Any property
+ * access that throws is treated as "gone".
+ */
+export function canDeliverTo(wc: WebContents): boolean {
+  try {
+    if (wc.isDestroyed()) return false;
+    const frame = (wc as { mainFrame?: Electron.WebFrameMain | null }).mainFrame;
+    if (!frame) return false;
+    if (typeof frame.isDestroyed === 'function' && frame.isDestroyed()) return false;
+    if (frame.detached) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Captured pre-patched `WebContents.prototype.send`. Broadcaster uses
  * this to send `pubsub:*` frames without tripping the guard. Stored
  * here (not on the WebContents object) so patching is a single
@@ -492,6 +515,7 @@ export function unguardedWebContentsSend(
   channel: string,
   ...args: unknown[]
 ): void {
+  if (!canDeliverTo(wc)) return;
   const original = perWcOriginalSend.get(wc.id);
   if (original) {
     original(channel, ...args);
@@ -525,6 +549,10 @@ function patchWebContentsSend(wc: WebContents): void {
           `Route through the broadcaster set via setPubsubBroadcaster() in main.ts.`,
         );
       }
+      // A closing or quitting window's frame can be gone while the
+      // WebContents is not yet destroyed; drop the send rather than let
+      // Electron log a disposed-frame error for it.
+      if (!canDeliverTo(wc)) return;
       return original.call(wc, channel, ...args);
     };
 }
