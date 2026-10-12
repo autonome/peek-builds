@@ -89,13 +89,15 @@ The page-host's "what state am I in?" decision at INITIALIZING reads from three 
 
 The init transition uses input #1. If `maximized=1` is present, transition to MAXIMIZED — but trust that `window-open` has already sized the window to the work area. If absent, transition to NORMAL.
 
-For the inputs to actually reach init, two upstream changes are needed:
+This section describes the canvas-era design. Superseded: maximize is not restored. Session save and undo-close write the window's pre-maximize bounds and no `maximized` flag, and restore opens the window unmaximized at those bounds, because a window manager may refit a window mapped at full work-area size and restoring at the normal size avoids a stale maximized flag. Descriptors and closed-window entries from older builds that carry `maximized` are converted to the same result on restore. The propagation steps below (saving the flag, passing `maximized` through `window-open`, carrying it through `pushClosedWindow`) are therefore not implemented.
 
-- **Session save** must persist the `maximized` flag (today it drops it via `extractRealUrl` + `extractCanvasBounds`). Add it to the `WindowDescriptor.params` payload.
-- **`window-open`** must propagate `maximized` to the page-host URL params it constructs in `ipc.ts:956`. Today the `pageParams` URLSearchParams is built from `{url, x, y, width, height}` only. Add `maximized` if `options.maximized === true`.
-- **Session restore** must pass `maximized: true` in `options` when the descriptor's saved params include it.
+For the inputs to actually reach init, two upstream changes were originally planned:
 
-For undo-close (`reopenLastClosedWindow`) the same propagation applies — the URL param + `pushClosedWindow` payload must carry `maximized` through.
+- **Session save** persists the `maximized` flag (today it drops it via `extractRealUrl` + `extractCanvasBounds`). Add it to the `WindowDescriptor.params` payload.
+- **`window-open`** propagates `maximized` to the page-host URL params it constructs in `ipc.ts:956`. Today the `pageParams` URLSearchParams is built from `{url, x, y, width, height}` only. Add `maximized` if `options.maximized === true`.
+- **Session restore** passes `maximized: true` in `options` when the descriptor's saved params include it.
+
+For undo-close (`reopenLastClosedWindow`) the same propagation was planned — the URL param + `pushClosedWindow` payload carrying `maximized` through.
 
 ---
 

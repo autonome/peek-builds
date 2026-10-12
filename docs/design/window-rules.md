@@ -59,7 +59,7 @@ Each term is followed by the name the code uses for it.
 - **G9 app-activate.** The app activating shows again what deactivation hid, an attached overlay in front of its host, and never a window that was dismissed.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
-- **G12 restore.** A restored window comes back at its saved bounds and maximized state.
+- **G12 restore.** A restored or reopened window comes back unmaximized at its saved bounds; a window that was maximized when saved or closed comes back at its pre-maximize bounds. Maximize is not restored: a window manager may refit a window mapped at full work-area size, and restoring at the normal size avoids a stale maximized flag. Saved data from older builds that records a maximized window is converted the same way on restore.
 - **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, the user switches desktop, or the app becomes active while it is key. The same holds for every transient window that took key from another app, directly or through a chain of transient windows; nothing about it depends on which feature opened the window. Every one of those closes it outright; nothing replaces it, and the page stays in history. Losing key with the app inactive is the user clicking another app or switching desktop; the app becoming active while the page is key ends it the same way, rather than bringing the page forward as an ordinary window. Escape on a transient page-host window closes it too. Reason for closing: the page was asked for while Peek was not focused, so the task ends the moment that focus state ends, whichever way it ends — including the user bringing Peek itself forward.
 - **G14 switcher-reach.** The switcher lists the app's windows from every desktop, and picking one takes the user to that window's desktop. It is the one way to reach another desktop's window: a pick names a window the user knows is open there, while every other request makes something happen, and new things happen where the user is (`specs/kernel-desktops.md` rule 5).
 
@@ -397,7 +397,7 @@ restored the saved copy beside the one that never left (`specs/spaces-window-loc
 | Raise's confirmation counted as a new raise; several tokens churn | F3, S3 |
 | Hidden window re-appears on a late `show` echo with chrome re-attached | V2 |
 | Session restore leaves focus nowhere or on the wrong window | F7 |
-| Restored window comes back un-maximized | G12 |
+| Restored or reopened window comes back maximized, or at the maximized rect instead of its pre-maximize bounds | G12 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 
 Open against these rules: nothing. G1/F6 closed at `7e2eab6c` and G3/F7 at `a86b030c`, both

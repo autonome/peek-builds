@@ -1004,6 +1004,8 @@ defect (next section).
 
 #### The restore-time maximize seed never reached the kernel — fixed by `SeedMaximized`
 
+> `SeedMaximized` and `kernelSeedMaximized` were removed when maximize stopped being restored; a restored or reopened window comes back unmaximized at its pre-maximize bounds (`window-rules.md` G12).
+
 `session-restore-page-host.spec.ts`'s six skipped tests read geometry off the canvas shell page's
 `?width`/`?height` URL params, and a hybrid page host has no shell page. Hybrid is the only
 page-host architecture that ships, so **bounds and maximize round-trip through save+restore had no
