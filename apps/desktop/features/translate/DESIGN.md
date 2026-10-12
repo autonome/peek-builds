@@ -97,7 +97,16 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   `attachment.hash`/`size` and each decompressed file against `decompressedHash`/`Size`
   (`verifyAttachment()`, `verifyDecompressed()`; both SHA-256, confirmed on the real en-de
   files) before it is used.
-- Fetched from main with `net.fetch`.
+- Fetched from main with `net.fetch`, directly from Mozilla's Remote Settings servers: they
+  are the canonical, already-hosted source, and every file is checked against its record's
+  hash anyway. `main/page-translate/model-download.ts`: the server base is the one constant
+  `DEFAULT_REMOTE_SETTINGS_SERVER`, overridable per call (`server`), and the attachment host is
+  read from the server root, so a mirror serving the same API replaces both with no other
+  change. `downloadModelFile()` reuses a cached file whose bytes still match, otherwise
+  fetches, checks the attachment hash, zstd-decompresses (Node's built-in `zlib`), checks the
+  decompressed hash, and writes `.tmp`-then-rename; `downloadPair()` does every file of one
+  model; `readRecordsCache()`/`writeRecordsCache()` keep `records.json`. Attachment
+  `location`s that are absolute or climb out of the base are refused.
 
 ## Main-process side, `main/page-translate/`
 
