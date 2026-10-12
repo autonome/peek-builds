@@ -1803,7 +1803,31 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
 
   const waitOverlayReady = () => waitOverlayUsable(app);
 
+  // A previous Cmd+L test leaves the overlay window holding real OS focus. On a
+  // platform with a real window manager (Linux/openbox), hiding the overlay during
+  // the next retarget hands that focus to the settings window, and its late focus
+  // event deactivates the new fake host (which can never hold real focus itself),
+  // so the active handoff never applies. Move focus off the overlay first and wait
+  // until the machine has seen it, so no focus move is left to arrive afterwards.
+  const settleFocusOffOverlay = async () => {
+    const overlayFocused = await app.evaluateMain!(() =>
+      Boolean((globalThis as any).__peekHybridOverlayTest.overlayFocus()?.focused));
+    if (!overlayFocused) return;
+    await app.evaluateMain!(({ BrowserWindow }) => {
+      const settings = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().includes('peek://app/settings/'));
+      settings?.focus();
+    });
+    await expect
+      .poll(() => app.evaluateMain!(() => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        return { overlayFocused: Boolean(b.overlayFocus()?.focused), active: b.activeId() };
+      }))
+      .toEqual({ overlayFocused: false, active: null });
+  };
+
   const makeActive = async (url: string) => {
+    await settleFocusOffOverlay();
     const id = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       const w = b.makeFakeHybridWindow({ x: 140, y: 140, width: 700, height: 460 });
