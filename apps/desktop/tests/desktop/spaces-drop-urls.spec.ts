@@ -1,8 +1,14 @@
 /**
- * Web addresses dropped on the Spaces page (a tab dragged out of a browser, a
- * link, an address-bar icon) open as pages in the space under the cursor.
- * The active space takes them as ordinary windows; any other space gets them
- * written into its saved windows without leaving anything open.
+ * Web addresses dropped on the Spaces page (a link, an address-bar site icon)
+ * open as pages in the space under the cursor. The active space takes them as
+ * ordinary windows; any other space gets them written into its saved windows
+ * without leaving anything open.
+ *
+ * These specs use a synthetic drop, not a real OS drag. A Firefox tab dragged
+ * from the tab strip cannot be dropped here at all: Firefox offers no web
+ * address to other apps for it, only its private `org.mozilla.MozillaWildcard`
+ * drag type, whose data comes back empty, so the drag never reaches the page.
+ * Dragging the address-bar site icon or a link inside the page works.
  *
  * Run with:
  *   yarn test:grep "dropped web addresses"

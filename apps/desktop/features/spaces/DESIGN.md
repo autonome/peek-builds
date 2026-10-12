@@ -109,6 +109,20 @@ This means a space with 50 items doesn't spawn 50 windows. The user browses and 
 ### Spaces home UI
 Spaces has its own home UI (`features/spaces/home.html`), initially forked from groups home. This will diverge quickly — spaces UI will gain workspace-specific affordances (space settings, member management, layout controls) that don't belong in the simple groups tag browser.
 
+### Dropping web addresses on a space
+A web address dropped on a space's card in the Spaces home opens as a page in that space
+(`home.js setupUrlDrop()` / `openUrlInSpace()`, parsed by `config.js urlsFromDrop()` from the
+types in `DROP_TYPES`). Any drag that carries a standard URL or text type works: a browser's
+address-bar site icon, or a link dragged out of a page.
+
+A Firefox tab dragged from the tab strip cannot be dropped. Firefox offers no web address to
+other apps for a tab drag: the macOS drag pasteboard holds only Firefox's private
+`org.mozilla.MozillaWildcard` type, and asking for its data returns nothing. Chromium registers
+for no such type, so the drag never reaches the page, and Firefox, seeing nothing accept it,
+tears the tab off into a new window. No change in Peek can recover the address; a native drop
+target registered for that type would get the same empty data. Drag the address-bar site icon
+instead.
+
 ### Page host space widget
 The group-mode widget in `app/page/page.js` becomes the **space widget**. Reacts to `currentMode === 'space'`. Shows space name, color dot, ESC-to-close behavior.
 
