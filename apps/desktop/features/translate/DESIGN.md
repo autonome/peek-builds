@@ -1,0 +1,154 @@
+# Page translation on the device
+
+Translates web pages inside Peek with Mozilla's Bergamot translator and the models Firefox's
+built-in translation uses. Page text never leaves the machine: the only network traffic is
+downloading the engine and model files from Mozilla's settings server and attachment CDN.
+
+This is a built-in feature (`features/translate/`) backed by main-process code
+(`main/page-translate/`). It is not a change to any imported Chrome extension.
+
+Nothing here is built yet beyond the engine spike (`tools/translate-spike/spike.mjs`).
+
+## Engine
+
+Bergamot runs as WASM in an Electron `utilityProcess`, not in a tile:
+
+- `main/tile-csp.ts DEFAULT_CSP_DIRECTIVES` blocks workers and has no `wasm-unsafe-eval`.
+- A separate process keeps translation CPU off the main process and survives a lazy tile
+  being put to sleep.
+- The process reads model files from disk itself, so model bytes never cross IPC.
+
+**Chosen build: Firefox's** — Remote Settings collection `translations-wasm`, record
+`bergamot-translator`, highest `version` (3.0 at the time of writing, about 5 MB, bergamot
+`v0.6.0`), with the glue `bergamot-translator.js` from Firefox
+`toolkit/components/translations/bergamot-translator/` (MPL-2.0).
+
+What the spike established, under plain Node 24 on an Apple M4, en→de `base-memory` model 3.0:
+
+| | Firefox build (v0.6.0) | npm `@browsermt/bergamot-translator` 0.4.9 (v0.4.5) |
+|---|---|---|
+| Loads current models | yes | yes |
+| Runtime init | ~15 ms | ~12 ms |
+| Model construction | ~60 ms | ~60 ms |
+| First sentence (warm-up) | ~120 ms | ~130 ms |
+| Inline HTML segment | ~16 ms, markup kept | same |
+| Batch of 5 paragraphs, 103 words | ~190 ms, ~540 words/s | same |
+| Process RSS after one pair | ~330 MB | ~430 MB |
+
+Both produce identical output. Firefox's build is chosen because it is the one Mozilla ships
+and updates alongside the models, its glue links the matrix-multiply imports itself, and its
+`TranslationModel` carries the language pair. The npm build is unmaintained and leaves the
+`wasm_gemm` import to the caller.
+
+What the glue needs:
+
+- No browser globals. With `Module.wasmBinary` supplied, the Emscripten glue takes neither its
+  web nor its worker branch and never fetches; it uses only `WebAssembly`, `console` and
+  `performance`.
+- Firefox's glue is a single `function loadBergamot(Module)` declaration with no export, so the
+  host evaluates the file and calls it (the spike uses `new Function(src + 'return
+  loadBergamot')`). Ready is signalled through `Module.onRuntimeInitialized`; failure through
+  `Module.onAbort`.
+- `WebAssembly.mozIntGemm` does not exist outside Firefox. The glue detects that and falls
+  back to the integer matrix-multiply built into the wasm (`Using fallback gemm
+  implementation`). The measured speed above is with the fallback.
+- API (v0.6): `new BlockingService({cacheSize: 0})`; `new AlignedMemory(bytes, alignment)`
+  with alignment 256 for the model and 64 for lex and vocab files; `AlignedMemoryList` of one
+  `vocab` or of `srcvocab` then `trgvocab`; `new TranslationModel(src, tgt, configText, model,
+  lex, vocabs, null)`; `service.translate(model, VectorString, VectorResponseOptions)` or
+  `service.translateViaPivoting(m1, m2, …)`; `responses.get(i).getTranslatedText()`; every
+  wasm-side object freed with `.delete()`.
+- The config is Marian YAML text, indented as in Firefox's
+  `translations-engine.worker.js BergamotUtils.generateTextConfig`. `gemm-precision` is
+  `int8shiftAlphaAll` for `*.intgemm.alphas.bin` models and `int8shiftAll` for
+  `*.intgemm8.bin`; every model in the catalogue at the time of writing is an alphas model.
+
+Runs single-threaded (`cpu-threads: 0`). Whether the build requires WASM SIMD was not
+checked; Electron's V8 supports it either way.
+
+## Models
+
+Remote Settings collection `translations-models-v2`
+(`https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/translations-models-v2/records`).
+Records carry `sourceLanguage`, `targetLanguage`, `fileType` (`model`, `lex`, `vocab`, or the
+split pair `srcvocab` + `trgvocab`), `architecture` (`tiny`, `base`, `base-memory`),
+`version`, `decompressedHash`, `decompressedSize`. Attachments are zstd-compressed and served
+from the CDN named by the server root's `capabilities.attachments.base_url`.
+
+- About 35 MB per pair on disk, one direction per model, mostly to or from English. A
+  non-English pair pivots once through `en`.
+- Several records of the same pair coexist in the catalogue (18 pairs have two model
+  records, across versions 3.0, 3.0a1 and 3.1 and architectures); the highest compatible
+  version of the chosen architecture wins.
+- Cache in `<userData>/translations/`: `records.json` and
+  `models/<src>-<tgt>/<architecture>/<version>/{model,lex,vocab}`. Writes go to `.tmp` and are
+  renamed into place, as in `main/adblocker.ts`. Each decompressed file is checked against
+  `decompressedHash` before it is used.
+- Fetched from main with `net.fetch`.
+
+## Main-process side, `main/page-translate/`
+
+- `engine-host.ts` — spawns and keeps the utility process; requests `{segments, isHTML}` by id;
+  the process exits after a few idle minutes.
+- `model-store.ts` — catalogue, download, hash check, decompression, cache.
+- `page-session.ts` — one state machine per window: idle → collecting → translating →
+  translated → restoring.
+- `content-script.js` — the injected script as a string, plus pure helpers that unit tests
+  load directly.
+
+## Reaching the page
+
+`executeJavaScriptInIsolatedWorld` on `hybrid-overlay.ts getHybridContentWC(id)`, following
+`wireExecuteScript`. Main pulls and owns every transition:
+
+- `collect()` returns `[{id, html}]` for blocks near the viewport.
+- Main translates and calls `apply(results)`.
+- While translated, main polls `drain()` for work created by mutations and scrolling.
+- Originals are kept per id, so `restore()` needs no reload; `wc.reload()` is the fallback.
+
+## Page text handling
+
+Modelled on Firefox's `translations-document.sys.mjs TranslationsDocument`:
+
+- A TreeWalker over block elements, including open shadow roots.
+- Skipped: `code`, `kbd`, `script`, `style`, `textarea`, `iframe`, `translate="no"`,
+  `.notranslate`, contenteditable regions, and elements whose `lang` differs from the page's.
+- A block's `innerHTML` is sent as HTML with per-node ids; results are merged back onto the
+  original nodes so listeners and references survive. The engine keeps inline markup in place
+  (verified by the spike for `<a>` and `<b>`).
+- Attributes translated: `title`, `alt`, `placeholder`, `aria-*` labels, button `value`.
+- Visible blocks first, DOM updates batched, a per-session result cache, and a
+  MutationObserver that re-queues new content.
+
+## Feature, `features/translate/`
+
+A lazy tile with `lazyEvents: ["page:translatable"]`, commands and settings, and no network
+capability (downloads happen in main).
+
+- Commands: `translate page` (optional target language), `show original`, `translate
+  language`, `manage translation models`.
+- Settings: target language (defaults to the OS locale), offer translation automatically (off
+  by default), always translate from these languages, model architecture.
+- UI: a page widget, following `features/pagewidgets-sample/background.js`, showing
+  "Translate from X", progress and "Show original"; a models manager built on `<peek-*>`
+  components.
+- Handlers are registered synchronously in `init()` and guarded on an `initReady` promise, as
+  in `features/websearch/home.js`.
+- The wasm and glue ship under `vendor/bergamot/` and are listed in `electron-builder.yml
+  asarUnpack` so the utility process can read them.
+
+## Language detection
+
+The page's declared language first: port `PAGE_LANGUAGE_SCRIPT` and
+`normalizeDetectedLanguage` from `main/chrome-api-polyfills/_page-language.js` on branch
+`track/twp-popup`. Main publishes `page:translatable {windowId, lang}` from the `page:loaded`
+path in `main/ipc.ts` when the language differs from the target. Detection from page text
+(CLD2, Apache-2.0, as Firefox does) is a later addition.
+
+## Undecided
+
+- Whether the engine and models come from Mozilla's servers directly or from a mirror on a
+  Peek-run host.
+- Model download consent: proposed as an explicit prompt naming the size before each pair.
+- Scope: web pages only, not `peek://` pages. Peeks and slides windows are undecided.
+- The utility process's idle exit delay.
