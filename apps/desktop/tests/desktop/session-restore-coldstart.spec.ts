@@ -189,12 +189,28 @@ test.describe('Restore Cold-Start Oracle @desktop', () => {
     // as a user drags windows until the layout looks right, then save THAT. If it
     // never converges, the non-convergence is itself the finding: a tile that
     // refuses to stay back = a focus-steal-on-show root cause (report it).
+    //
+    // The on-screen stack is read through CGWindowList (cg-windows.swift), which
+    // exists only on macOS. Elsewhere the loop settles on the saved snapshot's
+    // order instead — the same focus-recency ledger the restore imports, and
+    // what the snapshot assertion below checks.
+    const canReadStack = process.platform === 'darwin';
+    const readArrangement = async (): Promise<string[]> => {
+      if (canReadStack) return cgStack(pid1);
+      await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
+      const s = (await app.evaluateMain!((() =>
+        (globalThis as any).__peek_test.getLastSnapshot()) as any)) as any;
+      return (s?.windows ?? [])
+        .filter((w: any) => slugForUrl(String(w.url)))
+        .sort((a: any, b: any) => b.zOrder - a.zOrder)
+        .map((w: any) => slugForUrl(String(w.url)) as string);
+    };
     const targetKey = TARGET_FRONT_TO_BACK.join(' ');
     let baseline: string[] = [];
     for (let attempt = 0; attempt < 20; attempt++) {
       await applyArrangement();
       await new Promise((r) => setTimeout(r, 200));
-      baseline = cgStack(pid1);
+      baseline = await readArrangement();
       if (baseline.join(' ') === targetKey) break;
       if (attempt === 19) {
         console.log(`[coldstart] BASELINE never converged after ${attempt + 1} sweeps — last: ${baseline.join(' ')}`);
@@ -256,7 +272,7 @@ test.describe('Restore Cold-Start Oracle @desktop', () => {
       if (counters.pageHosts > 0 && counters.firstFrameReasserts >= counters.pageHosts) break;
       await new Promise((r) => setTimeout(r, 250));
     }
-    const restored = cgStack(pid2);
+    const restored = canReadStack ? cgStack(pid2) : ['<no CGWindowList off macOS>'];
     const counts = (await app.evaluateMain!(((electron: any) => ({
       base: electron.BaseWindow.getAllWindows().length,
       browser: electron.BrowserWindow.getAllWindows().length,
