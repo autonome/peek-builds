@@ -26,7 +26,7 @@ import fs from 'fs';
 import os from 'os';
 import http from 'http';
 import { fileURLToPath } from 'url';
-import { waitForWindow as waitForWindowHelper, sleep, getTestProfile, waitForAppReady } from '../helpers/window-utils';
+import { waitForWindow as waitForWindowHelper, sleep, getTestProfile, waitForAppReady, waitForStartupWindowOpened } from '../helpers/window-utils';
 import { accessoryElectronBinaryPath } from '../helpers/accessory-electron';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -850,7 +850,12 @@ export async function getSharedApp(): Promise<DesktopApp> {
     return sharedAppPromise;
   }
 
-  sharedAppPromise = launchDesktopApp(SHARED_APP_PROFILE);
+  // Settled before any spec gets it: boot's startup window takes focus about
+  // half a second in, and a window opened before then loses focus to it.
+  sharedAppPromise = launchDesktopApp(SHARED_APP_PROFILE).then(async (app) => {
+    if (app.evaluateMain) await waitForStartupWindowOpened(app);
+    return app;
+  });
   sharedApp = await sharedAppPromise;
   sharedAppPromise = null;
   return sharedApp;
