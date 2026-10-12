@@ -577,6 +577,11 @@
       #url-action:hover { background: var(--cmd-surface-selected); }
       #url-action:active { transform: scale(0.98); }
       #url-action .icon-window { display: block; }
+      #url-action kbd {
+        font-family: inherit;
+        font-size: 11px;
+        color: var(--theme-text-muted, #999);
+      }
 
       /* Chain steps - shows the pipe history */
       #chain-steps {
@@ -647,6 +652,7 @@
           <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
           <path d="M3 9h18" fill="none" stroke="currentColor" stroke-width="1.6"/>
         </svg>
+        <kbd>⌘↵</kbd>
       </button>
     </div>
     <div id="results"></div>

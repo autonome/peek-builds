@@ -17,7 +17,7 @@ import { waitForExtensionsReady, waitForAppReady, waitForPanelCommandsLoaded } f
  * a marker, and picking that row switches to the window.
  *
  * Contract this spec pins: `button#url-action` inside `cmd/panel.html`, shown
- * with `data-action="switch"` and the text "Switch to" only for an open page;
+ * with `data-action="switch"` and the label "Switch to" and a ⌘↵ hint only for an open page;
  * Visited rows are `.url-result-item[data-url="<url>"]`, and an open page's
  * row holds a `.url-open-marker`.
  *
@@ -127,7 +127,8 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     const action = panel.locator('button#url-action');
     await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
     await expect(action).toHaveAttribute('data-action', 'switch', { timeout: 5000 });
-    await expect(action).toHaveText('Switch to', { timeout: 5000 });
+    await expect(action.locator('.url-action-label')).toHaveText('Switch to', { timeout: 5000 });
+    await expect(action.locator('kbd')).toHaveText('⌘↵');
 
     // Cmd+Enter. Keydown only: switching moves focus away and the panel can
     // close before a keyup would be delivered.
@@ -245,7 +246,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     const [lateId] = await liveWindowsAt(LATE_URL);
     await expect(action, 'the button did not notice the window opening').toBeVisible({ timeout: 5000 });
     await expect(action).toHaveAttribute('data-action', 'switch', { timeout: 5000 });
-    await expect(action).toHaveText('Switch to', { timeout: 5000 });
+    await expect(action.locator('.url-action-label')).toHaveText('Switch to', { timeout: 5000 });
 
     // And hidden again once that window closes.
     await bgWindow.evaluate(async (id: number) => {
