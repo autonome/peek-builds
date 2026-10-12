@@ -660,7 +660,7 @@ function openSpace(spaceName) {
 }
 
 async function openSpaceNow(spaceName) {
-  if (!spaceName) return { success: false, error: 'Usage: open space <name>' };
+  if (!spaceName) return { success: false, error: 'Usage: switch space <name>' };
   await defaultSpaceReady;
 
   const tagName = toSpaceTagName(spaceName.trim());
@@ -734,13 +734,12 @@ async function switchSpace(targetName) {
   // Switching to the workspace that is already active is a no-op: re-entering
   // it would save, close and reopen its own windows for no visible change.
   // The Spaces UI's card click and the `switch space` command both come
-  // through here, so this is where that churn is avoided; `open space` keeps
-  // its re-enter semantics.
+  // through here, so this is where that churn is avoided.
   if (activeSpaceId && activeSpaceName &&
       toSpaceTagName(targetName.trim()) === toSpaceTagName(activeSpaceName)) {
     return { success: true, spaceId: activeSpaceId, spaceName: activeSpaceName, unchanged: true };
   }
-  // Unlike `open space`, switching never creates the target.
+  // Switching never creates the target; `create space` does.
   const missing = await missingSpaceError(targetName);
   if (missing) return { success: false, error: missing };
   // Entering any workspace already closes whichever one is active — switching
@@ -925,10 +924,11 @@ async function moveToSpace(targetName) {
 let spaceNameSuggestions = [];
 
 const SPACE_NAME_COMMANDS = [
-  // pairPriority: typing a space name offers "open space <name>" first, ahead of "move to space
+  // pairPriority: typing a space name offers "switch space <name>" first, ahead of "move to space
   // <name>" whatever their pick history, because moving takes the window away from where it is.
-  { name: 'open space', description: 'Open a space (restore saved state or show home)', param: 'Space name', createCommand: 'create space', pairPriority: 1 },
-  { name: 'switch space', description: 'Close current space and open another', param: 'Target space name' },
+  // `switch space` is the one command for entering a space: entering one closes the current
+  // space's windows, so no command offers to open a second space alongside the current one.
+  { name: 'switch space', description: 'Close current space and open another', param: 'Target space name', createCommand: 'create space', pairPriority: 1 },
   { name: 'move to space', description: 'Move the active window to a space', param: 'Target space name' },
 ];
 
@@ -1007,17 +1007,6 @@ async function refreshSpaceNameCommands() {
 }
 
 const initCommands = () => {
-  // "open space <name>"
-  api.pubsub.subscribe('cmd:execute:open space', async (msg) => {
-    const result = await openSpace(spaceNameFromCommandMessage(msg, 'open space'));
-    if (!result?.success) {
-      console.warn('[ext:spaces] open space refused:', result?.error);
-    }
-    if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true });
-    }
-  });
-
   // "close space"
   api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
@@ -1081,7 +1070,7 @@ const initCommands = () => {
     }
   });
 
-  // open / switch / move take a space name; the panel suggests existing spaces.
+  // switch / move take a space name; the panel suggests existing spaces.
   publishSpaceNameCommands();
   refreshSpaceNameCommands();
 
@@ -1133,13 +1122,13 @@ const initCommands = () => {
     scope: 'global',
   });
 
-  console.log('[ext:spaces] Commands registered: open space, close space, switch space, ' +
+  console.log('[ext:spaces] Commands registered: close space, switch space, ' +
     'move to space, create space, pin to this workspace, pin across workspaces, unpin window');
 };
 
 const uninitCommands = () => {
   for (const name of [
-    'open space', 'close space', 'switch space', 'move to space', 'create space',
+    'close space', 'switch space', 'move to space', 'create space',
     'pin to this workspace', 'pin across workspaces', 'unpin window',
   ]) {
     api.pubsub.publish('cmd:unregister', { name });

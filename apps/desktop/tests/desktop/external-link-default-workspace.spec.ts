@@ -43,6 +43,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 /** Trigger the real main-process external-URL path (same call an OS open-url
  *  or second-instance event, or a CLI arg, would make) and wait for the
  *  resulting window's `window:opened` event, returning its id. */
@@ -114,8 +122,8 @@ test.describe('external links land in the default workspace @desktop', () => {
       return r?.data?.tag?.id ?? null;
     })) as string | null;
 
-    const openResult = await runCommand('open space', 'external-link-spec-workspace');
-    expect(openResult?.success, `open space failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace('external-link-spec-workspace');
+    expect(openResult?.success, `switch space failed: ${openResult?.error}`).toBe(true);
     const namedWorkspacePage = await app.getWindow('spaces/home.html', 15000);
     const namedWorkspaceInfo = await namedWorkspacePage.evaluate(() =>
       (window as unknown as { app: any }).app.window.getInfo(),

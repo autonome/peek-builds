@@ -92,7 +92,7 @@ Every tag is a group. Every group is a tag.
 "I enter a space to focus on a project. Everything I do is part of that space until I leave. Items load when I access them."
 
 ### Load-on-access pattern
-`open space` does NOT open all tagged items as windows. It:
+Entering a space (`switch space`) does NOT open all tagged items as windows. It:
 1. Activates space mode (border, auto-tagging context)
 2. Opens the spaces home UI (`peek://ext/spaces/home.html`) showing the space's items
 3. Items open as windows when the user clicks them, in space mode
@@ -102,9 +102,11 @@ This means a space with 50 items doesn't spawn 50 windows. The user browses and 
 ### Commands
 | Command | What it does |
 |---------|-------------|
-| `open space <name>` | Restores the space as you left it (windows, positions). If never opened before, shows spaces home UI. Activates space mode. |
+| `switch space <name>` | Saves and closes the current space, then restores the target as you left it (windows, positions). If never entered before, shows spaces home UI. Activates space mode. An unknown name creates nothing (the panel offers `create space` instead); the space already active is left as it is. |
 | `close space` | Saves current window state (which windows, positions), deactivates space mode |
-| `switch space <name>` | Closes current space, opens target |
+| `create space <name>` | Creates a space without entering it |
+
+There is one command for entering a space. Entering one always closes the current space's windows, so no command offers to open a second space alongside the current one.
 
 ### Spaces home UI
 Spaces has its own home UI (`features/spaces/home.html`), initially forked from groups home. This will diverge quickly — spaces UI will gain workspace-specific affordances (space settings, member management, layout controls) that don't belong in the simple groups tag browser.
@@ -298,7 +300,7 @@ create it) and passes the result as the window's explicit `spaceMode` option, ta
 into the default at the moment it opens — the same mechanism `enterWorkspace()` uses to restore a
 saved workspace's windows into their space. This runs in core rather than being left to the spaces
 feature to tag after the fact: that feature loads lazily (`manifest.json`'s background tile), woken
-only by its own commands (`open space` / `close space` / `switch space` / the pin commands), so a
+only by its own commands (`switch space` / `close space` / `create space` / the pin commands), so a
 link arriving before the user has ever touched a workspace command would reach a spaces feature
 that isn't running yet. Core's background window is never lazy, so resolving the tag itself removes
 that race entirely, at the cost of core knowing one space-specific fact (the tag name
@@ -348,19 +350,19 @@ The mode value is `'space'` (replacing `'group'`). Metadata fields use `spaceId`
 
 **1.6** WHEN querying for spaces, THEN only tags starting with exactly `space:` match (not `spaceship` or `myspace:foo`).
 
-### 2. `open space` Command
+### 2. Entering a space (`switch space`)
 
-**2.1** WHEN `open space <name>` is executed with no saved state, THEN the spaces home UI opens showing the space's tagged items.
+**2.1** WHEN `switch space <name>` is executed with no saved state, THEN the spaces home UI opens showing the space's tagged items.
 
-**2.2** WHEN `open space <name>` is executed with saved state (URLs + positions), THEN the saved windows are restored at their saved positions.
+**2.2** WHEN `switch space <name>` is executed with saved state (URLs + positions), THEN the saved windows are restored at their saved positions.
 
-**2.3** WHEN windows are restored by `open space`, THEN each has `context.mode = 'space'` with `spaceId` and `spaceName`.
+**2.3** WHEN windows are restored by `switch space`, THEN each has `context.mode = 'space'` with `spaceId` and `spaceName`.
 
-**2.4** WHEN `open space` executes, THEN the screen border becomes visible with the space's color and name.
+**2.4** WHEN `switch space` executes, THEN the screen border becomes visible with the space's color and name.
 
-**2.5** WHEN `open space` executes, THEN auto-tagging activates for space-mode windows.
+**2.5** WHEN `switch space` executes, THEN auto-tagging activates for space-mode windows.
 
-**2.6** WHEN `open space` executes for a space with 50 tagged items and no saved state, THEN exactly one window opens (spaces home UI), not 50.
+**2.6** WHEN `switch space` executes for a space with 50 tagged items and no saved state, THEN exactly one window opens (spaces home UI), not 50.
 
 ### 3. `close space` Command
 
@@ -378,9 +380,13 @@ The mode value is `'space'` (replacing `'group'`). Metadata fields use `spaceId`
 
 **4.1** WHEN `switch space <target>` is executed, THEN the current space is closed (equivalent to `close space`).
 
-**4.2** WHEN `switch space <target>` is executed, THEN the target space is opened (equivalent to `open space <target>`).
+**4.2** WHEN `switch space <target>` is executed, THEN the target space is entered as described in section 2.
 
 **4.3** WHEN `switch space` completes, THEN the border color and label reflect the target space.
+
+**4.4** WHEN `switch space <target>` names no existing space, THEN nothing is created and an error is returned.
+
+**4.5** WHEN `switch space <target>` names the space already active, THEN nothing is saved, closed or reopened.
 
 ### 5. Auto-tagging
 
@@ -466,7 +472,7 @@ The mode value is `'space'` (replacing `'group'`). Metadata fields use `spaceId`
 
 **10.4** WHEN viewing a group detail, THEN no screen border appears.
 
-**10.5** WHEN "Open as space" is triggered on a group, THEN a `space:` tag is created and `open space` executes.
+**10.5** WHEN "Open as space" is triggered on a group, THEN a `space:` tag is created and `switch space` executes.
 
 ### 11. Spaces Home UI
 

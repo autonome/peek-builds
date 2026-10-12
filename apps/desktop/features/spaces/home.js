@@ -834,7 +834,7 @@ const activateSpace = (space) => {
  * with. Its color is the space's resolved accent — the same
  * `resolveVividColor` fallback `background.js openSpace()` persists — not
  * the tag's raw stored color: a space whose tag is still grey (never entered
- * through `open`/`switch space`) would otherwise put grey windows next to a
+ * through `switch space`) would otherwise put grey windows next to a
  * vivid border, and the accent would depend on which happened first. The
  * active theme is passed for the same reason `loadSpaces()` passes it (see the
  * Active Theme note at the top of this file) — the two resolvers have to agree

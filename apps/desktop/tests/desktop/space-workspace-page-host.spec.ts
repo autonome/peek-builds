@@ -182,7 +182,7 @@ test.describe('space workspaces persist page hosts @desktop', () => {
 
   test('openSpace reopens the saved windows instead of falling back to the spaces home UI', async () => {
     // The RESTORE half, end to end, through the entry point a user actually
-    // hits: the `open space <name>` command handled by
+    // hits: the `switch space <name>` command handled by
     // `features/spaces/background.js openSpace`, which now restores through
     // the same `restoreSessionSnapshot()` the app's own boot restore uses.
     const spaceName = 'space-restore-spec';
@@ -250,7 +250,7 @@ test.describe('space workspaces persist page hosts @desktop', () => {
         'broke, so the restore half cannot be under test here',
     ).toContain(url);
 
-    // Close the page host so a window at this URL after `open space` can only
+    // Close the page host so a window at this URL after `switch space` can only
     // be one that RESTORE reopened.
     await bgWindow.evaluate(
       async (id: number) => await (window as unknown as { app: any }).app.window.close(id),
@@ -267,19 +267,19 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     const result = (await bgWindow.evaluate(async (name: string) => {
       const api = (window as unknown as { app: any }).app;
       return await new Promise((resolve) => {
-        const resultTopic = 'cmd:execute:open space:result';
+        const resultTopic = 'cmd:execute:switch space:result';
         api.subscribe(resultTopic, (r: unknown) => resolve(r));
-        api.publish('cmd:execute:open space', {
+        api.publish('cmd:execute:switch space', {
           search: name,
           params: [],
           expectResult: true,
           resultTopic,
         });
-        setTimeout(() => resolve({ error: 'timeout waiting for open space' }), 25000);
+        setTimeout(() => resolve({ error: 'timeout waiting for switch space' }), 25000);
       });
     }, spaceName)) as { success?: boolean; spaceId?: string; error?: string };
 
-    expect(result?.error, 'the `open space` command never came back').toBeUndefined();
+    expect(result?.error, 'the `switch space` command never came back').toBeUndefined();
     expect(result?.success).toBe(true);
     expect(
       result?.spaceId,

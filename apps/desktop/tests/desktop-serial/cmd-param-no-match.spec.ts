@@ -44,7 +44,7 @@ test.describe('Command param with no match @desktop', () => {
     await panel.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(panel);
     await panel.waitForFunction(() => {
-      const c = (window as any)._cmdState.commands['open space'];
+      const c = (window as any)._cmdState.commands['switch space'];
       return !!(c && c.params && c.params[0] && c.params[0].createCommand);
     }, { timeout: 20000 });
     return { panel, id: opened.id };
@@ -66,7 +66,7 @@ test.describe('Command param with no match @desktop', () => {
 
   test('Enter on the create row creates the typed space', async () => {
     const { panel, id } = await openPanel();
-    await panel.fill('input', 'open space zzzq');
+    await panel.fill('input', 'switch space zzzq');
     expect(await rows(panel, 'Create "zzzq"')).toEqual(['Create "zzzq"']);
     await panel.keyboard.press('Enter');
     await expect.poll(spaceTagNames, { timeout: 15000 }).toContain('space:zzzq');
@@ -75,7 +75,7 @@ test.describe('Command param with no match @desktop', () => {
 
   test('clicking the create row creates the typed space', async () => {
     const { panel, id } = await openPanel();
-    await panel.fill('input', 'open space zzzp');
+    await panel.fill('input', 'switch space zzzp');
     expect(await rows(panel, 'Create "zzzp"')).toEqual(['Create "zzzp"']);
     await panel.click('#results .command-item');
     await expect.poll(spaceTagNames, { timeout: 15000 }).toContain('space:zzzp');
@@ -84,7 +84,7 @@ test.describe('Command param with no match @desktop', () => {
 
   test('a command without a create path shows a no-match row and Enter creates nothing', async () => {
     const { panel, id } = await openPanel();
-    await panel.fill('input', 'switch space zzzr');
+    await panel.fill('input', 'move to space zzzr');
     expect(await rows(panel, 'No match for "zzzr"')).toEqual(['No match for "zzzr"']);
     await bgWindow.evaluate(() => {
       (window as any).__createRuns = [];

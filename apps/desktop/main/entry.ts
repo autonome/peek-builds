@@ -180,7 +180,7 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * Force-save current session snapshot (bypasses test-profile + isVisible
    * guards). Saves the ACTIVE workspace's row, the same as any ambient save
    * (`session.ts` "Active workspace") — the default's unless a spec has run
-   * `open space`.
+   * `switch space`.
    */
   forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
   /** Force-restore session snapshot (bypasses test-profile guard). */

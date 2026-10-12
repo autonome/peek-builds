@@ -48,6 +48,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 /** Resolve the Playwright Page for a specific native window id, not just any
  *  window whose URL happens to match — a closed-then-reopened window shares
  *  its predecessor's URL, so URL-only matching can grab a stale Page. */
@@ -74,8 +82,8 @@ async function openBlankWorkspaceHome(spaceName: string): Promise<number> {
   // (window-kernel.ts CONTENT_ROLES includes 'workspace') that stands in
   // here for "a window the user might pin", not the future dedicated
   // workspace panel (handoff.md Next Step 4, out of scope for this run).
-  const result = await runCommand('open space', spaceName);
-  expect(result?.success, `open space "${spaceName}" failed: ${result?.error}`).toBe(true);
+  const result = await enterSpace(spaceName);
+  expect(result?.success, `switch space "${spaceName}" failed: ${result?.error}`).toBe(true);
   const homePage = await app.getWindow('spaces/home.html', 15000);
   const info = await homePage.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
   expect(info?.error, `window.getInfo() failed: ${info?.error}`).toBeUndefined();
@@ -226,7 +234,7 @@ test.describe('pin mechanism: workspace-pinned and global HUD @desktop', () => {
     // Re-entering the same workspace restores it — pinned, from the saved
     // workspace snapshot's own `context.pinScope` field
     // (session-projection.ts serializeSession).
-    const reopenResult = await runCommand('open space', spaceName);
+    const reopenResult = await enterSpace(spaceName);
     expect(reopenResult?.success).toBe(true);
     const page = await app.getWindow('spaces/home.html', 15000);
     const info = await page.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());

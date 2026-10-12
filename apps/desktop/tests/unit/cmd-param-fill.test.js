@@ -52,8 +52,8 @@ describe('commandTextWithSuggestion', () => {
 
   it('matches the command name case-insensitively', () => {
     assert.equal(
-      commandTextWithSuggestion('open space', 'Open Space ', enumDef, { value: 'two' }),
-      'open space two'
+      commandTextWithSuggestion('switch space', 'Switch Space ', enumDef, { value: 'two' }),
+      'switch space two'
     );
   });
 
@@ -63,6 +63,6 @@ describe('commandTextWithSuggestion', () => {
   });
 
   it('leaves the text alone when there is no suggestion', () => {
-    assert.equal(commandTextWithSuggestion('open space', 'open space zz', enumDef, null), 'open space zz');
+    assert.equal(commandTextWithSuggestion('switch space', 'switch space zz', enumDef, null), 'switch space zz');
   });
 });

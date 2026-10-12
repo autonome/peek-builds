@@ -42,6 +42,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 async function publishEvent(topic: string, payload: unknown): Promise<void> {
   await bgWindow.evaluate(
     (arg: { topic: string; payload: unknown }) => {
@@ -151,8 +159,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     const alphaId = await spaceTagId(alpha);
     const betaId = await spaceTagId(beta);
 
-    const openResult = await runCommand('open space', alpha);
-    expect(openResult?.success, `open space "${alpha}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(alpha);
+    expect(openResult?.success, `switch space "${alpha}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(alpha, { timeout: 15000 });
 
@@ -182,8 +190,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     // successor still proves the close transition end to end.
     const beta = 'lock-beta';
     const betaId = await spaceTagId(beta);
-    const openResult = await runCommand('open space', beta);
-    expect(openResult?.success, `open space "${beta}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(beta);
+    expect(openResult?.success, `switch space "${beta}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(beta, { timeout: 15000 });
     expect(
@@ -292,8 +300,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     expect(copies).toBeGreaterThan(0);
 
     for (const round of [1, 2]) {
-      const openResult = await runCommand('open space', delta);
-      expect(openResult?.success, `round ${round}: open space "${delta}" failed: ${openResult?.error}`).toBe(true);
+      const openResult = await enterSpace(delta);
+      expect(openResult?.success, `round ${round}: switch space "${delta}" failed: ${openResult?.error}`).toBe(true);
       await expect
         .poll(() => browseAllPages().length, {
           timeout: 15000,
@@ -324,8 +332,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     const epsilonId = await spaceTagId(epsilon);
     const zetaId = await spaceTagId(zeta);
 
-    const openResult = await runCommand('open space', epsilon);
-    expect(openResult?.success, `open space "${epsilon}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(epsilon);
+    expect(openResult?.success, `switch space "${epsilon}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(epsilon, { timeout: 15000 });
 
@@ -392,8 +400,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     expect(itemResult.ok, `seeding the mode-clobber-probe item failed: ${itemResult.error}`).toBe(true);
     const itemId = itemResult.itemId as string;
 
-    const openResult = await runCommand('open space', theta);
-    expect(openResult?.success, `open space "${theta}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(theta);
+    expect(openResult?.success, `switch space "${theta}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(theta, { timeout: 15000 });
 
@@ -448,8 +456,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     const etaId = await spaceTagId(eta);
     const kappaId = await spaceTagId(kappa);
 
-    const openResult = await runCommand('open space', eta);
-    expect(openResult?.success, `open space "${eta}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(eta);
+    expect(openResult?.success, `switch space "${eta}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(eta, { timeout: 15000 });
 
@@ -505,8 +513,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     await spaceTagId(mu);
     await spaceTagId(nu);
 
-    const openResult = await runCommand('open space', mu);
-    expect(openResult?.success, `open space "${mu}" failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace(mu);
+    expect(openResult?.success, `switch space "${mu}" failed: ${openResult?.error}`).toBe(true);
     const borderPage = await app.getWindow('spaces/border.html', 15000);
     await expect(borderPage.locator('#label')).toHaveText(mu, { timeout: 15000 });
 
@@ -629,8 +637,8 @@ test.describe('workspace membership: every window opened in a workspace belongs 
 
       // Entering the space must agree with what the list already stored, and
       // the border and the space's windows must both show it.
-      const openResult = await runCommand('open space', omicron);
-      expect(openResult?.success, `open space "${omicron}" failed: ${openResult?.error}`).toBe(true);
+      const openResult = await enterSpace(omicron);
+      expect(openResult?.success, `switch space "${omicron}" failed: ${openResult?.error}`).toBe(true);
 
       let borderAccent = '';
       await expect

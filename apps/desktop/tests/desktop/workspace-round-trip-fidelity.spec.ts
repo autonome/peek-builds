@@ -67,6 +67,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 test.describe('workspace round-trip fidelity @desktop', () => {
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('workspace-round-trip-fidelity'));
@@ -106,8 +114,8 @@ test.describe('workspace round-trip fidelity @desktop', () => {
     }, spaceName);
     expect(spaceId, 'could not mint the space tag that keys the workspace snapshot').toBeTruthy();
 
-    const opened = await runCommand('open space', spaceName);
-    expect(opened?.success, `open space "${spaceName}" failed: ${opened?.error}`).toBe(true);
+    const opened = await enterSpace(spaceName);
+    expect(opened?.success, `switch space "${spaceName}" failed: ${opened?.error}`).toBe(true);
 
     // A distinctive bounds for the first window, so restore's bounds fidelity
     // is checked against something other than a default size.
@@ -165,8 +173,8 @@ test.describe('workspace round-trip fidelity @desktop', () => {
 
     // Switch away — saves this workspace under its own key and closes both
     // windows (docs/design/window-rules.md "Persistent windows").
-    const other = await runCommand('open space', 'fidelity-spec-elsewhere');
-    expect(other?.success, `open space "elsewhere" failed: ${other?.error}`).toBe(true);
+    const other = await enterSpace('fidelity-spec-elsewhere');
+    expect(other?.success, `switch space "elsewhere" failed: ${other?.error}`).toBe(true);
 
     const savedOnLeave = await snapshotRow(spaceId as string);
     expect(savedOnLeave?.windows?.length, 'the workspace snapshot has no windows after leaving').toBeGreaterThanOrEqual(2);
@@ -189,7 +197,7 @@ test.describe('workspace round-trip fidelity @desktop', () => {
       .toBe(0);
 
     // Switch back.
-    const back = await runCommand('open space', spaceName);
+    const back = await enterSpace(spaceName);
     expect(back?.success, `switching back to "${spaceName}" failed: ${back?.error}`).toBe(true);
 
     // Current URL: must reopen at the SECOND navigation target, not the
@@ -217,7 +225,7 @@ test.describe('workspace round-trip fidelity @desktop', () => {
     // save of the RESTORED instances, with no further interaction) and
     // confirm the relative order restore reconstructed — window2 still above
     // window1 — matches what was saved before the switch.
-    const leaveAgain = await runCommand('open space', 'fidelity-spec-elsewhere-2');
+    const leaveAgain = await enterSpace('fidelity-spec-elsewhere-2');
     expect(leaveAgain?.success).toBe(true);
 
     const savedAfterRoundTrip = await snapshotRow(spaceId as string);

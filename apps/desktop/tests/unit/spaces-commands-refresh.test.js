@@ -60,7 +60,6 @@ describe('space-name commands follow the space list', () => {
     await handlers.get('tag:created')({ tagId: 't-alpha', tagName: 'space:alpha' });
     await settle();
     assert.deepEqual(lastOptions('switch space'), ['alpha', 'default']);
-    assert.deepEqual(lastOptions('open space'), ['alpha', 'default']);
     assert.deepEqual(lastOptions('move to space'), ['alpha', 'default']);
 
     tags = tags.filter((t) => t.id !== 't-alpha');
@@ -76,7 +75,7 @@ describe('space-name commands follow the space list', () => {
     tags = tags.map((t) => (t.id === 't-beta' ? { ...t, name: 'space:gamma' } : t));
     await handlers.get('tag:renamed')({ tagId: 't-beta' });
     await settle();
-    assert.deepEqual(lastOptions('open space'), ['default', 'gamma']);
+    assert.deepEqual(lastOptions('switch space'), ['default', 'gamma']);
   });
 
   it('keeps the known spaces when a lookup fails, and catches up on the next tag event', async () => {
@@ -88,7 +87,6 @@ describe('space-name commands follow the space list', () => {
     await handlers.get('tag:created')({ tagId: 't-delta' });
     await settle();
     assert.deepEqual(lastOptions('switch space'), before);
-    assert.deepEqual(lastOptions('open space'), before);
     assert.deepEqual(lastOptions('move to space'), before);
 
     lookupFails = false;
@@ -117,15 +115,15 @@ describe('space-name commands show window counts', () => {
     liveWindows = {};
     await handlers.get('window:closed')({ windowId: 'w1' });
     await settle();
-    assert.equal(subtitleOf('open space', 'work'), 'no windows');
+    assert.equal(subtitleOf('move to space', 'work'), 'no windows');
   });
 });
 
 describe('space-name commands name a create path', () => {
-  it('only open space offers to create a space that does not exist', () => {
+  it('only switch space offers to create a space that does not exist', () => {
     const createCommandOf = (name) => [...registrations].reverse().find((r) => r.name === name)?.params?.[0]?.createCommand;
-    assert.equal(createCommandOf('open space'), 'create space');
-    assert.equal(createCommandOf('switch space'), undefined);
+    assert.equal(createCommandOf('switch space'), 'create space');
+    assert.equal(createCommandOf('open space'), undefined);
     assert.equal(createCommandOf('move to space'), undefined);
   });
 });

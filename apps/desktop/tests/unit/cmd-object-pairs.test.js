@@ -1,6 +1,6 @@
 /**
  * Unit tests for renderer/cmd/object-pairs.js — top-level rows that pair a command with one of
- * its enum options ("open space work") when the typed text matches the option's name.
+ * its enum options ("switch space work") when the typed text matches the option's name.
  *
  * Run via: node --test tests/unit/cmd-object-pairs.test.js
  */
@@ -20,7 +20,7 @@ const enumCmd = (name, ...values) => ({
   params: [{ type: 'enum', options: values.map(v => ({ value: v, title: v })) }],
 });
 const COMMANDS = [
-  enumCmd('open space', 'work', 'home', 'workshop'),
+  enumCmd('switch space', 'work', 'home', 'workshop'),
   enumCmd('move to space', 'work', 'home', 'workshop'),
   { name: 'reload', params: [] },
 ];
@@ -30,10 +30,10 @@ describe('pairRowsFor', () => {
   it('pairs each enum command with each option whose name matches', () => {
     const rows = pairRowsFor('work', COMMANDS, {}, NOW);
     assert.deepEqual(names(rows).sort(), [
-      'move to space work', 'move to space workshop', 'open space work', 'open space workshop',
+      'move to space work', 'move to space workshop', 'switch space work', 'switch space workshop',
     ]);
-    const row = rows.find(r => r.name === 'open space work');
-    assert.equal(row.command, 'open space');
+    const row = rows.find(r => r.name === 'switch space work');
+    assert.equal(row.command, 'switch space');
     assert.equal(row.value, 'work');
   });
 
@@ -67,9 +67,9 @@ describe('pairRowsFor', () => {
     const rows = pairRowsFor('work', COMMANDS, usage, NOW);
     assert.deepEqual(names(rows), [
       'move to space workshop', // used
-      'open space work', // exact before prefix
+      'switch space work', // exact before prefix
       'move to space work',
-      'open space workshop',
+      'switch space workshop',
     ]);
   });
 });
@@ -77,8 +77,8 @@ describe('pairRowsFor', () => {
 describe('pairRowsFor with pairPriority', () => {
   const withPriority = (cmd, pairPriority) => ({ ...cmd, pairPriority });
   const SPACES = [
-    withPriority(enumCmd('open space', 'work', 'home', 'workshop'), 1),
-    enumCmd('switch space', 'work', 'home', 'workshop'),
+    withPriority(enumCmd('switch space', 'work', 'home', 'workshop'), 1),
+    enumCmd('rename space', 'work', 'home', 'workshop'),
     enumCmd('move to space', 'work', 'home', 'workshop'),
   ];
 
@@ -87,14 +87,14 @@ describe('pairRowsFor with pairPriority', () => {
     for (let i = 0; i < 20; i++) usage = recordPick(usage, 'move to space', 'work', NOW - i * 1000);
     const pairs = pairRowsFor('work', SPACES, usage, NOW);
     const merged = withPairRows(['workflow'], pairs);
-    assert.equal(merged[0], 'open space work');
-    assert.ok(merged.indexOf('open space work') < merged.indexOf('move to space work'));
+    assert.equal(merged[0], 'switch space work');
+    assert.ok(merged.indexOf('switch space work') < merged.indexOf('move to space work'));
   });
 
   it('still orders the other commands for that option by usage', () => {
     const usage = recordPick({}, 'move to space', 'work', NOW);
     const pairs = pairRowsFor('work', SPACES, usage, NOW);
-    assert.deepEqual(names(pairs).slice(0, 3), ['open space work', 'move to space work', 'switch space work']);
+    assert.deepEqual(names(pairs).slice(0, 3), ['switch space work', 'move to space work', 'rename space work']);
   });
 
   it('still orders different options by usage', () => {
@@ -103,12 +103,12 @@ describe('pairRowsFor with pairPriority', () => {
     // The used option keeps the top slot, and the priority command takes it. Each option's
     // rows keep the slots usage gave them.
     assert.deepEqual(names(pairs), [
-      'open space workshop',
-      'open space work',
+      'switch space workshop',
       'switch space work',
+      'rename space work',
       'move to space work',
       'move to space workshop',
-      'switch space workshop',
+      'rename space workshop',
     ]);
   });
 });
@@ -117,7 +117,7 @@ describe('withPairRows', () => {
   it('puts pair rows after the command matches when no option name equals the typed text', () => {
     const pairs = pairRowsFor('wor', COMMANDS, {}, NOW);
     assert.deepEqual(withPairRows(['workflow'], pairs), [
-      'workflow', 'open space work', 'move to space work', 'open space workshop', 'move to space workshop',
+      'workflow', 'switch space work', 'move to space work', 'switch space workshop', 'move to space workshop',
     ]);
   });
 
@@ -125,7 +125,7 @@ describe('withPairRows', () => {
     const usage = recordPick({}, 'move to space', 'work', NOW);
     const pairs = pairRowsFor('work', COMMANDS, usage, NOW);
     assert.deepEqual(withPairRows(['workflow'], pairs), [
-      'move to space work', 'open space work', 'workflow', 'open space workshop', 'move to space workshop',
+      'move to space work', 'switch space work', 'workflow', 'switch space workshop', 'move to space workshop',
     ]);
   });
 
@@ -133,7 +133,7 @@ describe('withPairRows', () => {
     // A pick made in parameter mode ("move to space" -> "home") ranks the pair row too.
     const usage = recordPick({}, 'move to space', 'home', NOW);
     const pairs = pairRowsFor('hom', COMMANDS, usage, NOW);
-    assert.deepEqual(names(pairs), ['move to space home', 'open space home']);
+    assert.deepEqual(names(pairs), ['move to space home', 'switch space home']);
   });
 
   it('keeps command matches unchanged when there are no pair rows', () => {
@@ -142,7 +142,7 @@ describe('withPairRows', () => {
 
   it('drops a pair row whose text is already a command match', () => {
     const pairs = pairRowsFor('work', COMMANDS, {}, NOW);
-    const merged = withPairRows(['open space work'], pairs);
-    assert.equal(merged.filter(n => n === 'open space work').length, 1);
+    const merged = withPairRows(['switch space work'], pairs);
+    assert.equal(merged.filter(n => n === 'switch space work').length, 1);
   });
 });

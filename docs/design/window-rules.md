@@ -237,7 +237,7 @@ What replaced its controls: the active workspace is named by the right-edge acce
 (`features/spaces/border.html`), by the command palette's mode indicator
 (`renderer/cmd/panel.js updateModeIndicator`) and by the page chrome's space widget
 (`renderer/page/overlay.js buildSpaceModeContent`) — all read-only. Leaving a workspace goes
-through the `close space`, `open space` and `switch space` commands, and entering one also through
+through the `close space` and `switch space` commands, and entering one also through
 a card click in the browse-all Spaces list (`features/spaces/home.js activateSpace`).
 
 ### Settling `57b89e6e`'s open questions

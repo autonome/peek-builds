@@ -50,25 +50,25 @@ describe('score math', () => {
 describe('recordPick', () => {
   it('records per command and value without touching the input', () => {
     const before = {};
-    const after = recordPick(before, 'open space', 'Work', NOW);
+    const after = recordPick(before, 'switch space', 'Work', NOW);
     assert.deepEqual(before, {});
-    near(scoreAt(after['open space'].work, NOW), 100);
-    assert.equal(after['open space'].home, undefined);
+    near(scoreAt(after['switch space'].work, NOW), 100);
+    assert.equal(after['switch space'].home, undefined);
   });
 
   it('keeps a different command separate', () => {
-    const usage = recordPick({}, 'open space', 'Work', NOW);
-    assert.equal(usage['switch space'], undefined);
+    const usage = recordPick({}, 'switch space', 'Work', NOW);
+    assert.equal(usage['move to space'], undefined);
   });
 });
 
 describe('rankByUsage', () => {
   it('puts used options first by score, then unused ones in their supplied order', () => {
     let usage = {};
-    usage = recordPick(usage, 'open space', 'Home', NOW);
-    usage = recordPick(usage, 'open space', 'Work', NOW);
-    usage = recordPick(usage, 'open space', 'Work', NOW);
-    const ranked = rankByUsage(sug('Alpha', 'Home', 'Beta', 'Work'), usage, 'open space', NOW);
+    usage = recordPick(usage, 'switch space', 'Home', NOW);
+    usage = recordPick(usage, 'switch space', 'Work', NOW);
+    usage = recordPick(usage, 'switch space', 'Work', NOW);
+    const ranked = rankByUsage(sug('Alpha', 'Home', 'Beta', 'Work'), usage, 'switch space', NOW);
     assert.deepEqual(values(ranked), ['Work', 'Home', 'Alpha', 'Beta']);
   });
 

@@ -1,13 +1,13 @@
 /**
  * Top-level rows that pair a command with one of its enum options, so typing an object's name
- * ("work") offers "open space work", "move to space work" before any command is chosen.
+ * ("work") offers "switch space work", "move to space work" before any command is chosen.
  *
  * Only single-value enum parameters without a prefix take part. Pair usage is the per-command
  * parameter usage from usage-rank.js, so a pick here and a pick in parameter mode count the same.
  *
  * A command may declare `pairPriority` (a number, higher first, default 0). Among the rows for one
  * option it decides the order before usage does, so a command that changes where a window lives
- * ("move to space") cannot overtake the plain one ("open space") through its own pick history.
+ * ("move to space") cannot overtake the plain one ("switch space") through its own pick history.
  */
 
 import { matchTier, NO_MATCH, TIER_EXACT } from './enum-match.js';

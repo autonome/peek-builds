@@ -39,6 +39,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 test.describe('default workspace: enter/exit rules @desktop', () => {
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('workspace-default'));
@@ -90,8 +98,8 @@ test.describe('default workspace: enter/exit rules @desktop', () => {
 
     // Entering a named workspace must save-and-close the default's window
     // above, and open exactly one new (empty) window for the target.
-    const openResult = await runCommand('open space', 'default-spec-enter');
-    expect(openResult?.success, `open space failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace('default-spec-enter');
+    expect(openResult?.success, `switch space failed: ${openResult?.error}`).toBe(true);
 
     const stillOpen = await bgWindow.evaluate(async (id: number) => {
       const api = (window as unknown as { app: any }).app;
@@ -109,7 +117,7 @@ test.describe('default workspace: enter/exit rules @desktop', () => {
   });
 
   test('leaving reopens the default workspace\'s saved session', async () => {
-    // The previous test's "open space" saved the default's window into its
+    // The previous test's "switch space" saved the default's window into its
     // own workspace row as a side effect of closing it — leaving the
     // workspace opened above must restore that same window from that row.
     const closeResult = await runCommand('close space');
@@ -149,8 +157,8 @@ test.describe('default workspace: enter/exit rules @desktop', () => {
   });
 
   test('a window pinned across every workspace survives both entering and leaving', async () => {
-    const openResult = await runCommand('open space', 'default-spec-global-pin');
-    expect(openResult?.success, `open space failed: ${openResult?.error}`).toBe(true);
+    const openResult = await enterSpace('default-spec-global-pin');
+    expect(openResult?.success, `switch space failed: ${openResult?.error}`).toBe(true);
     const homePage = await app.getWindow('spaces/home.html', 15000);
     const homeInfo = await homePage.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
     await bgWindow.evaluate(async (id: number) => {
@@ -164,9 +172,9 @@ test.describe('default workspace: enter/exit rules @desktop', () => {
 
     // Entering a different workspace must not sweep the globally-pinned
     // window, even though it goes through the new save-and-close-current
-    // step every "open space" now performs.
-    const secondOpen = await runCommand('open space', 'default-spec-global-pin-2');
-    expect(secondOpen?.success, `open space failed: ${secondOpen?.error}`).toBe(true);
+    // step every "switch space" now performs.
+    const secondOpen = await enterSpace('default-spec-global-pin-2');
+    expect(secondOpen?.success, `switch space failed: ${secondOpen?.error}`).toBe(true);
     let stillOpen = await bgWindow.evaluate(async (id: number) => {
       const api = (window as unknown as { app: any }).app;
       const r = await api.window.exists(id);

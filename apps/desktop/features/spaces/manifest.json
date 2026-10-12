@@ -78,11 +78,6 @@
   },
   "commands": [
     {
-      "name": "open space",
-      "description": "Open a space (restore saved state or show home)",
-      "action": { "type": "execute" }
-    },
-    {
       "name": "close space",
       "description": "Save window state, close the workspace, and return to the default workspace",
       "action": { "type": "execute" }

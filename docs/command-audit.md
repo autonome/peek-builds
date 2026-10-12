@@ -114,7 +114,6 @@ Columns:
 | sheets | sheets | execute | lazy | works |
 | sheets | new sheet | execute | lazy | works |
 | sheets | open sheet | execute | lazy | works |
-| spaces | open space | execute | lazy | works |
 | spaces | close space | execute | lazy | works |
 | spaces | switch space | execute | lazy | works |
 | spaces | open spaces | window | lazy | works |

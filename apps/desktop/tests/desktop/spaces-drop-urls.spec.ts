@@ -41,6 +41,14 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 async function spaceTagId(name: string): Promise<string> {
   const id = await bgWindow.evaluate(async (tagName: string) => {
     const r = await (window as unknown as { app: any }).app.datastore.getOrCreateTag(tagName);
@@ -119,8 +127,8 @@ test.describe('dropped web addresses open in the space under the cursor @desktop
   test('a dragover highlights the card, and a drop on the active space opens each address in it', async () => {
     const alpha = 'drop-alpha';
     const alphaId = await spaceTagId(alpha);
-    const opened = await runCommand('open space', alpha);
-    expect(opened?.success, `open space "${alpha}" failed: ${opened?.error}`).toBe(true);
+    const opened = await enterSpace(alpha);
+    expect(opened?.success, `switch space "${alpha}" failed: ${opened?.error}`).toBe(true);
 
     const browsePage = await openBrowseAll();
     const card = browsePage.locator(`peek-card.space-card[data-tag-id="${alphaId}"]`);

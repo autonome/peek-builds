@@ -1,6 +1,6 @@
 /**
  * Spaces UI activation — the paths a user actually takes to enter a
- * workspace, beyond the bare `open space` command the other workspace specs
+ * workspace, beyond the bare `switch space` command the other workspace specs
  * drive (specs/spaces-workspace-switch-regressions.md).
  *
  * 1. `open spaces` (the browse-all command) shows the default workspace on

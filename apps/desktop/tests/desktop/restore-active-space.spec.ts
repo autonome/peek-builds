@@ -46,6 +46,14 @@ async function runCommand(name: string, search = '', bg: Page = bgWindow): Promi
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string, bg: Page = bgWindow): Promise<any> {
+  await runCommand('create space', name, bg);
+  return runCommand('switch space', name, bg);
+}
+
 function spaceHomeWindows(spaceId: string, inApp: DesktopApp = app): Page[] {
   return inApp
     .windows()
@@ -63,8 +71,8 @@ test.describe('restore active space across a relaunch @desktop', () => {
 
   test('a cold-start restore reopens the workspace that was active at quit and leaves it active', async () => {
     const spaceName = 'restore-active-space-spec';
-    const opened = await runCommand('open space', spaceName);
-    expect(opened?.success, `open space "${spaceName}" failed: ${opened?.error}`).toBe(true);
+    const opened = await enterSpace(spaceName);
+    expect(opened?.success, `switch space "${spaceName}" failed: ${opened?.error}`).toBe(true);
     const spaceId = opened.spaceId as string;
     expect(spaceId).toBeTruthy();
     await expect.poll(() => spaceHomeWindows(spaceId).length, { timeout: 15000 }).toBe(1);
@@ -107,8 +115,8 @@ test.describe('restore active space across a relaunch @desktop', () => {
 
   test('a workspace deleted since the quit is not reopened; the default stays active', async () => {
     const spaceName = 'restore-active-space-deleted';
-    const opened = await runCommand('open space', spaceName);
-    expect(opened?.success, `open space "${spaceName}" failed: ${opened?.error}`).toBe(true);
+    const opened = await enterSpace(spaceName);
+    expect(opened?.success, `switch space "${spaceName}" failed: ${opened?.error}`).toBe(true);
     const spaceId = opened.spaceId as string;
     await expect.poll(() => spaceHomeWindows(spaceId).length, { timeout: 15000 }).toBe(1);
 
@@ -167,8 +175,8 @@ test.describe('restore active space across a real relaunch @desktop', () => {
     try {
       const bg1 = await first.getBackgroundWindow();
       await waitForExtensionsReady(bg1);
-      const opened = await runCommand('open space', restoredName, bg1);
-      expect(opened?.success, `open space "${restoredName}" failed: ${opened?.error}`).toBe(true);
+      const opened = await enterSpace(restoredName, bg1);
+      expect(opened?.success, `switch space "${restoredName}" failed: ${opened?.error}`).toBe(true);
       spaceId = opened.spaceId as string;
       await expect.poll(() => spaceHomeWindows(spaceId, first!).length, { timeout: 15000 }).toBe(1);
       await first.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
@@ -195,8 +203,8 @@ test.describe('restore active space across a real relaunch @desktop', () => {
         )
         .toBe(spaceId);
 
-      const switched = await runCommand('open space', otherName, bg2);
-      expect(switched?.success, `open space "${otherName}" failed: ${switched?.error}`).toBe(true);
+      const switched = await enterSpace(otherName, bg2);
+      expect(switched?.success, `switch space "${otherName}" failed: ${switched?.error}`).toBe(true);
       await expect.poll(() => spaceHomeWindows(spaceId, second).length, { timeout: 15000 }).toBe(0);
 
       const readRow = (key: string) =>

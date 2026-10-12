@@ -47,9 +47,17 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
+// `switch space` never creates its target, so entering a space goes through
+// `create space` first. Creating a space that already exists is refused, which
+// is harmless here: the switch that follows enters it either way.
+async function enterSpace(name: string): Promise<any> {
+  await runCommand('create space', name);
+  return runCommand('switch space', name);
+}
+
 async function openAndPin(spaceName: string, scope: 'to this workspace' | 'across workspaces'): Promise<number> {
-  const opened = await runCommand('open space', spaceName);
-  expect(opened?.success, `open space "${spaceName}" failed: ${opened?.error}`).toBe(true);
+  const opened = await enterSpace(spaceName);
+  expect(opened?.success, `switch space "${spaceName}" failed: ${opened?.error}`).toBe(true);
   await app.getWindow('spaces/home.html', 15000);
 
   const pinResult = await runCommand(`pin ${scope}`);
@@ -111,7 +119,7 @@ test.describe('pin session restore: both scopes @desktop', () => {
   test('a cross-workspace pin is recorded in the default workspace\'s snapshot even when saved while a named workspace is active', async () => {
     const windowId = await openAndPin('pin-restore-spec-global', 'across workspaces');
 
-    // `open space` above made a NAMED workspace the active one, so this
+    // `switch space` above made a NAMED workspace the active one, so this
     // ambient save writes THAT workspace's row — and refreshes the default
     // row's record of every cross-workspace pin, which is what the read below
     // checks. Quitting while a named workspace is active must not lose a pin.
