@@ -144,6 +144,9 @@ test.describe('headless no focus theft @desktop', () => {
   // ---------------------------------------------------------------------------
 
   test('page-host window does not paint after open in headless', async () => {
+    // The headless show path hides a page-host by opacity 0, and Electron's
+    // setOpacity does nothing on Linux, so there the window is painted.
+    test.skip(process.platform === 'linux', 'Electron has no window opacity on Linux');
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
 
     const result = await bgWindow.evaluate(async () => {
