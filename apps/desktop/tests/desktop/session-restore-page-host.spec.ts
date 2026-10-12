@@ -231,7 +231,7 @@ test.describe('Session Restore Page Host @desktop', () => {
 
   // Tests ----------------------------------------------------------------
 
-  // The six tests immediately below are canvas-only and all skip under hybrid,
+  // The four tests immediately below are canvas-only and all skip under hybrid,
   // which is the only page-host architecture that ships. They assert geometry
   // by reading `?width`/`?height` off the shell page's URL, and a hybrid page
   // host has no shell page. Where each one's hybrid coverage lives, so a skip
@@ -239,12 +239,13 @@ test.describe('Session Restore Page Host @desktop', () => {
   //
   //   non-maximized bounds round-trip      → 'hybrid page host: bounds round-trip
   //                                           through save+restore'
-  //   maximized state survives restore     → 'maximized hybrid page host: maximize
-  //                                           state survives save+restore'
   //   max → unmax → resize → restart       → 'hybrid page host: maximize →
   //                                           unmaximize → resize smaller → …'
-  //   max → restore → unmax to pre-max     → 'hybrid page host: maximize →
-  //                                           save+restore → unmaximize …'
+  //
+  // (The canvas maximize round-trip tests were removed with the behaviour they
+  // asserted: a maximized window is no longer restored maximized — see
+  // 'hybrid page host: a window maximized at save time restores unmaximized …'.)
+  //
   //   edge resize handle (drag E)          → NO HYBRID PORT. Asserts the shell
   //                                           page's `#resize-e` DOM handle;
   //                                           a hybrid host has no such element.
@@ -313,76 +314,6 @@ test.describe('Session Restore Page Host @desktop', () => {
     expect(afterState.bodyMaximized).toBe(false);
     expect(afterState.urlParams.width).toBe(beforeState.urlParams.width);
     expect(afterState.urlParams.height).toBe(beforeState.urlParams.height);
-  });
-
-  test('maximized page host: maximize state survives save+restore (regression: restored windows lose maximized state)', async () => {
-    const url = `http://127.0.0.1:${serverPort}/maximized-roundtrip`;
-    const { pageWindow, windowId } = await openPageHost(url);
-
-    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
-      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
-
-    // Wait for init.
-    await pageWindow.waitForFunction(() => {
-      const p = new URL(window.location.href).searchParams;
-      return p.get('width') && p.get('height');
-    });
-
-    // Maximize via navbar dblclick (same path the user takes).
-    await maximizePageHost(pageWindow);
-    await waitForBodyMaximized(pageWindow, true);
-
-    const beforeState = await getHostState(pageWindow);
-    expect(beforeState.bodyMaximized).toBe(true);
-    expect(beforeState.urlParams.maximized).toBe('1');
-    expect(beforeState.seHandleExists).toBe(true);
-
-    // Save snapshot.
-    await app.evaluateMain!((() => {
-      return (globalThis as any).__peek_test.forceSaveSession();
-    }) as any);
-
-    // Close and wait deterministically.
-    await bgWindow.evaluate((id: number) => {
-      (window as any).__maxRemoved = new Promise<void>((resolve) => {
-        const handler = (msg: { id?: number }) => {
-          if (msg?.id === id) {
-            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
-            resolve();
-          }
-        };
-        (window as any).app.pubsub.subscribe('window:removed', handler);
-      });
-      (window as any).app.window.close(id);
-    }, windowId);
-    await bgWindow.evaluate(() => (window as any).__maxRemoved);
-
-    // Restore.
-    const restoreResult = await app.evaluateMain!((() => {
-      return (globalThis as any).__peek_test.forceRestoreSession();
-    }) as any) as { restored: number; failed: number; total: number };
-    expect(restoreResult.restored).toBeGreaterThan(0);
-
-    const restoredPageWindow = await app.getWindow('maximized-roundtrip', 15000);
-    await restoredPageWindow.waitForFunction(() => {
-      const p = new URL(window.location.href).searchParams;
-      return p.get('width') && p.get('height');
-    });
-
-    const afterState = await getHostState(restoredPageWindow);
-
-    // ── Expectations the FSM must meet ─────────────────────────────
-    // 1) The body class must reflect maximized state.
-    expect(afterState.bodyMaximized,
-      `restored page host lost body.maximized class — JS state thinks it's not maximized even though the saved URL had maximized=1`).toBe(true);
-    // 2) URL params should still carry the maximized flag.
-    expect(afterState.urlParams.maximized,
-      `restored page host lost maximized=1 URL param — page-host URL is regenerated by window-open without propagating the maximize state`).toBe('1');
-    // 3) Resize handles still exist in the DOM (they're now reachable
-    //    even when maximized so a corner-grab can exit-and-resize).
-    expect(afterState.seHandleExists,
-      `restored page host is missing the SE resize handle from the DOM`).toBe(true);
   });
 
   test('maximize → unmaximize → resize smaller → restart: bounds restore at resized size, not maximized', async () => {
@@ -485,103 +416,6 @@ test.describe('Session Restore Page Host @desktop', () => {
       `restored width should match resized width`).toBe(resizedWidth);
     expect(parseInt(afterState.urlParams.height as string, 10),
       `restored height should match resized height`).toBe(resizedHeight);
-  });
-
-  test('maximize → save+restore → unmaximize: restores to pre-maximize bounds (not workArea minus chrome)', async () => {
-    const url = `http://127.0.0.1:${serverPort}/premax-roundtrip`;
-    const { pageWindow, windowId } = await openPageHost(url);
-
-    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
-      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
-
-    await pageWindow.waitForFunction(() => {
-      const p = new URL(window.location.href).searchParams;
-      return p.get('width') && p.get('height');
-    });
-
-    // Capture pre-maximize bounds — the size the window has BEFORE we
-    // maximize. After the save/restore cycle and a subsequent unmaximize,
-    // the window must come back to this size.
-    const preState = await getHostState(pageWindow);
-    const preMaxWidth = parseInt(preState.urlParams.width as string, 10);
-    const preMaxHeight = parseInt(preState.urlParams.height as string, 10);
-    expect(preState.bodyMaximized).toBe(false);
-
-    // Maximize via dblclick — captures preMaximizeBounds in renderer state
-    // and writes preX/preY/preWidth/preHeight to the URL.
-    await maximizePageHost(pageWindow);
-    await waitForBodyMaximized(pageWindow, true);
-
-    // Verify the URL carries the pre-maximize bounds.
-    const maxState = await getHostState(pageWindow);
-    expect(maxState.urlParams.maximized).toBe('1');
-    expect(parseInt(maxState.urlParams.preWidth as string, 10),
-      `URL should carry preWidth so save+restore can preserve pre-maximize size`)
-      .toBe(preMaxWidth);
-    expect(parseInt(maxState.urlParams.preHeight as string, 10)).toBe(preMaxHeight);
-
-    // Save.
-    await app.evaluateMain!((() => {
-      return (globalThis as any).__peek_test.forceSaveSession();
-    }) as any);
-
-    // Close.
-    await bgWindow.evaluate((id: number) => {
-      (window as any).__premaxRemoved = new Promise<void>((resolve) => {
-        const handler = (msg: { id?: number }) => {
-          if (msg?.id === id) {
-            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
-            resolve();
-          }
-        };
-        (window as any).app.pubsub.subscribe('window:removed', handler);
-      });
-      (window as any).app.window.close(id);
-    }, windowId);
-    await bgWindow.evaluate(() => (window as any).__premaxRemoved);
-
-    // Restore.
-    const restoreResult = await app.evaluateMain!((() => {
-      return (globalThis as any).__peek_test.forceRestoreSession();
-    }) as any) as { restored: number; failed: number; total: number };
-    expect(restoreResult.restored).toBeGreaterThan(0);
-
-    const restoredPageWindow = await app.getWindow('premax-roundtrip', 15000);
-    await restoredPageWindow.waitForFunction(() => {
-      const p = new URL(window.location.href).searchParams;
-      return p.get('maximized') === '1';
-    });
-
-    const restoredMaxState = await getHostState(restoredPageWindow);
-    expect(restoredMaxState.bodyMaximized,
-      `after restore: body should be maximized`).toBe(true);
-    expect(restoredMaxState.urlParams.preWidth,
-      `after restore: URL should still carry preWidth so unmaximize knows where to go`)
-      .toBe(String(preMaxWidth));
-    expect(restoredMaxState.urlParams.preHeight)
-      .toBe(String(preMaxHeight));
-
-    // Now unmaximize on the restored window — must land at the original
-    // pre-maximize size, not at workArea-minus-chrome.
-    await maximizePageHost(restoredPageWindow);
-    await waitForBodyMaximized(restoredPageWindow, false);
-
-    // Wait for URL to reflect the unmaximize bounds.
-    await restoredPageWindow.waitForFunction(({ w, h }) => {
-      const p = new URL(window.location.href).searchParams;
-      return parseInt(p.get('width') || '0', 10) === w
-        && parseInt(p.get('height') || '0', 10) === h
-        && !p.has('maximized');
-    }, { w: preMaxWidth, h: preMaxHeight });
-
-    const finalState = await getHostState(restoredPageWindow);
-    expect(parseInt(finalState.urlParams.width as string, 10),
-      `unmaximize after save+restore should restore to original pre-maximize width, not workArea`)
-      .toBe(preMaxWidth);
-    expect(parseInt(finalState.urlParams.height as string, 10),
-      `unmaximize after save+restore should restore to original pre-maximize height, not workArea`)
-      .toBe(preMaxHeight);
   });
 
   test('edge resize handle: dragging E changes width only, not height', async () => {
@@ -821,88 +655,9 @@ test.describe('Session Restore Page Host @desktop', () => {
     });
   });
 
-  // Hybrid counterpart of the canvas-only maximize round-trip tests above
-  // (all skipped under hybrid — they assert on the canvas page-host's own
-  // body.classList/URL-params, which don't exist on the hybrid path's bare
-  // content window). This one drives the REAL hybrid maximize state (owned
-  // by the window-state machine record since §5 step 7B — the
-  // MAXIMIZE_REQUESTED/MAXIMIZE_RESTORED reducer transitions) through the
-  // same page:maximize pubsub intent the overlay navbar button publishes,
-  // and asserts on `tile:window:list`'s presentation-derived
-  // maximized/bounds/preMaxBounds fields — the hybrid-appropriate
-  // equivalent of the canvas assertions above.
-  test('maximized hybrid page host: maximize state survives save+restore', async () => {
-    const slug = 'hybrid-maximize-roundtrip';
-    const url = `http://127.0.0.1:${serverPort}/${slug}`;
-
-    const { pageWindow, windowId } = await openPageHost(url);
-    await pageWindow.waitForLoadState('domcontentloaded');
-
-    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
-      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-    test.skip(!isHybrid, 'not a hybrid page-host — this test exercises the hybrid maximize registry');
-
-    async function findEntry(id: number) {
-      return bgWindow.evaluate(async (targetId: number) => {
-        const r = await (window as any).app.window.list({ includeInternal: false });
-        if (!r?.success) return null;
-        return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
-      }, id);
-    }
-
-    const before = await findEntry(windowId);
-    expect(before?.maximized).toBe(false);
-    const originalBounds = before!.bounds;
-
-    await publishOverlayTopic(app, 'page:maximize', { windowId });
-    const maximized = await findEntry(windowId);
-    expect(maximized?.maximized).toBe(true);
-    expect(maximized?.preMaxBounds).toEqual(originalBounds);
-    const maximizedBounds = maximized!.bounds;
-
-    await app.evaluateMain!((() =>
-      (globalThis as any).__peek_test.forceSaveSession()) as any);
-
-    await bgWindow.evaluate(async (id: number) => {
-      await (window as any).app.window.close(id);
-    }, windowId);
-    await bgWindow.waitForFunction(async (id: number) => {
-      const list = await (window as any).app.window.list({ includeInternal: false });
-      if (!list?.success) return false;
-      return !(list.windows || []).some((w: any) => w.id === id);
-    }, windowId);
-
-    const restoreResult = await app.evaluateMain!((() =>
-      (globalThis as any).__peek_test.forceRestoreSession()) as any) as
-      { restored: number; failed: number; total: number };
-    expect(restoreResult.restored).toBeGreaterThanOrEqual(1);
-
-    const restoredPageWindow = await app.getWindow(slug, 15000);
-    await restoredPageWindow.waitForLoadState('domcontentloaded');
-    const restoredId = await bgWindow.evaluate(async (s: string) => {
-      const list = await (window as any).app.window.list({ includeInternal: false });
-      if (!list?.success) return null;
-      const match = (list.windows || []).find(
-        (w: any) => typeof w.url === 'string' && w.url.includes(s),
-      );
-      return match ? match.id : null;
-    }, slug) as number | null;
-    expect(restoredId).not.toBeNull();
-
-    const restoredEntry = await findEntry(restoredId!);
-    expect(restoredEntry?.maximized, 'restored window must come back maximized').toBe(true);
-    expect(restoredEntry?.bounds, 'restored window must be sized to the saved maximized bounds').toEqual(maximizedBounds);
-    expect(restoredEntry?.preMaxBounds, 'restored window must carry the original pre-maximize bounds').toEqual(originalBounds);
-
-    // Cleanup.
-    await bgWindow.evaluate(async (id: number) => {
-      await (window as any).app.window.close(id);
-    }, restoredId);
-  });
-
   // Hybrid ports of the canvas-only geometry round-trips ------------------
   //
-  // The six canvas tests above assert geometry by reading `?width`/`?height`
+  // The canvas tests above assert geometry by reading `?width`/`?height`
   // off the page-host shell page's URL, and a hybrid page host has no shell
   // page — so all six skip, and geometry round-trip had no coverage at all on
   // the only page-host architecture that exists. These three read geometry from
@@ -982,20 +737,11 @@ test.describe('Session Restore Page Host @desktop', () => {
     await closeAndAwait(windowId);
   });
 
-  test('hybrid page host: maximize → save+restore → unmaximize returns to the pre-maximize bounds', async () => {
-    // Pins the restore-time maximize seed reaching the KERNEL, not just the
-    // old machine. It ran as an expected failure while the seed was a bare
-    // `dispatchWindowEvent({type: 'MAXIMIZE_RESTORED', …})` in `ipc.ts`: the
-    // flag cleared on unmaximize but the window stayed at the maximized rect,
-    // while the sibling test asserting `preMaxBounds` passed the whole time —
-    // the presenter reads that field off the old machine, so the data looked
-    // right and only the behavior was wrong. The pair is now
-    // `kernelSeedMaximized`, whose `SeedMaximized` command carries the
-    // saved rect EXPLICITLY (replaying `Maximize` would stash the window's
-    // creation bounds, which at restore time already are the maximized rect).
-    // The live control above stays the other half of the pair: it passed
-    // throughout, which is what localized this to restored windows.
-
+  test('hybrid page host: a window maximized at save time restores unmaximized at its pre-maximize bounds', async () => {
+    // Maximize is not restored: a window manager may refit a window mapped at
+    // full work-area size, and restoring at the normal size avoids a stale
+    // maximized flag. The snapshot saves the rect the window unmaximizes back
+    // to, so the restored window is both unmaximized and at its old size.
     const slug = 'hybrid-premax-roundtrip';
     const windowId = await openHybridPageHost(slug);
 
@@ -1008,20 +754,21 @@ test.describe('Session Restore Page Host @desktop', () => {
 
     await app.evaluateMain!((() =>
       (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    const snapshot = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.getLastSnapshot()) as any) as
+      { windows: Array<{ url: string; bounds: unknown; params: Record<string, unknown> }> } | null;
+    const saved = (snapshot?.windows || []).find((w) => w.url.includes(slug));
+    expect(saved?.bounds, 'a maximized window is saved at its pre-maximize bounds').toEqual(original);
+    expect(saved?.params.maximized, 'maximize is not written to the snapshot').toBeUndefined();
+    expect(saved?.params.preMaxBounds, 'the pre-maximize stash is not written to the snapshot').toBeUndefined();
+
     await closeAndAwait(windowId);
 
     const restoredId = await restoreAndFind(slug);
-    await waitForEntry(restoredId, { maximized: true });
-
-    // The point of the test: the pre-maximize bounds must survive the round
-    // trip as a live fact, not merely be present in the snapshot. Unmaximizing
-    // the RESTORED window is what proves it — a restore that carried maximized
-    // state but dropped the stash would land somewhere else here.
-    await publishOverlayTopic(app, 'page:unmaximize', { windowId: restoredId });
-    await waitForEntry(restoredId, { maximized: false, bounds: original });
-
     const restored = await findEntry(restoredId);
-    expect(restored?.bounds, 'unmaximizing a restored window must return the pre-maximize bounds').toEqual(original);
+    expect(restored?.maximized, 'a window maximized at save time must not come back maximized').toBe(false);
+    expect(restored?.bounds, 'restored window must come back at its pre-maximize bounds').toEqual(original);
 
     await closeAndAwait(restoredId);
   });

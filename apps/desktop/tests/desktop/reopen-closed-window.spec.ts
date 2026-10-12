@@ -220,7 +220,7 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     expect(reopened).toBeTruthy();
   });
 
-  test('reopen a maximized hybrid page-host restores it maximized, with pre-max bounds for unmaximize', async () => {
+  test('reopen a maximized hybrid page-host restores it unmaximized at its pre-maximize bounds', async () => {
     const url = `http://127.0.0.1:${serverPort}/maximize-reopen`;
     const id = await openWindow(url);
     await findWindowWithUrl('/maximize-reopen');
@@ -253,7 +253,6 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     // The reported bounds while maximized are the live (work-area) BaseWindow
     // bounds, not the pre-maximize size.
     expect(maximizedEntry?.bounds).not.toEqual(originalBounds);
-    const maximizedBounds = maximizedEntry!.bounds;
 
     // Close while maximized, then reopen via the closed-window stack.
     const stackBefore = await getStackCount();
@@ -275,20 +274,12 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     }, '/maximize-reopen');
     expect(reopenedId).not.toBeNull();
 
-    // OUTCOME: reopened directly into MAXIMIZED, at the maximized bounds, with
-    // the ORIGINAL pre-maximize bounds preserved (so a later unmaximize lands
-    // back at the pre-maximize size, not the maximized work-area rect).
+    // OUTCOME: maximize is not restored. The closed-window entry holds the
+    // pre-maximize rect, so the window comes back unmaximized at its old size.
     const reopenedEntry = await findEntry(reopenedId!);
-    expect(reopenedEntry?.maximized, 'reopened window must come back maximized').toBe(true);
-    expect(reopenedEntry?.bounds, 'reopened window must be sized to the saved maximized bounds').toEqual(maximizedBounds);
-    expect(reopenedEntry?.preMaxBounds, 'reopened window must carry the ORIGINAL pre-maximize bounds').toEqual(originalBounds);
-
-    // Unmaximize the reopened window — must land back at the original
-    // pre-maximize size, not the maximized work-area rect.
-    await publishOverlayTopic(app, 'page:unmaximize', { windowId: reopenedId });
-    const unmaximizedEntry = await findEntry(reopenedId!);
-    expect(unmaximizedEntry?.maximized).toBe(false);
-    expect(unmaximizedEntry?.bounds).toEqual(originalBounds);
+    expect(reopenedEntry?.maximized, 'reopened window must not come back maximized').toBe(false);
+    expect(reopenedEntry?.bounds, 'reopened window must come back at the pre-maximize bounds').toEqual(originalBounds);
+    expect(reopenedEntry?.preMaxBounds, 'an unmaximized window carries no pre-maximize stash').toBeNull();
 
     // Cleanup.
     await closeWindowById(reopenedId!);
