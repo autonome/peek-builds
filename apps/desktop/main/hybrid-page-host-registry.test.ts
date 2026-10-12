@@ -496,7 +496,7 @@ describe('hybrid-page-host-registry: content-WC reverse lookup', () => {
 // Maximize-state tests moved with the state itself: `maximized`/`preMaxBounds`
 // now live on the window-state machine record (§5 step 7B) and are pinned in
 // window-state.test.ts (MAXIMIZE_REQUESTED / UNMAXIMIZE_REQUESTED /
-// MAXIMIZE_RESTORED / MAXIMIZE_EXITED_BY_RESIZE suites).
+// MAXIMIZE_EXITED_BY_RESIZE suites).
 
 // ============================================================================
 // window-open registration: an explicit `declareParent` wins over the

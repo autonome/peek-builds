@@ -19,7 +19,9 @@
  *                                        `window-presenter.ts getRestorableBounds`
  *                                        now delegates to — one implementation,
  *                                        not two)
- *   - `maximized` / pre-maximize rect  → `WindowRecord.maximized` / `.preMaxBounds`
+ *   - pre-maximize rect                → `WindowRecord.maximized` / `.preMaxBounds`
+ *                                        (a maximized window is saved at this
+ *                                        rect, unmaximized)
  *   - `zOrder`                         → position in `kernelOrder`
  *   - `stackIndex`                     → position in `kernelOrder`
  *   - `focused`                        → `topmostContentWindowId`
@@ -45,8 +47,9 @@
  * `feature_settings` row), not just a deep-equal.
  *
  * This module owns BOTH directions of two pieces of that shape:
- *   - the maximize state a descriptor carries — `serializeSession` writes it,
- *     `readPreMaxBounds` reads it back for the window-open path;
+ *   - the maximize state older descriptors carry — `serializeSession` no longer
+ *     writes it; `readPreMaxBounds` / `unmaximizedRestoreDescriptor` read it
+ *     back so such a descriptor restores unmaximized at its pre-maximize rect;
  *   - the saved stacking position — `serializeSession` writes `stackIndex`,
  *     `readStackIndex` + `orderRestoredWindowsBottomToTop` read it back for the
  *     restore path's `STACK_ORDER_IMPORTED`.
@@ -235,7 +238,7 @@ export function restorableBoundsFromRecord(rec: WindowRecord | undefined): Elect
  * have aged out.
  *
  * Returns null when neither shape is present or complete — "maximized with no
- * restorable rect", which the reducer accepts as a `MAXIMIZE_RESTORED` seed.
+ * restorable rect".
  */
 export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rectangle | null {
   const nested = params.preMaxBounds as Partial<Electron.Rectangle> | null | undefined;
@@ -256,6 +259,36 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
     return { x, y, width, height };
   }
   return null;
+}
+
+/**
+ * A saved descriptor's bounds and params, converted so the window opens
+ * unmaximized.
+ *
+ * Maximize is not restored: a window mapped at full work-area size may be
+ * refitted by the window manager, and restoring at the normal size avoids a
+ * stale maximized flag. A descriptor from an older build with `maximized: true`
+ * therefore opens at its pre-maximize rect (`readPreMaxBounds`) when it has
+ * one, else at its saved bounds. The maximize keys (`maximized`, `preMaxBounds`,
+ * the flat `preMaxX/Y/Width/Height`) are always dropped so they never reach the
+ * window registry. Returns a new object; the input is not mutated.
+ */
+export function unmaximizedRestoreDescriptor<D extends { bounds: Electron.Rectangle; params: Record<string, unknown> }>(
+  descriptor: D,
+): D {
+  const params = { ...descriptor.params };
+  let bounds = descriptor.bounds;
+  if (params.maximized === true) {
+    const preMax = readPreMaxBounds(params);
+    if (preMax) bounds = preMax;
+  }
+  delete params.maximized;
+  delete params.preMaxBounds;
+  delete params.preMaxX;
+  delete params.preMaxY;
+  delete params.preMaxWidth;
+  delete params.preMaxHeight;
+  return { ...descriptor, bounds, params };
 }
 
 /**
@@ -540,13 +573,16 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     // failed, so restore reloads it instead of reopening the internal page.
     const realUrl = savedWindowUrl(presentation.address);
 
-    // Geometry + maximize are machine facts (§5 steps 7B/7C/7D). The
-    // presentation's rect survives only as the fallback for a window the
-    // machine has no record for — which is exactly the fallback the presenter
-    // itself applies, so this is the same value either way.
-    const windowBounds = restorableBoundsFromRecord(rec) ?? presentation.bounds;
-    const canvasMaximized = rec?.maximized === true;
-    const preMaxBounds = canvasMaximized ? (rec?.preMaxBounds ?? null) : null;
+    // Geometry is a machine fact (§5 steps 7B/7D). The presentation's rect
+    // survives only as the fallback for a window the machine has no record for
+    // — which is exactly the fallback the presenter itself applies, so this is
+    // the same value either way.
+    //
+    // Maximize is not restored: a maximized window is saved at the rect it
+    // unmaximizes back to (`WindowRecord.preMaxBounds`), falling back to its
+    // current bounds when nothing was stashed.
+    const currentBounds = restorableBoundsFromRecord(rec) ?? presentation.bounds;
+    const windowBounds = rec?.maximized === true ? (rec.preMaxBounds ?? currentBounds) : currentBounds;
 
     // Skip windows for unknown tiles (stale from renames/removals)
     const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
@@ -560,7 +596,7 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
 
     notices.push({
       level: 'info',
-      message: `[session:save] Window ${w.nativeId} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasMaximized ? " [maximized]" : ""}${rec?.desktop !== undefined ? ` desktop=${rec.desktop}` : ""} url=${realUrl.substring(0, 80)}`,
+      message: `[session:save] Window ${w.nativeId} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${rec?.desktop !== undefined ? ` desktop=${rec.desktop}` : ""} url=${realUrl.substring(0, 80)}`,
     });
 
     // Capture context state for this window
@@ -599,36 +635,11 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     }
 
     const sanitized = sanitizeParams(mirrorPlacementIntent(w.params));
-    // The pass-through above can carry a STALE `params.maximized` for a
-    // hybrid window: it's set once at open time (true only when opened via
-    // reopen/session-restore of a maximized window) and never updated by
-    // page:maximize/page:unmaximize afterward (those update the hybrid
-    // registry, not the general window-registry params). The machine record
-    // is always live, so it — not the pass-through — is authoritative here;
-    // explicitly set both branches rather than only adding the true case.
-    if (canvasMaximized) {
-      sanitized.maximized = true;
-      // The pre-maximize rect the window unmaximizes back to, written as ONE
-      // nested field named as the machine record names it (§5 step 11 task 5 —
-      // it used to be four flat numbers, preMaxX/Y/Width/Height). Restore
-      // threads it back through the window-open path (`readPreMaxBounds`) to
-      // seed the machine, so an unmaximize after restore lands at the original
-      // pre-maximize size instead of the maximized work-area rect. Set AFTER
-      // `sanitizeParams`, which drops objects.
-      if (preMaxBounds) {
-        sanitized.preMaxBounds = {
-          x: preMaxBounds.x,
-          y: preMaxBounds.y,
-          width: preMaxBounds.width,
-          height: preMaxBounds.height,
-        };
-      } else {
-        delete sanitized.preMaxBounds;
-      }
-    } else {
-      delete sanitized.maximized;
-      delete sanitized.preMaxBounds;
-    }
+    // The pass-through above can carry `maximized` / `preMaxBounds` from a
+    // snapshot written by an older build; maximize is not restored, so neither
+    // is ever written.
+    delete sanitized.maximized;
+    delete sanitized.preMaxBounds;
     // A restored window carries its snapshot's params forward, so the flat bag
     // from a pre-collapse snapshot can ride back in through the pass-through.
     // Drop it unconditionally: a newly written snapshot only ever carries the

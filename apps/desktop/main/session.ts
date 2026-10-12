@@ -23,7 +23,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
+import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, unmaximizedRestoreDescriptor, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -258,7 +258,7 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
     let focusedWindowId: number | null = null;
     let opened = 0;
     for (let i = 0; i < ordered.length; i++) {
-      const original = ordered[i];
+      const original = unmaximizedRestoreDescriptor(ordered[i]);
       try {
         const collapsed = collapseToPrimaryDisplay(original, primaryWorkArea);
         const descriptor =
@@ -1718,7 +1718,7 @@ export async function restoreSessionSnapshot(
   };
 
   for (let i = 0; i < orderedWindows.length; i++) {
-    const original = orderedWindows[i];
+    const original = unmaximizedRestoreDescriptor(orderedWindows[i]);
     try {
       const descriptor = (() => {
         const collapsed = collapseToPrimaryDisplay(original, primaryWorkArea);

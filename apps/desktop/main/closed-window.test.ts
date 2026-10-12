@@ -28,8 +28,6 @@ interface ClosedWindowEntry {
   role?: string;
   scrollX?: number;
   scrollY?: number;
-  maximized?: boolean;
-  preMaximizeBounds?: Rect;
   timestamp: number;
 }
 
@@ -128,10 +126,10 @@ function createClosedWindowEntry(
   // Pull bounds + maximize state from the presentation captured
   // pre-destruction, falling back to the raw captured bounds when no
   // presentation resolved (e.g. the window was already gone).
-  const saveBounds = captured.presentation?.bounds ?? captured.bounds;
-  const saveMaximized = captured.presentation?.maximized ?? false;
-  const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
-    captured.presentation?.preMaxBounds ?? undefined;
+  const presentation = captured.presentation;
+  const saveBounds = presentation?.maximized && presentation.preMaxBounds
+    ? presentation.preMaxBounds
+    : (presentation?.bounds ?? captured.bounds);
 
   // Use the current navigated URL if available (tracks where user actually was)
   const currentUrl = params.currentUrl;
@@ -147,8 +145,6 @@ function createClosedWindowEntry(
     role: params.role || undefined,
     scrollX: scrollX || undefined,
     scrollY: scrollY || undefined,
-    maximized: saveMaximized || undefined,
-    preMaximizeBounds: savePreMaxBounds,
     timestamp: Date.now(),
   };
 }
@@ -576,7 +572,7 @@ describe('Entry creation logic', () => {
 });
 
 describe('Maximize state capture', () => {
-  it('omits maximized and preMaximizeBounds when the presentation is not maximized', () => {
+  it('keeps the presentation bounds and writes no maximize fields when not maximized', () => {
     const bounds = { x: 0, y: 0, width: 1280, height: 800 };
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
@@ -585,11 +581,12 @@ describe('Maximize state capture', () => {
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    assert.strictEqual(entry!.maximized, undefined);
-    assert.strictEqual(entry!.preMaximizeBounds, undefined);
+    assert.deepStrictEqual(entry!.bounds, bounds);
+    assert.strictEqual('maximized' in entry!, false);
+    assert.strictEqual('preMaximizeBounds' in entry!, false);
   });
 
-  it('captures maximized=true and the pre-maximize bounds when the presentation is maximized', () => {
+  it('saves the pre-maximize bounds, with no maximize fields, when the presentation is maximized', () => {
     const workAreaBounds = { x: 0, y: 0, width: 1920, height: 1080 };
     const preMax = { x: 100, y: 100, width: 800, height: 600 };
     const entry = createClosedWindowEntry(
@@ -599,12 +596,12 @@ describe('Maximize state capture', () => {
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    assert.strictEqual(entry!.maximized, true);
-    assert.deepStrictEqual(entry!.bounds, workAreaBounds);
-    assert.deepStrictEqual(entry!.preMaximizeBounds, preMax);
+    assert.deepStrictEqual(entry!.bounds, preMax);
+    assert.strictEqual('maximized' in entry!, false);
+    assert.strictEqual('preMaximizeBounds' in entry!, false);
   });
 
-  it('maximized=true with no pre-maximize bounds omits preMaximizeBounds', () => {
+  it('maximized with no pre-maximize bounds saves the presentation bounds as-is', () => {
     const workAreaBounds = { x: 0, y: 0, width: 1920, height: 1080 };
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
@@ -613,19 +610,20 @@ describe('Maximize state capture', () => {
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    assert.strictEqual(entry!.maximized, true);
-    assert.strictEqual(entry!.preMaximizeBounds, undefined);
+    assert.deepStrictEqual(entry!.bounds, workAreaBounds);
+    assert.strictEqual('maximized' in entry!, false);
   });
 
-  it('falls back to maximized=false when captured has no presentation at all', () => {
+  it('falls back to the raw captured bounds when captured has no presentation at all', () => {
+    const bounds = { x: 10, y: 10, width: 400, height: 300 };
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      capturedBounds({ x: 10, y: 10, width: 400, height: 300 }),
+      capturedBounds(bounds),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    assert.strictEqual(entry!.maximized, undefined);
-    assert.strictEqual(entry!.preMaximizeBounds, undefined);
+    assert.deepStrictEqual(entry!.bounds, bounds);
+    assert.strictEqual('maximized' in entry!, false);
   });
 });

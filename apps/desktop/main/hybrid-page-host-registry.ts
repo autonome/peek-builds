@@ -291,7 +291,7 @@ export function getHybridWindow(windowId: number): HybridWindowEntry | null {
 
 // Maximize state (`maximized` / `preMaxBounds`) now lives on the kernel
 // record (window-kernel.ts WindowRecord — §5 step 7B), driven by the
-// Maximize / Unmaximize / SeedMaximized / MaximizeExitedByResize kernel
+// Maximize / Unmaximize / MaximizeExitedByResize kernel
 // transitions. The rationale that used to live here (frameless hosts never
 // fire native 'maximize' events, so the
 // app's own intent is the only deterministic signal) is documented on

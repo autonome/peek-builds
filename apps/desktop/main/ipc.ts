@@ -56,7 +56,6 @@ import {
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 // The session-descriptor maximize shape is owned by the projection module —
 // `serializeSession` writes it, this reads it back on the open path.
-import { readPreMaxBounds } from './session-projection.js';
 
 import {
   APP_DEF_WIDTH,
@@ -105,7 +104,6 @@ import {
   kernelMaximizeExitedByResize,
   kernelSetBounds,
   kernelMaximize,
-  kernelSeedMaximized,
   kernelUnmaximize,
   kernelSetDesktopMembership,
   kernelShowRequested,
@@ -538,11 +536,14 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     trackingSourceId: 'last-closed',
   };
 
-  if (entry.bounds) {
-    options.x = entry.bounds.x;
-    options.y = entry.bounds.y;
-    options.width = entry.bounds.width;
-    options.height = entry.bounds.height;
+  // Maximize is not restored: an entry from an older build that was maximized
+  // reopens at its pre-maximize rect.
+  const reopenBounds = entry.maximized && entry.preMaximizeBounds ? entry.preMaximizeBounds : entry.bounds;
+  if (reopenBounds) {
+    options.x = reopenBounds.x;
+    options.y = reopenBounds.y;
+    options.width = reopenBounds.width;
+    options.height = reopenBounds.height;
   }
 
   if (entry.spaceMode) {
@@ -558,23 +559,6 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   // Restore scroll position so user returns to where they were reading
   if (entry.scrollX != null) options.scrollX = entry.scrollX;
   if (entry.scrollY != null) options.scrollY = entry.scrollY;
-
-  // Restore maximize state so the page-host FSM boots into MAXIMIZED.
-  if (entry.maximized) options.maximized = true;
-
-  // Pre-maximize bounds: thread through so the reopened page-host seeds its
-  // machine record with the rect the user had before the original maximize,
-  // letting them unmaximize back to it even after a close+reopen cycle. Same
-  // nested `preMaxBounds` field the session descriptor carries (§5 step 11
-  // task 5) — one shape for both open paths, read by `readPreMaxBounds`.
-  if (entry.preMaximizeBounds) {
-    options.preMaxBounds = {
-      x: entry.preMaximizeBounds.x,
-      y: entry.preMaximizeBounds.y,
-      width: entry.preMaximizeBounds.width,
-      height: entry.preMaximizeBounds.height,
-    };
-  }
 
   const bgWin = getBackgroundWindow();
   if (!invokeWindowOpen || !bgWin) {
@@ -1068,11 +1052,6 @@ function assembleHybridPageHost(
       : undefined,
   });
 
-  // Construction-time maximize restore moved to a MAXIMIZE_RESTORED dispatch
-  // right after the machine registration below (§5 step 7B) — the machine
-  // record is the one holder of `maximized`/`preMaxBounds` now, and the
-  // dispatch needs the machine-minted id.
-
   // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
   // lastContentWindowId) from the host BaseWindow's focus event. The
   // hybrid registry tracks its OWN active-window id off this same event,
@@ -1188,7 +1167,6 @@ function assembleHybridPageHost(
     y: contentY,
     width: contentW,
     height: contentH,
-    maximized: options.maximized === true,
     // Mark this as a hybrid page-host so later phases (and any
     // downstream code) can distinguish it from a BrowserWindow page-host.
     hybridPageHost: true,
@@ -1252,28 +1230,6 @@ function assembleHybridPageHost(
       ? { desktopMembership: options.nonActivating === true ? 'anchor' as const : desktopMembershipForRole(role) }
       : {}),
   });
-  // Reopen-last-closed (reopenLastClosedWindow above) and session restore
-  // (session.ts restoreSessionSnapshot) both thread a maximized window's
-  // saved state through as open-time options: `maximized: true` plus
-  // `preMaxBounds` (the pre-maximize rect to unmaximize back to).
-  // `readPreMaxBounds` owns that field's shape — it also still accepts the
-  // flat `preMaxX/Y/Width/Height` a pre-collapse snapshot carries.
-  // The window's CREATION bounds already ARE the maximized rect
-  // (computeInitialBounds used `winOptions.x/y/width/height`, which
-  // reopen/restore set from the saved presentation.bounds — the live
-  // maximized size), so there is nothing to resize: MAXIMIZE_RESTORED seeds
-  // the machine record (`maximized` + the SAVED `preMaxBounds`) without
-  // driving a SET_BOUNDS, so a later page:unmaximize (and
-  // getHybridPresentation / session save) see it (§5 step 7B).
-  if (options.maximized === true) {
-    const restoredPreMaxBounds = readPreMaxBounds(options);
-    // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
-    // window manager. The kernel's `SeedMaximized` carries the SAME saved
-    // rect as data, because replaying `Maximize` here would stash this
-    // window's creation bounds — which already ARE the maximized rect — as
-    // the thing to unmaximize back to.
-    kernelSeedMaximized(hostMachineId, restoredPreMaxBounds);
-  }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
   // registration uses the machine-minted id from just above.

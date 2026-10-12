@@ -25,6 +25,12 @@
  * before the change still restores; save rewrites the whole snapshot row on
  * every autosave, so one save cycle converts a profile.
  *
+ * DELIBERATE BEHAVIOUR CHANGE: maximize is not restored. A maximized record is
+ * saved at its pre-maximize rect (`bounds`) with no `maximized` / `preMaxBounds`
+ * keys; the oracle was updated WITH the change. Descriptors written by older
+ * builds still carry those keys and are converted on restore
+ * (`unmaximizedRestoreDescriptor`, tested below).
+ *
  * DELIBERATE SHAPE CHANGE (§5 step 11 task 7): a descriptor now also carries
  * `stackIndex` — its position in the machine's bottom→top order at save
  * time — so restore replays the stack that was literally on screen instead of
@@ -77,6 +83,7 @@ import {
   addDescriptorsToSnapshot,
   restorableBoundsFromRecord,
   readPreMaxBounds,
+  unmaximizedRestoreDescriptor,
   readStackIndex,
   orderRestoredWindowsBottomToTop,
   sanitizeParams,
@@ -304,8 +311,9 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
     const presentation = presentationFor(world, f);
     if (!presentation) continue;
     const realUrl = presentation.address;
-    const windowBounds = presentation.bounds;
-    const canvasMaximized = presentation.maximized;
+    const windowBounds = presentation.maximized && presentation.preMaxBounds
+      ? presentation.preMaxBounds
+      : presentation.bounds;
 
     const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
     if (extMatch) {
@@ -317,22 +325,8 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
     const windowContext: WindowContext | undefined = f.context;
 
     const sanitized = legacySanitizeParams(legacyMirrorPlacementIntent(f.params));
-    if (canvasMaximized) {
-      sanitized.maximized = true;
-      if (presentation.preMaxBounds) {
-        sanitized.preMaxBounds = {
-          x: presentation.preMaxBounds.x,
-          y: presentation.preMaxBounds.y,
-          width: presentation.preMaxBounds.width,
-          height: presentation.preMaxBounds.height,
-        };
-      } else {
-        delete sanitized.preMaxBounds;
-      }
-    } else {
-      delete sanitized.maximized;
-      delete sanitized.preMaxBounds;
-    }
+    delete sanitized.maximized;
+    delete sanitized.preMaxBounds;
     delete sanitized.preMaxX;
     delete sanitized.preMaxY;
     delete sanitized.preMaxWidth;
@@ -534,7 +528,7 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       frontNativeId: 1,
     }],
 
-    ['maximized window carries the nested preMax rect', {
+    ['maximized window is saved at its pre-maximize rect, unmaximized', {
       fixtures: [contentFixture(1, 'w1')],
       records: [makeRecord('w1', {
         bounds: { x: 0, y: 0, width: 1512, height: 900 },
@@ -543,11 +537,9 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       })],
     }],
 
-    // A window restored from a PRE-COLLAPSE snapshot still carries that
-    // snapshot's flat bag in its params. Re-saving it must emit the nested
-    // rect only — the flat keys do not ride forward, or a profile would never
-    // finish converting.
-    ['a pre-collapse flat bag in params is replaced by the nested rect', {
+    // A window restored from an older snapshot may still carry that
+    // snapshot's maximize keys in its params. Re-saving it must not write them.
+    ['maximize keys in params do not ride forward', {
       fixtures: [contentFixture(1, 'w1', {
         params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
       })],
@@ -942,7 +934,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(out.map((w) => w.stackIndex), [0, 2]);
   });
 
-  it('maximize + the preMax rect come from the record, overriding stale params', () => {
+  it('stale maximize keys in params are stripped when the record is not maximized', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
         params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
@@ -955,11 +947,9 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.strictEqual('preMaxX' in d.params, false);
   });
 
-  it('a maximized record writes ONE nested preMaxBounds and no flat keys', () => {
+  it('a maximized record is saved at its pre-maximize rect with no maximize keys', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
-        // A window restored from a pre-collapse snapshot: the flat bag is
-        // still on its params and must not survive the re-save.
         params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
       })],
       records: [makeRecord('w1', {
@@ -969,14 +959,13 @@ describe('session-projection — machine-derived descriptor fields', () => {
       })],
     };
     const [d] = serializeSession(inputFor(world)).snapshot.windows;
-    assert.strictEqual(d.params.maximized, true);
-    assert.deepStrictEqual(d.params.preMaxBounds, { x: 100, y: 110, width: 640, height: 480 });
-    for (const k of ['preMaxX', 'preMaxY', 'preMaxWidth', 'preMaxHeight']) {
-      assert.strictEqual(k in d.params, false, `${k} must not ride forward`);
+    assert.deepStrictEqual(d.bounds, { x: 100, y: 110, width: 640, height: 480 });
+    for (const k of ['maximized', 'preMaxBounds', 'preMaxX', 'preMaxY', 'preMaxWidth', 'preMaxHeight']) {
+      assert.strictEqual(k in d.params, false, `${k} must not be written`);
     }
   });
 
-  it('maximized with no stash writes maximized alone — no preMaxBounds key at all', () => {
+  it('a maximized record with no stash is saved at its current bounds, unmaximized', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', { params: { ...CONTENT_PARAMS, preMaxX: 9 } })],
       records: [makeRecord('w1', {
@@ -986,20 +975,21 @@ describe('session-projection — machine-derived descriptor fields', () => {
       })],
     };
     const [d] = serializeSession(inputFor(world)).snapshot.windows;
-    assert.strictEqual(d.params.maximized, true);
+    assert.deepStrictEqual(d.bounds, { x: 1, y: 1, width: 2, height: 2 });
+    assert.strictEqual('maximized' in d.params, false);
     assert.strictEqual('preMaxBounds' in d.params, false);
     assert.strictEqual('preMaxX' in d.params, false);
   });
 });
 
 /**
- * The READ half of the descriptor's maximize shape. The nested branch is the
- * shape `serializeSession` writes today; the flat branch exists only to absorb
- * snapshots written before the collapse and is meant to be deleted once those
- * have aged out — these cases pin it while it lives.
+ * The READ half of the descriptor's maximize shape. `serializeSession` no longer
+ * writes it; both branches exist only to absorb snapshots written by older
+ * builds and are meant to be deleted once those have aged out — these cases pin
+ * them while they live.
  */
 describe('session-projection — readPreMaxBounds', () => {
-  it('reads the nested rect a current snapshot carries', () => {
+  it('reads the nested rect an older snapshot carries', () => {
     assert.deepStrictEqual(
       readPreMaxBounds({ maximized: true, preMaxBounds: { x: 1, y: 2, width: 3, height: 4 } }),
       { x: 1, y: 2, width: 3, height: 4 },
@@ -1478,3 +1468,50 @@ describe('planDesktopRestore — which desktop each window goes to and whether t
   });
 });
 
+
+describe('session-projection — unmaximizedRestoreDescriptor', () => {
+  const MAXIMIZED_RECT = { x: 0, y: 0, width: 1512, height: 900 };
+  const PRE_MAX = { x: 100, y: 110, width: 640, height: 480 };
+  const MAX_KEYS = ['maximized', 'preMaxBounds', 'preMaxX', 'preMaxY', 'preMaxWidth', 'preMaxHeight'];
+
+  it('an older maximized descriptor with a nested preMaxBounds restores at that rect', () => {
+    const out = unmaximizedRestoreDescriptor({
+      bounds: MAXIMIZED_RECT,
+      params: { keep: 'me', maximized: true, preMaxBounds: PRE_MAX },
+    });
+    assert.deepStrictEqual(out.bounds, PRE_MAX);
+    assert.deepStrictEqual(out.params, { keep: 'me' });
+  });
+
+  it('an older maximized descriptor with the flat preMaxX/Y/Width/Height restores at that rect', () => {
+    const out = unmaximizedRestoreDescriptor({
+      bounds: MAXIMIZED_RECT,
+      params: { maximized: true, preMaxX: 100, preMaxY: 110, preMaxWidth: 640, preMaxHeight: 480 },
+    });
+    assert.deepStrictEqual(out.bounds, PRE_MAX);
+    for (const k of MAX_KEYS) assert.strictEqual(k in out.params, false, `${k} must be dropped`);
+  });
+
+  it('a maximized descriptor with no stash keeps its saved bounds, unmaximized', () => {
+    const out = unmaximizedRestoreDescriptor({ bounds: MAXIMIZED_RECT, params: { maximized: true } });
+    assert.deepStrictEqual(out.bounds, MAXIMIZED_RECT);
+    assert.strictEqual('maximized' in out.params, false);
+  });
+
+  it('a descriptor that is not maximized keeps its bounds and loses only stray maximize keys', () => {
+    const out = unmaximizedRestoreDescriptor({
+      bounds: MAXIMIZED_RECT,
+      params: { keep: 1, preMaxBounds: PRE_MAX },
+    });
+    assert.deepStrictEqual(out.bounds, MAXIMIZED_RECT);
+    assert.deepStrictEqual(out.params, { keep: 1 });
+  });
+
+  it('does not mutate its input and keeps other descriptor fields', () => {
+    const input = { url: 'https://a.test', bounds: MAXIMIZED_RECT, params: { maximized: true, preMaxBounds: PRE_MAX } };
+    const out = unmaximizedRestoreDescriptor(input);
+    assert.strictEqual(out.url, 'https://a.test');
+    assert.strictEqual(input.params.maximized, true);
+    assert.deepStrictEqual(input.bounds, MAXIMIZED_RECT);
+  });
+});

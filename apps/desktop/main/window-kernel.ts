@@ -357,7 +357,6 @@ export type Command =
   | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number }
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle; expectedVersion: number }
   | { type: 'Maximize'; id: WindowId; workArea?: Rectangle; expectedVersion: number }
-  | { type: 'SeedMaximized'; id: WindowId; preMaxBounds: Rectangle | null; expectedVersion: number }
   | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean; expectedVersion: number }
@@ -2371,20 +2370,6 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           { type: 'Maximized', id: cmd.id, preMaxBounds: rec.bounds ?? null },
           // Drive the actual snap, reusing BoundsChanged. Skipped when the caller had no rect to hand.
           ...(cmd.workArea !== undefined ? ([{ type: 'BoundsChanged', id: cmd.id, bounds: cmd.workArea }] as Event[]) : []),
-        ],
-      };
-    }
-    case 'SeedMaximized': {
-      const rec = state.order.find((w) => w.id === cmd.id)!;
-      // Same fullscreen guard as Maximize/SetBounds.
-      if (rec.fsMode.name !== 'normal') return { events: [] };
-      return {
-        events: [
-          // The stash comes from the command, never from `rec.bounds` the way
-          // `Maximize` resolves it — at construction time those bounds are
-          // already the maximized rect. No paired BoundsChanged or
-          // PendingProjectionDiscarded: this seeds a record to match geometry that already exists.
-          { type: 'Maximized', id: cmd.id, preMaxBounds: cmd.preMaxBounds },
         ],
       };
     }

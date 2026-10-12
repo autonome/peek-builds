@@ -356,15 +356,15 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
         // Context may be cleaned up already during shutdown
       }
 
-      // Pull bounds + maximize state from the presentation captured
-      // pre-destruction. The presenter reads the window-state machine via
-      // the ONE restorable-geometry rule (window-presenter.ts
-      // getRestorableBounds, §5 step 7D) for every window kind, so a
-      // fullscreen/maximized window reopens at a sane rect.
-      const saveBounds = captured.presentation?.bounds ?? captured.bounds;
-      const saveMaximized = captured.presentation?.maximized ?? false;
-      const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
-        captured.presentation?.preMaxBounds ?? undefined;
+      // Pull bounds from the presentation captured pre-destruction. The
+      // presenter reads the window-state machine via the ONE restorable-geometry
+      // rule (window-presenter.ts getRestorableBounds, §5 step 7D) for every
+      // window kind, so a fullscreen window reopens at a sane rect. Maximize is
+      // not restored: a maximized window is saved at its pre-maximize rect.
+      const presentation = captured.presentation;
+      const saveBounds = presentation?.maximized && presentation.preMaxBounds
+        ? presentation.preMaxBounds
+        : (presentation?.bounds ?? captured.bounds);
 
       // Use the current navigated URL if available (tracks where user actually was)
       const currentUrl = windowData.params.currentUrl as string | undefined;
@@ -380,8 +380,6 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
         role: role || undefined,
         scrollX: scrollX || undefined,
         scrollY: scrollY || undefined,
-        maximized: saveMaximized || undefined,
-        preMaximizeBounds: savePreMaxBounds,
         timestamp: Date.now(),
       });
     }
@@ -490,11 +488,9 @@ export interface ClosedWindowEntry {
   role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
   scrollX?: number;      // Scroll position at time of close
   scrollY?: number;
-  maximized?: boolean;   // Page-host was maximized at close — restore directly into MAXIMIZED on reopen
-  // Pre-maximize bounds: stored alongside `maximized` so reopen-after-close
-  // can hand them to the page-host, letting unmaximize after reopen restore
-  // to the size before the original maximize. Read from the page-host URL
-  // params (preX/preY/preWidth/preHeight) at close time.
+  // Legacy: only entries persisted by older builds carry these; reopen reads them
+  // to come back unmaximized at `preMaximizeBounds`. New entries never set them.
+  maximized?: boolean;
   preMaximizeBounds?: { x: number; y: number; width: number; height: number };
   timestamp: number;
 }

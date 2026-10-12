@@ -375,10 +375,6 @@ export function kernelMaximize(id: WindowId, workArea?: Rectangle): void {
   });
 }
 
-export function kernelSeedMaximized(id: WindowId, preMaxBounds: Rectangle | null): void {
-  kernelExecute({ type: 'SeedMaximized', id, preMaxBounds, expectedVersion: getKernelExecutor().getState().version });
-}
-
 export function kernelUnmaximize(id: WindowId): void {
   kernelExecute({ type: 'Unmaximize', id, expectedVersion: getKernelExecutor().getState().version });
 }
