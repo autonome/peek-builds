@@ -173,7 +173,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 **Where in UI:** Settings > Core > "Window drag hold delay".
 
 **How to try it:**
-1. Open Settings and set "Window drag hold delay" (default: 0.3 seconds).
+1. Open Settings and set "Window drag hold delay" (default: 1 second).
 2. On a page, click and hold without moving. After the delay, the cursor changes to a hand.
 3. Now move the mouse to drag the window.
 4. On the navbar background, drag is instant with no delay.
