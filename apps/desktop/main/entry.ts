@@ -133,6 +133,7 @@ import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-installer.js';
 import { installDefaultProtocolGuard } from './default-protocol-guard.js';
 import { initRendererLog } from './renderer-log.js';
+import { installSpaceDropDiag } from './space-drop-diag.js';
 import { initMainLog } from './main-log.js';
 import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
@@ -1347,6 +1348,7 @@ const onReady = async () => {
   // from any preload-managed renderer to <userData>/logs/renderer.log.
   // Must be called after app is ready (app.getPath('userData') requires it).
   initRendererLog();
+  installSpaceDropDiag(); // TEMPORARY: space-drop diagnostic
 
   // Run daily backup check (non-blocking)
   checkAndRunDailyBackup().catch(err => {
