@@ -67,6 +67,11 @@ const border = {
   windowId: null,
   pendingUpdate: null, // { color, name } received while opening
   closeRequested: false,
+  // The open window is hidden because the app is not the focused app. It is
+  // kept, not closed, so activation shows it again at once: opening a fresh
+  // border window (display lookup, window creation, page load) is slow enough
+  // to see.
+  hiddenWhileInactive: false,
 };
 let borderHideTimer = null;
 const BORDER_HIDE_DELAY_MS = 600;
@@ -86,8 +91,13 @@ async function showBorder(color, name) {
       const exists = await api.window.exists(border.windowId);
       if (exists?.exists) {
         // The window may have been hidden since (the app resigning active
-        // hides overlays); the creation path shows it, so re-show it here
+        // hides it); the creation path shows it, so re-show it here
         // too — without activating the app.
+        if (!appFocused) {
+          concealBorder();
+          return;
+        }
+        border.hiddenWhileInactive = false;
         await api.window.show(border.windowId, { inactive: true });
         api.pubsub.publish('spaces:border-update', { color: safeColor, name });
         return;
@@ -132,10 +142,13 @@ async function showBorder(color, name) {
     }
     border.windowId = result.id;
     border.state = 'open';
+    border.hiddenWhileInactive = false;
     if (border.closeRequested) {
       hideBorder();
       return;
     }
+    // The app resigned active while the window was opening.
+    if (!appFocused) concealBorder();
     await api.window.setIgnoreMouseEvents(border.windowId, true, true);
     await api.window.setVisibleOnAllWorkspaces(border.windowId, true);
     if (border.pendingUpdate) {
@@ -165,10 +178,37 @@ function hideBorder() {
   border.windowId = null;
   border.pendingUpdate = null;
   border.closeRequested = false;
+  border.hiddenWhileInactive = false;
 }
 
-// The delay absorbs a brief resign/activate pair (a desktop switch, the
-// startup activation dance): whatever re-shows the border cancels it first.
+// Hides (never closes) the border the moment the app stops being the focused
+// app, with no delay: the border and its name chip must not stay on screen
+// over another app. A brief resign/activate pair (a desktop switch, a window
+// drag) therefore flickers the border, which is the accepted cost. Called
+// synchronously from the focus handler so the hide request leaves this tick.
+function concealBorder() {
+  cancelHideTimer();
+  if (border.state !== 'open' || !border.windowId || border.hiddenWhileInactive) return;
+  border.hiddenWhileInactive = true;
+  try {
+    Promise.resolve(api.window.hide(border.windowId)).catch(() => {});
+  } catch { /* window gone */ }
+}
+
+// Shows the border hidden by concealBorder() again, at once, without
+// activating the app. updateBorderVisibility() runs right after and closes it
+// if the window that took focus is not a space window.
+function revealBorder() {
+  if (border.state !== 'open' || !border.windowId || !border.hiddenWhileInactive) return;
+  border.hiddenWhileInactive = false;
+  try {
+    Promise.resolve(api.window.show(border.windowId, { inactive: true })).catch(() => {});
+  } catch { /* window gone */ }
+}
+
+// The delay absorbs focus moving between Peek's own windows (to a window
+// outside the space and back): whatever re-shows the border cancels it first.
+// App focus never goes through it — see concealBorder().
 function scheduleHideBorder() {
   if (!borderHideTimer) {
     borderHideTimer = setTimeout(() => {
@@ -269,7 +309,7 @@ let appFocused = true;
 async function updateBorderVisibility() {
   if (!shouldShowBorder(appFocused, true)) {
     // Backgrounded: never open the border (it would activate the app).
-    scheduleHideBorder();
+    concealBorder();
     return;
   }
   if (!activeSpaceId) {
@@ -287,7 +327,7 @@ async function updateBorderVisibility() {
     const modeResult = await api.context.get('mode', focusedId);
     // The app may have resigned active during the awaits above.
     if (!appFocused) {
-      scheduleHideBorder();
+      concealBorder();
       return;
     }
     // The default workspace shows no border — Goal (handoff.md): it is what
@@ -311,15 +351,17 @@ async function updateBorderVisibility() {
 }
 
 // The border and its name chip are visible only while Peek is the focused
-// app: resigning active hides them (after the hide delay) even when windows
-// of the space are still showing behind the other app, and becoming active
-// again re-evaluates them from the focused window.
+// app: resigning active hides them at once even when windows of the space are
+// still showing behind the other app, and becoming active shows the same
+// window again at once, then re-evaluates it from the focused window. Both
+// edges issue their window request synchronously, before any await.
 function handleAppFocusChanged(msg) {
   appFocused = !!msg?.focused;
   if (appFocused) {
+    revealBorder();
     updateBorderVisibility();
   } else {
-    scheduleHideBorder();
+    concealBorder();
   }
 }
 
@@ -1137,6 +1179,7 @@ export const __test = {
   showBorder,
   border,
   handleAppFocusChanged,
+  cancelHideTimer,
   setActiveSpaceId: (id) => { activeSpaceId = id; },
 };
 
