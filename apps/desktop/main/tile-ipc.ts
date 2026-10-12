@@ -158,6 +158,7 @@ import {
   isWaylandSession,
 } from './shortcuts.js';
 import { resolveCliHelperPath, formatCliCommand } from './cli-helper.js';
+import { gatherProcessMetrics, summarizeMemory } from './process-metrics.js';
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
@@ -7555,6 +7556,22 @@ export function registerTileIpcHandlers(): void {
     }
     const verbArgs = Array.isArray(args.args) ? args.args.map(String) : [];
     return { success: true, data: { command: formatCliCommand(args.verb, verbArgs) } };
+  });
+
+  // tile:app:metrics — aggregate memory across every Peek process (main,
+  // renderers, GPU, utility) for the memory HUD: `{ totalKb, processCount,
+  // byType }`. trustedBuiltin only — process-level telemetry, like
+  // tile:pubsub:stats.
+  registerTileIpc('tile:app:metrics', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:metrics', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:metrics' };
+    }
+    return { success: true, data: summarizeMemory(gatherProcessMetrics()) };
   });
 
   // ── tile:darkMode:* ──────────────────────────────────────────────

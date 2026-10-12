@@ -1,7 +1,7 @@
 /**
  * Unit tests for the pure parts of process→tile→window attribution.
  *
- * Covers parseTileIdFromUrl + joinMetrics (process-metrics.ts) and the
+ * Covers parseTileIdFromUrl + joinMetrics + summarizeMemory (process-metrics.ts) and the
  * config/formatting helpers (cpu-watch.ts). The Electron-side collectors
  * (gatherWebContents / gatherProcessMetrics / probeVisibilityState) need a live
  * runtime and aren't exercised here — they're thin wrappers over Electron APIs.
@@ -12,6 +12,7 @@ import * as assert from 'node:assert';
 import {
   parseTileIdFromUrl,
   joinMetrics,
+  summarizeMemory,
   type ProcMetric,
   type WcDescriptor,
 } from './process-metrics.js';
@@ -81,6 +82,46 @@ describe('joinMetrics', () => {
     const joined = joinMetrics(metrics, []);
     assert.ok(!('tiles' in metrics[0]));
     assert.deepEqual(joined[0].tiles, []);
+  });
+});
+
+describe('summarizeMemory', () => {
+  it('totals memory across every process and groups it by process type', () => {
+    const summary = summarizeMemory([
+      proc({ pid: 1, procType: 'Browser', memoryKb: 100_000 }),
+      proc({ pid: 2, procType: 'Tab', memoryKb: 50_000 }),
+      proc({ pid: 3, procType: 'Tab', memoryKb: 25_000 }),
+      proc({ pid: 4, procType: 'GPU', memoryKb: 40_000 }),
+      proc({ pid: 5, procType: 'Utility', memoryKb: 10_000 }),
+    ]);
+    assert.equal(summary.totalKb, 225_000);
+    assert.equal(summary.processCount, 5);
+    assert.deepEqual(summary.byType, {
+      Browser: 100_000,
+      Tab: 75_000,
+      GPU: 40_000,
+      Utility: 10_000,
+    });
+  });
+
+  it('returns zeros for no processes', () => {
+    assert.deepEqual(summarizeMemory([]), { totalKb: 0, processCount: 0, byType: {} });
+  });
+
+  it('counts a process with no usable memory figure as zero', () => {
+    const summary = summarizeMemory([
+      proc({ pid: 1, procType: 'Tab', memoryKb: 30_000 }),
+      proc({ pid: 2, procType: 'Tab', memoryKb: NaN }),
+      proc({ pid: 3, procType: 'Zygote', memoryKb: -5 }),
+    ]);
+    assert.equal(summary.totalKb, 30_000);
+    assert.equal(summary.processCount, 3);
+    assert.deepEqual(summary.byType, { Tab: 30_000, Zygote: 0 });
+  });
+
+  it('files a process without a type under "unknown"', () => {
+    const summary = summarizeMemory([proc({ pid: 1, procType: '', memoryKb: 7 })]);
+    assert.deepEqual(summary.byType, { unknown: 7 });
   });
 });
 

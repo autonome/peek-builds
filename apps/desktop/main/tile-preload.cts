@@ -2623,6 +2623,16 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:app:cli-command', { token: tileToken, verb, args });
     },
+    /**
+     * Aggregate memory across every Peek process:
+     * `{ totalKb, processCount, byType: { [processType]: kb } }`.
+     */
+    metrics: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:metrics', { token: tileToken });
+    },
   };
 
   // ── Nav (trustedBuiltin only) ─────────────────────────────────────────

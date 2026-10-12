@@ -13,6 +13,8 @@
  *   - the background CPU watchdog (cpu-watch.ts) — auto-logs the culprit when a
  *     process sustains high CPU, so a hot Peek is self-attributing in main.log
  *     with no live debugging.
+ *   - the `tile:app:metrics` IPC (tile-ipc.ts) — aggregate memory for the
+ *     memory HUD, via `summarizeMemory`.
  *
  * The join itself (`joinMetrics`) is a pure function over plain data so it is
  * unit-testable under ELECTRON_RUN_AS_NODE=1. Electron access goes through
@@ -106,6 +108,32 @@ export function joinMetrics(
   return metrics
     .map(m => ({ ...m, tiles: byPid.get(m.pid) ?? [] }))
     .sort((a, b) => b.percentCpu - a.percentCpu);
+}
+
+/** Aggregate memory across every Peek process (main, renderers, GPU, utility). */
+export interface MemorySummary {
+  /** Sum of every process's working set, kilobytes. */
+  totalKb: number;
+  processCount: number;
+  /** Kilobytes per ProcessMetric type ('Browser', 'Tab', 'GPU', …). */
+  byType: Record<string, number>;
+}
+
+/**
+ * Sum process memory into one total plus a per-process-type breakdown. Pure.
+ * A missing, non-finite or negative figure counts as zero so one odd process
+ * can't poison the total; the process is still counted.
+ */
+export function summarizeMemory(metrics: ProcMetric[]): MemorySummary {
+  let totalKb = 0;
+  const byType: Record<string, number> = {};
+  for (const m of metrics) {
+    const kb = Number.isFinite(m.memoryKb) && m.memoryKb > 0 ? m.memoryKb : 0;
+    const type = m.procType || 'unknown';
+    totalKb += kb;
+    byType[type] = (byType[type] ?? 0) + kb;
+  }
+  return { totalKb, processCount: metrics.length, byType };
 }
 
 // ─── Electron-side collection ──────────────────────────────────────────────────
