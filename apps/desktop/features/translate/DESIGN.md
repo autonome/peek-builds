@@ -77,13 +77,26 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
 
 - About 35 MB per pair on disk, one direction per model, mostly to or from English. A
   non-English pair pivots once through `en`.
-- Several records of the same pair coexist in the catalogue (18 pairs have two model
-  records, across versions 3.0, 3.0a1 and 3.1 and architectures); the highest compatible
-  version of the chosen architecture wins.
+- Several models of the same pair coexist in the catalogue (18 pairs have two, across
+  versions 3.0, 3.0a1 and 3.1 and architectures). Each record's `filter_expression` says which
+  Firefox builds it is for, and it decides most of these: `env.appinfo.OS == 'Android'` /
+  `!= 'Android'` splits en-ko, en-ru, ja-en, ko-en and zh-Hans-en between a phone model
+  (base-memory 3.1, split vocab) and a desktop one (base 3.0); `env.channel == 'default' ||
+  env.channel == 'nightly'` marks the 3.0a1 pre-releases nightly-only, so nn-en has no release
+  model at all. Peek evaluates filters as a desktop release build and drops any record whose
+  filter it cannot read.
+- Selection, `main/page-translate/model-store.ts resolvePlan()`: of the records that pass the
+  filter, have a major version the engine reads (3) and form a complete model (`model`, `lex`,
+  and `vocab` or both `srcvocab` and `trgvocab`), a preferred architecture wins when present,
+  then the newest version (`3.0a1` < `3.0` < `3.1`). No direct pair → one pivot through `en`;
+  otherwise the result names the missing legs.
 - Cache in `<userData>/translations/`: `records.json` and
-  `models/<src>-<tgt>/<architecture>/<version>/{model,lex,vocab}`. Writes go to `.tmp` and are
-  renamed into place, as in `main/adblocker.ts`. Each decompressed file is checked against
-  `decompressedHash` before it is used.
+  `models/<src>-<tgt>/<architecture>/<version>/<fileType>` (`model-store.ts cachePath()`, which
+  rejects any record whose fields would leave the cache root). Writes go to `.tmp` and are
+  renamed into place, as in `main/adblocker.ts`. Each download is checked against
+  `attachment.hash`/`size` and each decompressed file against `decompressedHash`/`Size`
+  (`verifyAttachment()`, `verifyDecompressed()`; both SHA-256, confirmed on the real en-de
+  files) before it is used.
 - Fetched from main with `net.fetch`.
 
 ## Main-process side, `main/page-translate/`
