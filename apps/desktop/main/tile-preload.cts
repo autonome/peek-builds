@@ -770,6 +770,19 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * The id of an open window showing `url` (another window than the
+     * caller's), or null when none is. Pages saved in an inactive space have
+     * no window and do not count. Resolves `{ success, id }`. Requires
+     * `window.query` (or trustedBuiltin).
+     */
+    findByUrl: (url: string) => {
+      return ipcRenderer.invoke('tile:window:find-by-url', {
+        token: tileToken,
+        url,
+      });
+    },
+
+    /**
      * Check if a window with the given id is still open. Requires
      * `window.manage` (or trustedBuiltin).
      */

@@ -540,6 +540,43 @@
         border-color: rgba(52, 199, 89, 0.6);
       }
 
+      /* URL action button at the right end of the input (Cmd+Enter). */
+      #url-action {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+        margin-left: 8px;
+        padding: 3px 8px;
+        height: 26px;
+        box-sizing: border-box;
+        background: var(--cmd-badge-bg);
+        border: 1px solid var(--cmd-surface-divider);
+        border-radius: 6px;
+        color: var(--theme-text, #333);
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        user-select: none;
+      }
+      #url-action[hidden] { display: none; }
+      #url-action:hover { background: var(--cmd-surface-selected); }
+      #url-action:active { transform: scale(0.98); }
+      #url-action .icon-switch,
+      #url-action .icon-open { display: none; }
+      #url-action[data-action="switch"] .icon-switch,
+      #url-action[data-action="open"] .icon-open { display: block; }
+      #url-action[data-action="switch"] {
+        background: rgba(0, 122, 255, 0.18);
+        border-color: rgba(0, 122, 255, 0.45);
+      }
+      #url-action kbd {
+        font-family: inherit;
+        font-size: 11px;
+        color: var(--theme-text-muted, #999);
+      }
+
       /* Chain steps - shows the pipe history */
       #chain-steps {
         display: none;
@@ -599,6 +636,22 @@
         <input id="command-input" type="text" autofocus spellcheck="false" autocomplete="off" placeholder="Feed meeeee" />
         <div id="command-text"></div>
       </div>
+      <!-- URL action: what Cmd+Enter does with the panel's web address.
+           panel.js updateUrlAction() sets data-action to "switch" (a window
+           showing it is open) or "open" (a new window), and hides it when the
+           panel holds no address. -->
+      <button id="url-action" type="button" data-no-drag hidden tabindex="-1">
+        <svg class="icon-switch" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <rect x="9" y="5" width="12" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M2 12h10m-3.5-3.5L12 12l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg class="icon-open" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <rect x="3" y="7" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M11 3h8a2 2 0 0 1 2 2v8M14 10l7-7m-5 0h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="url-action-label"></span>
+        <kbd>⌘↵</kbd>
+      </button>
     </div>
     <div id="results"></div>
 

@@ -1673,6 +1673,122 @@ function hasModifier(e) {
   return e.altKey || e.ctrlKey || e.metaKey;
 }
 
+// ===== URL action (Cmd+Enter: switch to an open page, or open it) =====
+
+// Only web pages and peek pages can be "open in a window".
+function isSwitchableUrl(url) {
+  return typeof url === 'string' && /^(https?|peek):\/\//.test(url);
+}
+
+/**
+ * The web address the panel is holding, in the order plain Enter would pick
+ * among them: a highlighted url-history row after arrowing into the list, the
+ * shown inline completion when the typed text is no address itself, the typed
+ * address, then an auto-selected url-history row. Null when there is none.
+ */
+function currentActionUrl() {
+  const fsmState = machine.getState();
+  const row = selectedRow(fsmState, state);
+  const rowUrl = (row !== null && row >= state.matches.length)
+    ? (state.urlMatches[row - state.matches.length]?.content || null)
+    : null;
+  if (fsmState === States.RESULTS_OPEN && rowUrl) return rowUrl;
+  const typed = (state.typed || '').trim();
+  const urlResult = getValidURL(typed);
+  if (!urlResult.valid && state.matches.length === 0 && urlGhostSuggestion) {
+    const completion = currentGhostCompletion(state.typed);
+    if (completion) {
+      return urlGhostGranularity === 'full' ? urlGhostSuggestion.url : withDefaultScheme(completion);
+    }
+  }
+  if (urlResult.valid) return urlResult.url;
+  return rowUrl;
+}
+
+// What the URL action button currently says: { url, action: 'switch'|'open', id }.
+let urlAction = null;
+let urlActionQuery = 0;
+
+function renderUrlAction() {
+  const btn = document.getElementById('url-action');
+  if (!btn) return;
+  if (!urlAction) {
+    btn.hidden = true;
+    btn.removeAttribute('data-action');
+    return;
+  }
+  btn.hidden = false;
+  btn.dataset.action = urlAction.action;
+  const label = urlAction.action === 'switch' ? 'Switch to page' : 'Open in new window';
+  btn.title = `${label} (Cmd+Enter)`;
+  btn.setAttribute('aria-label', label);
+  const labelEl = btn.querySelector('.url-action-label');
+  if (labelEl) labelEl.textContent = urlAction.action === 'switch' ? 'Switch' : 'Open';
+}
+
+// Re-derive the button from the panel's current address. The "is it open"
+// answer comes from main (`api.window.findByUrl`); a newer address supersedes
+// an answer still in flight.
+function updateUrlAction() {
+  const url = currentActionUrl();
+  if (!isSwitchableUrl(url)) {
+    urlActionQuery++;
+    if (urlAction) { urlAction = null; renderUrlAction(); }
+    return;
+  }
+  if (urlAction && urlAction.url === url) return;
+  const query = ++urlActionQuery;
+  // Until main answers, the address shows as "open" — the safe default.
+  urlAction = { url, action: 'open', id: null };
+  renderUrlAction();
+  lookupOpenWindow(url).then((id) => {
+    if (query !== urlActionQuery) return;
+    urlAction = { url, action: id != null ? 'switch' : 'open', id };
+    renderUrlAction();
+  });
+}
+
+async function lookupOpenWindow(url) {
+  try {
+    const result = await api.window.findByUrl(url);
+    return result && result.success && typeof result.id === 'number' ? result.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Carry out the URL action for `url`: bring forward the window showing it, or
+ * open it in a new window when none is. `known` is the button's answer for this
+ * address when it already has one, so the raise is sent without another round
+ * trip.
+ */
+async function runUrlAction(url, known) {
+  if (!isSwitchableUrl(url)) return;
+  const id = known && known.url === url && known.action !== 'open' ? known.id : await lookupOpenWindow(url);
+  state.lastExecuted = url;
+  updateMatchCount(url);
+  if (typeof id === 'number') {
+    log('cmd:panel', 'Switching to open page:', url, id);
+    try {
+      await api.window.focus(id, { named: true });
+    } catch (error) {
+      log.error('cmd:panel', 'Failed to switch to open page:', error);
+    }
+    return;
+  }
+  log('cmd:panel', 'Opening URL in a new window:', url);
+  api.window.open(url, {
+    role: 'content',
+    width: 1024,
+    height: 768,
+    trackingSource: 'cmd',
+    trackingSourceId: 'url-action'
+  }).catch(error => {
+    log.error('cmd:panel', 'Failed to open URL:', error);
+  });
+}
+
 // ===== UI Update Functions =====
 
 /**
@@ -1715,6 +1831,7 @@ function appendUrlGhost(typed) {
 }
 
 function updateCommandUI() {
+  updateUrlAction();
   const commandText = document.getElementById('command-text');
   commandText.innerHTML = '';
 
@@ -1841,6 +1958,7 @@ function updateCommandUI() {
 }
 
 function updateResultsUI() {
+  updateUrlAction();
   const resultsContainer = document.getElementById('results');
   resultsContainer.innerHTML = '';
 
@@ -2610,6 +2728,10 @@ function actionHandlers() {
       });
     },
 
+    runUrlAction(payload) {
+      runUrlAction(payload?.url, payload?.known);
+    },
+
     openSearch(payload) {
       const trimmedText = (payload?.value || state.typed || '').trim();
       if (!trimmedText) return;
@@ -3016,6 +3138,17 @@ async function render() {
       return;
     }
 
+    // Cmd+Enter: the URL action — switch to the window showing the panel's
+    // address, or open it in a new one (the button at the input's right end
+    // says which).
+    if (e.key === 'Enter' && e.metaKey && !e.altKey && !e.ctrlKey) {
+      e.preventDefault();
+      const url = currentActionUrl();
+      if (!isSwitchableUrl(url)) return;
+      machine.dispatch(Events.URL_ACTION, { url, known: urlAction });
+      return;
+    }
+
     if (e.key === 'Enter' && !hasModifier(e)) {
       e.preventDefault();
       const trimmedText = commandInput.value.trim();
@@ -3146,6 +3279,17 @@ async function render() {
 
   // Initialize mode indicator
   initModeIndicator();
+
+  // URL action button — the same action as Cmd+Enter.
+  const urlActionBtn = document.getElementById('url-action');
+  if (urlActionBtn) {
+    urlActionBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the input focused
+    urlActionBtn.addEventListener('click', () => {
+      const url = currentActionUrl();
+      if (!isSwitchableUrl(url)) return;
+      machine.dispatch(Events.URL_ACTION, { url, known: urlAction });
+    });
+  }
 
   // Chain cancel button handler — dispatch through state machine
   const chainCancelBtn = document.getElementById('chain-cancel');

@@ -402,6 +402,30 @@ export function findHybridWindowsByUrl(url: string): HybridWindowEntry[] {
 }
 
 /**
+ * Find the hybrid windows currently SHOWING `url` — what "is this page open?"
+ * means to a user. Unlike `findHybridWindowsByUrl` (reuse on a repeat open),
+ * only the LIVE content URL counts: a window that has navigated away from the
+ * address it was opened for is no longer showing it, and one that was
+ * redirected is showing where it landed. The requested address stands in only
+ * while the content has no URL yet (still loading). Same canonical matching
+ * (`normalizeForDedup`), http(s) only.
+ */
+export function findHybridWindowsShowingUrl(url: string): HybridWindowEntry[] {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return [];
+  const target = normalizeForDedup(url);
+  const found: HybridWindowEntry[] = [];
+  for (const e of entries.values()) {
+    if (e.baseWin.isDestroyed()) continue;
+    const live = safeUrl(e.contentWC);
+    const shown = live && live !== 'about:blank' ? live : e.requestedUrl;
+    if (shown && normalizeForDedup(shown) === target) {
+      found.push(toPublic(e));
+    }
+  }
+  return found;
+}
+
+/**
  * Find the hybrid windows opened with dedup `key` by the feature at `source` —
  * candidates for reuse, chosen among by the kernel as for a url.
  * Mirrors the canvas path's `findWindowsByKey(source, key)`: a key is the

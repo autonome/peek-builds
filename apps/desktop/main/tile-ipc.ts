@@ -124,8 +124,9 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
+import { getAllHybridWindows, getHybridWindow, findHybridWindowsShowingUrl } from './hybrid-page-host-registry.js';
 import {
+  pickReusableHere,
   getTopmostContentWindowId,
   getTopmostWebPageWindowId,
   getWindowModeName,
@@ -457,6 +458,33 @@ function writeFeatureHistory(
  * registry `disabled` flag is the boot-time load gate.
  */
 const REQUIRED_BUILTIN_FEATURE_IDS = new Set<string>(['cmd', 'features-manager']);
+
+/**
+ * The one "is this page open?" lookup: the id of a live window showing `url`,
+ * or null. Only windows that exist count — pages saved in an inactive space's
+ * snapshot have no window and never match. Web pages (http/https) match on the
+ * page a hybrid page-host is showing now (`findHybridWindowsShowingUrl`),
+ * preferring one the kernel would reuse on the current desktop and otherwise
+ * any; `peek://` pages match a window whose user-facing address is exactly the
+ * url. `excludeId` leaves out the asking window itself.
+ */
+export function findOpenWindowIdForUrl(url: string, excludeId?: number | null): number | null {
+  if (typeof url !== 'string' || !url) return null;
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const found = findHybridWindowsShowingUrl(url).filter((e) => e.windowId !== excludeId);
+    if (found.length === 0) return null;
+    const here = pickReusableHere(found, (e) => e.baseWin);
+    return (here ?? found[0]).windowId;
+  }
+  if (url.startsWith('peek://')) {
+    for (const win of getAllLiveWindows()) {
+      if (win.id === excludeId || !getWindowInfo(win.id)) continue;
+      const presentation = getWindowPresentation(win.id);
+      if (presentation && presentation.address === url) return presentation.id;
+    }
+  }
+  return null;
+}
 
 /**
  * Register all tile IPC handlers
@@ -3064,6 +3092,30 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:find-by-url ───────────────────────────────────────
+  //
+  // "Is this page open, and in which window?" without opening anything —
+  // `findOpenWindowIdForUrl`. Gated by `window.query`, like the list it
+  // answers a narrower question of. The asking window is never its own answer.
+  registerTileIpc('tile:window:find-by-url', { mode: 'handle' }, async (event, args: {
+    token: string;
+    url: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'list');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:find-by-url', check.error, args.token);
+      return { success: false, id: null, error: check.error };
+    }
+    try {
+      const self = windowFromWebContents(event.sender);
+      return { success: true, id: findOpenWindowIdForUrl(String(args.url ?? ''), self?.id ?? null) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, id: null, error: message };
     }
   });
 

@@ -115,6 +115,7 @@ export const Events = Object.freeze({
   TAB: 'Tab',
   SHIFT_TAB: 'ShiftTab',
   ENTER: 'Enter',
+  URL_ACTION: 'url_action',         // Cmd+Enter or the URL action button: switch to / open the panel's address
   ESCAPE: 'Escape',
   // Click events
   CLICK_RESULT: 'click_result',     // Clicked a command result item
@@ -243,6 +244,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     isURL: (payload) => {
       return payload?.isURL === true;
     },
+    hasActionUrl: (payload) => typeof payload?.url === 'string' && payload.url.length > 0,
     isAllHashtags: (payload) => {
       return payload?.allHashtags === true;
     },
@@ -487,6 +489,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
         // Enter should not silently route to a web search — the user invokes
         // `search` explicitly if they want one).
       ],
+      [Events.URL_ACTION]: [
+        { guard: 'hasActionUrl', target: States.CLOSING, actions: ['runUrlAction', 'clearInput', 'shutdown'] },
+      ],
       [Events.ESCAPE]: [
         // Escape peels one layer per press. Visible dropdown first — hide it and
         // keep the typed text; only a later press clears the text, then closes.
@@ -593,6 +598,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           target: States.CLOSING,
           actions: ['openURL', 'recordFrecency', 'clearInput', 'shutdown'],
         },
+      ],
+      [Events.URL_ACTION]: [
+        { guard: 'hasActionUrl', target: States.CLOSING, actions: ['runUrlAction', 'clearInput', 'shutdown'] },
       ],
       [Events.CLICK_RESULT]: [
         {
