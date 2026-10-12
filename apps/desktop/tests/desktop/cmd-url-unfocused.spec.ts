@@ -26,6 +26,7 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForPanelCommandsLoaded } from '../helpers/window-utils';
+import { TRANSIENT_FROM_OTHER_APP } from '../../main/izui-roles';
 
 test.describe('cmd URL open while the app is in the background @desktop', () => {
   let app: DesktopApp;
@@ -196,6 +197,32 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
     }) as any, opened.id);
     expect(nativeVisible).toBe(true);
 
+    if (!TRANSIENT_FROM_OTHER_APP) {
+      // Transience from another app is switched off (`izui-roles.ts
+      // TRANSIENT_FROM_OTHER_APP`): the page is an ordinary window, raised
+      // with the user's intent so the app comes forward with it, and losing
+      // key does not end it. Whether the app actually activates is decided by
+      // `window-kernel-executor.ts planRaise()`, which answers `inactive-show`
+      // headless, so it is not asserted here.
+      const pageRecord = page as KernelState['order'][number] & { transient?: boolean };
+      expect(pageRecord.nonActivating === true, timeline.join('\n')).toBe(false);
+      expect(pageRecord.transient === true, timeline.join('\n')).toBe(false);
+      expect(effectsFor(timeline, 'RaiseWindow', pageWmId)[0], timeline.join('\n')).toContain(`RaiseWindow(${pageWmId}):user`);
+      const blurredOrdinary = await app.evaluateMain!(((_e: unknown, id: number) => {
+        return (globalThis as any).__peek_test.blurHybridWindowForTest(id);
+      }) as any, opened.id);
+      expect(blurredOrdinary).toBe(true);
+      await new Promise((r) => setTimeout(r, 800));
+      const afterOrdinaryBlur = await readState();
+      expect(afterOrdinaryBlur.order.find((w) => w.id === pageWmId)?.visible, JSON.stringify(afterOrdinaryBlur.order)).toBe(true);
+      const timelineAfterOrdinaryBlur = await readTimeline(baselineLen);
+      expect(effectsFor(timelineAfterOrdinaryBlur, 'DismissWindow', pageWmId), timelineAfterOrdinaryBlur.join('\n')).toEqual([]);
+      await bgWindow.evaluate(async (wid: number) => {
+        try { await (window as any).app.window.close(wid); } catch { /* ignore */ }
+      }, opened.id);
+      return;
+    }
+
     // The palette held key over the other app when the page was asked for, so
     // the page is a transient page-host window (docs/design/window-rules.md G1): built
     // non-activating, raised with the user's intent, and handed key — all with
@@ -231,6 +258,7 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
   });
 
   test('a link the transient page opens in a new window is transient too, at the default size', async () => {
+    test.skip(!TRANSIENT_FROM_OTHER_APP, 'transience from another app is switched off (izui-roles.ts TRANSIENT_FROM_OTHER_APP)');
     const url = `http://127.0.0.1:${serverPort}/opener`;
     const { opened, pageWmId } = await openPageFromPaletteInBackground(url);
     const before = await readState();
@@ -298,6 +326,7 @@ test.describe('cmd URL open while the app is in the background @desktop', () => 
   });
 
   test('the app activating while the transient page-host window holds key closes the page', async () => {
+    test.skip(!TRANSIENT_FROM_OTHER_APP, 'transience from another app is switched off (izui-roles.ts TRANSIENT_FROM_OTHER_APP)');
     const url = `http://127.0.0.1:${serverPort}/activated`;
     const { pageWmId } = await openPageFromPaletteInBackground(url);
 

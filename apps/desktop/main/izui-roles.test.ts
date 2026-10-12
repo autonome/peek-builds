@@ -22,6 +22,8 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  pageActivatesFromOtherApp,
+  TRANSIENT_FROM_OTHER_APP,
   reuseShowActivation,
   windowIsTransient,
   hybridResizeDirAt,
@@ -216,10 +218,41 @@ describe('windowNonActivating (the Panel open-time declaration — window-rules.
   });
 });
 
+describe('TRANSIENT_FROM_OTHER_APP (transience for opens made while another app is focused)', () => {
+  // Off until the switch-to-page flow (command panel "Switch to") is settled:
+  // a page opened over another app opens as an ordinary window and brings
+  // Peek forward, so the user can jump straight into an already-open page.
+  it('is switched off', () => {
+    assert.strictEqual(TRANSIENT_FROM_OTHER_APP, false);
+  });
+});
+
+describe('pageActivatesFromOtherApp (a page opened from a panel over another app while transience is off)', () => {
+  it('a page opened to show while a panel holds key over another app brings Peek forward', () => {
+    assert.strictEqual(pageActivatesFromOtherApp(true, {}), !TRANSIENT_FROM_OTHER_APP);
+    assert.strictEqual(pageActivatesFromOtherApp(true, { show: true }), !TRANSIENT_FROM_OTHER_APP);
+  });
+
+  it('nobody typing into the app, a window opened not to show, or a caller-typed window is left alone', () => {
+    assert.strictEqual(pageActivatesFromOtherApp(false, {}), false);
+    assert.strictEqual(pageActivatesFromOtherApp(true, { show: false }), false);
+    assert.strictEqual(pageActivatesFromOtherApp(true, { type: 'panel' }), false);
+    assert.strictEqual(pageActivatesFromOtherApp(true, { regular: true }), false);
+  });
+
+  it('never both opens transient and activates', () => {
+    for (const held of [false, true]) {
+      for (const options of [{}, { show: false }, { type: 'panel' }, { regular: true }]) {
+        assert.ok(!(pageActivatesFromOtherApp(held, options) && pageOpensTransient(held, options)));
+      }
+    }
+  });
+});
+
 describe('pageOpensTransient (a page opened from a panel over another app — window-rules.md G1)', () => {
-  it('a page opened to show while a panel holds key over another app is a transient page-host window', () => {
-    assert.strictEqual(pageOpensTransient(true, {}), true);
-    assert.strictEqual(pageOpensTransient(true, { show: true }), true);
+  it('a page opened to show while a panel holds key over another app is a transient page-host window only while transience from another app is on', () => {
+    assert.strictEqual(pageOpensTransient(true, {}), TRANSIENT_FROM_OTHER_APP);
+    assert.strictEqual(pageOpensTransient(true, { show: true }), TRANSIENT_FROM_OTHER_APP);
   });
 
   it('nobody typing into the app — an active app, or a command-line open — is an ordinary open', () => {
@@ -249,8 +282,8 @@ describe('windowIsTransient (specs/kernel-desktops.md "Transient window")', () =
     assert.strictEqual(windowIsTransient(false, {}), false);
   });
 
-  it('while another app is focused, anything opened to show is transient', () => {
-    assert.strictEqual(windowIsTransient(true, {}), true);
+  it('while another app is focused, anything opened to show is transient only while transience from another app is on', () => {
+    assert.strictEqual(windowIsTransient(true, {}), TRANSIENT_FROM_OTHER_APP);
     assert.strictEqual(windowIsTransient(true, { show: false }), false);
   });
 

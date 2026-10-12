@@ -51,6 +51,16 @@ rule that depends on either, on every platform the desktop app runs on.
   while Peek is focused is an ordinary window. A window opened while no Peek window holds key (a
   command-line open) is not transient (`window-rules.md` G1). Page chrome attached to a host
   (`overlayFor`) and windows that take no input are never transient.
+
+  **The second case is switched off** (`izui-roles.ts TRANSIENT_FROM_OTHER_APP`, `false`) until the
+  switch-to-page flow (the command panel's "Switch to" button, `tile-ipc.ts
+  findOpenWindowIdForUrl()`) is settled. While it is off, an open made while another app is focused
+  is transient only if its open asks for it; a page opened from the palette over another app opens
+  as an ordinary window with the user's intent (`izui-roles.ts pageActivatesFromOtherApp()`), so it
+  brings Peek forward and an already-open page for the same URL is reused rather than duplicated.
+  This lets the user jump from another app straight into a related page that is already open. The
+  rules below that depend on the second case (rule 3, the transient half of rule 5, G13's 5e) hold
+  again when the switch is turned back on, and the tests that cover them follow the switch.
 - **Ending a transient window**: a transient window ends — closed, or hidden if it is kept for
   reuse — when it loses key, when the app resigns, when the user switches desktop, and, if it took
   key from another app, when Peek comes forward while it holds key (`window-rules.md` 5e). Nothing
@@ -113,7 +123,7 @@ rule that depends on either, on every platform the desktop app runs on.
    the user asked for it without leaving the other app, so it ends when that moment ends — by
    leaving it (another app, another desktop) or by bringing Peek forward while it still holds key.
    Accepted cost of keeping a transient window on its own desktop: it cannot show over another
-   app's full-screen desktop.
+   app's full-screen desktop. Currently switched off; see "Transient window".
 4. **Closing or hiding a window never switches desktop.** Where key goes next is rule 9. While
    the app is inactive the manager focuses nothing: the user stays in the other app.
 5. **New things happen where the user is.** A request that would reuse an open window — a URL

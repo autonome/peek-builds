@@ -71,6 +71,15 @@ export function windowNonActivating(options: { type?: string; nonActivating?: bo
   return options.type === 'panel' || options.nonActivating === true;
 }
 
+// Whether an open made while another app is focused (a Peek panel holding key
+// over it) is transient. Switched off until the switch-to-page flow (the
+// command panel's "Switch to" button, `tile-ipc.ts findOpenWindowIdForUrl()`)
+// is settled: while off, a page opened that way opens as an ordinary window
+// and brings Peek forward (`pageActivatesFromOtherApp()`), so the user can
+// jump from another app straight into an already-open page. Setting this back
+// to true restores the transient behaviour and its tests' expectations.
+export const TRANSIENT_FROM_OTHER_APP: boolean = false;
+
 // A page opened to show while the user is typing into one of the app's panels
 // over another app is a transient page-host window: it takes key and content focus without the
 // app coming forward, so the user can use it at once and return to the other
@@ -82,8 +91,28 @@ export function pageOpensTransient(
   keyHeldWhileAppInactive: boolean,
   options: { show?: boolean; type?: string; regular?: boolean },
 ): boolean {
+  if (!TRANSIENT_FROM_OTHER_APP) return false;
+  return pageOpenedFromOtherApp(keyHeldWhileAppInactive, options);
+}
+
+// The open `pageOpensTransient()` describes, whatever the switch says.
+function pageOpenedFromOtherApp(
+  keyHeldWhileAppInactive: boolean,
+  options: { show?: boolean; type?: string; regular?: boolean },
+): boolean {
   if (options.regular === true) return false;
   return keyHeldWhileAppInactive && options.show !== false && options.type === undefined;
+}
+
+// With transience from another app switched off, that same open is an
+// ordinary window carrying the user's intent, so its raise is admitted while
+// another app is frontmost and Peek comes forward with it.
+export function pageActivatesFromOtherApp(
+  keyHeldWhileAppInactive: boolean,
+  options: { show?: boolean; type?: string; regular?: boolean },
+): boolean {
+  if (TRANSIENT_FROM_OTHER_APP) return false;
+  return pageOpenedFromOtherApp(keyHeldWhileAppInactive, options);
 }
 
 // The show option a reuse of an already-open window carries: a user gesture
@@ -101,9 +130,9 @@ export function reuseShowActivation(options: {
 // recorded as `WindowRecord.transient`. From the open options and whether a
 // Peek window holds key while another app is focused, never from role: while
 // Peek is focused only a window opened as transient is transient; while
-// another app is focused, anything opened to show is. A window that takes no
-// input never is; one opened not to show (session restore) is only if it
-// asked to be.
+// another app is focused, anything opened to show is, when
+// `TRANSIENT_FROM_OTHER_APP` is on. A window that takes no input never is; one
+// opened not to show (session restore) is only if it asked to be.
 export function windowIsTransient(
   keyHeldWhileAppInactive: boolean,
   options: { modal?: boolean; overlay?: boolean; show?: boolean; focusable?: boolean; clickThrough?: boolean; regular?: boolean },
@@ -114,7 +143,7 @@ export function windowIsTransient(
   // typing into a Peek panel, whatever stale key the kernel still holds) is
   // never transient by focus.
   if (options.regular === true) return false;
-  return keyHeldWhileAppInactive && options.show !== false;
+  return TRANSIENT_FROM_OTHER_APP && keyHeldWhileAppInactive && options.show !== false;
 }
 
 export function spacesPolicyForRole(

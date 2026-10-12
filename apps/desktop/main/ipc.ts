@@ -126,6 +126,7 @@ import {
   windowSelfClosesOnBlur,
   windowNonActivating,
   pageOpensTransient,
+  pageActivatesFromOtherApp,
   reuseShowActivation,
   windowIsTransient,
   deriveWindowSurface,
@@ -3331,6 +3332,14 @@ export function registerWindowHandlers(): void {
     // A regular open (command line) is a user gesture: the raise reaches it
     // and brings the app forward, as the transient path does for its window.
     if (options.regular === true) options.activation = 'user';
+    // While transience from another app is off (`izui-roles.ts
+    // TRANSIENT_FROM_OTHER_APP`), the page that would have opened transient is
+    // an ordinary window the user asked for: a fresh open or a reuse of the
+    // already-open page comes forward and brings the app with it.
+    if (pageActivatesFromOtherApp(keyHeldWhileAppInactive, options)) {
+      options.activation = 'user';
+      wmLog('page-activates-from-other-app', { url: String(url).substring(0, 80) });
+    }
     // The one transience decision for this window, read by both registration
     // branches below (`WindowRecord.transient`); decided here, before the
     // window is built, since building it can move key.
