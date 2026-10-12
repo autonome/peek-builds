@@ -54,8 +54,6 @@ import {
   finalizeWindowClose,
 } from './main.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
-// The session-descriptor maximize shape is owned by the projection module —
-// `serializeSession` writes it, this reads it back on the open path.
 
 import {
   APP_DEF_WIDTH,
