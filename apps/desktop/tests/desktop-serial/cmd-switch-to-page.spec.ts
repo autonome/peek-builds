@@ -14,8 +14,14 @@ import { waitForExtensionsReady, waitForAppReady, waitForPanelCommandsLoaded } f
  * Cmd+Enter on a "switch" address brings the open window forward without
  * creating another one.
  *
+ * The button follows windows opening, closing and navigating while the panel
+ * stays up. Every Visited suggestion row whose page is open in a window carries
+ * a marker, and picking that row switches to the window.
+ *
  * Contract this spec pins: `button#url-action` inside `cmd/panel.html`, with
- * `data-action` set to `switch` or `open` for a URL.
+ * `data-action` set to `switch` or `open` for a URL; Visited rows are
+ * `.url-result-item[data-url="<url>"]`, and an open page's row holds a
+ * `.url-open-marker`.
  *
  * Run with:
  *   echo 'apps/desktop/tests/desktop-serial/cmd-switch-to-page.spec.ts' > "$(scripts/tagged-path.sh test-spec)"
@@ -28,6 +34,10 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
   const OPEN_URL = 'https://example.com/cmd-switch-target';
   const NOT_OPEN_URL = 'https://example.com/cmd-switch-not-open';
   const SAVED_ONLY_URL = 'https://example.com/cmd-switch-saved-only';
+  const LATE_URL = 'https://example.com/cmd-switch-opens-later';
+  const ROW_QUERY = 'cmd-switch-row';
+  const ROW_OPEN_URL = 'https://example.com/cmd-switch-row-open';
+  const ROW_CLOSED_URL = 'https://example.com/cmd-switch-row-closed';
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('cmd-switch-to-page'));
@@ -212,5 +222,96 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
     await expect(action).toHaveAttribute('data-action', 'open', { timeout: 5000 });
     await closePanel(panel);
+  });
+
+  test('the URL action follows a window opening and closing while the panel stays up', async () => {
+    const panel = await openPanel(LATE_URL);
+    const action = panel.locator('button#url-action');
+    await expect(action, 'the URL action button is missing').toBeVisible({ timeout: 5000 });
+    await expect(action).toHaveAttribute('data-action', 'open', { timeout: 5000 });
+
+    // A window opens on the address with the panel still showing it: the
+    // button turns to "switch" without any typing. It opens without taking
+    // focus, as a window opened in the background would; a focused one would
+    // dismiss the panel.
+    const opened = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, { width: 800, height: 600, show: false });
+    }, LATE_URL);
+    expect(opened.success).toBe(true);
+    await expect
+      .poll(async () => (await liveWindowsAt(LATE_URL)).length, { timeout: 15000 })
+      .toBe(1);
+    const [lateId] = await liveWindowsAt(LATE_URL);
+    await expect(action, 'the button did not notice the window opening').toHaveAttribute(
+      'data-action', 'switch', { timeout: 5000 });
+
+    // And back to "open" once that window closes.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, lateId);
+    await expect(action, 'the button did not notice the window closing').toHaveAttribute(
+      'data-action', 'open', { timeout: 5000 });
+    await closePanel(panel);
+  });
+
+  test('every Visited row whose page is open is marked, and picking it switches', async () => {
+    // Both addresses are in history; only ROW_OPEN_URL has a window.
+    for (const url of [ROW_OPEN_URL, ROW_CLOSED_URL]) {
+      const tracked = await bgWindow.evaluate(async (u: string) => {
+        return await (window as any).app.datastore.trackNavigation(u, { source: 'window', windowType: 'main' });
+      }, url);
+      expect(tracked.success).toBe(true);
+    }
+    const opened = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, { width: 800, height: 600 });
+    }, ROW_OPEN_URL);
+    expect(opened.success).toBe(true);
+    await expect
+      .poll(async () => (await liveWindowsAt(ROW_OPEN_URL)).length, { timeout: 15000 })
+      .toBe(1);
+    const [rowOpenId] = await liveWindowsAt(ROW_OPEN_URL);
+
+    const panel = await openPanel(ROW_QUERY);
+    const openRow = panel.locator(`.url-result-item[data-url="${ROW_OPEN_URL}"]`);
+    const closedRow = panel.locator(`.url-result-item[data-url="${ROW_CLOSED_URL}"]`);
+    await expect(openRow, 'the open page has no Visited row').toHaveCount(1, { timeout: 8000 });
+    await expect(closedRow, 'the closed page has no Visited row').toHaveCount(1, { timeout: 8000 });
+    await expect(openRow.locator('.url-open-marker'), 'the open page is not marked').toBeVisible({ timeout: 5000 });
+    await expect(closedRow.locator('.url-open-marker')).toHaveCount(0);
+
+    // A window opening (in the background) on the other row's page marks it
+    // too, panel still up.
+    const openedLater = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, { width: 800, height: 600, show: false });
+    }, ROW_CLOSED_URL);
+    expect(openedLater.success).toBe(true);
+    await expect(closedRow.locator('.url-open-marker'), 'a newly opened page was not marked').toBeVisible({ timeout: 8000 });
+    const [rowLaterId] = await liveWindowsAt(ROW_CLOSED_URL);
+
+    // Picking the marked row brings its window forward instead of opening one.
+    await bgWindow.evaluate((url: string) => {
+      const api = (window as any).app;
+      (window as any).__rowTargetOpened = 0;
+      api.subscribe('window:opened', (msg: any) => {
+        if ((msg?.url || '').startsWith(url)) (window as any).__rowTargetOpened++;
+      });
+    }, ROW_OPEN_URL);
+    await openRow.click();
+    if (!panel.isClosed()) await panel.waitForEvent('close', { timeout: 10000 }).catch(() => {});
+    if (!process.env.HEADLESS) {
+      await expect
+        .poll(async () => bgWindow.evaluate(async (id: number) => {
+          const list = await (window as any).app.window.list();
+          return !!(list.windows || []).find((w: any) => w.id === id && w.focused);
+        }, rowOpenId), { timeout: 5000, message: 'the row\'s window was not brought forward' })
+        .toBe(true);
+    }
+    expect(await bgWindow.evaluate(() => (window as any).__rowTargetOpened),
+      'picking the row opened another window').toBe(0);
+    expect(await liveWindowsAt(ROW_OPEN_URL)).toEqual([rowOpenId]);
+
+    await bgWindow.evaluate(async (ids: number[]) => {
+      for (const id of ids) await (window as any).app.window.close(id);
+    }, [rowOpenId, rowLaterId]);
   });
 });
