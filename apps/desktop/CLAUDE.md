@@ -109,7 +109,7 @@ only ~3. The buckets:
   now exercises a single page-host path unconditionally — the `hybrid-overlay` /
   `hybrid-popups` / `hybrid-windows-feature` specs run every time. See git history /
   peek item `e8081cce` for the removal.
-- **~13 unconditionally-parked feature describes** (`HUD Extension`, `Proton Pass`) —
+- **Unconditionally-parked feature describes** (`Proton Pass`) —
   disabled features, `describe.skip` in source.
 - **~3 genuine macOS-headless OS-surface skips** (geolocation grant, devtools-open) — need a
   real display.
@@ -554,7 +554,7 @@ If a bug only appears in the packaged build (not `yarn start`), suspect asar pat
 
 ## Process Roles
 
-- **bgWindow** (`peek://app/background.html` → `app/index.js`) — the core orchestrator. Initialises the cmd registry, page canvas, and HUD. Session management and pubsub live here.
+- **bgWindow** (`peek://app/background.html` → `app/index.js`) — the core orchestrator. Initialises the cmd registry and the core palette commands. Session management and pubsub live here.
 - **main process** (`main/`) — `datastore.ts` (SQLite via better-sqlite3), IPC handlers (`ipc.ts`), `peek://` protocol handler (`protocol.ts`).
 - `datastore.ts` owns frecency, slug, hashtag, cascade, and pubsub rules. External writers must replicate its inline behaviour and include tests.
 - `setTimeout` bodies in the main process **must** guard `isDestroyed()` before touching a `BrowserWindow`.

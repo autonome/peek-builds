@@ -261,6 +261,38 @@ const registerCoreCommands = () => {
     }
   });
 
+  // Memory HUD: an ordinary window pinned across workspaces
+  // (docs/design/window-rules.md "Persistent windows"). The `key` makes a
+  // second run focus the open HUD instead of opening another. Pinning uses
+  // the same two steps as the "pin across workspaces" command
+  // (features/spaces/background.js setPinState()): move the window to the
+  // pinned band, then record scope in the 'pin' context key, which the badge
+  // and closeSpace() read. No Cmd+H shortcut: macOS reserves it for Hide.
+  api.commands.register({
+    name: 'hud',
+    description: 'Show Peek memory and stats, pinned across workspaces',
+    execute: async () => {
+      const opened = await api.window.open('peek://app/hud/hud.html', {
+        width: 240,
+        height: 260,
+        x: 16,
+        y: 48,
+        key: 'hud-stats',
+        title: 'Peek HUD',
+      });
+      const windowId = opened?.id;
+      if (!opened?.success || windowId == null) {
+        return { success: false, error: opened?.error || 'Failed to open the HUD window' };
+      }
+      const pinned = await api.window.setPinned(windowId, true);
+      if (!pinned?.success) {
+        return { success: false, error: pinned?.error || 'Failed to pin the HUD window', windowId };
+      }
+      await api.context.set('pin', 'global', {}, windowId);
+      return { success: true, windowId, scope: 'global' };
+    }
+  });
+
   // ---- Theme Commands ----
 
   api.commands.register({

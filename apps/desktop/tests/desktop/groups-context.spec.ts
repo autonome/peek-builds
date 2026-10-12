@@ -10,7 +10,7 @@
 
 import { test, expect, DesktopApp, getSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
-import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
+import { waitForExtensionsReady } from '../helpers/window-utils';
 
 // Shared app and background window
 let sharedApp: DesktopApp;
@@ -340,80 +340,6 @@ test.describe('Group Mode Context @desktop', () => {
       expect(defaultMode.value).toBe('default');
     } finally {
       await closeWindow(sharedBgWindow, windowId);
-    }
-  });
-
-  test.skip('HUD displays group mode with name', async () => {
-    // This test verifies HUD rendering of group mode.
-    // The existing HUD test in hud.spec.ts sets mode directly via context API.
-    // Here we verify it works through the actual groups navigation flow.
-
-    // Open HUD — arm the getWindow promise before publishing so we don't miss the
-    // window-creation event if the command resolves faster than this test resumes.
-    const hudWindowPromise = sharedApp.getWindow('hud/hud.html', 5000);
-    await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {});
-    });
-    const hudWindow = await hudWindowPromise;
-    expect(hudWindow).toBeTruthy();
-
-    const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
-
-    try {
-      // Navigate into the group - this sets mode via context API
-      await navigateIntoGroup(groupsWindow, tagId);
-
-      // Wait for group mode to be set
-      await waitForMode(sharedBgWindow, windowId, 'group', 5000);
-
-      // Verify HUD shows group mode with group name (via mode widget webview)
-      // The 10 second polling loop below handles the HUD update delay via watchMode.
-      const start = Date.now();
-      let modeText: string | null = null;
-      while (Date.now() - start < 10000) {
-        try {
-          modeText = await hudWindow.evaluate(async () => {
-            const webviews = document.querySelectorAll('webview');
-            for (const wv of webviews) {
-              if (wv.src && wv.src.includes('widgets/mode.html')) {
-                try {
-                  return await (wv as any).executeJavaScript(
-                    'document.getElementById("mode-value")?.textContent || null'
-                  );
-                } catch { return null; }
-              }
-            }
-            return null;
-          });
-          if (modeText && modeText.includes(groupName)) break;
-        } catch { /* page not ready */ }
-        await sleep(200);
-      }
-      expect(modeText).toContain('group');
-      expect(modeText).toContain(groupName);
-
-      // Verify the group mode CSS class is applied (via webview)
-      const modeClasses = await hudWindow.evaluate(async () => {
-        const webviews = document.querySelectorAll('webview');
-        for (const wv of webviews) {
-          if (wv.src && wv.src.includes('widgets/mode.html')) {
-            try {
-              return await (wv as any).executeJavaScript(
-                'document.getElementById("mode-value")?.className || ""'
-              );
-            } catch { return ''; }
-          }
-        }
-        return '';
-      });
-      expect(modeClasses).toContain('mode-group');
-    } finally {
-      await closeWindow(sharedBgWindow, windowId);
-
-      // Close HUD
-      await sharedBgWindow.evaluate(async () => {
-        (window as any).app.publish('cmd:execute:hud', {});
-      });
     }
   });
 });

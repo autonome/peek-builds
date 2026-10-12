@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Peek HUD</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 10px 12px;
+      font: 11px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+    .total {
+      font-size: 20px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .caption { opacity: 0.6; margin-bottom: 6px; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0 12px;
+    }
+    .stats .label { opacity: 0.6; }
+    .stats .value { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <div class="caption">Peek memory, all processes</div>
+  <div id="memory-total" class="total">-</div>
+  <div class="stats">
+    <span class="label">Processes</span><span id="process-count" class="value">-</span>
+  </div>
+  <div id="by-type" class="stats"></div>
+  <div id="other-stats" class="stats"></div>
+  <script type="module" src="hud.js"></script>
+</body>
+</html>
