@@ -243,6 +243,19 @@
         white-space: nowrap;
       }
 
+      /* A Visited row whose page is open in a window: picking it switches. */
+      .url-open-marker {
+        flex-shrink: 0;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 500;
+        white-space: nowrap;
+        background: rgba(0, 122, 255, 0.18);
+        border: 1px solid rgba(0, 122, 255, 0.45);
+        color: var(--theme-text, #333);
+      }
+
       /* URL results separator in normal cmd mode */
       .url-results-separator {
         padding: 4px 12px 2px;

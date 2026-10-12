@@ -1705,9 +1705,16 @@ function currentActionUrl() {
   return rowUrl;
 }
 
+// Which of the panel's addresses are open in a window: url → window id, or
+// null when main answered that none is. Holds answers for the addresses the
+// panel is showing right now (the URL action's address and every Visited row);
+// an address missing from it has not been asked about yet.
+let openWindowIds = new Map();
+let openWindowQuery = 0;
+let openWindowRefreshTimer = null;
+
 // What the URL action button currently says: { url, action: 'switch'|'open', id }.
 let urlAction = null;
-let urlActionQuery = 0;
 
 function renderUrlAction() {
   const btn = document.getElementById('url-action');
@@ -1726,46 +1733,120 @@ function renderUrlAction() {
   if (labelEl) labelEl.textContent = urlAction.action === 'switch' ? 'Switch' : 'Open';
 }
 
-// Re-derive the button from the panel's current address. The "is it open"
-// answer comes from main (`api.window.findByUrl`); a newer address supersedes
-// an answer still in flight.
-function updateUrlAction() {
-  const url = currentActionUrl();
-  if (!isSwitchableUrl(url)) {
-    urlActionQuery++;
-    if (urlAction) { urlAction = null; renderUrlAction(); }
-    return;
+// The marker on a Visited row whose page is open in a window (prior art:
+// Chrome's "Switch to this tab"). Picking such a row switches to the window.
+function renderRowMarker(el, url) {
+  const id = openWindowIds.get(url);
+  const existing = el.querySelector('.url-open-marker');
+  if (typeof id === 'number') {
+    el.dataset.openWindowId = String(id);
+    if (!existing) {
+      const marker = document.createElement('span');
+      marker.className = 'url-open-marker';
+      marker.textContent = 'Switch to window';
+      marker.title = 'This page is open in a window';
+      el.appendChild(marker);
+    }
+  } else {
+    delete el.dataset.openWindowId;
+    if (existing) existing.remove();
   }
-  if (urlAction && urlAction.url === url) return;
-  const query = ++urlActionQuery;
-  // Until main answers, the address shows as "open" — the safe default.
-  urlAction = { url, action: 'open', id: null };
+}
+
+// Paint the button and every row's marker from the answers in hand. Until an
+// address has an answer it shows as "open" — the safe default.
+function applyOpenWindows() {
+  const url = currentActionUrl();
+  if (isSwitchableUrl(url)) {
+    const id = openWindowIds.get(url);
+    urlAction = { url, action: typeof id === 'number' ? 'switch' : 'open', id: typeof id === 'number' ? id : null };
+  } else {
+    urlAction = null;
+  }
   renderUrlAction();
-  lookupOpenWindow(url).then((id) => {
-    if (query !== urlActionQuery) return;
-    urlAction = { url, action: id != null ? 'switch' : 'open', id };
-    renderUrlAction();
+  document.querySelectorAll('#results .url-result-item[data-url]').forEach((el) => {
+    renderRowMarker(el, el.dataset.url);
   });
 }
 
-async function lookupOpenWindow(url) {
-  try {
-    const result = await api.window.findByUrl(url);
-    return result && result.success && typeof result.id === 'number' ? result.id : null;
-  } catch {
-    return null;
+// Every address the panel shows that could be open in a window.
+function shownSwitchableUrls() {
+  const urls = new Set();
+  const actionUrl = currentActionUrl();
+  if (isSwitchableUrl(actionUrl)) urls.add(actionUrl);
+  if (machine.getState() !== States.CHAIN_MODE) {
+    for (const item of state.urlMatches || []) {
+      if (isSwitchableUrl(item?.content)) urls.add(item.content);
+    }
   }
+  return [...urls];
+}
+
+/**
+ * Bring the button and the row markers up to date. Asks main about every shown
+ * address in ONE batched call (`api.window.findByUrls`), and only when some
+ * address has no answer yet — unless `force`, which re-asks about all of them
+ * (a window opened, closed or navigated, so any answer may be stale). A newer
+ * query supersedes an answer still in flight.
+ */
+function updateUrlAction(force = false) {
+  const urls = shownSwitchableUrls();
+  if (!force && urls.every((u) => openWindowIds.has(u))) {
+    applyOpenWindows();
+    return;
+  }
+  const query = ++openWindowQuery;
+  if (force) openWindowIds = new Map();
+  applyOpenWindows();
+  if (urls.length === 0) return;
+  lookupOpenWindows(urls).then((ids) => {
+    if (query !== openWindowQuery) return;
+    const next = new Map(openWindowIds);
+    for (const u of urls) next.set(u, typeof ids[u] === 'number' ? ids[u] : null);
+    openWindowIds = next;
+    applyOpenWindows();
+  });
+}
+
+// A window opened, closed or navigated: re-ask about everything shown. Several
+// such events arrive together (open publishes, then the page navigates), so
+// they are coalesced into one query.
+function scheduleOpenWindowRefresh() {
+  if (openWindowRefreshTimer) clearTimeout(openWindowRefreshTimer);
+  openWindowRefreshTimer = setTimeout(() => {
+    openWindowRefreshTimer = null;
+    updateUrlAction(true);
+  }, 50);
+}
+for (const topic of ['window:opened', 'window:closed', 'window:removed', 'page:navigated']) {
+  api.subscribe(topic, scheduleOpenWindowRefresh);
+}
+
+async function lookupOpenWindows(urls) {
+  try {
+    const result = await api.window.findByUrls(urls);
+    return (result && result.success && result.ids) || {};
+  } catch {
+    return {};
+  }
+}
+
+async function lookupOpenWindow(url) {
+  const ids = await lookupOpenWindows([url]);
+  return typeof ids[url] === 'number' ? ids[url] : null;
 }
 
 /**
  * Carry out the URL action for `url`: bring forward the window showing it, or
- * open it in a new window when none is. `known` is the button's answer for this
- * address when it already has one, so the raise is sent without another round
- * trip.
+ * open it in a new window when none is. A known answer for this address (from
+ * the button or a row marker) sends the raise without another round trip;
+ * without one, main is asked first. `trackingSourceId` names what was picked
+ * for the open path's history.
  */
-async function runUrlAction(url, known) {
+async function runUrlAction(url, trackingSourceId = 'url-action') {
   if (!isSwitchableUrl(url)) return;
-  const id = known && known.url === url && known.action !== 'open' ? known.id : await lookupOpenWindow(url);
+  const known = openWindowIds.get(url);
+  const id = typeof known === 'number' ? known : await lookupOpenWindow(url);
   state.lastExecuted = url;
   updateMatchCount(url);
   if (typeof id === 'number') {
@@ -1783,7 +1864,7 @@ async function runUrlAction(url, known) {
     width: 1024,
     height: 768,
     trackingSource: 'cmd',
-    trackingSourceId: 'url-action'
+    trackingSourceId
   }).catch(error => {
     log.error('cmd:panel', 'Failed to open URL:', error);
   });
@@ -2148,6 +2229,11 @@ function updateResultsUI() {
       urlSpan.textContent = item.domain || item.content || '';
       el.appendChild(urlSpan);
 
+      if (item.content) {
+        el.dataset.url = item.content;
+        renderRowMarker(el, item.content);
+      }
+
       el.addEventListener('click', () => {
         machine.dispatch(Events.CLICK_URL_RESULT, { index: globalIndex });
       });
@@ -2214,6 +2300,12 @@ function actionHandlers() {
     const item = state.urlMatches[urlIndex];
     if (!item || !item.content) return;
     const url = item.content;
+    // A row whose page is open in a window (it carries the marker) switches
+    // to that window; any other row opens its page.
+    if (isSwitchableUrl(url) && typeof openWindowIds.get(url) === 'number') {
+      runUrlAction(url, 'history-result');
+      return;
+    }
     log('cmd:panel', 'Opening URL history result:', url);
     state.lastExecuted = url;
     updateMatchCount(url);
@@ -2729,7 +2821,7 @@ function actionHandlers() {
     },
 
     runUrlAction(payload) {
-      runUrlAction(payload?.url, payload?.known);
+      runUrlAction(payload?.url);
     },
 
     openSearch(payload) {
@@ -2764,6 +2856,12 @@ function actionHandlers() {
       const url = (urlGhostGranularity === 'full' || !completion)
         ? urlGhostSuggestion.url
         : withDefaultScheme(completion);
+      // The completed address is open in a window (the URL action button says
+      // "switch"): go to that window instead of opening another.
+      if (typeof openWindowIds.get(url) === 'number') {
+        runUrlAction(url, 'url-ghost');
+        return;
+      }
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);
@@ -3145,7 +3243,7 @@ async function render() {
       e.preventDefault();
       const url = currentActionUrl();
       if (!isSwitchableUrl(url)) return;
-      machine.dispatch(Events.URL_ACTION, { url, known: urlAction });
+      machine.dispatch(Events.URL_ACTION, { url });
       return;
     }
 
@@ -3287,7 +3385,7 @@ async function render() {
     urlActionBtn.addEventListener('click', () => {
       const url = currentActionUrl();
       if (!isSwitchableUrl(url)) return;
-      machine.dispatch(Events.URL_ACTION, { url, known: urlAction });
+      machine.dispatch(Events.URL_ACTION, { url });
     });
   }
 

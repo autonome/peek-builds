@@ -783,6 +783,18 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * `findByUrl` for several addresses in one round trip. Resolves
+     * `{ success, ids }` where `ids[url]` is an open window's id or null.
+     * Requires `window.query` (or trustedBuiltin).
+     */
+    findByUrls: (urls: string[]) => {
+      return ipcRenderer.invoke('tile:window:find-by-urls', {
+        token: tileToken,
+        urls,
+      });
+    },
+
+    /**
      * Check if a window with the given id is still open. Requires
      * `window.manage` (or trustedBuiltin).
      */

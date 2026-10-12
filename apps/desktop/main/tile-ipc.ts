@@ -3119,6 +3119,36 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:window:find-by-urls ──────────────────────────────────────
+  //
+  // The batched form of find-by-url: one round trip answers a whole
+  // suggestion list. Resolves `{ success, ids }` where `ids[url]` is the open
+  // window's id or null. Same gate and self-exclusion as find-by-url.
+  registerTileIpc('tile:window:find-by-urls', { mode: 'handle' }, async (event, args: {
+    token: string;
+    urls: unknown;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'list');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:find-by-urls', check.error, args.token);
+      return { success: false, ids: {}, error: check.error };
+    }
+    try {
+      const self = windowFromWebContents(event.sender);
+      const ids: Record<string, number | null> = {};
+      const urls = Array.isArray(args.urls) ? args.urls : [];
+      for (const url of urls.slice(0, 100)) {
+        if (typeof url !== 'string' || url in ids) continue;
+        ids[url] = findOpenWindowIdForUrl(url, self?.id ?? null);
+      }
+      return { success: true, ids };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, ids: {}, error: message };
+    }
+  });
+
   // ── tile:window:exists ────────────────────────────────────────────
   //
   // Strict counterpart of the un-gated legacy `window-exists` channel.
