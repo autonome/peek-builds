@@ -9,17 +9,20 @@
  * Electron launch would succeed.
  */
 
-import { DesktopApp, launchDesktopApp } from '../fixtures/desktop-app';
+import { DesktopApp, LaunchOptions, launchDesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady, waitForStartupWindowOpened } from './window-utils';
 
-export async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; bgWindow: Page }> {
+export async function createPerDescribeApp(
+  label: string,
+  options: LaunchOptions = {},
+): Promise<{ app: DesktopApp; bgWindow: Page }> {
   // Profile MUST start with "test" — `isTestProfile()` in apps/desktop/main/config.ts
   // keys on that prefix to skip the single-instance lock. Without it, parallel
   // Playwright workers would all contend for the same machine-wide lock and
   // only one Electron launch would succeed.
   const profile = `test-smoke-${label.replace(/[^a-z0-9]/gi, '-')}-${Date.now()}`;
-  const app = await launchDesktopApp(profile);
+  const app = await launchDesktopApp(profile, options);
   const bgWindow = await app.getBackgroundWindow();
   await waitForExtensionsReady(bgWindow);
   await waitForStartupWindowOpened(app);

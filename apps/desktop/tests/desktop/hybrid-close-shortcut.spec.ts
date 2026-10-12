@@ -27,7 +27,7 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
   let app: DesktopApp;
 
   test.beforeAll(async () => {
-    ({ app } = await createPerDescribeApp('hybrid-close-shortcut'));
+    ({ app } = await createPerDescribeApp('hybrid-close-shortcut', { headless: true }));
   });
 
   test.afterAll(async () => {

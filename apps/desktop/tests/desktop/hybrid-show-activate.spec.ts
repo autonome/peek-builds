@@ -34,7 +34,7 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
   let app: DesktopApp;
 
   test.beforeAll(async () => {
-    ({ app } = await createPerDescribeApp('hybrid-show-activate'));
+    ({ app } = await createPerDescribeApp('hybrid-show-activate', { headless: true }));
   });
 
   test.afterAll(async () => {

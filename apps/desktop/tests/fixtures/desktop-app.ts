@@ -166,6 +166,13 @@ function isHeadless(): boolean {
 export interface LaunchOptions {
   /** Legacy: force all extensions to separate windows (for testing) */
   legacyMode?: boolean;
+  /**
+   * Launch with PEEK_HEADLESS=1 regardless of the HEADLESS env var. For specs
+   * that assert the headless path itself: `scripts/playwright-with-display.sh`
+   * unsets HEADLESS on Linux, so without this they would assert a mode the app
+   * is not in there.
+   */
+  headless?: boolean;
 }
 
 /**
@@ -227,7 +234,7 @@ function packagedExecutablePath(): string {
  */
 async function launchElectron(profile: string, options: LaunchOptions = {}): Promise<DesktopApp> {
   // Translate unified HEADLESS to Electron's PEEK_HEADLESS
-  const headless = isHeadless();
+  const headless = options.headless ?? isHeadless();
   const packaged = isPackaged();
 
   // Get or create temp directory for test data

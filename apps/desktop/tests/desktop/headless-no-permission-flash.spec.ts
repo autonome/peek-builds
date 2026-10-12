@@ -33,7 +33,7 @@ test.describe('headless no permission flash @desktop', () => {
   let serverPort: number;
 
   test.beforeAll(async () => {
-    ({ app, bgWindow } = await createPerDescribeApp('headless-no-perm-flash'));
+    ({ app, bgWindow } = await createPerDescribeApp('headless-no-perm-flash', { headless: true }));
 
     await new Promise<void>((resolve) => {
       server = http.createServer((_req, res) => {

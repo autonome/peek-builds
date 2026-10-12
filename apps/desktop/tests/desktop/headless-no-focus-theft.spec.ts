@@ -27,7 +27,7 @@ test.describe('headless no focus theft @desktop', () => {
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    ({ app, bgWindow } = await createPerDescribeApp('headless-no-focus-theft'));
+    ({ app, bgWindow } = await createPerDescribeApp('headless-no-focus-theft', { headless: true }));
   });
 
   test.afterAll(async () => {
