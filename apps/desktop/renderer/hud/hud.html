@@ -5,27 +5,34 @@
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
   <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
   <title>Peek HUD</title>
+  <!-- Theme variables. tile-preload.cts re-injects this stylesheet on
+       tile:theme:changed, so a theme or colour-scheme switch restyles the
+       open HUD without a reload. -->
+  <link rel="stylesheet" href="peek://theme/variables.css">
   <style>
     :root { color-scheme: light dark; }
     body {
       margin: 0;
       padding: 10px 12px;
-      font: 11px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      background: Canvas;
-      color: CanvasText;
+      font-family: var(--theme-font-sans, system-ui, sans-serif);
+      font-size: 11px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      background: var(--theme-bg, Canvas);
+      color: var(--theme-text, CanvasText);
     }
     .total {
       font-size: 20px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
     }
-    .caption { opacity: 0.6; margin-bottom: 6px; }
+    .caption { color: var(--theme-text-secondary, GrayText); margin-bottom: 6px; }
     .stats {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 0 12px;
     }
-    .stats .label { opacity: 0.6; }
+    .stats .label { color: var(--theme-text-secondary, GrayText); }
     .stats .value { text-align: right; font-variant-numeric: tabular-nums; }
   </style>
 </head>

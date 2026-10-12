@@ -99,6 +99,52 @@ test.describe('memory hud @desktop', () => {
     expect(again.windowId, 'a second hud opened a new window').toBe(hudId);
   });
 
+  test('the HUD takes its colours from the theme and follows a theme switch while open', async () => {
+    const opened = await runCommand('hud');
+    expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
+    const page = await getWindowById(opened.windowId as number);
+
+    // The body background against the theme's background colour, both
+    // resolved to computed rgb() strings through a probe element.
+    const colours = () => page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.background = 'var(--theme-bg)';
+      document.body.appendChild(probe);
+      const themeBg = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { body: getComputedStyle(document.body).backgroundColor, themeBg };
+    });
+    const themeApi = (method: string, arg?: string) => bgWindow.evaluate(
+      async (a: { method: string; arg?: string }) =>
+        (window as unknown as { app: any }).app.theme[a.method](a.arg),
+      { method, arg },
+    );
+
+    await expect.poll(async () => {
+      const c = await colours();
+      return c.themeBg !== 'rgba(0, 0, 0, 0)' && c.body === c.themeBg;
+    }, { timeout: 10000, message: 'the HUD background is not the theme background' }).toBe(true);
+    const before = (await colours()).body;
+
+    // The bundled themes have different backgrounds (peek #f6f6f6, basic
+    // #ffffff), so a switch must visibly restyle the open window. A colour
+    // scheme switch is not used: in the test build it does not reach the
+    // page's prefers-color-scheme.
+    const initial = await themeApi('get');
+    const target = initial.themeId === 'basic' ? 'peek' : 'basic';
+    try {
+      expect((await themeApi('setTheme', target))?.success).toBe(true);
+      await expect.poll(async () => (await colours()).body, {
+        timeout: 10000,
+        message: 'the open HUD kept its colours after the theme switch',
+      }).not.toBe(before);
+      const after = await colours();
+      expect(after.body, 'the HUD background left the theme after the switch').toBe(after.themeBg);
+    } finally {
+      await themeApi('setTheme', initial.themeId);
+    }
+  });
+
   test('the HUD comes back after a restart, still pinned across workspaces and still the one hud reuses', async () => {
     const opened = await runCommand('hud');
     expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
