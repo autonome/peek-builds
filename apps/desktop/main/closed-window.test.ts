@@ -12,6 +12,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
+import { closedWindowSaveBounds } from './session-projection.js';
 
 // ============================================================================
 // Types (mirrored from main.ts)
@@ -126,10 +127,7 @@ function createClosedWindowEntry(
   // Pull bounds + maximize state from the presentation captured
   // pre-destruction, falling back to the raw captured bounds when no
   // presentation resolved (e.g. the window was already gone).
-  const presentation = captured.presentation;
-  const saveBounds = presentation?.maximized && presentation.preMaxBounds
-    ? presentation.preMaxBounds
-    : (presentation?.bounds ?? captured.bounds);
+  const saveBounds = closedWindowSaveBounds(captured.presentation, captured.bounds);
 
   // Use the current navigated URL if available (tracks where user actually was)
   const currentUrl = params.currentUrl;

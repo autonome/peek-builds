@@ -37,6 +37,7 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { closedWindowSaveBounds } from './session-projection.js';
 import {
   initWindowStateMachine,
   registerWindowWithMachine,
@@ -361,10 +362,7 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
       // rule (window-presenter.ts getRestorableBounds, §5 step 7D) for every
       // window kind, so a fullscreen window reopens at a sane rect. Maximize is
       // not restored: a maximized window is saved at its pre-maximize rect.
-      const presentation = captured.presentation;
-      const saveBounds = presentation?.maximized && presentation.preMaxBounds
-        ? presentation.preMaxBounds
-        : (presentation?.bounds ?? captured.bounds);
+      const saveBounds = closedWindowSaveBounds(captured.presentation, captured.bounds);
 
       // Use the current navigated URL if available (tracks where user actually was)
       const currentUrl = windowData.params.currentUrl as string | undefined;

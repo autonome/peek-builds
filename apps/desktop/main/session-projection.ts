@@ -262,6 +262,19 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
 }
 
 /**
+ * The rect a closed window is saved at for reopen. Maximize is not restored, so
+ * a maximized window is saved at its pre-maximize rect when one was stashed;
+ * otherwise the presentation's bounds, else the raw bounds captured at close.
+ */
+export function closedWindowSaveBounds(
+  presentation: { bounds: Electron.Rectangle; maximized?: boolean; preMaxBounds?: Electron.Rectangle | null } | null | undefined,
+  capturedBounds: Electron.Rectangle | null,
+): Electron.Rectangle | null {
+  if (presentation?.maximized && presentation.preMaxBounds) return presentation.preMaxBounds;
+  return presentation?.bounds ?? capturedBounds;
+}
+
+/**
  * A saved descriptor's bounds and params, converted so the window opens
  * unmaximized.
  *
