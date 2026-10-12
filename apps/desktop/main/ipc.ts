@@ -218,6 +218,7 @@ import {
   nextLoadPhase,
 } from './page-load-error.js';
 import type { LoadEvent, LoadPhase } from './page-load-error.js';
+import { destroyedCleanups } from './destroyed-cleanups.js';
 
 /**
  * Per host window: records the address about to be loaded. A string that is not
@@ -1610,18 +1611,22 @@ export function wireHybridContentEvents(
   // redirect-driven did-navigate, mirroring the canvas path (ipc.ts ~2465).
   let skipTracking = options?.skipTracking === true;
 
+  // Every teardown step below shares one `destroyed` listener; see
+  // destroyed-cleanups.ts for why separate listeners tripped MaxListeners.
+  const onContentDestroyed = destroyedCleanups(contentWC, `hybrid-content:${hostWindowId}`);
+
   // Editable-focus tracking (peek 51798bae): register the `page:editable-focus`
   // receiver once (idempotent), and drop this content WC's cached focus state on
   // teardown so a recycled webContents id never inherits a stale editable flag.
   initHybridEditableFocusTracking();
-  contentWC.once('destroyed', () => clearEditableFocusForWc(contentWC.id));
+  onContentDestroyed(() => clearEditableFocusForWc(contentWC.id));
 
   // Producer for `window-escape.ts EscapeKeyPress.rendererHandled` (peek
   // 7fffa286 companion): register the `tile:escape:handled` receiver once
   // (idempotent), and drop this content WC's cached answer on teardown so a
   // recycled webContents id never inherits a stale one.
   initRendererHandledEscapeTracking(ipcMain);
-  contentWC.once('destroyed', () => clearRendererHandledEscapeForWc(contentWC.id));
+  onContentDestroyed(() => clearRendererHandledEscapeForWc(contentWC.id));
 
   // Content-area double/triple-click window gesture (peek d8ce0ddf): register the
   // `page:content-window-gesture` receiver once (idempotent). detent 2 → toggle
@@ -1728,7 +1733,7 @@ export function wireHybridContentEvents(
   });
   watchForHungRenderer(contentWC);
   hybridNavTargetNoters.set(hostWindowId, (u: string) => { pendingNavUrl = u; });
-  contentWC.once('destroyed', () => hybridNavTargetNoters.delete(hostWindowId));
+  onContentDestroyed(() => hybridNavTargetNoters.delete(hostWindowId));
   contentWC.on('did-start-navigation', (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
     const d = details as unknown as { url: string; isMainFrame: boolean; isSameDocument: boolean };
     if (!d.isMainFrame || d.isSameDocument) return;
@@ -1745,7 +1750,7 @@ export function wireHybridContentEvents(
     if (!isMainFrame) return;
     advanceLoad({ type: 'failed', code }, validatedURL || pendingNavUrl, description);
   });
-  contentWC.once('destroyed', () => { if (loadTimer) clearTimeout(loadTimer); });
+  onContentDestroyed(() => { if (loadTimer) clearTimeout(loadTimer); });
 
   // ── Title → datastore + chrome state ─────────────────────────────────────
   contentWC.on('page-title-updated', (_event: Electron.Event, title: string) => {
@@ -2047,7 +2052,7 @@ export function wireHybridContentEvents(
   // closed host leaves no stale setter (the reconciler already guards
   // isDestroyed(), so a late call is harmless even before this fires).
   hybridContentCursorSetters.set(hostWindowId, setContentCursor);
-  contentWC.once('destroyed', () => { hybridContentCursorSetters.delete(hostWindowId); });
+  onContentDestroyed(() => { hybridContentCursorSetters.delete(hostWindowId); });
 
   // ── Pointer-gesture state for this host's content WC ─────────────────────
   // ONE value, three named states — a left press over content is EITHER a resize
