@@ -136,7 +136,6 @@ import {
   getKernelExecutorForApp,
 } from './window-machine.js';
 import { wmLog } from './window-diag.js';
-import { spaceDropDiag, SPACE_DROP_DIAG_TAG } from './space-drop-diag.js';
 import {
   kernelSetFullscreen,
   kernelSetBounds,
@@ -7339,10 +7338,6 @@ export function registerTileIpcHandlers(): void {
       .replace('peek://app/', '')
       .replace('peek://', '');
     console.log(`[${shortSource}]`, ...(args.args ?? []));
-    // TEMPORARY: space-drop diagnostic lines go to a fixed file.
-    if (args.args?.[0] === SPACE_DROP_DIAG_TAG) {
-      spaceDropDiag(`[${shortSource}] ${args.args.slice(1).map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`);
-    }
   });
 
   // ── tile:app:quit ─────────────────────────────────────────────────

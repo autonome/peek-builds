@@ -21,8 +21,6 @@ import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
 import { resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex, urlsFromDrop } from './config.js';
 
 const api = window.app;
-// TEMPORARY: space-drop diagnostic — proves the module ran even if init() fails.
-try { api.log('[space-drop-diag]', `home.js module evaluated url=${location.href}`); } catch { /* best-effort */ }
 
 const SPACE_PREFIX = 'space:';
 
@@ -912,58 +910,7 @@ const clearDropHighlight = () => {
   document.querySelectorAll(`.${DROP_HIGHLIGHT_CLASS}`).forEach((el) => el.classList.remove(DROP_HIGHLIGHT_CLASS));
 };
 
-// TEMPORARY: space-drop diagnostic. Lines reach /tmp/peek-space-drop-diag.log
-// through main (`main/space-drop-diag.ts`), not the console.
-const DROP_DIAG_TAG = '[space-drop-diag]';
-const dropDiag = (...parts) => {
-  try { api.log(DROP_DIAG_TAG, ...parts); } catch { /* best-effort */ }
-};
-
-const describeDragEvent = (e, phase) => {
-  const dt = e.dataTransfer;
-  const t = e.target;
-  const card = t?.closest?.('.space-card');
-  const targetDesc = t === document ? 'document'
-    : t ? `${t.tagName || t.nodeName}${t.id ? '#' + t.id : ''}${t.className && typeof t.className === 'string' ? '.' + t.className.trim().replace(/\s+/g, '.') : ''}`
-    : 'null';
-  return `${phase} type=${e.type} target=${targetDesc} card=${card ? card.dataset.tagId : '-'}`
-    + ` view=${state.view} types=${JSON.stringify(Array.from(dt?.types || []))}`
-    + ` dropEffect=${dt?.dropEffect} effectAllowed=${dt?.effectAllowed}`
-    + ` defaultPrevented=${e.defaultPrevented}`;
-};
-
-const setupDropDiag = () => {
-  dropDiag(`home loaded; diag bridge works. url=${location.href} view=${state.view}`);
-  let lastOverKey = '';
-  let overCount = 0;
-  const shouldLog = (e) => {
-    if (e.type !== 'dragover') return true;
-    overCount += 1;
-    const key = `${e.target?.closest?.('.space-card')?.dataset?.tagId ?? '-'}|${e.target?.tagName}`;
-    if (key !== lastOverKey) { lastOverKey = key; return true; }
-    return overCount % 25 === 0;
-  };
-  let lastAfterKey = '';
-  const shouldLogAfter = (e) => {
-    const key = `${e.target?.closest?.('.space-card')?.dataset?.tagId ?? '-'}|${e.defaultPrevented}`;
-    if (key !== lastAfterKey) { lastAfterKey = key; return true; }
-    return false;
-  };
-  for (const type of ['dragenter', 'dragover', 'dragleave', 'drop', 'dragend']) {
-    // Capture on the document: sees the event before any page handler.
-    document.addEventListener(type, (e) => {
-      if (shouldLog(e)) dropDiag(describeDragEvent(e, 'capture'));
-    }, true);
-    // Bubble on window: runs after setupUrlDrop()'s document handlers, so
-    // defaultPrevented here says whether the page accepted the drag.
-    window.addEventListener(type, (e) => {
-      if (e.type !== 'dragover' || shouldLogAfter(e)) dropDiag(describeDragEvent(e, 'after-page'));
-    });
-  }
-};
-
 const setupUrlDrop = () => {
-  setupDropDiag();
   document.addEventListener('dragover', (e) => {
     if (!dragCarriesUrls(e)) return;
     const { space, element } = dropTargetFor(e);
@@ -989,16 +936,10 @@ const setupUrlDrop = () => {
       mozUrl: e.dataTransfer.getData('text/x-moz-url'),
       plain: e.dataTransfer.getData('text/plain')
     });
-    dropDiag(`drop accepted space=${space.id} urls=${JSON.stringify(urls)}`
-      + ` uriList=${JSON.stringify(e.dataTransfer.getData('text/uri-list'))}`
-      + ` mozUrl=${JSON.stringify(e.dataTransfer.getData('text/x-moz-url'))}`
-      + ` plain=${JSON.stringify(e.dataTransfer.getData('text/plain'))}`);
     for (const url of urls) {
       try {
-        const r = await openUrlInSpace(space, url);
-        dropDiag(`openUrlInSpace url=${url} result=${JSON.stringify(r)}`);
+        await openUrlInSpace(space, url);
       } catch (err) {
-        dropDiag(`openUrlInSpace url=${url} threw ${String(err)}`);
         console.error('[spaces] Failed to open dropped page:', url, err);
       }
     }

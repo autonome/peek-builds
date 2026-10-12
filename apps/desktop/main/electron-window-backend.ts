@@ -56,7 +56,6 @@ import {
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
-import { spaceDropDiag } from './space-drop-diag.js';
 import { UserRaiseReassert } from './user-raise-reassert.js';
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
@@ -1349,10 +1348,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (win.isDestroyed()) return;
       this.syncChromeFlag(id, win);
       win.setIgnoreMouseEvents(!acceptsInput, { forward: true });
-      // TEMPORARY: space-drop diagnostic — which windows go click-through.
-      let diagUrl = '';
-      try { diagUrl = (win as { webContents?: WebContents }).webContents?.getURL?.() ?? ''; } catch { /* base window */ }
-      spaceDropDiag(`[main] setAcceptsInput id=${String(id)} acceptsInput=${acceptsInput} url=${diagUrl.slice(0, 100)}`);
     } catch {
       /* torn-down window mid-command — the machine already recorded intent */
     }
