@@ -52,7 +52,7 @@ describe('peeks keep their resized size', () => {
     await handlers.get('window:resized')({ key: 'peek:1', width: 1100, height: 700 });
     await settle();
 
-    assert.deepEqual(store.sizes, { 'peek:1': { width: 1100, height: 700 } });
+    assert.deepEqual(store.sizes, { 'peek:1': { width: 1100, height: 700, optionsWidth: 800, optionsHeight: 600 } });
     assert.ok(!writes.includes('items'), 'the items rows the Options panel edits are not rewritten');
 
     await handlers.get('cli:peek-open')({ args: ['1'] });
@@ -73,7 +73,7 @@ describe('peeks keep their resized size', () => {
   it('ignores a resize for a window it did not open', async () => {
     await handlers.get('window:resized')({ key: 'https://x.example/:Left', width: 300, height: 300 });
     await settle();
-    assert.deepEqual(store.sizes, { 'peek:1': { width: 1100, height: 700 } });
+    assert.deepEqual(store.sizes, { 'peek:1': { width: 1100, height: 700, optionsWidth: 800, optionsHeight: 600 } });
   });
 
   it('loads saved sizes after a restart', async () => {
@@ -87,5 +87,56 @@ describe('peeks keep their resized size', () => {
     const opened = opens.at(-1);
     assert.equal(opened.width, 640);
     assert.equal(opened.height, 480);
+  });
+});
+
+const flush = async () => { for (let i = 0; i < 10; i++) await settle(); };
+
+const editPeek1 = async (fields) => {
+  store.items = store.items.map(i => (i.keyNum === 1 ? { ...i, ...fields } : i));
+  handlers.get('peeks:settings-changed')();
+  await flush();
+};
+
+const openPeek1 = async () => {
+  await handlers.get('cli:peek-open')({ args: ['1'] });
+  await flush();
+  return opens.at(-1);
+};
+
+describe('the latest peek size edit wins', () => {
+  it('an Options width edit after a resize opens at the Options size', async () => {
+    await handlers.get('window:resized')({ key: 'peek:1', width: 1100, height: 700 });
+    await flush();
+    await editPeek1({ width: 900 });
+    const opened = await openPeek1();
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 600);
+  });
+
+  it('a resize after an Options edit opens at the resized size', async () => {
+    await handlers.get('window:resized')({ key: 'peek:1', width: 1200, height: 750 });
+    await flush();
+    const opened = await openPeek1();
+    assert.equal(opened.width, 1200);
+    assert.equal(opened.height, 750);
+  });
+
+  it('an Options edit to another field keeps the resized size', async () => {
+    await editPeek1({ title: 'A' });
+    const opened = await openPeek1();
+    assert.equal(opened.width, 1200);
+    assert.equal(opened.height, 750);
+  });
+
+  it('an Options height edit made while the tile was not running wins at the next start', async () => {
+    feature.uninit();
+    handlers.clear();
+    store.items = store.items.map(i => (i.keyNum === 1 ? { ...i, height: 500 } : i));
+    await feature.init();
+    await flush();
+    const opened = await openPeek1();
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 500);
   });
 });

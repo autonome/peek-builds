@@ -54,7 +54,7 @@ describe('slides keep their resized size', () => {
     await handlers.get('window:resized')({ key: 'https://music.example/:Left', width: 1000, height: 720 });
     await settle();
 
-    assert.deepEqual(store.sizes, { Left: { width: 1000, height: 720 } });
+    assert.deepEqual(store.sizes, { Left: { width: 1000, height: 720, optionsWidth: 800, optionsHeight: 600 } });
     assert.ok(!writes.includes('items'), 'the items rows the Options panel edits are not rewritten');
 
     await handlers.get('cli:slide-open')({ args: ['left'] });
@@ -75,7 +75,7 @@ describe('slides keep their resized size', () => {
   it('ignores a resize for a window it did not open', async () => {
     await handlers.get('window:resized')({ key: 'peek:3', width: 300, height: 300 });
     await settle();
-    assert.deepEqual(store.sizes, { Left: { width: 1000, height: 720 } });
+    assert.deepEqual(store.sizes, { Left: { width: 1000, height: 720, optionsWidth: 800, optionsHeight: 600 } });
   });
 
   it('loads saved sizes after a restart', async () => {
@@ -89,5 +89,56 @@ describe('slides keep their resized size', () => {
     const opened = opens.at(-1);
     assert.equal(opened.width, 640);
     assert.equal(opened.height, 480);
+  });
+});
+
+const flush = async () => { for (let i = 0; i < 10; i++) await settle(); };
+
+const editLeft = async (fields) => {
+  store.items = store.items.map(i => (i.screenEdge === 'Left' ? { ...i, ...fields } : i));
+  handlers.get('slides:settings-changed')();
+  await flush();
+};
+
+const openLeft = async () => {
+  await handlers.get('cli:slide-open')({ args: ['left'] });
+  await flush();
+  return opens.at(-1);
+};
+
+describe('the latest slide size edit wins', () => {
+  it('an Options width edit after a resize opens at the Options size', async () => {
+    await handlers.get('window:resized')({ key: 'https://music.example/:Left', width: 1000, height: 720 });
+    await flush();
+    await editLeft({ width: 900 });
+    const opened = await openLeft();
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 600);
+  });
+
+  it('a resize after an Options edit opens at the resized size', async () => {
+    await handlers.get('window:resized')({ key: 'https://music.example/:Left', width: 1100, height: 750 });
+    await flush();
+    const opened = await openLeft();
+    assert.equal(opened.width, 1100);
+    assert.equal(opened.height, 750);
+  });
+
+  it('an Options edit to another field keeps the resized size', async () => {
+    await editLeft({ title: 'Music' });
+    const opened = await openLeft();
+    assert.equal(opened.width, 1100);
+    assert.equal(opened.height, 750);
+  });
+
+  it('an Options height edit made while the tile was not running wins at the next start', async () => {
+    feature.uninit();
+    handlers.clear();
+    store.items = store.items.map(i => (i.screenEdge === 'Left' ? { ...i, height: 500 } : i));
+    await feature.init();
+    await flush();
+    const opened = await openLeft();
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 500);
   });
 });

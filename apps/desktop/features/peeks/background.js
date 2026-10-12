@@ -74,10 +74,18 @@ const saveSettings = async (settings) => {
  * Open a peek window for the given item
  */
 // The size each peek was last resized to, by its window key (`peek:<keyNum>`):
-// `{ [key]: { width, height } }`. Kept in its own `sizes` setting rather than
-// on the `items` rows, so a resize never rewrites the rows the Features
-// Manager Options panel edits. Filled from the datastore in init(), updated on
-// every settled resize main reports as `window:resized`.
+// `{ [key]: { width, height, optionsWidth, optionsHeight } }`. Kept in its own
+// `sizes` setting rather than on the `items` rows, so a resize never rewrites
+// the rows the Features Manager Options panel edits. Filled from the datastore
+// in init(), updated on every settled resize main reports as `window:resized`.
+//
+// `optionsWidth`/`optionsHeight` record the item's Options width/height at the
+// time of the resize. The latest size edit wins: once the Options values differ
+// from them, the Options panel was edited after the resize and its size is used
+// instead. The comparison happens at open time rather than in the
+// settings-changed subscriber because this tile is lazy — an Options edit made
+// while it is asleep wakes it with the new rows already saved, so there are no
+// old values left to diff against.
 let savedSizes = {};
 
 const loadSizes = async () => {
@@ -88,11 +96,24 @@ const loadSizes = async () => {
 
 const windowKeyFor = (item) => `peek:${item.keyNum}`;
 
+const optionsDim = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+
+// A saved resize still applies unless the item's Options width or height has
+// changed since it was taken. Entries saved before the Options values were
+// recorded carry no `optionsWidth` key and keep applying.
+const resizeStillApplies = (saved, item) => {
+  if (!saved) return false;
+  if (!('optionsWidth' in saved)) return true;
+  return optionsDim(saved.optionsWidth) === optionsDim(item.width)
+    && optionsDim(saved.optionsHeight) === optionsDim(item.height);
+};
+
 const executeItem = (item) => {
   console.log('[ext:peeks] executeItem', item);
   const saved = savedSizes[windowKeyFor(item)];
-  const height = (saved && saved.height) || item.height || 600;
-  const width = (saved && saved.width) || item.width || 800;
+  const resized = resizeStillApplies(saved, item) ? saved : null;
+  const height = (resized && resized.height) || item.height || 600;
+  const width = (resized && resized.width) || item.width || 800;
 
   const params = {
     // IZUI role
@@ -289,7 +310,13 @@ const init = async () => {
     const height = Number(msg?.height);
     if (typeof key !== 'string' || !key.startsWith('peek:')) return;
     if (!(width > 0) || !(height > 0)) return;
-    savedSizes = { ...savedSizes, [key]: { width, height } };
+    const item = (currentSettings.items || []).find(i => windowKeyFor(i) === key);
+    savedSizes = {
+      ...savedSizes,
+      [key]: item
+        ? { width, height, optionsWidth: optionsDim(item.width), optionsHeight: optionsDim(item.height) }
+        : { width, height },
+    };
     await api.settings.set('sizes', savedSizes);
   });
 
