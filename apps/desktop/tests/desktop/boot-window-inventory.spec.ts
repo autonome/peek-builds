@@ -151,8 +151,12 @@ test.describe('Boot Window Inventory @desktop', () => {
 
     // ── 1. Deterministically wait for boot to settle ──────────────────────
     // Poll the live window set (MAIN process) until every expected
-    // resident-tile URL is present. No timers — this resolves the instant the
-    // last resident tile finishes loading its URL.
+    // resident-tile URL is present and no window is still without a URL. No
+    // timers — this resolves the instant the last resident tile finishes
+    // loading its URL. The no-empty-URL half matters because the chrome
+    // extension bridge window (`chrome-extensions.ts _spawnBridgeWindow`) is
+    // created whenever its service worker starts, and until its load commits
+    // it cannot be told apart from a new resident tile by URL.
     await app.evaluateMain!(((electron: typeof import('electron'), expected: string[]) => {
       const { BrowserWindow } = electron;
       return new Promise<void>((resolve) => {
@@ -162,7 +166,7 @@ test.describe('Boot Window Inventory @desktop', () => {
           });
           const allPresent = expected.every((needle) =>
             urls.some((u) => u.includes(needle)));
-          if (allPresent) { resolve(); return; }
+          if (allPresent && urls.every((u) => u !== '')) { resolve(); return; }
           setImmediate(check);
         };
         check();
@@ -213,7 +217,20 @@ test.describe('Boot Window Inventory @desktop', () => {
     // Ceiling is the observed count exactly, so a NEW resident tile sneaking
     // into the boot set fails the test. It used to carry +1 of slack, which is
     // what let the overlay land here unnoticed; the slack is not restored.
-    expect(fixed.windowCount).toBeLessThanOrEqual(4);
+    //
+    // Two kinds of window are left out of the count because they are not
+    // tiles and whether they exist yet at this point is not fixed:
+    //   - desktop markers (`peek://spaces/signal.html`,
+    //     `desktop-marker-manager.ts`): one per visited desktop, minted only
+    //     when the run is not headless — always the case on Linux, where
+    //     `scripts/playwright-with-display.sh` unsets HEADLESS.
+    //   - chrome extension bridge windows (`chrome-extension://…`): one per
+    //     enabled extension that declares externally_connectable, spawned
+    //     once its service worker is running, off the boot path.
+    const residentCount = fixed.windows
+      .filter((w) => !w.url.includes('peek://spaces/signal.html'))
+      .filter((w) => !w.url.startsWith('chrome-extension://')).length;
+    expect(residentCount).toBeLessThanOrEqual(4);
   });
 
   test('per-page-host cost', async () => {
