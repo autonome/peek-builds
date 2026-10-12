@@ -174,7 +174,14 @@ test.describe('Boot Window Inventory @desktop', () => {
     }) as any, EXPECTED_RESIDENT_URLS);
 
     // ── 2. Capture & log the FIXED inventory ──────────────────────────────
-    const fixed = await captureInventory();
+    // The extension bridge can spawn between the settle above and a capture,
+    // with an empty URL until its load commits, so the chrome-extension://
+    // filter below could not drop it. Re-capture until no window lacks a URL;
+    // the check and the capture share one main-process tick.
+    let fixed = await captureInventory();
+    while (fixed.windows.some((w) => w.url === '')) {
+      fixed = await captureInventory();
+    }
     console.log(`[boot-inv] FIXED windows=${fixed.windowCount} webContents=${fixed.webContentsCount}`);
     for (const w of fixed.windows) {
       console.log(`[boot-inv] win ${w.id} vis=${w.visible} ${w.url}`);
