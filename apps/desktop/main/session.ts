@@ -499,6 +499,13 @@ export interface SessionMetadata {
   crashCount: number;
   lastRestoreAt?: number;
   restoreCount?: number;
+  /**
+   * The workspace that was active at the last save (`_activeWorkspaceKey`, not
+   * the save's own key). Boot reads it to reopen that workspace rather than the
+   * default — see `restorableSavedWorkspaceKey`. Absent in metadata written
+   * before it existed, which boots into the default as before.
+   */
+  activeWorkspaceKey?: string;
 }
 
 /**
@@ -717,6 +724,35 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
  */
 function snapshotRowKey(workspaceKey: string): string {
   return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'snapshot' : `snapshot:${workspaceKey}`;
+}
+
+/**
+ * The named workspace boot should reopen, or null for the default.
+ *
+ * The metadata row records which workspace was active at the last save
+ * (`SessionMetadata.activeWorkspaceKey`). A named workspace's key is its
+ * `space:` tag's id; the workspace comes back only while that tag still exists
+ * and its saved row is still there — a workspace deleted since the quit, or one
+ * never saved, falls back to the default exactly as boot did before the key
+ * was recorded.
+ */
+function restorableSavedWorkspaceKey(db: ReturnType<typeof getDb>): string | null {
+  try {
+    const metaRow = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
+    ).get() as { value: string } | undefined;
+    if (!metaRow?.value) return null;
+    const saved = (JSON.parse(metaRow.value) as Partial<SessionMetadata>).activeWorkspaceKey;
+    if (typeof saved !== 'string' || !saved || saved === DEFAULT_WORKSPACE_KEY) return null;
+    const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(saved) as { name: string } | undefined;
+    if (!tag?.name?.startsWith('space:')) return null;
+    const row = db.prepare(
+      `SELECT 1 AS present FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotRowKey(saved)) as { present: number } | undefined;
+    return row ? saved : null;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -948,6 +984,10 @@ export function saveSessionSnapshot(
       crashCount: existingMetadata.crashCount ?? 0,
       lastRestoreAt: existingMetadata.lastRestoreAt,
       restoreCount: existingMetadata.restoreCount,
+      // The ACTIVE workspace, not `workspaceKey`: the switch's explicit save of
+      // the outgoing workspace runs while that workspace is still active, and
+      // every ambient save writes the active one's row anyway.
+      activeWorkspaceKey: _activeWorkspaceKey,
     };
     db.prepare(`
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
@@ -1505,20 +1545,45 @@ export async function restoreSessionSnapshot(
     }
   }
 
+  // Boot reopens the workspace that was active at quit. Its own row holds its
+  // windows; the windows pinned across every workspace live only in the
+  // default row (a named save leaves them out), so that row is read too,
+  // narrowed to those pins. The pref-off and declined-crash paths
+  // (`globalPinsOnly`) restore the default's pins and stay on the default.
+  let restoreKey = key;
+  if (isColdStart && !globalPinsOnly && !isWorkspaceSwitch && key === DEFAULT_WORKSPACE_KEY) {
+    const saved = restorableSavedWorkspaceKey(db);
+    if (saved) {
+      restoreKey = saved;
+      setActiveWorkspaceKey(saved);
+      console.log(`[session] cold-start-workspace key=${saved}`);
+    }
+  }
+
   // Read the snapshot
-  const snapshotKey = snapshotRowKey(key);
+  const snapshotDb = db;
+  const readSnapshotRow = (workspaceKey: string): SessionSnapshot | null => {
+    const row = snapshotDb.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(snapshotRowKey(workspaceKey)) as { value: string } | undefined;
+    return row?.value ? (JSON.parse(row.value) as SessionSnapshot) : null;
+  };
   let snapshot: SessionSnapshot;
   try {
-    const row = db.prepare(
-      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
-    ).get(snapshotKey) as { value: string } | undefined;
+    const row = readSnapshotRow(restoreKey);
 
-    if (!row?.value) {
-      DEBUG && console.log(`[session] No snapshot found for workspace "${key}"`);
+    if (!row) {
+      DEBUG && console.log(`[session] No snapshot found for workspace "${restoreKey}"`);
       return result;
     }
 
-    snapshot = JSON.parse(row.value);
+    snapshot = row;
+    if (restoreKey !== key) {
+      const defaultRow = readSnapshotRow(key);
+      const pins = (defaultRow?.version === 1 && Array.isArray(defaultRow.windows) ? defaultRow.windows : [])
+        .filter((d) => d.context?.pinScope === 'global');
+      snapshot = { ...row, windows: [...pins, ...(row.windows ?? [])] };
+    }
   } catch (error) {
     console.error('[session] Failed to read snapshot:', error);
     return result;
@@ -1612,7 +1677,7 @@ export async function restoreSessionSnapshot(
     currentDesktopAtRestore,
     kernelStateAtRestore.desktops.map((d) => d.id),
   );
-  installHeldRestore(key, held);
+  installHeldRestore(restoreKey, held);
   if (held.size > 0) {
     console.log(
       `[session] lazy-restore-partition current=${currentDesktopAtRestore} openNow=${openNow.length} held=${validWindows.length - openNow.length}`,

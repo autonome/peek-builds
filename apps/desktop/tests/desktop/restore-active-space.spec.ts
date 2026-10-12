@@ -103,4 +103,41 @@ test.describe('restore active space across a relaunch @desktop', () => {
     );
     expect(activeKey, 'the workspace active at quit is not the active workspace after relaunch').toBe(spaceId);
   });
+
+  test('a workspace deleted since the quit is not reopened; the default stays active', async () => {
+    const spaceName = 'restore-active-space-deleted';
+    const opened = await runCommand('open space', spaceName);
+    expect(opened?.success, `open space "${spaceName}" failed: ${opened?.error}`).toBe(true);
+    const spaceId = opened.spaceId as string;
+    await expect.poll(() => spaceHomeWindows(spaceId).length, { timeout: 15000 }).toBe(1);
+
+    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    for (const page of spaceHomeWindows(spaceId)) {
+      const info = await page.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
+      await bgWindow.evaluate(
+        async (id: number) => (window as unknown as { app: any }).app.window.close(id),
+        info.id as number,
+      );
+    }
+    await expect.poll(() => spaceHomeWindows(spaceId).length, { timeout: 15000 }).toBe(0);
+    const reset = await bgWindow.evaluate(
+      async () => await (window as unknown as { app: any }).app.session.setActiveWorkspace('default'),
+    );
+    expect(reset?.success).toBe(true);
+
+    const deleted = await bgWindow.evaluate(
+      async (id: string) => await (window as unknown as { app: any }).app.datastore.deleteTag(id),
+      spaceId,
+    );
+    expect(deleted?.success, `deleting the space tag failed: ${deleted?.error}`).toBe(true);
+
+    await app.evaluateMain!((() => (globalThis as any).__peek_test.forceColdStartRestoreSession()) as any);
+
+    expect(spaceHomeWindows(spaceId).length, 'a deleted workspace reopened its windows').toBe(0);
+    const activeKey = await app.evaluateMain!(
+      (() => (globalThis as any).__peek_test.getActiveWorkspaceKeyForTest()) as any,
+    );
+    expect(activeKey, 'a deleted workspace became active after relaunch').toBe('default');
+  });
 });
