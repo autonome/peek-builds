@@ -104,10 +104,12 @@ test.describe('Hybrid cmd-click open @desktop', () => {
     })) as number[];
 
     // REAL cmd+left-click on the full-viewport link → background-tab open.
-    await app.evaluateMain!(((_e: unknown, id: number) => {
+    // Chromium's background-tab modifier is Cmd on macOS and Ctrl elsewhere.
+    const modifier = process.platform === 'darwin' ? 'meta' : 'control';
+    await app.evaluateMain!(((_e: unknown, arg: { id: number; modifier: string }) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.sendContentModifiedClick(id, 350, 250, 'meta');
-    }) as any, openerId);
+      return b.sendContentModifiedClick(arg.id, 350, 250, arg.modifier);
+    }) as any, { id: openerId, modifier });
 
     // A NEW hybrid window (id not in `before`) must appear.
     const newId = (await (async () => {
