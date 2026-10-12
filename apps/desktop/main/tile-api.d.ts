@@ -645,6 +645,12 @@ interface TileSession {
    */
   setActiveWorkspace(key: string): Promise<{ success: boolean; error?: string }>;
   /**
+   * The workspace the main process holds active — `'default'` or a named
+   * workspace's key. A boot restore can make a named workspace active before
+   * any tile wakes. Requires `session` capability.
+   */
+  getActiveWorkspace(): Promise<{ success: boolean; key?: string; error?: string }>;
+  /**
    * Read a named workspace's saved window bounds/z-order without restoring
    * anything — a narrow, workspace-scoped read (never the default workspace's
    * own row). Requires `session` capability.

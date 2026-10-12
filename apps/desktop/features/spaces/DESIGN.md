@@ -224,12 +224,23 @@ The very first time `getOrCreateTag('space:default')` creates the tag (`created:
 result — the same signal `main/onboarding-seed.ts` uses for its own once-per-profile sentinel,
 though this one rides the tag's own creation rather than a separate row), whatever windows a
 general session restore already opened before this feature ran become the default workspace's
-membership from that moment on: `adoptOpenWindowsIntoDefault()` walks `api.window.list()` and
+membership from that moment on: `adoptOpenWindowsInto()` walks `api.window.list()` and
 tags anything with no mode of its own **and role `'content'`** into `space:default` — the same
 role `features/windows/windows.js loadWindows()` uses to tell user content from dedicated chrome
 (palette, overlays, switcher, workspace panel) and background pages, so nothing skips by matching
 a URL substring. Every later launch skips adoption — the default workspace's membership from then
 on is whatever was tagged into it explicitly, the same as any other space.
+
+### Relaunch into a named workspace
+
+Boot restores the workspace that was active at quit (`main/session.ts restoreSessionSnapshot`), so
+the main process can hold a named workspace active before this lazy feature wakes. On wake,
+`bootstrapDefaultSpace()` asks the main process which workspace is active
+(`api.session.getActiveWorkspace()`); when that key names an existing space tag, the feature makes
+that space active — declares it for new windows, adopts untagged open windows into it, and shows its
+border — instead of the default. `main/entry.ts` wakes the feature right after a boot restore that
+reopened a named workspace, so the border and the new-window membership are there from launch rather
+than from the first spaces command.
 
 ### Enter and exit
 

@@ -2202,7 +2202,8 @@ function buildAPI(): Record<string, unknown> {
   // The methods do NOT share a gate:
   //   - `saveWorkspaceSnapshot` / `restoreWorkspaceSnapshot` /
   //     `getWorkspaceSnapshotInfo` / `beginWorkspaceSwitch` /
-  //     `setActiveWorkspace` require the `session` capability. Used by
+  //     `setActiveWorkspace` / `getActiveWorkspace` require the `session`
+  //     capability. Used by
   //     features/spaces and features/groups to persist/reopen/inspect a
   //     named workspace's window layout through the general session-snapshot
   //     pipeline (`main/session.ts`, keyed by workspace id), and to tell the
@@ -2239,6 +2240,12 @@ function buildAPI(): Record<string, unknown> {
         return Promise.reject(new Error('[tile-preload] api.session.setActiveWorkspace requires the session capability'));
       }
       return ipcRenderer.invoke('tile:session:set-active-workspace', { token: tileToken, key });
+    },
+    getActiveWorkspace: () => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.getActiveWorkspace requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:get-active-workspace', { token: tileToken });
     },
     restoreWorkspaceSnapshot: (key: string) => {
       if (!hasSessionCapability()) {

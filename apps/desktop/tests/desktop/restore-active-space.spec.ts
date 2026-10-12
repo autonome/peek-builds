@@ -18,15 +18,16 @@
  *   yarn test:grep "restore active space"
  */
 
-import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp, launchDesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { waitForExtensionsReady } from '../helpers/window-utils';
 
 let app: DesktopApp;
 let bgWindow: Page;
 
-async function runCommand(name: string, search = ''): Promise<any> {
-  return bgWindow.evaluate(
+async function runCommand(name: string, search = '', bg: Page = bgWindow): Promise<any> {
+  return bg.evaluate(
     async (arg: { name: string; search: string }) => {
       const api = (window as unknown as { app: any }).app;
       return await new Promise((resolve) => {
@@ -45,8 +46,8 @@ async function runCommand(name: string, search = ''): Promise<any> {
   );
 }
 
-function spaceHomeWindows(spaceId: string): Page[] {
-  return app
+function spaceHomeWindows(spaceId: string, inApp: DesktopApp = app): Page[] {
+  return inApp
     .windows()
     .filter((p) => !p.isClosed() && p.url().includes('spaces/home.html') && p.url().includes(encodeURIComponent(spaceId)));
 }
@@ -139,5 +140,87 @@ test.describe('restore active space across a relaunch @desktop', () => {
       (() => (globalThis as any).__peek_test.getActiveWorkspaceKeyForTest()) as any,
     );
     expect(activeKey, 'a deleted workspace became active after relaunch').toBe('default');
+  });
+});
+
+/**
+ * A real relaunch, two processes on one profile. The spaces feature is lazy,
+ * so after a relaunch it wakes fresh; it must wake into the restored
+ * workspace rather than the default, or the next switch saves the restored
+ * workspace's windows into the default's row.
+ *
+ * The profile is `tmp-`, not `test-`: boot restore is skipped for test
+ * profiles (`config.ts isTestProfile`), and a `tmp-` profile is still
+ * ephemeral. The fixture reuses one temp dir per profile string within a run,
+ * so the second launch reads what the first saved.
+ */
+test.describe('restore active space across a real relaunch @desktop', () => {
+  const PROFILE = 'tmp-restore-active-space-relaunch';
+
+  test('after a relaunch into a workspace, switching away saves its windows to its own row, not the default', async () => {
+    const restoredName = 'relaunch-restored';
+    const otherName = 'relaunch-other';
+
+    // ---- Launch 1: enter a workspace, then quit while it is active ----
+    let first: DesktopApp | null = await launchDesktopApp(PROFILE);
+    let spaceId: string;
+    try {
+      const bg1 = await first.getBackgroundWindow();
+      await waitForExtensionsReady(bg1);
+      const opened = await runCommand('open space', restoredName, bg1);
+      expect(opened?.success, `open space "${restoredName}" failed: ${opened?.error}`).toBe(true);
+      spaceId = opened.spaceId as string;
+      await expect.poll(() => spaceHomeWindows(spaceId, first!).length, { timeout: 15000 }).toBe(1);
+      await first.evaluateMain!((() => (globalThis as any).__peek_test.forceSaveSession()) as any);
+    } finally {
+      await first.close();
+      first = null;
+    }
+
+    // ---- Launch 2: boot restore reopens the workspace ----
+    const second = await launchDesktopApp(PROFILE);
+    try {
+      const bg2 = await second.getBackgroundWindow();
+      await waitForExtensionsReady(bg2);
+      await expect
+        .poll(() => spaceHomeWindows(spaceId, second).length, {
+          timeout: 20000,
+          message: 'boot did not reopen the workspace active at quit',
+        })
+        .toBe(1);
+      await expect
+        .poll(
+          () => second.evaluateMain!((() => (globalThis as any).__peek_test.getActiveWorkspaceKeyForTest()) as any),
+          { timeout: 10000 },
+        )
+        .toBe(spaceId);
+
+      const switched = await runCommand('open space', otherName, bg2);
+      expect(switched?.success, `open space "${otherName}" failed: ${switched?.error}`).toBe(true);
+      await expect.poll(() => spaceHomeWindows(spaceId, second).length, { timeout: 15000 }).toBe(0);
+
+      const readRow = (key: string) =>
+        second.evaluateMain!(
+          ((_e: unknown, k: string) => (globalThis as any).__peek_test.getWorkspaceSnapshotUrlsForTest(k)) as any,
+          key,
+        ) as Promise<string[] | null>;
+      const holdsRestoredHome = (urls: string[] | null) =>
+        (urls ?? []).some((u) => u.includes('spaces/home.html') && u.includes(encodeURIComponent(spaceId)));
+
+      expect(
+        holdsRestoredHome(await readRow('default')),
+        "the switch saved the restored workspace's window into the default workspace's row",
+      ).toBe(false);
+      expect(
+        holdsRestoredHome(await readRow(spaceId)),
+        "the restored workspace's own row lost its window on the switch",
+      ).toBe(true);
+      const activeKey = await second.evaluateMain!(
+        (() => (globalThis as any).__peek_test.getActiveWorkspaceKeyForTest()) as any,
+      );
+      expect(activeKey).toBe(switched.spaceId);
+    } finally {
+      await second.close();
+    }
   });
 });

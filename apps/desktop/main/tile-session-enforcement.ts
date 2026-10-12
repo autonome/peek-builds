@@ -52,6 +52,10 @@ import { DEFAULT_WORKSPACE_KEY } from './session-projection.js';
  *   reports which workspace is active (and brackets a switch) so the app's
  *   own ambient saves write the active workspace's row. See
  *   `main/session.ts` "Active workspace".
+ * - `get-active-workspace` — read which workspace the main process holds
+ *   active. A boot restore can make a named workspace active before the
+ *   spaces feature wakes, so the feature reads it on wake rather than
+ *   assuming the default.
  */
 export type SessionOp =
   | 'save-workspace-snapshot'
@@ -60,7 +64,8 @@ export type SessionOp =
   | 'get-workspace-snapshot-window-count'
   | 'add-window-to-workspace-snapshot'
   | 'begin-workspace-switch'
-  | 'set-active-workspace';
+  | 'set-active-workspace'
+  | 'get-active-workspace';
 
 export type SessionCheckResult =
   | { ok: true }
@@ -107,7 +112,8 @@ export function checkSessionAllowed(
     case 'get-workspace-snapshot-window-count':
     case 'add-window-to-workspace-snapshot':
     case 'begin-workspace-switch':
-    case 'set-active-workspace': {
+    case 'set-active-workspace':
+    case 'get-active-workspace': {
       return { ok: true };
     }
 

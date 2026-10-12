@@ -114,7 +114,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, getActiveWorkspaceKey } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, getActiveWorkspaceKey, DEFAULT_WORKSPACE_KEY, snapshotRowKey } from './session.js';
 import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop-marker-manager.js';
 import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
 import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
@@ -201,6 +201,24 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * that a cold-start restore leaves the workspace active at quit active again.
    */
   getActiveWorkspaceKeyForTest: () => getActiveWorkspaceKey(),
+  /**
+   * The URLs a workspace's saved row holds (`'default'` or a named
+   * workspace's key), or null when the row is missing or unreadable. Read by
+   * tests/desktop/restore-active-space.spec.ts to check which row a switch
+   * after a relaunch saved the restored workspace's windows into.
+   */
+  getWorkspaceSnapshotUrlsForTest: (key: string): string[] | null => {
+    try {
+      const row = getDb().prepare(
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+      ).get(snapshotRowKey(key)) as { value: string } | undefined;
+      if (!row?.value) return null;
+      const windows = (JSON.parse(row.value) as { windows?: { url?: string }[] }).windows;
+      return Array.isArray(windows) ? windows.map((w) => String(w?.url ?? '')) : null;
+    } catch {
+      return null;
+    }
+  },
   // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
   // is kernel state (`pendingColdStartFocus`), spent by `AppActivated`. Drive it
   // from a spec by feeding `ColdStartFocusArmed` + `AppActivated`, or cover it
@@ -1544,6 +1562,14 @@ const onReady = async () => {
             // open it now.
             DEBUG && console.log('[session] No session windows restored, opening startup feature');
             publish(systemAddress, 'session:open-startup', {});
+          }
+          // The restore reopened a named workspace: wake the spaces feature
+          // (lazy) now so it adopts that workspace as active — declaring it
+          // for new windows and showing its border — instead of waking on a
+          // later command believing the default is active and saving this
+          // workspace's windows into the default's row on the next switch.
+          if (getActiveWorkspaceKey() !== DEFAULT_WORKSPACE_KEY) {
+            publish(systemAddress, 'spaces:ensure-default', {});
           }
         } catch (err) {
           console.error('[session] Session restore failed:', err);

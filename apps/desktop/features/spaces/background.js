@@ -422,17 +422,18 @@ async function declareActiveWorkspaceForNewWindows(spaceId, spaceName, color) {
 
 /**
  * Whatever content windows are already open when this feature wakes belong
- * to the default workspace from here on — the default is a real space from
- * the start, not one adopted piecemeal window-by-window later. Runs on every
+ * to the active workspace from here on — the default, or the named workspace
+ * a boot restore reopened (see `bootstrapDefaultSpace()`). Runs on every
  * wake, not only the first launch: a window opened before the feature woke
  * (or restored from a snapshot row saved before tagging existed) carries no
  * workspace, or only the URL-detected `page`/`default` placeholder, and would
  * otherwise never be swept. A window that already belongs to a space or a
  * group keeps that membership. Only windows on screen are adopted: a hidden
  * one (the pre-warmed settings singleton, a helper page) is not something
- * the user has open in this workspace.
+ * the user has open in this workspace. `color` is the color the workspace's
+ * windows carry — the same one `enterWorkspace()` gives them.
  */
-async function adoptOpenWindowsIntoDefault(tag, spaceName) {
+async function adoptOpenWindowsInto(tag, spaceName, color) {
   try {
     const listResult = await api.window.list();
     if (!listResult?.success || !Array.isArray(listResult.windows)) return;
@@ -443,11 +444,37 @@ async function adoptOpenWindowsIntoDefault(tag, spaceName) {
       if (mode === 'space' || mode === 'group') continue; // already has a membership of its own
       await api.context.setMode('space', {
         windowId: w.id,
-        metadata: { spaceId: tag.id, spaceName, color: tag.color, url: modeResult?.data?.metadata?.url }
+        metadata: { spaceId: tag.id, spaceName, color, url: modeResult?.data?.metadata?.url }
       });
     }
   } catch (err) {
-    console.error('[ext:spaces] Failed to adopt open windows into the default workspace:', err);
+    console.error('[ext:spaces] Failed to adopt open windows into the active workspace:', err);
+  }
+}
+
+/**
+ * The named space tag the main process holds active, or null for the
+ * default. A boot restore makes the workspace that was active at quit active
+ * again before this feature wakes (`main/session.ts restoreSessionSnapshot`),
+ * so the feature follows the main process rather than assuming the default.
+ * A key naming no existing space tag — or any failed lookup — answers null,
+ * and the default is active as before.
+ */
+async function restoredNamedSpaceTag() {
+  let key;
+  try {
+    const result = await api.session.getActiveWorkspace();
+    key = result?.success ? result.key : null;
+  } catch (err) {
+    console.error('[ext:spaces] Failed to read the active workspace:', err);
+    return null;
+  }
+  if (!key || key === DEFAULT_WORKSPACE_SNAPSHOT_KEY || key === defaultSpaceId) return null;
+  try {
+    return (await listSpaceTags()).find((t) => t.id === key) || null;
+  } catch (err) {
+    console.error('[ext:spaces] Failed to look up the restored workspace:', err);
+    return null;
   }
 }
 
@@ -457,15 +484,27 @@ async function bootstrapDefaultSpace() {
     console.error('[ext:spaces] Failed to get/create the default workspace tag');
     return;
   }
-  const { tag } = tagResult.data;
+  const { tag: defaultTag } = tagResult.data;
+  defaultSpaceId = defaultTag.id;
 
-  defaultSpaceId = tag.id;
+  const restoredTag = await restoredNamedSpaceTag();
+  const tag = restoredTag || defaultTag;
+  const spaceName = getSpaceDisplayName(tag);
+  // Same colors `enterWorkspace()` uses: the default's windows carry the
+  // tag's own color, a named workspace's the accent its border shows.
+  const windowColor = restoredTag ? resolveSpaceBorderColor(tag.color, tag.id) : tag.color;
+
   activeSpaceId = tag.id;
-  activeSpaceName = getSpaceDisplayName(tag);
+  activeSpaceName = spaceName;
   activeSpaceColor = tag.color;
 
-  await declareActiveWorkspaceForNewWindows(tag.id, activeSpaceName, tag.color);
-  await adoptOpenWindowsIntoDefault(tag, activeSpaceName);
+  await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
+  await adoptOpenWindowsInto(tag, spaceName, windowColor);
+
+  if (restoredTag) {
+    console.log(`[ext:spaces] Woke into restored space "${spaceName}"`);
+    showBorder(windowColor, spaceName);
+  }
 }
 
 // ===== Session Management =====
@@ -551,7 +590,7 @@ async function enterWorkspace(tag, spaceName) {
  * belongs to the session before destroying it — it closes everything, because
  * the app's own design guarantees only one workspace's content windows are
  * ever open at a time. This sweep closes every live content window
- * (`WORKSPACE_CONTENT_ROLES`, same set `adoptOpenWindowsIntoDefault()` reads)
+ * (`WORKSPACE_CONTENT_ROLES`, same set `adoptOpenWindowsInto()` reads)
  * on that same guarantee, rather than asking `getWindowsInSpace()` which
  * windows carry this space's `mode` tag — a live tag can lag or be
  * overwritten by an unrelated feature (e.g. a tile clobbering the shared
@@ -1125,7 +1164,8 @@ const init = async () => {
     await defaultSpaceReady;
   });
 
-  // Fire-and-forget: resolves activeSpaceId to the default workspace.
+  // Fire-and-forget: resolves activeSpaceId to the default workspace, or to
+  // the named workspace a boot restore reopened.
   // Every command handler above awaits this before touching activeSpaceId,
   // the same guard-the-body pattern lazy tiles use for a settings-load race
   // (see apps/desktop/CLAUDE.md "CRITICAL init-ordering rule for lazy tile

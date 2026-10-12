@@ -722,7 +722,7 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
  * `metadata` row: `cleanShutdown`, `crashCount`, …) is about the APP, not a
  * workspace, so there is one such row and no per-workspace variant of it.
  */
-function snapshotRowKey(workspaceKey: string): string {
+export function snapshotRowKey(workspaceKey: string): string {
   return workspaceKey === DEFAULT_WORKSPACE_KEY ? 'snapshot' : `snapshot:${workspaceKey}`;
 }
 

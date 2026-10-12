@@ -4442,6 +4442,23 @@ export function registerTileIpcHandlers(): void {
     return { success: true };
   });
 
+  // The workspace the main process holds active. A boot restore makes the
+  // workspace active at quit active again before the spaces feature wakes
+  // (`main/session.ts restoreSessionSnapshot`), so the feature reads this on
+  // wake instead of assuming the default.
+  registerTileIpc('tile:session:get-active-workspace', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkSessionAllowed(grant, 'get-active-workspace');
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:get-active-workspace', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    const { getActiveWorkspaceKey } = await import('./session.js');
+    return { success: true, key: getActiveWorkspaceKey() };
+  });
+
   registerTileIpc('tile:session:restore-workspace-snapshot', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;

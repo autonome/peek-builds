@@ -137,7 +137,7 @@ test.describe('move to space scope @desktop', () => {
     for (let n = 1; n <= 3; n++) await app.getWindow(`move-scope-page-${n}`, 15000);
     // A window opened from the test harness's own page is not stamped with a
     // workspace, so put each one in the default directly — the same write
-    // `adoptOpenWindowsIntoDefault()` performs.
+    // `adoptOpenWindowsInto()` performs on wake.
     for (const id of ids) {
       const ctx = await bgWindow.evaluate(
         async (arg: { id: number; spaceId: string }) =>
