@@ -49,7 +49,7 @@ export type SessionEvent =
   | { type: 'failed'; run: number; error: string };
 
 export type SessionEffect =
-  | { type: 'collect'; run: number; pageLang: string }
+  | { type: 'collect'; run: number; pageLang: string; targetLang: string }
   | { type: 'translate'; run: number; from: string; to: string; items: WorkItem[] }
   | { type: 'apply'; run: number; results: TranslationResult[] }
   | { type: 'drain'; run: number }
@@ -103,7 +103,7 @@ export function transition(state: SessionState, event: SessionEvent): Transition
       const run = state.run + 1;
       return {
         state: { phase: 'collecting', run, from: event.from, to: event.to, applied: 0, error: null },
-        effects: [{ type: 'collect', run, pageLang: event.from }],
+        effects: [{ type: 'collect', run, pageLang: event.from, targetLang: event.to }],
       };
     }
 
@@ -250,7 +250,7 @@ export function createPageSession(opts: SessionOptions): PageSession {
     try {
       switch (e.type) {
         case 'collect': {
-          await opts.page.run(injectionSource({ pageLang: e.pageLang, batchSize: opts.batchSize }));
+          await opts.page.run(injectionSource({ pageLang: e.pageLang, targetLang: e.targetLang, batchSize: opts.batchSize }));
           const items = await opts.page.run(callSource('collect'));
           dispatch({ type: 'batch', run: e.run, items: (items as WorkItem[] | null) ?? [] });
           return;

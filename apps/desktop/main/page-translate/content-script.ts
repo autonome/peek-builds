@@ -26,6 +26,12 @@
 export interface TranslatorOptions {
   /** The page's language (primary subtag is enough); elements declaring another language are skipped. */
   pageLang?: string;
+  /**
+   * The language being translated into. The translator does not read it; it is part of the
+   * options so `injectionSource` installs a fresh translator, with an empty translation cache,
+   * when the target changes.
+   */
+  targetLang?: string;
   /** Maximum units per `collect`/`drain` batch. */
   batchSize?: number;
   /** Pixels beyond the viewport that still count as near it. */
@@ -400,12 +406,20 @@ export function pageTranslator(doc: any, opts: TranslatorOptions = {}): PageTran
 /** The global the injected translator lives under in the page's isolated world. */
 export const PAGE_TRANSLATOR_GLOBAL = '__peekPageTranslator';
 
+/** The global holding the options the installed translator was created with. */
+export const PAGE_TRANSLATOR_OPTIONS_GLOBAL = '__peekPageTranslatorOptions';
+
 /**
- * Script that installs the translator in the isolated world once and evaluates to `true`.
- * Running it again keeps the existing instance and its saved originals.
+ * Script that installs the translator in the isolated world and evaluates to `true`. Running it
+ * again with the same options keeps the existing instance, its saved originals and its
+ * translation cache. Different options (another source or target language) replace it, which
+ * is safe only once the old instance has restored the page: `page-session.ts` injects only
+ * from idle, after a restore or on a fresh document.
  */
 export function injectionSource(opts: TranslatorOptions = {}): string {
-  return `(() => { if (!globalThis.${PAGE_TRANSLATOR_GLOBAL}) { globalThis.${PAGE_TRANSLATOR_GLOBAL} = (${pageTranslator.toString()})(document, ${JSON.stringify(opts)}); } return true; })()`;
+  const json = JSON.stringify(opts);
+  const key = JSON.stringify(json);
+  return `(() => { if (!globalThis.${PAGE_TRANSLATOR_GLOBAL} || globalThis.${PAGE_TRANSLATOR_OPTIONS_GLOBAL} !== ${key}) { globalThis.${PAGE_TRANSLATOR_GLOBAL} = (${pageTranslator.toString()})(document, ${json}); globalThis.${PAGE_TRANSLATOR_OPTIONS_GLOBAL} = ${key}; } return true; })()`;
 }
 
 /** Script that calls one translator method; evaluates to its JSON-safe return value. */

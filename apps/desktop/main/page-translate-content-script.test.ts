@@ -225,6 +225,22 @@ describe('injectionSource and callSource', () => {
     assert.strictEqual(document.body.innerHTML, '<p>Hallo <b>Welt</b></p>');
   });
 
+  it('injecting with another target language installs a fresh translator', () => {
+    const { document } = page('<p>Hallo</p>');
+    const ctx = vm.createContext({ document });
+    vm.runInContext(injectionSource({ pageLang: 'de', targetLang: 'en' }), ctx);
+    const first = vm.runInContext(`globalThis.${PAGE_TRANSLATOR_GLOBAL}`, ctx);
+    const items = vm.runInContext(callSource('collect'), ctx) as WorkItem[];
+    vm.runInContext(callSource('apply', translateAll(items)), ctx);
+    vm.runInContext(callSource('restore'), ctx);
+    vm.runInContext(injectionSource({ pageLang: 'de', targetLang: 'fr' }), ctx);
+    assert.notStrictEqual(vm.runInContext(`globalThis.${PAGE_TRANSLATOR_GLOBAL}`, ctx), first);
+    // The old translation is not reapplied from a cache: the unit comes back as work.
+    const again = vm.runInContext(callSource('collect'), ctx) as WorkItem[];
+    assert.strictEqual(again.length, 1);
+    assert.strictEqual(document.body.innerHTML, '<p>Hallo</p>');
+  });
+
   it('callSource returns null before injection', () => {
     const ctx = vm.createContext({ document: page('<p>x</p>').document });
     assert.strictEqual(vm.runInContext(callSource('drain'), ctx), null);

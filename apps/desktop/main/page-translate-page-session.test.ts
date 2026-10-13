@@ -39,7 +39,7 @@ describe('page session transitions', () => {
     let t = transition(INITIAL_SESSION_STATE, start);
     assert.strictEqual(t.state.phase, 'collecting');
     assert.strictEqual(t.state.run, 1);
-    assert.deepStrictEqual(t.effects, [{ type: 'collect', run: 1, pageLang: 'de' }]);
+    assert.deepStrictEqual(t.effects, [{ type: 'collect', run: 1, pageLang: 'de', targetLang: 'en' }]);
 
     t = transition(t.state, { type: 'batch', run: 1, items: [ITEM] });
     assert.strictEqual(t.state.phase, 'translating');

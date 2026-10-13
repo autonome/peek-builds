@@ -141,8 +141,19 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   `AbortSignal` fires before dispatch returns. Navigation goes straight to idle (the document
   holding the originals is gone); a failure restores the page; a failed restore reloads it.
   A batch is sent to the engine as at most two requests, HTML units and plain-text units. A
-  `translate` while a session is active is ignored, so changing the target language means
-  showing the original first; the feature step decides whether a command does both.
+  `translate` while a session is active is ignored by the session itself;
+  `translation-service.ts` turns it into show-original-then-translate.
+- `translation-service.ts` — `createTranslationService({pageFor, engine, onState})` keeps one
+  session per window id over one shared engine; `translate(windowId, {from, to})`,
+  `showOriginal`, `navigated`, `closed`, `state`, `dispose`. A `translate` with another
+  language pair while a session is active shows the original and starts the new translation
+  once the page is restored, so one command changes the target language; the same pair again
+  does nothing; if that restore fails the page reloads and the queued translation is dropped.
+  `pageFromWebContents(wc)` runs scripts in isolated world `TRANSLATE_WORLD_ID` (1001;
+  Electron reserves 0 and 999, nothing else in Peek claims one).
+- The injected translator is replaced when `injectionSource` is called with other options
+  (`targetLang` is among them), because its translation cache is keyed by source text only and
+  would otherwise reapply the previous language's translations after a restore.
 - `content-script.ts` — `pageTranslator(document, {pageLang, batchSize, viewportMargin})`,
   a self-contained function that unit tests call on a linkedom DOM and that
   `injectionSource()` serialises with `toString()` for the isolated world (installed once as
