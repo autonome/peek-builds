@@ -398,7 +398,7 @@ A feature must declare everything it touches:
 
 - **`hello-world/`** — the minimal working tile: the smallest feature that stands on its own, showing the tile → `manifest.json` → `window.app` model end to end. The first thing to read to understand how features work.
 - **`example/`** — the reference template. Feature-detects the Peek API, also runs standalone as a plain website, mime-typed command registration, storage fallback, cleanup.
-- **`todo/`** — shipped-but-disabled by design: its manifest is `manifest.json.disabled` so discovery walks past it. Re-enabling is a one-line `mv` — shipped-but-off with zero runtime cost, gated by the file's *name*.
+- **`todo/`** — an ordinary lazy command feature, enabled like any other: `todo` creates an item, `todos` and `done` list the outstanding and finished ones, `complete` marks one done through a suggestion picker. One background tile, woken by whichever command you type, so it costs nothing until used.
 
 ## Feature lifecycle: 7 states
 
@@ -427,7 +427,7 @@ The default for most built-ins now — production boot went from 6 windows to 2.
 
 ## The features I use
 
-35 dirs under `features/`; 34 active, `todo` disabled. (Plus theme features — `theme-peek`, `theme-shichijuni`, which keys colors to Japan's 72 traditional micro-seasons.)
+36 dirs under `features/`, all active. (Three are theme features — `theme-basic`, `theme-peek`, `theme-shichijuni`, which keys colors to Japan's 72 traditional micro-seasons.)
 
 | Feature | What it does | Key |
 |---|---|---|

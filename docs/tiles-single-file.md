@@ -271,6 +271,7 @@ still `background.html` importing `background.js` rather than the inlined
 | `files` | file/format commands (CSV, save, open) |
 | `pagewidgets-sample` | page-widget registration API demo |
 | `debug` | wakes on the `peek debug` / `peek devtools` commands |
+| `todo` | wakes on `cmd:execute:todo`, `cmd:execute:todos`, `cmd:execute:done` and `cmd:execute:complete` |
 
 ---
 
@@ -299,7 +300,6 @@ plus one or more UI tiles. Conversion is deferred — not blocked.
 | `example` | Sample background + gallery window pattern |
 | `pubsub-repro` | Deliberately separate background + window tiles — that's what it reproduces |
 
-`todo` ships disabled (`manifest.json.disabled`) and isn't loaded — not tracked here
-as pending work. `theme-basic`, `theme-peek`, and `theme-shichijuni` are pure theme
-manifests (no `tiles` key, no `manifestVersion`) — not tiles, so they don't belong in
-a migration table at all.
+`theme-basic`, `theme-peek`, and `theme-shichijuni` are pure theme manifests (no
+`tiles` key, no `manifestVersion`) — not tiles, so they don't belong in a migration
+table at all.
