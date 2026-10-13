@@ -1,0 +1,55 @@
+{
+  "manifestVersion": 3,
+  "id": "translate",
+  "shortname": "translate",
+  "name": "Translate",
+  "description": "Translate web pages on this device, without sending page text anywhere",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "cmd:execute:translate page",
+        "cmd:execute:show original",
+        "translate:page",
+        "translate:show-original",
+        "translate:state",
+        "page:execute-script",
+        "page:script-result",
+        "widget:register",
+        "widget:render",
+        "widget:close",
+        "ext:ready",
+        "ext:translate:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "window": {
+      "query": true
+    },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "translate page",
+      "description": "Translate the current web page on this device. Optionally name the language to translate into, such as de or fr; otherwise the system language is used.",
+      "action": { "type": "execute" },
+      "params": [
+        { "name": "language", "type": "string", "required": false, "description": "Language code to translate into, such as de, fr or ja." }
+      ]
+    },
+    {
+      "name": "show original",
+      "description": "Put the current page's own text back after a translation.",
+      "action": { "type": "execute" }
+    }
+  ]
+}

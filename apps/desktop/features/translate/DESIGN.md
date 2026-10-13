@@ -222,6 +222,25 @@ capability (downloads happen in main).
 - The wasm and glue ship under `vendor/bergamot/` and are listed in `electron-builder.yml
   asarUnpack` so the utility process can read them.
 
+What exists now (`background.js`, `translate-logic.js`, tested by
+`tests/unit/translate-tile.test.js`):
+
+- The tile is lazy and wakes on its two commands; `lazyEvents` waits for `page:translatable`.
+  It subscribes in `init()` with no await at all, so it needs no `initReady` guard until
+  settings arrive.
+- A command acts on the window `api.window.getFocusedVisibleWindowId()` names, the same front
+  window the `tags` commands use, rather than one remembered from `page:loaded`, because the
+  front window is what the user means and a remembered one goes stale when windows switch.
+- The source language is the page's declared one, read with `page:execute-script`
+  (`<html lang>`, then the `Content-Language` meta) and cut to its primary subtag. A page that
+  declares nothing is refused with a message until text-based detection exists. The target is
+  the command's argument, else `navigator.language`, both cut the same way.
+- The status widget is drawn only when the `translate:state` window is the front window,
+  because the widget lives in the shared chrome of the window in front. It shows text only:
+  the page-widget host renders an HTML string and has no way to send a click back to the
+  tile, so "Translate" and "Show original" buttons on `<peek-*>` components wait for a widget
+  action route in `renderer/page/page-widgets.js`.
+
 ## Language detection
 
 The page's declared language first: port `PAGE_LANGUAGE_SCRIPT` and
