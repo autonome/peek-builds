@@ -319,6 +319,34 @@ saved window whose URL was a real web page rather than a `peek://` tile.
 
 ---
 
+## Deleting a Space
+
+A space is deleted from its card on the spaces page (`home.js`) or with `delete space <name>`;
+both go through `background.js deleteSpace(name, { confirmed })`, which changes nothing unless
+the request is confirmed. The background page cannot show a prompt, so the command opens the
+spaces page with the name in its address and that page asks
+(`config.js deleteSpaceConfirmText`: `Delete space "Work"? Its 3 windows will move to the default
+space.`).
+
+- The default space cannot be deleted; `config.js planDeleteSpace` refuses it, and
+  `tile-session-enforcement.ts` refuses the default workspace as a merge source for any caller.
+- The deleted space's saved windows are merged into the default space's saved row
+  (`session.ts mergeWorkspaceSnapshotInto`, pure half `session-projection.ts
+  mergeSnapshotIntoWorkspace`). Every moved window is re-marked as belonging to the default space,
+  because a restored window takes its space from its saved mode metadata.
+- When the deleted space or the default space is active, the active space's windows are saved and
+  closed, the rows are merged, and the default space is entered, so everything reopens from the
+  merged row. Live windows are not re-tagged in place: the active space's row is re-saved from what
+  is on screen, which would overwrite the default space's saved windows. Reopened pages keep their
+  navigation history and scroll position, not other in-page state.
+- When some third space is active, only the saved rows change; no window opens or closes.
+- The space's tag is deleted; items carrying it lose the tag but are not deleted.
+
+Record: peek item `1f6e7458`. Tests: `tests/unit/spaces-delete-plan.test.js`,
+`tests/unit/spaces-delete-confirm.test.js`, `tests/desktop/spaces-delete.spec.ts`.
+
+---
+
 ## Open Questions
 
 - Mode inheritance opt-in (`inherit: true`) vs opt-out? Recommend opt-in.
