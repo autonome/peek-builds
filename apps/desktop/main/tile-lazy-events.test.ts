@@ -304,6 +304,31 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     unsubscribe('peek://websearch/bg', 'page:search-engine-discovered');
   });
 
+  it('wakes the translate-style tile on page:translatable and delivers the deferred payload', async () => {
+    // Mirrors features/translate/manifest.json: a lazy background tile whose lazyEvent is the
+    // page:translatable event main publishes when a loaded page declares another language.
+    const manifest = makeManifest('translate', ['page:translatable']);
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    const received: unknown[] = [];
+    launcherState.onLaunch = () => {
+      subscribe('peek://translate/bg', 'page:translatable', (msg) => {
+        received.push(msg);
+      });
+      signalReady(launcherState, 'translate', 'background');
+    };
+
+    const payload = { windowId: 4, url: 'https://example.es/', lang: 'es' };
+    publish('page-translate', 'page:translatable', payload);
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 1, 'translate tile should launch exactly once');
+    assert.strictEqual(launcherState.launchCalls[0].manifest.id, 'translate');
+    assert.deepStrictEqual(received, [payload]);
+
+    unsubscribe('peek://translate/bg', 'page:translatable');
+  });
+
   it('wakes the peeks-style tile on cli:peek-open and delivers the {args:[keyNum]} payload', async () => {
     // Mirrors the real peeks manifest after the lazy conversion (STEP 3b):
     // a single hidden tile whose lazyEvent is `cli:peek-open`. The static-

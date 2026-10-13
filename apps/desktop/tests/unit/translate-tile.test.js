@@ -15,11 +15,13 @@ import {
   DECLARED_LANGUAGE_SCRIPT,
   buildTranslateRequest,
   escapeHtml,
+  offerView,
   primaryLanguage,
   refusalText,
   SHOW_ORIGINAL_ACTION,
   statusHtml,
   statusView,
+  TRANSLATE_ACTION,
   widgetActionRequest,
 } from '../../features/translate/translate-logic.js';
 
@@ -56,7 +58,9 @@ describe('translate manifest', () => {
     assert.deepEqual(subscribed.sort(), [
       'cmd:execute:show original',
       'cmd:execute:translate page',
+      'page:loaded',
       'page:script-result',
+      'page:translatable',
       'translate:state',
       'widget:action',
     ]);
@@ -64,6 +68,11 @@ describe('translate manifest', () => {
     for (const topic of [...subscribed, ...published]) {
       assert.ok(allowed.includes(topic), `${topic} missing from capabilities.pubsub.topics`);
     }
+  });
+
+  it('wakes on page:translatable', () => {
+    const tile = manifest.tiles.find((t) => t.id === 'background');
+    assert.deepEqual(tile.lazyEvents, ['page:translatable']);
   });
 
   it('asks for no network access', () => {
@@ -87,7 +96,7 @@ describe('primaryLanguage', () => {
   });
 
   it('refuses anything not shaped like a language tag', () => {
-    for (const bad of ['', 'german', 'x', 'de AT', null, undefined, 42]) {
+    for (const bad of ['', 'german', 'x', 'de AT', 'und', 'zxx', null, undefined, 42]) {
       assert.equal(primaryLanguage(bad), null, String(bad));
     }
   });
@@ -175,12 +184,45 @@ describe('statusView', () => {
   });
 });
 
+describe('offerView', () => {
+  it('offers to translate from the page language into the target', () => {
+    const view = offerView({ lang: 'es', target: 'en-US' });
+    assert.match(view.text, /Spanish/);
+    assert.deepEqual(view.actions, [{ action: TRANSLATE_ACTION, label: 'Translate from Spanish', value: 'es en' }]);
+  });
+
+  it('offers nothing for a page in the target language or with no usable language', () => {
+    assert.equal(offerView({ lang: 'en-GB', target: 'en-US' }), null);
+    assert.equal(offerView({ lang: 'und', target: 'en' }), null);
+    assert.equal(offerView({ lang: 'es', target: '' }), null);
+  });
+
+  it('draws the button with both languages in data-widget-value', () => {
+    const html = statusHtml(offerView({ lang: 'de', target: 'en' }));
+    assert.match(html, /<peek-button[^>]*data-widget-action="translate" data-widget-value="de en"[^>]*>Translate from German<\/peek-button>/);
+  });
+});
+
 describe('widgetActionRequest', () => {
   const own = { extensionId: 'translate', widgetId: 'status' };
   const click = { extensionId: 'translate', widgetId: 'status', action: SHOW_ORIGINAL_ACTION, value: null, windowId: 9 };
 
   it('turns Show original into translate:show-original for the clicked window', () => {
     assert.deepEqual(widgetActionRequest(click, own), { topic: 'translate:show-original', message: { windowId: 9 } });
+  });
+
+  it('turns Translate from X into translate:page for the clicked window', () => {
+    const translate = { ...click, action: TRANSLATE_ACTION, value: 'es en' };
+    assert.deepEqual(widgetActionRequest(translate, own), {
+      topic: 'translate:page',
+      message: { windowId: 9, from: 'es', to: 'en' },
+    });
+  });
+
+  it('ignores a Translate click whose value does not name two different languages', () => {
+    for (const value of [null, '', 'es', 'es es', 'es en fr', 'Spanish English']) {
+      assert.equal(widgetActionRequest({ ...click, action: TRANSLATE_ACTION, value }, own), null, String(value));
+    }
   });
 
   it('ignores other widgets, unknown actions and clicks with no window', () => {

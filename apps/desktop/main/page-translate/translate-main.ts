@@ -15,7 +15,18 @@ import { publish, subscribe, unsubscribe } from '../pubsub.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
 import { createModelProvider, type ModelProvider } from './model-provider.js';
 import { installModelTopics } from './model-topics.js';
-import { createTranslationService, pageFromWebContents, type TranslationService } from './translation-service.js';
+import {
+  DECLARED_LANGUAGE_SCRIPT,
+  PAGE_TRANSLATABLE_TOPIC,
+  translatableLanguage,
+  type PageTranslatablePayload,
+} from './page-language.js';
+import {
+  createTranslationService,
+  pageFromWebContents,
+  TRANSLATE_WORLD_ID,
+  type TranslationService,
+} from './translation-service.js';
 import { installTranslateTopics, lazyEngine, statePayload, TRANSLATE_STATE_TOPIC, type LazyEngine } from './translate-topics.js';
 
 const SOURCE = 'page-translate';
@@ -86,6 +97,32 @@ export function initPageTranslation(): void {
 /** The window's page started a new document; any translation of the old one is gone. */
 export function pageTranslationNavigated(windowId: number): void {
   service?.navigated(windowId);
+}
+
+/**
+ * The window's page finished loading. When the page declares a language other than the system
+ * language, publishes `page:translatable {windowId, url, lang}`, which wakes the translate tile
+ * so it can offer a translation. The declared language is read in the translator's isolated
+ * world, so a page's own scripts cannot change what the read sees.
+ */
+export async function pageTranslationLoaded(windowId: number): Promise<void> {
+  if (!service) return;
+  const wc = getHybridContentWC(windowId);
+  if (!wc || wc.isDestroyed()) return;
+  const url = wc.getURL();
+  if (!isWebPage(url)) return;
+  let declared: unknown = null;
+  try {
+    declared = await wc.executeJavaScriptInIsolatedWorld(TRANSLATE_WORLD_ID, [{ code: DECLARED_LANGUAGE_SCRIPT }]);
+  } catch {
+    return;
+  }
+  // A navigation while the script ran makes the answer belong to a page that is gone.
+  if (wc.isDestroyed() || wc.getURL() !== url) return;
+  const { app } = await import('electron');
+  const lang = translatableLanguage(declared, app.getLocale());
+  if (!lang) return;
+  publish(SOURCE, PAGE_TRANSLATABLE_TOPIC, { windowId, url, lang } satisfies PageTranslatablePayload);
 }
 
 /** Ends every session and stops the engine process. Called on app quit. */

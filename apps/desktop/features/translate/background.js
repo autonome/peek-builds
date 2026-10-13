@@ -11,7 +11,13 @@
  * in a page widget while that window is the one in front. The widget's "Show original" button
  * comes back as `widget:action` and is turned into `translate:show-original`.
  *
- * Lazy: the tile boots on the first `cmd:execute:translate page` / `cmd:execute:show original`.
+ * Main publishes `page:translatable {windowId, url, lang}` when a loaded page declares a language
+ * other than the system one (`main/page-translate/page-language.ts`); the tile then offers a
+ * translation in the same widget, whose "Translate from X" button becomes `translate:page`.
+ * The offer closes when that window loads another page.
+ *
+ * Lazy: the tile boots on the first `cmd:execute:translate page` / `cmd:execute:show original`
+ * or `page:translatable`.
  * Every subscription is made synchronously in `init()`, before any await, so the publish that
  * woke the tile is not missed.
  */
@@ -20,6 +26,7 @@ import {
   DECLARED_LANGUAGE_SCRIPT,
   buildTranslateRequest,
   languageName,
+  offerView,
   refusalText,
   statusHtml,
   statusView,
@@ -87,17 +94,14 @@ const handleShowOriginal = async (msg) => {
   reply(msg, 'Showing the original page.');
 };
 
-const handleState = async (state) => {
-  if (!state || !Number.isInteger(state.windowId)) return;
-  // The widget lives in the chrome of the window in front, so a change in another window must
-  // not draw there.
-  const front = await api.window.getFocusedVisibleWindowId();
-  if (front !== state.windowId) return;
-  const view = statusView(state);
-  if (!view) {
-    api.pubsub.publish('widget:close', { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
-    return;
-  }
+/** The window whose translation offer the widget shows, or null when it shows no offer. */
+let offerWindowId = null;
+
+function closeWidget() {
+  api.pubsub.publish('widget:close', { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
+}
+
+function drawWidget(view) {
   // Registering is idempotent; repeating it covers a chrome that was rebuilt since init.
   api.pubsub.publish('widget:register', {
     extensionId: EXTENSION_ID,
@@ -111,6 +115,40 @@ const handleState = async (state) => {
     title: view.title,
     html: statusHtml(view),
   });
+}
+
+const handleState = async (state) => {
+  if (!state || !Number.isInteger(state.windowId)) return;
+  // The widget lives in the chrome of the window in front, so a change in another window must
+  // not draw there.
+  const front = await api.window.getFocusedVisibleWindowId();
+  if (front !== state.windowId) return;
+  // The translation's status replaces any offer in the one widget.
+  offerWindowId = null;
+  const view = statusView(state);
+  if (!view) {
+    closeWidget();
+    return;
+  }
+  drawWidget(view);
+};
+
+/** A page declaring another language finished loading: offer to translate it. */
+const handleTranslatable = async (msg) => {
+  if (!msg || !Number.isInteger(msg.windowId)) return;
+  const front = await api.window.getFocusedVisibleWindowId();
+  if (front !== msg.windowId) return;
+  const view = offerView({ lang: msg.lang, target: navigator.language });
+  if (!view) return;
+  offerWindowId = msg.windowId;
+  drawWidget(view);
+};
+
+/** A new document in the window whose offer is showing: that offer was for the old page. */
+const handleLoaded = (msg) => {
+  if (offerWindowId === null || !msg || msg.windowId !== offerWindowId) return;
+  offerWindowId = null;
+  closeWidget();
 };
 
 const init = () => {
@@ -129,6 +167,12 @@ const init = () => {
   api.pubsub.subscribe('translate:state', (state) => {
     handleState(state).catch((err) => console.error('[ext:translate] state update failed:', err));
   });
+  // The lazy wake event: main publishes it when a loaded page declares another language.
+  api.pubsub.subscribe('page:translatable', (msg) => {
+    handleTranslatable(msg).catch((err) => console.error('[ext:translate] offer failed:', err));
+  });
+  // page:loaded comes before the next page's page:translatable, so a stale offer closes first.
+  api.pubsub.subscribe('page:loaded', handleLoaded);
   // A button in the widget: the window comes with the click, so it acts on the window whose
   // chrome showed the button.
   api.pubsub.subscribe('widget:action', (msg) => {
@@ -138,7 +182,7 @@ const init = () => {
 };
 
 const uninit = () => {
-  api.pubsub.publish('widget:close', { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
+  closeWidget();
 };
 
 export default {

@@ -245,9 +245,8 @@ capability (downloads happen in main).
 What exists now (`background.js`, `translate-logic.js`, tested by
 `tests/unit/translate-tile.test.js`):
 
-- The tile is lazy and wakes on its two commands; `lazyEvents` waits for `page:translatable`.
-  It subscribes in `init()` with no await at all, so it needs no `initReady` guard until
-  settings arrive.
+- The tile is lazy and wakes on its two commands and on `page:translatable`. It subscribes in
+  `init()` with no await at all, so it needs no `initReady` guard until settings arrive.
 - A command acts on the window `api.window.getFocusedVisibleWindowId()` names, the same front
   window the `tags` commands use, rather than one remembered from `page:loaded`, because the
   front window is what the user means and a remembered one goes stale when windows switch.
@@ -265,9 +264,17 @@ What exists now (`background.js`, `translate-logic.js`, tested by
   showed the widget; the tile turns it into `translate:show-original` for that window
   (`translate-logic.js widgetActionRequest`), so the click acts on the window it was made in
   rather than whichever window reads as focused once the chrome takes the click. The widget
-  closes when the page is back to its original, so a "Translate from X" button has no
-  widget to live in yet; it arrives with the translation offer of step 8, which shows a
-  widget on a page that declares another language.
+  closes when the page is back to its original.
+- The translation offer: on `page:translatable {windowId, url, lang}` for the front window,
+  the same widget shows "This page is in X." with a "Translate from X" `<peek-button>`
+  (`data-widget-action="translate"`, `data-widget-value="<from> <to>"`); the click becomes
+  `translate:page` for the clicked window (`translate-logic.js offerView`,
+  `widgetActionRequest`). The value carries both languages, so the click alone names the
+  request and the tile keeps no memory of what it offered. The target is
+  `navigator.language`. The offer is shown by default; the "offer translation automatically"
+  setting does not exist yet. A `page:loaded` for the window whose offer is showing closes it
+  (it comes before that load's own `page:translatable`), and a translation's status replaces
+  it. After "Show original" no offer comes back until the next load.
 - `manage translation models` is a declarative `window` command opening `models.html` (a
   `workspace` window, key `translate-models`), so the background tile is not woken for it.
   The view (`models.js` over the pure `models-logic.js`, tested by
@@ -286,10 +293,15 @@ What exists now (`background.js`, `translate-logic.js`, tested by
 
 ## Language detection
 
-The page's declared language first: port `PAGE_LANGUAGE_SCRIPT` and
-`normalizeDetectedLanguage` from `main/chrome-api-polyfills/_page-language.js` on branch
-`track/twp-popup`. Main publishes `page:translatable {windowId, lang}` from the `page:loaded`
-path in `main/ipc.ts` when the language differs from the target. Detection from page text
+The page's declared language first (`<html lang>`, then the `Content-Language` meta), cut to
+its primary subtag; `und`, `zxx`, `mul` and `mis` name no language and count as undeclared.
+When a hybrid page finishes loading, `ipc.ts wireHybridContentEvents` calls
+`page-translate/translate-main.ts pageTranslationLoaded`, which reads the language in the
+translator's isolated world (so page scripts cannot change what the read sees) and publishes
+`page:translatable {windowId, url, lang}` when it differs from `app.getLocale()`
+(`page-translate/page-language.ts translatableLanguage`). Main compares with the system
+language because the target-language setting does not exist yet; once it does, main reads
+it, so a page already in the user's language never wakes the tile. Detection from page text
 (CLD2, Apache-2.0, as Firefox does) is a later addition.
 
 ## Undecided

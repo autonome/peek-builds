@@ -7,17 +7,22 @@
 /** Same shape main accepts in `translate-topics.ts languageOf`. */
 const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 
+/** BCP 47 codes that name no language: undetermined, no linguistic content, multiple. */
+const NOT_A_LANGUAGE = new Set(['und', 'zxx', 'mul', 'mis']);
+
 /**
  * The primary language subtag of a BCP 47 tag, lower-cased (`de-AT` → `de`), or null when the
- * value is not shaped like a language tag. Script and region subtags are dropped because the
- * model catalogue names most languages by the primary subtag alone; the variants it does
- * distinguish (`zh-Hans`) are handled with page-language detection in a later step.
+ * value is not shaped like a language tag or names no language. Script and region subtags are
+ * dropped because the model catalogue names most languages by the primary subtag alone; the
+ * variants it does distinguish (`zh-Hans`) are handled with page-language detection in a later
+ * step. Matches `main/page-translate/page-language.ts primaryLanguage`.
  */
 export function primaryLanguage(tag) {
   if (typeof tag !== 'string') return null;
   const trimmed = tag.trim().replace(/_/g, '-');
   if (!LANGUAGE_TAG.test(trimmed)) return null;
-  return trimmed.split('-')[0].toLowerCase();
+  const primary = trimmed.split('-')[0].toLowerCase();
+  return NOT_A_LANGUAGE.has(primary) ? null : primary;
 }
 
 /**
@@ -99,6 +104,30 @@ export const SHOW_ORIGINAL_ACTION = 'show-original';
 const SHOW_ORIGINAL_BUTTON = { action: SHOW_ORIGINAL_ACTION, label: 'Show original' };
 
 /**
+ * The widget action that starts a translation from the offer. Its `value` carries both
+ * languages, `"<from> <to>"`, so the click alone names the request.
+ */
+export const TRANSLATE_ACTION = 'translate';
+
+/**
+ * What the page widget shows when a page declares a language other than the target (a
+ * `page:translatable` payload): `{title, text, actions}` with a "Translate from X" button, or
+ * null when there is nothing to offer.
+ *
+ * @param {{lang: string, target: string|null}} input - the page's language and the target
+ */
+export function offerView({ lang, target }) {
+  const from = primaryLanguage(lang);
+  const to = primaryLanguage(target);
+  if (!from || !to || from === to) return null;
+  return {
+    title: 'Translation',
+    text: `This page is in ${languageName(from)}.`,
+    actions: [{ action: TRANSLATE_ACTION, label: `Translate from ${languageName(from)}`, value: `${from} ${to}` }],
+  };
+}
+
+/**
  * What the page widget shows for a `translate:state` payload: `{title, text, actions}`, or null
  * when the widget should close (back to the original with nothing to report, or the window is
  * gone). `actions` are the buttons, `{action, label}`, each sent back on `widget:action`.
@@ -136,7 +165,10 @@ export function statusHtml(view) {
   const actions = Array.isArray(view.actions) ? view.actions : [];
   if (actions.length === 0) return text;
   const buttons = actions
-    .map((a) => `<peek-button size="sm" variant="secondary" data-widget-action="${escapeHtml(a.action)}">${escapeHtml(a.label)}</peek-button>`)
+    .map((a) => {
+      const value = typeof a.value === 'string' ? ` data-widget-value="${escapeHtml(a.value)}"` : '';
+      return `<peek-button size="sm" variant="secondary" data-widget-action="${escapeHtml(a.action)}"${value}>${escapeHtml(a.label)}</peek-button>`;
+    })
     .join('');
   return `${text}<div style="display:flex;gap:6px;margin-top:8px;">${buttons}</div>`;
 }
@@ -154,6 +186,13 @@ export function widgetActionRequest(msg, own) {
   if (!Number.isInteger(msg.windowId) || msg.windowId <= 0) return null;
   if (msg.action === SHOW_ORIGINAL_ACTION) {
     return { topic: 'translate:show-original', message: { windowId: msg.windowId } };
+  }
+  if (msg.action === TRANSLATE_ACTION && typeof msg.value === 'string') {
+    const [rawFrom, rawTo, ...rest] = msg.value.trim().split(/\s+/);
+    const from = primaryLanguage(rawFrom);
+    const to = primaryLanguage(rawTo);
+    if (rest.length > 0 || !from || !to || from === to) return null;
+    return { topic: 'translate:page', message: { windowId: msg.windowId, from, to } };
   }
   return null;
 }

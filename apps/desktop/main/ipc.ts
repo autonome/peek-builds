@@ -179,7 +179,7 @@ import {
   // First-paint tracking
   markHybridPainted,
 } from './hybrid-page-host-registry.js';
-import { pageTranslationNavigated } from './page-translate/translate-main.js';
+import { pageTranslationLoaded, pageTranslationNavigated } from './page-translate/translate-main.js';
 
 // Transient-sibling autoclose (focus-driven AND app-resign) is GONE from this
 // file (§5 step 9 cutover). The window-kernel machine owns both halves now:
@@ -757,6 +757,8 @@ function applyPlacementOnReuse(
  *   REUSED (existing subscribers — payloads identical to page.js / canvas main):
  *     - page:loaded                  {url,title,opensearchUrl}   (websearch home.js)
  *     - page:search-engine-discovered{pageUrl,opensearchUrl}     (websearch LAZY-WAKE)
+ *     - page:translatable            {windowId,url,lang}         (translate LAZY-WAKE,
+ *                                    published by page-translate/translate-main.ts)
  *     - page:content-ready           {url,title,windowId}        (entities)
  *     - page:navigated               {url,title}                 (pagewidgets-sample)
  *   INVENTED for the P1.4 overlay (no existing consumer; names per design §4):
@@ -2709,6 +2711,12 @@ export function wireHybridContentEvents(
       });
       console.log(`[hybrid-page-host] page:search-engine-discovered published: ${pageUrl} ${opensearchUrl}`);
     }
+
+    // Lazy-wake trigger for the translate tile: page:translatable when the page declares a
+    // language other than the system one.
+    pageTranslationLoaded(hostWindowId).catch((err) => {
+      DEBUG && console.log('[hybrid-page-host] page language check failed:', err instanceof Error ? err.message : err);
+    });
 
     publishNavState();
   });

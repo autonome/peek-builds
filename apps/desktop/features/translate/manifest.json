@@ -10,7 +10,8 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "lazy": true,
+      "lazyEvents": ["page:translatable"]
     },
     {
       "id": "models",
@@ -31,6 +32,8 @@
         "translate:page",
         "translate:show-original",
         "translate:state",
+        "page:translatable",
+        "page:loaded",
         "page:execute-script",
         "page:script-result",
         "widget:register",

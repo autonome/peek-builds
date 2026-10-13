@@ -8,13 +8,16 @@
  * server (no internet) and declares Spanish with `<html lang="es">`.
  *
  * Path covered:
- *  - `cmd:execute:translate page` wakes the lazy `translate` tile, which reads the page's
- *    declared language and publishes `translate:page`; main injects the page translator,
- *    sends the text to the engine process and writes the result back into the page.
- *  - The tile shows its status widget in the overlay; clicking the widget's
- *    "Show original" `<peek-button>` (inside its shadow root) travels back as
- *    `widget:action` and puts the page's own text back.
- *  - The `show original` command does the same after a second translation.
+ *  - Loading the page makes main publish `page:translatable` (the page declares Spanish, the
+ *    app's language is English), which wakes the lazy `translate` tile.
+ *  - With the window in front, a load shows the offer widget; its "Translate from Spanish"
+ *    `<peek-button>` (clicked inside its shadow root) travels back as `widget:action` and
+ *    becomes `translate:page`; main injects the page translator, sends the text to the engine
+ *    process and writes the result back into the page.
+ *  - The tile then shows its status widget; clicking its "Show original" button puts the
+ *    page's own text back.
+ *  - `cmd:execute:translate page` reads the page's declared language and translates again,
+ *    and the `show original` command restores it.
  *
  * Window activation is synthetic (`setActive`), so the spec never takes OS focus.
  */
@@ -64,21 +67,25 @@ function publishSystemTopic(topic: string, msg: unknown): Promise<void> {
   }) as any, { topic, msg });
 }
 
-/** Clicks the button inside the widget's "Show original" `<peek-button>`, in the overlay. */
-function clickShowOriginal(): Promise<unknown> {
-  return app.evaluateMain!(((_e: unknown, key: string) => {
+/**
+ * Clicks the button inside the widget's `<peek-button>` for `action`, in the overlay. Every
+ * render replaces the widget's card and the old one stays in the DOM for a moment with class
+ * `hiding`, so the live card is the one without it.
+ */
+function clickWidgetButton(action: string): Promise<unknown> {
+  return app.evaluateMain!(((_e: unknown, arg: { key: string; action: string }) => {
     const b = (globalThis as any).__peekHybridOverlayTest;
     return b.evalInOverlay(`(() => {
-      const card = document.querySelector('.widget[data-widget-id="${key}"]');
+      const card = document.querySelector('.widget[data-widget-id="${arg.key}"]:not(.hiding)');
       if (!card) return 'no-widget';
-      const host = card.querySelector('peek-button[data-widget-action="show-original"]');
+      const host = card.querySelector('peek-button[data-widget-action="${arg.action}"]');
       if (!host) return 'no-button';
       const inner = host.shadowRoot && host.shadowRoot.querySelector('button');
       if (!inner) return 'peek-button-not-upgraded';
       inner.click();
       return 'clicked';
     })()`);
-  }) as any, WIDGET_KEY);
+  }) as any, { key: WIDGET_KEY, action });
 }
 
 async function widgetBody(): Promise<string | null> {
@@ -111,7 +118,11 @@ test.describe('Page translation with the stub engine @desktop', () => {
     if (app) await app.close();
   });
 
-  test('translates a page, then restores it from the widget button and from the command', async () => {
+  test('offers a translation, translates, then restores from the widget button and from the command', async () => {
+    // ── loading a page that declares Spanish wakes the lazy tile ───────────
+    // Main publishes page:translatable because the page's language is not the app's (en).
+    const ready = app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.waitForTileState('translate', 'ready', 15000)) as any);
     const url = `http://127.0.0.1:${serverPort}${PAGE_PATH}`;
     const opened = await bgWindow.evaluate(async (u: string) => {
       return await (window as any).app.window.open(u, { width: 800, height: 600 });
@@ -121,28 +132,33 @@ test.describe('Page translation with the stub engine @desktop', () => {
     const page = await app.getWindow(PAGE_PATH.slice(1), 15000);
     await page.waitForLoadState('domcontentloaded');
     expect(await readPage(page)).toEqual(ORIGINAL);
+    await ready;
 
     expect(await setActive(app, { id: windowId, contentWcId: null })).toBe(true);
     await waitOverlayReady(app);
 
-    // ── translate through the command; the publish wakes the lazy tile ─────
-    const ready = app.evaluateMain!(((_e: unknown) =>
-      (globalThis as any).__peek_test.waitForTileState('translate', 'ready', 15000)) as any);
-    await publishSystemTopic('cmd:execute:translate page', { search: 'en' });
-    await ready;
+    // ── with the window in front, a load shows the offer ───────────────────
+    // The first load may have finished before the window was made active, so load again.
+    await page.reload();
+    await expect
+      .poll(widgetBody, { timeout: 10000 })
+      .toContain('data-widget-action="translate" data-widget-value="es en"');
+    expect(await widgetBody()).toContain('Translate from Spanish');
 
+    // ── "Translate from Spanish" translates the page ───────────────────────
+    expect(await clickWidgetButton('translate')).toBe('clicked');
     await expect.poll(() => readPage(page), { timeout: 15000 }).toEqual(TRANSLATED);
 
     // ── the widget offers "Show original"; clicking it restores the page ──
     await expect
       .poll(widgetBody, { timeout: 10000 })
       .toContain('data-widget-action="show-original"');
-    expect(await clickShowOriginal()).toBe('clicked');
+    expect(await clickWidgetButton('show-original')).toBe('clicked');
     await expect.poll(() => readPage(page), { timeout: 10000 }).toEqual(ORIGINAL);
     // Back to the original, the tile closes its widget.
     await expect.poll(widgetBody, { timeout: 10000 }).toBeNull();
 
-    // ── translate again, then restore through the `show original` command ─
+    // ── translate through the command, then restore through `show original` ─
     await publishSystemTopic('cmd:execute:translate page', { search: 'en' });
     await expect.poll(() => readPage(page), { timeout: 15000 }).toEqual(TRANSLATED);
     await publishSystemTopic('cmd:execute:show original', {});
