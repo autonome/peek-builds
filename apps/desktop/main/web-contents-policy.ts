@@ -20,6 +20,9 @@
  * webContents types whose isolation prefs Peek checks. Extension background
  * pages and offscreen-rendering surfaces are Electron-managed: they set their
  * own webPreferences, so checking them would false-positive.
+ * A denylist on purpose: `sandbox-enforcement.ts SANDBOX_ENFORCED_TYPES` is a
+ * three-type allowlist and would silently stop checking `remote` and any type
+ * Electron adds later.
  */
 export function isIsolationCheckedType(type: string): boolean {
   return type !== 'backgroundPage' && type !== 'offscreen';
