@@ -301,8 +301,20 @@ What exists now (`background.js`, `translate-logic.js`, tested by
   (`<html lang>`, then the `Content-Language` meta) and cut to its primary subtag. A page that
   declares nothing is refused with a message until text-based detection exists. The target is
   the command's argument, else `navigator.language`, both cut the same way.
-- The status widget is drawn only when the `translate:state` window is the front window,
-  because the widget lives in the shared chrome of the window in front. While a translation
+- The widget follows the window in front. Every page window shares one chrome, which draws
+  one translate widget, so the tile keeps the view each window should show (its offer, status
+  or download prompt) in `window-views.js createWindowViews` and draws only the front window's.
+  The front window comes from main's `page-overlay:active {windowId}` report
+  (`main/hybrid-overlay.ts sendActiveHandoff`, the same report that moves the chrome), so
+  another window coming forward shows its own view or closes the widget, and the first
+  window's view comes back with it; a repeated report of the same window does not redraw.
+  Until the first report after the tile wakes, `getFocusedVisibleWindowId()` seeds the front
+  window. Views are kept for background windows too: a translation finishing in a window
+  behind, or a page there declaring another language, shows its status or offer when that
+  window comes forward. The download prompt alone is started only for the front window,
+  because it answers a translation just asked for there; a background window's
+  `models-needed` keeps the "manage translation models" text.
+- The status widget: while a translation
   runs or is shown, it carries a "Show original" `<peek-button>` with
   `data-widget-action="show-original"`. The page-widget host
   (`renderer/page/page-widgets.js widgetActionFromPath`, wired in `overlay.js addWidget`)
@@ -312,14 +324,13 @@ What exists now (`background.js`, `translate-logic.js`, tested by
   (`translate-logic.js widgetActionRequest`), so the click acts on the window it was made in
   rather than whichever window reads as focused once the chrome takes the click. The widget
   closes when the page is back to its original.
-- The translation offer: on `page:translatable {windowId, url, lang}` for the front window,
-  the same widget shows "This page is in X." with a "Translate from X" `<peek-button>`
+- The translation offer: on `page:translatable {windowId, url, lang}`, that window's widget shows "This page is in X." with a "Translate from X" `<peek-button>`
   (`data-widget-action="translate"`, `data-widget-value="<from> <to>"`); the click becomes
   `translate:page` for the clicked window (`translate-logic.js offerView`,
   `widgetActionRequest`). The value carries both languages, so the click alone names the
   request and the tile keeps no memory of what it offered. The target is
   `navigator.language`. The offer is shown by default; the "offer translation automatically"
-  setting does not exist yet. A `page:loaded` for the window whose offer is showing closes it
+  setting does not exist yet. A `page:loaded` for a window whose view is the offer ends it
   (it comes before that load's own `page:translatable`), and a translation's status replaces
   it. After "Show original" no offer comes back until the next load.
 - `manage translation models` is a declarative `window` command opening `models.html` (a

@@ -16,6 +16,11 @@
  * translation in the same widget, whose "Translate from X" button becomes `translate:page`.
  * The offer closes when that window loads another page.
  *
+ * Every page window shares one chrome, so the tile keeps the view of each window
+ * (`window-views.js`) and draws the one for the window in front, following main's
+ * `page-overlay:active` reports: another window coming forward shows its own view or none, and
+ * the first window's view comes back with it.
+ *
  * A translation that stops for want of models (`error: 'models-needed'`) turns into a download
  * prompt in the same widget, naming the size main estimates; Download fetches the models and
  * then translates again (`download-offer.js`).
@@ -44,6 +49,7 @@ import {
   offerOnState,
 } from './download-offer.js';
 import { directionKey } from './models-logic.js';
+import { createWindowViews } from './window-views.js';
 
 const api = window.app;
 
@@ -106,8 +112,15 @@ const handleShowOriginal = async (msg) => {
   reply(msg, 'Showing the original page.');
 };
 
-/** The window whose translation offer the widget shows, or null when it shows no offer. */
-let offerWindowId = null;
+/** The view each window's widget shows, and which window is in front (`window-views.js`). */
+const views = createWindowViews();
+/** Windows whose view is the "Translate from X" offer, which their next page load ends. */
+const offerWindows = new Set();
+/**
+ * Whether main has reported the window in front on `page-overlay:active` since the tile woke.
+ * Until then the window query stands in for it.
+ */
+let frontReported = false;
 
 function closeWidget() {
   api.pubsub.publish('widget:close', { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
@@ -129,61 +142,100 @@ function drawWidget(view) {
   });
 }
 
+/** Draws or closes the widget as a `window-views.js` answer says. */
+function applyWidgetStep(step) {
+  if (!step) return;
+  if (step.draw) drawWidget(step.draw);
+  else closeWidget();
+}
+
+/**
+ * Sets the view `windowId` shows (null for none); it is drawn only while that window is in
+ * front. `offer` marks the "Translate from X" offer, which the window's next page load ends.
+ */
+function showView(windowId, view, { offer = false } = {}) {
+  if (offer && view) offerWindows.add(windowId);
+  else offerWindows.delete(windowId);
+  applyWidgetStep(views.setView(windowId, view));
+}
+
+/** Another window came in front: its own view replaces the widget. */
+function syncFront(windowId) {
+  applyWidgetStep(views.setFront(windowId));
+}
+
+/**
+ * The window in front. Main's `page-overlay:active` reports keep it current; before the first
+ * report since the tile woke, the window query answers and seeds it.
+ */
+async function frontWindow() {
+  if (frontReported) return views.front();
+  const queried = await api.window.getFocusedVisibleWindowId();
+  // A report that arrived during the query is newer than its answer.
+  if (frontReported) return views.front();
+  syncFront(queried);
+  return views.front();
+}
+
 /** The download offer in progress (`download-offer.js`), or null. */
 let downloadOffer = null;
 /** Directions whose download was accepted in this session: they download without asking. */
 const consented = new Set();
 
-/** Applies a `download-offer.js` step: keeps its offer, publishes, and draws or closes. */
+/**
+ * Applies a `download-offer.js` step: keeps its offer, publishes, and sets the view of the
+ * offer's window. A new offer for another window ends the previous one, whose window then shows
+ * nothing.
+ */
 function applyOfferStep(step) {
+  const previous = downloadOffer;
   downloadOffer = step.offer;
   for (const { topic, message } of step.publish) api.pubsub.publish(topic, message);
-  if (step.view === null) closeWidget();
-  else if (step.view) drawWidget(step.view);
+  const windowId = step.offer ? step.offer.windowId : previous ? previous.windowId : null;
+  if (previous && step.offer && previous.windowId !== step.offer.windowId) showView(previous.windowId, null);
+  if (windowId !== null && step.view !== undefined) showView(windowId, step.view);
 }
 
 const handleState = async (state) => {
   if (!state || !Number.isInteger(state.windowId)) return;
-  // The widget lives in the chrome of the window in front, so a change in another window must
-  // not draw there.
-  const front = await api.window.getFocusedVisibleWindowId();
-  if (front !== state.windowId) return;
-  // The translation's status replaces any offer in the one widget.
-  offerWindowId = null;
-  const step = offerOnState(downloadOffer, state);
-  if (step) {
-    applyOfferStep(step);
-    return;
+  const front = await frontWindow();
+  // The download prompt is offered only for the window in front, because it answers a
+  // translation the user just asked for there.
+  if (front === state.windowId) {
+    const step = offerOnState(downloadOffer, state);
+    if (step) {
+      applyOfferStep(step);
+      return;
+    }
   }
   // Any other news for the window ends an unanswered download prompt there.
   if (downloadOffer && downloadOffer.windowId === state.windowId && downloadOffer.phase !== 'downloading') {
     downloadOffer = null;
   }
-  const view = statusView(state);
-  if (!view) {
-    closeWidget();
-    return;
-  }
-  drawWidget(view);
+  // The translation's status replaces any offer in the window's widget.
+  showView(state.windowId, statusView(state));
 };
 
 /** A page declaring another language finished loading: offer to translate it. */
 const handleTranslatable = async (msg) => {
   if (!msg || !Number.isInteger(msg.windowId)) return;
-  const front = await api.window.getFocusedVisibleWindowId();
-  if (front !== msg.windowId) return;
+  await frontWindow();
   const view = offerView({ lang: msg.lang, target: navigator.language });
   if (!view) return;
-  offerWindowId = msg.windowId;
-  drawWidget(view);
+  showView(msg.windowId, view, { offer: true });
 };
 
-/** A new document in the window whose offer is showing: that offer was for the old page. */
+/** A new document in a window: its offer and unanswered prompt were for the old page. */
 const handleLoaded = (msg) => {
   applyOfferStep(offerOnLoaded(downloadOffer, msg));
-  if (offerWindowId === null || !msg || msg.windowId !== offerWindowId) return;
-  offerWindowId = null;
-  closeWidget();
+  if (!msg || !offerWindows.has(msg.windowId)) return;
+  showView(msg.windowId, null);
+};
+
+/** Main's report of the page window in front (null when none is). */
+const handleFrontWindow = (msg) => {
+  frontReported = true;
+  syncFront(msg && Number.isInteger(msg.windowId) ? msg.windowId : null);
 };
 
 const init = () => {
@@ -216,6 +268,9 @@ const init = () => {
   api.pubsub.subscribe('translate:models:progress', (msg) => {
     applyOfferStep(offerOnProgress(downloadOffer, msg));
   });
+  // The page window in front changed (`main/hybrid-overlay.ts sendActiveHandoff`): the widget
+  // follows it.
+  api.pubsub.subscribe('page-overlay:active', handleFrontWindow);
   // A button in the widget: the window comes with the click, so it acts on the window whose
   // chrome showed the button.
   api.pubsub.subscribe('widget:action', (msg) => {

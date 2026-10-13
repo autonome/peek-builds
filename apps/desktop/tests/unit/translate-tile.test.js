@@ -33,6 +33,7 @@ import {
   offerOnProgress,
   offerOnState,
 } from '../../features/translate/download-offer.js';
+import { createWindowViews } from '../../features/translate/window-views.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dir = join(__dirname, '..', '..', 'features', 'translate');
@@ -67,6 +68,7 @@ describe('translate manifest', () => {
     assert.deepEqual(subscribed.sort(), [
       'cmd:execute:show original',
       'cmd:execute:translate page',
+      'page-overlay:active',
       'page:loaded',
       'page:script-result',
       'page:translatable',
@@ -348,5 +350,70 @@ describe('download offer', () => {
     assert.deepEqual(done.publish, []);
     assert.equal(done.view, null);
     assert.equal(offerOnLoaded(downloading, { windowId: 8 }).offer, downloading);
+  });
+});
+
+describe('window views', () => {
+  const offerA = { title: 'Translation', text: 'This page is in Spanish.', actions: [] };
+  const statusB = { title: 'Translation', text: 'Translated from German to English.', actions: [] };
+
+  it('draws a view only while its window is in front', () => {
+    const views = createWindowViews();
+    assert.deepEqual(views.setFront(1), { close: true });
+    assert.deepEqual(views.setView(1, offerA), { draw: offerA });
+    assert.equal(views.setView(2, statusB), null);
+    assert.equal(views.viewOf(2), statusB);
+  });
+
+  it('hides the widget when a window without a view comes forward, and brings it back with its window', () => {
+    const views = createWindowViews();
+    views.setFront(1);
+    views.setView(1, offerA);
+    assert.deepEqual(views.setFront(3), { close: true });
+    assert.deepEqual(views.setFront(1), { draw: offerA });
+  });
+
+  it('shows the view of the window that comes forward', () => {
+    const views = createWindowViews();
+    views.setFront(1);
+    views.setView(1, offerA);
+    views.setView(2, statusB);
+    assert.deepEqual(views.setFront(2), { draw: statusB });
+    assert.deepEqual(views.setFront(1), { draw: offerA });
+  });
+
+  it('does not redraw when the same window is reported in front again', () => {
+    const views = createWindowViews();
+    views.setFront(1);
+    views.setView(1, offerA);
+    assert.equal(views.setFront(1), null);
+    assert.equal(views.front(), 1);
+  });
+
+  it('closes the widget when no page window is in front', () => {
+    const views = createWindowViews();
+    views.setFront(1);
+    views.setView(1, offerA);
+    assert.deepEqual(views.setFront(null), { close: true });
+    assert.equal(views.front(), null);
+    assert.equal(views.setView(1, statusB), null);
+    assert.deepEqual(views.setFront(1), { draw: statusB });
+  });
+
+  it('clearing a view closes the widget only for the window in front', () => {
+    const views = createWindowViews();
+    views.setFront(1);
+    views.setView(1, offerA);
+    views.setView(2, statusB);
+    assert.equal(views.setView(2, null), null);
+    assert.equal(views.viewOf(2), null);
+    assert.deepEqual(views.setView(1, null), { close: true });
+    assert.deepEqual(views.setFront(2), { close: true });
+  });
+
+  it('ignores a view for no window', () => {
+    const views = createWindowViews();
+    assert.equal(views.setView(null, offerA), null);
+    assert.equal(views.setView(undefined, offerA), null);
   });
 });
