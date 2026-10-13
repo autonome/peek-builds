@@ -114,7 +114,9 @@ apps/desktop/features/todo/
   config.js          id and labels
 ```
 
-`background.html` is boilerplate, and worth copying verbatim:
+`background.html` is boilerplate. Copy the real file rather than this condensed sketch of it —
+it also carries a `<!DOCTYPE>`, a `<head>` with a `script-src 'self' 'unsafe-inline'` CSP, and a
+`<title>`:
 
 ```html
 <script type="module">
@@ -157,12 +159,13 @@ re-exports wholesale. Three functions matter:
   file returns null silently; a JSON syntax error or a validation failure is logged and returns
   null.
 
-**Schema v3 is `"manifestVersion": 3`.** A manifest is treated as a tile manifest if
-`manifestVersion` is `3`, or — with the field absent or some other number — if `tiles` is an
-array and `capabilities` is an object. `manifestVersion: 2` is legacy, and every loader refuses
-it: `tile-loader.ts` reports "has a legacy manifest (manifestVersion < 3)",
-`feature-installer.ts` rejects local installs, `manifest-cache.ts` refuses to cache it. Set the
-field to `3` and move on.
+**Schema v3 is `"manifestVersion": 3`.** `detectManifestVersion` decides in three steps:
+`manifestVersion: 3` is a tile manifest outright, `manifestVersion: 2` is legacy outright, and
+anything else — the field absent, or any other value — falls through to a sniff that calls it a
+tile manifest only if `tiles` is an array and `capabilities` is a non-null object. A legacy
+manifest is refused by every loader: `tile-loader.ts` reports "has a legacy manifest
+(manifestVersion < 3)", `feature-installer.ts` rejects local installs, `manifest-cache.ts`
+refuses to cache it. Set the field to `3` and move on.
 
 Two keys are rejected outright as removed in v3: `tiles[].type` (use `resident: true`) and
 `tiles[].windowHints` (put the window fields directly on the tile entry).
@@ -179,7 +182,7 @@ Validated — a failure here means the feature does not load:
 | `capabilities` | yes | object | May be empty, but the key must be present. |
 | `commands` | no | array | Each entry needs `name` and an `action` object. |
 | `shortcuts` | no | array | Each needs `keys` plus exactly one of `command` or `wakeTopic`. |
-| `rules` | no | array | `{ topic, scriptId }` plus optional `match`, `config`, `display`, `enabled`, `ordering`; reconciled into the `rules` table by `feature-startup.ts syncManifestRules`. |
+| `rules` | no | array | `{ topic, scriptId }` plus optional `match`, `config`, `display`, `enabled`, `ordering`; reconciled into the `rules` table by `rules.ts syncManifestRules`, which `feature-startup.ts` calls at startup. |
 
 Read by the code but not validated: `manifestVersion`, `version` (defaults to `0.0.0`),
 `description`, `shortname`, `builtin`, `settingsSchema`, `defaults`, `nouns`,
@@ -196,15 +199,16 @@ live in `tiles[]`), and no `enabled`/`disabled` key — see "Enabling and disabl
 
 Validated: `id` (required, unique within the manifest) and `url` (required), plus `lazyEvents`
 if present (array of non-empty strings). The rest is typed in
-`packages/capabilities/index.d.ts` as `TileEntry` and read by
-`apps/desktop/main/tile-launcher.ts createTileBrowserWindow`:
+`packages/capabilities/index.d.ts` as `TileEntry`. The window-shaping keys are read by
+`apps/desktop/main/tile-launcher.ts createTileBrowserWindow`; the activation keys are read by the
+arming and lazy-wake code instead, as noted per row:
 
 | Key | Effect |
 |---|---|
-| `resident: true` | Launch this tile eagerly at startup. |
-| `lazy: true` | Marks which entry a wake should launch. Does **not** by itself make the feature lazy. |
-| `lazyEvents: [...]` | Topics that wake this tile. |
-| `keepLive: true` | Hide rather than destroy the window when it is dismissed. |
+| `resident: true` | Launch this tile eagerly at startup. Read in `tile-arm.ts`, not the launcher. |
+| `lazy: true` | Marks which entry a wake should launch — `tile-lazy.ts` takes `tiles.find(t => t.lazy === true)` and falls back to `tiles[0]`. Does **not** by itself make the feature lazy. |
+| `lazyEvents: [...]` | Topics that wake this tile. Read in `tile-arm.ts`, `tile-lazy.ts` and `manifest-cache.ts`. |
+| `keepLive: true` | Hide rather than destroy the window when it is dismissed. The launcher hands it to the window machine, which owns the hide-versus-close decision (`window-kernel.ts`, `windows.ts closeOrHideWindow`). |
 | `width`, `height` | Defaults 800 × 600. |
 | `minWidth`, `minHeight` | Minimum size. |
 | `frame: true` | Opt into OS chrome; tiles are frameless by default. |
@@ -212,7 +216,7 @@ if present (array of non-empty strings). The rest is typed in
 | `focusable`, `resizable` | Default true; set `false` to opt out. |
 | `title` | Falls back to `name`. |
 | `role` | Defaults to `'workspace'`; `'overlay'` for full-screen overlays. |
-| `key` | Collapses repeat opens onto one window. |
+| `key` | Carried into the window hints, but nothing downstream reads it. Collapsing repeat opens onto one window is driven by the `key` passed to `app.window.open` (`ipc.ts`), not by this field. |
 
 ### `capabilities`
 
@@ -230,6 +234,7 @@ against this list:
 | `commands` | `true` | `tile-ipc.ts` |
 | `shortcuts` | `true` or `{ keys?: string[] }` | `tile-shortcuts-enforcement.ts` |
 | `settings` | `true` or `{ readForeign?: string[] }` | `tile-ipc.ts`, `tile-settings-foreign-enforcement.ts` |
+| `settingsForeign` | `string[]` — the feature ids whose settings this tile may read. A top-level fallback for `settings.readForeign`, which wins when both are present. | `tile-settings-foreign-enforcement.ts` |
 | `context` | `true` or `{ read?, write?, modes?, queryWindows? }` | `tile-context-enforcement.ts` |
 | `dialogs` | `true` or `{ types?: ('save'\|'open')[] }` | `tile-dialogs-enforcement.ts` |
 | `features` | `true` or `{ read?, install?, manage?, update?, dev?, publish?, devtools?, browse?, sources? }` | `tile-features-enforcement.ts` |
@@ -247,12 +252,14 @@ against this list:
 
 **List every topic the tile subscribes to, not only the ones it publishes.** A consumer that
 forgets is the classic silent failure here, and it is caught at test time rather than at
-runtime: `apps/desktop/main/manifest-subscribe-drift.test.ts` walks every `.js` file under
-`apps/desktop/features/`, extracts literal `subscribe('…')` topics and `liveQuery({ topics: […] })`
-arrays, and fails if one is not covered by that feature's `capabilities.pubsub.topics`. It runs
-in the main-process unit runner, so an undeclared subscribe breaks the gate. Note it reads `.js`
-files only — a topic subscribed from an inline `<script>` in an `.html` file is not audited, so
-check those by hand.
+runtime: `apps/desktop/main/manifest-subscribe-drift.test.ts` walks every `.js`, `.cjs` and
+`.mjs` file under `apps/desktop/features/`, extracts literal `subscribe('…')` topics and
+`liveQuery({ topics: […] })` arrays, and fails if one is not covered by that feature's
+`capabilities.pubsub.topics`. It runs in the main-process unit runner, so an undeclared subscribe
+breaks the gate. Nothing stops it at runtime — the `tile:pubsub:subscribe` handler does no
+allowlist check and the broadcaster delivers to every tile window — so this test is the whole
+enforcement. Note it reads JavaScript files only: a topic subscribed from an inline `<script>` in
+an `.html` file is not audited, so check those by hand.
 
 Publishes are enforced at runtime instead: `tile-ipc.ts`'s `tile:pubsub:publish` handler drops
 a publish whose topic matches no pattern and records a violation. Patterns support an exact
@@ -485,8 +492,9 @@ it is bespoke CSS that only looks close.
 - **`tile-preload.cts` must stay `.cts`.** The backend `tsconfig.json` emits ESM for `.ts`, and
   Electron's sandboxed preload silently rejects ESM: `window.app` comes up empty and the entire
   tile API vanishes with no error. Never rename or convert it.
-- **An undeclared subscribe topic fails silently at runtime** and breaks the gate at test time.
-  Declare it in `capabilities.pubsub.topics`.
+- **An undeclared subscribe topic breaks the gate, not the app.** Nothing filters subscribes at
+  runtime — `manifest-subscribe-drift.test.ts` is what fails. An undeclared *publish* is the one
+  silently dropped at runtime. Declare every topic in `capabilities.pubsub.topics` either way.
 - **A missing importmap leaves `<peek-*>` elements inert**, with nothing thrown.
 - **Register wake handlers before your awaits**, or the tile misses the publish that woke it.
 - **A typo in a capability key is ignored, not reported.** Check it against the table above.
