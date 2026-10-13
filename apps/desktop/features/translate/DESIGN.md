@@ -115,30 +115,54 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
 - `model-store.ts` — catalogue, download, hash check, decompression, cache.
 - `page-session.ts` — one state machine per window: idle → collecting → translating →
   translated → restoring.
-- `content-script.js` — the injected script as a string, plus pure helpers that unit tests
-  load directly.
+- `content-script.ts` — `pageTranslator(document, {pageLang, batchSize, viewportMargin})`,
+  a self-contained function that unit tests call on a linkedom DOM and that
+  `injectionSource()` serialises with `toString()` for the isolated world (installed once as
+  `globalThis.__peekPageTranslator`); `callSource(method, arg)` builds each call. It is
+  TypeScript in `main/` rather than a `.js` file because the build compiles only `.ts` there,
+  and its test is `main/page-translate-content-script.test.ts`.
 
 ## Reaching the page
 
 `executeJavaScriptInIsolatedWorld` on `hybrid-overlay.ts getHybridContentWC(id)`, following
 `wireExecuteScript`. Main pulls and owns every transition:
 
-- `collect()` returns `[{id, html}]` for blocks near the viewport.
-- Main translates and calls `apply(results)`.
-- While translated, main polls `drain()` for work created by mutations and scrolling.
-- Originals are kept per id, so `restore()` needs no reload; `wc.reload()` is the fallback.
+- `collect()` scans the page, queues every unit and returns the first batch of work items
+  `{id, text, isHTML}`, units near the viewport first. Block units are HTML; attribute units
+  are plain text, so main groups a batch into one engine request per `isHTML` value.
+- Main translates and calls `apply([{id, text}])`. A unit whose source changed after it was
+  handed out is re-queued rather than overwritten.
+- While translated, main polls `drain()` for the rest of the scan and for content a
+  MutationObserver queued; units near the viewport are re-prioritised on every call.
+- Translations are cached by source text for the page's lifetime, including across a
+  restore, so identical text is applied without another engine call.
+- Original child nodes and attribute values are kept, so `restore()` puts back the same node
+  objects with no reload; `wc.reload()` is the fallback.
 
 ## Page text handling
 
 Modelled on Firefox's `translations-document.sys.mjs TranslationsDocument`:
 
-- A TreeWalker over block elements, including open shadow roots.
-- Skipped: `code`, `kbd`, `script`, `style`, `textarea`, `iframe`, `translate="no"`,
-  `.notranslate`, contenteditable regions, and elements whose `lang` differs from the page's.
-- A block's `innerHTML` is sent as HTML with per-node ids; results are merged back onto the
-  original nodes so listeners and references survive. The engine keeps inline markup in place
-  (verified by the spike for `<a>` and `<b>`).
-- Attributes translated: `title`, `alt`, `placeholder`, `aria-*` labels, button `value`.
+- A recursive walk over elements, including open shadow roots (a hand-written walk rather
+  than a TreeWalker, which cannot skip a subtree without a filter). There is no layout in the
+  walk: an element counts as inline by tag name (`a`, `b`, `span`, `em`, …); anything else is
+  a block. A block with text of its own, directly or through inline children, is a unit; a
+  block nested inside a unit is its own unit and a placeholder in the outer one.
+- Skipped: `code`, `kbd`, `samp`, `var`, `pre`, `script`, `style`, `noscript`, `template`,
+  `textarea`, `iframe`, `svg`, `math`, media and `select` elements, `translate="no"`,
+  `.notranslate`, contenteditable regions, and elements whose `lang` primary subtag differs
+  from the page's.
+- A unit is sent as HTML in which every inline element is reduced to `<tag data-t="n">` (no
+  other attributes) and every other element is an empty placeholder. Results are parsed in an
+  inert `<template>` and merged back by index onto the original elements, so listeners,
+  attributes and references survive and the engine's reordering is followed. Placeholders the
+  engine drops are appended at the end of the unit rather than lost. The engine keeps inline
+  markup in place (verified by the spike for `<a>` and `<b>`).
+- Attributes translated: `title`, `alt`, `placeholder`, `aria-label`, `aria-description`, and
+  `value` on button-type inputs.
+- Known limits: content a page adds inside an already translated unit is left untranslated;
+  the MutationObserver watches `document.body` only, so new content inside shadow roots is
+  not picked up.
 - Visible blocks first, DOM updates batched, a per-session result cache, and a
   MutationObserver that re-queues new content.
 
