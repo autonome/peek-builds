@@ -80,10 +80,26 @@ The process (`engine-worker.ts createEngineWorker`) translates one request at a 
 order; a `cancel` aborts the running request or drops a queued one. Messages are in
 `engine-protocol.ts`. `PEEK_TRANSLATE_ENGINE=stub` selects a stub engine that uppercases text
 outside tags and entities (`PEEK_TRANSLATE_STUB_DELAY_MS` adds a per-segment delay); any other
-value selects Bergamot, which is not wired yet and answers `engine-unavailable`. The child
+value selects Bergamot (`engine-bergamot.ts createBergamotEngine`). The child
 inherits main's environment, so the flag set on the app reaches it. The entry point also speaks
 Node's `child_process` IPC, which is how the main-process unit test runs a real engine process:
 `utilityProcess` does not exist under `ELECTRON_RUN_AS_NODE`.
+
+The Bergamot engine reads every file it needs from the request: a translate message carries
+`resources` (`engine-protocol.ts EngineResources`: the wasm path and one or two directions with
+their model files on disk, built from `model-provider.ts ReadyStep`s by
+`engineStepsFromReady`), so the process never reaches the network or the catalogue. A request
+without them answers `engine-unavailable`. The runtime loads once per wasm path; a different
+wasm path (a newer engine version) replaces it and frees every model. One `TranslationModel`
+per direction is kept built, the four most recently used (`MAX_WARM_MODELS`), because each
+holds ~30–60 MB of wasm heap. A pivot pair runs through `translateViaPivoting` with both
+directions, as Firefox does, which keeps inline HTML aligned across both legs. Segments go to
+the engine eight at a time (`SEGMENTS_PER_CALL`), with a turn of the event loop between calls
+so a `cancel` lands; blank segments come back unchanged without reaching the engine, because
+empty text breaks it. Errors: `engine-load-failed` (retried on the next request),
+`model-files-missing`, `bad-request` (steps that do not chain from `from` to `to`).
+Measured through a forked engine process on an Apple M4 with es→en base-memory 3.0: runtime +
+model + three sentences 225 ms cold, a short HTML paragraph 13 ms warm, engine RSS ~280 MB.
 
 ## Models
 
@@ -247,7 +263,11 @@ capability (downloads happen in main).
   with the record list in `engine/records.json` for offline use. Only major 3 is accepted
   because the glue's API (the `TranslationModel` signature) changes with the major version.
 - The glue is not in any Remote Settings collection (Firefox ships it in its source tree), so
-  it is the one part that must ship with Peek, pinned to the v3 wasm.
+  it is the one part that must ship with Peek, pinned to the v3 wasm. It is vendored unchanged
+  at `main/page-translate/vendor/bergamot-translator.js` (MPL-2.0; upstream path, revision and
+  hash in `vendor/README.md`) and copied to `dist/main/page-translate/vendor/` by the build,
+  because `tsc` compiles only `.ts`. The engine process reads it from inside `app.asar`, so it
+  needs no `asarUnpack` entry.
 
 What exists now (`background.js`, `translate-logic.js`, tested by
 `tests/unit/translate-tile.test.js`):

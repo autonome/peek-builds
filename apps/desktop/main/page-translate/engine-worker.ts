@@ -5,7 +5,7 @@
  * share the loop.
  */
 
-import type { EngineMode, EngineToHost, HostToEngine, TranslateMessage } from './engine-protocol.js';
+import type { EngineMode, EngineResources, EngineToHost, HostToEngine, TranslateMessage } from './engine-protocol.js';
 
 export interface WorkerEngineRequest {
   from: string;
@@ -13,6 +13,7 @@ export interface WorkerEngineRequest {
   segments: string[];
   isHTML: boolean;
   signal: AbortSignal;
+  resources?: EngineResources;
 }
 
 export interface WorkerEngine {
@@ -65,15 +66,6 @@ export function createStubEngine(delayMs = 0): WorkerEngine {
   };
 }
 
-/** Placeholder until the Bergamot engine is wired: every request fails with a clear code. */
-export function createUnavailableEngine(): WorkerEngine {
-  return {
-    async translate() {
-      throw new EngineWorkerError('engine-unavailable', 'the Bergamot engine is not wired yet');
-    },
-  };
-}
-
 export interface EngineWorker {
   handle(msg: HostToEngine): void;
   /** Resolves once the queue is empty; for tests. */
@@ -110,6 +102,7 @@ export function createEngineWorker(opts: {
           segments: msg.segments,
           isHTML: msg.isHTML,
           signal: ctrl.signal,
+          resources: msg.resources,
         });
         if (ctrl.signal.aborted) {
           opts.post({ type: 'error', id: msg.id, code: 'aborted', message: 'request cancelled' });

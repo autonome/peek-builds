@@ -16,6 +16,43 @@ export function engineModeFromEnv(env: Record<string, string | undefined>): Engi
   return env[ENGINE_MODE_ENV] === 'stub' ? 'stub' : 'bergamot';
 }
 
+/** Model file kinds a direction can carry: `vocab`, or the `srcvocab` + `trgvocab` pair. */
+export type EngineModelFile = 'model' | 'lex' | 'vocab' | 'srcvocab' | 'trgvocab';
+
+/** One direction of a translation with its model files already on disk. */
+export interface EngineStep {
+  from: string;
+  to: string;
+  /** The model record's name; `*.intgemm8.bin` selects a different matrix-multiply precision. */
+  modelName: string;
+  files: Partial<Record<EngineModelFile, string>>;
+}
+
+/**
+ * Everything on disk the Bergamot engine needs for one request: the engine wasm and one or two
+ * directions (two when pivoting through English). Main resolves and downloads these, so the
+ * engine process never touches the network or the catalogue.
+ */
+export interface EngineResources {
+  wasmPath: string;
+  steps: EngineStep[];
+}
+
+/** Turns `model-provider.ts ReadyStep`s into the steps a translate message carries. */
+export function engineStepsFromReady(
+  steps: Array<{
+    plan: { sourceLanguage: string; targetLanguage: string; files: { model?: { name: string } } };
+    files: Partial<Record<EngineModelFile, string>>;
+  }>,
+): EngineStep[] {
+  return steps.map((s) => ({
+    from: s.plan.sourceLanguage,
+    to: s.plan.targetLanguage,
+    modelName: s.plan.files.model?.name ?? '',
+    files: { ...s.files },
+  }));
+}
+
 export interface TranslateMessage {
   type: 'translate';
   id: number;
@@ -23,6 +60,8 @@ export interface TranslateMessage {
   to: string;
   segments: string[];
   isHTML: boolean;
+  /** Required by the Bergamot engine, ignored by the stub. */
+  resources?: EngineResources;
 }
 
 export interface CancelMessage {

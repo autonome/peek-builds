@@ -28,10 +28,10 @@ import {
 import {
   createEngineWorker,
   createStubEngine,
-  createUnavailableEngine,
   stubTranslateText,
   type WorkerEngine,
 } from './page-translate/engine-worker.js';
+import { createBergamotEngine } from './page-translate/engine-bergamot.js';
 import type { SessionEngine } from './page-translate/page-session.js';
 
 function req(segments: string[], signal = new AbortController().signal, isHTML = false) {
@@ -101,10 +101,24 @@ describe('engine worker loop', () => {
     await worker.idle();
     assert.strictEqual(out[1].type === 'error' && out[1].code, 'engine-failed');
 
-    const u = harness(createUnavailableEngine());
+    const u = harness(createBergamotEngine());
     u.worker.handle({ type: 'translate', id: 7, from: 'de', to: 'en', segments: ['a'], isHTML: false });
     await u.worker.idle();
     assert.strictEqual(u.out[1].type === 'error' && u.out[1].code, 'engine-unavailable');
+  });
+
+  it('hands the request resources to the engine', async () => {
+    const seen: unknown[] = [];
+    const { worker } = harness({
+      translate: async (r) => {
+        seen.push(r.resources);
+        return r.segments;
+      },
+    });
+    const resources = { wasmPath: '/w.wasm', steps: [{ from: 'de', to: 'en', modelName: 'm.bin', files: { model: '/m' } }] };
+    worker.handle({ type: 'translate', id: 1, from: 'de', to: 'en', segments: ['a'], isHTML: false, resources });
+    await worker.idle();
+    assert.deepStrictEqual(seen, [resources]);
   });
 });
 
@@ -283,7 +297,7 @@ describe('engine host with a real engine process', () => {
     await f.exits[0];
   });
 
-  it('without the stub flag the process reports engine-unavailable', async () => {
+  it('without the stub flag and with no engine files named, the process reports engine-unavailable', async () => {
     const f = forkSpawner({ [ENGINE_MODE_ENV]: '' });
     const host = createEngineHost({ spawn: f.spawn });
     await rejectsWith(host.translate(req(['a'])), 'engine-unavailable');

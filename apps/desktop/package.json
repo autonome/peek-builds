@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "//-- Build --//": "",
-    "build": "../../scripts/timed.sh sh -c 'node ../../packages/schema/codegen.js && rm -rf dist && tsc -p tsconfig.json && cp -r main/chrome-api-polyfills dist/main/ && node ../../scripts/patch-chrome-extensions.js && node ../../scripts/patch-virtual-core.js && node scripts/build-desktop-helper.mjs && node scripts/build-nonactivating-window.mjs'",
+    "build": "../../scripts/timed.sh sh -c 'node ../../packages/schema/codegen.js && rm -rf dist && tsc -p tsconfig.json && cp -r main/chrome-api-polyfills dist/main/ && cp -r main/page-translate/vendor dist/main/page-translate/ &&node ../../scripts/patch-chrome-extensions.js && node ../../scripts/patch-virtual-core.js && node scripts/build-desktop-helper.mjs && node scripts/build-nonactivating-window.mjs'",
     "build:watch": "tsc -p tsconfig.json --watch",
     "build:electron": "cd ../.. && ./scripts/timed.sh electron-builder --dir",
     "build:electron:install": "cd ../.. && ./scripts/timed.sh sh -c 'scripts/assert-prod-peek-not-running.sh && yarn workspace @peek/desktop build && electron-builder --dir && scripts/assert-prod-peek-not-running.sh && rm -rf /Applications/Peek.app && cp -R out/mac-arm64/Peek.app /Applications/'",

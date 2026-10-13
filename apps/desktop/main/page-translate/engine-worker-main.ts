@@ -6,7 +6,8 @@
  */
 
 import { engineModeFromEnv, STUB_DELAY_ENV, type EngineToHost, type HostToEngine } from './engine-protocol.js';
-import { createEngineWorker, createStubEngine, createUnavailableEngine } from './engine-worker.js';
+import { createBergamotEngine } from './engine-bergamot.js';
+import { createEngineWorker, createStubEngine } from './engine-worker.js';
 
 interface ParentPortLike {
   on(event: 'message', fn: (e: { data: unknown }) => void): void;
@@ -31,6 +32,6 @@ if (parentPort) {
 }
 
 const mode = engineModeFromEnv(process.env);
-const engine = mode === 'stub' ? createStubEngine(Number(process.env[STUB_DELAY_ENV]) || 0) : createUnavailableEngine();
+const engine = mode === 'stub' ? createStubEngine(Number(process.env[STUB_DELAY_ENV]) || 0) : createBergamotEngine();
 const worker = createEngineWorker({ engine, mode, post });
 listen((msg) => worker.handle(msg));
