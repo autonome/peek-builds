@@ -173,6 +173,14 @@ export interface LaunchOptions {
    * is not in there.
    */
   headless?: boolean;
+  /**
+   * Extra environment for the launched app only, applied over the runner's own
+   * environment. Main passes its environment on to the processes it starts (the
+   * page-translation engine reads `PEEK_TRANSLATE_ENGINE` there), so this reaches
+   * them too. Set here rather than on `process.env` so one spec's settings never
+   * leak into the next app launched by the same worker.
+   */
+  env?: Record<string, string>;
 }
 
 /**
@@ -296,7 +304,8 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       // unused and required for the v2 bgWindow path.
       E2E_TEST: 'true',
       // Electron uses PEEK_HEADLESS for headless mode
-      ...(headless ? { PEEK_HEADLESS: '1' } : {})
+      ...(headless ? { PEEK_HEADLESS: '1' } : {}),
+      ...(options.env ?? {})
     }
   });
 
