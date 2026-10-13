@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder, planMoveToSpace,
+  resolveVividColor, shouldShowBorder, planMoveToSpace, planDeleteSpace,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
   emptySpaceWindowOptions, createSerialRunner, countSpaceWindows
 } from './config.js';
@@ -747,6 +747,93 @@ async function switchSpace(targetName) {
   return openSpace(targetName);
 }
 
+/**
+ * Delete a space: its saved windows move into the default space and its tag
+ * is deleted (items carrying the tag lose it but are not deleted). The
+ * default space cannot be deleted. See `planDeleteSpace` for when the default
+ * is reopened and when only the saved rows move. Runs in the same queue as
+ * switches, since it may close and reopen windows the same way.
+ */
+function deleteSpace(spaceName) {
+  return runSwitchExclusively(() => deleteSpaceNow(spaceName));
+}
+
+async function deleteSpaceNow(spaceName) {
+  await defaultSpaceReady;
+  let tags;
+  try {
+    tags = await listSpaceTags();
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+  const plan = planDeleteSpace({
+    targetName: spaceName,
+    tags,
+    activeSpaceId,
+    defaultSpaceId,
+    defaultSpaceName: DEFAULT_SPACE_NAME,
+  });
+  if (plan.action === 'error') return { success: false, error: plan.error };
+
+  const defaultTagResult = await api.datastore.getOrCreateTag(toSpaceTagName(DEFAULT_SPACE_NAME));
+  if (!defaultTagResult?.success) return { success: false, error: 'Failed to find the default space' };
+  const defaultTag = defaultTagResult.data.tag;
+  const defaultName = getSpaceDisplayName(defaultTag);
+  // The default's windows carry the tag's own color (see enterWorkspace()).
+  const targetSpace = { spaceId: defaultTag.id, spaceName: defaultName, color: defaultTag.color };
+  const merge = () => api.session.mergeWorkspaceSnapshot(
+    workspaceSnapshotKey(plan.targetId), DEFAULT_WORKSPACE_SNAPSHOT_KEY, targetSpace);
+
+  let mergeResult;
+  if (plan.action === 'reload-default') {
+    // Same bracket as a switch (see openSpaceNow()): no ambient save may
+    // rewrite a row between the save below and the default reopening.
+    try {
+      await api.session.beginWorkspaceSwitch();
+    } catch (err) {
+      console.error('[ext:spaces] Failed to mark the workspace switch as in progress:', err);
+    }
+    try {
+      // Saves the active workspace's row first, so the merge reads the
+      // windows that were on screen, then closes them.
+      await closeCurrentWorkspaceWindows();
+      try {
+        mergeResult = await merge();
+      } catch (err) {
+        mergeResult = { success: false, error: err?.message || String(err) };
+      }
+      // Reopen the default either way: the active workspace's windows are
+      // already closed, and a failed merge leaves the space and its row intact.
+      await enterWorkspace(defaultTag, defaultName);
+    } finally {
+      try {
+        await api.session.setActiveWorkspace(workspaceSnapshotKey(activeSpaceId));
+      } catch (err) {
+        console.error('[ext:spaces] Failed to report the active workspace:', err);
+      }
+    }
+  } else {
+    try {
+      mergeResult = await merge();
+    } catch (err) {
+      mergeResult = { success: false, error: err?.message || String(err) };
+    }
+  }
+
+  if (!mergeResult?.success) {
+    return { success: false, error: `Failed to move the windows of "${plan.targetName}": ${mergeResult?.error || 'unknown error'}` };
+  }
+
+  const deleteResult = await api.datastore.deleteTag(plan.targetId);
+  if (!deleteResult?.success) {
+    return { success: false, error: `Failed to delete space "${plan.targetName}": ${deleteResult?.error || 'unknown error'}` };
+  }
+  refreshSpaceNameCommands();
+  publishMembershipChanged(null, defaultTag.id);
+  console.log(`[ext:spaces] Deleted space "${plan.targetName}", ${mergeResult.moved ?? 0} window(s) moved to the default space`);
+  return { success: true, spaceId: plan.targetId, spaceName: plan.targetName, moved: mergeResult.moved ?? 0 };
+}
+
 // ===== Pin / Unpin =====
 //
 // A pinned window is an ordinary Pinned window (window-kernel.ts `layer`
@@ -1212,6 +1299,7 @@ export const __test = {
   border,
   handleAppFocusChanged,
   cancelHideTimer,
+  deleteSpace,
   setActiveSpaceId: (id) => { activeSpaceId = id; },
 };
 

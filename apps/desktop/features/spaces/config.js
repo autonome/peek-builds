@@ -206,6 +206,36 @@ const planMoveToSpace = ({ targetName, activeSpaceName, pinScope }) => {
 };
 
 /**
+ * What deleting a space does. The deleted space's saved windows always move
+ * into the default space's saved row. The active workspace's row is rewritten
+ * from what is on screen by every ambient save, so when the space being
+ * deleted is active, or the default is (no active space counts as the
+ * default), a row merge alone would be overwritten: the active workspace is
+ * saved and closed, the rows merged, and the default reopened from the merged
+ * row (`reload-default`). With some third space active, neither row is the
+ * active one and only the rows move (`rows-only`). The default space cannot
+ * be deleted. `tags` are the space tags; names match case-insensitively by
+ * display name.
+ */
+const planDeleteSpace = ({ targetName, tags, activeSpaceId, defaultSpaceId, defaultSpaceName }) => {
+  const wanted = typeof targetName === 'string' ? targetName.trim() : '';
+  if (!wanted) return { action: 'error', error: 'Usage: delete space <name>' };
+  const lower = wanted.toLowerCase();
+  const refuseDefault = { action: 'error', error: 'The default space cannot be deleted' };
+  if (typeof defaultSpaceName === 'string' && defaultSpaceName.trim().toLowerCase() === lower) {
+    return refuseDefault;
+  }
+  const target = (Array.isArray(tags) ? tags : []).find(
+    (t) => t && isSpaceTag(t.name) && getSpaceDisplayName(t).trim().toLowerCase() === lower
+  );
+  if (!target) return { action: 'error', error: `No space named "${wanted}"` };
+  if (target.id === defaultSpaceId) return refuseDefault;
+  const defaultIsActive = activeSpaceId == null || activeSpaceId === defaultSpaceId;
+  const action = target.id === activeSpaceId || defaultIsActive ? 'reload-default' : 'rows-only';
+  return { action, targetId: target.id, targetName: getSpaceDisplayName(target) };
+};
+
+/**
  * Check a name for a new space. `existingNames` are the display names of the
  * spaces that exist; the default space's name is always taken.
  */
@@ -324,6 +354,7 @@ export {
   validateNewSpaceName,
   spaceNameOptions,
   planMoveToSpace,
+  planDeleteSpace,
   shouldShowBorder,
   countSpaceWindows,
   initialSelectedIndex,
