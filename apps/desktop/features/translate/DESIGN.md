@@ -136,6 +136,16 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   `net.fetch` and `<userData>/translations` on first use. It asks nothing: consent comes from
   its caller. A real es→en download through it (base-memory 3.0, 37 MB on disk from 25 MB of
   attachments) took ~1.7 s with all three hashes matching.
+- Managing models: `model-inventory.ts` lists the directions on disk with their size (one
+  `models/<src>-<tgt>` folder each, named back to languages by `model-store.ts
+  parsePairDirName`), deletes one, and estimates a download (`estimateDownload`: compressed
+  bytes still to fetch, counting files already present at their expected size as free, plus
+  the bytes on disk afterwards). `model-topics.ts` publishes these on pubsub
+  (`translate:models:list` / `:estimate` / `:download` / `:delete`, answered on `:listed` /
+  `:estimated` / `:progress`). A download request is itself the consent: the view sends it only
+  after the user accepted a prompt naming the size, once per pair before its first download.
+  A plain list stays local; the catalogue is read only when the list asks for it, since that
+  may contact the server.
 
 ## Main-process side, `main/page-translate/`
 

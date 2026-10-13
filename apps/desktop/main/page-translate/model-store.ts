@@ -195,14 +195,37 @@ const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  */
 export function cachePath(root: string, record: Pick<ModelRecord, 'sourceLanguage' | 'targetLanguage' | 'architecture' | 'version' | 'fileType'>): string {
   const { sourceLanguage, targetLanguage, architecture, version, fileType } = record;
-  if (!SAFE_LANGUAGE.test(sourceLanguage) || !SAFE_LANGUAGE.test(targetLanguage)) {
-    throw new Error(`unsafe language tag in model record: ${sourceLanguage}-${targetLanguage}`);
-  }
+  const dir = pairCacheDir(root, sourceLanguage, targetLanguage);
   for (const seg of [architecture, version]) {
     if (!SAFE_SEGMENT.test(seg) || seg.includes('..')) throw new Error(`unsafe path segment in model record: ${seg}`);
   }
   if (!KNOWN_FILE_TYPES.has(fileType)) throw new Error(`unknown model file type: ${fileType}`);
-  return path.join(root, 'models', `${sourceLanguage}-${targetLanguage}`, architecture, version, fileType);
+  return path.join(dir, architecture, version, fileType);
+}
+
+/** The folder holding every model of one direction: `<root>/models/<src>-<tgt>`. */
+export function pairCacheDir(root: string, sourceLanguage: string, targetLanguage: string): string {
+  if (!SAFE_LANGUAGE.test(sourceLanguage) || !SAFE_LANGUAGE.test(targetLanguage)) {
+    throw new Error(`unsafe language tag in model record: ${sourceLanguage}-${targetLanguage}`);
+  }
+  return path.join(root, 'models', `${sourceLanguage}-${targetLanguage}`);
+}
+
+/**
+ * The direction a `<src>-<tgt>` folder name stands for, or null. Tags can hold hyphens
+ * (`zh-Hans-en`), so the split is at the hyphen where the right side starts a new primary
+ * language subtag (lower-case letters); script and region subtags never do in the collection.
+ */
+export function parsePairDirName(name: string): { sourceLanguage: string; targetLanguage: string } | null {
+  const parts = name.split('-');
+  for (let i = 1; i < parts.length; i++) {
+    const sourceLanguage = parts.slice(0, i).join('-');
+    const targetLanguage = parts.slice(i).join('-');
+    if (/^[a-z]{2,3}$/.test(parts[i]) && SAFE_LANGUAGE.test(sourceLanguage) && SAFE_LANGUAGE.test(targetLanguage)) {
+      return { sourceLanguage, targetLanguage };
+    }
+  }
+  return null;
 }
 
 export function sha256Hex(data: Uint8Array): string {

@@ -1,6 +1,7 @@
 /**
  * Electron wiring for page translation: one `translation-service.ts` service over the hybrid
- * page hosts, one lazily spawned engine process, and the pubsub topics in `translate-topics.ts`.
+ * page hosts, one lazily spawned engine process, the pubsub topics in `translate-topics.ts`,
+ * and the models manager topics in `model-topics.ts`.
  *
  * Only web pages (http and https) are translatable; a window showing anything else answers as
  * having no page. A window's session ends through the hybrid registry's closed listener, so no
@@ -13,6 +14,7 @@ import { getHybridContentWC, registerHybridWindowClosedListener } from '../hybri
 import { publish, subscribe, unsubscribe } from '../pubsub.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
 import { createModelProvider, type ModelProvider } from './model-provider.js';
+import { installModelTopics } from './model-topics.js';
 import { createTranslationService, pageFromWebContents, type TranslationService } from './translation-service.js';
 import { installTranslateTopics, lazyEngine, statePayload, TRANSLATE_STATE_TOPIC, type LazyEngine } from './translate-topics.js';
 
@@ -71,6 +73,13 @@ export function initPageTranslation(): void {
       publish: (topic, msg) => publish(SOURCE, topic, msg),
     }),
     registerHybridWindowClosedListener((windowId) => svc.closed(windowId)),
+    installModelTopics(pageTranslationModels, {
+      subscribe: (topic, cb) => subscribe(SOURCE, topic, cb),
+      unsubscribe: (topic) => {
+        unsubscribe(SOURCE, topic);
+      },
+      publish: (topic, msg) => publish(SOURCE, topic, msg),
+    }).dispose,
   ];
 }
 

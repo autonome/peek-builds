@@ -43,6 +43,8 @@ export interface ReadyStep {
 export type EnsureResult = { ok: true; steps: ReadyStep[] } | Exclude<TranslationPlan, { ok: true }>;
 
 export interface ModelProvider {
+  /** The translations cache root the provider downloads into. */
+  readonly root: string;
   /** The catalogue: memory, else the server (cached to disk), else the disk cache. */
   records(options?: { refresh?: boolean; signal?: AbortSignal }): Promise<ModelRecord[]>;
   /** Which models translating `from` into `to` needs, without downloading anything. */
@@ -105,5 +107,5 @@ export function createModelProvider(options: ModelProviderOptions): ModelProvide
     return pending;
   }
 
-  return { records, plan, ensure };
+  return { root: options.root, records, plan, ensure };
 }
