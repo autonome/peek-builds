@@ -113,8 +113,17 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
 - `engine-host.ts` — spawns and keeps the utility process; requests `{segments, isHTML}` by id;
   the process exits after a few idle minutes.
 - `model-store.ts` — catalogue, download, hash check, decompression, cache.
-- `page-session.ts` — one state machine per window: idle → collecting → translating →
-  translated → restoring.
+- `page-session.ts` — one session per window: a pure `transition(state, event)` returning
+  effects, and `createPageSession({page, engine})`, which carries them out. Phases idle →
+  collecting → translating ⇄ translated → restoring → idle, plus closed after
+  `page:will-close`. While translated, `drain()` is polled on a timer. Every request carries a
+  run number; showing the original, navigating, closing and failing start a new run, so late
+  engine results or page replies from the old run are dropped, and the engine request's
+  `AbortSignal` fires before dispatch returns. Navigation goes straight to idle (the document
+  holding the originals is gone); a failure restores the page; a failed restore reloads it.
+  A batch is sent to the engine as at most two requests, HTML units and plain-text units. A
+  `translate` while a session is active is ignored, so changing the target language means
+  showing the original first; the feature step decides whether a command does both.
 - `content-script.ts` — `pageTranslator(document, {pageLang, batchSize, viewportMargin})`,
   a self-contained function that unit tests call on a linkedom DOM and that
   `injectionSource()` serialises with `toString()` for the isolated world (installed once as
