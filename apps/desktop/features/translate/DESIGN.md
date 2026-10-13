@@ -126,6 +126,16 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   decompressed hash, and writes `.tmp`-then-rename; `downloadPair()` does every file of one
   model; `readRecordsCache()`/`writeRecordsCache()` keep `records.json`. Attachment
   `location`s that are absolute or climb out of the base are refused.
+- `main/page-translate/model-provider.ts createModelProvider({fetch, root, server?})` ties
+  these together: `records()` fetches the catalogue once per session and writes `records.json`,
+  falling back to the last `records.json` when the server cannot be reached so pairs already
+  on disk keep working offline (`refresh: true` fetches again); `plan(from, to)` resolves
+  without downloading; `ensure(from, to)` resolves and downloads every file of every step and
+  answers with their paths, or with the plan's failure. Concurrent `ensure` calls for one pair
+  share one download. `translate-main.ts pageTranslationModels()` builds it over Electron's
+  `net.fetch` and `<userData>/translations` on first use. It asks nothing: consent comes from
+  its caller. A real es→en download through it (base-memory 3.0, 37 MB on disk from 25 MB of
+  attachments) took ~1.7 s with all three hashes matching.
 
 ## Main-process side, `main/page-translate/`
 

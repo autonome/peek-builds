@@ -7,9 +7,12 @@
  * extra listener is added to the page's WebContents.
  */
 
+import * as path from 'node:path';
+
 import { getHybridContentWC, registerHybridWindowClosedListener } from '../hybrid-page-host-registry.js';
 import { publish, subscribe, unsubscribe } from '../pubsub.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
+import { createModelProvider, type ModelProvider } from './model-provider.js';
 import { createTranslationService, pageFromWebContents, type TranslationService } from './translation-service.js';
 import { installTranslateTopics, lazyEngine, statePayload, TRANSLATE_STATE_TOPIC, type LazyEngine } from './translate-topics.js';
 
@@ -17,7 +20,28 @@ const SOURCE = 'page-translate';
 
 let service: TranslationService | null = null;
 let engine: LazyEngine | null = null;
+let models: Promise<ModelProvider> | null = null;
 let teardown: Array<() => void> = [];
+
+/** `<userData>/translations` holds the profile's catalogue and model cache. */
+export const TRANSLATIONS_DIR = 'translations';
+
+async function electronModelProvider(): Promise<ModelProvider> {
+  const { app, net } = await import('electron');
+  return createModelProvider({
+    fetch: (url, init) => net.fetch(url, init),
+    root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
+  });
+}
+
+/**
+ * The model provider over Electron's `net.fetch` and the profile's translations folder,
+ * created on first use. `ensure` downloads, so its callers obtain consent first.
+ */
+export function pageTranslationModels(): Promise<ModelProvider> {
+  models ??= electronModelProvider();
+  return models;
+}
 
 function isWebPage(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
@@ -63,4 +87,5 @@ export function disposePageTranslation(): void {
   service = null;
   engine?.dispose();
   engine = null;
+  models = null;
 }
