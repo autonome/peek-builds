@@ -487,7 +487,7 @@ describe('restoreNavHistory', () => {
     navHistoryIndex: 1,
   };
 
-  it('passes the entries and index through and resolves true', async () => {
+  it('passes the entries and index through and resolves restored', async () => {
     const calls: Array<{ entries: NavHistoryEntry[]; index: number }> = [];
     const target: NavHistoryRestoreTarget = {
       isDestroyed: () => false,
@@ -495,7 +495,7 @@ describe('restoreNavHistory', () => {
         async restore(options) { calls.push(options); },
       },
     };
-    assert.strictEqual(await restoreNavHistory(target, history), true);
+    assert.strictEqual(await restoreNavHistory(target, history), 'restored');
     assert.strictEqual(calls.length, 1);
     assert.deepStrictEqual(calls[0].entries, history.navHistory);
     assert.strictEqual(calls[0].index, 1);
@@ -509,11 +509,11 @@ describe('restoreNavHistory', () => {
         restore() { called = true; },
       },
     };
-    assert.strictEqual(await restoreNavHistory(target, history), true);
+    assert.strictEqual(await restoreNavHistory(target, history), 'restored');
     assert.strictEqual(called, true);
   });
 
-  it('resolves false for a destroyed target without calling restore', async () => {
+  it('resolves refused for a destroyed target without calling restore', async () => {
     let called = false;
     const target: NavHistoryRestoreTarget = {
       isDestroyed: () => true,
@@ -521,32 +521,61 @@ describe('restoreNavHistory', () => {
         restore() { called = true; },
       },
     };
-    assert.strictEqual(await restoreNavHistory(target, history), false);
+    assert.strictEqual(await restoreNavHistory(target, history), 'refused');
     assert.strictEqual(called, false);
   });
 
-  it('resolves false when restore rejects', async () => {
+  it('resolves refused when restore rejects without a navigation error', async () => {
     const target: NavHistoryRestoreTarget = {
       isDestroyed: () => false,
       navigationHistory: {
         restore: () => Promise.reject(new Error('restore refused the entries')),
       },
     };
-    assert.strictEqual(await restoreNavHistory(target, history), false);
+    assert.strictEqual(await restoreNavHistory(target, history), 'refused');
   });
 
-  it('resolves false when restore throws synchronously', async () => {
+  it('resolves refused when restore throws synchronously', async () => {
     const target: NavHistoryRestoreTarget = {
       isDestroyed: () => false,
       navigationHistory: {
         restore() { throw new Error('restore exploded'); },
       },
     };
-    assert.strictEqual(await restoreNavHistory(target, history), false);
+    assert.strictEqual(await restoreNavHistory(target, history), 'refused');
   });
 
-  it('resolves false for a missing target', async () => {
-    assert.strictEqual(await restoreNavHistory(null, history), false);
-    assert.strictEqual(await restoreNavHistory(undefined, history), false);
+  it('resolves refused for a missing target', async () => {
+    assert.strictEqual(await restoreNavHistory(null, history), 'refused');
+    assert.strictEqual(await restoreNavHistory(undefined, history), 'refused');
+  });
+
+  // The shape Electron rejects with when the navigation restore started does
+  // not finish: an Error carrying the Chromium net error number as `errno`.
+  function navigationError(errno: number, code: string): Error {
+    return Object.assign(new Error(`${code} (${errno})`), { errno, code, url: 'https://example.test/1' });
+  }
+
+  it('resolves load-failed, not refused, when the replayed navigation is superseded', async () => {
+    // A later navigation (Back pressed before the page loaded) aborts the
+    // replay with ERR_ABORTED. The trail is in place; falling back to a plain
+    // load would cut across the user's navigation.
+    const target: NavHistoryRestoreTarget = {
+      isDestroyed: () => false,
+      navigationHistory: {
+        restore: () => Promise.reject(navigationError(-3, 'ERR_ABORTED')),
+      },
+    };
+    assert.strictEqual(await restoreNavHistory(target, history), 'load-failed');
+  });
+
+  it('resolves load-failed when the replayed navigation fails', async () => {
+    const target: NavHistoryRestoreTarget = {
+      isDestroyed: () => false,
+      navigationHistory: {
+        restore: () => Promise.reject(navigationError(-102, 'ERR_CONNECTION_REFUSED')),
+      },
+    };
+    assert.strictEqual(await restoreNavHistory(target, history), 'load-failed');
   });
 });

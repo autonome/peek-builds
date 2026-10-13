@@ -287,26 +287,46 @@ export function clearWindowNavHistory(windowId: number): void {
 }
 
 /**
- * Replay a trail into a webContents.
+ * How a trail replay ended.
  *
- * Resolves true when `navigationHistory.restore` accepted the trail, and false
- * for a destroyed target or a restore that threw or rejected — so a caller can
- * fall back to a plain `loadURL(url)` and still land the user on the right page
- * without the trail.
+ *   - `restored`: the trail was accepted and its active entry finished loading.
+ *   - `refused`: the trail never went in — no target, a destroyed one, or a
+ *     restore that threw or rejected before any navigation began. Nothing is
+ *     loading, so the caller should fall back to a plain load of the leaf URL.
+ *   - `load-failed`: the trail went in and the navigation to its active entry
+ *     started, but did not finish — it failed, or a later navigation (the user
+ *     pressing Back before the page loaded) superseded it. The trail is in place
+ *     and the page-host's own load-failure handling owns what is shown; a
+ *     fallback load here would land on top of whatever the user did next.
  */
+export type NavHistoryRestoreOutcome = 'restored' | 'refused' | 'load-failed';
+
+/**
+ * Whether a rejection from `navigationHistory.restore` is the outcome of the
+ * navigation it started rather than a refusal of the trail. Electron rejects a
+ * started navigation that fails or is superseded with an error carrying the
+ * Chromium net error number as `errno` (ERR_ABORTED is -3); a refused trail
+ * rejects or throws a plain error without one.
+ */
+function isNavigationOutcomeError(err: unknown): boolean {
+  return err != null && typeof err === 'object'
+    && typeof (err as { errno?: unknown }).errno === 'number';
+}
+
+/** Replay a trail into a webContents. See `NavHistoryRestoreOutcome`. */
 export async function restoreNavHistory(
   wc: NavHistoryRestoreTarget | null | undefined,
   history: NavHistorySnapshot,
-): Promise<boolean> {
-  if (!wc) return false;
+): Promise<NavHistoryRestoreOutcome> {
+  if (!wc) return 'refused';
   try {
-    if (wc.isDestroyed()) return false;
+    if (wc.isDestroyed()) return 'refused';
     await wc.navigationHistory.restore({
       entries: history.navHistory,
       index: history.navHistoryIndex,
     });
-    return true;
-  } catch {
-    return false;
+    return 'restored';
+  } catch (err) {
+    return isNavigationOutcomeError(err) ? 'load-failed' : 'refused';
   }
 }

@@ -975,8 +975,15 @@ async function awaitLoadOutcome(
  * replayed instead, so the window comes back with a live Back/Forward rather
  * than just its leaf page. `navigationHistory.restore` navigates to the trail's
  * active entry, which is the same page the plain load would have shown, so the
- * user lands in the same place either way. A refused restore falls back to the
- * plain load.
+ * user lands in the same place either way.
+ *
+ * Only a refused restore falls back to the plain load. A replay whose navigation
+ * started and then failed or was superseded is a failed load like any other:
+ * the load-failure handling in `wireHybridContentEvents` shows the error page
+ * for a real failure, and a superseded one means the user already navigated
+ * elsewhere (Back pressed before the reopened page finished loading). Loading
+ * the leaf URL at that point would cut across the user's own navigation, and
+ * the resulting aborted load would itself be reported as a failure.
  */
 async function loadHybridContent(
   contentWC: Electron.WebContents,
@@ -985,9 +992,11 @@ async function loadHybridContent(
   trail: NavHistorySnapshot | null,
 ): Promise<'loaded' | 'failed' | 'timed-out'> {
   if (!trail) return loadWithOutcome(contentWC, url, baseWin);
-  const begun = restoreNavHistory(contentWC, trail).then(
-    (restored) => (restored ? ('loaded' as const) : beginPlainLoad(contentWC, url, baseWin)),
-  );
+  const begun = restoreNavHistory(contentWC, trail).then((outcome) => {
+    if (outcome === 'restored') return 'loaded' as const;
+    if (outcome === 'load-failed') return 'failed' as const;
+    return beginPlainLoad(contentWC, url, baseWin);
+  });
   return awaitLoadOutcome(begun, baseWin);
 }
 
