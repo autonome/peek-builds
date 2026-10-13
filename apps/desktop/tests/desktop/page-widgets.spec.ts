@@ -42,6 +42,16 @@ import {
 
 let app: DesktopApp;
 
+/** Run `code` in the overlay renderer, where the widget host and its cards live. */
+async function evalInOverlay(a: DesktopApp, code: string): Promise<unknown> {
+  return a.evaluateMain!((_e, arg) => {
+    const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+      evalInOverlay(c: string): Promise<unknown>;
+    };
+    return b.evalInOverlay(arg.code);
+  }, { code } as { code: string });
+}
+
 test.beforeAll(async () => {
   ({ app } = await createPerDescribeApp('page-widgets'));
 });
@@ -146,6 +156,62 @@ test.describe('Page Widgets @desktop', () => {
         (await widgetHostState(app))?.byId['test-ext:update-test']?.bodyHtml.includes('Updated content'),
       )
       .toBe(true);
+
+    await closeHybridPage(app, h);
+  });
+
+  test('widget:render of a showing widget updates the same card in place', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    const h = await openHybridPage(app, PAGE_HTML);
+    const key = 'test-ext:rerender-test';
+
+    await publishOverlayTopic(app, 'widget:register', {
+      extensionId: 'test-ext',
+      widgetId: 'rerender-test',
+    });
+    await publishOverlayTopic(app, 'widget:render', {
+      extensionId: 'test-ext',
+      widgetId: 'rerender-test',
+      html: '<p>First render</p>',
+    });
+
+    await expect
+      .poll(async () => (await widgetHostState(app))?.byId[key]?.present)
+      .toBe(true);
+
+    // Mark the card so the second render can be checked for reusing it rather
+    // than building a replacement.
+    const tagged = await evalInOverlay(
+      app,
+      `(() => {
+        const card = document.querySelector('#widget-container .widget[data-widget-id="${key}"]');
+        if (!card) return false;
+        card.dataset.specMark = 'first';
+        return true;
+      })()`,
+    );
+    expect(tagged).toBe(true);
+
+    await publishOverlayTopic(app, 'widget:render', {
+      extensionId: 'test-ext',
+      widgetId: 'rerender-test',
+      html: '<p>Second render</p>',
+    });
+
+    await expect
+      .poll(async () => (await widgetHostState(app))?.byId[key]?.bodyHtml.includes('Second render'))
+      .toBe(true);
+
+    // Right after the second render: one card, not fading out, and the same
+    // element that the first render built.
+    const cards = (await evalInOverlay(
+      app,
+      `(() => Array.from(
+        document.querySelectorAll('#widget-container .widget[data-widget-id="${key}"]'),
+      ).map((c) => ({ hiding: c.classList.contains('hiding'), mark: c.dataset.specMark || null })))()`,
+    )) as Array<{ hiding: boolean; mark: string | null }>;
+    expect(cards).toEqual([{ hiding: false, mark: 'first' }]);
 
     await closeHybridPage(app, h);
   });
