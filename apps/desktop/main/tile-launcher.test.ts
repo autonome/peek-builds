@@ -20,10 +20,13 @@ import {
   shutdownTile,
   unloadTile,
   isTileLoaded,
+  getTileWindow,
+  releaseTileWindow,
   configureTileLauncher,
   __setTileWindowForTest,
   __clearTileStateForTest,
 } from './tile-launcher.js';
+import * as tileLifecycle from './tile-lifecycle.js';
 
 // ─── unsubscribeAllByPrefix (pubsub) ────────────────────────────────
 
@@ -146,6 +149,126 @@ describe('unloadTile (registry-backed)', () => {
     assert.deepStrictEqual(win._sends, ['tile:lifecycle:shutdown']);
     assert.strictEqual(win._closed, true);
     assert.strictEqual(isTileLoaded('unload-tile', 'bg'), false);
+  });
+});
+
+// ─── several live windows on one tile entry ──────────────────────────
+//
+// Two `api.window.open('peek://search/home.html?q=…')` calls build two
+// windows for the same (tile, entry), so the registry holds a list per key
+// and only the key's LAST live window may tear the entry down.
+
+/** The fake stands in for a BrowserWindow: `releaseTileWindow` only uses the
+ *  handle's identity and its `id`, both of which the fake satisfies. */
+function asWin(win: FakeWin): Parameters<typeof releaseTileWindow>[2] {
+  return win as unknown as Parameters<typeof releaseTileWindow>[2];
+}
+
+describe('tile window registry: several windows on one entry', () => {
+  beforeEach(() => {
+    __clearTileStateForTest();
+    tileLifecycle.resetForTests();
+    configureFakeCloseHook();
+  });
+
+  it('releasing the first window keeps the second registered and subscribed', () => {
+    const winA = makeFakeWin();
+    const winB = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', winA);
+    __setTileWindowForTest('sib-tile', 'home', winB);
+    subscribe('peek://sib-tile/home', 'test:sibling:topic', () => {});
+
+    const perEntryCleanupRan = releaseTileWindow('sib-tile', 'home', asWin(winA), 'closed');
+
+    assert.strictEqual(perEntryCleanupRan, false, 'per-entry cleanup must wait for the last window');
+    assert.strictEqual(getTileWindow('sib-tile', 'home'), asWin(winB));
+    assert.strictEqual(isTileLoaded('sib-tile', 'home'), true);
+    // The survivor's subscriptions live under the shared source address, so
+    // unsubscribing on the first close would silence it.
+    assert.strictEqual(hasSubscriber('test:sibling:topic', 'peek://sib-tile/home'), true);
+
+    unsubscribeAllByPrefix('peek://sib-tile/');
+  });
+
+  it('releasing the last window runs the per-entry cleanup', () => {
+    const winA = makeFakeWin();
+    const winB = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', winA);
+    __setTileWindowForTest('sib-tile', 'home', winB);
+
+    releaseTileWindow('sib-tile', 'home', asWin(winA), 'closed');
+    const perEntryCleanupRan = releaseTileWindow('sib-tile', 'home', asWin(winB), 'closed');
+
+    assert.strictEqual(perEntryCleanupRan, true);
+    assert.strictEqual(isTileLoaded('sib-tile', 'home'), false);
+    assert.strictEqual(getTileWindow('sib-tile', 'home'), null);
+  });
+
+  it('releasing the most recently opened window falls back to the earlier one', () => {
+    const winA = makeFakeWin();
+    const winB = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', winA);
+    __setTileWindowForTest('sib-tile', 'home', winB);
+
+    const perEntryCleanupRan = releaseTileWindow('sib-tile', 'home', asWin(winB), 'closed');
+
+    assert.strictEqual(perEntryCleanupRan, false);
+    assert.strictEqual(getTileWindow('sib-tile', 'home'), asWin(winA));
+    assert.strictEqual(isTileLoaded('sib-tile', 'home'), true);
+  });
+
+  it('a crash of one window leaves the entry lifecycle state alone', () => {
+    // Drive the entry to `ready` so a stray RENDER_GONE would be visible as
+    // `crashed` rather than silently rejected from `unregistered`.
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.INSTALL);
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.LOAD);
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.TILE_READY);
+    assert.strictEqual(tileLifecycle.getState('sib-tile', 'home'), tileLifecycle.STATES.READY);
+
+    const winA = makeFakeWin();
+    const winB = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', winA);
+    __setTileWindowForTest('sib-tile', 'home', winB);
+
+    const perEntryCleanupRan = releaseTileWindow('sib-tile', 'home', asWin(winA), 'crashed');
+
+    assert.strictEqual(perEntryCleanupRan, false);
+    assert.strictEqual(tileLifecycle.getState('sib-tile', 'home'), tileLifecycle.STATES.READY,
+      'the entry is still running in the surviving window');
+  });
+
+  it('a close arriving after unloadTile still returns the entry to registered', async () => {
+    // unloadTile de-registers eagerly so callers see isTileLoaded() false at
+    // once; the window's own 'closed' event lands afterwards and is still the
+    // step that drives the lifecycle home. Skip it and a disabled feature can
+    // never be re-enabled — the FSM has no edge out of `ready` for a fresh LOAD.
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.INSTALL);
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.LOAD);
+    tileLifecycle.transition('sib-tile', 'home', tileLifecycle.TRIGGERS.TILE_READY);
+
+    const win = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', win);
+    await unloadTile('sib-tile', 'home');
+    assert.strictEqual(isTileLoaded('sib-tile', 'home'), false);
+
+    const perEntryCleanupRan = releaseTileWindow('sib-tile', 'home', asWin(win), 'closed');
+
+    assert.strictEqual(perEntryCleanupRan, true);
+    assert.strictEqual(tileLifecycle.getState('sib-tile', 'home'), tileLifecycle.STATES.REGISTERED);
+  });
+
+  it('shutdownTile signals and closes every live window for the entry', async () => {
+    const winA = makeFakeWin();
+    const winB = makeFakeWin();
+    __setTileWindowForTest('sib-tile', 'home', winA);
+    __setTileWindowForTest('sib-tile', 'home', winB);
+
+    await shutdownTile('sib-tile', 'home');
+
+    assert.deepStrictEqual(winA._sends, ['tile:lifecycle:shutdown']);
+    assert.deepStrictEqual(winB._sends, ['tile:lifecycle:shutdown']);
+    assert.strictEqual(winA._closed, true);
+    assert.strictEqual(winB._closed, true);
   });
 });
 

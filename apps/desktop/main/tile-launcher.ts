@@ -169,21 +169,43 @@ export const TILE_SHUTDOWN_GRACE_MS = 500;
 // Re-export token functions for consumers
 export { generateToken, validateToken, revokeToken, getGrantForToken } from './tile-tokens.js';
 
-/** Tile window registry: tileId:entryId -> BrowserWindow.
+/** Tile window registry: tileId:entryId -> every live window for that
+ *  key, in open order (most recently opened last).
  *
- *  This is a **singleton** map — used by callers like getTileWindow()
- *  that assume one live window per (tile, entry). Opening a second
- *  window for the same entry (e.g. multiple search/home queries open
- *  side-by-side) silently overwrites the first entry here, which is
- *  fine for those keyed lookups (they happen to want the most recent
- *  one).
+ *  More than one live window can share a key: each
+ *  `api.window.open('peek://search/home.html?q=…')` builds another
+ *  window for the same (tile, entry). This used to be a singleton
+ *  `Map<string, BrowserWindow>` where the second open overwrote the
+ *  first, so the FIRST close tore the whole entry down — `getTileWindow`
+ *  went null and the entry's pubsub subscriptions were dropped while a
+ *  sibling was still running.
  *
- *  For the pubsub broadcaster, however, the Map's "last write wins"
- *  shape was a real bug: every prior window stopped receiving pubsub
- *  events because they were no longer reachable via this Map. Use
- *  `tileWindowsAll` below instead — it preserves every live window.
+ *  Keyed lookups keep their old answer: `getTileWindow` returns the
+ *  last element (the most recently opened window), `isTileLoaded` is
+ *  true while any window remains. Per-entry teardown now waits for the
+ *  key's last live window — see `releaseTileWindow`.
+ *
+ *  A key is present only while it has at least one window; an empty
+ *  list is deleted rather than kept.
  */
-const tileWindows = new Map<string, BrowserWindow>();
+const tileWindows = new Map<string, BrowserWindow[]>();
+
+/** Live windows for a key, in open order. The returned array is the
+ *  registry's own — callers that close windows while iterating must
+ *  copy it first. */
+function tileWindowsFor(key: string): BrowserWindow[] {
+  return tileWindows.get(key) ?? [];
+}
+
+/** Append `win` to the key's list, ignoring a window already there. */
+function addTileWindow(key: string, win: BrowserWindow): void {
+  const list = tileWindows.get(key);
+  if (!list) {
+    tileWindows.set(key, [win]);
+    return;
+  }
+  if (!list.includes(win)) list.push(win);
+}
 
 /** Every live tile BrowserWindow, regardless of (tileId, entryId)
  *  duplicates. Exists so the pubsub broadcaster can fan out to all
@@ -279,6 +301,110 @@ export interface CreateTileBrowserWindowSpec {
    * Default: true when `manifest` is provided, false otherwise.
    */
   publishCrashEvent?: boolean;
+}
+
+/**
+ * Why one window of a tile entry went away.
+ *
+ *  - `closed` — a launcher-created window closed normally; the entry's
+ *    last window drives SHUTDOWN → CLEANUP_KEEP.
+ *  - `crashed` — the window's render process is gone; the entry's last
+ *    window drives RENDER_GONE.
+ *  - `builtin-closed` — a trusted-builtin window closed; no lifecycle
+ *    transitions, because those entries never ran through the feature
+ *    registry.
+ */
+export type TileWindowReleaseReason = 'closed' | 'crashed' | 'builtin-closed';
+
+/**
+ * Drop one live tile window from the registry, and tear the ENTRY down
+ * only when that window was the last one for its key.
+ *
+ * Several live windows can share a `tileId:entryId` key, so the work
+ * splits in two:
+ *
+ *  - Per-window, always: forget the window in `tileWindowsAll`, remove it
+ *    from the key's list, forget its role/address info. The capability
+ *    token is per-window too, but stays with the caller — only the
+ *    handler that minted it knows which token the window carries.
+ *  - Per-entry, only for the key's last live window: the ready flag, the
+ *    entry's pubsub subscriptions (pubsub keys them by source address,
+ *    which both siblings share), and the lifecycle transitions for the
+ *    reason given.
+ *
+ * Returns true when the per-entry teardown ran.
+ *
+ * `crashDetails` carries the `render-process-gone` reason/exit code into
+ * the RENDER_GONE transition's context; it is ignored for other reasons.
+ */
+export function releaseTileWindow(
+  tileId: string,
+  entryId: string,
+  win: BrowserWindow,
+  reason: TileWindowReleaseReason,
+  crashDetails?: { reason?: string; exitCode?: number },
+): boolean {
+  const key = `${tileId}:${entryId}`;
+  const list = tileWindows.get(key);
+  // Per-entry teardown is gated on "no OTHER window is registered for this
+  // key", not on `win` still being registered itself. A live sibling blocks
+  // it; an already-de-registered window does not. `unloadTile` and
+  // `unloadAllTiles` drop their windows from the registry eagerly, so by the
+  // time the real `closed` event arrives `win` is gone from the list — and
+  // that close still has to drive the entry's lifecycle back to `registered`,
+  // or a disabled feature can never be re-enabled (the FSM has no edge out of
+  // `ready` for a fresh LOAD).
+  const isLast = (list ?? []).some(other => other !== win) === false;
+
+  // Lifecycle first, keeping the pre-split order (transition, then the
+  // registry deletes) for the single-window case that every existing
+  // caller exercises.
+  if (isLast) {
+    if (reason === 'closed') {
+      // Drive the entry back toward `registered`: SHUTDOWN → UNLOADING →
+      // CLEANUP_KEEP → REGISTERED. Each step is best-effort; from
+      // UNREGISTERED (trustedBuiltin callers, uninstall races) or CRASHED
+      // the FSM rejects and the resource cleanup below still runs.
+      const curState = tileLifecycle.getState(tileId, entryId);
+      if (curState !== tileLifecycle.STATES.UNREGISTERED && curState !== tileLifecycle.STATES.CRASHED) {
+        tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.SHUTDOWN, { source: 'window-closed' });
+        tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.CLEANUP_KEEP, { source: 'window-closed' });
+      }
+    } else if (reason === 'crashed') {
+      tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.RENDER_GONE, {
+        reason: crashDetails?.reason,
+        exitCode: crashDetails?.exitCode,
+      });
+    }
+    // 'builtin-closed' never transitions — those entries have no FSM record.
+  }
+
+  // Per-window, unconditionally. The index is re-read rather than reused from
+  // above: the transitions publish `tile:state-changed` synchronously, so a
+  // subscriber could in principle have reordered the key's list in between.
+  tileWindowsAll.delete(win);
+  const removeAt = list ? list.indexOf(win) : -1;
+  if (removeAt >= 0) {
+    list!.splice(removeAt, 1);
+    if (list!.length === 0) tileWindows.delete(key);
+  }
+  // Drop the tile-window info entry added on launch, so stale entries don't
+  // accumulate and getTileWindowInfo can't resolve a dead id.
+  tileWindowInfo.delete(win.id);
+
+  if (!isLast) return false;
+
+  readyTiles.delete(key);
+  try {
+    // Scope the unsubscribe to THIS entry's source address only — otherwise a
+    // window-entry closing would wipe out a sibling background-entry's pubsub
+    // subscriptions, since the tile registry keys subscriptions by full source
+    // address `peek://{tileId}/{entryId}`.
+    unsubscribeAll(`peek://${tileId}/${entryId}`);
+  } catch (err) {
+    console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on ${reason}:`, err);
+  }
+  return true;
 }
 
 /**
@@ -397,7 +523,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   setTokenOwner(token, win.webContents.id);
 
   const key = `${tileId}:${entryId}`;
-  tileWindows.set(key, win);
+  addTileWindow(key, win);
   tileWindowsAll.add(win);
   if (manifest) loadedManifests.set(tileId, manifest);
 
@@ -463,22 +589,18 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   // Render-process crashes: revoke token, drop tracked state, unsubscribe
   // this entry's subs only (sibling entries stay subscribed), and
   // optionally publish a `tile:crashed` event.
+  //
+  // With a sibling window still live on this key, `releaseTileWindow` does
+  // per-window cleanup only — no RENDER_GONE, since the entry is still
+  // running. The `tile:crashed` publish fires either way: it reports THIS
+  // window's crash, not the entry's death.
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(
       `[tile:${tileId}:${entryId}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
     );
-    tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.RENDER_GONE,
+    releaseTileWindow(tileId, entryId, win, 'crashed',
       { reason: details.reason, exitCode: details.exitCode });
-    tileWindows.delete(key);
-    tileWindowsAll.delete(win);
-    readyTiles.delete(key);
     revokeToken(token);
-    tileWindowInfo.delete(win.id);
-    try {
-      unsubscribeAll(`peek://${tileId}/${entryId}`);
-    } catch (err) {
-      console.error(`[tile:${tileId}:${entryId}] Failed to unsubscribe after crash:`, err);
-    }
     if (publishCrashEvent) {
       try {
         publish(getSystemAddress(), 'tile:crashed', {
@@ -492,31 +614,12 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     }
   });
 
-  // Normal close: same cleanup as crash, minus the crash broadcast.
-  //
-  // FSM: drive the entry back toward `registered`. From a ready/visible/
-  // loading state the correct sequence is SHUTDOWN → UNLOADING →
-  // CLEANUP_KEEP → REGISTERED. Each step is best-effort; if it's already
-  // UNREGISTERED (trustedBuiltin callers, uninstall races), the FSM
-  // silently rejects and we continue with the resource cleanup below.
+  // Normal close: same cleanup as crash, minus the crash broadcast. The
+  // entry's lifecycle and pubsub teardown wait for the key's last live
+  // window; the token is per-window, so it is revoked here either way.
   win.on('closed', () => {
-    const curState = tileLifecycle.getState(tileId, entryId);
-    if (curState !== tileLifecycle.STATES.UNREGISTERED && curState !== tileLifecycle.STATES.CRASHED) {
-      tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.SHUTDOWN, { source: 'window-closed' });
-      tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.CLEANUP_KEEP, { source: 'window-closed' });
-    }
-    tileWindows.delete(key);
-    tileWindowsAll.delete(win);
-    readyTiles.delete(key);
+    releaseTileWindow(tileId, entryId, win, 'closed');
     revokeToken(token);
-    // Drop the tile-window info entry we added on launch, so stale entries
-    // don't accumulate and getTileWindowInfo can't resolve a dead id.
-    tileWindowInfo.delete(win.id);
-    try {
-      unsubscribeAll(`peek://${tileId}/${entryId}`);
-    } catch (err) {
-      console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on close:`, err);
-    }
     DEBUG && console.log(`[tile-launcher:${tileId}:${entryId}] Tile closed`);
   });
 
@@ -652,17 +755,20 @@ export function waitForTileReady(tileId: string, entryId: string): Promise<void>
 // ─── Tile Queries ────────────────────────────────────────────────────
 
 /**
- * Get the BrowserWindow for a tile entry
+ * Get the BrowserWindow for a tile entry — the most recently opened live
+ * one when several share the entry (what the old singleton registry's
+ * "last write wins" happened to answer, which is what callers want).
  */
 export function getTileWindow(tileId: string, entryId: string): BrowserWindow | null {
-  return tileWindows.get(`${tileId}:${entryId}`) || null;
+  const list = tileWindowsFor(`${tileId}:${entryId}`);
+  return list.length > 0 ? list[list.length - 1] : null;
 }
 
 /**
- * Check if a tile entry is loaded
+ * Check if a tile entry is loaded — true while ANY window remains for it.
  */
 export function isTileLoaded(tileId: string, entryId: string): boolean {
-  return tileWindows.has(`${tileId}:${entryId}`);
+  return tileWindowsFor(`${tileId}:${entryId}`).length > 0;
 }
 
 /**
@@ -691,12 +797,13 @@ export function getLoadedTileIds(): string[] {
  * Used by the pubsub broadcaster to forward messages to tile windows.
  */
 export function getAllTileWindows(): BrowserWindow[] {
-  // Iterate `tileWindowsAll`, NOT `tileWindows` — the latter is a
-  // singleton Map keyed by tileId:entryId, which silently drops
-  // earlier instances when a second window opens for the same entry.
-  // Using it here meant pubsub events stopped reaching the first
-  // open window the moment a second matching window appeared (e.g.
-  // two `peek://search/home.html?q=...` queries side by side).
+  // Iterate `tileWindowsAll`, NOT `tileWindows` — a flat set needs no
+  // per-key walk to answer "every live tile window". (Historically
+  // `tileWindows` was a singleton Map that silently dropped earlier
+  // instances when a second window opened for the same entry, so using
+  // it here stopped pubsub events reaching the first open window the
+  // moment a second matching window appeared — e.g. two
+  // `peek://search/home.html?q=...` queries side by side.)
   return Array.from(tileWindowsAll).filter(win => !win.isDestroyed());
 }
 
@@ -720,8 +827,7 @@ export function registerTrustedBuiltinWindow(
   win: BrowserWindow,
   token: string,
 ): void {
-  const key = `${tileId}:${entryId}`;
-  tileWindows.set(key, win);
+  addTileWindow(`${tileId}:${entryId}`, win);
   tileWindowsAll.add(win);
 
   // Phase 2 pubsub hardening: bind the trustedBuiltin token to its
@@ -731,19 +837,8 @@ export function registerTrustedBuiltinWindow(
   setTokenOwner(token, win.webContents.id);
 
   win.on('closed', () => {
-    tileWindows.delete(key);
-    tileWindowsAll.delete(win);
-    readyTiles.delete(key);
+    releaseTileWindow(tileId, entryId, win, 'builtin-closed');
     revokeToken(token);
-    try {
-      // Scope the unsubscribe to THIS entry's source address only — otherwise a
-      // window-entry closing would wipe out a sibling background-entry's pubsub
-      // subscriptions, since the tile registry keys subscriptions by full source
-      // address `peek://{tileId}/{entryId}`.
-      unsubscribeAll(`peek://${tileId}/${entryId}`);
-    } catch (err) {
-      console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on close:`, err);
-    }
     DEBUG && console.log(`[tile-launcher:${tileId}:${entryId}] Trusted-builtin window closed`);
   });
 }
@@ -892,60 +987,70 @@ export function getTileWebPreferencesForWebviewUrl(
 }
 
 /**
- * Send the `tile:lifecycle:shutdown` IPC to a single tile window, wait a
- * short grace period for its `api.onShutdown()` callbacks to run, and then
- * close the BrowserWindow.
+ * Send the `tile:lifecycle:shutdown` IPC to EVERY live window of a tile
+ * entry, wait a short grace period for their `api.onShutdown()` callbacks
+ * to run, and then close them all.
  *
  * Tiles register shutdown callbacks via `api.onShutdown(cb)` in tile-preload.
  * Without this signal the callback never fires, so intervals / timers /
- * subscriptions inside the tile leak.
+ * subscriptions inside the tile leak. Signalling only the latest window
+ * would leak exactly that way in the siblings.
  *
- * Returns a promise that resolves once the close has been dispatched (via
- * the injected machine hook). The `closed` event (which does the real
+ * The grace period is waited once for the whole set, so quit latency stays
+ * bounded no matter how many windows share the entry.
+ *
+ * Returns a promise that resolves once the closes have been dispatched (via
+ * the injected machine hook). The `closed` events (which do the real
  * tracked-state cleanup) may fire a tick or two later — callers that need to
- * wait for full teardown should listen for it separately.
+ * wait for full teardown should listen for them separately.
  */
 export async function shutdownTile(tileId: string, entryId: string): Promise<void> {
   const key = `${tileId}:${entryId}`;
-  const win = tileWindows.get(key);
+  // Snapshot: closing a window mutates the key's list via releaseTileWindow.
+  const wins = tileWindowsFor(key).filter(win => !win.isDestroyed());
 
-  if (!win || win.isDestroyed()) return;
+  if (wins.length === 0) return;
 
-  try {
-    // Notify the tile so `api.onShutdown()` callbacks can run.
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send('tile:lifecycle:shutdown');
+  for (const win of wins) {
+    try {
+      // Notify the tile so `api.onShutdown()` callbacks can run.
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('tile:lifecycle:shutdown');
+      }
+    } catch (err) {
+      console.error(`[tile-launcher:${tileId}:${entryId}] Failed to send tile:lifecycle:shutdown:`, err);
     }
-  } catch (err) {
-    console.error(`[tile-launcher:${tileId}:${entryId}] Failed to send tile:lifecycle:shutdown:`, err);
   }
 
-  // Give the tile a short grace period to clean up. We intentionally don't
+  // Give the tiles a short grace period to clean up. We intentionally don't
   // wait for an ack — a crashing or unresponsive tile must not block quit.
   await new Promise<void>((resolve) => setTimeout(resolve, TILE_SHUTDOWN_GRACE_MS));
 
-  if (!win.isDestroyed()) {
-    closeTileWindowViaHook(win);
+  for (const win of wins) {
+    if (!win.isDestroyed()) {
+      closeTileWindowViaHook(win);
+    }
   }
 }
 
 /**
  * Unload a tile — send shutdown signal, close its window, revoke tokens.
  *
- * The `closed` event handler on the window performs the real tracked-state
- * cleanup (tileWindows / readyTiles / token revocation / unsubscribeAllByPrefix).
+ * The `closed` event handler on each window performs the real tracked-state
+ * cleanup (tileWindows / readyTiles / token revocation / unsubscribeAll).
  * Keep the eager cleanup here too so callers that check isTileLoaded() right
  * after unloadTile() see the tile as unloaded without waiting for the close
- * event to fire.
+ * events to fire — which means dropping EVERY window of the entry, not just
+ * the latest, or isTileLoaded() would stay true.
  */
 export async function unloadTile(tileId: string, entryId: string): Promise<void> {
   const key = `${tileId}:${entryId}`;
 
   await shutdownTile(tileId, entryId);
 
-  const win = tileWindows.get(key);
+  const wins = tileWindowsFor(key).slice();
   tileWindows.delete(key);
-  if (win) tileWindowsAll.delete(win);
+  for (const win of wins) tileWindowsAll.delete(win);
   readyTiles.delete(key);
   loadedManifests.delete(tileId);
 
@@ -997,8 +1102,10 @@ export async function relaunchTile(tileId: string): Promise<TileLaunchResult | n
     return null;
   }
 
-  // Close the existing window if one is running.
-  const existingWin = tileWindows.get(`${tileId}:${entry.id}`);
+  // Close the existing window if one is running. getTileWindow answers
+  // whether ANYTHING is live for the entry, which is all the dedupe needs —
+  // unloadTile below drops every window for the key.
+  const existingWin = getTileWindow(tileId, entry.id);
   if (existingWin && !existingWin.isDestroyed()) {
     // Use unloadTile for clean shutdown (shutdown signal + token revoke + unsubscribe).
     await unloadTile(tileId, entry.id);
@@ -1025,14 +1132,14 @@ export async function relaunchTile(tileId: string): Promise<TileLaunchResult | n
 // shutdown / unload path can be exercised without spinning up a real Electron
 // window. Not part of the public API — exported with an underscore prefix.
 
-/** @internal */
+/** @internal Appends to the entry's window list, so calling it twice for one
+ *  key installs two siblings in open order. */
 export function __setTileWindowForTest(
   tileId: string,
   entryId: string,
   win: unknown,
 ): void {
-  const key = `${tileId}:${entryId}`;
-  tileWindows.set(key, win as BrowserWindow);
+  addTileWindow(`${tileId}:${entryId}`, win as BrowserWindow);
   tileWindowsAll.add(win as BrowserWindow);
 }
 
