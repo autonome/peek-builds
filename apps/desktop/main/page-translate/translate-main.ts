@@ -16,6 +16,7 @@ import { createEngineProvider, type EngineProvider } from './engine-files.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
 import { engineModeFromEnv } from './engine-protocol.js';
 import { createResourceResolver } from './engine-resources.js';
+import { remoteSettingsServerFromEnv } from './model-download.js';
 import { createModelProvider, type ModelProvider } from './model-provider.js';
 import { installModelTopics } from './model-topics.js';
 import {
@@ -48,6 +49,7 @@ async function electronModelProvider(): Promise<ModelProvider> {
   return createModelProvider({
     fetch: (url, init) => net.fetch(url, init),
     root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
+    server: remoteSettingsServerFromEnv(process.env),
   });
 }
 
@@ -69,6 +71,7 @@ async function electronEngineProvider(): Promise<EngineProvider> {
   return createEngineProvider({
     fetch: (url, init) => net.fetch(url, init),
     root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
+    server: remoteSettingsServerFromEnv(process.env),
   });
 }
 

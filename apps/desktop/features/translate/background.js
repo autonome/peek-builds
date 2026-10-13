@@ -16,6 +16,10 @@
  * translation in the same widget, whose "Translate from X" button becomes `translate:page`.
  * The offer closes when that window loads another page.
  *
+ * A translation that stops for want of models (`error: 'models-needed'`) turns into a download
+ * prompt in the same widget, naming the size main estimates; Download fetches the models and
+ * then translates again (`download-offer.js`).
+ *
  * Lazy: the tile boots on the first `cmd:execute:translate page` / `cmd:execute:show original`
  * or `page:translatable`.
  * Every subscription is made synchronously in `init()`, before any await, so the publish that
@@ -32,6 +36,14 @@ import {
   statusView,
   widgetActionRequest,
 } from './translate-logic.js';
+import {
+  offerOnAction,
+  offerOnEstimated,
+  offerOnLoaded,
+  offerOnProgress,
+  offerOnState,
+} from './download-offer.js';
+import { directionKey } from './models-logic.js';
 
 const api = window.app;
 
@@ -117,6 +129,19 @@ function drawWidget(view) {
   });
 }
 
+/** The download offer in progress (`download-offer.js`), or null. */
+let downloadOffer = null;
+/** Directions whose download was accepted in this session: they download without asking. */
+const consented = new Set();
+
+/** Applies a `download-offer.js` step: keeps its offer, publishes, and draws or closes. */
+function applyOfferStep(step) {
+  downloadOffer = step.offer;
+  for (const { topic, message } of step.publish) api.pubsub.publish(topic, message);
+  if (step.view === null) closeWidget();
+  else if (step.view) drawWidget(step.view);
+}
+
 const handleState = async (state) => {
   if (!state || !Number.isInteger(state.windowId)) return;
   // The widget lives in the chrome of the window in front, so a change in another window must
@@ -125,6 +150,15 @@ const handleState = async (state) => {
   if (front !== state.windowId) return;
   // The translation's status replaces any offer in the one widget.
   offerWindowId = null;
+  const step = offerOnState(downloadOffer, state);
+  if (step) {
+    applyOfferStep(step);
+    return;
+  }
+  // Any other news for the window ends an unanswered download prompt there.
+  if (downloadOffer && downloadOffer.windowId === state.windowId && downloadOffer.phase !== 'downloading') {
+    downloadOffer = null;
+  }
   const view = statusView(state);
   if (!view) {
     closeWidget();
@@ -146,6 +180,7 @@ const handleTranslatable = async (msg) => {
 
 /** A new document in the window whose offer is showing: that offer was for the old page. */
 const handleLoaded = (msg) => {
+  applyOfferStep(offerOnLoaded(downloadOffer, msg));
   if (offerWindowId === null || !msg || msg.windowId !== offerWindowId) return;
   offerWindowId = null;
   closeWidget();
@@ -173,9 +208,25 @@ const init = () => {
   });
   // page:loaded comes before the next page's page:translatable, so a stale offer closes first.
   api.pubsub.subscribe('page:loaded', handleLoaded);
+  // Main's answers about models; the models manager view reads them too, so answers for a pair
+  // the tile did not ask about are ignored.
+  api.pubsub.subscribe('translate:models:estimated', (msg) => {
+    applyOfferStep(offerOnEstimated(downloadOffer, msg, consented));
+  });
+  api.pubsub.subscribe('translate:models:progress', (msg) => {
+    applyOfferStep(offerOnProgress(downloadOffer, msg));
+  });
   // A button in the widget: the window comes with the click, so it acts on the window whose
   // chrome showed the button.
   api.pubsub.subscribe('widget:action', (msg) => {
+    if (msg && msg.extensionId === EXTENSION_ID && msg.widgetId === WIDGET_ID) {
+      const step = offerOnAction(downloadOffer, msg);
+      if (step.accepted) consented.add(directionKey(step.offer.from, step.offer.to));
+      if (step.offer !== downloadOffer || step.view !== undefined) {
+        applyOfferStep(step);
+        return;
+      }
+    }
     const request = widgetActionRequest(msg, { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
     if (request) api.pubsub.publish(request.topic, request.message);
   });

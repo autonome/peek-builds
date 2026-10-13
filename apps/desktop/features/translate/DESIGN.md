@@ -105,9 +105,17 @@ model + three sentences 225 ms cold, a short HTML paragraph 13 ms warm, engine R
 Main hands over those files through `engine-resources.ts createResourceResolver`, passed to
 `engine-host.ts createEngineHost` as `resources` (not in stub mode). A page translation never
 downloads: when the engine wasm or a model the pair needs is not on disk (checked by size), the
-request fails with `models-needed` and the tile points at "manage translation models", whose
-prompt names the bytes, including the ~5 MB engine the first time (`model-topics.ts` adds
-`engineBytes` to the estimate and fetches the engine before the models). Present files are
+request fails with `models-needed`. The tile then asks main for the pair's size
+(`translate:models:estimate`) and shows a prompt in its page widget naming the bytes, including
+the ~5 MB engine the first time (`model-topics.ts` adds `engineBytes` to the estimate and
+fetches the engine before the models), with Download and Not now (`download-offer.js`).
+Download publishes `translate:models:download` and, once that pair reports `done`, asks for the
+translation again. Consent is asked once per direction in a session: a direction accepted once
+downloads again without a prompt, and a download of nothing asks nothing; Not now fetches
+nothing and closes the prompt, and the next translate request asks again. The models manager
+view (`manage translation models`) asks with the same text. `PEEK_TRANSLATE_SERVER`
+(`model-download.ts remoteSettingsServerFromEnv`) replaces Mozilla's server with a mirror;
+`tests/desktop/page-translate-download.spec.ts` points it at a local server. Present files are
 handed to the providers' `ensure`, which verifies their hashes, once per pair per session; the
 answer is kept and reused while every path in it still exists. The engine process starts only
 once a request's files are resolved. Inside the packaged app's `utilityProcess` the glue loads

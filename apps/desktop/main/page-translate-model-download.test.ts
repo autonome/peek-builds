@@ -20,6 +20,7 @@ import {
   fetchModelRecords,
   ModelDownloadError,
   readRecordsCache,
+  remoteSettingsServerFromEnv,
   writeRecordsCache,
   type FetchLike,
   type FetchResponseLike,
@@ -236,5 +237,14 @@ describe('model-download downloadPair and records cache', () => {
     const { record } = makeRecord('lex', 'lex');
     await writeRecordsCache(root, [record]);
     assert.deepStrictEqual(await readRecordsCache(root), [record]);
+  });
+});
+
+describe('remoteSettingsServerFromEnv', () => {
+  it('names a mirror only for an http(s) address', () => {
+    assert.strictEqual(remoteSettingsServerFromEnv({}), undefined);
+    assert.strictEqual(remoteSettingsServerFromEnv({ PEEK_TRANSLATE_SERVER: '' }), undefined);
+    assert.strictEqual(remoteSettingsServerFromEnv({ PEEK_TRANSLATE_SERVER: 'file:///etc' }), undefined);
+    assert.strictEqual(remoteSettingsServerFromEnv({ PEEK_TRANSLATE_SERVER: ' http://127.0.0.1:9/v1 ' }), 'http://127.0.0.1:9/v1');
   });
 });

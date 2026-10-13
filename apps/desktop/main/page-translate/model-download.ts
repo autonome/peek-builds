@@ -25,6 +25,18 @@ import { cachePath, verifyAttachment, verifyDecompressed, type ModelRecord, type
 
 /** Mozilla's Remote Settings server. Override with `DownloadOptions.server` for a mirror. */
 export const DEFAULT_REMOTE_SETTINGS_SERVER = 'https://firefox.settings.services.mozilla.com/v1';
+/** Environment variable naming a mirror's Remote Settings base in place of Mozilla's. */
+export const REMOTE_SETTINGS_SERVER_ENV = 'PEEK_TRANSLATE_SERVER';
+
+/**
+ * The Remote Settings base `env` names (`PEEK_TRANSLATE_SERVER`), or undefined for Mozilla's.
+ * Only an http(s) address counts; anything else is ignored rather than fetched.
+ */
+export function remoteSettingsServerFromEnv(env: Record<string, string | undefined>): string | undefined {
+  const value = env[REMOTE_SETTINGS_SERVER_ENV]?.trim();
+  return value && /^https?:\/\/[^/\s]+/.test(value) ? value : undefined;
+}
+
 export const MODELS_COLLECTION = 'translations-models-v2';
 /** Holds the engine wasm (`engine-files.ts`). */
 export const WASM_COLLECTION = 'translations-wasm';

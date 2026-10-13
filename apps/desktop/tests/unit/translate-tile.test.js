@@ -24,6 +24,15 @@ import {
   TRANSLATE_ACTION,
   widgetActionRequest,
 } from '../../features/translate/translate-logic.js';
+import {
+  DECLINE_ACTION,
+  DOWNLOAD_ACTION,
+  offerOnAction,
+  offerOnEstimated,
+  offerOnLoaded,
+  offerOnProgress,
+  offerOnState,
+} from '../../features/translate/download-offer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dir = join(__dirname, '..', '..', 'features', 'translate');
@@ -61,9 +70,15 @@ describe('translate manifest', () => {
       'page:loaded',
       'page:script-result',
       'page:translatable',
+      'translate:models:estimated',
+      'translate:models:progress',
       'translate:state',
       'widget:action',
     ]);
+    // Published through a variable by the download offer.
+    for (const topic of ['translate:models:estimate', 'translate:models:download', 'translate:page']) {
+      assert.ok(allowed.includes(topic), `${topic} missing from capabilities.pubsub.topics`);
+    }
     const published = [...background.matchAll(/publish\(\s*'([^']+)'/g)].map((m) => m[1]);
     for (const topic of [...subscribed, ...published]) {
       assert.ok(allowed.includes(topic), `${topic} missing from capabilities.pubsub.topics`);
@@ -232,5 +247,106 @@ describe('widgetActionRequest', () => {
     assert.equal(widgetActionRequest({ ...click, action: 'launch' }, own), null);
     assert.equal(widgetActionRequest({ ...click, windowId: null }, own), null);
     assert.equal(widgetActionRequest(null, own), null);
+  });
+});
+
+describe('download offer', () => {
+  const needed = { windowId: 7, phase: 'idle', from: 'es', to: 'en', applied: 0, error: 'models-needed' };
+  const estimated = { from: 'es', to: 'en', ok: true, downloadBytes: 42_000_000, diskBytes: 42_000_000, engineBytes: 5_000_000 };
+
+  function asking() {
+    const start = offerOnState(null, needed);
+    return offerOnEstimated(start.offer, estimated, new Set()).offer;
+  }
+
+  it('asks main for the size when a translation lacks its models', () => {
+    const step = offerOnState(null, needed);
+    assert.deepEqual(step.publish, [{ topic: 'translate:models:estimate', message: { from: 'es', to: 'en' } }]);
+    assert.equal(step.offer.phase, 'estimating');
+    assert.match(step.view.text, /Checking the download for Spanish → English/);
+    // The second report of the same failure keeps the one offer and asks nothing more.
+    const again = offerOnState(step.offer, { ...needed, phase: 'restoring' });
+    assert.equal(again.offer, step.offer);
+    assert.deepEqual(again.publish, []);
+  });
+
+  it('leaves other states to the status widget', () => {
+    assert.equal(offerOnState(null, { ...needed, error: 'no-engine' }), null);
+    assert.equal(offerOnState(null, { ...needed, error: null, phase: 'translated' }), null);
+  });
+
+  it('prompts with the size, the engine named, and Download / Not now buttons', () => {
+    const start = offerOnState(null, needed);
+    const step = offerOnEstimated(start.offer, estimated, new Set());
+    assert.equal(step.offer.phase, 'asking');
+    assert.deepEqual(step.publish, []);
+    assert.match(step.view.text, /fetches 42\.0 MB \(5\.0 MB of it is the engine/);
+    assert.deepEqual(step.view.actions.map((a) => a.action), [DOWNLOAD_ACTION, DECLINE_ACTION]);
+    const html = statusHtml(step.view);
+    assert.match(html, /data-widget-action="download-models"/);
+  });
+
+  it('ignores estimates for another pair or when not estimating', () => {
+    const start = offerOnState(null, needed);
+    assert.equal(offerOnEstimated(start.offer, { ...estimated, to: 'de' }, new Set()).offer, start.offer);
+    assert.equal(offerOnEstimated(null, estimated, new Set()).offer, null);
+  });
+
+  it('downloads without asking when nothing is fetched or the direction was accepted before', () => {
+    const start = offerOnState(null, needed);
+    const free = offerOnEstimated(start.offer, { ...estimated, downloadBytes: 0 }, new Set());
+    assert.equal(free.offer.phase, 'downloading');
+    assert.deepEqual(free.publish, [{ topic: 'translate:models:download', message: { from: 'es', to: 'en' } }]);
+    const known = offerOnEstimated(start.offer, estimated, new Set(['es>en']));
+    assert.equal(known.offer.phase, 'downloading');
+  });
+
+  it('names the reason when the size cannot be had', () => {
+    const start = offerOnState(null, needed);
+    const step = offerOnEstimated(start.offer, { from: 'es', to: 'en', ok: false, reason: 'unsupported' }, new Set());
+    assert.equal(step.offer, null);
+    assert.equal(step.view.text, 'No translation model covers these languages.');
+  });
+
+  it('Download publishes the download and reports the consent; Not now closes', () => {
+    const offer = asking();
+    const yes = offerOnAction(offer, { windowId: 7, action: DOWNLOAD_ACTION });
+    assert.equal(yes.accepted, true);
+    assert.equal(yes.offer.phase, 'downloading');
+    assert.deepEqual(yes.publish, [{ topic: 'translate:models:download', message: { from: 'es', to: 'en' } }]);
+    assert.match(yes.view.text, /Downloading the Spanish → English translation model/);
+    const no = offerOnAction(offer, { windowId: 7, action: DECLINE_ACTION });
+    assert.equal(no.accepted, false);
+    assert.equal(no.offer, null);
+    assert.deepEqual(no.publish, []);
+    assert.equal(no.view, null);
+    // A click from another window's chrome or another button changes nothing.
+    assert.equal(offerOnAction(offer, { windowId: 8, action: DOWNLOAD_ACTION }).offer, offer);
+    assert.equal(offerOnAction(offer, { windowId: 7, action: 'show-original' }).view, undefined);
+  });
+
+  it('translates again once the download is done, and reports a failure', () => {
+    const downloading = offerOnAction(asking(), { windowId: 7, action: DOWNLOAD_ACTION }).offer;
+    assert.equal(offerOnProgress(downloading, { from: 'es', to: 'en', phase: 'downloading' }).offer, downloading);
+    const done = offerOnProgress(downloading, { from: 'es', to: 'en', phase: 'done' });
+    assert.equal(done.offer, null);
+    assert.deepEqual(done.publish, [{ topic: 'translate:page', message: { windowId: 7, from: 'es', to: 'en' } }]);
+    const failed = offerOnProgress(downloading, { from: 'es', to: 'en', phase: 'failed', error: 'HTTP 500' });
+    assert.equal(failed.offer, null);
+    assert.equal(failed.view.text, 'The download failed: HTTP 500');
+    assert.equal(offerOnProgress(downloading, { from: 'es', to: 'de', phase: 'done' }).offer, downloading);
+  });
+
+  it('a new page closes an unanswered prompt; a download under way finishes without translating it', () => {
+    const closed = offerOnLoaded(asking(), { windowId: 7 });
+    assert.equal(closed.offer, null);
+    assert.equal(closed.view, null);
+    const downloading = offerOnAction(asking(), { windowId: 7, action: DOWNLOAD_ACTION }).offer;
+    const stale = offerOnLoaded(downloading, { windowId: 7 }).offer;
+    assert.equal(stale.stale, true);
+    const done = offerOnProgress(stale, { from: 'es', to: 'en', phase: 'done' });
+    assert.deepEqual(done.publish, []);
+    assert.equal(done.view, null);
+    assert.equal(offerOnLoaded(downloading, { windowId: 8 }).offer, downloading);
   });
 });
