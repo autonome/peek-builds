@@ -23,6 +23,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
+import { getWindowNavHistory, readNavHistory } from './nav-history.js';
 import { serializeSession, addDescriptorsToSnapshot, mergeSnapshotIntoWorkspace, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, unmaximizedRestoreDescriptor, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
@@ -303,6 +304,14 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
         if (descriptor.context?.pinScope) {
           options.alwaysOnTop = true;
           options.pinScope = descriptor.context.pinScope;
+        }
+        // Same open-time trail directive as the boot loop — a group held for a
+        // desktop the user had not arrived on yet opens from the same
+        // descriptors and must come back with the same history.
+        const heldTrail = readNavHistory(descriptor);
+        if (heldTrail) {
+          options.navHistory = heldTrail.navHistory;
+          options.navHistoryIndex = heldTrail.navHistoryIndex;
         }
         const openResult = (await invokeWindowOpen(
           { sender: bgWin.webContents },
@@ -629,6 +638,17 @@ function buildSessionSaveWindows(
       url = '';
     }
 
+    // The back/forward trail, for a page-host only — a BrowserWindow tile and
+    // a `peek://` window have no trail to keep. Read from the per-window cache
+    // in `nav-history.ts`, NEVER from a live webContents: a window restored
+    // beyond the eager count has not navigated yet, so a live read would
+    // report no entries and every later save would erase the trail it is still
+    // waiting to replay. Because the cache is kept current by the content
+    // webContents' own navigation events, the existing before-quit, autosave,
+    // window-lifecycle and manual saves all carry the trail with no new save
+    // trigger.
+    const trail = hybridEntry ? getWindowNavHistory(id) : null;
+
     saveWindows.push({
       nativeId: id,
       machineId: getWindowIdFor(id),
@@ -636,6 +656,7 @@ function buildSessionSaveWindows(
       params: winData.params,
       destroyed,
       url,
+      ...(trail ? { navHistory: trail } : {}),
     });
   }
   return saveWindows;
@@ -1039,6 +1060,13 @@ export function saveSessionSnapshot(
           role: (descriptor.params.role as string) || undefined,
           scrollX: scrollX || undefined,
           scrollY: scrollY || undefined,
+          // The trail the descriptor was just saved with, so undo-close after a
+          // quit brings the whole trail back rather than only the leaf URL.
+          // Spread only when present, so an entry without one carries no
+          // explicit `undefined` keys into the persisted stack row.
+          ...(descriptor.navHistory
+            ? { navHistory: descriptor.navHistory, navHistoryIndex: descriptor.navHistoryIndex }
+            : {}),
           timestamp: Date.now(),
         });
       }
@@ -1936,6 +1964,21 @@ export async function restoreSessionSnapshot(
       if (descriptor.context?.pinScope) {
         options.alwaysOnTop = true;
         options.pinScope = descriptor.context.pinScope;
+      }
+
+      // The back/forward trail, handed to the open as an open-time directive so
+      // the page-host replays it instead of landing on the leaf URL with a dead
+      // Back. It is a top-level descriptor field rather than a param, so
+      // `RESTORE_STRIP_KEYS` has nothing to say about it. `descriptor.url` stays
+      // the URL to open — the trail's own active entry agrees with it, and a
+      // descriptor whose trail is missing or unusable (every snapshot written
+      // before the fields existed) opens at the leaf exactly as before.
+      // A deferred window carries the trail too: the open seeds it into the
+      // nav-history cache, which its first activation reads.
+      const restoreTrail = readNavHistory(descriptor);
+      if (restoreTrail) {
+        options.navHistory = restoreTrail.navHistory;
+        options.navHistoryIndex = restoreTrail.navHistoryIndex;
       }
 
       // Open window via the in-process window-open handler. The handler
