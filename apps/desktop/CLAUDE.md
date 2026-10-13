@@ -45,6 +45,13 @@ port for Electron/AppKit vocabulary and fails on a new one. Full rule and its ra
 
 ## Testing
 
+> **Every live launch made to check a change goes through `scripts/live-check.mjs`** (skill:
+> `.claude/skills/live-check/SKILL.md`), headless or visible, paired with `Monitor` on its
+> event log. That includes every check the user does by hand: launch the build with
+> `--visible` and watch the log, then ask the user only for the gesture or what they see —
+> never hand them a launch command. Playwright specs are the one exception; they launch
+> through their own runner.
+
 > **On macOS, Electron test launches take the user's focus.** Every Electron launched from
 > source — `yarn test:grep`, `test:desktop:electron:source`, `scripts/playwright-with-display.sh`
 > without `PACKAGED=1` — activates briefly at launch even with `HEADLESS=1` (the residual

@@ -1,6 +1,6 @@
 ---
 name: live-check
-description: Launch a worktree's own Peek desktop build for a live check and watch it from the first second — one event log of lifecycle events and real errors (stdout/stderr + the profile's main.log, noise filtered), meant for Monitor. Use for EVERY app launch made to check a track, by any agent, headless or visible, instead of composing an Electron command line by hand.
+description: Launch a worktree's own Peek desktop build for a live check and watch it from the first second — one event log of lifecycle events and real errors (stdout/stderr + the profile's main.log, noise filtered), meant for Monitor. Use for EVERY app launch made to check a track, by any agent, headless or visible, instead of composing an Electron command line by hand — and ALWAYS when asking the user to check something by hand in the app, so their check runs under a watched launch.
 ---
 
 `scripts/live-check.mjs` launches `<worktree>/node_modules/electron/...` with the worktree
@@ -11,6 +11,14 @@ error as it happens instead of grepping afterwards.
 ## When
 
 Any time Peek is launched to check a track's change — headless (the default) or visible.
+
+**A hand check by the user always runs through this tool.** When a change needs the user to
+look at or do something in the app, don't hand them a launch command or ask them to start
+the app themselves. Build the worktree, `start <worktree> --visible` (ask before a visible
+launch, as below), start `Monitor` on the event log, then ask for only the gesture or the
+observation. Errors, exits and relaunches during their check land in the log as they
+happen, so the result is read from the log as well as from what they report. `stop` when
+they're done. The Linux box has no display, so a hand check always happens on the Mac.
 It replaces the hand-composed launch in the user-level `peek-bg-run` skill for that case;
 `peek-bg-run` still describes what headless does and doesn't hide, and the test-running
 rules. Playwright specs are not launched through this tool.
