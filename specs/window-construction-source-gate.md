@@ -87,29 +87,3 @@ the counts.
 ## Working rules
 
 Run one command per Bash call.
-
-## Result
-
-`apps/desktop/main/window-construction-gate.test.ts` exists and is the only change. No production
-file was touched.
-
-The inventory table above was re-derived against the tree and needed no correction — every row
-matched. `EXPECTED` in the test holds exactly those 11 rows, totalling 21 construction sites:
-`tile-launcher.ts` BrowserWindow 1, `core-glue.ts` BrowserWindow 1, `test-fixture-glue.ts`
-BrowserWindow 1, `ipc.ts` BrowserWindow 1 / BaseWindow 1 / WebContentsView 3, `hybrid-overlay.ts`
-BrowserWindow 1 / BaseWindow 5 / WebContentsView 4, `chrome-extensions.ts` BrowserWindow 2,
-`chrome-api-polyfills/offscreen.js` BrowserWindow 1. Five comment-only mentions
-(`tile-tokens.ts`, `page-host-compat.ts`, `tile-ipc-gate.ts`, two in `ipc.ts`) are correctly
-excluded. The forbidden-literal scan finds zero offenders in the tree.
-
-Verify gate:
-
-- The new file alone: `tests 5`, `pass 5`, `fail 0`.
-- Main-process unit runner (`dist/main/*.test.js`): `tests 4063`, `pass 4063`, `fail 0`.
-- Node unit runner (`tests/unit/*.test.js`): `tests 1125`, `pass 1125`, `fail 0`.
-
-Bite check: appending `const _biteProbe = new BrowserWindow({});` to `main/tile-tokens.ts` turned
-the inventory test red with `tile-tokens.ts: 1 unlisted \`new BrowserWindow(\` site(s)` and the
-add-to-`EXPECTED` instruction; reverted, and the tree is clean apart from the new test file.
-
-Nothing needs a decision.
