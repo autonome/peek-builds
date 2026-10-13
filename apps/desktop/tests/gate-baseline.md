@@ -101,6 +101,12 @@ header count moves from 31 to 28; the runner totals above are left as recorded.
 | `cmdl-navbar-no-resize.spec.ts` | Cmd+L shows the navbar without maximizing or resizing the window |
 | `hybrid-overlay.spec.ts` | clicking the chrome (overlay focus on content blur) does NOT deactivate |
 | `reopen-closed-window.spec.ts` | open → close → reopen brings the URL back |
+| `editor-query-tag-action-key.spec.ts` | u after x puts the tags back and the block returns |
+
+`editor-query-tag-action-key.spec.ts` "u after x puts the tags back and the block returns" failed
+once, in the 2026-10-12 full gate on `bbe79458`, at the `x` step: the item's tags had become
+`['done']`, but its `.qs-block` was still in the query view 10 s later. The spec alone passed 15/15 (5 repeats) on
+the same packaged build. Not yet reproduced with the specs that preceded it in its worker.
 
 `reopen-closed-window.spec.ts` "open → close → reopen brings the URL back" passed in both runs
 recorded above and failed in a later gate run. Three isolated runs of that spec alone on an
