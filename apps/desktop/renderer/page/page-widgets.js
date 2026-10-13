@@ -11,9 +11,17 @@
  *
  * Pubsub topics (extension -> host):
  *   widget:register   - Register a widget type
- *   widget:render     - Populate a widget with content
+ *   widget:render     - Show a widget, or update it in place if it is already
+ *                       showing (an `autoDismiss` on a re-render restarts the
+ *                       dismiss countdown)
  *   widget:update     - Update an existing widget
  *   widget:close      - Remove a widget
+ *
+ * Only `widget:close` or a user dismissal (or an expired autoDismiss) takes a
+ * card away. A re-render never tears the card down and rebuilds it: that would
+ * fade it out and in, reset its collapse state, and publish a false
+ * `widget:closed`, so an owner that re-renders on every progress tick would
+ * make the card blink.
  *   page:execute-script - Request script execution in page webview
  *
  * Pubsub topics (host -> extension):
@@ -171,15 +179,22 @@ export function createPageWidgetHost(deps) {
       return;
     }
 
-    // Remove existing widget if re-rendering
-    if (activeWidgets.has(key)) {
-      removeWidget(key);
-      activeWidgets.delete(key);
+    const title = msg.title || registration.title;
+    const content = msg.html || msg.content || '';
+
+    // A widget already showing is updated in place: the card keeps its element,
+    // its collapse state and its listeners, and no widget:closed goes out.
+    const shown = activeWidgets.get(key);
+    if (shown) {
+      updateWidget(key, { title, content });
+      if (msg.autoDismiss > 0) restartDismissTimer(key, shown, msg.autoDismiss);
+      DEBUG && console.log('[page-widgets] Re-rendered widget in place:', key);
+      return;
     }
 
     const handle = addWidget(key, {
-      title: msg.title || registration.title,
-      content: msg.html || msg.content || '',
+      title,
+      content,
       autoDismiss: msg.autoDismiss || 0,
       onClose: () => {
         activeWidgets.delete(key);
@@ -204,6 +219,23 @@ export function createPageWidgetHost(deps) {
       activeWidgets.set(key, handle);
       DEBUG && console.log('[page-widgets] Rendered widget:', key);
     }
+  }
+
+  /**
+   * Restart a showing widget's dismiss countdown from now, because new content
+   * deserves a full read time. updateWidget does not touch timers, so the host
+   * replaces them here; the handle's `timers` array is the one removeWidget
+   * clears, so a later remove still cancels the new timer.
+   */
+  function restartDismissTimer(key, handle, ms) {
+    if (!Array.isArray(handle.timers)) handle.timers = [];
+    for (const timer of handle.timers) clearTimeout(timer);
+    handle.timers.length = 0;
+    handle.timers.push(setTimeout(() => {
+      if (activeWidgets.get(key) !== handle) return;
+      removeWidget(key);
+      activeWidgets.delete(key);
+    }, ms));
   }
 
   // --- Widget update ---

@@ -305,17 +305,60 @@ describe('createPageWidgetHost', () => {
       assert.equal(widgetFns._added.length, 0);
     });
 
-    it('removes existing widget before re-rendering', () => {
-      const { host, widgetFns } = createHost();
+    it('updates a showing widget in place on re-render', () => {
+      const { host, api, widgetFns } = createHost();
+      host.init();
+
+      host._handleRegister({ extensionId: 'ext1', widgetId: 'w1', title: 'Reg' });
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V1</p>' });
+      const handle = host.getActiveWidgets().get('ext1:w1');
+      api.clearPublished();
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V2</p>' });
+
+      assert.equal(widgetFns._added.length, 1);
+      assert.equal(widgetFns._removed.length, 0);
+      assert.deepEqual(widgetFns._updated, [
+        { id: 'ext1:w1', opts: { title: 'Reg', content: '<p>V2</p>' } },
+      ]);
+      assert.equal(api.getPublished('widget:closed').length, 0);
+      assert.equal(host.getActiveWidgets().get('ext1:w1'), handle);
+    });
+
+    it('restarts the dismiss timer when a re-render carries autoDismiss', (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const widgetFns = createMockWidgetFns();
+      // Mirror overlay.js: addWidget schedules the dismiss, removeWidget clears
+      // the handle's timers and fires onClose.
+      const handles = new Map();
+      const addWidget = (id, opts) => {
+        const handle = widgetFns.addWidget(id, opts);
+        if (opts.autoDismiss > 0) handle.timers.push(setTimeout(() => removeWidget(id), opts.autoDismiss));
+        handles.set(id, handle);
+        return handle;
+      };
+      const removeWidget = (id) => {
+        const handle = handles.get(id);
+        if (!handle) return;
+        for (const timer of handle.timers) clearTimeout(timer);
+        handles.delete(id);
+        widgetFns.removeWidget(id);
+        handle.onClose?.();
+      };
+      const { host, api } = createHost({ addWidget, removeWidget, updateWidget: widgetFns.updateWidget });
       host.init();
 
       host._handleRegister({ extensionId: 'ext1', widgetId: 'w1' });
-      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V1</p>' });
-      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V2</p>' });
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V1</p>', autoDismiss: 5000 });
+      t.mock.timers.tick(4000);
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<p>V2</p>', autoDismiss: 5000 });
+      t.mock.timers.tick(4000);
+      assert.equal(widgetFns._removed.length, 0, 'the first render\'s timer no longer dismisses');
+      assert.equal(host.getActiveWidgets().size, 1);
 
-      assert.equal(widgetFns._added.length, 2);
-      assert.equal(widgetFns._removed.length, 1);
-      assert.equal(widgetFns._removed[0], 'ext1:w1');
+      t.mock.timers.tick(1000);
+      assert.deepEqual(widgetFns._removed, ['ext1:w1']);
+      assert.equal(host.getActiveWidgets().size, 0);
+      assert.equal(api.getPublished('widget:closed').length, 1);
     });
 
     it('publishes widget:closed when onClose callback fires', () => {
