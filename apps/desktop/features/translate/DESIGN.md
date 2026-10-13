@@ -66,6 +66,25 @@ What the glue needs:
 Runs single-threaded (`cpu-threads: 0`). Whether the build requires WASM SIMD was not
 checked; Electron's V8 supports it either way.
 
+### Engine process
+
+`main/page-translate/engine-host.ts createEngineHost` is the main-process side and satisfies
+`page-session.ts SessionEngine`. It forks `engine-worker-main.js` as a `utilityProcess` on the
+first non-empty request, holds requests until the process reports `ready`, matches replies by
+request id, and turns an aborted `AbortSignal` into an immediate rejection plus a `cancel`
+message. A process exit fails every outstanding request with `engine-exited`; the next request
+starts a new process. After five idle minutes (`DEFAULT_ENGINE_IDLE_MS`) the process is
+stopped: rebuilding a model costs ~60 ms, while a loaded engine holds ~330 MB.
+
+The process (`engine-worker.ts createEngineWorker`) translates one request at a time in arrival
+order; a `cancel` aborts the running request or drops a queued one. Messages are in
+`engine-protocol.ts`. `PEEK_TRANSLATE_ENGINE=stub` selects a stub engine that uppercases text
+outside tags and entities (`PEEK_TRANSLATE_STUB_DELAY_MS` adds a per-segment delay); any other
+value selects Bergamot, which is not wired yet and answers `engine-unavailable`. The child
+inherits main's environment, so the flag set on the app reaches it. The entry point also speaks
+Node's `child_process` IPC, which is how the main-process unit test runs a real engine process:
+`utilityProcess` does not exist under `ELECTRON_RUN_AS_NODE`.
+
 ## Models
 
 Remote Settings collection `translations-models-v2`
