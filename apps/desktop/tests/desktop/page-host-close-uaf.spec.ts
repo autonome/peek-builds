@@ -8,8 +8,9 @@
  * cppgc (Blink GC) object derefed inside `-[NSWindow __close]` (the
  * `performClose:` path `app.window.close()` uses).
  *
- * Why every plain http page-host has the relay: TWP (bundled, `<all_urls>`
- * ISOLATED content scripts) matches any http URL, so
+ * Why every plain http page-host has the relay: Proton Pass (bundled, enabled
+ * by default, ISOLATED content scripts matching `http://*\/*` and
+ * `https://*\/*`) matches any http URL, so
  * `getRuntimeExternalWebPrefsForUrl` installs `runtime-external-preload.cjs`
  * on the guest. That preload's window→IPC bridge (runtime-external-preload.cjs
  * ~line 213) relays ANY `{__peekRuntimeExternal:'request'}` postMessage from
@@ -119,7 +120,7 @@ test.describe('Page-host close UAF @desktop', () => {
       const wv = document.querySelector('webview') as any;
       if (!wv) return false;
       // The MAIN-world polyfill sets chrome.runtime.id to the matched ext id
-      // (TWP's runtime hash) when the runtime-external preload installed.
+      // (Proton Pass's runtime hash) when the runtime-external preload installed.
       const id = await wv.executeJavaScript(
         '(window.chrome && window.chrome.runtime && window.chrome.runtime.id) || null',
       ).catch(() => null);
@@ -133,7 +134,7 @@ test.describe('Page-host close UAF @desktop', () => {
     test.setTimeout(180_000);
 
     // Sanity: the relay preload must be installed for this repro to mean
-    // anything. If TWP isn't matching (env without bundled extensions), fail
+    // anything. If Proton Pass isn't matching (env without bundled extensions), fail
     // loudly rather than green-washing.
     const { pageWindow: probeWin, windowId: probeId } = await openPageHost('uaf-probe');
     await probeWin.waitForLoadState('domcontentloaded').catch(() => {});
@@ -146,7 +147,7 @@ test.describe('Page-host close UAF @desktop', () => {
       ).catch(() => null);
       return typeof id === 'string' && id.length > 0;
     }, undefined, { timeout: 15000 }).then(() => true).catch(() => false);
-    expect(live, 'runtime-external relay preload must be installed on the http page-host guest (is TWP loaded?)').toBe(true);
+    expect(live, 'runtime-external relay preload must be installed on the http page-host guest (is Proton Pass loaded?)').toBe(true);
     await bgWindow.evaluate((id: number) => (window as any).app.window.close(id), probeId);
 
     // The crash signal is the MAIN process dying, which we detect by probing

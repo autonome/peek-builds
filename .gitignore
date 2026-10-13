@@ -74,8 +74,6 @@ device-backup-*/
 # Individual extensions are un-ignored below (must re-include parent and all subpaths).
 chrome-extensions/*
 !chrome-extensions/README.md
-# Exceptions: vendored small extensions we want tracked
-!chrome-extensions/twp/
 
 # Experimental/unused files
 babel.config.json

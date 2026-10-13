@@ -499,8 +499,8 @@ export function setupMainProcess(session, options = {}) {
       // This cleanup() is only ever called from cleanupChromeExtensions(),
       // which is only ever called from entry.ts onQuit — i.e. at process
       // shutdown. Windows/webviews are still alive at that point (app.quit
-      // happens later in quitApp). The TWP <all_urls> content-script in the
-      // localhost peek/slide panels can fire a final LOG_EVENT →
+      // happens later in quitApp). A bundled extension's http(s) content script
+      // in a still-open page can fire a final LOG_EVENT →
       // ipcRenderer.invoke('peek:runtime-external:send') DURING teardown. If we
       // remove the handler first, that in-flight invoke logs a cosmetic
       // "No handler registered" error in the main console. Removing the handler
