@@ -268,6 +268,21 @@ What exists now (`background.js`, `translate-logic.js`, tested by
   closes when the page is back to its original, so a "Translate from X" button has no
   widget to live in yet; it arrives with the translation offer of step 8, which shows a
   widget on a page that declares another language.
+- `manage translation models` is a declarative `window` command opening `models.html` (a
+  `workspace` window, key `translate-models`), so the background tile is not woken for it.
+  The view (`models.js` over the pure `models-logic.js`, tested by
+  `tests/unit/translate-models.test.js`) is built on `<peek-card>`, `<peek-button>` and
+  `<peek-dialog>` with the lit importmap. Opening it publishes `translate:models:list
+  {catalogue: true}`, because opening the manager is the request to see what can be
+  downloaded. It lists model directions, not language pairs: what is on disk with its size
+  and a Delete button, and every other catalogue direction with a Download button. A pair
+  that pivots through English is its two directions, each listed on its own. Download
+  publishes `translate:models:estimate` first and opens a prompt naming the bytes to fetch
+  (and the size on disk when larger); only Download in the prompt publishes
+  `translate:models:download`, while Cancel, Escape and the backdrop publish nothing. When
+  the estimate finds every file already on disk, the download is published without a prompt,
+  because nothing would be fetched. Answers carrying no catalogue (those after a download or
+  delete) keep the list already shown.
 
 ## Language detection
 

@@ -1,0 +1,111 @@
+/* Import theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  --theme-bg-secondary: var(--base01);
+  --theme-border: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-muted: var(--base04);
+  --theme-bg-tertiary: var(--base02);
+  --theme-accent: var(--base0D);
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.intro h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.intro p {
+  color: var(--base04);
+  max-width: 60ch;
+}
+
+.intro .status {
+  margin-top: 8px;
+  color: var(--base05);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 600;
+}
+
+.section-header .total {
+  font-weight: 400;
+  color: var(--base04);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--base02);
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.row-detail {
+  font-size: 12px;
+  color: var(--base04);
+}
+
+.row-failure {
+  color: var(--base08);
+}
+
+.empty {
+  color: var(--base04);
+  padding: 4px 0;
+}
+
+.prompt-text {
+  max-width: 48ch;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

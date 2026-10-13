@@ -11,6 +11,15 @@
       "id": "background",
       "url": "background.html",
       "lazy": true
+    },
+    {
+      "id": "models",
+      "url": "models.html",
+      "role": "workspace",
+      "key": "translate-models",
+      "width": 640,
+      "height": 640,
+      "title": "Translation models"
     }
   ],
   "capabilities": {
@@ -28,6 +37,13 @@
         "widget:render",
         "widget:close",
         "widget:action",
+        "translate:models:list",
+        "translate:models:listed",
+        "translate:models:estimate",
+        "translate:models:estimated",
+        "translate:models:download",
+        "translate:models:progress",
+        "translate:models:delete",
         "ext:ready",
         "ext:translate:shutdown",
         "app:shutdown"
@@ -51,6 +67,21 @@
       "name": "show original",
       "description": "Put the current page's own text back after a translation.",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "manage translation models",
+      "description": "See, download and delete the language models used to translate pages on this device.",
+      "action": {
+        "type": "window",
+        "url": "peek://translate/models.html",
+        "options": {
+          "role": "workspace",
+          "key": "translate-models",
+          "width": 640,
+          "height": 640,
+          "title": "Translation models"
+        }
+      }
     }
   ]
 }

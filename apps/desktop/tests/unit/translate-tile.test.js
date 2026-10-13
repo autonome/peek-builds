@@ -29,17 +29,25 @@ const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8'));
 const background = readFileSync(join(dir, 'background.js'), 'utf-8');
 
 describe('translate manifest', () => {
-  it('declares the translate page and show original commands', () => {
+  it('declares the translate page, show original and manage translation models commands', () => {
     assert.equal(manifest.id, 'translate');
-    assert.deepEqual(manifest.commands.map((c) => c.name), ['translate page', 'show original']);
+    assert.deepEqual(manifest.commands.map((c) => c.name), ['translate page', 'show original', 'manage translation models']);
   });
 
   it('has one lazy background tile, not resident, whose url exists', () => {
-    assert.equal(manifest.tiles.length, 1);
-    const tile = manifest.tiles[0];
+    const tile = manifest.tiles.find((t) => t.id === 'background');
     assert.equal(tile.lazy, true);
     assert.equal(tile.resident, undefined);
     readFileSync(join(dir, tile.url));
+  });
+
+  it('opens the models view as a window with no background tile in between', () => {
+    const tile = manifest.tiles.find((t) => t.id === 'models');
+    readFileSync(join(dir, tile.url));
+    const command = manifest.commands.find((c) => c.name === 'manage translation models');
+    assert.equal(command.action.type, 'window');
+    assert.equal(command.action.url, `peek://translate/${tile.url}`);
+    assert.equal(command.action.options.key, tile.key);
   });
 
   it('allows every topic background.js subscribes to or publishes', () => {

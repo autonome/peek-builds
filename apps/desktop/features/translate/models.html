@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Translation models</title>
+    <link rel="stylesheet" type="text/css" href="models.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-dialog.js';
+    </script>
+  </head>
+  <body>
+    <header class="intro">
+      <h1>Translation models</h1>
+      <p>Pages are translated on this device with Mozilla's translation models. Each language
+        direction is a separate download of about 20–40 MB from Mozilla; nothing is downloaded
+        without asking.</p>
+      <p class="status" hidden></p>
+    </header>
+
+    <peek-card class="section installed-section">
+      <div slot="header" class="section-header">
+        <span>On this device</span>
+        <span class="total"></span>
+      </div>
+      <div class="rows installed-rows"></div>
+    </peek-card>
+
+    <peek-card class="section available-section">
+      <div slot="header" class="section-header">
+        <span>Available to download</span>
+      </div>
+      <div class="rows available-rows"></div>
+    </peek-card>
+
+    <peek-dialog class="download-prompt" modal>
+      <span slot="header">Download translation model</span>
+      <p class="prompt-text"></p>
+      <div slot="footer" class="prompt-actions">
+        <peek-button variant="ghost" class="prompt-cancel">Cancel</peek-button>
+        <peek-button variant="primary" class="prompt-accept">Download</peek-button>
+      </div>
+    </peek-dialog>
+
+    <script type="module" src="models.js"></script>
+  </body>
+</html>
