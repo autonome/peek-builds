@@ -236,6 +236,31 @@ const planDeleteSpace = ({ targetName, tags, activeSpaceId, defaultSpaceId, defa
 };
 
 /**
+ * The question asked before a space is deleted. `windowCount` is the space's
+ * window count (`countSpaceWindows`); null when it could not be read.
+ */
+const deleteSpaceConfirmText = (spaceName, windowCount) => {
+  const head = `Delete space "${spaceName}"?`;
+  if (typeof windowCount !== 'number') return `${head} Any windows in it will move to the default space.`;
+  if (windowCount === 0) return `${head} It has no windows to move.`;
+  return `${head} Its ${formatWindowCount(windowCount)} will move to the default space.`;
+};
+
+// The spaces page asks the deletion question: a background page cannot show a
+// prompt of its own, so `delete space <name>` from the command panel opens the
+// spaces page with the space's name in this query parameter.
+const DELETE_SPACE_QUERY_PARAM = 'deleteSpace';
+
+const deleteSpacePromptUrl = (spaceName) =>
+  `peek://spaces/home.html?${DELETE_SPACE_QUERY_PARAM}=${encodeURIComponent(spaceName)}`;
+
+/** The space name a spaces-page query asks to delete, or '' for none. */
+const deleteSpaceNameFromQuery = (search) => {
+  const value = new URLSearchParams(typeof search === 'string' ? search : '').get(DELETE_SPACE_QUERY_PARAM);
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+/**
  * Check a name for a new space. `existingNames` are the display names of the
  * spaces that exist; the default space's name is always taken.
  */
@@ -355,6 +380,9 @@ export {
   spaceNameOptions,
   planMoveToSpace,
   planDeleteSpace,
+  deleteSpaceConfirmText,
+  deleteSpacePromptUrl,
+  deleteSpaceNameFromQuery,
   shouldShowBorder,
   countSpaceWindows,
   initialSelectedIndex,

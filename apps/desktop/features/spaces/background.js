@@ -10,7 +10,7 @@
 import {
   id, labels, schemas, storageKeys, defaults,
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
-  resolveVividColor, shouldShowBorder, planMoveToSpace, planDeleteSpace,
+  resolveVividColor, shouldShowBorder, planMoveToSpace, planDeleteSpace, deleteSpacePromptUrl,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
   emptySpaceWindowOptions, createSerialRunner, countSpaceWindows
 } from './config.js';
@@ -752,13 +752,14 @@ async function switchSpace(targetName) {
  * is deleted (items carrying the tag lose it but are not deleted). The
  * default space cannot be deleted. See `planDeleteSpace` for when the default
  * is reopened and when only the saved rows move. Runs in the same queue as
- * switches, since it may close and reopen windows the same way.
+ * switches, since it may close and reopen windows the same way. Without
+ * `confirmed`, nothing changes: the spaces page opens to ask first.
  */
-function deleteSpace(spaceName) {
-  return runSwitchExclusively(() => deleteSpaceNow(spaceName));
+function deleteSpace(spaceName, { confirmed = false } = {}) {
+  return runSwitchExclusively(() => deleteSpaceNow(spaceName, confirmed));
 }
 
-async function deleteSpaceNow(spaceName) {
+async function deleteSpaceNow(spaceName, confirmed) {
   await defaultSpaceReady;
   let tags;
   try {
@@ -774,6 +775,19 @@ async function deleteSpaceNow(spaceName) {
     defaultSpaceName: DEFAULT_SPACE_NAME,
   });
   if (plan.action === 'error') return { success: false, error: plan.error };
+
+  if (!confirmed) {
+    // Nothing is deleted without the question being answered, and only the
+    // spaces page can ask it (see `deleteSpacePromptUrl`). That page sends the
+    // request back with `confirmed: true`.
+    const opened = await api.window.open(deleteSpacePromptUrl(plan.targetName), {
+      role: 'workspace',
+      width: 800,
+      height: 600,
+    });
+    if (opened?.success === false) return { success: false, error: opened.error || 'Failed to open the spaces page' };
+    return { success: true, spaceId: plan.targetId, spaceName: plan.targetName, prompted: true };
+  }
 
   const defaultTagResult = await api.datastore.getOrCreateTag(toSpaceTagName(DEFAULT_SPACE_NAME));
   if (!defaultTagResult?.success) return { success: false, error: 'Failed to find the default space' };
@@ -1017,6 +1031,7 @@ const SPACE_NAME_COMMANDS = [
   // space's windows, so no command offers to open a second space alongside the current one.
   { name: 'switch space', description: 'Close current space and open another', param: 'Target space name', createCommand: 'create space', pairPriority: 1 },
   { name: 'move to space', description: 'Move the active window to a space', param: 'Target space name' },
+  { name: 'delete space', description: 'Delete a space; its windows move to the default space', param: 'Space to delete' },
 ];
 
 function publishSpaceNameCommands() {
@@ -1157,7 +1172,21 @@ const initCommands = () => {
     }
   });
 
-  // switch / move take a space name; the panel suggests existing spaces.
+  // "delete space <name>" — from the command panel this opens the spaces page
+  // to ask first; the spaces page sends `confirmed: true` once answered.
+  api.pubsub.subscribe('cmd:execute:delete space', async (msg) => {
+    const result = await deleteSpace(spaceNameFromCommandMessage(msg, 'delete space'), {
+      confirmed: msg?.confirmed === true,
+    });
+    if (!result?.success) {
+      console.warn('[ext:spaces] delete space refused:', result?.error);
+    }
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
+    }
+  });
+
+  // switch / move / delete take a space name; the panel suggests existing spaces.
   publishSpaceNameCommands();
   refreshSpaceNameCommands();
 
@@ -1210,12 +1239,12 @@ const initCommands = () => {
   });
 
   console.log('[ext:spaces] Commands registered: close space, switch space, ' +
-    'move to space, create space, pin to this workspace, pin across workspaces, unpin window');
+    'move to space, create space, delete space, pin to this workspace, pin across workspaces, unpin window');
 };
 
 const uninitCommands = () => {
   for (const name of [
-    'close space', 'switch space', 'move to space', 'create space',
+    'close space', 'switch space', 'move to space', 'create space', 'delete space',
     'pin to this workspace', 'pin across workspaces', 'unpin window',
   ]) {
     api.pubsub.publish('cmd:unregister', { name });

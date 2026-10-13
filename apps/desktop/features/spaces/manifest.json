@@ -98,6 +98,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "delete space",
+      "description": "Delete a space; its windows move to the default space",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "open spaces",
       "description": "Browse all spaces",
       "action": {

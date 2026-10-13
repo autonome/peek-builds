@@ -18,7 +18,10 @@ import {
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
-import { resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex, urlsFromDrop } from './config.js';
+import {
+  resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex, urlsFromDrop,
+  deleteSpaceConfirmText, deleteSpaceNameFromQuery
+} from './config.js';
 
 const api = window.app;
 
@@ -797,6 +800,25 @@ const createSpaceCard = (space) => {
 
   header.appendChild(colorDot);
   header.appendChild(title);
+
+  // The default space cannot be deleted, so its card has no delete control.
+  if (getSpaceDisplayName(space) !== 'default') {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'card-delete-btn space-delete-btn';
+    deleteBtn.title = `Delete space ${getSpaceDisplayName(space)}`;
+    deleteBtn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+      '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+      '</svg>';
+    deleteBtn.addEventListener('click', (e) => {
+      // Not a card click: that would switch to the space.
+      e.stopPropagation();
+      confirmDeleteSpace(getSpaceDisplayName(space), space.windowCount);
+    });
+    header.appendChild(deleteBtn);
+  }
+
   card.appendChild(header);
 
   const footer = document.createElement('div');
@@ -824,6 +846,36 @@ const activateSpace = (space) => {
     search: getSpaceDisplayName(space),
     params: [getSpaceDisplayName(space)],
   });
+};
+
+/**
+ * Ask before deleting a space, then send the deletion through the same
+ * `delete space` command the palette uses (`background.js deleteSpace()`),
+ * marked as answered so the background does not ask again. The list
+ * re-renders from the `tag:deleted` the deletion produces.
+ */
+const confirmDeleteSpace = (spaceName, windowCount) => {
+  if (!confirm(deleteSpaceConfirmText(spaceName, windowCount))) return false;
+  api.pubsub.publish('cmd:execute:delete space', {
+    search: spaceName,
+    params: [spaceName],
+    confirmed: true,
+  });
+  return true;
+};
+
+/**
+ * `delete space <name>` from the command panel opens this page with the
+ * space's name in the address (`deleteSpacePromptUrl`), since only a page can
+ * ask the question. Asked once, after the spaces have loaded so the window
+ * count is known.
+ */
+const askDeleteFromAddress = () => {
+  const name = deleteSpaceNameFromQuery(window.location.search);
+  if (!name) return;
+  const lower = name.toLowerCase();
+  const space = state.spaces.find((s) => getSpaceDisplayName(s).trim().toLowerCase() === lower);
+  confirmDeleteSpace(space ? getSpaceDisplayName(space) : name, space ? space.windowCount : null);
 };
 
 /**
@@ -1101,6 +1153,7 @@ const init = async () => {
   api.pubsub.publish('spaces:ensure-default', {});
 
   showSpaces();
+  askDeleteFromAddress();
 };
 
 // home.js loads via a dynamic `import()` awaited after `window.app.initialize()`
