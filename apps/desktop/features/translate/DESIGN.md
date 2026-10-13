@@ -239,8 +239,15 @@ capability (downloads happen in main).
   components.
 - Handlers are registered synchronously in `init()` and guarded on an `initReady` promise, as
   in `features/websearch/home.js`.
-- The wasm and glue ship under `vendor/bergamot/` and are listed in `electron-builder.yml
-  asarUnpack` so the utility process can read them.
+- The wasm is not bundled: `main/page-translate/engine-files.ts createEngineProvider`
+  downloads the newest `translations-wasm` record named `bergamot-translator` of major version
+  3 through the same overridable server base as the models (`model-download.ts`), checks it
+  against the record's attachment hash and size (the wasm is served uncompressed), and caches it
+  at `<userData>/translations/engine/bergamot-translator/<version>/bergamot-translator.wasm`
+  with the record list in `engine/records.json` for offline use. Only major 3 is accepted
+  because the glue's API (the `TranslationModel` signature) changes with the major version.
+- The glue is not in any Remote Settings collection (Firefox ships it in its source tree), so
+  it is the one part that must ship with Peek, pinned to the v3 wasm.
 
 What exists now (`background.js`, `translate-logic.js`, tested by
 `tests/unit/translate-tile.test.js`):

@@ -1,5 +1,6 @@
 /**
- * Downloading translation model files into the on-disk cache.
+ * Downloading translation model files, and the engine wasm (`engine-files.ts`), into the
+ * on-disk cache.
  *
  * Records and attachments come from Mozilla's Remote Settings servers. The only address
  * written down is the server base, `DEFAULT_REMOTE_SETTINGS_SERVER`; the attachment host is
@@ -19,11 +20,14 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as zlib from 'node:zlib';
 
+import type { EngineRecord } from './engine-files.js';
 import { cachePath, verifyAttachment, verifyDecompressed, type ModelRecord, type PairPlan } from './model-store.js';
 
 /** Mozilla's Remote Settings server. Override with `DownloadOptions.server` for a mirror. */
 export const DEFAULT_REMOTE_SETTINGS_SERVER = 'https://firefox.settings.services.mozilla.com/v1';
 export const MODELS_COLLECTION = 'translations-models-v2';
+/** Holds the engine wasm (`engine-files.ts`). */
+export const WASM_COLLECTION = 'translations-wasm';
 const BUCKET = 'main';
 
 /** The part of the Fetch API used here; `net.fetch` and global `fetch` both satisfy it. */
@@ -90,12 +94,21 @@ export async function fetchAttachmentBase(options: ServerOptions): Promise<strin
   return base.endsWith('/') ? base : `${base}/`;
 }
 
-/** Every record of the models collection, as served. */
-export async function fetchModelRecords(options: ServerOptions): Promise<ModelRecord[]> {
-  const url = `${serverBase(options)}/buckets/${BUCKET}/collections/${MODELS_COLLECTION}/records`;
+async function fetchCollectionRecords(options: ServerOptions, collection: string): Promise<unknown[]> {
+  const url = `${serverBase(options)}/buckets/${BUCKET}/collections/${collection}/records`;
   const body = (await (await getOk(options, url)).json()) as { data?: unknown };
   if (!Array.isArray(body?.data)) throw new ModelDownloadError('bad-response', `no data array at ${url}`);
-  return body.data as ModelRecord[];
+  return body.data;
+}
+
+/** Every record of the models collection, as served. */
+export async function fetchModelRecords(options: ServerOptions): Promise<ModelRecord[]> {
+  return (await fetchCollectionRecords(options, MODELS_COLLECTION)) as ModelRecord[];
+}
+
+/** Every record of the wasm collection (the engine and other wasm Firefox uses), as served. */
+export async function fetchEngineRecords(options: ServerOptions): Promise<EngineRecord[]> {
+  return (await fetchCollectionRecords(options, WASM_COLLECTION)) as EngineRecord[];
 }
 
 /**
@@ -184,6 +197,27 @@ async function downloadOne(record: ModelRecord, options: DownloadOptions, getBas
   return { path: target, downloaded: true };
 }
 
+/**
+ * Make the engine wasm present and valid at `target`. The wasm attachment is served
+ * uncompressed, so its attachment hash and size are the file's own and are checked on the
+ * cached file as well as on a fresh download.
+ */
+export async function downloadEngineFile(record: EngineRecord, target: string, options: DownloadOptions): Promise<DownloadResult> {
+  try {
+    if (verifyAttachment(await fs.promises.readFile(target), record)) return { path: target, downloaded: false };
+  } catch {
+    // absent or unreadable: download it
+  }
+  const base = options.attachmentBase ?? (await fetchAttachmentBase(options));
+  const url = attachmentUrl(base, record);
+  const data = new Uint8Array(await (await getOk(options, url)).arrayBuffer());
+  if (!verifyAttachment(data, record)) {
+    throw new ModelDownloadError('attachment-mismatch', `downloaded ${record.attachment.filename} does not match its record`);
+  }
+  await writeAtomic(target, data);
+  return { path: target, downloaded: true };
+}
+
 /** Every file of one model, one after another; the attachment base is fetched at most once. */
 export async function downloadPair(plan: PairPlan, options: DownloadOptions): Promise<Partial<Record<keyof PairPlan['files'], string>>> {
   const getBase = lazyAttachmentBase(options);
@@ -201,14 +235,36 @@ export function recordsCachePath(root: string): string {
 }
 
 export async function writeRecordsCache(root: string, records: readonly ModelRecord[]): Promise<void> {
-  await writeAtomic(recordsCachePath(root), Buffer.from(JSON.stringify({ data: records })));
+  await writeDataFile(recordsCachePath(root), records);
 }
 
 /** The cached catalogue, or null when absent or unreadable. */
 export async function readRecordsCache(root: string): Promise<ModelRecord[] | null> {
+  return (await readDataFile(recordsCachePath(root))) as ModelRecord[] | null;
+}
+
+/** `<root>/engine/records.json`: the last wasm records fetched, for offline use. */
+export function engineRecordsCachePath(root: string): string {
+  return path.join(root, 'engine', 'records.json');
+}
+
+export async function writeEngineRecordsCache(root: string, records: readonly EngineRecord[]): Promise<void> {
+  await writeDataFile(engineRecordsCachePath(root), records);
+}
+
+/** The cached wasm records, or null when absent or unreadable. */
+export async function readEngineRecordsCache(root: string): Promise<EngineRecord[] | null> {
+  return (await readDataFile(engineRecordsCachePath(root))) as EngineRecord[] | null;
+}
+
+async function writeDataFile(file: string, data: readonly unknown[]): Promise<void> {
+  await writeAtomic(file, Buffer.from(JSON.stringify({ data })));
+}
+
+async function readDataFile(file: string): Promise<unknown[] | null> {
   try {
-    const body = JSON.parse(await fs.promises.readFile(recordsCachePath(root), 'utf8')) as { data?: unknown };
-    return Array.isArray(body?.data) ? (body.data as ModelRecord[]) : null;
+    const body = JSON.parse(await fs.promises.readFile(file, 'utf8')) as { data?: unknown };
+    return Array.isArray(body?.data) ? body.data : null;
   } catch {
     return null;
   }
