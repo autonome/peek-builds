@@ -98,7 +98,6 @@ header count moves from 31 to 28; the runner totals above are left as recorded.
 
 | Spec | Test |
 |---|---|
-| `cmdl-navbar-no-resize.spec.ts` | Cmd+L shows the navbar without maximizing or resizing the window |
 | `hybrid-overlay.spec.ts` | clicking the chrome (overlay focus on content blur) does NOT deactivate |
 | `reopen-closed-window.spec.ts` | open → close → reopen brings the URL back |
 | `editor-query-tag-action-key.spec.ts` | u after x puts the tags back and the block returns |
