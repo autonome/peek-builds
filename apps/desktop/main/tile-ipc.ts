@@ -467,24 +467,42 @@ const REQUIRED_BUILTIN_FEATURE_IDS = new Set<string>(['cmd', 'features-manager']
  * page a hybrid page-host is showing now (`findHybridWindowsShowingUrl`),
  * preferring one the kernel would reuse on the current desktop and otherwise
  * any; `peek://` pages match a window whose user-facing address is exactly the
- * url. `excludeId` leaves out the asking window itself.
+ * url. `excludeId` leaves out the asking window itself. A hidden window never
+ * counts (`isWindowShowing`): a dismissed peek or slide kept alive off screen is
+ * not a page the user has open.
  */
 export function findOpenWindowIdForUrl(url: string, excludeId?: number | null): number | null {
   if (typeof url !== 'string' || !url) return null;
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    const found = findHybridWindowsShowingUrl(url).filter((e) => e.windowId !== excludeId);
+    const found = findHybridWindowsShowingUrl(url).filter(
+      (e) => e.windowId !== excludeId && isWindowShowing(e.windowId, e.baseWin),
+    );
     if (found.length === 0) return null;
     const here = pickReusableHere(found, (e) => e.baseWin);
     return (here ?? found[0]).windowId;
   }
   if (url.startsWith('peek://')) {
     for (const win of getAllLiveWindows()) {
-      if (win.id === excludeId || !getWindowInfo(win.id)) continue;
+      if (win.id === excludeId || !getWindowInfo(win.id) || !isWindowShowing(win.id, win)) continue;
       const presentation = getWindowPresentation(win.id);
       if (presentation && presentation.address === url) return presentation.id;
     }
   }
   return null;
+}
+
+/**
+ * Whether a window is on screen as far as the user is concerned: the kernel's
+ * record says it is shown and not on its way to being hidden. A keepLive peek
+ * or slide that was dismissed is hidden this way while its window lives on. A
+ * window the kernel has no record of falls back to the native visibility.
+ */
+function isWindowShowing(electronId: number, nativeWin: { isDestroyed(): boolean; isVisible(): boolean }): boolean {
+  if (nativeWin.isDestroyed()) return false;
+  const machineId = getWindowIdFor(electronId);
+  const record = machineId != null ? getMachineWindowRecord(machineId) : undefined;
+  if (record) return record.visible && record.pendingHidden !== true;
+  return nativeWin.isVisible();
 }
 
 /**

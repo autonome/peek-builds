@@ -10,7 +10,9 @@ import { waitForExtensionsReady, waitForAppReady, waitForPanelCommandsLoaded } f
  * window forward without creating another one. With no such window the button
  * is hidden, including when the page exists only in the saved windows of a
  * space that is not active (those windows are closed, so there is nothing to
- * switch to), and Cmd+Enter does what plain Enter does.
+ * switch to), and Cmd+Enter does what plain Enter does. A hidden window does
+ * not count either: a peek or slide kept alive after being dismissed shows the
+ * page in a window nobody can see.
  *
  * The button follows windows opening, closing and navigating while the panel
  * stays up. Every Visited suggestion row whose page is open in a window carries
@@ -36,6 +38,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
   const ROW_QUERY = 'cmd-switch-row';
   const ROW_OPEN_URL = 'https://example.com/cmd-switch-row-open';
   const ROW_CLOSED_URL = 'https://example.com/cmd-switch-row-closed';
+  const HIDDEN_PEEK_URL = 'https://example.com/cmd-switch-hidden-peek';
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('cmd-switch-to-page'));
@@ -224,6 +227,57 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     await expect(action, 'the URL action shows for a page saved only in an inactive space')
       .toBeHidden({ timeout: 5000 });
     await closePanel(panel);
+  });
+
+  test('a page open only in a hidden peek shows no URL action', async () => {
+    // A peek: a quick-view page host kept alive when dismissed, so dismissing
+    // it hides the window instead of closing it.
+    const opened = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, {
+        role: 'quick-view',
+        modal: true,
+        pageHost: true,
+        type: 'panel',
+        width: 600,
+        height: 400,
+        keepLive: true,
+        key: 'cmd-switch-hidden-peek',
+      });
+    }, HIDDEN_PEEK_URL);
+    expect(opened.success).toBe(true);
+    const peekId = opened.id as number;
+    const findByUrl = () =>
+      bgWindow.evaluate(async (url: string) => {
+        const r = await (window as any).app.window.findByUrl(url);
+        return (r?.id ?? null) as number | null;
+      }, HIDDEN_PEEK_URL);
+    // While the peek shows, it is the open window for the address.
+    await expect.poll(findByUrl, { timeout: 15000, message: 'the showing peek is not found' }).toBe(peekId);
+
+    // Dismiss it: the window survives, hidden.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, peekId);
+    await expect
+      .poll(async () => bgWindow.evaluate(async (id: number) => {
+        const list = await (window as any).app.window.list({ includeInternal: true });
+        const w = (list.windows || []).find((x: any) => x.id === id);
+        return w ? (w.visible ? 'visible' : 'hidden') : 'gone';
+      }, peekId), { timeout: 10000, message: 'the dismissed peek was not kept alive hidden' })
+      .toBe('hidden');
+
+    expect(await findByUrl(), 'a hidden peek counts as an open window').toBeNull();
+    const panel = await openPanel(HIDDEN_PEEK_URL);
+    const action = panel.locator('button#url-action');
+    await panel.waitForTimeout(500);
+    await expect(action, 'the URL action offers switching to a hidden peek').toBeHidden({ timeout: 5000 });
+    await closePanel(panel);
+
+    // keepLive only hides on close; destroy the window outright.
+    await app.evaluateMain!(({ BaseWindow }: any, id: number) => {
+      const w = BaseWindow.fromId(id);
+      if (w && !w.isDestroyed()) w.destroy();
+    }, peekId).catch(() => {});
   });
 
   test('the URL action follows a window opening and closing while the panel stays up', async () => {
