@@ -63,14 +63,12 @@ const itemSchema = {
       "default": false
     },
     "height": {
-      "description": "User-defined height of peek page",
-      "type": "integer",
-      "default": 768
+      "description": "User-defined height of peek page - left empty, the peek opens at a height relative to the display",
+      "type": "integer"
     },
     "width": {
-      "description": "User-defined width of peek page",
-      "type": "integer",
-      "default": 1024
+      "description": "User-defined width of peek page - left empty, the peek opens at a width relative to the display",
+      "type": "integer"
     },
     "enabled": {
       "description": "Whether this peek is enabled or not.",
@@ -79,7 +77,7 @@ const itemSchema = {
     },
   },
   "required": [ "keyNum", "title", "address", "persistState", "keepLive", "allowSound",
-                "height", "width", "enabled" ]
+                "enabled" ]
 };
 
 const listSchema = {
@@ -116,16 +114,23 @@ for (var i = 0; i != 10; i++) {
     persistState: false,
     keepLive: false,
     allowSound: false,
-    height: 768,
-    width: 1024,
     enabled: enabled,
   };
 }
+
+// The size a peek opens at when no resize is remembered and Options carries no
+// size: a share of the work area of whichever display it opens on. Wider than it
+// is tall is deliberate — a peek is a page read in place, not a column.
+const relativeSize = {
+  widthFraction: 0.60,
+  heightFraction: 0.80,
+};
 
 export {
   id,
   labels,
   schemas,
   storageKeys,
-  defaults
+  defaults,
+  relativeSize
 };

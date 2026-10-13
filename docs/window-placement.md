@@ -268,6 +268,24 @@ The window-open path:
    compute initial bounds and creates the window with those bounds.
 4. The handler records `placement` and `windowSize` on the window registry.
 
+### Sizes relative to the display
+
+A caller with no `width`/`height` of its own may send a `relativeSize` instead:
+`{ widthFraction, heightFraction, minWidth? }`, fractions of the work area of
+whichever display the window lands on. The size resolves inside the projection,
+after the target display is chosen, so a window asking for the same fractions is
+proportionally the same on every monitor. `minWidth` is a floor applied to the
+resolved width; the clamp to the work area still runs last, so the floor can
+never push a window wider than the display it is on.
+
+An explicit `width`/`height` always wins — the handler sends a `relativeSize`
+only when the request carries neither. With no display attached, fractions
+resolve against a nominal work area so a display-less run still gets a size.
+
+Peeks and slides are the callers today: a peek asks for 0.60 x 0.80 of the work
+area, a slide for 0.35 x 0.90 with an 800 px floor on the width, and both only
+when no remembered resize and no size set in Options applies.
+
 ---
 
 ## Test scenarios (regression suite)

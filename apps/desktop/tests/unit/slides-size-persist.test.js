@@ -18,6 +18,8 @@ const store = {
   items: [
     { screenEdge: 'Left', address: 'https://music.example/', enabled: true, width: 800, height: 600 },
     { screenEdge: 'Up', address: 'https://news.example/', enabled: true },
+    { screenEdge: 'Down', address: 'https://docs.example/', enabled: true, width: 1024, height: 768 },
+    { screenEdge: 'Right', address: 'https://chat.example/', enabled: true, width: 900, height: 500 },
   ],
 };
 const writes = [];
@@ -65,17 +67,54 @@ describe('slides keep their resized size', () => {
   });
 
   it('keeps using the item size for an edge never resized', async () => {
+    await handlers.get('cli:slide-open')({ args: ['right'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 500);
+    assert.equal(opened.relativeSize, undefined);
+  });
+
+  it('sends a display-relative size for a slide with no size of its own', async () => {
     await handlers.get('cli:slide-open')({ args: ['up'] });
     await settle();
     const opened = opens.at(-1);
-    assert.equal(opened.width, 800);
-    assert.equal(opened.height, 600);
+    assert.equal(opened.width, undefined);
+    assert.equal(opened.height, undefined);
+    assert.deepEqual(opened.relativeSize, {
+      widthFraction: 0.35,
+      heightFraction: 0.90,
+      minWidth: 800,
+    });
+  });
+
+  it('sends a display-relative size for a slide still carrying the old shipped 1024x768', async () => {
+    await handlers.get('cli:slide-open')({ args: ['down'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, undefined);
+    assert.deepEqual(opened.relativeSize, {
+      widthFraction: 0.35,
+      heightFraction: 0.90,
+      minWidth: 800,
+    });
   });
 
   it('ignores a resize for a window it did not open', async () => {
     await handlers.get('window:resized')({ key: 'peek:3', width: 300, height: 300 });
     await settle();
     assert.deepEqual(store.sizes, { Left: { width: 1000, height: 720, optionsWidth: 800, optionsHeight: 600 } });
+  });
+
+  it('a resize wins over the display-relative size at the next open', async () => {
+    await handlers.get('window:resized')({ key: 'https://news.example/:Up', width: 1234, height: 567 });
+    await settle();
+    await handlers.get('cli:slide-open')({ args: ['up'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, 1234);
+    assert.equal(opened.height, 567);
+    assert.equal(opened.relativeSize, undefined);
   });
 
   it('loads saved sizes after a restart', async () => {

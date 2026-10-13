@@ -120,4 +120,68 @@ test.describe('Peeks @desktop', () => {
       await (window as any).app.window.close(id);
     }, result.id as number);
   });
+
+  // ── Display-relative default size ──────────────────────────────────────
+  //
+  // A peek whose item carries neither a remembered resize nor an Options size
+  // sends no pixel pair at all. It asks for a share of the work area of
+  // whichever display it opens on, and main resolves it there. These are the
+  // fractions `features/peeks/config.js` sends.
+  const PEEK_RELATIVE = { widthFraction: 0.60, heightFraction: 0.80 };
+
+  test('a peek with no size set opens at a share of the display work area', async () => {
+    const result = await bgWindow.evaluate(async (rel: object) => {
+      return await (window as any).app.window.open('about:blank', {
+        role: 'quick-view',
+        modal: true,
+        type: 'panel',
+        relativeSize: rel,
+        center: true,
+        key: 'peek:relative',
+      });
+    }, PEEK_RELATIVE);
+    if (!result.success) {
+      throw new Error(`peek open failed: ${JSON.stringify(result)}`);
+    }
+
+    const bounds = await getBounds(result.id as number);
+    const work = await getCursorWorkArea();
+    expect(bounds).not.toBeNull();
+
+    const expectedWidth = Math.min(work.width, Math.round(0.60 * work.width));
+    const expectedHeight = Math.min(work.height, Math.round(0.80 * work.height));
+    expect(Math.abs(bounds!.width - expectedWidth)).toBeLessThanOrEqual(2);
+    expect(Math.abs(bounds!.height - expectedHeight)).toBeLessThanOrEqual(2);
+
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, result.id as number);
+  });
+
+  test('an explicit size still wins over the display-relative one', async () => {
+    const result = await bgWindow.evaluate(async (rel: object) => {
+      return await (window as any).app.window.open('about:blank', {
+        role: 'quick-view',
+        modal: true,
+        type: 'panel',
+        width: 640,
+        height: 480,
+        relativeSize: rel,
+        center: true,
+        key: 'peek:explicit',
+      });
+    }, PEEK_RELATIVE);
+    if (!result.success) {
+      throw new Error(`peek open failed: ${JSON.stringify(result)}`);
+    }
+
+    const bounds = await getBounds(result.id as number);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.width).toBe(640);
+    expect(bounds!.height).toBe(480);
+
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, result.id as number);
+  });
 });

@@ -16,6 +16,8 @@ import * as assert from 'node:assert';
 import {
   computePlacement,
   computeInitialBounds,
+  parseRelativeSize,
+  resolveRelativeSize,
   toProportional,
   ownDisplay,
   type Placement,
@@ -614,6 +616,159 @@ describe('computeInitialBounds: fresh-window helper', () => {
       0,
     );
     assert.deepStrictEqual(bounds, { x: 0, y: 0, width: 800, height: 600 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// display-relative sizes
+//
+// A window open that carries no width/height of its own may ask for a size as
+// fractions of the work area of whichever display it lands on. Peeks ask for
+// 0.60 x 0.80 of it; slides for 0.35 x 0.90 with an 800 px floor on the width.
+// ---------------------------------------------------------------------------
+
+const PEEK_RELATIVE = { widthFraction: 0.60, heightFraction: 0.80 };
+const SLIDE_RELATIVE = { widthFraction: 0.35, heightFraction: 0.90, minWidth: 800 };
+
+describe('resolveRelativeSize', () => {
+  it('a peek is 60% wide and 80% tall on a 1920x1080 work area', () => {
+    assert.deepStrictEqual(
+      resolveRelativeSize(PEEK_RELATIVE, { width: 1920, height: 1080 }),
+      { width: 1152, height: 864 },
+    );
+  });
+
+  it('a slide is 35% wide and 90% tall where that clears the width floor', () => {
+    assert.deepStrictEqual(
+      resolveRelativeSize(SLIDE_RELATIVE, { width: 2560, height: 1440 }),
+      { width: 896, height: 1296 },
+    );
+  });
+
+  it('the width floor wins on a work area too narrow for the fraction', () => {
+    // 0.35 * 1440 = 504, below the 800 px floor.
+    assert.deepStrictEqual(
+      resolveRelativeSize(SLIDE_RELATIVE, { width: 1440, height: 900 }),
+      { width: 800, height: 810 },
+    );
+  });
+
+  it('fractions outside 0..1 clamp rather than overflowing the display', () => {
+    assert.deepStrictEqual(
+      resolveRelativeSize({ widthFraction: 3, heightFraction: -1 }, { width: 1000, height: 1000 }),
+      { width: 1000, height: 0 },
+    );
+  });
+});
+
+describe('parseRelativeSize', () => {
+  it('reads a pair of fractions, with or without a minimum width', () => {
+    assert.deepStrictEqual(
+      parseRelativeSize({ widthFraction: 0.35, heightFraction: 0.9, minWidth: 800 }),
+      { widthFraction: 0.35, heightFraction: 0.9, minWidth: 800 },
+    );
+    assert.deepStrictEqual(
+      parseRelativeSize({ widthFraction: 0.6, heightFraction: 0.8 }),
+      { widthFraction: 0.6, heightFraction: 0.8 },
+    );
+  });
+
+  it('anything without a usable pair of fractions is no relative size at all', () => {
+    for (const value of [
+      undefined, null, 'wide', 42, {}, { widthFraction: 0.5 }, { heightFraction: 0.5 },
+      { widthFraction: 0, heightFraction: 0.5 }, { widthFraction: 'half', heightFraction: 0.5 },
+    ]) {
+      assert.strictEqual(parseRelativeSize(value), undefined, `parsed ${JSON.stringify(value)}`);
+    }
+  });
+
+  it('a minimum width that is not a positive number is dropped', () => {
+    assert.deepStrictEqual(
+      parseRelativeSize({ widthFraction: 0.5, heightFraction: 0.5, minWidth: 'wide' }),
+      { widthFraction: 0.5, heightFraction: 0.5 },
+    );
+  });
+});
+
+describe('computeInitialBounds: display-relative size', () => {
+  it('a centered peek takes its size from the display it lands on', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds({ mode: 'centered' }, PEEK_RELATIVE, displays, 1);
+    assert.strictEqual(bounds.width, 1152);
+    assert.strictEqual(bounds.height, 864);
+    assert.strictEqual(bounds.x, Math.round((1920 - 1152) / 2));
+    assert.strictEqual(bounds.y, Math.round((1080 - 864) / 2));
+  });
+
+  it('the same peek on a smaller display is smaller, not clipped', () => {
+    const bounds = computeInitialBounds(
+      { mode: 'centered' }, PEEK_RELATIVE, fakeDisplays([laptopOnly]), 1,
+    );
+    assert.strictEqual(bounds.width, 864);
+    assert.strictEqual(bounds.height, 720);
+  });
+
+  it('a work area smaller than the display shrinks the window with it', () => {
+    // 1920x1080 panel with a 1920x1000 work area (menu bar / dock).
+    const displays = fakeDisplays([{
+      id: 1, x: 0, y: 0, width: 1920, height: 1080,
+      workArea: { x: 0, y: 40, width: 1920, height: 1000 },
+    }]);
+    const bounds = computeInitialBounds({ mode: 'centered' }, PEEK_RELATIVE, displays, 1);
+    assert.strictEqual(bounds.height, 800);
+    assert.strictEqual(bounds.y, 40 + Math.round((1000 - 800) / 2));
+  });
+
+  it('an Up slide anchors to the top edge at 90% of the work area height', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'edge', edge: 'top' }, SLIDE_RELATIVE, displays, 2,
+    );
+    // 0.35 * 1920 = 672, under the floor, so the floor sets the width.
+    assert.strictEqual(bounds.width, 800);
+    assert.strictEqual(bounds.height, 972);
+    assert.strictEqual(bounds.y, 0);
+    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 800) / 2));
+  });
+
+  it('a slide on a wide display is a third of it, taller than wide', () => {
+    const wide = fakeDisplays([{ id: 1, x: 0, y: 0, width: 2560, height: 1440 }]);
+    const bounds = computeInitialBounds({ mode: 'edge', edge: 'left' }, SLIDE_RELATIVE, wide, 1);
+    assert.strictEqual(bounds.width, 896);
+    assert.strictEqual(bounds.height, 1296);
+    assert.ok(bounds.height > bounds.width);
+  });
+
+  it("a slide's width floor survives onto a narrow display", () => {
+    const bounds = computeInitialBounds(
+      { mode: 'edge', edge: 'left' }, SLIDE_RELATIVE, fakeDisplays([laptopOnly]), 1,
+    );
+    assert.strictEqual(bounds.width, 800);
+    assert.strictEqual(bounds.height, 810);
+  });
+
+  it('the work-area clamp still applies last, so the floor never overflows', () => {
+    const narrow = fakeDisplays([{ id: 1, x: 0, y: 0, width: 600, height: 480 }]);
+    const bounds = computeInitialBounds(
+      { mode: 'edge', edge: 'left' }, SLIDE_RELATIVE, narrow, 1,
+    );
+    assert.strictEqual(bounds.width, 600);
+    assert.strictEqual(bounds.height, 432);
+    assert.strictEqual(bounds.x, 0);
+  });
+
+  it('an explicit pixel size bypasses the fractions entirely', () => {
+    const displays = fakeDisplays([displayA]);
+    const bounds = computeInitialBounds(
+      { mode: 'centered' }, { width: 640, height: 480 }, displays, 1,
+    );
+    assert.strictEqual(bounds.width, 640);
+    assert.strictEqual(bounds.height, 480);
+  });
+
+  it('with no display attached a relative size falls back to a nominal work area', () => {
+    const bounds = computeInitialBounds({ mode: 'centered' }, PEEK_RELATIVE, [], 0);
+    assert.deepStrictEqual(bounds, { x: 0, y: 0, width: 614, height: 614 });
   });
 });
 

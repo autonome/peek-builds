@@ -33,13 +33,11 @@
       },
       "height": {
         "type": "integer",
-        "description": "Window height",
-        "default": 768
+        "description": "Window height - left empty, the peek opens at a height relative to the display"
       },
       "width": {
         "type": "integer",
-        "description": "Window width",
-        "default": 1024
+        "description": "Window width - left empty, the peek opens at a width relative to the display"
       },
       "persistState": {
         "type": "boolean",
@@ -79,8 +77,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": true
       },
       {
@@ -90,8 +86,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -101,8 +95,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -112,8 +104,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -123,8 +113,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -134,8 +122,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -145,8 +131,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -156,8 +140,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -167,8 +149,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       },
       {
@@ -178,8 +158,6 @@
         "persistState": false,
         "keepLive": false,
         "allowSound": false,
-        "height": 768,
-        "width": 1024,
         "enabled": false
       }
     ]

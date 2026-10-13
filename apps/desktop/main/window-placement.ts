@@ -9,6 +9,64 @@ export type Placement =
   | { mode: 'proportional'; relX: number; relY: number }
   | { mode: 'parent-centered'; parentId: number };
 
+// A size expressed as fractions of the target display's work area, resolved once the
+// display is known. `minWidth` is a floor applied before the work-area clamp, so a
+// narrow display yields the work-area width rather than the floor.
+export interface RelativeSize {
+  widthFraction: number;
+  heightFraction: number;
+  minWidth?: number;
+}
+
+// Either a pixel size or a display-relative one. A window open that carries no explicit
+// width/height passes the relative form; an explicit size passes pixels and never
+// consults the fractions.
+export type SizeRequest = { width: number; height: number } | RelativeSize;
+
+export function isRelativeSize(size: SizeRequest): size is RelativeSize {
+  return typeof (size as RelativeSize).widthFraction === 'number';
+}
+
+// The work area assumed when no display is attached and a relative size has to resolve
+// to something. Matches the pixel default that preceded relative sizing, so a
+// display-less run keeps its old scale.
+const NO_DISPLAY_WORK_AREA = { width: 1024, height: 768 };
+
+// Reads a relative size off an untrusted open request. Anything missing a usable pair of
+// fractions is `undefined`, which leaves the caller on its pixel size.
+export function parseRelativeSize(value: unknown): RelativeSize | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const widthFraction = Number(raw.widthFraction);
+  const heightFraction = Number(raw.heightFraction);
+  if (!(widthFraction > 0) || !(heightFraction > 0)) return undefined;
+  const minWidth = Number(raw.minWidth);
+  return {
+    widthFraction,
+    heightFraction,
+    ...(minWidth > 0 ? { minWidth } : {}),
+  };
+}
+
+export function resolveRelativeSize(
+  relative: RelativeSize,
+  workArea: { width: number; height: number },
+): { width: number; height: number } {
+  const width = Math.round(clamp01(relative.widthFraction) * workArea.width);
+  const height = Math.round(clamp01(relative.heightFraction) * workArea.height);
+  return {
+    width: relative.minWidth === undefined ? width : Math.max(width, relative.minWidth),
+    height,
+  };
+}
+
+function resolveSize(
+  size: SizeRequest,
+  workArea: { width: number; height: number },
+): { width: number; height: number } {
+  return isRelativeSize(size) ? resolveRelativeSize(size, workArea) : size;
+}
+
 export interface PlacementInput {
   placement: Placement;
   currentBounds: Electron.Rectangle;
@@ -186,21 +244,23 @@ export function computePlacement(input: PlacementInput): PlacementResult {
   return { kind: 'reposition', bounds: proposed };
 }
 
-// Empty `displays` returns a rect at (0, 0) with the requested size — caller is presumably headless.
+// Empty `displays` returns a rect at (0, 0) with the requested size — caller is presumably
+// headless; a relative size resolves against `NO_DISPLAY_WORK_AREA` there.
 export function computeInitialBounds(
   placement: Placement,
-  size: { width: number; height: number },
+  size: SizeRequest,
   displays: Electron.Display[],
   primaryDisplayId: number,
   parentBounds?: Electron.Rectangle,
 ): Electron.Rectangle {
   if (displays.length === 0) {
-    return { x: 0, y: 0, width: size.width, height: size.height };
+    const resolved = resolveSize(size, NO_DISPLAY_WORK_AREA);
+    return { x: 0, y: 0, width: resolved.width, height: resolved.height };
   }
   const target = pickTargetDisplay(
     placement, undefined, displays, primaryDisplayId, parentBounds,
   );
-  return projectBounds(placement, size, target, parentBounds);
+  return projectBounds(placement, resolveSize(size, target.workArea), target, parentBounds);
 }
 
 // Clamped to [0, 1]; an axis with zero free space (window same size as the display) returns 0.
