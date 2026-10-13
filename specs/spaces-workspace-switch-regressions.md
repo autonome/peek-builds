@@ -1,5 +1,5 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/features/spaces/**, apps/desktop/main/session.ts, apps/desktop/tests/desktop/workspace-panel.spec.ts, apps/desktop/tests/desktop/space-workspace-page-host.spec.ts, apps/desktop/tests/desktop/workspace-round-trip-fidelity.spec.ts, docs/design/window-rules.md]
 depends-on: []
 ---
