@@ -82,7 +82,7 @@
 
 import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
-import { createPageWidgetHost } from './page-widgets.js';
+import { createPageWidgetHost, widgetActionFromPath } from './page-widgets.js';
 import { navbarLoadReveal, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
 
 if (api.initialize) {
@@ -2221,7 +2221,7 @@ function syncWidgetContainerData() {
   else widgetContainer.classList.remove('has-data');
 }
 
-function addWidget(id, { title, content, autoDismiss = 0, onClose, closable = true, collapsible = true } = {}) {
+function addWidget(id, { title, content, autoDismiss = 0, onClose, onAction, closable = true, collapsible = true } = {}) {
   if (widgets.has(id)) removeWidget(id);
 
   const el = document.createElement('div');
@@ -2263,6 +2263,18 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose, closable = tr
   else if (content instanceof HTMLElement) body.appendChild(content);
   bodyWrap.appendChild(body);
   el.appendChild(bodyWrap);
+  // Clicks on elements carrying `data-widget-action` go back to the widget's
+  // owner (see page-widgets.js widgetActionFromPath). The listener sits on the
+  // body, not on the elements, so it survives updateWidget replacing the markup.
+  if (typeof onAction === 'function') {
+    body.addEventListener('click', (e) => {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [e.target];
+      const hit = widgetActionFromPath(path, body);
+      if (!hit) return;
+      e.stopPropagation();
+      try { onAction(hit); } catch (err) { console.error('[overlay] widget action failed:', err); }
+    });
+  }
 
   if (toggle) {
     toggle.addEventListener('click', (e) => {
@@ -2346,6 +2358,7 @@ const pageWidgetHost = createPageWidgetHost({
   addWidget,
   updateWidget,
   removeWidget,
+  getActiveWindowId: () => activeWindowId,
 });
 pageWidgetHost.init();
 if (typeof window !== 'undefined') {

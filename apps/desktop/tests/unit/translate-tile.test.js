@@ -17,8 +17,10 @@ import {
   escapeHtml,
   primaryLanguage,
   refusalText,
+  SHOW_ORIGINAL_ACTION,
   statusHtml,
   statusView,
+  widgetActionRequest,
 } from '../../features/translate/translate-logic.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +50,7 @@ describe('translate manifest', () => {
       'cmd:execute:translate page',
       'page:script-result',
       'translate:state',
+      'widget:action',
     ]);
     const published = [...background.matchAll(/publish\(\s*'([^']+)'/g)].map((m) => m[1]);
     for (const topic of [...subscribed, ...published]) {
@@ -62,7 +65,7 @@ describe('translate manifest', () => {
   it('subscribes before its first await', () => {
     const initBody = background.slice(background.indexOf('const init = '));
     const firstAwait = initBody.indexOf('await');
-    const lastSubscribe = initBody.lastIndexOf("subscribe('translate:state'");
+    const lastSubscribe = initBody.lastIndexOf("subscribe('widget:action'");
     assert.ok(lastSubscribe > 0);
     assert.ok(firstAwait === -1 || firstAwait > lastSubscribe);
   });
@@ -131,7 +134,7 @@ describe('statusView', () => {
   it('reports progress, the finished translation, restoring and errors', () => {
     assert.match(statusView({ windowId: 1, phase: 'collecting', from: 'de', to: 'en', applied: 0, error: null }).text, /Translating from German to English/);
     assert.match(statusView({ windowId: 1, phase: 'translating', from: 'de', to: 'en', applied: 12, error: null }).text, /12 passages/);
-    assert.match(statusView({ windowId: 1, phase: 'translated', from: 'de', to: 'en', applied: 12, error: null }).text, /show original/);
+    assert.match(statusView({ windowId: 1, phase: 'translated', from: 'de', to: 'en', applied: 12, error: null }).text, /Translated from German to English/);
     assert.match(statusView({ windowId: 1, phase: 'restoring', from: 'de', to: 'en', applied: 12, error: null }).text, /original/);
     assert.match(statusView({ windowId: 1, phase: 'idle', from: 'de', to: 'en', applied: 0, error: 'no-page' }).text, /no web page/);
     assert.match(statusView({ windowId: 1, phase: 'idle', from: 'de', to: 'en', applied: 0, error: 'engine-unavailable' }).text, /engine-unavailable/);
@@ -146,5 +149,37 @@ describe('statusView', () => {
   it('escapes the text it puts in the widget', () => {
     assert.equal(escapeHtml('<a href="x">&</a>'), '&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;');
     assert.ok(!statusHtml({ title: 't', text: '<script>' }).includes('<script>'));
+  });
+
+  it('offers Show original while translating or translated, and no button otherwise', () => {
+    const at = (phase, error = null) => statusView({ windowId: 1, phase, from: 'de', to: 'en', applied: 0, error });
+    for (const phase of ['collecting', 'translating', 'translated']) {
+      assert.deepEqual(at(phase).actions.map((a) => a.action), [SHOW_ORIGINAL_ACTION], phase);
+    }
+    assert.deepEqual(at('restoring').actions, []);
+    assert.deepEqual(at('idle', 'no-page').actions, []);
+  });
+
+  it('draws each action as a peek-button carrying data-widget-action', () => {
+    const html = statusHtml(statusView({ windowId: 1, phase: 'translated', from: 'de', to: 'en', applied: 3, error: null }));
+    assert.match(html, /<peek-button[^>]*data-widget-action="show-original"[^>]*>Show original<\/peek-button>/);
+    assert.ok(!statusHtml({ title: 't', text: 'x', actions: [] }).includes('peek-button'));
+  });
+});
+
+describe('widgetActionRequest', () => {
+  const own = { extensionId: 'translate', widgetId: 'status' };
+  const click = { extensionId: 'translate', widgetId: 'status', action: SHOW_ORIGINAL_ACTION, value: null, windowId: 9 };
+
+  it('turns Show original into translate:show-original for the clicked window', () => {
+    assert.deepEqual(widgetActionRequest(click, own), { topic: 'translate:show-original', message: { windowId: 9 } });
+  });
+
+  it('ignores other widgets, unknown actions and clicks with no window', () => {
+    assert.equal(widgetActionRequest({ ...click, extensionId: 'other' }, own), null);
+    assert.equal(widgetActionRequest({ ...click, widgetId: 'other' }, own), null);
+    assert.equal(widgetActionRequest({ ...click, action: 'launch' }, own), null);
+    assert.equal(widgetActionRequest({ ...click, windowId: null }, own), null);
+    assert.equal(widgetActionRequest(null, own), null);
   });
 });

@@ -27,6 +27,7 @@
         "widget:register",
         "widget:render",
         "widget:close",
+        "widget:action",
         "ext:ready",
         "ext:translate:shutdown",
         "app:shutdown"

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'page', 'page-widgets.js');
 
-const { createPageWidgetHost } = await import(modulePath);
+const { createPageWidgetHost, widgetActionFromPath } = await import(modulePath);
 
 // --- Mock factories ---
 
@@ -337,6 +337,34 @@ describe('createPageWidgetHost', () => {
       assert.equal(closedMsgs[0].data.widgetId, 'w1');
     });
 
+    it('publishes widget:action with the active window when onAction fires', () => {
+      const { host, api, widgetFns } = createHost({ getActiveWindowId: () => 42 });
+      host.init();
+
+      host._handleRegister({ extensionId: 'ext1', widgetId: 'w1' });
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '<button data-widget-action="go">Go</button>' });
+
+      api.clearPublished();
+      const onAction = widgetFns._added[0].opts.onAction;
+      assert.ok(typeof onAction === 'function');
+      onAction({ action: 'go', value: 'fast' });
+
+      assert.deepEqual(api.getPublished('widget:action').map((p) => p.data), [
+        { extensionId: 'ext1', widgetId: 'w1', action: 'go', value: 'fast', windowId: 42 },
+      ]);
+    });
+
+    it('sends a null window on widget:action when the host does not know it', () => {
+      const { host, api, widgetFns } = createHost();
+      host.init();
+      host._handleRegister({ extensionId: 'ext1', widgetId: 'w1' });
+      host._handleRender({ extensionId: 'ext1', widgetId: 'w1', html: '' });
+      widgetFns._added[0].opts.onAction({ action: 'go' });
+      const [msg] = api.getPublished('widget:action');
+      assert.equal(msg.data.windowId, null);
+      assert.equal(msg.data.value, null);
+    });
+
     it('passes autoDismiss to addWidget', () => {
       const { host, widgetFns } = createHost();
       host.init();
@@ -591,5 +619,41 @@ describe('createPageWidgetHost', () => {
       });
       assert.equal(host.getActiveWidgets().size, 0);
     });
+  });
+});
+
+describe('widgetActionFromPath', () => {
+  function el(attrs = {}) {
+    return {
+      getAttribute: (name) => (name in attrs ? attrs[name] : null),
+      hasAttribute: (name) => name in attrs,
+    };
+  }
+  const body = el();
+
+  it('finds the innermost element carrying data-widget-action, with its value', () => {
+    const label = el();
+    const button = el({ 'data-widget-action': 'show-original', 'data-widget-value': 'de' });
+    assert.deepEqual(widgetActionFromPath([label, button, body], body), { action: 'show-original', value: 'de' });
+  });
+
+  it('reaches a component host from inside its shadow root', () => {
+    const shadowRoot = { nodeType: 11 };
+    const inner = el();
+    const host = el({ 'data-widget-action': 'go' });
+    assert.deepEqual(widgetActionFromPath([inner, shadowRoot, host, body], body), { action: 'go', value: null });
+  });
+
+  it('stops at the widget body and ignores clicks with no action', () => {
+    const outside = el({ 'data-widget-action': 'outer' });
+    assert.equal(widgetActionFromPath([el(), body, outside], body), null);
+    assert.equal(widgetActionFromPath([el({ 'data-widget-action': '  ' }), body], body), null);
+    assert.equal(widgetActionFromPath(null, body), null);
+  });
+
+  it('answers null for a disabled control or one inside a disabled element', () => {
+    assert.equal(widgetActionFromPath([el({ 'data-widget-action': 'go', disabled: '' }), body], body), null);
+    const wrap = el({ disabled: '' });
+    assert.equal(widgetActionFromPath([el({ 'data-widget-action': 'go' }), wrap, body], body), null);
   });
 });

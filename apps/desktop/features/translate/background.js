@@ -8,7 +8,8 @@
  *   - `show original` — asks main to put the page's own text back.
  *
  * Main reports every change of a window's translation on `translate:state`; this tile shows it
- * in a page widget while that window is the one in front.
+ * in a page widget while that window is the one in front. The widget's "Show original" button
+ * comes back as `widget:action` and is turned into `translate:show-original`.
  *
  * Lazy: the tile boots on the first `cmd:execute:translate page` / `cmd:execute:show original`.
  * Every subscription is made synchronously in `init()`, before any await, so the publish that
@@ -22,6 +23,7 @@ import {
   refusalText,
   statusHtml,
   statusView,
+  widgetActionRequest,
 } from './translate-logic.js';
 
 const api = window.app;
@@ -126,6 +128,12 @@ const init = () => {
   });
   api.pubsub.subscribe('translate:state', (state) => {
     handleState(state).catch((err) => console.error('[ext:translate] state update failed:', err));
+  });
+  // A button in the widget: the window comes with the click, so it acts on the window whose
+  // chrome showed the button.
+  api.pubsub.subscribe('widget:action', (msg) => {
+    const request = widgetActionRequest(msg, { extensionId: EXTENSION_ID, widgetId: WIDGET_ID });
+    if (request) api.pubsub.publish(request.topic, request.message);
   });
 };
 

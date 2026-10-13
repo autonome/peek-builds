@@ -236,10 +236,18 @@ What exists now (`background.js`, `translate-logic.js`, tested by
   declares nothing is refused with a message until text-based detection exists. The target is
   the command's argument, else `navigator.language`, both cut the same way.
 - The status widget is drawn only when the `translate:state` window is the front window,
-  because the widget lives in the shared chrome of the window in front. It shows text only:
-  the page-widget host renders an HTML string and has no way to send a click back to the
-  tile, so "Translate" and "Show original" buttons on `<peek-*>` components wait for a widget
-  action route in `renderer/page/page-widgets.js`.
+  because the widget lives in the shared chrome of the window in front. While a translation
+  runs or is shown, it carries a "Show original" `<peek-button>` with
+  `data-widget-action="show-original"`. The page-widget host
+  (`renderer/page/page-widgets.js widgetActionFromPath`, wired in `overlay.js addWidget`)
+  publishes a click on any element carrying `data-widget-action` as `widget:action
+  {extensionId, widgetId, action, value, windowId}`, `windowId` being the window whose chrome
+  showed the widget; the tile turns it into `translate:show-original` for that window
+  (`translate-logic.js widgetActionRequest`), so the click acts on the window it was made in
+  rather than whichever window reads as focused once the chrome takes the click. The widget
+  closes when the page is back to its original, so a "Translate from X" button has no
+  widget to live in yet; it arrives with the translation offer of step 8, which shows a
+  widget on a page that declares another language.
 
 ## Language detection
 

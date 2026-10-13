@@ -22,7 +22,48 @@
  *   page:will-close   - Page window is about to close
  *   page:script-result - Result of script execution
  *   widget:registered  - Confirmation of widget registration
+ *   widget:closed      - The user dismissed a widget
+ *   widget:action      - The user clicked an element inside a widget that carries
+ *                        `data-widget-action`; payload `{extensionId, widgetId,
+ *                        action, value, windowId}`. `value` is the element's
+ *                        `data-widget-value` (or null); `windowId` is the window the
+ *                        widget was drawn for, when the host knows it (or null).
+ *                        A widget's HTML gets clickable controls this way without
+ *                        any script of its own, since widget markup is inert HTML.
  */
+
+/**
+ * The action a click inside a widget body asks for: the innermost element on the
+ * event's path, up to (not including) `boundary`, that carries a non-empty
+ * `data-widget-action`. A disabled element (or one inside a disabled element)
+ * answers null, so a disabled `<peek-button>` cannot fire its action through a
+ * click on its host box.
+ *
+ * Takes the event path as an array (`event.composedPath()`), so a click inside a
+ * component's shadow root still finds the attribute on the component's host.
+ *
+ * @param {Array<object>} path - event.composedPath(), innermost first
+ * @param {object} boundary - the widget body; the walk stops there
+ * @returns {{action: string, value: string|null}|null}
+ */
+export function widgetActionFromPath(path, boundary) {
+  if (!Array.isArray(path)) return null;
+  for (const node of path) {
+    if (!node || node === boundary) return null;
+    if (typeof node.getAttribute !== 'function') continue;
+    if (node.hasAttribute?.('disabled')) return null;
+    const action = node.getAttribute('data-widget-action');
+    if (typeof action === 'string' && action.trim()) {
+      for (const outer of path.slice(path.indexOf(node) + 1)) {
+        if (!outer || outer === boundary) break;
+        if (outer.hasAttribute?.('disabled')) return null;
+      }
+      const value = node.getAttribute('data-widget-value');
+      return { action: action.trim(), value: typeof value === 'string' ? value : null };
+    }
+  }
+  return null;
+}
 
 /**
  * @typedef {Object} WidgetRegistration
@@ -56,10 +97,13 @@
  * @param {function} deps.addWidget - page.js addWidget(id, opts)
  * @param {function} deps.updateWidget - page.js updateWidget(id, opts)
  * @param {function} deps.removeWidget - page.js removeWidget(id)
+ * @param {function} [deps.getActiveWindowId] - the window widgets are drawn for,
+ *   carried on `widget:action` so a tile acts on the window the user clicked in
  * @returns {PageWidgetHost}
  */
 export function createPageWidgetHost(deps) {
   const { api, webview, widgetContainer, addWidget, updateWidget, removeWidget } = deps;
+  const getActiveWindowId = typeof deps.getActiveWindowId === 'function' ? deps.getActiveWindowId : () => null;
 
   /** @type {Map<string, WidgetRegistration>} */
   const registrations = new Map();
@@ -142,6 +186,16 @@ export function createPageWidgetHost(deps) {
         api.publish('widget:closed', {
           extensionId: msg.extensionId,
           widgetId: msg.widgetId,
+        });
+      },
+      onAction: ({ action, value }) => {
+        const windowId = getActiveWindowId();
+        api.publish('widget:action', {
+          extensionId: msg.extensionId,
+          widgetId: msg.widgetId,
+          action,
+          value: value ?? null,
+          windowId: Number.isInteger(windowId) ? windowId : null,
         });
       },
     });

@@ -93,9 +93,15 @@ export function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+/** The widget action that puts the page's own text back (`widget:action` `action`). */
+export const SHOW_ORIGINAL_ACTION = 'show-original';
+
+const SHOW_ORIGINAL_BUTTON = { action: SHOW_ORIGINAL_ACTION, label: 'Show original' };
+
 /**
- * What the page widget shows for a `translate:state` payload: `{title, text}`, or null when the
- * widget should close (back to the original with nothing to report, or the window is gone).
+ * What the page widget shows for a `translate:state` payload: `{title, text, actions}`, or null
+ * when the widget should close (back to the original with nothing to report, or the window is
+ * gone). `actions` are the buttons, `{action, label}`, each sent back on `widget:action`.
  */
 export function statusView(state) {
   if (!state || typeof state !== 'object') return null;
@@ -103,24 +109,51 @@ export function statusView(state) {
   const to = languageName(state.to);
   const title = 'Translation';
   if (state.error) {
-    return { title, text: ERROR_TEXT[state.error] || `Translation stopped: ${state.error}` };
+    return { title, text: ERROR_TEXT[state.error] || `Translation stopped: ${state.error}`, actions: [] };
   }
   switch (state.phase) {
     case 'collecting':
     case 'translating': {
       const done = state.applied > 0 ? ` (${state.applied} passages so far)` : '';
-      return { title, text: `Translating from ${from} to ${to}…${done}` };
+      return { title, text: `Translating from ${from} to ${to}…${done}`, actions: [SHOW_ORIGINAL_BUTTON] };
     }
     case 'translated':
-      return { title, text: `Translated from ${from} to ${to}. Run "show original" to restore the page.` };
+      return { title, text: `Translated from ${from} to ${to}.`, actions: [SHOW_ORIGINAL_BUTTON] };
     case 'restoring':
-      return { title, text: 'Restoring the original text…' };
+      return { title, text: 'Restoring the original text…', actions: [] };
     default:
       return null;
   }
 }
 
-/** Widget body markup for a `statusView` result. */
+/**
+ * Widget body markup for a `statusView` result. Buttons are `<peek-button>`s carrying
+ * `data-widget-action`, which the page widget host (`renderer/page/page-widgets.js`) turns into
+ * a `widget:action` publish when clicked.
+ */
 export function statusHtml(view) {
-  return `<div style="font-size:12px;line-height:1.4;color:var(--theme-text,#e0e0e0);">${escapeHtml(view.text)}</div>`;
+  const text = `<div style="font-size:12px;line-height:1.4;color:var(--theme-text,#e0e0e0);">${escapeHtml(view.text)}</div>`;
+  const actions = Array.isArray(view.actions) ? view.actions : [];
+  if (actions.length === 0) return text;
+  const buttons = actions
+    .map((a) => `<peek-button size="sm" variant="secondary" data-widget-action="${escapeHtml(a.action)}">${escapeHtml(a.label)}</peek-button>`)
+    .join('');
+  return `${text}<div style="display:flex;gap:6px;margin-top:8px;">${buttons}</div>`;
+}
+
+/**
+ * The `translate:*` publish a click in this tile's widget asks for, or null when the
+ * `widget:action` is for another widget, names an unknown action, or carries no window.
+ *
+ * @param {object} msg - a `widget:action` payload `{extensionId, widgetId, action, value, windowId}`
+ * @param {{extensionId: string, widgetId: string}} own - this tile's widget
+ * @returns {{topic: string, message: object}|null}
+ */
+export function widgetActionRequest(msg, own) {
+  if (!msg || msg.extensionId !== own.extensionId || msg.widgetId !== own.widgetId) return null;
+  if (!Number.isInteger(msg.windowId) || msg.windowId <= 0) return null;
+  if (msg.action === SHOW_ORIGINAL_ACTION) {
+    return { topic: 'translate:show-original', message: { windowId: msg.windowId } };
+  }
+  return null;
 }

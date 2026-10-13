@@ -1010,6 +1010,8 @@
 
   <script type="module">
     import 'peek://app/components/peek-navbar.js';
+    // Widget markup from tiles may use <peek-button> (e.g. with data-widget-action).
+    import 'peek://app/components/peek-button.js';
   </script>
   <peek-navbar id="navbar" class="interactive"></peek-navbar>
   <script type="module" src="overlay.js"></script>
