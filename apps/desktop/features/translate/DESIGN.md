@@ -152,14 +152,21 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   `attachment.hash`/`size` and each decompressed file against `decompressedHash`/`Size`
   (`verifyAttachment()`, `verifyDecompressed()`; both SHA-256, confirmed on the real en-de
   files) before it is used.
-- Fetched from main with `net.fetch`, directly from Mozilla's Remote Settings servers: they
-  are the canonical, already-hosted source, and every file is checked against its record's
-  hash anyway. Every request (records, the server root, attachments) sends
-  `User-Agent: Peek/<app version> (on-device translation)` (`translation-fetch.ts
-  withUserAgent()`, applied in `translate-main.ts electronTranslationFetch()`), because the
-  attachment CDN answers any Chrome user agent, Electron's default included, with HTTP 406. The
-  requests identify as Peek rather than imitating Firefox, so they stay honest about their
-  origin. `main/page-translate/model-download.ts`: the server base is the one constant
+- Fetched from main, directly from Mozilla's Remote Settings servers: they are the canonical,
+  already-hosted source, and every file is checked against its record's hash anyway. Every
+  request (records, the server root, attachments) goes through a dedicated in-memory session,
+  `peek-translations` (`translate-main.ts electronTranslationFetch()`, `translation-fetch.ts`),
+  whose user agent is `Peek/<app version> (on-device translation)`, with `cache: 'no-store'`.
+  The attachment CDN can answer a Chrome user agent with HTTP 406, and that 406 carries
+  `cache-control: public, max-age=31536000, immutable`; the user agent is not part of the cache
+  key, so once the browsing session's disk cache held one 406, every later `net.fetch` of that
+  attachment got the cached 406 whatever `User-Agent` header it sent (an Electron probe against
+  a copy of the affected profile's cache: 406 through `net.fetch`, 200 through the translation
+  session). `net.fetch` itself does send a `User-Agent` request header as given. The session
+  has no disk cache, never reads or writes the HTTP cache, keeps these requests away from
+  browsing cookies, and keeps Chromium's proxy and certificate handling. The requests identify
+  as Peek rather than imitating Firefox, so they stay honest about their origin.
+  `main/page-translate/model-download.ts`: the server base is the one constant
   `DEFAULT_REMOTE_SETTINGS_SERVER`, overridable per call (`server`), and the attachment host is
   read from the server root, so a mirror serving the same API replaces both with no other
   change. `downloadModelFile()` reuses a cached file whose bytes still match, otherwise

@@ -31,7 +31,7 @@ import {
   TRANSLATE_WORLD_ID,
   type TranslationService,
 } from './translation-service.js';
-import { translationUserAgent, withUserAgent } from './translation-fetch.js';
+import { TRANSLATION_PARTITION, translationUserAgent, withoutHttpCache } from './translation-fetch.js';
 import { installTranslateTopics, lazyEngine, statePayload, TRANSLATE_STATE_TOPIC, type LazyEngine } from './translate-topics.js';
 
 const SOURCE = 'page-translate';
@@ -45,10 +45,19 @@ let teardown: Array<() => void> = [];
 /** `<userData>/translations` holds the profile's catalogue and model cache. */
 export const TRANSLATIONS_DIR = 'translations';
 
-/** `net.fetch` identifying as Peek; see `translation-fetch.ts` for why. */
+let translationSessionFetch: FetchLike | null = null;
+
+/**
+ * Fetch through the in-memory translation session, which identifies as Peek and bypasses the
+ * HTTP cache; see `translation-fetch.ts` for why. Needs the app to be ready.
+ */
 async function electronTranslationFetch(): Promise<FetchLike> {
-  const { app, net } = await import('electron');
-  return withUserAgent((url, init) => net.fetch(url, init), translationUserAgent(app.getVersion()));
+  if (translationSessionFetch) return translationSessionFetch;
+  const { app, session } = await import('electron');
+  const translations = session.fromPartition(TRANSLATION_PARTITION);
+  translations.setUserAgent(translationUserAgent(app.getVersion()));
+  translationSessionFetch = withoutHttpCache((url, init) => translations.fetch(url, init));
+  return translationSessionFetch;
 }
 
 async function electronModelProvider(): Promise<ModelProvider> {
@@ -61,7 +70,7 @@ async function electronModelProvider(): Promise<ModelProvider> {
 }
 
 /**
- * The model provider over Electron's `net.fetch` and the profile's translations folder,
+ * The model provider over the translation session's fetch and the profile's translations folder,
  * created on first use. `ensure` downloads, so its callers obtain consent first.
  */
 export function pageTranslationModels(): Promise<ModelProvider> {
