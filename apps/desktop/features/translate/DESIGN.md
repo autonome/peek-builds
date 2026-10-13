@@ -154,7 +154,12 @@ from the CDN named by the server root's `capabilities.attachments.base_url`.
   files) before it is used.
 - Fetched from main with `net.fetch`, directly from Mozilla's Remote Settings servers: they
   are the canonical, already-hosted source, and every file is checked against its record's
-  hash anyway. `main/page-translate/model-download.ts`: the server base is the one constant
+  hash anyway. Every request (records, the server root, attachments) sends
+  `User-Agent: Peek/<app version> (on-device translation)` (`translation-fetch.ts
+  withUserAgent()`, applied in `translate-main.ts electronTranslationFetch()`), because the
+  attachment CDN answers any Chrome user agent, Electron's default included, with HTTP 406. The
+  requests identify as Peek rather than imitating Firefox, so they stay honest about their
+  origin. `main/page-translate/model-download.ts`: the server base is the one constant
   `DEFAULT_REMOTE_SETTINGS_SERVER`, overridable per call (`server`), and the attachment host is
   read from the server root, so a mirror serving the same API replaces both with no other
   change. `downloadModelFile()` reuses a cached file whose bytes still match, otherwise

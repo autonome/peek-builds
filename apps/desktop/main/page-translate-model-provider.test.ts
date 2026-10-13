@@ -13,6 +13,7 @@ import * as zlib from 'node:zlib';
 import { DEFAULT_REMOTE_SETTINGS_SERVER, readRecordsCache, type FetchLike, type FetchResponseLike } from './page-translate/model-download.js';
 import { createModelProvider } from './page-translate/model-provider.js';
 import { cachePath, sha256Hex, type ModelRecord } from './page-translate/model-store.js';
+import { translationUserAgent, withUserAgent, type HeaderFetchLike } from './page-translate/translation-fetch.js';
 
 const SERVER = DEFAULT_REMOTE_SETTINGS_SERVER;
 const RECORDS_URL = `${SERVER}/buckets/main/collections/translations-models-v2/records`;
@@ -214,5 +215,25 @@ describe('model-provider ensure', () => {
     await assert.rejects(provider.ensure('es', 'en'), /ERR_INTERNET_DISCONNECTED/);
     server.setOffline(false);
     assert.ok((await provider.ensure('es', 'en')).ok);
+  });
+});
+
+describe('model-provider over the translation fetch', () => {
+  it('sends the Peek user agent on the records, server-root and attachment requests', async () => {
+    const server = fakeServer([['es', 'en']]);
+    const seen: Array<[string, string | undefined]> = [];
+    const headerFetch: HeaderFetchLike = async (url, init) => {
+      seen.push([url, init.headers['User-Agent']]);
+      return server.fetch(url, { signal: init.signal });
+    };
+    const ua = translationUserAgent('1.2.3');
+    assert.strictEqual(ua, 'Peek/1.2.3 (on-device translation)');
+    const provider = createModelProvider({ fetch: withUserAgent(headerFetch, ua), root });
+    assert.ok((await provider.ensure('es', 'en')).ok);
+    const urls = seen.map(([url]) => url);
+    assert.ok(urls.includes(RECORDS_URL), 'records request');
+    assert.ok(urls.includes(`${SERVER}/`), 'server-root request');
+    assert.ok(urls.some((url) => url.startsWith(ATTACH_BASE)), 'attachment request');
+    for (const [url, agent] of seen) assert.strictEqual(agent, ua, url);
   });
 });

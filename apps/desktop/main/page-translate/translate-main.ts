@@ -16,7 +16,7 @@ import { createEngineProvider, type EngineProvider } from './engine-files.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
 import { engineModeFromEnv } from './engine-protocol.js';
 import { createResourceResolver } from './engine-resources.js';
-import { remoteSettingsServerFromEnv } from './model-download.js';
+import { remoteSettingsServerFromEnv, type FetchLike } from './model-download.js';
 import { createModelProvider, type ModelProvider } from './model-provider.js';
 import { installModelTopics } from './model-topics.js';
 import {
@@ -31,6 +31,7 @@ import {
   TRANSLATE_WORLD_ID,
   type TranslationService,
 } from './translation-service.js';
+import { translationUserAgent, withUserAgent } from './translation-fetch.js';
 import { installTranslateTopics, lazyEngine, statePayload, TRANSLATE_STATE_TOPIC, type LazyEngine } from './translate-topics.js';
 
 const SOURCE = 'page-translate';
@@ -44,10 +45,16 @@ let teardown: Array<() => void> = [];
 /** `<userData>/translations` holds the profile's catalogue and model cache. */
 export const TRANSLATIONS_DIR = 'translations';
 
-async function electronModelProvider(): Promise<ModelProvider> {
+/** `net.fetch` identifying as Peek; see `translation-fetch.ts` for why. */
+async function electronTranslationFetch(): Promise<FetchLike> {
   const { app, net } = await import('electron');
+  return withUserAgent((url, init) => net.fetch(url, init), translationUserAgent(app.getVersion()));
+}
+
+async function electronModelProvider(): Promise<ModelProvider> {
+  const { app } = await import('electron');
   return createModelProvider({
-    fetch: (url, init) => net.fetch(url, init),
+    fetch: await electronTranslationFetch(),
     root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
     server: remoteSettingsServerFromEnv(process.env),
   });
@@ -67,9 +74,9 @@ function isWebPage(url: string): boolean {
 }
 
 async function electronEngineProvider(): Promise<EngineProvider> {
-  const { app, net } = await import('electron');
+  const { app } = await import('electron');
   return createEngineProvider({
-    fetch: (url, init) => net.fetch(url, init),
+    fetch: await electronTranslationFetch(),
     root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
     server: remoteSettingsServerFromEnv(process.env),
   });
