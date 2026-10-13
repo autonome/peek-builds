@@ -179,6 +179,7 @@ import {
   // First-paint tracking
   markHybridPainted,
 } from './hybrid-page-host-registry.js';
+import { pageTranslationNavigated } from './page-translate/translate-main.js';
 
 // Transient-sibling autoclose (focus-driven AND app-resign) is GONE from this
 // file (§5 step 9 cutover). The window-kernel machine owns both halves now:
@@ -2598,6 +2599,9 @@ export function wireHybridContentEvents(
     cacheNavHistory(hostWindowId, contentWC);
     publishNavState();
     publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: shownUrl(navUrl), title: contentWC.getTitle() || '' });
+    // A new document: a translation of the old one is gone. In-page navigation keeps the
+    // document, so its handler below leaves the translation running.
+    pageTranslationNavigated(hostWindowId);
 
     // History tracking — same skip rules as the canvas path (ipc.ts ~2446).
     if (navUrl === initialUrl) return;

@@ -12,6 +12,7 @@ import { headlessActivationPolicy } from './headless-policy.js';
 import { app, BaseWindow, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
+import { disposePageTranslation, initPageTranslation } from './page-translate/translate-main.js';
 import { readBuildInfo, formatBuildInfoLogLine, UNIDENTIFIED_BUILD_LOG_LINE } from './build-info.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1026,6 +1027,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevTiles(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevTiles error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
+  try { disposePageTranslation(); } catch (e) { DEBUG && console.error('[lifecycle] disposePageTranslation error:', e); }
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
   try { cleanupThumbnails(getActiveThumbnailHashes); } catch (e) { DEBUG && console.error('[lifecycle] cleanupThumbnails error:', e); }
   try { shutdown(); } catch (e) { DEBUG && console.error('[lifecycle] shutdown error:', e); }
@@ -1342,6 +1344,10 @@ const onReady = async () => {
   // resolved to the active hybrid window's content webContents here).
   // Idempotent.
   installHybridNavbarActionRouting();
+
+  // Page translation: the translate:page / translate:show-original topics, sessions per hybrid
+  // page window, and an engine process spawned on the first request.
+  initPageTranslation();
 
   // Always-on renderer log: writes every console.{log,info,warn,error,debug}
   // from any preload-managed renderer to <userData>/logs/renderer.log.
