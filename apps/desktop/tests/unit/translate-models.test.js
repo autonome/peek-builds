@@ -116,13 +116,23 @@ describe('download flow', () => {
     assert.equal(requestDownload(s, 'es', 'en').publish, null);
   });
 
+  it('names the engine and its bytes when the first download brings it', () => {
+    const s = requestDownload(base, 'es', 'en').state;
+    const r = applyEstimated(s, { from: 'es', to: 'en', ok: true, downloadBytes: 30_000_000, engineBytes: 5_000_000, diskBytes: 42_000_000, steps: [] });
+    assert.equal(r.state.prompt.engineBytes, 5_000_000);
+    const text = promptText(r.state.prompt);
+    assert.match(text, /model and the translation engine/);
+    assert.match(text, /30\.0 MB \(5\.0 MB of it is the engine/);
+  });
+
   it('asks before downloading, naming the bytes, and downloads only on yes', () => {
     let s = requestDownload(base, 'es', 'en').state;
     const r = applyEstimated(s, { from: 'es', to: 'en', ok: true, downloadBytes: 25_000_000, diskBytes: 37_000_000, steps: [] });
     assert.equal(r.publish, null);
-    assert.deepEqual(r.state.prompt, { from: 'es', to: 'en', downloadBytes: 25_000_000, diskBytes: 37_000_000 });
+    assert.deepEqual(r.state.prompt, { from: 'es', to: 'en', downloadBytes: 25_000_000, diskBytes: 37_000_000, engineBytes: 0 });
     assert.match(promptText(r.state.prompt), /25\.0 MB/);
     assert.match(promptText(r.state.prompt), /37\.0 MB on disk/);
+    assert.doesNotMatch(promptText(r.state.prompt), /engine/);
     s = r.state;
     const yes = answerPrompt(s, true);
     assert.deepEqual(yes.publish, { topic: MODELS_TOPICS.download, message: { from: 'es', to: 'en' } });

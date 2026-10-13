@@ -19,8 +19,14 @@ import { EngineWorkerError, type WorkerEngine, type WorkerEngineRequest } from '
 /** The vendored glue as the build lays it out next to this module (see `vendor/README.md`). */
 export const BERGAMOT_GLUE_PATH = fileURLToPath(new URL('./vendor/bergamot-translator.js', import.meta.url));
 
-/** Directions kept built; each holds ~30–60 MB of wasm heap, so older ones are freed. */
-export const MAX_WARM_MODELS = 4;
+/**
+ * Directions kept built; older ones are freed. Measured in the packaged app's engine process
+ * (Apple M4, base-memory 3.0 models): ~296 MB with one direction, ~417 MB with two, so each
+ * direction costs ~120 MB. Two keeps a pivot (both legs) or a direction and its reverse warm
+ * at ~420 MB; a third or fourth would push the process past ~540 or ~660 MB, while rebuilding
+ * an evicted direction costs ~60 ms.
+ */
+export const MAX_WARM_MODELS = 2;
 
 /** Segments per engine call: large enough to batch well, small enough to notice a cancel. */
 export const SEGMENTS_PER_CALL = 8;

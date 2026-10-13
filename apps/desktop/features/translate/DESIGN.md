@@ -91,8 +91,9 @@ their model files on disk, built from `model-provider.ts ReadyStep`s by
 `engineStepsFromReady`), so the process never reaches the network or the catalogue. A request
 without them answers `engine-unavailable`. The runtime loads once per wasm path; a different
 wasm path (a newer engine version) replaces it and frees every model. One `TranslationModel`
-per direction is kept built, the four most recently used (`MAX_WARM_MODELS`), because each
-holds ~30–60 MB of wasm heap. A pivot pair runs through `translateViaPivoting` with both
+per direction is kept built, the two most recently used (`MAX_WARM_MODELS`), because each
+costs the engine process ~120 MB (measured in the packaged app: ~296 MB with one direction,
+~417 MB with two), and two covers a pivot's both legs while staying well under ~600 MB. A pivot pair runs through `translateViaPivoting` with both
 directions, as Firefox does, which keeps inline HTML aligned across both legs. Segments go to
 the engine eight at a time (`SEGMENTS_PER_CALL`), with a turn of the event loop between calls
 so a `cancel` lands; blank segments come back unchanged without reaching the engine, because
@@ -100,6 +101,17 @@ empty text breaks it. Errors: `engine-load-failed` (retried on the next request)
 `model-files-missing`, `bad-request` (steps that do not chain from `from` to `to`).
 Measured through a forked engine process on an Apple M4 with es→en base-memory 3.0: runtime +
 model + three sentences 225 ms cold, a short HTML paragraph 13 ms warm, engine RSS ~280 MB.
+
+Main hands over those files through `engine-resources.ts createResourceResolver`, passed to
+`engine-host.ts createEngineHost` as `resources` (not in stub mode). A page translation never
+downloads: when the engine wasm or a model the pair needs is not on disk (checked by size), the
+request fails with `models-needed` and the tile points at "manage translation models", whose
+prompt names the bytes, including the ~5 MB engine the first time (`model-topics.ts` adds
+`engineBytes` to the estimate and fetches the engine before the models). Present files are
+handed to the providers' `ensure`, which verifies their hashes, once per pair per session; the
+answer is kept and reused while every path in it still exists. The engine process starts only
+once a request's files are resolved. Inside the packaged app's `utilityProcess` the glue loads
+from `app.asar` with no `asarUnpack` entry (`tests/desktop/page-translate-bergamot.spec.ts`).
 
 ## Models
 

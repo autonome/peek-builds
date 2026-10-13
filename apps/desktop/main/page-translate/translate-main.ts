@@ -12,7 +12,10 @@ import * as path from 'node:path';
 
 import { getHybridContentWC, registerHybridWindowClosedListener } from '../hybrid-page-host-registry.js';
 import { publish, subscribe, unsubscribe } from '../pubsub.js';
+import { createEngineProvider, type EngineProvider } from './engine-files.js';
 import { createEngineHost, electronSpawner } from './engine-host.js';
+import { engineModeFromEnv } from './engine-protocol.js';
+import { createResourceResolver } from './engine-resources.js';
 import { createModelProvider, type ModelProvider } from './model-provider.js';
 import { installModelTopics } from './model-topics.js';
 import {
@@ -34,6 +37,7 @@ const SOURCE = 'page-translate';
 let service: TranslationService | null = null;
 let engine: LazyEngine | null = null;
 let models: Promise<ModelProvider> | null = null;
+let engineFiles: Promise<EngineProvider> | null = null;
 let teardown: Array<() => void> = [];
 
 /** `<userData>/translations` holds the profile's catalogue and model cache. */
@@ -60,10 +64,37 @@ function isWebPage(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
+async function electronEngineProvider(): Promise<EngineProvider> {
+  const { app, net } = await import('electron');
+  return createEngineProvider({
+    fetch: (url, init) => net.fetch(url, init),
+    root: path.join(app.getPath('userData'), TRANSLATIONS_DIR),
+  });
+}
+
+/**
+ * The engine wasm provider over the same fetch and folder as the models, created on first use.
+ * `ensure` downloads, so its callers obtain consent first.
+ */
+export function pageTranslationEngineFiles(): Promise<EngineProvider> {
+  engineFiles ??= electronEngineProvider();
+  return engineFiles;
+}
+
 /** Starts page translation. Idempotent. */
 export function initPageTranslation(): void {
   if (service) return;
-  engine = lazyEngine(async () => createEngineHost({ spawn: await electronSpawner() }));
+  // The stub needs no files; Bergamot gets the engine and model paths with every request.
+  const resources =
+    engineModeFromEnv(process.env) === 'stub'
+      ? undefined
+      : createResourceResolver({ models: pageTranslationModels, engine: pageTranslationEngineFiles });
+  engine = lazyEngine(async () =>
+    createEngineHost({
+      spawn: await electronSpawner(),
+      resources: resources ? (from, to, signal) => resources.resolve(from, to, signal) : undefined,
+    }),
+  );
   const svc = createTranslationService({
     pageFor(windowId) {
       const wc = getHybridContentWC(windowId);
@@ -90,7 +121,7 @@ export function initPageTranslation(): void {
         unsubscribe(SOURCE, topic);
       },
       publish: (topic, msg) => publish(SOURCE, topic, msg),
-    }).dispose,
+    }, pageTranslationEngineFiles).dispose,
   ];
 }
 
@@ -134,4 +165,5 @@ export function disposePageTranslation(): void {
   engine?.dispose();
   engine = null;
   models = null;
+  engineFiles = null;
 }

@@ -127,7 +127,7 @@ export function applyEstimated(state, msg) {
   return {
     state: {
       ...state,
-      prompt: { from: msg.from, to: msg.to, downloadBytes, diskBytes: Number(msg.diskBytes) || 0 },
+      prompt: { from: msg.from, to: msg.to, downloadBytes, diskBytes: Number(msg.diskBytes) || 0, engineBytes: Number(msg.engineBytes) || 0 },
     },
     publish: null,
   };
@@ -151,7 +151,10 @@ export function answerPrompt(state, accepted) {
 export function promptText(prompt) {
   const label = directionLabel(prompt.from, prompt.to);
   const disk = prompt.diskBytes > prompt.downloadBytes ? ` It takes ${formatBytes(prompt.diskBytes)} on disk.` : '';
-  return `Download the ${label} translation model from Mozilla? This fetches ${formatBytes(prompt.downloadBytes)}.${disk} Translation then runs on this device.`;
+  const engineBytes = Number(prompt.engineBytes) || 0;
+  const what = engineBytes > 0 ? `the ${label} translation model and the translation engine` : `the ${label} translation model`;
+  const engine = engineBytes > 0 ? ` (${formatBytes(engineBytes)} of it is the engine, fetched once)` : '';
+  return `Download ${what} from Mozilla? This fetches ${formatBytes(prompt.downloadBytes)}${engine}.${disk} Translation then runs on this device.`;
 }
 
 /** A `translate:models:progress` answer. */

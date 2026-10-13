@@ -17,6 +17,7 @@
  * `model-download.ts DEFAULT_REMOTE_SETTINGS_SERVER`.
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
@@ -82,6 +83,13 @@ export interface EngineFile {
 
 export type EnsureEngineResult = ({ ok: true } & EngineFile) | { ok: false; reason: 'no-engine' };
 
+/**
+ * Whether the engine is on disk, without downloading it. `downloadBytes` is 0 when the cached
+ * file has the attachment's size (the wasm is served uncompressed); the hash is checked by
+ * `ensure`, not here.
+ */
+export type EngineEstimate = { ok: true; path: string; record: EngineRecord; downloadBytes: number } | { ok: false; reason: 'no-engine' };
+
 export interface EngineProviderOptions {
   fetch: FetchLike;
   /** Translations cache root, `<userData>/translations`. */
@@ -96,6 +104,8 @@ export interface EngineProvider {
   records(options?: { refresh?: boolean; signal?: AbortSignal }): Promise<EngineRecord[]>;
   /** Resolve and download the engine wasm; concurrent calls share one download. */
   ensure(options?: { signal?: AbortSignal }): Promise<EnsureEngineResult>;
+  /** Resolve the engine record and report what `ensure` would still fetch; never downloads the wasm. */
+  estimate(options?: { signal?: AbortSignal }): Promise<EngineEstimate>;
 }
 
 export function createEngineProvider(options: EngineProviderOptions): EngineProvider {
@@ -144,5 +154,18 @@ export function createEngineProvider(options: EngineProviderOptions): EngineProv
     return inflight;
   }
 
-  return { records, ensure };
+  async function estimate(opts: { signal?: AbortSignal } = {}): Promise<EngineEstimate> {
+    const record = resolveEngineRecord(await records({ signal: opts.signal }), options.env);
+    if (!record) return { ok: false, reason: 'no-engine' };
+    const target = engineCachePath(options.root, record);
+    let present = false;
+    try {
+      present = (await fs.promises.stat(target)).size === record.attachment.size;
+    } catch {
+      present = false;
+    }
+    return { ok: true, path: target, record, downloadBytes: present ? 0 : record.attachment.size };
+  }
+
+  return { records, ensure, estimate };
 }

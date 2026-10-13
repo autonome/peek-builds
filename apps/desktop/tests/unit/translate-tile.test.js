@@ -154,6 +154,7 @@ describe('statusView', () => {
     assert.match(statusView({ windowId: 1, phase: 'translated', from: 'de', to: 'en', applied: 12, error: null }).text, /Translated from German to English/);
     assert.match(statusView({ windowId: 1, phase: 'restoring', from: 'de', to: 'en', applied: 12, error: null }).text, /original/);
     assert.match(statusView({ windowId: 1, phase: 'idle', from: 'de', to: 'en', applied: 0, error: 'no-page' }).text, /no web page/);
+    assert.match(statusView({ windowId: 1, phase: 'idle', from: 'de', to: 'en', applied: 0, error: 'models-needed' }).text, /manage translation models/);
     assert.match(statusView({ windowId: 1, phase: 'idle', from: 'de', to: 'en', applied: 0, error: 'engine-unavailable' }).text, /engine-unavailable/);
   });
 

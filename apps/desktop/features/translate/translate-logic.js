@@ -88,6 +88,9 @@ export function refusalText(result) {
 
 const ERROR_TEXT = {
   'no-page': 'There is no web page in this window to translate.',
+  'models-needed': 'The translation model for these languages is not downloaded yet. Get it with "manage translation models".',
+  'unsupported-pair': 'No translation model covers these languages.',
+  'no-engine': 'The translation engine is not available.',
 };
 
 export function escapeHtml(str) {

@@ -8,7 +8,8 @@
  *   catalogue offers, or null unless `catalogue: true` was asked (reading the catalogue may
  *   contact the server, so a plain list stays local).
  * - `translate:models:estimate {from, to}` → `translate:models:estimated {from, to, ...estimate}`:
- *   the bytes a download would fetch and occupy, for the consent prompt.
+ *   the bytes a download would fetch and occupy, for the consent prompt, with `engineBytes`
+ *   when the engine wasm is not on disk yet (counted in `downloadBytes` too).
  * - `translate:models:download {from, to}` → `translate:models:progress {from, to, phase,
  *   error}` with phase `downloading`, then `done` or `failed`, then a fresh `listed`. A download
  *   request is the consent: the view publishes it only after the user accepted the prompt that
@@ -16,6 +17,7 @@
  * - `translate:models:delete {from, to}` → a fresh `listed`. Deletes one direction's folder.
  */
 
+import type { EngineProvider } from './engine-files.js';
 import { deleteInstalledDirection, estimateDownload, listInstalledDirections } from './model-inventory.js';
 import type { ModelProvider } from './model-provider.js';
 import { candidatesForPair } from './model-store.js';
@@ -64,10 +66,17 @@ export async function availableDirections(provider: ModelProvider): Promise<Dire
 
 /**
  * Subscribes the manager's request topics. `models` yields the provider (built lazily in main).
+ * With `engine`, an estimate also counts the engine wasm while it is not on disk (its bytes are
+ * in `downloadBytes` and named again as `engineBytes`, so the prompt can say the engine comes
+ * too), and a download fetches the engine before the models: a pair is useless without it.
  * Returns a function that unsubscribes them, and `idle()` for tests: settles once every
  * request handled so far has answered.
  */
-export function installModelTopics(models: () => Promise<ModelProvider>, ports: TopicPorts): { dispose(): void; idle(): Promise<void> } {
+export function installModelTopics(
+  models: () => Promise<ModelProvider>,
+  ports: TopicPorts,
+  engine?: () => Promise<EngineProvider>,
+): { dispose(): void; idle(): Promise<void> } {
   const pending = new Set<Promise<void>>();
   function track(work: Promise<void>): void {
     const p = work.catch(() => {}).finally(() => pending.delete(p));
@@ -100,7 +109,21 @@ export function installModelTopics(models: () => Promise<ModelProvider>, ports: 
         try {
           const provider = await models();
           const estimate = await estimateDownload(provider.root, await provider.plan(pair.from, pair.to));
-          ports.publish(MODELS_ESTIMATED_TOPIC, { ...pair, ...estimate });
+          if (!estimate.ok || !engine) {
+            ports.publish(MODELS_ESTIMATED_TOPIC, { ...pair, ...estimate });
+            return;
+          }
+          const engineState = await (await engine()).estimate();
+          if (!engineState.ok) {
+            ports.publish(MODELS_ESTIMATED_TOPIC, { ...pair, ok: false, reason: 'no-engine' });
+            return;
+          }
+          ports.publish(MODELS_ESTIMATED_TOPIC, {
+            ...pair,
+            ...estimate,
+            downloadBytes: estimate.downloadBytes + engineState.downloadBytes,
+            engineBytes: engineState.downloadBytes,
+          });
         } catch (err) {
           ports.publish(MODELS_ESTIMATED_TOPIC, { ...pair, ok: false, reason: 'error', error: errorText(err) });
         }
@@ -115,6 +138,14 @@ export function installModelTopics(models: () => Promise<ModelProvider>, ports: 
       (async () => {
         ports.publish(MODELS_PROGRESS_TOPIC, { ...pair, phase: 'downloading', error: null });
         try {
+          if (engine) {
+            const engineResult = await (await engine()).ensure();
+            if (!engineResult.ok) {
+              ports.publish(MODELS_PROGRESS_TOPIC, { ...pair, phase: 'failed', error: engineResult.reason });
+              await publishList(false);
+              return;
+            }
+          }
           const result = await (await models()).ensure(pair.from, pair.to);
           ports.publish(MODELS_PROGRESS_TOPIC, result.ok ? { ...pair, phase: 'done', error: null } : { ...pair, phase: 'failed', error: result.reason });
         } catch (err) {

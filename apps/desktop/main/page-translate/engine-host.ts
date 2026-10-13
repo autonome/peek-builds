@@ -11,7 +11,7 @@
 
 import { fileURLToPath } from 'node:url';
 
-import type { EngineMode, EngineToHost, HostToEngine } from './engine-protocol.js';
+import type { EngineMode, EngineResources, EngineToHost, HostToEngine, TranslateMessage } from './engine-protocol.js';
 import type { EngineRequest, SessionEngine } from './page-session.js';
 
 /** Five minutes: a model takes ~60 ms to build again, so a cold restart is cheap and ~330 MB is freed. */
@@ -64,6 +64,12 @@ export interface EngineHostOptions {
   idleMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  /**
+   * Resolves the files a request needs (`engine-resources.ts`); each translate message then
+   * carries them. A rejection fails the request with the error's code (an `EngineHostError`
+   * keeps its own, anything else becomes `resources-failed`). Omitted for the stub engine.
+   */
+  resources?: (from: string, to: string, signal: AbortSignal) => Promise<EngineResources>;
 }
 
 export interface EngineHost extends SessionEngine {
@@ -171,7 +177,9 @@ export function createEngineHost(opts: EngineHostOptions): EngineHost {
       if (req.signal.aborted) return Promise.reject(new EngineHostError('aborted', 'request cancelled'));
       if (req.segments.length === 0) return Promise.resolve([]);
       disarmIdle();
-      if (!proc) start();
+      // With a resolver the process starts once the files are known, so a request that fails
+      // for want of models never spawns one.
+      if (!proc && !opts.resources) start();
       const id = nextId++;
       return new Promise<string[]>((resolve, reject) => {
         const onAbort = () => {
@@ -185,7 +193,22 @@ export function createEngineHost(opts: EngineHostOptions): EngineHost {
           reject,
           cleanup: () => req.signal.removeEventListener('abort', onAbort),
         });
-        send({ type: 'translate', id, from: req.from, to: req.to, segments: req.segments, isHTML: req.isHTML });
+        const message: TranslateMessage = { type: 'translate', id, from: req.from, to: req.to, segments: req.segments, isHTML: req.isHTML };
+        if (!opts.resources) {
+          send(message);
+          return;
+        }
+        opts.resources(req.from, req.to, req.signal).then(
+          (resources) => {
+            if (!pending.has(id)) return;
+            if (!proc) start();
+            send({ ...message, resources });
+          },
+          (err: unknown) => {
+            const failure = err instanceof EngineHostError ? err : new EngineHostError('resources-failed', err instanceof Error ? err.message : String(err));
+            settle(id)?.reject(failure);
+          },
+        );
       });
     },
     running: () => proc !== null,
