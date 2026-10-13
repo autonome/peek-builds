@@ -81,6 +81,7 @@ import * as assert from 'node:assert';
 import {
   serializeSession,
   addDescriptorsToSnapshot,
+  mergeSnapshotIntoWorkspace,
   restorableBoundsFromRecord,
   readPreMaxBounds,
   unmaximizedRestoreDescriptor,
@@ -1422,6 +1423,97 @@ describe('addDescriptorsToSnapshot', () => {
     const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
     addDescriptorsToSnapshot(existing, [desc('https://b.test/')], 'tag-1', 'workspace-switch', 2);
     assert.strictEqual(existing.windows.length, 1);
+  });
+});
+
+describe('mergeSnapshotIntoWorkspace', () => {
+  const desc = (url: string, over: Partial<WindowDescriptor> = {}): WindowDescriptor => ({
+    url,
+    key: undefined,
+    title: url,
+    bounds: { x: 0, y: 0, width: 100, height: 100 },
+    source: 'test',
+    params: {},
+    zOrder: 0,
+    focused: false,
+    ...over,
+  });
+  const snap = (key: string, windows: WindowDescriptor[]) =>
+    ({ version: 1 as const, createdAt: 1, reason: 'workspace-switch' as const, workspaceKey: key, windows });
+  const target = { spaceId: 'tag-default', spaceName: 'default', color: '#999' };
+  const inSpace = (spaceId: string, spaceName: string): WindowContext => ({
+    mode: 'space',
+    modeMetadata: { spaceId, spaceName, color: '#f00', url: 'https://x.test/' },
+  });
+
+  it('keeps the target workspace windows first and appends the source windows', () => {
+    const merged = mergeSnapshotIntoWorkspace(
+      snap('default', [desc('https://a.test/')]),
+      snap('tag-1', [desc('https://b.test/', { context: inSpace('tag-1', 'Work') })]),
+      'default', target, 7,
+    );
+    assert.strictEqual(merged.workspaceKey, 'default');
+    assert.strictEqual(merged.createdAt, 7);
+    assert.deepStrictEqual(merged.windows.map((d) => d.url), ['https://a.test/', 'https://b.test/']);
+  });
+
+  it('moves each source window into the target space, keeping its saved url', () => {
+    const merged = mergeSnapshotIntoWorkspace(
+      null,
+      snap('tag-1', [desc('https://b.test/', { context: inSpace('tag-1', 'Work') })]),
+      'default', target, 7,
+    );
+    assert.deepStrictEqual(merged.windows[0].context?.modeMetadata,
+      { spaceId: 'tag-default', spaceName: 'default', color: '#999', url: 'https://x.test/' });
+    assert.strictEqual(merged.windows[0].context?.mode, 'space');
+  });
+
+  it('keeps a workspace pin on a moved window', () => {
+    const merged = mergeSnapshotIntoWorkspace(
+      null,
+      snap('tag-1', [desc('https://b.test/', { context: { ...inSpace('tag-1', 'Work'), pinScope: 'workspace' } })]),
+      'default', target, 7,
+    );
+    assert.strictEqual(merged.windows[0].context?.pinScope, 'workspace');
+  });
+
+  it('puts a source window with no saved membership in the target space too', () => {
+    const merged = mergeSnapshotIntoWorkspace(null, snap('tag-1', [desc('https://b.test/')]), 'default', target, 7);
+    assert.strictEqual(merged.windows[0].context?.mode, 'space');
+    assert.strictEqual(merged.windows[0].context?.modeMetadata?.spaceId, 'tag-default');
+  });
+
+  it('leaves the target window that had focus as the only focused one', () => {
+    const merged = mergeSnapshotIntoWorkspace(
+      snap('default', [desc('https://a.test/', { focused: true })]),
+      snap('tag-1', [desc('https://b.test/', { focused: true })]),
+      'default', target, 7,
+    );
+    assert.deepStrictEqual(merged.windows.map((d) => d.focused), [true, false]);
+  });
+
+  it('does not add a source window the target already holds (same url and key)', () => {
+    const merged = mergeSnapshotIntoWorkspace(
+      snap('default', [desc('https://a.test/')]),
+      snap('tag-1', [desc('https://a.test/')]),
+      'default', target, 7,
+    );
+    assert.strictEqual(merged.windows.length, 1);
+  });
+
+  it('with no source snapshot, returns the target windows unchanged', () => {
+    const existing = snap('default', [desc('https://a.test/')]);
+    const merged = mergeSnapshotIntoWorkspace(existing, null, 'default', target, 7);
+    assert.deepStrictEqual(merged.windows, existing.windows);
+  });
+
+  it('does not mutate either input', () => {
+    const source = snap('tag-1', [desc('https://b.test/', { context: inSpace('tag-1', 'Work'), focused: true })]);
+    const existing = snap('default', [desc('https://a.test/')]);
+    mergeSnapshotIntoWorkspace(existing, source, 'default', target, 7);
+    assert.strictEqual(existing.windows.length, 1);
+    assert.strictEqual(source.windows[0].context?.modeMetadata?.spaceId, 'tag-1');
+    assert.strictEqual(source.windows[0].focused, true);
   });
 });
 

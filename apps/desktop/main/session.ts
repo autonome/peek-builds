@@ -23,7 +23,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, addDescriptorsToSnapshot, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, unmaximizedRestoreDescriptor, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
+import { serializeSession, addDescriptorsToSnapshot, mergeSnapshotIntoWorkspace, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, unmaximizedRestoreDescriptor, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -1110,6 +1110,60 @@ export function addWindowToWorkspaceSnapshot(
       VALUES (?, 'session', ?, ?, ?)
     `).run(`session-${rowKey}`, rowKey, JSON.stringify(merged), Date.now());
     return { success: true, added: merged.windows.length > (existing?.windows.length ?? 0) };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Move every window of one workspace's saved snapshot into another's and drop
+ * the source row, as when a space is deleted and its windows go to the
+ * default space (`session-projection.ts mergeSnapshotIntoWorkspace`).
+ * `targetSpace` is the space membership the moved windows carry from now on.
+ * Rows only: live windows are the caller's business — save the source first
+ * if it is open, and reopen the target afterwards if it is the active one,
+ * since an ambient save of the active workspace rewrites its row from what is
+ * on screen. Returns how many windows the target row gained.
+ */
+export function mergeWorkspaceSnapshotInto(
+  fromKey: string,
+  toKey: string,
+  targetSpace: Record<string, unknown>,
+): { success: boolean; moved?: number; error?: string } {
+  if (!fromKey || !toKey) return { success: false, error: 'fromKey and toKey are required' };
+  if (fromKey === toKey) return { success: false, error: 'cannot merge a workspace into itself' };
+  if (fromKey === DEFAULT_WORKSPACE_KEY) return { success: false, error: 'the default workspace cannot be merged away' };
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return { success: false, error: 'Database not available' };
+  }
+  const readRow = (rowKey: string): SessionSnapshot | null => {
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = ?`
+    ).get(rowKey) as { value: string } | undefined;
+    if (!row?.value) return null;
+    const parsed: SessionSnapshot = JSON.parse(row.value);
+    return parsed.version === 1 && Array.isArray(parsed.windows) ? parsed : null;
+  };
+  try {
+    const fromRowKey = snapshotRowKey(fromKey);
+    const toRowKey = snapshotRowKey(toKey);
+    const source = readRow(fromRowKey);
+    const target = readRow(toRowKey);
+    const before = target?.windows.length ?? 0;
+    if (source && source.windows.length > 0) {
+      const merged = mergeSnapshotIntoWorkspace(target, source, toKey, targetSpace, Date.now());
+      db.prepare(`
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+        VALUES (?, 'session', ?, ?, ?)
+      `).run(`session-${toRowKey}`, toRowKey, JSON.stringify(merged), Date.now());
+      db.prepare(`DELETE FROM feature_settings WHERE featureId = 'session' AND key = ?`).run(fromRowKey);
+      return { success: true, moved: merged.windows.length - before };
+    }
+    db.prepare(`DELETE FROM feature_settings WHERE featureId = 'session' AND key = ?`).run(fromRowKey);
+    return { success: true, moved: 0 };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }

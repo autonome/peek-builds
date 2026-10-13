@@ -2284,6 +2284,17 @@ function buildAPI(): Record<string, unknown> {
         windowId,
       });
     },
+    mergeWorkspaceSnapshot: (fromKey: string, toKey: string, targetSpace: Record<string, unknown>) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.mergeWorkspaceSnapshot requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:merge-workspace-snapshot', {
+        token: tileToken,
+        fromKey,
+        toKey,
+        targetSpace,
+      });
+    },
     // trustedBuiltin only.
     save: () => {
       if (!trustedBuiltin) {

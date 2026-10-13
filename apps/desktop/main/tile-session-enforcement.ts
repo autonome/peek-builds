@@ -48,6 +48,11 @@ import { DEFAULT_WORKSPACE_KEY } from './session-projection.js';
  *   workspace's saved snapshot, keeping the windows it already holds. Write-only:
  *   it returns no saved URLs, so it is allowed for any key. Used by
  *   features/spaces to move a window into an inactive space.
+ * - `merge-workspace-snapshot` — move every window of a named workspace's
+ *   saved snapshot into another workspace's and drop the source row.
+ *   Write-only. Used by features/spaces when a space is deleted. `key` is the
+ *   SOURCE; the default workspace's key is refused for every caller — see
+ *   `checkSessionAllowed`.
  * - `begin-workspace-switch` / `set-active-workspace` — the spaces feature
  *   reports which workspace is active (and brackets a switch) so the app's
  *   own ambient saves write the active workspace's row. See
@@ -63,6 +68,7 @@ export type SessionOp =
   | 'get-workspace-snapshot-info'
   | 'get-workspace-snapshot-window-count'
   | 'add-window-to-workspace-snapshot'
+  | 'merge-workspace-snapshot'
   | 'begin-workspace-switch'
   | 'set-active-workspace'
   | 'get-active-workspace';
@@ -97,6 +103,9 @@ export function checkSessionAllowed(
   if (op === 'get-workspace-snapshot-info' && args?.key === DEFAULT_WORKSPACE_KEY) {
     return { ok: false, error: 'the default workspace\'s own snapshot is not readable through get-workspace-snapshot-info' };
   }
+  if (op === 'merge-workspace-snapshot' && args?.key === DEFAULT_WORKSPACE_KEY) {
+    return { ok: false, error: 'the default workspace cannot be merged away' };
+  }
 
   if (!grant) return { ok: false, error: 'Invalid token' };
   // Trusted-builtin core renderers bypass the session gate.
@@ -111,6 +120,7 @@ export function checkSessionAllowed(
     case 'get-workspace-snapshot-info':
     case 'get-workspace-snapshot-window-count':
     case 'add-window-to-workspace-snapshot':
+    case 'merge-workspace-snapshot':
     case 'begin-workspace-switch':
     case 'set-active-workspace':
     case 'get-active-workspace': {

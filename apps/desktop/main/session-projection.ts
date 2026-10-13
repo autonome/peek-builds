@@ -488,6 +488,35 @@ export function addDescriptorsToSnapshot(
   return { version: 1, createdAt, reason, workspaceKey, windows };
 }
 
+/**
+ * Fold one workspace's saved snapshot into another's, as when a space is
+ * deleted and its windows move to the default space. The target's windows
+ * stay first and keep their focus; each source window is appended (unless the
+ * target already holds the same url and window key), unfocused, and made a
+ * member of the target space through `targetSpace` — the restore path re-tags
+ * a reopened window from its saved `modeMetadata`, so a window left carrying
+ * the source's space id would reopen as a member of a space that no longer
+ * exists. A workspace pin survives the move. Pure: never mutates its inputs.
+ */
+export function mergeSnapshotIntoWorkspace(
+  target: SessionSnapshot | null,
+  source: SessionSnapshot | null,
+  targetKey: string,
+  targetSpace: Record<string, unknown>,
+  createdAt: number,
+): SessionSnapshot {
+  const moved = (source && Array.isArray(source.windows) ? source.windows : []).map((d): WindowDescriptor => {
+    const ctx = d.context;
+    const context: WindowContext = {
+      mode: 'space',
+      modeMetadata: { ...(ctx?.mode === 'space' ? ctx.modeMetadata : {}), ...targetSpace },
+      ...(ctx?.pinScope ? { pinScope: ctx.pinScope } : {}),
+    };
+    return { ...d, focused: false, context };
+  });
+  return addDescriptorsToSnapshot(target, moved, targetKey, 'workspace-switch', createdAt);
+}
+
 export function serializeSession(input: SerializeSessionInput): SessionProjection {
   const notices: SessionSaveNotice[] = [];
 

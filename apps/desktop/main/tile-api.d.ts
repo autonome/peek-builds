@@ -669,6 +669,14 @@ interface TileSession {
    * must already carry that workspace's space membership.
    */
   addWindowToWorkspaceSnapshot(key: string, windowId: number): Promise<{ success: boolean; added?: boolean; error?: string }>;
+  /**
+   * Move every window of a named workspace's saved snapshot into another
+   * workspace's and drop the source row; the moved windows become members of
+   * `targetSpace` (`{ spaceId, spaceName, color }`). Rows only — live windows
+   * are untouched. The default workspace can never be the source. Requires
+   * `session` capability.
+   */
+  mergeWorkspaceSnapshot(fromKey: string, toKey: string, targetSpace: Record<string, unknown>): Promise<{ success: boolean; moved?: number; error?: string }>;
   /** Save the full session. Requires trustedBuiltin. */
   save(): Promise<{ success: boolean; error?: string }>;
   /** Restore the saved session interactively. Requires trustedBuiltin. */

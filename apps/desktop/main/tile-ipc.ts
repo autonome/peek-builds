@@ -4575,6 +4575,33 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  registerTileIpc('tile:session:merge-workspace-snapshot', { mode: 'handle' }, async (event, args: {
+    token: string;
+    fromKey: string;
+    toKey: string;
+    targetSpace: Record<string, unknown>;
+  }, _grant) => {
+    const grant = _grant;
+    if (typeof args.fromKey !== 'string' || !args.fromKey || typeof args.toKey !== 'string' || !args.toKey) {
+      return { success: false, error: 'fromKey and toKey are required' };
+    }
+    if (!args.targetSpace || typeof args.targetSpace !== 'object') {
+      return { success: false, error: 'targetSpace is required' };
+    }
+    const check = checkSessionAllowed(grant, 'merge-workspace-snapshot', { key: args.fromKey });
+    if (!check.ok) {
+      handleViolation(grant, 'session', 'session:merge-workspace-snapshot', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      const { mergeWorkspaceSnapshotInto } = await import('./session.js');
+      return mergeWorkspaceSnapshotInto(args.fromKey, args.toKey, args.targetSpace);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── Network Fetch ──
 
   registerTileIpc('tile:network:fetch', { mode: 'handle' }, async (event, args: {

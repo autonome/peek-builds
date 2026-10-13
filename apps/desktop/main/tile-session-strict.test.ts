@@ -127,6 +127,24 @@ describe('checkSessionAllowed — add-window-to-workspace-snapshot', () => {
   });
 });
 
+describe('checkSessionAllowed — merge-workspace-snapshot', () => {
+  // Moves a deleted space's saved windows into another workspace's row.
+  it('is allowed from a named key into the default key with the session capability', () => {
+    const grant = makeGrant({ session: true });
+    assert.strictEqual(checkSessionAllowed(grant, 'merge-workspace-snapshot', { key: 'tag-42' }).ok, true);
+  });
+
+  it('never merges the default workspace away, even for a trusted caller', () => {
+    const trusted = makeGrant({}, true);
+    assert.strictEqual(checkSessionAllowed(trusted, 'merge-workspace-snapshot', { key: DEFAULT_WORKSPACE_KEY }).ok, false);
+  });
+
+  it('refuses without the session capability', () => {
+    const grant = makeGrant({});
+    assert.strictEqual(checkSessionAllowed(grant, 'merge-workspace-snapshot', { key: 'tag-42' }).ok, false);
+  });
+});
+
 describe('resolveCapabilities — session shape preservation', () => {
   it('preserves session: true across resolution', () => {
     const grant = resolveCapabilities('t', { session: true }, false);
