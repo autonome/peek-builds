@@ -52,7 +52,8 @@ const refreshMemory = async () => {
 
 const refreshOther = async () => {
   const pairs = [];
-  const windows = await api.window.list({ includeInternal: true });
+  // Hidden windows too: the HUD reports how many of all live windows are visible.
+  const windows = await api.window.list({ includeInternal: true, includeHidden: true });
   if (windows?.success && windows.windows) {
     const visible = windows.windows.filter(w => w.visible).length;
     pairs.push(['Windows visible', String(visible)]);

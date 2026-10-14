@@ -182,9 +182,9 @@ test.describe('Websearch Cold-Start Lazy Loading @desktop', () => {
       expect(result.finalState).not.toBe('ERROR');
 
       // Verify the extension is now loaded after the lazy load:
-      // a live websearch tile window should exist.
+      // a live websearch tile window should exist (a hidden background window).
       const nowLoaded = await sharedBgWindow.evaluate(async () => {
-        const result = await (window as any).app.window.list({ includeInternal: true });
+        const result = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
         if (!result?.success || !Array.isArray(result.windows)) return false;
         return result.windows.some(
           (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),

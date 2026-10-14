@@ -181,7 +181,8 @@ const handleKeydown = (e) => {
 const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
 
 /**
- * Load all visible windows
+ * Load all visible windows. Hidden windows (a dismissed peek or slide kept
+ * alive, a pin-hidden page) are left out by `api.window.list` itself.
  */
 const loadWindows = async () => {
   // Include internal peek:// windows so we can show them
@@ -306,9 +307,6 @@ const createWindowCard = (win) => {
   card.interactive = true;
   card.elevated = true;
   card.dataset.windowId = win.id;
-  if (win.visible === false) {
-    card.dataset.hidden = 'true';
-  }
 
   // Header with optional favicon and title
   const header = document.createElement('div');
@@ -334,13 +332,6 @@ const createWindowCard = (win) => {
   title.textContent = win.title || 'Untitled';
   header.appendChild(title);
 
-  if (win.visible === false) {
-    const badge = document.createElement('span');
-    badge.className = 'card-hidden-badge';
-    badge.textContent = 'Hidden';
-    header.appendChild(badge);
-  }
-
   card.appendChild(header);
 
   // Always render a thumbnail-sized region so every card has the same
@@ -358,11 +349,8 @@ const createWindowCard = (win) => {
   url.textContent = win.url || '';
   card.appendChild(url);
 
-  // Click to focus window and close windows view; un-hide first if hidden
+  // Click to focus window and close windows view
   card.addEventListener('card-click', async () => {
-    if (win.visible === false && api?.window?.show) {
-      await api.window.show(win.id);
-    }
     await api.window.setOverlayFocusTarget(win.id);
     closeWindowsView();
   });

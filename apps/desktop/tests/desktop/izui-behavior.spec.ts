@@ -187,7 +187,8 @@ test.describe('IZUI Behavior @desktop', () => {
     // for a close — if it hasn't dropped by then, the close path is broken.
     await bgWindow.waitForFunction(
       async (wid: number) => {
-        const listResult = await (window as any).app.window.list({ includeInternal: true });
+        // includeHidden: a window hidden instead of closed must not pass as closed.
+        const listResult = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
         if (!listResult.success) return false;
         return !listResult.windows.some((w: any) => w.id === wid);
       },

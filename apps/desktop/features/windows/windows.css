@@ -145,10 +145,6 @@ peek-card[selected]:hover {
   user-select: none;
 }
 
-peek-card[data-hidden="true"] .card-thumbnail {
-  filter: grayscale(0.4);
-}
-
 .card-title {
   font-size: 14px;
   font-weight: 600;
@@ -164,31 +160,6 @@ peek-card[data-hidden="true"] .card-thumbnail {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* Hidden (pin-hidden) windows: dim the card and tag it. */
-peek-card[data-hidden="true"] {
-  --peek-card-bg: var(--base01);
-  opacity: 0.65;
-}
-
-peek-card[data-hidden="true"] .card-title {
-  font-style: italic;
-  color: var(--base04);
-}
-
-.card-hidden-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--base05);
-  background: var(--base02);
-  border: 1px solid var(--base03);
-  border-radius: 3px;
-  padding: 1px 6px;
-  margin-left: auto;
-  flex-shrink: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 /* List view mode - remove max-width constraint */
@@ -266,7 +237,7 @@ peek-grid.cards[view-mode="fit"] peek-card::part(header) {
   pointer-events: none;
 }
 
-/* Header content chip — wraps favicon + title (+ optional Hidden badge)
+/* Header content chip — wraps favicon + title
    in one mostly-opaque dark surface, sized to its contents rather than
    the card width. Uses !important to override the inline display:flex
    that windows.js sets so flex columns mode keeps that layout. */
@@ -281,14 +252,6 @@ peek-grid.cards[view-mode="fit"] peek-card > [slot="header"] {
 /* Title — chip is on the wrapper now; title is plain white text. */
 peek-grid.cards[view-mode="fit"] .card-title {
   color: #fff;
-}
-
-/* Hidden badge — flipped colours so it reads against the dark wrapper
-   chip without competing with its own background fill. */
-peek-grid.cards[view-mode="fit"] .card-hidden-badge {
-  background: rgba(255, 255, 255, 0.9);
-  color: #000;
-  border-color: rgba(255, 255, 255, 0.6);
 }
 
 /* Empty state */

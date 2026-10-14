@@ -43,7 +43,7 @@ test.describe('Pubsub Repro @desktop', () => {
       // Detect lazy load by polling for a pubsub-repro tile window.
       const start = Date.now();
       while (Date.now() - start < 15000) {
-        const result = await api.window.list({ includeInternal: true });
+        const result = await api.window.list({ includeInternal: true, includeHidden: true });
         if (result?.success && Array.isArray(result.windows)) {
           const hit = result.windows.some(
             (w: { url?: string }) => (w.url || '').includes('peek://pubsub-repro/'),

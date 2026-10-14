@@ -761,11 +761,14 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * List open windows. Requires `window.query` (or trustedBuiltin).
+     * Only windows on screen are listed; `includeHidden: true` adds hidden
+     * ones (a dismissed peek or slide kept alive, a pin-hidden page).
      */
-    list: (opts?: { includeInternal?: boolean }) => {
+    list: (opts?: { includeInternal?: boolean; includeHidden?: boolean }) => {
       return ipcRenderer.invoke('tile:window:list', {
         token: tileToken,
         includeInternal: opts?.includeInternal,
+        includeHidden: opts?.includeHidden,
       });
     },
 

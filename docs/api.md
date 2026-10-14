@@ -96,21 +96,25 @@ Bring window to front and focus it.
 await window.app.window.focus('settings');
 ```
 
-### `window.app.window.list()`
+### `window.app.window.list(options?)`
 
-List all open windows.
+List open windows that are on screen. Hidden windows (a dismissed peek or
+slide kept alive, a window hidden with `hide`) are left out unless
+`includeHidden: true` is passed, so user-facing lists and searches never show
+them. `includeInternal: true` adds windows without a registry entry.
 
 ```javascript
 const result = await window.app.window.list();
+const everything = await window.app.window.list({ includeInternal: true, includeHidden: true });
 // Returns: {
 //   success: true,
-//   data: [{
-//     id: 'main',
-//     label: 'main',
-//     url: 'peek://app/background.html',
-//     source: 'peek://app/background.html',
-//     visible: false,
-//     focused: false
+//   windows: [{
+//     id: 3,
+//     url: 'https://example.com/',
+//     title: 'Example',
+//     visible: true,
+//     focused: false,
+//     ...
 //   }, ...]
 // }
 ```

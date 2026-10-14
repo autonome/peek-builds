@@ -166,8 +166,8 @@ export interface IWindowApi {
   /** Blur (unfocus) a window */
   blur(id: number): Promise<ApiResult<void>>;
 
-  /** List all windows */
-  list(options?: { includeInternal?: boolean }): Promise<ApiResult<{ windows: WindowInfo[] }>>;
+  /** List open windows on screen; `includeHidden: true` also lists hidden ones */
+  list(options?: { includeInternal?: boolean; includeHidden?: boolean }): Promise<ApiResult<{ windows: WindowInfo[] }>>;
 }
 
 // ==================== Datastore ====================

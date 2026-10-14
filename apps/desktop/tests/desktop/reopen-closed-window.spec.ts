@@ -431,7 +431,7 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     const websearchWindow = await app.getWindow('websearch/', 10_000);
     expect(websearchWindow).toBeTruthy();
     const websearchId = await bgWindow.evaluate(async () => {
-      const r = await (window as any).app.window.list({ includeInternal: true });
+      const r = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
       if (!r.success) return null;
       const win = r.windows.find((w: any) => (w.url || '').includes('peek://websearch/'));
       return win?.id ?? null;

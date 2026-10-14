@@ -80,7 +80,7 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     } catch { /* app may be gone */ }
     try {
       await bgWindow.evaluate(async (keepId: number) => {
-        const r = await (window as any).app.window.list({ includeInternal: true });
+        const r = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
         if (!r?.success) return;
         for (const w of r.windows) {
           if (w.id === keepId) continue;

@@ -3023,9 +3023,14 @@ export function registerTileIpcHandlers(): void {
     };
   });
 
+  // Lists only windows on screen (`isWindowShowing`) unless the caller passes
+  // `includeHidden: true`. A dismissed peek or slide kept alive, a pin-hidden
+  // page and a pre-warmed helper are not windows the user has open, so every
+  // user-facing list and search leaves them out without filtering on its own.
   registerTileIpc('tile:window:list', { mode: 'handle' }, async (event, args: {
     token: string;
     includeInternal?: boolean;
+    includeHidden?: boolean;
   }, _grant) => {
     const grant = _grant;
     const check = checkWindowAllowed(grant, 'list');
@@ -3057,6 +3062,7 @@ export function registerTileIpcHandlers(): void {
         // filter skips windows without a registry payload.
         const info = getWindowInfo(win.id);
         if (!args.includeInternal && !info) continue;
+        if (!args.includeHidden && !isWindowShowing(win.id, win)) continue;
         const params: Record<string, unknown> = info ? info.params : {};
         const presentation = getWindowPresentation(win.id);
         if (!presentation) continue;
@@ -3087,6 +3093,7 @@ export function registerTileIpcHandlers(): void {
       const seen = new Set(windows.map((w) => w.id));
       for (const h of getAllHybridWindows()) {
         if (seen.has(h.windowId)) continue;
+        if (!args.includeHidden && !isWindowShowing(h.windowId, h.baseWin)) continue;
         const presentation = getWindowPresentation(h.windowId);
         if (!presentation) continue;
         windows.push({

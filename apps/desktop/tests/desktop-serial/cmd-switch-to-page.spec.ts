@@ -260,7 +260,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     }, peekId);
     await expect
       .poll(async () => bgWindow.evaluate(async (id: number) => {
-        const list = await (window as any).app.window.list({ includeInternal: true });
+        const list = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
         const w = (list.windows || []).find((x: any) => x.id === id);
         return w ? (w.visible ? 'visible' : 'hidden') : 'gone';
       }, peekId), { timeout: 10000, message: 'the dismissed peek was not kept alive hidden' })

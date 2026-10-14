@@ -635,7 +635,9 @@ async function closeCurrentWorkspaceWindows() {
     console.error('[ext:spaces] Failed to save workspace layout on close:', err);
   }
 
-  const listResult = await api.window.list();
+  // Hidden windows too: a hidden window of the workspace being left closes with
+  // the rest, rather than surviving into the next workspace.
+  const listResult = await api.window.list({ includeHidden: true });
   if (!listResult?.success || !Array.isArray(listResult.windows)) return;
   for (const w of listResult.windows) {
     if (!w?.id || !WORKSPACE_CONTENT_ROLES.has(w.params?.role)) continue;

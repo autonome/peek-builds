@@ -77,7 +77,7 @@ test.describe('Modal self-close-on-blur (the OAuth-window trap — peek 5b4fefdc
 
   async function isPresent(id: number): Promise<boolean> {
     return await bgWindow.evaluate(async (wid: number) => {
-      const r = await (window as any).app.window.list({ includeInternal: true });
+      const r = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
       if (!r.success) return false;
       return r.windows.some((w: any) => w.id === wid);
     }, id);
