@@ -12,6 +12,8 @@
  *     groups noun's create, i.e. `new group <name>`).
  * The switcher's hidden-windows toggle (off on every opening) lists hidden
  * windows dimmed with a Hidden badge; clicking one shows it.
+ * App chrome (the page-host chrome overlay, a desktop marker) is never listed,
+ * with any options, and never gets a switcher card.
  *
  *   yarn test:grep "Hidden windows stay out of window lists"
  */
@@ -146,6 +148,70 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
     expect(urls, 'the group tag was created').not.toBeNull();
     expect(urls).toContain(`${base}/shown`);
     expect(urls).not.toContain(`${base}/hidden`);
+  });
+
+  // App chrome is not a user window: the shared page-host chrome
+  // (`hybrid-overlay.ts`) and a per-desktop marker window are listed by no
+  // option combination and get no switcher card, hidden-windows toggle on or
+  // off. Headless runs mint no markers (`desktop-marker-manager.ts`), so the
+  // marker here is opened with the manager's own options
+  // (`desktop-markers.ts markerOpenOptions`) and shown the way a mint shows it.
+  test('app chrome (page chrome overlay, desktop marker) is never listed', async () => {
+    const overlayId = await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = b ? b.overlayState() : null;
+      return s ? s.id : null;
+    });
+    expect(overlayId, 'the shared page-host chrome exists while pages are open').not.toBeNull();
+
+    const markerId = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const r = await api.window.open('peek://spaces/signal.html', {
+        role: 'signal', width: 2, height: 2, x: 0, y: 0,
+        transparent: true, focusable: false, skipTaskbar: true, show: false,
+      });
+      if (!r?.success) return null;
+      await api.window.show(r.id, { inactive: true });
+      return r.id;
+    });
+    expect(markerId, 'marker window opened').not.toBeNull();
+
+    try {
+      // The marker is live and on screen, so its absence below is the chrome filter's doing.
+      await expect.poll(async () => await bgWindow.evaluate(
+        async (id: number) => (await (window as any).app.window.exists(id))?.exists ?? false,
+        markerId,
+      ), { timeout: 5000 }).toBe(true);
+
+      for (const opts of [{}, { includeInternal: true }, { includeHidden: true }, { includeInternal: true, includeHidden: true }]) {
+        const ids = await listIds(opts);
+        expect(ids, `overlay listed with ${JSON.stringify(opts)}`).not.toContain(overlayId);
+        expect(ids, `marker listed with ${JSON.stringify(opts)}`).not.toContain(markerId);
+      }
+
+      await app.evaluateMain!((_e: unknown) => {
+        (globalThis as any).__peek_test.publishCmdExecute('windows');
+      });
+      const switcher = await app.getWindow('windows/windows.html', 15000);
+      expect(switcher).toBeTruthy();
+      await switcher.waitForLoadState('domcontentloaded');
+      await switcher.waitForSelector(`peek-card[data-window-id="${shownId}"]`, { timeout: 10000 });
+      for (const id of [overlayId, markerId]) {
+        expect(await switcher.locator(`peek-card[data-window-id="${id}"]`).count()).toBe(0);
+      }
+      const toggleButton = switcher.locator('peek-button.hidden-toggle button');
+      await toggleButton.click();
+      await expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
+      // The hidden window's card appearing means the toggled listing has rendered.
+      await expect(switcher.locator(`peek-card[data-window-id="${hiddenId}"]`)).toHaveCount(1, { timeout: 10000 });
+      for (const id of [overlayId, markerId]) {
+        expect(await switcher.locator(`peek-card[data-window-id="${id}"]`).count()).toBe(0);
+      }
+      await switcher.evaluate(() => window.close());
+      await expect.poll(() => switcher.isClosed(), { timeout: 5000 }).toBe(true);
+    } finally {
+      await bgWindow.evaluate(async (id: number) => await (window as any).app.window.close(id), markerId).catch(() => {});
+    }
   });
 
   // Runs last: clicking the hidden card shows the window, which would change
