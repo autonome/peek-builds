@@ -10,6 +10,8 @@
  *   - the Windows switcher (`features/windows/windows.js loadWindows`);
  *   - "save windows to group" (`features/groups/home.js saveToGroup`, the
  *     groups noun's create, i.e. `new group <name>`).
+ * The switcher's hidden-windows toggle (off on every opening) lists hidden
+ * windows dimmed with a Hidden badge; clicking one shows it.
  *
  *   yarn test:grep "Hidden windows stay out of window lists"
  */
@@ -144,5 +146,43 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
     expect(urls, 'the group tag was created').not.toBeNull();
     expect(urls).toContain(`${base}/shown`);
     expect(urls).not.toContain(`${base}/hidden`);
+  });
+
+  // Runs last: clicking the hidden card shows the window, which would change
+  // what the tests above see.
+  test('the switcher hidden-windows toggle lists a hidden window, and clicking it shows the window', async () => {
+    await app.evaluateMain!((_e: unknown) => {
+      (globalThis as any).__peek_test.publishCmdExecute('windows');
+    });
+    const switcher = await app.getWindow('windows/windows.html', 15000);
+    expect(switcher).toBeTruthy();
+    await switcher.waitForLoadState('domcontentloaded');
+    await switcher.waitForSelector(`peek-card[data-window-id="${shownId}"]`, { timeout: 10000 });
+    expect(await switcher.locator(`peek-card[data-window-id="${hiddenId}"]`).count()).toBe(0);
+
+    const toggleButton = switcher.locator('peek-button.hidden-toggle button');
+    await expect(toggleButton).toHaveAttribute('aria-pressed', 'false');
+    await expect(toggleButton).toHaveAttribute('aria-label', 'Show hidden windows');
+    await toggleButton.click();
+    await expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
+
+    const hiddenCard = switcher.locator(`peek-card[data-window-id="${hiddenId}"]`);
+    await expect(hiddenCard).toHaveCount(1, { timeout: 10000 });
+    await expect(hiddenCard).toHaveAttribute('data-hidden', 'true');
+    await expect(hiddenCard.locator('.card-hidden-badge')).toHaveText('Hidden');
+    // The on-screen window is still listed, without the badge.
+    await expect(switcher.locator(`peek-card[data-window-id="${shownId}"]`)).toHaveCount(1);
+    await expect(switcher.locator(`peek-card[data-window-id="${shownId}"] .card-hidden-badge`)).toHaveCount(0);
+
+    await hiddenCard.click();
+
+    await expect.poll(async () => {
+      const all = await bgWindow.evaluate(
+        async () => await (window as any).app.window.list({ includeInternal: true, includeHidden: true }),
+      );
+      const w = (all.windows || []).find((x: { id: number }) => x.id === hiddenId);
+      return w ? w.visible : null;
+    }, { timeout: 10000 }).toBe(true);
+    await expect.poll(() => switcher.isClosed(), { timeout: 5000 }).toBe(true);
   });
 });

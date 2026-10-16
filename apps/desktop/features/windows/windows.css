@@ -48,11 +48,38 @@ body:has(peek-grid.cards[view-mode="fit"]) {
 /* Search */
 .search-container {
   padding: 24px 24px 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Show/hide hidden windows toggle, sized to sit beside the search field.
+   Slashed eye while hidden windows are left out; open eye once pressed. */
+peek-button.hidden-toggle {
+  flex-shrink: 0;
+  --peek-btn-bg: var(--base01);
+  --peek-btn-border: var(--base02);
+  --peek-btn-text: var(--base05);
+  --peek-btn-hover-bg: var(--base02);
+  --peek-btn-pressed-bg: var(--base0D);
+  --peek-btn-pressed-text: var(--base00);
+}
+
+peek-button.hidden-toggle::part(button) {
+  height: 44px;
+  width: 44px;
+  padding: 0;
+}
+
+peek-button.hidden-toggle[pressed] .hidden-toggle-slash {
+  display: none;
 }
 
 /* Component customization for peek-input */
 peek-input.search-input {
   display: block;
+  flex: 1;
+  min-width: 0;
   width: 100%;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
@@ -145,6 +172,10 @@ peek-card[selected]:hover {
   user-select: none;
 }
 
+peek-card[data-hidden="true"] .card-thumbnail {
+  filter: grayscale(0.4);
+}
+
 .card-title {
   font-size: 14px;
   font-weight: 600;
@@ -160,6 +191,32 @@ peek-card[selected]:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Hidden windows (listed only while the hidden-windows toggle is on):
+   dim the card and tag it. */
+peek-card[data-hidden="true"] {
+  --peek-card-bg: var(--base01);
+  opacity: 0.65;
+}
+
+peek-card[data-hidden="true"] .card-title {
+  font-style: italic;
+  color: var(--base04);
+}
+
+.card-hidden-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--base05);
+  background: var(--base02);
+  border: 1px solid var(--base03);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 /* List view mode - remove max-width constraint */
@@ -237,7 +294,7 @@ peek-grid.cards[view-mode="fit"] peek-card::part(header) {
   pointer-events: none;
 }
 
-/* Header content chip — wraps favicon + title
+/* Header content chip — wraps favicon + title (+ optional Hidden badge)
    in one mostly-opaque dark surface, sized to its contents rather than
    the card width. Uses !important to override the inline display:flex
    that windows.js sets so flex columns mode keeps that layout. */
@@ -252,6 +309,14 @@ peek-grid.cards[view-mode="fit"] peek-card > [slot="header"] {
 /* Title — chip is on the wrapper now; title is plain white text. */
 peek-grid.cards[view-mode="fit"] .card-title {
   color: #fff;
+}
+
+/* Hidden badge — flipped colours so it reads against the dark wrapper
+   chip without competing with its own background fill. */
+peek-grid.cards[view-mode="fit"] .card-hidden-badge {
+  background: rgba(255, 255, 255, 0.9);
+  color: #000;
+  border-color: rgba(255, 255, 255, 0.6);
 }
 
 /* Empty state */

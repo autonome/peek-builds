@@ -10,6 +10,11 @@
  * @prop {boolean} disabled - Whether the button is disabled
  * @prop {boolean} loading - Show loading state
  * @prop {string} type - Button type: 'button' | 'submit' | 'reset'
+ * @prop {string} label - Accessible name for the inner button (needed when
+ *   the content is only an icon)
+ * @prop {boolean} toggle - The button is an on/off toggle; the inner button
+ *   carries aria-pressed
+ * @prop {boolean} pressed - Toggle state (only meaningful with `toggle`)
  *
  * @slot - Default slot for button content
  * @slot prefix - Content before the main label (e.g., icon)
@@ -31,7 +36,7 @@
  * <peek-button variant="ghost" disabled>Disabled</peek-button>
  */
 
-import { html, css } from 'lit';
+import { html, css, nothing } from 'lit';
 import { PeekElement, sharedStyles } from './base.js';
 
 export class PeekButton extends PeekElement {
@@ -40,7 +45,10 @@ export class PeekButton extends PeekElement {
     size: { type: String, reflect: true },
     disabled: { type: Boolean, reflect: true },
     loading: { type: Boolean, reflect: true },
-    type: { type: String }
+    type: { type: String },
+    label: { type: String },
+    toggle: { type: Boolean, reflect: true },
+    pressed: { type: Boolean, reflect: true }
   };
 
   static styles = [
@@ -145,6 +153,14 @@ export class PeekButton extends PeekElement {
         --_btn-active-bg: var(--peek-btn-active-bg, color-mix(in srgb, var(--theme-danger, #ff3b30) 75%, #000));
       }
 
+      /* Toggle, pressed: the active fill so the on state reads at a glance */
+      :host([toggle][pressed]) .button {
+        --_btn-bg: var(--peek-btn-pressed-bg, var(--theme-accent, #007aff));
+        --_btn-text: var(--peek-btn-pressed-text, #fff);
+        --_btn-border: var(--peek-btn-pressed-bg, var(--theme-accent, #007aff));
+        --_btn-hover-bg: var(--peek-btn-pressed-bg, var(--theme-accent, #007aff));
+      }
+
       /* Loading state */
       :host([loading]) .button {
         pointer-events: none;
@@ -196,6 +212,9 @@ export class PeekButton extends PeekElement {
     this.disabled = false;
     this.loading = false;
     this.type = 'button';
+    this.label = '';
+    this.toggle = false;
+    this.pressed = false;
   }
 
   render() {
@@ -206,6 +225,8 @@ export class PeekButton extends PeekElement {
         type=${this.type}
         ?disabled=${this.disabled || this.loading}
         aria-busy=${this.loading ? 'true' : 'false'}
+        aria-label=${this.label || nothing}
+        aria-pressed=${this.toggle ? (this.pressed ? 'true' : 'false') : nothing}
       >
         <span class="spinner" aria-hidden="true"></span>
         <span class="button-content">

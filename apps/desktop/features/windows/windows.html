@@ -28,6 +28,7 @@
       import 'peek://app/components/peek-card.js';
       import 'peek://app/components/peek-grid.js';
       import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-button.js';
       import 'peek://app/components/peek-grid-toolbar.js';
     </script>
   </head>
@@ -38,6 +39,19 @@
         placeholder="Search windows..."
         type="search"
       ></peek-input>
+      <peek-button
+        class="hidden-toggle"
+        variant="secondary"
+        toggle
+        label="Show hidden windows"
+        title="Show hidden windows"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M1.5 9s2.75-5 7.5-5 7.5 5 7.5 5-2.75 5-7.5 5-7.5-5-7.5-5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <circle cx="9" cy="9" r="2.25" stroke="currentColor" stroke-width="1.5"/>
+          <path class="hidden-toggle-slash" d="M3 15L15 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </peek-button>
     </div>
 
     <peek-grid-toolbar class="grid-toolbar" view-mode="fit"></peek-grid-toolbar>

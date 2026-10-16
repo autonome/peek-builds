@@ -24,7 +24,11 @@ const SORT_OPTIONS = [
 let state = {
   windows: [],
   selectedIndex: 0,
-  searchQuery: ''
+  searchQuery: '',
+  // Hidden windows (a dismissed peek or slide kept alive, a pin-hidden page)
+  // are listed only while the toggle beside the search field is pressed.
+  // Deliberately not persisted: every opening starts with on-screen windows only.
+  showHidden: false
 };
 
 // Handle ESC - close the windows view
@@ -124,6 +128,12 @@ const handleKeydown = (e) => {
     return;
   }
 
+  // Enter/Space on the hidden-windows toggle press it rather than open the
+  // selected card.
+  if (e.target?.closest?.('peek-button') && (e.key === 'Enter' || e.key === ' ')) {
+    return;
+  }
+
   const cards = getCards();
   if (cards.length === 0) return;
 
@@ -181,12 +191,13 @@ const handleKeydown = (e) => {
 const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
 
 /**
- * Load all visible windows. Hidden windows (a dismissed peek or slide kept
- * alive, a pin-hidden page) are left out by `api.window.list` itself.
+ * Load the windows to show. Hidden windows (a dismissed peek or slide kept
+ * alive, a pin-hidden page) are left out by `api.window.list` itself unless
+ * the hidden-windows toggle is pressed.
  */
 const loadWindows = async () => {
   // Include internal peek:// windows so we can show them
-  const result = await api.window.list({ includeInternal: true });
+  const result = await api.window.list({ includeInternal: true, includeHidden: state.showHidden });
 
   if (result.success) {
     // Filter out windows we don't want to show:
@@ -307,6 +318,9 @@ const createWindowCard = (win) => {
   card.interactive = true;
   card.elevated = true;
   card.dataset.windowId = win.id;
+  if (win.visible === false) {
+    card.dataset.hidden = 'true';
+  }
 
   // Header with optional favicon and title
   const header = document.createElement('div');
@@ -332,6 +346,13 @@ const createWindowCard = (win) => {
   title.textContent = win.title || 'Untitled';
   header.appendChild(title);
 
+  if (win.visible === false) {
+    const badge = document.createElement('span');
+    badge.className = 'card-hidden-badge';
+    badge.textContent = 'Hidden';
+    header.appendChild(badge);
+  }
+
   card.appendChild(header);
 
   // Always render a thumbnail-sized region so every card has the same
@@ -349,8 +370,11 @@ const createWindowCard = (win) => {
   url.textContent = win.url || '';
   card.appendChild(url);
 
-  // Click to focus window and close windows view
+  // Click to focus window and close windows view; un-hide first if hidden
   card.addEventListener('card-click', async () => {
+    if (win.visible === false && api?.window?.show) {
+      await api.window.show(win.id);
+    }
     await api.window.setOverlayFocusTarget(win.id);
     closeWindowsView();
   });
@@ -459,6 +483,18 @@ const init = async () => {
   searchInput.addEventListener('input', () => {
     state.searchQuery = searchInput.value;
     state.selectedIndex = 0;
+    renderWindows();
+  });
+
+  // Show/hide hidden windows
+  const hiddenToggle = document.querySelector('peek-button.hidden-toggle');
+  hiddenToggle?.addEventListener('click', async () => {
+    state.showHidden = !state.showHidden;
+    hiddenToggle.pressed = state.showHidden;
+    const label = state.showHidden ? 'Hide hidden windows' : 'Show hidden windows';
+    hiddenToggle.label = label;
+    hiddenToggle.title = label;
+    await loadWindows();
     renderWindows();
   });
 
