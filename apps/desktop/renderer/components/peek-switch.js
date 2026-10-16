@@ -179,15 +179,6 @@ export class PeekSwitch extends PeekElement {
     this.emit('change', { checked: this.checked });
   }
 
-  _handleClick(e) {
-    // Allow clicking on the whole component
-    if (this.disabled) return;
-    if (e.target !== this.inputElement) {
-      this.checked = !this.checked;
-      this.emit('change', { checked: this.checked });
-    }
-  }
-
   _handleKeydown(e) {
     if (this.disabled) return;
     if (e.key === ' ' || e.key === 'Enter') {
@@ -198,8 +189,11 @@ export class PeekSwitch extends PeekElement {
   }
 
   render() {
+    // A click anywhere on the label activates the native checkbox, whose
+    // change event is the only place a click toggles state. Handling the
+    // label's click as well toggles twice on a real pointer click.
     return html`
-      <label class="wrapper" @click=${this._handleClick}>
+      <label class="wrapper">
         <input
           type="checkbox"
           role="switch"

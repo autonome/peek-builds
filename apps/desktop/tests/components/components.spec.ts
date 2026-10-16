@@ -320,6 +320,79 @@ test.describe('Components @components', () => {
         el.checked = false;
       });
     });
+
+    // A trusted pointer click lets Lit re-render between the label's click
+    // handler and the label's default action on the inner checkbox, so a
+    // switch that handles both toggles twice and emits change(true) then
+    // change(false). A script label.click() does not show this.
+    for (const target of ['host', 'track', 'label text'] as const) {
+      test(`one trusted click on the ${target} toggles once and emits one change`, async () => {
+        await page.evaluate(() => {
+          const el = document.querySelector('#switch-off') as any;
+          el.checked = false;
+          (window as any).__switchEvents = [];
+          (window as any).__switchListener?.();
+          const listener = (e: any) => (window as any).__switchEvents.push(e.detail.checked);
+          el.addEventListener('change', listener);
+          (window as any).__switchListener = () => el.removeEventListener('change', listener);
+        });
+
+        const host = page.locator('#switch-off');
+        const locator =
+          target === 'host' ? host
+          : target === 'track' ? host.locator('.switch')
+          : host.locator('.label');
+
+        await locator.click();
+        await page.waitForTimeout(50);
+        expect(await page.evaluate(() => (window as any).__switchEvents)).toEqual([true]);
+        expect(await host.evaluate((el: any) => el.checked)).toBe(true);
+        expect(await host.evaluate((el: any) => el.shadowRoot.querySelector('input').checked)).toBe(true);
+
+        await locator.click();
+        await page.waitForTimeout(50);
+        expect(await page.evaluate(() => (window as any).__switchEvents)).toEqual([true, false]);
+        expect(await host.evaluate((el: any) => el.checked)).toBe(false);
+        expect(await host.evaluate((el: any) => el.shadowRoot.querySelector('input').checked)).toBe(false);
+
+        await page.evaluate(() => (window as any).__switchListener?.());
+      });
+    }
+
+    test('Space on the focused switch toggles once and emits one change', async () => {
+      await page.evaluate(() => {
+        const el = document.querySelector('#switch-off') as any;
+        el.checked = false;
+        (window as any).__switchEvents = [];
+        const listener = (e: any) => (window as any).__switchEvents.push(e.detail.checked);
+        el.addEventListener('change', listener);
+        (window as any).__switchListener = () => el.removeEventListener('change', listener);
+        el.focus();
+      });
+
+      await page.keyboard.press('Space');
+      await page.waitForTimeout(50);
+      expect(await page.evaluate(() => (window as any).__switchEvents)).toEqual([true]);
+      expect(await page.locator('#switch-off').evaluate((el: any) => el.checked)).toBe(true);
+
+      await page.evaluate(() => {
+        (window as any).__switchListener?.();
+        (document.querySelector('#switch-off') as any).checked = false;
+      });
+    });
+
+    test('a disabled switch ignores a trusted click', async () => {
+      await page.evaluate(() => {
+        const el = document.querySelector('#switch-disabled') as any;
+        (window as any).__switchEvents = [];
+        el.addEventListener('change', (e: any) => (window as any).__switchEvents.push(e.detail.checked));
+      });
+
+      await page.locator('#switch-disabled').click({ force: true });
+      await page.waitForTimeout(50);
+      expect(await page.evaluate(() => (window as any).__switchEvents)).toEqual([]);
+      expect(await page.locator('#switch-disabled').evaluate((el: any) => el.checked)).toBe(false);
+    });
   });
 
   // ==========================================================================
