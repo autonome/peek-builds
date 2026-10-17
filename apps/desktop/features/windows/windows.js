@@ -188,6 +188,10 @@ const handleKeydown = (e) => {
 // than imported: this file is a plain peek:// tile script with no import
 // path into main-process TypeScript (see apps/desktop/CLAUDE.md's tile
 // architecture notes).
+// One exception: a 'quick-view' window that is hidden (visible === false) is
+// not chrome. A dismissed keepLive peek or slide is a user window kept alive
+// off screen, and the hidden-windows toggle must be able to list it. While on
+// screen, a peek or slide stays filtered.
 const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
 
 /**
@@ -214,7 +218,9 @@ const loadWindows = async () => {
       // Skip background pages
       if (url.includes('background.html')) return false;
       // Skip dedicated chrome, by role
-      if (CHROME_ROLES.has(w.params?.role)) return false;
+      const role = w.params?.role;
+      const hiddenQuickView = role === 'quick-view' && w.visible === false;
+      if (CHROME_ROLES.has(role) && !hiddenQuickView) return false;
       // Include everything else (content windows and peek:// UI pages)
       return true;
     });
