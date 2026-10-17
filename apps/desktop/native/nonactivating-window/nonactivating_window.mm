@@ -123,22 +123,40 @@ static napi_value MakeKey(napi_env env, napi_callback_info info) {
   return JsBool(env, [window isKeyWindow]);
 }
 
-static NSView* FirstWebContentView(NSView* view) {
+static bool IsWebContentView(NSView* view) {
+  return [NSStringFromClass([view class]) isEqualToString:@"RenderWidgetHostViewCocoa"];
+}
+
+// The first web content view under `view` whose containers are all shown.
+// A hidden container is a page deliberately taken off screen and is skipped.
+// The web content view's own hidden flag is Chromium's, not the page's: Chromium
+// hides it while the window is ordered out and shows it again only after the
+// window is back on screen, which is after a re-show has already asked for
+// focus. With `allowHiddenContent` such a view is accepted; without it, only a
+// shown one is.
+static NSView* FirstWebContentView(NSView* view, bool allowHiddenContent) {
+  if (IsWebContentView(view)) return (allowHiddenContent || !view.hidden) ? view : nil;
   if (view.hidden) return nil;
-  if ([NSStringFromClass([view class]) isEqualToString:@"RenderWidgetHostViewCocoa"]) return view;
   for (NSView* child in view.subviews) {
-    NSView* found = FirstWebContentView(child);
+    NSView* found = FirstWebContentView(child, allowHiddenContent);
     if (found != nil) return found;
   }
   return nil;
 }
 
-// focusContent(handle) -> true when the window's first visible web content
-// view is now its first responder. Chromium treats that as content focus.
+// focusContent(handle) -> true when the window's web content view is now its
+// first responder. Chromium treats that as content focus.
+//
+// A shown web content view is preferred. Failing that, a web content view
+// Chromium still holds hidden is focused anyway: hiding a view takes first
+// responder away from it, so a window kept alive, hidden and re-shown has no
+// focused content until something focuses it again, and AppKit lets a hidden
+// view become first responder. Chromium keeps that status when it shows the view.
 static napi_value FocusContent(napi_env env, napi_callback_info info) {
   NSWindow* window = WindowArg(env, info, nullptr);
   if (window == nil) return JsBool(env, false);
-  NSView* content = FirstWebContentView(window.contentView);
+  NSView* content = FirstWebContentView(window.contentView, false);
+  if (content == nil) content = FirstWebContentView(window.contentView, true);
   return JsBool(env, content != nil && [window makeFirstResponder:content]);
 }
 

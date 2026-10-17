@@ -911,8 +911,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       const wid = this.getWindowIdFor(win) ?? undefined;
       wmLog('native-make-key-no-activate', { where: 'focus-content', id: wid });
       makeKeyWithoutActivating(win);
-      wmLog('native-focus-content-no-activate', { id: wid });
-      focusContentWithoutActivating(win);
+      const took = focusContentWithoutActivating(win);
+      wmLog('native-focus-content-no-activate', { id: wid, took });
       this.diagPeekSlash(win, wc, wid);
     } else {
       wc.focus();
