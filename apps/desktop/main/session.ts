@@ -32,6 +32,7 @@ import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
 import { planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
+import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -557,39 +558,9 @@ export function collapseToPrimaryDisplay(
   return { bounds: newBounds, params: newParams };
 }
 
-/**
- * Build the x/y/w/h options the restore path passes to window-open.
- *
- * If the descriptor declares a non-manual placement intent (`center: true`
- * or `screenEdge` set), drop x/y so window-open re-derives placement on the
- * current display layout. Otherwise behave as before: pass saved x/y when
- * the saved center point lands on an active display, drop them when it
- * doesn't (off-screen safety net for old snapshots).
- *
- * Pure: callers inject `isPointOnScreen` so this can be unit-tested without
- * Electron's `screen` module.
- */
-export function buildRestoreBoundsOptions(
-  descriptor: { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> },
-  isPointOnScreen: (x: number, y: number) => boolean,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    width: descriptor.bounds.width,
-    height: descriptor.bounds.height,
-  };
-  const hasCenterIntent = descriptor.params.center === true;
-  const hasEdgeIntent = typeof descriptor.params.screenEdge === 'string';
-  const hasNonManualIntent = hasCenterIntent || hasEdgeIntent;
-  if (hasNonManualIntent) return out;
-
-  const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
-  const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
-  if (isPointOnScreen(centerX, centerY)) {
-    out.x = descriptor.bounds.x;
-    out.y = descriptor.bounds.y;
-  }
-  return out;
-}
+// Pure restore-bounds builder lives in `session-restore-bounds.ts` so it can
+// be unit-tested without Electron; re-exported from its historical home.
+export { buildRestoreBoundsOptions };
 
 /**
  * Read phase for `saveSessionSnapshot`: gather the one thing the

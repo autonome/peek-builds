@@ -21,6 +21,7 @@ import { DatabaseSync } from 'node:sqlite';
 // replication drift): the session-save early-skip decision shared by
 // `saveSessionSnapshot`'s loop.
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
+import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 
 // ============================================================================
 // Types (mirrored from session.ts to avoid import issues with Electron deps)
@@ -155,32 +156,6 @@ function mirrorPlacementIntent(
       if (typeof placement.relX === 'number') out.placementRelX = placement.relX;
       if (typeof placement.relY === 'number') out.placementRelY = placement.relY;
       break;
-  }
-  return out;
-}
-
-/**
- * Build restore boundsOptions from a descriptor.
- * Identical to session.ts buildRestoreBoundsOptions.
- */
-function buildRestoreBoundsOptions(
-  descriptor: { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> },
-  isPointOnScreen: (x: number, y: number) => boolean,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    width: descriptor.bounds.width,
-    height: descriptor.bounds.height,
-  };
-  const hasCenterIntent = descriptor.params.center === true;
-  const hasEdgeIntent = typeof descriptor.params.screenEdge === 'string';
-  const hasNonManualIntent = hasCenterIntent || hasEdgeIntent;
-  if (hasNonManualIntent) return out;
-
-  const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
-  const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
-  if (isPointOnScreen(centerX, centerY)) {
-    out.x = descriptor.bounds.x;
-    out.y = descriptor.bounds.y;
   }
   return out;
 }
@@ -600,13 +575,24 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(out.y, undefined);
     });
 
-    it('center: true intent always drops x/y, even when saved center is on-screen', () => {
+    it('center: true keeps saved x/y and overrides center so window-open does not re-center', () => {
       const out = buildRestoreBoundsOptions(
         { bounds: baseBounds, params: { center: true } },
         allOnScreen,
       );
+      assert.strictEqual(out.x, 100);
+      assert.strictEqual(out.y, 200);
+      assert.strictEqual(out.center, false);
+    });
+
+    it('center: true + off-screen: drops x/y and leaves center alone', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: { center: true } },
+        allOffScreen,
+      );
       assert.strictEqual(out.x, undefined);
       assert.strictEqual(out.y, undefined);
+      assert.strictEqual(out.center, undefined);
     });
 
     it('screenEdge intent always drops x/y, even when saved center is on-screen', () => {
