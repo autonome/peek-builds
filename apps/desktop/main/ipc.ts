@@ -1833,6 +1833,10 @@ export function wireHybridContentEvents(
   // propagation / OS focus churn.
   let lastHybridEscTime = 0;
   contentWC.on('before-input-event', (event, input) => {
+    // DIAG(peek-slash): every keyDown reaching the content WC.
+    if (input.type === 'keyDown') {
+      wmLog('diag-peek-slash-main', { key: input.key, win: hostWindowId, contentFocused: contentWC.isFocused() });
+    }
     // ── ESC → close (no modifier) ────────────────────────────────────────────
     // A focused hybrid page-host makes its content WebContentsView the macOS
     // first responder, so ESC arrives HERE, not at the per-BrowserWindow

@@ -913,8 +913,44 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       makeKeyWithoutActivating(win);
       wmLog('native-focus-content-no-activate', { id: wid });
       focusContentWithoutActivating(win);
+      this.diagPeekSlash(win, wc, wid);
     } else {
       wc.focus();
+    }
+  }
+
+  // DIAG(peek-slash): where does "/" go after a non-activating focus? Logs focus
+  // state after the focus calls, and installs (once per page) a capture-phase
+  // keydown listener whose console.log is read back through 'console-message'.
+  private diagPeekSlashWired = new WeakSet<object>();
+  private diagPeekSlash(win: NativeWindow, wc: NativeWebContents, wid: WindowId | undefined): void {
+    try {
+      const ewc = wc as unknown as WebContents;
+      wmLog('diag-peek-slash-after-focus', {
+        id: wid,
+        contentFocused: ewc.isFocused(),
+        baseWinFocused: this.isFocused(win),
+        kernelActive: getAppActive(),
+      });
+      if (!this.diagPeekSlashWired.has(ewc)) {
+        this.diagPeekSlashWired.add(ewc);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ewc.on('console-message', (...a: any[]) => {
+          const msg = String(a[0]?.message ?? a[2] ?? '');
+          if (msg.startsWith('diag-peek-slash-page ')) wmLog('diag-peek-slash-page', { id: wid, report: msg.slice(21) });
+        });
+      }
+      void ewc
+        .executeJavaScript(
+          `(() => { if (window.__diagPeekSlash) return; window.__diagPeekSlash = true;
+            window.addEventListener('keydown', (e) => {
+              console.log('diag-peek-slash-page ' + JSON.stringify({ key: e.key, hasFocus: document.hasFocus(),
+                active: document.activeElement && document.activeElement.tagName, vis: document.visibilityState }));
+            }, true); })()`,
+        )
+        .catch(() => {});
+    } catch {
+      /* diagnostics only */
     }
   }
 
