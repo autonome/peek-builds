@@ -8724,3 +8724,66 @@ describe('window-kernel: a CLI open while the app is inactive', () => {
     assert.strictEqual(platformChoseFocus(state, OTHER, { kind: 'world' }), null);
   });
 });
+
+describe('window-kernel: a transient shown on user intent dismisses the other transients without a focus arrival', () => {
+  const peek = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'quick-view',
+    role: 'quick-view',
+    nonActivating: true,
+    transient: true,
+    ...extra,
+  });
+  const record = (state: State, id: WindowId): WindowRecord => state.order.find((w) => w.id === id)!;
+  const dismissed = (effects: Effect[]): WindowId[] =>
+    effects.filter((e) => e.type === 'DismissWindow').map((e) => (e as { id: WindowId }).id);
+
+  // The reused kept-alive peek is older than the one open, and the app is inactive.
+  const reusedOverOpen = (): State =>
+    fold([
+      peek(wid(3)),
+      { type: 'WindowShown', id: wid(3) },
+      { type: 'WindowContentOrderable', id: wid(3) },
+      { type: 'WindowHidden', id: wid(3) },
+      peek(wid(35)),
+      { type: 'WindowShown', id: wid(35) },
+      { type: 'WindowContentOrderable', id: wid(35) },
+      { type: 'AppResigned' },
+    ]);
+
+  it('re-showing an older kept-alive peek over another app dismisses the newer open peek', () => {
+    const after = foldWithEffects(
+      [
+        { type: 'WindowShown', id: wid(3) },
+        { type: 'FocusRaiseRequested', id: wid(3), intent: 'user' },
+      ],
+      reusedOverOpen(),
+    );
+    assert.deepStrictEqual(dismissed(after.effects), [wid(35)]);
+    assert.strictEqual(record(after.state, wid(3)).pendingHidden === true, false, 'the shown peek stays');
+  });
+
+  it('a raise without user intent dismisses nothing', () => {
+    const after = foldWithEffects(
+      [
+        { type: 'WindowShown', id: wid(3) },
+        { type: 'FocusRaiseRequested', id: wid(3) },
+      ],
+      reusedOverOpen(),
+    );
+    assert.deepStrictEqual(dismissed(after.effects), []);
+  });
+
+  it('a popup raised by user intent does not dismiss the transient that opened it', () => {
+    const after = foldWithEffects(
+      [peek(wid(4), { parentId: wid(35) }), { type: 'WindowShown', id: wid(4) }, { type: 'WindowContentOrderable', id: wid(4) }, { type: 'FocusRaiseRequested', id: wid(4), intent: 'user' }],
+      reusedOverOpen(),
+    );
+    assert.deepStrictEqual(dismissed(after.effects), []);
+  });
+});

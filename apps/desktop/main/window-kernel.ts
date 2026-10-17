@@ -1762,13 +1762,23 @@ function evolveEvent(state: State, ev: Event): State {
         targetRecord !== undefined &&
         admitsHoldAboveOtherApps(targetRecord) &&
         withinReach(state, targetRecord, requester);
+      // A transient shown on user intent ends the other transients even when the
+      // show draws no focus arrival (a kept-alive window re-shown over another
+      // app takes key without one), so the sweep a focus arrival runs is also
+      // run here. World cause: the target may be older than the transients it
+      // replaces, so no ordering floor applies; the focuser relation still spares its own parent.
+      const sweepVictims =
+        issuesRaiseRequest && ev.intent === 'user' && targetRecord?.transient === true && targetRecord.visible
+          ? new Set(selectTransientAutoclose(state, ev.id))
+          : null;
       return {
         ...state,
-        order: state.order.map((w) =>
-          w.id === ev.id && (issuesRaiseRequest || holds)
+        order: state.order.map((w) => {
+          if (w.id !== ev.id) return sweepVictims?.has(w.id) ? { ...w, pendingHidden: true } : w;
+          return issuesRaiseRequest || holds
             ? { ...w, ...(issuesRaiseRequest ? { lastOpSeq: requestOpSeq } : {}), ...(holds ? { heldAboveOtherApps: true } : {}) }
-            : w,
-        ),
+            : w;
+        }),
         opSeqCounter: requestOpSeq,
         // A held window is what the user was last given over the other app. The
         // platform hands key to the app's main window on activation, which a
