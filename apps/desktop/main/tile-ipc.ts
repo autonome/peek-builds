@@ -509,7 +509,8 @@ function isWindowShowing(electronId: number, nativeWin: { isDestroyed(): boolean
  * Roles of windows that are the app's own chrome rather than windows the user
  * has open: `overlay` (the shared page-host chrome in `hybrid-overlay.ts`, the
  * spaces border, the Windows switcher itself) and `signal` (the per-desktop
- * marker windows, `desktop-markers.ts markerOpenOptions`).
+ * marker windows, `desktop-markers.ts markerOpenOptions`). Listed only when
+ * the caller passes `includeHidden: true`.
  */
 const APP_CHROME_ROLES: ReadonlySet<string> = new Set(['overlay', 'signal']);
 
@@ -518,7 +519,8 @@ const APP_CHROME_ROLES: ReadonlySet<string> = new Set(['overlay', 'signal']);
  * record's role, which every registration declares — the shared page-host
  * chrome carries no window-open payload, so its role is only there — falling
  * back to the open payload's `params.role` for a window the kernel does not
- * track. App chrome is never listed, whatever the caller asks for.
+ * track. App chrome is listed only for a caller that passes
+ * `includeHidden: true`.
  */
 function isAppChromeWindow(electronId: number): boolean {
   const machineId = getWindowIdFor(electronId);
@@ -3050,7 +3052,8 @@ export function registerTileIpcHandlers(): void {
   // page and a pre-warmed helper are not windows the user has open, so every
   // user-facing list and search leaves them out without filtering on its own.
   // App chrome (`isAppChromeWindow`: the page-host chrome, desktop markers, the
-  // spaces border) is never listed, with or without either option.
+  // spaces border) is left out unless the caller passes `includeHidden: true`,
+  // which lists every window, on screen or not, chrome included.
   registerTileIpc('tile:window:list', { mode: 'handle' }, async (event, args: {
     token: string;
     includeInternal?: boolean;
@@ -3086,8 +3089,10 @@ export function registerTileIpcHandlers(): void {
         // filter skips windows without a registry payload.
         const info = getWindowInfo(win.id);
         if (!args.includeInternal && !info) continue;
-        if (isAppChromeWindow(win.id)) continue;
-        if (!args.includeHidden && !isWindowShowing(win.id, win)) continue;
+        if (!args.includeHidden) {
+          if (isAppChromeWindow(win.id)) continue;
+          if (!isWindowShowing(win.id, win)) continue;
+        }
         const params: Record<string, unknown> = info ? info.params : {};
         const presentation = getWindowPresentation(win.id);
         if (!presentation) continue;

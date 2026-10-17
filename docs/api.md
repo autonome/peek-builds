@@ -103,7 +103,8 @@ slide kept alive, a window hidden with `hide`) are left out unless
 `includeHidden: true` is passed, so user-facing lists and searches never show
 them. `includeInternal: true` adds windows without a registry entry. The app's
 own chrome (the page chrome overlay, the per-desktop marker windows, the spaces
-border, the Windows switcher) is never listed, whatever the options.
+border, the Windows switcher) is listed only when `includeHidden: true` is
+passed, which lists every window, on screen or not.
 
 ```javascript
 const result = await window.app.window.list();

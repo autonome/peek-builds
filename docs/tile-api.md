@@ -65,7 +65,7 @@ removed name throws `Error('[tile-preload] ... removed in Phase 4; use ...')`.
 | `api.window.open(url, options?)` | `create` | Open a new window |
 | `api.window.close(id?)` | `manage` or self | Close a window |
 | `api.window.getInfo()` | `query` | Get current window info |
-| `api.window.list({ includeInternal?, includeHidden? })` | `query` | List open windows on screen; `includeHidden: true` also lists hidden ones (a dismissed peek or slide kept alive, a window hidden with `hide`); app chrome (page chrome overlay, desktop markers, spaces border) is never listed |
+| `api.window.list({ includeInternal?, includeHidden? })` | `query` | List open windows on screen; `includeHidden: true` also lists hidden ones (a dismissed peek or slide kept alive, a window hidden with `hide`); app chrome (page chrome overlay, desktop markers, spaces border) is listed only when `includeHidden: true` is passed |
 | `api.window.exists(id)` | `manage` | Check if window is open |
 | `api.window.show(id)` | `manage` | Show a window |
 | `api.window.hide(id)` | `manage` | Hide a window |

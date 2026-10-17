@@ -12,8 +12,9 @@
  *     groups noun's create, i.e. `new group <name>`).
  * The switcher's hidden-windows toggle (off on every opening) lists hidden
  * windows dimmed with a Hidden badge; clicking one shows it.
- * App chrome (the page-host chrome overlay, a desktop marker) is never listed,
- * with any options, and never gets a switcher card.
+ * App chrome (the page-host chrome overlay, a desktop marker) is listed only
+ * with `includeHidden: true`, and gets a switcher card only with the toggle
+ * pressed, which cards every window, on screen or not, whatever its role.
  *
  *   yarn test:grep "Hidden windows stay out of window lists"
  */
@@ -151,12 +152,14 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
   });
 
   // App chrome is not a user window: the shared page-host chrome
-  // (`hybrid-overlay.ts`) and a per-desktop marker window are listed by no
-  // option combination and get no switcher card, hidden-windows toggle on or
-  // off. Headless runs mint no markers (`desktop-marker-manager.ts`), so the
-  // marker here is opened with the manager's own options
-  // (`desktop-markers.ts markerOpenOptions`) and shown the way a mint shows it.
-  test('app chrome (page chrome overlay, desktop marker) is never listed', async () => {
+  // (`hybrid-overlay.ts`) and a per-desktop marker window are left out of the
+  // default listing and get no switcher card. With `includeHidden: true` and
+  // the switcher's toggle pressed, every window is listed, chrome included,
+  // on screen or not. Headless runs mint no markers
+  // (`desktop-marker-manager.ts`), so the marker here is opened with the
+  // manager's own options (`desktop-markers.ts markerOpenOptions`) and shown
+  // the way a mint shows it.
+  test('app chrome (page chrome overlay, desktop marker) is listed only with includeHidden', async () => {
     const overlayId = await app.evaluateMain!(() => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       const s = b ? b.overlayState() : null;
@@ -183,11 +186,16 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
         markerId,
       ), { timeout: 5000 }).toBe(true);
 
-      for (const opts of [{}, { includeInternal: true }, { includeHidden: true }, { includeInternal: true, includeHidden: true }]) {
+      // Without includeHidden, chrome is not listed.
+      for (const opts of [{}, { includeInternal: true }]) {
         const ids = await listIds(opts);
         expect(ids, `overlay listed with ${JSON.stringify(opts)}`).not.toContain(overlayId);
         expect(ids, `marker listed with ${JSON.stringify(opts)}`).not.toContain(markerId);
       }
+      // With it, on-screen chrome is listed too.
+      const withHidden = await listIds({ includeInternal: true, includeHidden: true });
+      expect(withHidden).toContain(overlayId);
+      expect(withHidden).toContain(markerId);
 
       await app.evaluateMain!((_e: unknown) => {
         (globalThis as any).__peek_test.publishCmdExecute('windows');
@@ -204,19 +212,34 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
       await expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
       // The hidden window's card appearing means the toggled listing has rendered.
       await expect(switcher.locator(`peek-card[data-window-id="${hiddenId}"]`)).toHaveCount(1, { timeout: 10000 });
+      // Toggle on: on-screen chrome gets a card, undimmed, and the switcher's own window does not.
       for (const id of [overlayId, markerId]) {
-        expect(await switcher.locator(`peek-card[data-window-id="${id}"]`).count()).toBe(0);
+        const card = switcher.locator(`peek-card[data-window-id="${id}"]`);
+        await expect(card).toHaveCount(1);
+        await expect(card.locator('.card-hidden-badge')).toHaveCount(0);
       }
       await switcher.evaluate(() => window.close());
       await expect.poll(() => switcher.isClosed(), { timeout: 5000 }).toBe(true);
+
+      // Hidden, the marker is still left out of the default listing.
+      const hideRes = await bgWindow.evaluate(
+        async (id: number) => await (window as any).app.window.hide(id),
+        markerId,
+      );
+      expect(hideRes.success !== false).toBe(true);
+      await expect.poll(() => listIds({ includeInternal: true, includeHidden: true }), { timeout: 10000 })
+        .toContain(markerId);
+      for (const opts of [{}, { includeInternal: true }]) {
+        expect(await listIds(opts), `hidden marker listed with ${JSON.stringify(opts)}`).not.toContain(markerId);
+      }
     } finally {
       await bgWindow.evaluate(async (id: number) => await (window as any).app.window.close(id), markerId).catch(() => {});
     }
   });
 
   // A dismissed peek or slide (role 'quick-view', keepLive) is a user window
-  // kept alive off screen: the quick-view chrome filter lets it through once
-  // it is hidden, so the toggle lists it.
+  // kept alive off screen: the chrome filter skips hidden windows, so the
+  // toggle lists it.
   test('the switcher hidden-windows toggle lists a hidden quick-view window (a dismissed slide)', async () => {
     const slideId = await bgWindow.evaluate(async (url: string) => {
       const r = await (window as any).app.window.open(url, {
@@ -263,6 +286,55 @@ test.describe('Hidden windows stay out of window lists @desktop', () => {
       await expect.poll(() => switcher.isClosed(), { timeout: 5000 }).toBe(true);
     } finally {
       await bgWindow.evaluate(async (id: number) => await (window as any).app.window.close(id), slideId).catch(() => {});
+    }
+  });
+
+  // A hidden window of a chrome role ('panel') is not filtered by role: the
+  // toggle lists it dimmed, and with the toggle off it gets no card.
+  test('the switcher hidden-windows toggle lists a hidden chrome-role window (a hidden panel)', async () => {
+    const panelId = await bgWindow.evaluate(async (url: string) => {
+      const r = await (window as any).app.window.open(url, {
+        role: 'panel', key: `hidden-panel-${Date.now()}`, width: 400, height: 300,
+      });
+      return r?.success ? r.id : null;
+    }, `${base}/panel`);
+    expect(panelId, 'panel-role window opened').not.toBeNull();
+
+    try {
+      const hideRes = await bgWindow.evaluate(
+        async (id: number) => await (window as any).app.window.hide(id),
+        panelId,
+      );
+      expect(hideRes.success !== false).toBe(true);
+      await expect.poll(async () => {
+        const all = await bgWindow.evaluate(
+          async () => await (window as any).app.window.list({ includeInternal: true, includeHidden: true }),
+        );
+        const w = (all.windows || []).find((x: { id: number }) => x.id === panelId);
+        return w ? w.visible : null;
+      }, { timeout: 10000 }).toBe(false);
+
+      await app.evaluateMain!((_e: unknown) => {
+        (globalThis as any).__peek_test.publishCmdExecute('windows');
+      });
+      const switcher = await app.getWindow('windows/windows.html', 15000);
+      expect(switcher).toBeTruthy();
+      await switcher.waitForLoadState('domcontentloaded');
+      await switcher.waitForSelector(`peek-card[data-window-id="${shownId}"]`, { timeout: 10000 });
+      expect(await switcher.locator(`peek-card[data-window-id="${panelId}"]`).count()).toBe(0);
+
+      const toggleButton = switcher.locator('peek-button.hidden-toggle button');
+      await toggleButton.click();
+      await expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
+
+      const panelCard = switcher.locator(`peek-card[data-window-id="${panelId}"]`);
+      await expect(panelCard).toHaveCount(1, { timeout: 10000 });
+      await expect(panelCard).toHaveAttribute('data-hidden', 'true');
+
+      await switcher.evaluate(() => window.close());
+      await expect.poll(() => switcher.isClosed(), { timeout: 5000 }).toBe(true);
+    } finally {
+      await bgWindow.evaluate(async (id: number) => await (window as any).app.window.close(id), panelId).catch(() => {});
     }
   });
 
