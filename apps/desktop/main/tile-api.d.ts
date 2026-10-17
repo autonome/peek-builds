@@ -662,6 +662,7 @@ interface TileSession {
    * URLs. Requires `session` capability.
    */
   getWorkspaceSnapshotWindowCount(key: string): Promise<{ success: boolean; count?: number | null; error?: string }>;
+  getHeldWindowCount(key: string): Promise<{ success: boolean; count?: number; error?: string }>;
   /**
    * Append an open window to a workspace's saved snapshot, keeping the windows
    * it already holds (a window already there is not added twice). Creates the

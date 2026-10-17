@@ -18,6 +18,7 @@ const registrations = [];
 let tags = [{ id: 't-default', name: 'space:default', color: '#123456' }];
 let lookupFails = false;
 let liveWindows = {};
+let heldWindows = {};
 
 globalThis.window = {
   app: {
@@ -35,8 +36,16 @@ globalThis.window = {
       setDefault: async () => ({ success: true }),
       getWindowsInSpace: async (tagId) => ({ success: true, data: liveWindows[tagId] || [] }),
     },
-    session: { getWorkspaceSnapshotWindowCount: async () => ({ success: true, count: 0 }) },
-    window: { list: async () => ({ success: true, windows: [] }) },
+    session: {
+      getWorkspaceSnapshotWindowCount: async () => ({ success: true, count: 0 }),
+      getHeldWindowCount: async (key) => ({ success: true, count: heldWindows[key] || 0 }),
+    },
+    window: {
+      list: async () => ({
+        success: true,
+        windows: Object.values(liveWindows).flat().map((id) => ({ id, url: 'https://x.test/', visible: true })),
+      }),
+    },
     theme: { onChange: () => {}, getInfo: async () => ({ themeId: 'peek' }) },
   },
 };
@@ -116,6 +125,16 @@ describe('space-name commands show window counts', () => {
     await handlers.get('window:closed')({ windowId: 'w1' });
     await settle();
     assert.equal(subtitleOf('move to space', 'work'), 'no windows');
+  });
+
+  it('adds windows still held for another desktop to the live ones', async () => {
+    liveWindows = { 't-work': ['w1', 'w2', 'w3'] };
+    heldWindows = { 't-work': 3 };
+    await handlers.get('spaces:membership-changed')({ windowId: 'w3', spaceId: 't-work' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '6 windows');
+    heldWindows = {};
+    liveWindows = {};
   });
 });
 

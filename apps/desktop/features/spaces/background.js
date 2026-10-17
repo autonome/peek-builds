@@ -12,7 +12,7 @@ import {
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, planMoveToSpace, planDeleteSpace, deleteSpacePromptUrl,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
-  emptySpaceWindowOptions, createSerialRunner, countSpaceWindows
+  emptySpaceWindowOptions, createSerialRunner, countSpaceWindows, liveSpaceWindowIds
 } from './config.js';
 
 const api = window.app;
@@ -1063,21 +1063,33 @@ function publishSpaceNameCommands() {
  */
 async function countWindowsBySpace(tags) {
   const counts = {};
+  let windowList = [];
+  try {
+    const r = await api.window.list();
+    if (r?.success && Array.isArray(r.windows)) windowList = r.windows;
+  } catch { /* leave empty */ }
   for (const tag of tags) {
     const isDefault = getSpaceDisplayName(tag) === DEFAULT_SPACE_NAME;
-    let live = [];
+    const key = isDefault ? 'default' : tag.id;
+    let tagged = [];
     try {
       const r = await api.context.getWindowsInSpace(tag.id);
-      if (r?.success && Array.isArray(r.data)) live = r.data;
+      if (r?.success && Array.isArray(r.data)) tagged = r.data;
     } catch { /* leave empty */ }
+    const live = liveSpaceWindowIds(tagged, windowList);
+    let heldCount = 0;
+    try {
+      const r = await api.session.getHeldWindowCount(key);
+      if (r?.success && typeof r.count === 'number') heldCount = r.count;
+    } catch { /* none held */ }
     let snapshotCount = null;
-    if (live.length === 0) {
+    if (live.length === 0 && heldCount === 0) {
       try {
-        const r = await api.session.getWorkspaceSnapshotWindowCount(isDefault ? 'default' : tag.id);
+        const r = await api.session.getWorkspaceSnapshotWindowCount(key);
         if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
       } catch { /* no snapshot */ }
     }
-    const count = countSpaceWindows(live, snapshotCount, isDefault);
+    const count = countSpaceWindows(live, snapshotCount, isDefault, heldCount);
     if (count != null) counts[tag.id] = count;
   }
   return counts;

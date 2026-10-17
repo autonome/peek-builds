@@ -2277,6 +2277,15 @@ function buildAPI(): Record<string, unknown> {
         key,
       });
     },
+    getHeldWindowCount: (key: string) => {
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.getHeldWindowCount requires the session capability'));
+      }
+      return ipcRenderer.invoke('tile:session:get-held-window-count', {
+        token: tileToken,
+        key,
+      });
+    },
     addWindowToWorkspaceSnapshot: (key: string, windowId: number) => {
       if (!hasSessionCapability()) {
         return Promise.reject(new Error('[tile-preload] api.session.addWindowToWorkspaceSnapshot requires the session capability'));

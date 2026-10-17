@@ -159,17 +159,40 @@ const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
   appFocused === true && focusedWindowInNamedSpace === true;
 
 /**
- * Number of windows a space holds. Open windows win (the active workspace);
- * otherwise the saved workspace snapshot's window list. A space with no saved
- * snapshot holds none, so it counts 0. `null` only for the default workspace
- * with nothing open and no readable snapshot (tiles cannot read its snapshot
- * while another workspace is active), so the caller shows no count rather
- * than a wrong 0.
+ * Number of windows a space holds, across every desktop. For the active
+ * workspace that is its open windows plus those a lazy restore still holds
+ * for another desktop (`heldCount`); otherwise the saved workspace snapshot's
+ * window list, which covers all desktops. A space with no saved snapshot holds
+ * none, so it counts 0. `null` only for the default workspace with nothing
+ * open or held and no readable snapshot (tiles cannot read its snapshot while
+ * another workspace is active), so the caller shows no count rather than a
+ * wrong 0.
  */
-const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false) => {
-  if (Array.isArray(liveWindowIds) && liveWindowIds.length > 0) return liveWindowIds.length;
+const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false, heldCount = 0) => {
+  const live = Array.isArray(liveWindowIds) ? liveWindowIds.length : 0;
+  const held = typeof heldCount === 'number' && heldCount > 0 ? heldCount : 0;
+  if (live + held > 0) return live + held;
   if (typeof snapshotCount === 'number') return snapshotCount;
   return isDefaultSpace ? null : 0;
+};
+
+// Pages of the spaces feature that are Peek's own chrome for spaces, never
+// part of a space's content: the home window, the per-desktop marker, the border.
+const SPACES_CHROME_URL_PREFIXES = ['peek://spaces/', 'peek://ext/spaces/'];
+
+/**
+ * The windows tagged with a space that count toward it: visible, listed, and
+ * not spaces chrome. `spaceWindowIds` is `api.context.getWindowsInSpace`'s
+ * answer, `windowList` is `api.window.list()`'s `windows`.
+ */
+const liveSpaceWindowIds = (spaceWindowIds, windowList) => {
+  if (!Array.isArray(spaceWindowIds) || !Array.isArray(windowList)) return [];
+  const tagged = new Set(spaceWindowIds);
+  return windowList
+    .filter((w) =>
+      w && tagged.has(w.id) && w.visible !== false &&
+      !SPACES_CHROME_URL_PREFIXES.some((p) => typeof w.url === 'string' && w.url.startsWith(p)))
+    .map((w) => w.id);
 };
 
 /**
@@ -385,6 +408,7 @@ export {
   deleteSpaceNameFromQuery,
   shouldShowBorder,
   countSpaceWindows,
+  liveSpaceWindowIds,
   initialSelectedIndex,
   formatWindowCount,
   id,

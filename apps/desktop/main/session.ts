@@ -173,6 +173,15 @@ function heldDescriptorsFor(workspaceKey: string): WindowDescriptor[] {
 }
 
 /**
+ * How many windows are still held (no window yet, waiting for the user to
+ * reach their desktop) for `workspaceKey`; 0 when the hold belongs to another
+ * workspace or nothing is held. A bare count: it exposes none of the URLs.
+ */
+export function getHeldWindowCount(workspaceKey: string): number {
+  return heldDescriptorsFor(workspaceKey).filter((d) => d.url).length;
+}
+
+/**
  * Replace any previous hold with this restore's held groups and watch kernel
  * state for arrival on one of their desktops. A restore defines the session's
  * composition, so an older hold (a previous workspace's, say) is discarded —

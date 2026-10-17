@@ -19,7 +19,7 @@ import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
 import {
-  resolveVividColor, countSpaceWindows, formatWindowCount, initialSelectedIndex, urlsFromDrop,
+  resolveVividColor, countSpaceWindows, liveSpaceWindowIds, formatWindowCount, initialSelectedIndex, urlsFromDrop,
   deleteSpaceConfirmText, deleteSpaceNameFromQuery
 } from './config.js';
 
@@ -267,27 +267,39 @@ const loadSpaces = async () => {
         tag.itemCount = 0;
       }
     }
-    // Count windows per space: live windows for the active workspace, else the
-    // saved snapshot. The default workspace's snapshot is not readable by
-    // tiles, so while inactive it has no count.
+    // Count windows per space: live windows plus those still held for another
+    // desktop for the active workspace, else the saved snapshot. Spaces chrome
+    // never counts. The default workspace's snapshot is not readable by tiles,
+    // so while inactive it has no count.
+    let windowList = [];
+    try {
+      const r = await api.window.list();
+      if (r?.success && Array.isArray(r.windows)) windowList = r.windows;
+    } catch { /* leave empty */ }
     for (const tag of spaceTags) {
-      let live = [];
+      let tagged = [];
       try {
         const r = await api.context.getWindowsInSpace(tag.id);
-        if (r?.success && Array.isArray(r.data)) live = r.data;
+        if (r?.success && Array.isArray(r.data)) tagged = r.data;
       } catch { /* leave empty */ }
+      const live = liveSpaceWindowIds(tagged, windowList);
       tag.hasLiveWindows = live.length > 0;
+      // The default workspace's snapshot is stored under the key 'default';
+      // every other space under its tag id.
+      const key = getSpaceDisplayName(tag) === 'default' ? 'default' : tag.id;
+      let heldCount = 0;
+      try {
+        const r = await api.session.getHeldWindowCount(key);
+        if (r?.success && typeof r.count === 'number') heldCount = r.count;
+      } catch { /* none held */ }
       let snapshotCount = null;
-      if (live.length === 0) {
-        // The default workspace's snapshot is stored under the key 'default';
-        // every other space under its tag id.
-        const key = getSpaceDisplayName(tag) === 'default' ? 'default' : tag.id;
+      if (live.length === 0 && heldCount === 0) {
         try {
           const r = await api.session.getWorkspaceSnapshotWindowCount(key);
           if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
         } catch { /* no snapshot */ }
       }
-      tag.windowCount = countSpaceWindows(live, snapshotCount, getSpaceDisplayName(tag) === 'default');
+      tag.windowCount = countSpaceWindows(live, snapshotCount, getSpaceDisplayName(tag) === 'default', heldCount);
     }
     activeSpaceId = await resolveActiveSpaceId(spaceTags);
     // Resolve vivid colors for spaces with default/grey color

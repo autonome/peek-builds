@@ -44,6 +44,9 @@ import { DEFAULT_WORKSPACE_KEY } from './session-projection.js';
  *   workspace's snapshot holds. Unlike the layout read it is allowed for the
  *   default workspace's key, since a count exposes none of the saved URLs.
  *   Used by features/spaces to label an inactive space card.
+ * - `get-held-window-count` — read only the NUMBER of windows a workspace's
+ *   restore still holds for another desktop. Added to a live count so a
+ *   space's window count does not depend on which desktop the user is on.
  * - `add-window-to-workspace-snapshot` — append one open window to a
  *   workspace's saved snapshot, keeping the windows it already holds. Write-only:
  *   it returns no saved URLs, so it is allowed for any key. Used by
@@ -67,6 +70,7 @@ export type SessionOp =
   | 'restore-workspace-snapshot'
   | 'get-workspace-snapshot-info'
   | 'get-workspace-snapshot-window-count'
+  | 'get-held-window-count'
   | 'add-window-to-workspace-snapshot'
   | 'merge-workspace-snapshot'
   | 'begin-workspace-switch'
@@ -119,6 +123,7 @@ export function checkSessionAllowed(
     case 'restore-workspace-snapshot':
     case 'get-workspace-snapshot-info':
     case 'get-workspace-snapshot-window-count':
+    case 'get-held-window-count':
     case 'add-window-to-workspace-snapshot':
     case 'merge-workspace-snapshot':
     case 'begin-workspace-switch':
