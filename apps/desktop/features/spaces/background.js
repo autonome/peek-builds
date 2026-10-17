@@ -1165,9 +1165,17 @@ const initCommands = () => {
     console.log('[ext:spaces] move to space received:', JSON.stringify({
       search: msg.search, params: msg.params, typed: msg.typed, value: msg.value, name: msg.name,
     }));
-    const result = await moveToSpace(spaceNameFromCommandMessage(msg, 'move to space'));
+    let result;
+    try {
+      result = await moveToSpace(spaceNameFromCommandMessage(msg, 'move to space'));
+    } catch (err) {
+      console.error('[ext:spaces] move to space threw:', err?.stack || err);
+      result = { success: false, error: String(err?.message || err) };
+    }
     if (!result?.success) {
       console.warn('[ext:spaces] move to space refused:', result?.error);
+    } else {
+      console.log('[ext:spaces] move to space done');
     }
     if (msg.expectResult && msg.resultTopic) {
       api.pubsub.publish(msg.resultTopic, result || { success: true });
