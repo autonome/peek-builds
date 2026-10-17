@@ -95,6 +95,15 @@
       "action": { "type": "execute" }
     }
   ],
+  "nouns": [
+    {
+      "name": "groups",
+      "singular": "group",
+      "description": "Saved tab groups",
+      "capabilities": ["query", "browse", "open", "create"],
+      "produces": "application/json"
+    }
+  ],
   "shortcuts": [],
   "settingsSchema": "./settings-schema.json"
 }

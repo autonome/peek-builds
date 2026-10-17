@@ -427,6 +427,27 @@ export interface TileCommand {
 }
 
 /**
+ * Noun declared in a tile manifest — the static twin of the tile renderer's
+ * `registerNoun` call (`renderer/cmd/nouns.js`). For a lazy tile, main
+ * announces it at boot so the commands it generates (`new <singular>`,
+ * `list <name>`, `open <singular>`, ...) are listed before the tile runs, and
+ * a `noun:<capability>:<name>` dispatch wakes the tile.
+ */
+export interface TileNoun {
+  /** Plural name, e.g. `groups`. Must match the renderer's `registerNoun` name. */
+  name: string;
+  /** Singular name, e.g. `group`. */
+  singular: string;
+  description?: string;
+  /** Capabilities the renderer registers handlers for. */
+  capabilities: Array<'query' | 'browse' | 'open' | 'create'>;
+  /** MIME type the query capability produces. */
+  produces?: string;
+  /** If true, no bare `<name>` command is generated. */
+  skipBare?: boolean;
+}
+
+/**
  * Shortcut definition in tile manifest.
  *
  * A manifest shortcut binds an accelerator (`keys`) to a WAKE TARGET,
@@ -510,6 +531,8 @@ export interface TileManifest {
   capabilities: TileCapabilities;
   /** Commands registered by this tile */
   commands?: TileCommand[];
+  /** Nouns the tile registers at runtime, declared so a lazy tile's noun commands are listed before it wakes */
+  nouns?: TileNoun[];
   /** Keyboard shortcuts */
   shortcuts?: TileShortcut[];
   /**

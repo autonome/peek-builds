@@ -11,6 +11,8 @@
  *   3. When `cmd:execute:{name}` fires for a lazy tile, the dispatch
  *      hook loads the tile and the message reaches its real handler.
  *   4. Window-action commands still appear in the announcement.
+ *   5. Declared nouns are announced via `noun:register-batch`, and a
+ *      `noun:<capability>:<name>` publish wakes the tile.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -215,5 +217,60 @@ describe('tile command registration', () => {
 
     unsubscribe('test-observer-3', 'cmd:register-batch');
     unsubscribe('test-window-observer', 'window:reopen-request');
+  });
+
+  it('announces declared nouns via noun:register-batch without loading the tile', () => {
+    const received: unknown[] = [];
+    subscribe('test-noun-observer', 'noun:register-batch', (msg: unknown) => {
+      received.push(msg);
+    });
+
+    const manifest: TileManifest = {
+      ...makeManifestWithCommands('noun-test-1', []),
+      nouns: [{ name: 'widgets', singular: 'widget', capabilities: ['query', 'create'], produces: 'application/json' }],
+    };
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    assert.strictEqual(received.length, 1);
+    const batch = received[0] as { nouns: Array<Record<string, unknown>> };
+    assert.strictEqual(batch.nouns.length, 1);
+    assert.strictEqual(batch.nouns[0].name, 'widgets');
+    assert.strictEqual(batch.nouns[0].singular, 'widget');
+    assert.strictEqual(batch.nouns[0].hasQuery, true);
+    assert.strictEqual(batch.nouns[0].hasCreate, true);
+    assert.strictEqual(batch.nouns[0].hasBrowse, false);
+    assert.strictEqual(batch.nouns[0].hasOpen, false);
+    assert.strictEqual(launcherState.launchCalls.length, 0);
+
+    unsubscribe('test-noun-observer', 'noun:register-batch');
+  });
+
+  it('a declared noun capability topic wakes the tile and reaches its handler', async () => {
+    const manifest: TileManifest = {
+      ...makeManifestWithCommands('noun-test-2', []),
+      nouns: [{ name: 'widgets', singular: 'widget', capabilities: ['create'] }],
+    };
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    const realHandlerReceived: unknown[] = [];
+    launcherState.onLaunch = () => {
+      subscribe('peek://noun-test-2/bg', 'noun:create:widgets', (msg: unknown) => {
+        realHandlerReceived.push(msg);
+      });
+      signalReady(launcherState, 'noun-test-2', 'background');
+    };
+
+    // A capability the noun does not declare does not wake the tile.
+    publish('test-caller', 'noun:query:widgets', {});
+    for (let i = 0; i < 3; i++) await flushMicrotasks();
+    assert.strictEqual(launcherState.launchCalls.length, 0);
+
+    publish('test-caller', 'noun:create:widgets', { search: 'blue' });
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should be launched once');
+    assert.deepStrictEqual(realHandlerReceived, [{ search: 'blue' }]);
+
+    unsubscribe('peek://noun-test-2/bg', 'noun:create:widgets');
   });
 });

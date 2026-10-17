@@ -3,9 +3,10 @@
  *
  * A lazy tile is registered at boot with its manifest + launch
  * config, but no BrowserWindow is created. The tile's declared
- * commands are announced to the cmd panel via `cmd:register-batch` so
- * it can list them; its background process boots the first time it
- * needs to handle a command or a declared lazyEvent topic.
+ * commands are announced to the cmd panel via `cmd:register-batch`, and
+ * its declared nouns via `noun:register-batch`, so the panel can list
+ * them; its background process boots the first time it needs to handle
+ * a command, a noun capability, or a declared lazyEvent topic.
  *
  * Load-on-dispatch mechanism (Phase E):
  *
@@ -40,7 +41,7 @@ import {
   type TileLaunchOptions,
   type TileLaunchResult,
 } from './tile-launcher.js';
-import { type TileManifest, type TileCommand } from './tile-manifest.js';
+import { type TileManifest, type TileCommand, type TileNoun } from './tile-manifest.js';
 import { DEBUG, isDevProfile } from './config.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 import { clearFeatureLoadError, setFeatureLoadError, resetFeatureLoadErrors } from './feature-load-errors.js';
@@ -83,6 +84,7 @@ export function __resetTileLazyStateForTest(): void {
   lazyTileRegistry.clear();
   loadingTiles.clear();
   declaredLazyEventTopics.clear();
+  declaredNounTopics.clear();
   pendingDispatchesByTile.clear();
   _hookInstalled = false;
   _crashObserverInstalled = false;
@@ -107,6 +109,14 @@ const loadingTiles = new Set<string>();
  * unrelated topics pay only a Set lookup, not a manifest scan.
  */
 const declaredLazyEventTopics = new Set<string>();
+
+/**
+ * `noun:<capability>:<name>` topics of every registered tile's declared
+ * `nouns`. Running a noun command from the cmd panel publishes one of
+ * these (`renderer/cmd/commands.js` noun proxy), so they wake the tile
+ * the same way `cmd:execute:<name>` does.
+ */
+const declaredNounTopics = new Set<string>();
 
 /** Timeout for lazy load (ms) */
 const LAZY_LOAD_TIMEOUT_MS = 10000;
@@ -232,6 +242,10 @@ export function registerLazyTile(
     declaredLazyEventTopics.add(topic);
   }
 
+  for (const topic of collectNounTopics(manifest)) {
+    declaredNounTopics.add(topic);
+  }
+
   // Announce declared commands to the cmd panel. The panel's
   // subscriber builds proxy entries from this batch; it doesn't care
   // whether a stub or a real handler sits behind the source address.
@@ -255,9 +269,64 @@ export function registerLazyTile(
     );
   }
 
+  // Announce declared nouns the same way the tile's own `registerNoun`
+  // would (`renderer/cmd/nouns.js`): the cmd panel generates the noun's
+  // commands (`new group`, `list groups`, ...) from this metadata, so they
+  // are listed while the tile is still asleep. When the tile wakes, its
+  // `registerNoun` re-announces the same noun and replaces this entry.
+  const nouns = declaredNouns(manifest);
+  if (nouns.length > 0) {
+    publish(
+      `peek://${tileId}/lazy-stub`,
+      'noun:register-batch',
+      {
+        nouns: nouns.map(noun => ({
+          name: noun.name,
+          singular: noun.singular,
+          description: noun.description || '',
+          source: `peek://${tileId}/background`,
+          hasQuery: noun.capabilities.includes('query'),
+          hasBrowse: noun.capabilities.includes('browse'),
+          hasOpen: noun.capabilities.includes('open'),
+          hasCreate: noun.capabilities.includes('create'),
+          produces: noun.produces || null,
+          params: [],
+          modes: [],
+          skipBare: noun.skipBare || false,
+        })),
+      },
+    );
+  }
+
   DEBUG && console.log(
-    `[tile-lazy] Registered lazy tile: ${tileId} (${manifest.commands?.length || 0} commands, ${collectLazyEventTopics(manifest).length} lazyEvents)`
+    `[tile-lazy] Registered lazy tile: ${tileId} (${manifest.commands?.length || 0} commands, ${nouns.length} nouns, ${collectLazyEventTopics(manifest).length} lazyEvents)`
   );
+}
+
+const NOUN_CAPABILITIES = ['query', 'browse', 'open', 'create'] as const;
+
+/** The manifest's well-formed noun declarations. */
+function declaredNouns(manifest: TileManifest): TileNoun[] {
+  if (!Array.isArray(manifest.nouns)) return [];
+  return manifest.nouns.filter(noun =>
+    noun && typeof noun.name === 'string' && noun.name.length > 0 &&
+    typeof noun.singular === 'string' && noun.singular.length > 0 &&
+    Array.isArray(noun.capabilities) &&
+    noun.capabilities.some(cap => (NOUN_CAPABILITIES as readonly string[]).includes(cap)),
+  );
+}
+
+/** `noun:<capability>:<name>` topics a manifest's declared nouns handle. */
+function collectNounTopics(manifest: TileManifest): string[] {
+  const topics: string[] = [];
+  for (const noun of declaredNouns(manifest)) {
+    for (const cap of noun.capabilities) {
+      if ((NOUN_CAPABILITIES as readonly string[]).includes(cap)) {
+        topics.push(`noun:${cap}:${noun.name}`);
+      }
+    }
+  }
+  return topics;
 }
 
 function collectLazyEventTopics(manifest: TileManifest): string[] {
@@ -283,9 +352,13 @@ function collectLazyEventTopics(manifest: TileManifest): string[] {
  */
 function rebuildDeclaredLazyEventTopics(): void {
   declaredLazyEventTopics.clear();
+  declaredNounTopics.clear();
   for (const { manifest } of lazyTileRegistry.values()) {
     for (const topic of collectLazyEventTopics(manifest)) {
       declaredLazyEventTopics.add(topic);
+    }
+    for (const topic of collectNounTopics(manifest)) {
+      declaredNounTopics.add(topic);
     }
   }
 }
@@ -315,6 +388,9 @@ export function unregisterLazyTile(tileId: string): void {
     for (const cmd of config.manifest.commands) {
       publish(`peek://${tileId}/lazy-stub`, 'cmd:unregister', { name: cmd.name });
     }
+  }
+  for (const noun of declaredNouns(config.manifest)) {
+    publish(`peek://${tileId}/lazy-stub`, 'noun:unregister', { name: noun.name });
   }
 
   lazyTileRegistry.delete(tileId);
@@ -383,13 +459,16 @@ function dispatchHookPredicate(topic: string): boolean {
     // has a colon in the rest and must not be intercepted.
     return !rest.includes(':') && rest.length > 0;
   }
-  return declaredLazyEventTopics.has(topic);
+  return declaredLazyEventTopics.has(topic) || declaredNounTopics.has(topic);
 }
 
 async function dispatchHookBody(topic: string, msg: unknown): Promise<PrePublishHookResult> {
   if (topic.startsWith('cmd:execute:')) {
     const name = topic.slice('cmd:execute:'.length);
     return handleCommandDispatch(name, msg);
+  }
+  if (declaredNounTopics.has(topic)) {
+    return handleNounDispatch(topic, msg);
   }
   // lazyEvent topic — find owner and ensure loaded.
   return handleLazyEventDispatch(topic);
@@ -464,6 +543,38 @@ async function handleCommandDispatch(
   // Programmatic command: load the tile (if needed), then let the
   // publish continue — by which point the tile's background has
   // subscribed its real handler.
+  return wakeForDispatch(tileId, name, msg);
+}
+
+/**
+ * A noun command run from the cmd panel (`noun:<capability>:<name>`) for a
+ * noun a lazy tile declares: wake the tile, then deliver — the tile's
+ * `registerNoun` subscribes the capability handler during init.
+ */
+async function handleNounDispatch(
+  topic: string,
+  msg: unknown,
+): Promise<PrePublishHookResult> {
+  const owner = findTileByNounTopic(topic);
+  if (!owner) return 'continue';
+  const bgEntry = getBackgroundEntry(owner.tileId);
+  if (bgEntry) {
+    assertDispatchFsmState(owner.tileId, bgEntry, topic);
+  }
+  return wakeForDispatch(owner.tileId, topic, msg);
+}
+
+/**
+ * Load the tile a dispatch targets and let the publish continue once it is
+ * ready. On a failed load the caller's result topic gets an error and the
+ * publish is skipped, so the cmd panel settles instead of waiting out its
+ * proxy timeout.
+ */
+async function wakeForDispatch(
+  tileId: string,
+  name: string,
+  msg: unknown,
+): Promise<PrePublishHookResult> {
   const typedMsg = msg as { resultTopic?: string } | null;
   const pending: PendingDispatch = {
     cmdName: name,
@@ -634,6 +745,15 @@ function findTileByCommand(
     if (!Array.isArray(config.manifest.commands)) continue;
     const cmd = config.manifest.commands.find(c => c.name === name);
     if (cmd) return { tileId, cmd };
+  }
+  return null;
+}
+
+function findTileByNounTopic(topic: string): { tileId: string } | null {
+  for (const [tileId, config] of lazyTileRegistry) {
+    if (collectNounTopics(config.manifest).includes(topic)) {
+      return { tileId };
+    }
   }
   return null;
 }
