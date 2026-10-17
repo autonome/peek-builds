@@ -3,7 +3,21 @@ import * as assert from 'node:assert';
 import {
   normalizeEditableFocusReport,
   shouldDeferEscapeToEditable,
+  shouldDeferEscapeNow,
+  DEFER_ESCAPE_TO_EDITABLE,
 } from './hybrid-editable-escape.js';
+
+describe('shouldDeferEscapeNow', () => {
+  const withText = { editable: true, empty: false };
+  it('is off by default, even for an editable holding text', () => {
+    assert.strictEqual(DEFER_ESCAPE_TO_EDITABLE, false);
+    assert.strictEqual(shouldDeferEscapeNow(withText), false);
+  });
+  it('follows the predicate when enabled', () => {
+    assert.strictEqual(shouldDeferEscapeNow(withText, true), true);
+    assert.strictEqual(shouldDeferEscapeNow({ editable: true, empty: true }, true), false);
+  });
+});
 
 describe('shouldDeferEscapeToEditable', () => {
   it('defers when an editable with text is focused', () => {

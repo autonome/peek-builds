@@ -1,6 +1,8 @@
 /**
- * Hybrid page-host: ESC while an editable element is focused must NOT open the
- * Windows switcher (peek 51798bae; consolidates duplicate cb8d92d6).
+ * Hybrid page-host: the ESC-defers-to-a-focused-editable guard (peek 51798bae;
+ * consolidates duplicate cb8d92d6) is switched OFF (DEFER_ESCAPE_TO_EDITABLE =
+ * false): ESC acts the same whether or not a focused field holds text. The
+ * description below is of the mechanism the switch controls.
  *
  * The universal content preload (runtime-external-preload.cjs) reports focus
  * transitions via `page:editable-focus`; the hybrid content-WC before-input-event
@@ -42,20 +44,16 @@ test.describe('Hybrid page-host ESC editable guard @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  // Editable focused: ESC belongs to the editing context. It must fall through
-  // to the page UNSTOLEN (no preventDefault), the switcher must NOT open, and the
-  // page survives. Runs FIRST so no prior test could have opened the switcher.
-  test('ESC with an editable focused is deferred to the page (no switcher, not stolen)', async () => {
+  // Deferring ESC to a focused field holding text is switched off
+  // (DEFER_ESCAPE_TO_EDITABLE in hybrid-editable-escape.ts): the field's text
+  // made peeks and slides impossible to dismiss by keyboard. ESC with text in a
+  // focused field is stolen and routed to policy like any other ESC.
+  test('ESC with text in a focused editable is not deferred (stolen, opens the switcher)', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
-    // Active session — the state where a content-page ESC would normally route
-    // to the switcher (so the guard is what suppresses it, not the session).
+    // Active session — the state where a content-page ESC routes to the switcher.
     const sessionState = await bgWindow.evaluate(async () => (window as any).app.izui.getState());
     expect(sessionState).toBe('active');
-
-    // Sanity: switcher not open yet.
-    const switcherBefore = await app.getWindow('windows/windows.html', 1000).catch(() => null);
-    expect(switcherBefore).toBeFalsy();
 
     const setup = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -63,7 +61,7 @@ test.describe('Hybrid page-host ESC editable guard @desktop', () => {
         role: 'content',
       });
       b.setActive(id);
-      // Simulate the content preload reporting an editable is focused.
+      // Simulate the content preload reporting an editable holding text is focused.
       const seeded = b.setContentEditableFocus(id, true, { empty: false });
       const existedBefore = b.hybridWindowExists(id);
       // Drive the REAL content-WC before-input-event with a no-modifier ESC.
@@ -72,18 +70,40 @@ test.describe('Hybrid page-host ESC editable guard @desktop', () => {
     });
     expect(setup.seeded).toBe(true);
     expect(setup.existedBefore).toBe(true);
-    // The decisive assertion: ESC was NOT stolen — it fell through to the page so
-    // the field can blur natively.
-    expect(setup.prevented).toBe(false);
+    // ESC was stolen by the content-WC handler, as with no field focused.
+    expect(setup.prevented).toBe(true);
 
-    // The switcher must NOT appear.
-    const switcherAfter = await app.getWindow('windows/windows.html', 1500).catch(() => null);
-    expect(switcherAfter).toBeFalsy();
+    const switcher = await app.getWindow('windows/windows.html', 8000);
+    expect(switcher).toBeTruthy();
 
     // ...and the page window survives.
     const survived = await app.evaluateMain!(((_e: unknown, wid: number) =>
       (globalThis as any).__peekHybridOverlayTest.hybridWindowExists(wid)) as any, setup.id);
     expect(survived).toBe(true);
+  });
+
+  // A peek/slide (role 'quick-view', modal, pageHost — as openNewSlide builds
+  // it) with a focused textarea holding text must still close on ESC.
+  test('ESC closes a quick-view host whose focused textarea holds text', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = await b.makeRoledHybrid('data:text/html,<title>Slide</title><textarea>hello</textarea>', {
+        role: 'quick-view',
+        modal: true,
+        pageHost: true,
+      });
+      b.setActive(id);
+      b.setContentEditableFocus(id, true, { empty: false });
+      const existedBefore = b.hybridWindowExists(id);
+      const prevented = b.dispatchContentKey(id, 'Escape', { meta: false, control: false });
+      const gone = await b.waitHybridGone(id);
+      return { existedBefore, prevented, gone };
+    });
+    expect(result.existedBefore).toBe(true);
+    expect(result.prevented).toBe(true);
+    expect(result.gone).toBe(true);
   });
 
   // Editable focused but EMPTY: there is nothing for ESC to clear, so it behaves

@@ -38,3 +38,19 @@ export function normalizeEditableFocusReport(payload: unknown): EditableFocusSta
 export function shouldDeferEscapeToEditable(state: EditableFocusState | undefined): boolean {
   return !!state && state.editable && !state.empty;
 }
+
+/**
+ * Off switch for deferring ESC to a focused editable that holds text. Disabled
+ * because ESC inside a text field with text left peeks and slides impossible to
+ * dismiss by keyboard. The predicate, focus cache and `page:editable-focus` IPC
+ * stay in place; flip to `true` to restore the deferral.
+ */
+export const DEFER_ESCAPE_TO_EDITABLE = false;
+
+/** The deferral decision the ESC handler uses: the predicate behind the off switch. */
+export function shouldDeferEscapeNow(
+  state: EditableFocusState | undefined,
+  enabled: boolean = DEFER_ESCAPE_TO_EDITABLE,
+): boolean {
+  return enabled && shouldDeferEscapeToEditable(state);
+}

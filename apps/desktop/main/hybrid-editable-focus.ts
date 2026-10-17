@@ -21,7 +21,7 @@
 import { ipcMain } from 'electron';
 import {
   normalizeEditableFocusReport,
-  shouldDeferEscapeToEditable,
+  shouldDeferEscapeNow,
   type EditableFocusState,
 } from './hybrid-editable-escape.js';
 
@@ -43,9 +43,10 @@ export function initHybridEditableFocusTracking(): void {
 /**
  * True iff ESC should stay with the page: the content WC last reported an
  * editable element focused AND holding text. An empty field defers nothing.
+ * Always false while `DEFER_ESCAPE_TO_EDITABLE` is off.
  */
 export function shouldDeferEscapeToPageForWc(wcId: number): boolean {
-  return shouldDeferEscapeToEditable(editableByWcId.get(wcId));
+  return shouldDeferEscapeNow(editableByWcId.get(wcId));
 }
 
 /** Drop cached state when a content WC is destroyed. */
