@@ -619,6 +619,25 @@ describe('window-kernel-dispatch: raise feed (peek 7fffa286)', () => {
     assert.strictEqual(request?.intent, 'user');
   });
 
+  it('a reuse of a kept peek (modal panel), while the app is inactive, raises it with user intent', () => {
+    // A peek's global hotkey with another app frontmost reaches the hybrid
+    // key-reuse branch with `{ modal: true, type: 'panel' }` and no
+    // `activation`. Without user intent the raise is not admitted while the
+    // app is inactive: the peek is shown but never takes key, so keystrokes
+    // reach the app behind it.
+    const [a, b] = [wid(129), wid(130)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+    kernelAppResigned();
+    assert.strictEqual(getKernelExecutor().getState().appActive, false);
+
+    kernelShowRequested(a, true, reuseShowActivation({ modal: true, type: 'panel' }));
+
+    const request = getKernelExecutor().getState().lastRaiseRequest;
+    assert.strictEqual(request?.id, a, 'the request names the reused peek');
+    assert.strictEqual(request?.intent, 'user');
+  });
+
   it('an activating show without the option stays a machine raise — no intent on the request', () => {
     const [a, b] = [wid(125), wid(126)];
     registerVisibleContentWindow(a);

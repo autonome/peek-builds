@@ -119,11 +119,26 @@ export function pageActivatesFromOtherApp(
 // (`activation: 'user'`, or a regular open, which is the command line's) asks
 // the kernel to raise even while another app is frontmost, so the reused page
 // comes forward and activates the app as a fresh open does.
+//
+// A quick-view surface (a peek or slide: modal, a panel) is re-opened by the
+// keystroke that asked for it, the same user intent its fresh open is given
+// (`ipc.ts` page-host and browser-window branches). Its reuse carries that
+// intent too: without it the raise is not admitted while another app is
+// frontmost, so the kept window is shown but never takes key and keystrokes
+// reach the app behind it. A window that takes no input is never raised for
+// the user.
 export function reuseShowActivation(options: {
   activation?: string;
   regular?: boolean;
+  modal?: boolean;
+  type?: string;
+  focusable?: boolean;
+  clickThrough?: boolean;
 }): { activation?: 'user' } {
-  return options.activation === 'user' || options.regular === true ? { activation: 'user' } : {};
+  if (options.activation === 'user' || options.regular === true) return { activation: 'user' };
+  const takesInput = options.focusable !== false && options.clickThrough !== true;
+  const quickView = options.modal === true || options.type === 'panel';
+  return takesInput && quickView ? { activation: 'user' } : {};
 }
 
 // The one transience decision (specs/kernel-desktops.md "Transient window"),

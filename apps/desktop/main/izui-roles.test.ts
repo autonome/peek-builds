@@ -299,6 +299,19 @@ describe('windowIsTransient (specs/kernel-desktops.md "Transient window")', () =
     assert.deepStrictEqual(reuseShowActivation({}), {});
   });
 
+  it('reusing a quick-view surface (a peek or slide re-opened by its hotkey) carries user activation', () => {
+    // A peek or slide opens `modal` + `type: 'panel'`. Its fresh open is given
+    // the user intent of the keystroke (`ipc.ts` page-host branch); a reuse of
+    // the same kept window must carry it too, or the raise is held while
+    // another app is frontmost and the page never takes key.
+    assert.deepStrictEqual(reuseShowActivation({ modal: true, type: 'panel' }), { activation: 'user' });
+    assert.deepStrictEqual(reuseShowActivation({ modal: true }), { activation: 'user' });
+    assert.deepStrictEqual(reuseShowActivation({ type: 'panel' }), { activation: 'user' });
+    // A window that takes no input is never raised for the user.
+    assert.deepStrictEqual(reuseShowActivation({ modal: true, focusable: false }), {});
+    assert.deepStrictEqual(reuseShowActivation({ type: 'panel', clickThrough: true }), {});
+  });
+
   it('a window that takes no input never is', () => {
     assert.strictEqual(windowIsTransient(true, { overlay: true, focusable: false }), false);
     assert.strictEqual(windowIsTransient(true, { modal: true, clickThrough: true }), false);
