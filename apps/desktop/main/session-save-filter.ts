@@ -10,6 +10,19 @@
  */
 
 /**
+ * How many descriptors have a url and none starting with an excluded prefix.
+ * Backs the bare saved/held window counts, which leave out spaces chrome.
+ */
+export function countDescriptorsExcludingPrefixes(
+  descriptors: ReadonlyArray<{ url?: string }>,
+  excludeUrlPrefixes: readonly string[] = [],
+): number {
+  return descriptors.filter(
+    (d) => d.url && !excludeUrlPrefixes.some((p) => d.url!.startsWith(p)),
+  ).length;
+}
+
+/**
  * Decide whether the session-save loop should skip a window at the EARLY
  * (window-type-dependent) stage — i.e. before the common modal/utility/overlay
  * checks. Pure on its resolved inputs (no Electron objects).

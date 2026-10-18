@@ -408,6 +408,7 @@ export {
   shouldShowBorder,
   countSpaceWindows,
   liveSpaceWindowIds,
+  SPACES_CHROME_URL_PREFIXES,
   initialSelectedIndex,
   formatWindowCount,
   id,

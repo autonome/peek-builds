@@ -20,7 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 // Electron-free, so safe to import the REAL implementation here (no
 // replication drift): the session-save early-skip decision shared by
 // `saveSessionSnapshot`'s loop.
-import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
+import { shouldSkipWindowForSaveEarly, countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 
 // ============================================================================
@@ -2434,5 +2434,26 @@ describe('Closed window stack persistence', () => {
     assert.strictEqual(loaded2[0].url, 'https://a.com');
 
     db.close();
+  });
+});
+
+describe('countDescriptorsExcludingPrefixes (saved and held window counts)', () => {
+  const descriptors = [
+    { url: 'https://a.com' },
+    { url: 'peek://spaces/home.html' },
+    { url: 'peek://ext/spaces/home.html' },
+    { url: 'peek://app/page.html' },
+    { url: '' },
+  ];
+
+  it('counts every descriptor with a url when no prefixes are given', () => {
+    assert.strictEqual(countDescriptorsExcludingPrefixes(descriptors), 4);
+  });
+
+  it('leaves out descriptors whose url starts with an excluded prefix', () => {
+    assert.strictEqual(
+      countDescriptorsExcludingPrefixes(descriptors, ['peek://spaces/', 'peek://ext/spaces/']),
+      2,
+    );
   });
 });

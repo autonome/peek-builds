@@ -33,6 +33,7 @@ import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
 import { planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
+import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -176,9 +177,10 @@ function heldDescriptorsFor(workspaceKey: string): WindowDescriptor[] {
  * How many windows are still held (no window yet, waiting for the user to
  * reach their desktop) for `workspaceKey`; 0 when the hold belongs to another
  * workspace or nothing is held. A bare count: it exposes none of the URLs.
+ * Descriptors whose url starts with any `excludeUrlPrefixes` entry are skipped.
  */
-export function getHeldWindowCount(workspaceKey: string): number {
-  return heldDescriptorsFor(workspaceKey).filter((d) => d.url).length;
+export function getHeldWindowCount(workspaceKey: string, excludeUrlPrefixes: string[] = []): number {
+  return countDescriptorsExcludingPrefixes(heldDescriptorsFor(workspaceKey), excludeUrlPrefixes);
 }
 
 /**
@@ -2503,9 +2505,10 @@ export function getWorkspaceSnapshotDesktops(key: string): string[] | null {
  * workspace included, since a bare count exposes none of the saved URLs
  * (`getWorkspaceSnapshotWindowInfo` refuses the default key for that reason).
  * Counts the same windows a restore would reopen. Returns `null` for a
- * missing/invalid snapshot or a read error.
+ * missing/invalid snapshot or a read error. Descriptors whose url starts with
+ * any `excludeUrlPrefixes` entry are skipped.
  */
-export function getWorkspaceSnapshotWindowCount(key: string): number | null {
+export function getWorkspaceSnapshotWindowCount(key: string, excludeUrlPrefixes: string[] = []): number | null {
   if (!key) return null;
   try {
     const db = getDb();
@@ -2515,7 +2518,7 @@ export function getWorkspaceSnapshotWindowCount(key: string): number | null {
     if (!row?.value) return null;
     const snapshot: SessionSnapshot = JSON.parse(row.value);
     if (snapshot.version !== 1 || !Array.isArray(snapshot.windows)) return null;
-    return snapshot.windows.filter((d) => isValidDescriptor(d) && d.url).length;
+    return countDescriptorsExcludingPrefixes(snapshot.windows.filter(isValidDescriptor), excludeUrlPrefixes);
   } catch {
     return null;
   }

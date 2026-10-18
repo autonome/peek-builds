@@ -2268,22 +2268,24 @@ function buildAPI(): Record<string, unknown> {
         key,
       });
     },
-    getWorkspaceSnapshotWindowCount: (key: string) => {
+    getWorkspaceSnapshotWindowCount: (key: string, excludeUrlPrefixes?: string[]) => {
       if (!hasSessionCapability()) {
         return Promise.reject(new Error('[tile-preload] api.session.getWorkspaceSnapshotWindowCount requires the session capability'));
       }
       return ipcRenderer.invoke('tile:session:get-workspace-snapshot-window-count', {
         token: tileToken,
         key,
+        excludeUrlPrefixes,
       });
     },
-    getHeldWindowCount: (key: string) => {
+    getHeldWindowCount: (key: string, excludeUrlPrefixes?: string[]) => {
       if (!hasSessionCapability()) {
         return Promise.reject(new Error('[tile-preload] api.session.getHeldWindowCount requires the session capability'));
       }
       return ipcRenderer.invoke('tile:session:get-held-window-count', {
         token: tileToken,
         key,
+        excludeUrlPrefixes,
       });
     },
     addWindowToWorkspaceSnapshot: (key: string, windowId: number) => {

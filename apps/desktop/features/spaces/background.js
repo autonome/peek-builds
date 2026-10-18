@@ -12,7 +12,8 @@ import {
   SPACE_TAG_PREFIX, isSpaceTag, getSpaceDisplayName, toSpaceTagName,
   resolveVividColor, shouldShowBorder, planMoveToSpace, planDeleteSpace, deleteSpacePromptUrl,
   validateNewSpaceName, spaceNameOptions, spaceNameFromCommandMessage,
-  emptySpaceWindowOptions, createSerialRunner, countSpaceWindows, liveSpaceWindowIds
+  emptySpaceWindowOptions, createSerialRunner, countSpaceWindows, liveSpaceWindowIds,
+  SPACES_CHROME_URL_PREFIXES
 } from './config.js';
 
 const api = window.app;
@@ -1079,13 +1080,13 @@ async function countWindowsBySpace(tags) {
     const live = liveSpaceWindowIds(tagged, windowList);
     let heldCount = 0;
     try {
-      const r = await api.session.getHeldWindowCount(key);
+      const r = await api.session.getHeldWindowCount(key, SPACES_CHROME_URL_PREFIXES);
       if (r?.success && typeof r.count === 'number') heldCount = r.count;
     } catch { /* none held */ }
     let snapshotCount = null;
     if (live.length === 0 && heldCount === 0) {
       try {
-        const r = await api.session.getWorkspaceSnapshotWindowCount(key);
+        const r = await api.session.getWorkspaceSnapshotWindowCount(key, SPACES_CHROME_URL_PREFIXES);
         if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
       } catch { /* no snapshot */ }
     }

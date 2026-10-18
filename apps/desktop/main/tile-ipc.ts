@@ -4582,9 +4582,13 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  const sanitizeExcludeUrlPrefixes = (v: unknown): string[] =>
+    Array.isArray(v) && v.every((p) => typeof p === 'string') ? v : [];
+
   registerTileIpc('tile:session:get-workspace-snapshot-window-count', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
+    excludeUrlPrefixes?: string[];
   }, _grant) => {
     const grant = _grant;
     if (typeof args.key !== 'string' || !args.key) {
@@ -4597,7 +4601,7 @@ export function registerTileIpcHandlers(): void {
     }
     try {
       const { getWorkspaceSnapshotWindowCount } = await import('./session.js');
-      return { success: true, count: getWorkspaceSnapshotWindowCount(args.key) };
+      return { success: true, count: getWorkspaceSnapshotWindowCount(args.key, sanitizeExcludeUrlPrefixes(args.excludeUrlPrefixes)) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -4607,6 +4611,7 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:session:get-held-window-count', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
+    excludeUrlPrefixes?: string[];
   }, _grant) => {
     const grant = _grant;
     if (typeof args.key !== 'string' || !args.key) {
@@ -4619,7 +4624,7 @@ export function registerTileIpcHandlers(): void {
     }
     try {
       const { getHeldWindowCount } = await import('./session.js');
-      return { success: true, count: getHeldWindowCount(args.key) };
+      return { success: true, count: getHeldWindowCount(args.key, sanitizeExcludeUrlPrefixes(args.excludeUrlPrefixes)) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
