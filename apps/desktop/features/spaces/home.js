@@ -269,8 +269,8 @@ const loadSpaces = async () => {
     }
     // Count windows per space: live windows plus those still held for another
     // desktop for the active workspace, else the saved snapshot. Spaces chrome
-    // never counts. The default workspace's snapshot is not readable by tiles,
-    // so while inactive it has no count.
+    // never counts. A space with no saved snapshot yet (the default before it
+    // is first left) has no count.
     let windowList = [];
     try {
       const r = await api.window.list();

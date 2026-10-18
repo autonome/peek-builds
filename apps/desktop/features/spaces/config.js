@@ -164,9 +164,8 @@ const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
  * for another desktop (`heldCount`); otherwise the saved workspace snapshot's
  * window list, which covers all desktops. A space with no saved snapshot holds
  * none, so it counts 0. `null` only for the default workspace with nothing
- * open or held and no readable snapshot (tiles cannot read its snapshot while
- * another workspace is active), so the caller shows no count rather than a
- * wrong 0.
+ * open or held and no saved snapshot yet (it is saved the first time the
+ * default is left), so the caller shows no count rather than a wrong 0.
  */
 const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false, heldCount = 0) => {
   const live = Array.isArray(liveWindowIds) ? liveWindowIds.length : 0;
