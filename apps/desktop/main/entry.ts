@@ -8,6 +8,7 @@
 // MUST be first: sets the macOS headless activation policy before any other
 // (side-effectful) import runs, minimizing the launch-time focus flash.
 import './headless-policy.js';
+import { installNativeCallDiag, setDiagWindowIdResolver } from './diag-native-calls.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { app, BaseWindow, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
@@ -154,6 +155,10 @@ try {
     `[${ts}] entry.ts loaded: pid=${process.pid} argv=${JSON.stringify(process.argv)} packaged=${app.isPackaged}\n`
   );
 } catch { /* ignore */ }
+
+// DIAG (peek 4fa36692): log every window show/focus/order and app activation call.
+installNativeCallDiag();
+setDiagWindowIdResolver((win) => getWindowIdFor(win as Parameters<typeof getWindowIdFor>[0]));
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
