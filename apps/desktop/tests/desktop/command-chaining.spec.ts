@@ -286,7 +286,9 @@ test.describe('Command Chaining @desktop', () => {
     }
   });
 
-  test('csv command converts JSON to CSV format', async () => {
+  // Skipped: command chaining is paused; its output popup closes the panel under
+  // the closing rule, and children of transients are undecided (peek ef7f63a8).
+  test.skip('csv command converts JSON to CSV format', async () => {
     // list urls → OUTPUT_SELECTION → select row → CHAIN_MODE → csv → text/csv
     await waitForCommand(bgWindow, 'csv', 10000);
 

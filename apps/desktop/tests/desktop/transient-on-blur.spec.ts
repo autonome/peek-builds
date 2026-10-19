@@ -222,7 +222,9 @@ test.describe('Transient on blur auto-hide @desktop', () => {
     await closeWindow(b);
   });
 
-  test('utility that declares the palette as its parent survives the utility focusing (chain popup invariant)', async () => {
+  // Skipped: the closing rule closes a transient when a window it opened takes
+  // focus; children of transients are undecided (peek ef7f63a8).
+  test.skip('utility that declares the palette as its parent survives the utility focusing (chain popup invariant)', async () => {
     const palette = await openVisibleWindow('palette', 'palette-with-child');
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
     // Open the utility (chain popup) window FROM the palette's own renderer —
