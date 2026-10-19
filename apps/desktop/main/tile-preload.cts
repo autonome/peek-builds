@@ -2890,6 +2890,72 @@ const api = buildAPI();
 contextBridge.exposeInMainWorld('app', api);
 __preloadMark('preload-done');
 
+// ─── Press blockers for the window manager's hold-to-drag ───────────
+//
+// Main owns hold-to-drag for every window (docs/design/window-drag.md). Which
+// element a press landed on is a fact only this renderer has, so a press that
+// must not move the window is reported once, on a capture-phase mousedown, as
+// `window-drag:press-blocked`; main cancels the pending hold. Capture phase on
+// the window runs before any shadow-internal stopPropagation (the navbar's URL
+// field stops its own mousedown).
+{
+  const PRESS_BLOCKED = 'window-drag:press-blocked';
+
+  // Walks composedPath so an element inside a shadow root is seen, not its
+  // retargeted host.
+  const pressBlocked = (e: MouseEvent): boolean => {
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    for (const node of path) {
+      if (!node || (node as Node).nodeType !== 1) continue;
+      const el = node as HTMLElement;
+      const marked = el.closest('[data-no-drag]');
+      if (marked && marked !== document.body && marked !== document.documentElement) return true;
+      // Only a text field that already has focus blocks: a first press on an
+      // unfocused field can still start a hold, a press while editing places
+      // the caret. Focus inside a shadow tree is that root's activeElement.
+      const root = el.getRootNode() as Document | ShadowRoot;
+      const focused = !!root && (root as { activeElement?: Element | null }).activeElement === el;
+      const tag = (el.tagName || '').toLowerCase();
+      if ((tag === 'input' || tag === 'textarea') && focused) return true;
+      if (el.isContentEditable && focused) return true;
+    }
+    // A press inside the current selection starts a selection drag.
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      for (let i = 0; i < sel.rangeCount; i += 1) {
+        for (const r of Array.from(sel.getRangeAt(i).getClientRects())) {
+          if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // A window drag keeps the pointer over the element it pressed, so the
+  // release would synthesise a click there. The window moved under the pointer
+  // when screen position changed by more than window position did; that click
+  // is swallowed.
+  const WINDOW_MOVED_PX = 3;
+  let pressScreenX = 0, pressScreenY = 0, pressClientX = 0, pressClientY = 0;
+
+  window.addEventListener('mousedown', (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    pressScreenX = e.screenX; pressScreenY = e.screenY;
+    pressClientX = e.clientX; pressClientY = e.clientY;
+    if (pressBlocked(e)) ipcRenderer.send(PRESS_BLOCKED);
+  }, true);
+
+  window.addEventListener('click', (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    const windowDx = (e.screenX - pressScreenX) - (e.clientX - pressClientX);
+    const windowDy = (e.screenY - pressScreenY) - (e.clientY - pressClientY);
+    if (Math.abs(windowDx) > WINDOW_MOVED_PX || Math.abs(windowDy) > WINDOW_MOVED_PX) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  }, true);
+}
+
 // ─── Click-and-Hold Window Drag (unified, application-wide) ─────────
 //
 // Provides drag-to-move for all frameless windows. Hold the mouse button

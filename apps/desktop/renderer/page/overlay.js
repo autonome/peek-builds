@@ -681,6 +681,11 @@ let captureOn = false;
 // must not go opaque (e.g. the navbar trigger zone) mid-resize or it would starve
 // and freeze the drag.
 let resizeActive = false;
+// Whether the window manager's hold-to-drag is moving a window (main's
+// window:drag-active). While true the capture-loop leaves the capture state as
+// the press found it — captured for a press on the chrome, click-through for a
+// press on the page.
+let windowDragActive = false;
 function setCapture(want) {
   const next = !!want;
   if (next === captureOn) return;
@@ -757,10 +762,10 @@ function pointerOverChrome(x, y) {
 }
 document.addEventListener('mousemove', (e) => {
   if (activeWindowId == null) return;
-  // While a hold-to-drag is actively moving the window, the overlay is
-  // intentionally captured (opaque); don't let the chrome hit-test release it
-  // mid-drag (would drop the pointer to the content and stall the move).
-  if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
+  // While a window drag is moving a window, keep whatever capture state the
+  // press found: flipping it mid-drag would take the pointer stream away from
+  // the webContents the press landed in. See windowDragActive.
+  if (windowDragActive) return;
   // While a MAIN-driven resize is in progress, stay click-through no matter where
   // the pointer roams (incl. the top trigger zone) — going opaque would starve the
   // content WC's move stream that drives the resize. See resizeActive.
@@ -788,41 +793,17 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 
-// ── P1.4b-3: window interaction (MOVE / maximize) ─────────────────────────────
-// The overlay owns the navbar-drag MOVE + the maximize affordance for the active
-// hybrid window. Both drive the content BaseWindow via main: the renderer computes
-// new OUTER bounds (tracked locally in activeBounds, seeded from the handoff +
-// kept in sync via page-overlay:bounds during a main-driven resize) and publishes
-// `page:set-bounds {windowId, bounds}` (move) / `page:maximize` / `page:unmaximize`.
+// ── P1.4b-3: window interaction (maximize) ────────────────────────────────────
+// The overlay owns the maximize affordance for the active hybrid window
+// (`page:maximize` / `page:unmaximize`), tracking the host's outer bounds
+// locally in activeBounds (seeded from the handoff, kept live by main's
+// page-overlay:bounds) for the restore rect and the panel layout.
 //
-// RESIZE is NOT here (round 2): the overlay never paints a cursor (it is never the
-// macOS first responder), so edge/corner resize — cursor AND drag — moved to main
-// against the content WC's input-event stream (ipc.ts wireHybridContentEvents).
-
-function publishBounds() {
-  if (activeWindowId == null || !activeBounds) return;
-  api.publish('page:set-bounds', {
-    windowId: activeWindowId,
-    bounds: {
-      x: Math.round(activeBounds.x),
-      y: Math.round(activeBounds.y),
-      width: Math.round(activeBounds.width),
-      height: Math.round(activeBounds.height),
-    },
-  });
-}
-
-// Signal main to paint the closed-hand cursor over WEB CONTENT during the
-// hold-to-drag gesture. The overlay is never the macOS first responder, so its
-// own `document.body.style.cursor` (set alongside these calls) renders only over
-// the chrome region, NOT over the content WebContentsView. Main owns the content
-// WC and paints the cursor there via its insertCSS reconciler (ipc.ts
-// wireHybridContentEvents), resolving the target host from `windowId`. `state` is
-// 'grab' (hold fired) / 'grabbing' (dragging) / null (released).
-function publishDragCursor(state) {
-  if (activeWindowId == null) return;
-  api.publish('page:drag-cursor', { windowId: activeWindowId, state });
-}
+// MOVE is not here: hold-to-drag is the window manager's, in main, for every
+// window (docs/design/window-drag.md). RESIZE is not here either: the overlay
+// never paints a cursor (it is never the macOS first responder), so edge/corner
+// resize — cursor AND drag — lives in main against the content WC's
+// input-event stream (ipc.ts wireHybridContentEvents).
 
 // --- Main-driven resize sync ---
 // Main owns edge/corner resize (it drives baseWin.setBounds off the content WC's
@@ -830,9 +811,9 @@ function publishDragCursor(state) {
 //   - page-overlay:resize-active {active} — gates the capture-loop to stay
 //     click-through for the whole drag (see resizeActive), so the overlay never
 //     goes opaque mid-resize and starves main's move stream.
-//   - page-overlay:bounds {bounds} — main pushes the host's new outer bounds each
-//     resize step so the renderer's locally-tracked activeBounds (used by the
-//     navbar-drag MOVE math + maximize stash) doesn't go stale.
+//   - page-overlay:bounds {bounds} — main pushes the host's new outer bounds on
+//     every resize and move so the renderer's locally-tracked activeBounds (the
+//     maximize stash, the panel layout) doesn't go stale.
 //   - page-overlay:maximize-state {maximized, preMaxBounds} — main pushes the
 //     registry's maximize state when IT changes that state without going through
 //     this overlay's toggleMaximize. Today that's the resize-start exit: grabbing
@@ -848,9 +829,6 @@ api.subscribe('page-overlay:resize-active', (msg) => {
 });
 api.subscribe('page-overlay:bounds', (msg) => {
   if (!isActive(msg) || !msg.bounds) return;
-  // A chrome drag owns activeBounds and publishes it itself; main's echo of
-  // those moves lags the pointer and would rewind it mid-drag.
-  if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
   activeBounds = { ...msg.bounds };
   contentInset = msg.contentInset ? { ...msg.contentInset } : null;
   setRevealDelay(msg.revealDelayMs);
@@ -866,286 +844,29 @@ api.subscribe('page-overlay:maximize-state', (msg) => {
   updateOverlayPositions();
 });
 
-// --- Uniform hold-to-drag window move (chrome + web content) ---
-// Peek-wide gesture (identical to the canvas <webview> page.js hold-to-drag,
-// page.js ~1294-1592): press, hold STILL for `dragHoldDelay` (default 1s), THEN
-// move → the active hybrid content window moves. There is NO instant drag — the
-// prior R2 navbar-background instant drag + `#drag-zone` strip handlers are
-// REMOVED. This applies UNIFORMLY over the overlay chrome (navbar / gutters /
-// panels) AND the web page content.
-//
-// dnd / selection / click safety: ANY pointer movement beyond JITTER_TOLERANCE
-// BEFORE the hold threshold fires CANCELS window-drag candidacy and lets the
-// native gesture proceed untouched (link/image drag, text select, panel card
-// drag, normal click). Only a deliberate still-hold-then-move drags the window.
-//
-// ONE state machine for both regions. Over CHROME the overlay renderer natively
-// gets pointerdown/move/up. Over CONTENT the overlay is click-through above the
-// main-owned WebContentsView so it never sees button-down/up there — main
-// observes the content WC's `input-event` mouse stream and forwards it as
-// `page-overlay:content-pointer {phase, screenX, screenY}` (ipc.ts
-// wireHybridContentEvents). Both feed the SAME onDown/onMove/onUp below. On
-// hold-fire the FSM flips the overlay to CAPTURE (setCapture(true)) so post-hold
-// moves land on the overlay and drive the drag instead of selecting page text;
-// on up it releases capture (the reveal loop re-captures if still over chrome).
-const JITTER_TOLERANCE = 5; // px of movement allowed during hold without cancelling
-let DRAG_HOLD_THRESHOLD = 1000; // ms, updated from prefs (mirror page.js)
-
-// Read drag hold delay from prefs (mirror page.js ~1324-1332 exactly).
-(async () => {
-  try {
-    const prefs = await api.app.getPrefs();
-    if (prefs && typeof prefs.dragHoldDelay === 'number') {
-      DRAG_HOLD_THRESHOLD = Math.max(0, prefs.dragHoldDelay * 1000);
-    }
-  } catch { /* prefs unavailable — keep default */ }
-})();
-
-// Pure, observable hold-to-drag state machine. Effects (capture flip, bounds
-// publish, cursor) are injected so it can be unit-tested via the test bridge
-// without real pointer input. State: idle → pending(hold timer) → (cancel | ready)
-// → dragging. `now` is injectable for deterministic tests.
-function createHoldDrag(deps) {
-  const {
-    getThreshold, getTolerance, canStart, onDragStart, onDragMove, onDragEnd,
-    setGrabCursor, clearCursor, setSchedule, clearSchedule,
-  } = deps;
-  let buttonDown = false;
-  let pending = false;     // hold timer running, waiting for it to fire
-  let ready = false;       // hold fired; cursor 'grab'; waiting for movement
-  let dragging = false;
-  let timer = null;
-  let startX = 0, startY = 0;
-
-  function reset() {
-    if (timer != null) { clearSchedule(timer); timer = null; }
-    buttonDown = false; pending = false; ready = false; dragging = false;
-  }
-
-  function onDown(screenX, screenY) {
-    // A fresh press supersedes any prior candidacy.
-    if (timer != null) { clearSchedule(timer); timer = null; }
-    if (!canStart()) { buttonDown = false; pending = false; ready = false; dragging = false; return; }
-    buttonDown = true; pending = true; ready = false; dragging = false;
-    startX = screenX; startY = screenY;
-    timer = setSchedule(() => {
-      timer = null;
-      if (!buttonDown || !pending) return; // released or cancelled before fire
-      pending = false; ready = true;
-      setGrabCursor();
-    }, getThreshold());
-  }
-
-  function onMove(screenX, screenY) {
-    if (!buttonDown) return;
-    if (pending) {
-      // Pre-threshold: any movement beyond tolerance cancels candidacy so the
-      // native gesture (dnd / selection / panel card drag / click) proceeds.
-      const dx = Math.abs(screenX - startX);
-      const dy = Math.abs(screenY - startY);
-      if (dx > getTolerance() || dy > getTolerance()) {
-        pending = false;
-        if (timer != null) { clearSchedule(timer); timer = null; }
-      }
-      return;
-    }
-    if (ready) {
-      // Hold fired, first movement → begin the actual window drag from the
-      // press point (so the window tracks 1:1 with the cursor from press).
-      ready = false; dragging = true;
-      onDragStart(startX, startY);
-    }
-    if (dragging) onDragMove(screenX, screenY);
-  }
-
-  function onUp() {
-    const wasDragging = dragging;
-    reset();
-    clearCursor();
-    if (wasDragging) onDragEnd();
-  }
-
-  function onButtonsCleared() {
-    // A document mousemove arrived with NO buttons pressed while we still think
-    // a button is down. This is our fallback for a mouseup we didn't natively
-    // see (the overlay is click-through over the content WC, so a real
-    // button-up can be missed). Only honor it once the gesture has LATCHED —
-    // `ready` (hold fired, grab cursor shown) or `dragging` (actively moving the
-    // host) — the states where a missed release would strand a grab/drag that
-    // follows the cursor forever.
-    //
-    // During `pending` (the hold window, before the threshold timer fires) a
-    // zero-button move is almost always OS jitter: focus/blur churn retargets
-    // the overlay window, its frame moves, and macOS synthesizes a buttons=0
-    // mousemove at the new cursor-relative position. Treating THAT as a release
-    // cancels a legitimate held-still press — the confirmed cause of the
-    // hold-to-drag test flake AND a real "press cancelled by pointer jitter"
-    // fragility. So ignore it while pending; a genuine release still arrives as
-    // a native `mouseup`, and if it somehow didn't, the worst case is the timer
-    // briefly shows the grab cursor and self-corrects on the next event.
-    if (dragging || ready) onUp();
-  }
-
-  return {
-    onDown, onMove, onUp, onButtonsCleared,
-    isDragging: () => dragging,
-    // test-only inspectors
-    _state: () => ({ buttonDown, pending, ready, dragging }),
-  };
-}
-
-let dragStartBx = 0;
-let dragStartBy = 0;
-let dragStartScreenX = 0;
-let dragStartScreenY = 0;
-
-const holdDrag = createHoldDrag({
-  getThreshold: () => DRAG_HOLD_THRESHOLD,
-  getTolerance: () => JITTER_TOLERANCE,
-  // A window move only starts when there is an active, non-maximized window.
-  canStart: () => activeWindowId != null && !!activeBounds && !maximized,
-  onDragStart: (screenX, screenY) => {
-    dragStartBx = activeBounds.x;
-    dragStartBy = activeBounds.y;
-    dragStartScreenX = screenX;
-    dragStartScreenY = screenY;
-    // Take over the pointer: become opaque so post-hold moves hit the overlay
-    // (and the page below stops text-selecting). Restored on drag end.
-    setCapture(true);
-    document.body.style.cursor = 'grabbing';
-    publishDragCursor('grabbing'); // paint 'grabbing' over web content too
-  },
-  onDragMove: (screenX, screenY) => {
-    if (!activeBounds) return;
-    activeBounds.x = dragStartBx + (screenX - dragStartScreenX);
-    activeBounds.y = dragStartBy + (screenY - dragStartScreenY);
-    publishBounds();
-  },
-  onDragEnd: () => {
-    document.body.style.cursor = '';
-    // A real drag just ended: swallow the click that this button-up would
-    // otherwise synthesize, so a drag that STARTED on an interactive surface
-    // (URL bar, widget, nav button) doesn't fire an unwanted click on release.
-    // (onDragEnd only runs when a drag actually happened — see the FSM's onUp.)
-    suppressNextClick = true;
-    // Release capture; the reveal-loop mousemove re-captures if the pointer is
-    // still over chrome, else the content window stays interactive.
-    setCapture(false);
-  },
-  setGrabCursor: () => { document.body.style.cursor = 'grab'; publishDragCursor('grab'); },
-  clearCursor: () => { document.body.style.cursor = ''; publishDragCursor(null); },
-  setSchedule: (fn, ms) => setTimeout(fn, ms),
-  clearSchedule: (t) => clearTimeout(t),
+// A window drag anywhere freezes the capture state (see windowDragActive). Not
+// gated on the active window: there is one pointer, and the dragged page may be
+// one this overlay has not been retargeted to yet.
+api.subscribe('window:drag-active', (msg) => {
+  windowDragActive = !!(msg && msg.active);
 });
 
-// CHROME region: the overlay renderer natively receives these. The hold-to-drag
-// gesture is Peek-wide — it starts on ALL overlay chrome surfaces (navbar
-// background, address bar, nav buttons, widgets, panels), not just the navbar
-// background. So the START binding is a DOCUMENT capture-phase mousedown rather
-// than a navbar-scoped one.
-//
-// Capture phase is REQUIRED: peek-navbar is a shadow-DOM Lit component whose URL
-// input `@mousedown` handler calls stopPropagation (to protect caret placement),
-// and #widget-container is a SIBLING of <peek-navbar>. A navbar-scoped bubble
-// listener would never see either. A document capture-phase listener runs before
-// any shadow-internal stopPropagation can block it, so the press is always seen.
-function shouldBlockOverlayDrag(e) {
-  // Walk composedPath (innermost → outermost). At the document level e.target is
-  // retargeted to the <peek-navbar> host, so composedPath is the only way to see
-  // the REAL innermost element INTO the shadow DOM (URL input, buttons, widgets).
-  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-  for (const node of path) {
-    if (!node || node.nodeType !== 1) continue; // elements only (skip document/window)
-    const el = node;
-    // Explicit opt-out marker (mirrors tile-preload shouldBlockDrag) — but NOT the
-    // <body>'s own data-no-drag: the overlay body carries it to opt OUT of
-    // tile-preload's whole-body window drag (tile-preload initDrag bails when
-    // body has data-no-drag), NOT to disable the overlay's own hold-drag. Honor
-    // the marker only on a specific control/widget BELOW body/html.
-    if (typeof el.closest === 'function') {
-      const nd = el.closest('[data-no-drag]');
-      if (nd && nd !== document.body && nd !== document.documentElement) return true;
-    }
-    const tag = (el.tagName || '').toLowerCase();
-    // Shadow-aware "active element": check within the element's OWN root, since a
-    // focused element inside a shadow tree is `shadowRoot.activeElement`, not
-    // `document.activeElement`. Only block an ACTIVELY-focused text field: this
-    // lets the FIRST press on the (unfocused) URL bar start hold-drag candidacy
-    // (gap 2) while a press WHILE editing the URL doesn't hijack caret placement.
-    // At capture-phase mousedown native focus hasn't moved yet, so an unfocused
-    // URL bar reads as not-active → candidacy starts; a quick release still
-    // focuses+edits it (no drag fired), only a still-hold-then-move drags.
-    const root = typeof el.getRootNode === 'function' ? el.getRootNode() : null;
-    const activeInRoot = !!root && root.activeElement === el;
-    if ((tag === 'input' || tag === 'textarea') && activeInRoot) return true;
-    if (el.isContentEditable && activeInRoot) return true;
-  }
-  return false;
-}
-document.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
-  if (shouldBlockOverlayDrag(e)) return;
-  holdDrag.onDown(e.screenX, e.screenY);
-}, true);
-// A real drag can now start on interactive chrome (URL bar, widgets, nav
-// buttons). If it ends over one of those, swallow the click the button-up
-// synthesizes so the drag doesn't also trigger the element's action. Set only
-// on a genuine drag end (onDragEnd), mirrored on tile-preload's onClickCapture.
-let suppressNextClick = false;
-document.addEventListener('click', (e) => {
-  if (suppressNextClick) {
-    suppressNextClick = false;
-    e.stopImmediatePropagation();
-    e.preventDefault();
-  }
-}, true);
-// Document-level move/up drive the drag once started, regardless of origin
-// (mirrors page.js). The reveal-loop mousemove handler above is guarded to not
-// fight capture while dragging (see that handler).
-document.addEventListener('mousemove', (e) => {
-  // A no-button move means "the mouse button is up" — but the FSM decides what
-  // that implies per state (release only once latched; ignore mid-hold jitter).
-  if (e.buttons === 0) { holdDrag.onButtonsCleared(); return; }
-  holdDrag.onMove(e.screenX, e.screenY);
-});
-document.addEventListener('mouseup', () => holdDrag.onUp());
-
-// CONTENT region: main forwards the page's pointer stream here (the overlay is
-// click-through over the WebContentsView so it can't see content button-down/up
-// natively). Same FSM. Active-window-gated (ignore foreign windows).
-//
 // Top-border reveal (peek 363e7cff): the overlay's own forwarded-`mousemove`
 // reveal loop (above) is STARVED when the content WebContentsView is the macOS
 // first responder and fills the overlay frame (the maximized / no-gutter case) —
-// the content WC captures the idle moves the reveal loop needs. So main also
-// forwards IDLE top-band moves as `phase:'reveal'` / `phase:'reveal-out'` (it owns
-// the host geometry, so this works edge-to-edge incl. maximized). We drive the
-// SAME requestReveal()/requestHide() route the trigger-zone hover uses; the dwell
-// for a host flush with the screen top lives there, in one place. The local
-// reveal loop still owns the gutter case (where the overlay sees moves natively);
-// both feeding requestReveal/requestHide is idempotent (cancelHide/scheduleHide
-// guard each other), so the two paths never fight.
+// the content WC captures the idle moves the reveal loop needs. So main forwards
+// IDLE top-band moves as `phase:'reveal'` / `phase:'reveal-out'` (it owns the host
+// geometry, so this works edge-to-edge incl. maximized). We drive the SAME
+// requestReveal()/requestHide() route the trigger-zone hover uses; the dwell for a
+// host flush with the screen top lives there, in one place. The local reveal loop
+// still owns the gutter case (where the overlay sees moves natively); both feeding
+// requestReveal/requestHide is idempotent (cancelHide/scheduleHide guard each
+// other), so the two paths never fight.
 api.subscribe('page-overlay:content-pointer', (msg) => {
   if (!isActive(msg)) return;
-  if (msg.phase === 'down') holdDrag.onDown(msg.screenX, msg.screenY);
-  else if (msg.phase === 'move') holdDrag.onMove(msg.screenX, msg.screenY);
-  else if (msg.phase === 'up') holdDrag.onUp();
-  else if (msg.phase === 'reveal') requestReveal();
+  if (msg.phase === 'reveal') requestReveal();
   else if (msg.phase === 'reveal-out') requestHide();
-  // No 'edge' phase: edge/corner RESIZE is owned entirely by main (cursor +
-  // drag against the content WC); the overlay only learns a resize is active via
-  // page-overlay:resize-active (above) so it stays click-through during the drag.
 });
-
-// Expose the pure FSM factory + the live instance for focus-free unit coverage
-// (press→move-before-threshold cancels; press→hold→move drags). Drives the REAL
-// path: the bridge builds an FSM with injected fake schedule/effects and asserts
-// transitions, and reads the live instance's state after synthetic events.
-if (typeof globalThis !== 'undefined') {
-  globalThis.__peekHoldDragTest = {
-    createHoldDrag, holdDrag, shouldBlockOverlayDrag, publishDragCursor,
-  };
-}
 
 // --- Maximize / restore (navbar double-click, mirrors page.js toggleMaximize) ---
 function toggleMaximize() {

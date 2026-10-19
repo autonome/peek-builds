@@ -253,6 +253,8 @@ import {
   clearEditableFocusForWc,
 } from './hybrid-editable-focus.js';
 import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
+import { setWebContentsCursor } from './webcontents-cursor.js';
+import { claimWindowPress } from './window-drag-runtime.js';
 import {
   HYBRID_LOAD_TIMEOUT_MS,
   LOAD_TIMED_OUT_CODE,
@@ -819,16 +821,6 @@ function applyPlacementOnReuse(
 const TRIGGER_ZONE_PX = 4;
 const REVEAL_EXIT_PX = 44;
 
-// Per-host content-cursor setters, keyed by host windowId. Each hybrid content WC
-// registers its `setContentCursor` (which feeds the SAME single-in-flight cursor
-// reconciler its resize hover cursor uses — see wireHybridContentEvents) here, so
-// the ONE global `page:drag-cursor` subscription (installHybridNavbarActionRouting)
-// can paint the hold-to-drag grab/grabbing cursor over the RIGHT host's web
-// content. Reusing the per-host reconciler (rather than a second, independent one)
-// guarantees resize + grab can never leave two cursors painted on one WC. Cleaned
-// on content-WC teardown so a closed host leaves no stale setter.
-const hybridContentCursorSetters = new Map<number, (cursor: string | null) => void>();
-
 /**
  * Construct the opaque, content-sized BaseWindow host shell for a hybrid
  * page-host. Extracted from the windowOpenHandler hybrid branch so the
@@ -1171,9 +1163,10 @@ function assembleHybridPageHost(
   fillView();
   baseWin.on('resize', fillView);
 
-  // Keep the chrome overlay's cached bounds (its drag math builds page:set-bounds
-  // from them) equal to the host's live bounds on every resize and move, native
-  // border resizes included — they reach no other publisher.
+  // Keep the chrome overlay's cached bounds (its panel layout and the maximize
+  // toggle's restore rect read them) equal to the host's live bounds on every
+  // resize and move, native border resizes and window drags included — they
+  // reach no other publisher.
   publishHostBoundsOnChange(baseWin, (bounds) => {
     try {
       publish(getSystemAddress(), 'page-overlay:bounds', {
@@ -2023,22 +2016,10 @@ export function wireHybridContentEvents(
     }
   });
 
-  // ── Hold-to-drag over web CONTENT: forward content pointer signals to overlay ─
-  // The web page is a MAIN-owned WebContentsView; the shared overlay sits above it
-  // CLICK-THROUGH (R1), so the overlay never natively sees button-down/up over the
-  // page — only forwarded moves. To support the Peek-wide HOLD-to-drag gesture
-  // (press → hold still for dragHoldDelay → move → window moves) UNIFORMLY over the
-  // page too, main observes the content WC's raw `input-event` mouse stream
-  // (SPIKE-confirmed to emit mouseDown/mouseMove/mouseUp with screen coords
-  // globalX/globalY on a WebContentsView in Electron 40) and forwards each as
-  // `page-overlay:content-pointer {windowId, phase, screenX, screenY}`. The overlay
-  // runs the SINGLE hold-to-drag state machine for BOTH chrome and content: it
-  // starts the hold timer on `down`, CANCELS on any `move` beyond tolerance before
-  // the threshold (so link/image drag + text selection + clicks proceed untouched),
-  // and on threshold-fire begins the window drag — flipping the overlay to capture
-  // so post-hold moves land on it and stop the page from selecting. windowId-tagged
-  // so the overlay (which gates on the active windowId) only acts for the active
-  // page. Button-held moves (down→up) are forwarded for the drag FSM.
+  // Hold-to-drag over web content is not handled here: every registered window's
+  // webContents feeds the window-manager-level gesture
+  // (electron-window-backend.ts wirePointerInput → window-drag-runtime.ts). An
+  // edge-resize press below claims its press from that gesture.
   //
   // ── Top-border reveal (peek 363e7cff — the last hybrid dead-focus cluster item) ─
   // Separately, IDLE (no-button) moves near the content's TOP EDGE are forwarded as
@@ -2099,82 +2080,28 @@ export function wireHybridContentEvents(
   const WORK_AREA_MATCH_PX = 2;
   let inRevealBand = false;
 
-  // Content-cursor reconciler. `wantCursor` is the intended FULL css cursor value
-  // (e.g. 'nw-resize' for edge/corner hover, 'grab'/'grabbing' for the hold-drag
-  // gesture); `appliedCursor`/`appliedKey` track the CSS actually inserted. A
-  // single in-flight applier (`applyingCursor`) serializes the async insert/remove
-  // and re-checks after, so rapid changes can't leave a stale cursor (race-free,
-  // no key churn).
-  //
-  // TWO producers feed this SAME state: the idle-move RESIZE hover cursor
-  // (setHoverDir) and the hold-to-drag GRAB cursor over content (setContentCursor,
-  // driven by the global page:drag-cursor subscription). They are TEMPORALLY
-  // EXCLUSIVE — a resize press `return`s before any content-pointer 'down', and no
-  // idle resize-move runs during a button-down hold — so routing both through one
-  // reconciler guarantees the WC can never end up with two cursors painted.
-  let wantCursor: string | null = null;
-  let appliedCursor: string | null = null;
-  let appliedKey: string | null = null;
-  let applyingCursor = false;
-  const reconcileCursor = (): void => {
-    if (applyingCursor) return;
-    if (wantCursor === appliedCursor) return;
-    applyingCursor = true;
-    void (async () => {
-      try {
-        if (appliedKey != null && !contentWC.isDestroyed()) {
-          try { await contentWC.removeInsertedCSS(appliedKey); } catch { /* gone */ }
-        }
-        appliedKey = null; appliedCursor = null;
-        const want = wantCursor;
-        if (want != null && !contentWC.isDestroyed()) {
-          try {
-            appliedKey = await contentWC.insertCSS(`*{cursor:${want} !important}`);
-            appliedCursor = want;
-          } catch { /* gone */ }
-        }
-      } finally {
-        applyingCursor = false;
-        if (wantCursor !== appliedCursor) reconcileCursor();
-      }
-    })();
-  };
-  const setCursor = (cursor: string | null): void => {
-    if (cursor === wantCursor) return;
-    wantCursor = cursor;
-    reconcileCursor();
-  };
-  // Resize hover cursor: maps a resize dir → `${dir}-resize` (null → no cursor).
+  // Resize hover cursor: a resize dir → `${dir}-resize`, null → no cursor. Painted
+  // through the per-webContents reconciler the hold-to-drag hand also uses
+  // (webcontents-cursor.ts), so the two can never leave two rules on this WC.
+  // They never want the WC at the same moment: hover runs only on buttonless
+  // moves, the hand only while a button is held. Written only on a change, so
+  // a hover recompute never clears the hand.
+  let hoverCursor: string | null = null;
   const setHoverDir = (dir: ResizeDir | null): void => {
-    setCursor(dir != null ? `${dir}-resize` : null);
+    const next = dir != null ? `${dir}-resize` : null;
+    if (next === hoverCursor) return;
+    hoverCursor = next;
+    setWebContentsCursor(contentWC, next != null ? { cursor: next } : null);
   };
-  // Hold-to-drag grab/grabbing cursor over web content (driven by the global
-  // page:drag-cursor handler). Feeds the SAME reconciler as resize.
-  const setContentCursor = (cursor: string | null): void => {
-    setCursor(cursor);
-  };
-  // Register this host's content-cursor setter so the global page:drag-cursor
-  // subscription can resolve it by windowId. Cleaned on content-WC teardown so a
-  // closed host leaves no stale setter (the reconciler already guards
-  // isDestroyed(), so a late call is harmless even before this fires).
-  hybridContentCursorSetters.set(hostWindowId, setContentCursor);
-  onContentDestroyed(() => { hybridContentCursorSetters.delete(hostWindowId); });
 
   // ── Pointer-gesture state for this host's content WC ─────────────────────
-  // ONE value, three named states — a left press over content is EITHER a resize
-  // OR a hold-to-drag OR nothing, never two at once.
+  // A left press over content is EITHER an edge resize OR nothing this listener
+  // owns (a hold-to-drag is the window manager's, see above).
   //
-  // This used to be two independent variables (`activeResize` object +
-  // `leftButtonDown` boolean), which made illegal combinations representable —
-  // and one of them shipped. `activeResize` was only ever cleared on `mouseUp`,
-  // but a resize that CLAMPS at MIN_RESIZE_W/MIN_RESIZE_H stops following the
-  // cursor, so the terminating release lands OUTSIDE the host and the content WC
-  // never sees that `mouseUp`. The resize stayed armed forever. The next plain
-  // press in the page interior correctly hit-tested to no direction and set
-  // `leftButtonDown`, but the first move matched the still-armed resize branch
-  // (tested first) and applied the PREVIOUS gesture's anchor — the window jumped
-  // at the start of an unrelated drag. With one state value that's unrepresentable:
-  // a press ends whatever came before (endGesture) before it decides what it is.
+  // A resize that CLAMPS at MIN_RESIZE_W/MIN_RESIZE_H stops following the
+  // cursor, so the terminating release can land OUTSIDE the host and the content
+  // WC never sees that `mouseUp`. So a press ends whatever came before
+  // (endGesture) before it decides what it is, rather than trusting a release.
   //   `resizing` carries the anchor: dir + press point + bounds AT PRESS, so each
   // move recomputes from a fixed origin.
   type PointerGesture =
@@ -2183,8 +2110,7 @@ export function wireHybridContentEvents(
         kind: 'resizing';
         dir: ResizeDir; sx: number; sy: number;
         sb: { x: number; y: number; width: number; height: number };
-      }
-    | { kind: 'dragging' };
+      };
   let gesture: PointerGesture = { kind: 'idle' };
 
   // The ONE transition back to idle, from any state, with the exit action that
@@ -2377,24 +2303,16 @@ export function wireHybridContentEvents(
         gesture = { kind: 'resizing', dir, sx: input.globalX, sy: input.globalY, sb: b };
         setHoverDir(dir);
         publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: true });
+        // The press is the resize's, not a hold-to-drag candidate.
+        const pressMachineId = getWindowIdFor(hostWindowId);
+        if (pressMachineId != null) claimWindowPress(pressMachineId);
         return;
       }
-      gesture = { kind: 'dragging' };
-      publish(getSystemAddress(), 'page-overlay:content-pointer', {
-        windowId: hostWindowId, phase: 'down', screenX: input.globalX, screenY: input.globalY,
-      });
     } else if (t === 'mouseMove' && gesture.kind === 'resizing') {
       applyResize(input.globalX, input.globalY);
-    } else if (t === 'mouseMove' && gesture.kind === 'dragging') {
-      // A move whose modifiers omit the left button means the release was lost
-      // (it landed off-host); end the drag instead of letting the window follow
-      // a cursor with no button held. An event without a modifiers array is not
-      // evidence either way and keeps the drag.
-      const leftHeld = !Array.isArray(input.modifiers) || input.modifiers.includes('leftbuttondown');
-      if (!leftHeld) endGesture();
-      publish(getSystemAddress(), 'page-overlay:content-pointer', {
-        windowId: hostWindowId, phase: leftHeld ? 'move' : 'up', screenX: input.globalX, screenY: input.globalY,
-      });
+    } else if (t === 'mouseMove' && Array.isArray(input.modifiers) && input.modifiers.includes('leftbuttondown')) {
+      // A button-held move outside a resize belongs to the window manager's
+      // hold-to-drag (or to the page); hover feedback waits for the release.
     } else if (t === 'mouseMove') {
       // Idle (no-button) move → top-border reveal AND edge/corner resize cursor.
       // Both read the host's screen-space bounds; reveal emits only on band-cross,
@@ -2464,7 +2382,7 @@ export function wireHybridContentEvents(
         const hoverMachineId = getWindowIdFor(hostWindowId);
         const contentFocused =
           hoverMachineId != null && getMachineWindowRecord(hoverMachineId)?.contentFocused === true;
-        setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, wantCursor !== null) : null);
+        setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, hoverCursor !== null) : null);
       }
     } else if (t === 'mouseUp' && input.button === 'left') {
       const g = gesture;
@@ -2473,13 +2391,7 @@ export function wireHybridContentEvents(
         // Recompute the hover cursor at the release point (persist if still in band).
         const b = hostBounds();
         setHoverDir(b ? resizeDirAt(b, input.globalX, input.globalY, false) : null);
-        return;
       }
-      if (g.kind !== 'dragging') return;
-      endGesture();
-      publish(getSystemAddress(), 'page-overlay:content-pointer', {
-        windowId: hostWindowId, phase: 'up', screenX: input.globalX, screenY: input.globalY,
-      });
     }
   });
 
@@ -2488,9 +2400,6 @@ export function wireHybridContentEvents(
   // to end it — that is exactly the abandoned-resize leak the press-time
   // `endGesture()` catches late. This closes it at the moment it happens, off an
   // existing lifecycle event (no timer, no poll).
-  //   `dragging` deliberately does NOT end on blur: that gesture is owned by the
-  // overlay's own pointer stream, which moves the window under the cursor and can
-  // legitimately take focus mid-drag.
   contentWC.on('blur', () => {
     if (gesture.kind === 'resizing') endGesture();
   });
@@ -2983,23 +2892,6 @@ export function installHybridNavbarActionRouting(): void {
       // window manager.
       kernelSetBounds(machineId, setBounds);
     }
-  });
-
-  // page:drag-cursor — paint the hold-to-drag grab/grabbing cursor over the
-  // host's WEB CONTENT. The overlay is never the macOS first responder, so it can
-  // only paint its own `document.body.style.cursor` over the CHROME region, not
-  // over the content WebContentsView; main owns the content WC and paints there.
-  // Resolved per-window via the SAME windowId keying page:set-bounds uses (here
-  // via the host's registered setContentCursor), routed into that host's single
-  // cursor reconciler. `state`: 'grab' (hold fired) / 'grabbing' (dragging) /
-  // anything else incl. null (released → clear). NOT gated on contentWC.isFocused()
-  // (unlike the resize hover cursor): a drag press has already focused the host.
-  subscribe(getSystemAddress(), 'page:drag-cursor', (raw) => {
-    const msg = raw as { windowId?: number; state?: string } | null;
-    if (!msg || typeof msg.windowId !== 'number') return;
-    const setContentCursor = hybridContentCursorSetters.get(msg.windowId);
-    if (!setContentCursor) return;
-    setContentCursor(msg.state === 'grab' || msg.state === 'grabbing' ? msg.state : null);
   });
 
   // page:maximize — snap the host to its display's work area. Kernel-owned

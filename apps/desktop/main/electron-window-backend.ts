@@ -57,6 +57,30 @@ import {
 import { expandToOverlayFrame } from './overlay-frame.js';
 import { wmLog, type WmLogFields } from './window-diag.js';
 import { UserRaiseReassert } from './user-raise-reassert.js';
+import { windowDragPointer, windowDragVeto, windowDragWindowClosed } from './window-drag-runtime.js';
+import type { DragCursor } from './window-drag.js';
+import { setWebContentsCursor, type CursorWebContents } from './webcontents-cursor.js';
+
+// The message a window's preload sends when it judges the current press not
+// draggable (docs/design/window-drag.md "What blocks a press").
+export const WINDOW_DRAG_PRESS_BLOCKED = 'window-drag:press-blocked';
+
+// One Electron `input-event` mouse event as the hold-to-drag runtime sees it,
+// or null for anything it does not consume (other buttons, keys, wheel).
+export function translatePointerInput(
+  input: unknown,
+): { type: 'press'; x: number; y: number } | { type: 'move'; x: number; y: number; buttonHeld: boolean | null } | { type: 'release' } | null {
+  const i = input as { type?: string; button?: string; globalX?: number; globalY?: number; modifiers?: unknown } | null;
+  if (!i || typeof i.globalX !== 'number' || typeof i.globalY !== 'number') return null;
+  if (i.type === 'mouseDown' && i.button === 'left') return { type: 'press', x: i.globalX, y: i.globalY };
+  if (i.type === 'mouseUp' && i.button === 'left') return { type: 'release' };
+  if (i.type === 'mouseMove') {
+    // No modifiers array is no evidence either way about the button.
+    const buttonHeld = Array.isArray(i.modifiers) ? i.modifiers.includes('leftbuttondown') : null;
+    return { type: 'move', x: i.globalX, y: i.globalY, buttonHeld };
+  }
+  return null;
+}
 import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization } from './window-kernel-executor.js';
@@ -511,6 +535,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (decision.attachNativeListeners) {
       this.attachNativeListeners(id, osWindowId, win, kind, rendererWC);
     }
+    // Every webContents a window adopts, including one adopted on a
+    // re-registration, feeds the hold-to-drag gesture.
+    if (decision.adoptRendererWC && rendererWC) this.wirePointerInput(id, rendererWC);
 
     let initialBounds: Rectangle | null = null;
     try {
@@ -679,6 +706,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.pendingMachineClose.delete(id);
       this.windows.delete(id);
       this.idByOsWindowId.delete(osWindowId);
+      windowDragWindowClosed(id);
       kernelWindowClosed(id);
     });
     win.on('enter-full-screen', () => {
@@ -730,6 +758,39 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         kernelContentFirstResponderChanged(id, false);
       });
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Hold-to-drag input and indicator (docs/design/window-drag.md). The gesture
+  // itself is window-drag.ts; this backend only reports pointer events and
+  // paints the hand cursor.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private readonly pointerWired = new WeakSet<NativeWebContents>();
+
+  private wirePointerInput(id: WindowId, wc: NativeWebContents): void {
+    if (this.pointerWired.has(wc)) return;
+    this.pointerWired.add(wc);
+    wc.on('input-event', (_event: unknown, input: unknown) => {
+      const pointer = translatePointerInput(input);
+      if (pointer) windowDragPointer(id, pointer);
+    });
+    wc.on('ipc-message', (_event: unknown, channel: unknown) => {
+      if (channel === WINDOW_DRAG_PRESS_BLOCKED) windowDragVeto(id);
+    });
+  }
+
+  // The hand cursor over a window's own webContents, with text selection off
+  // while it shows.
+  paintDragIndicator(id: WindowId, cursor: DragCursor): void {
+    const wc = this.windows.get(id)?.rendererWC as (NativeWebContents & Partial<CursorWebContents>) | null | undefined;
+    if (!wc || typeof wc.insertCSS !== 'function' || typeof wc.removeInsertedCSS !== 'function') return;
+    try {
+      if (wc.isDestroyed()) return;
+    } catch {
+      return;
+    }
+    setWebContentsCursor(wc as CursorWebContents, cursor ? { cursor, noSelect: true } : null);
   }
 
   // ───────────────────────────────────────────────────────────────────────────

@@ -16,8 +16,11 @@ import {
   kernelWindowShown,
   kernelSetDesktopMembership,
   kernelShowRequested,
+  kernelSetBounds,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
+import { initWindowDrag, resolveDragTarget, movableRecord } from './window-drag-runtime.js';
+import { getPrefs } from './windows.js';
 import { cyclableWindowIds, cycleTarget, type CycleDirection } from './window-cycle.js';
 import { isContentWindow, windowById, reusableHere, frontWindowHere } from './window-kernel.js';
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
@@ -84,6 +87,38 @@ export function initWindowStateMachine(): void {
   setKernelExecutorProvider(() => getKernelExecutorForApp());
   getWindowBackend().attachAppListeners();
   seedSessionMirror();
+  initWindowDragRuntime();
+}
+
+// The default `dragHoldDelay` pref, in seconds (renderer/config.js).
+const DEFAULT_DRAG_HOLD_DELAY_S = 1;
+
+// Hold-to-drag (docs/design/window-drag.md): the runtime reads the kernel to
+// decide which window a press moves, moves it through the kernel, and paints
+// its indicator through this backend.
+function initWindowDragRuntime(): void {
+  initWindowDrag({
+    resolveTarget: (source) => resolveDragTarget(getKernelExecutor().getState(), source),
+    movableBounds: (target) => {
+      if (!movableRecord(getKernelExecutor().getState(), target)) return null;
+      const native = getWindowBackend().getNativeWindowFor(target);
+      try {
+        return native ? native.getBounds() : null;
+      } catch {
+        return null;
+      }
+    },
+    holdMs: () => {
+      const delay = getPrefs().dragHoldDelay;
+      return Math.max(0, (typeof delay === 'number' && Number.isFinite(delay) ? delay : DEFAULT_DRAG_HOLD_DELAY_S) * 1000);
+    },
+    setBounds: (id, bounds) => kernelSetBounds(id, bounds),
+    paintIndicator: (id, cursor) => getWindowBackend().paintDragIndicator(id, cursor),
+    announceActive: (active) => {
+      wmLog('window-drag-active', { active });
+      publish(getSystemAddress(), 'window:drag-active', { active });
+    },
+  });
 }
 
 // Keeps the izui coordinator's own display-facing state (mode indicator, tile:izui:* handlers)
