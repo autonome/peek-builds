@@ -597,6 +597,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     kind: WindowKind,
     rendererWC: NativeWebContents | null,
   ): void {
+    // A click or key press inside a Peek window, so a trace shows what the user did between the
+    // window manager's own events. Only the input type and, for keys, a non-printable key's name
+    // are logged, never typed text.
+    rendererWC?.on('input-event', (_event: unknown, input: unknown) => {
+      const { type, key } = input as { type?: string; key?: string };
+      if (type !== 'mouseDown' && type !== 'rawKeyDown') return;
+      wmLog('user-input', { id, type, ...(type === 'rawKeyDown' && key !== undefined && key.length > 1 ? { key } : {}) });
+    });
     win.on('focus', () => {
       this.onDesktopTriggerCoalesced('window-focus');
       wmLog('native-focus-arrived', { id, producer: 'host-window', ...this.describeInFlightOps() });
@@ -631,7 +639,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       const focused = opSeq !== undefined && this.isFocused(win);
       // A show with no op token is one the platform made by itself; naming the window lets a trace
       // tell which one, since its desktop read below logs only the trigger.
-      wmLog('native-show', { id, opSeq: opSeq ?? null, focused: this.isFocused(win) });
+      const shownState = getKernelExecutor().getState();
+      wmLog('native-show', {
+        id,
+        opSeq: opSeq ?? null,
+        focused: this.isFocused(win),
+        desktop: windowById(shownState, id)?.desktop ?? null,
+        currentDesktop: shownState.screens[0]?.current ?? null,
+        appActive: getAppActive(),
+      });
       kernelWindowShown(id, focused, opSeq);
       this.onDesktopTrigger('window-shown');
     });
