@@ -1,10 +1,10 @@
 ---
 enabled: true
-touches: [apps/desktop/tests/desktop/spaces-delete.spec.ts, apps/desktop/tests/unit/spaces-delete-confirm.test.js, apps/desktop/tests/desktop/transient-on-blur.spec.ts, apps/desktop/tests/desktop/page-translate-front-window.spec.ts, apps/desktop/tests/desktop-serial/modal-self-close-on-blur.spec.ts, apps/desktop/main/hybrid-overlay.ts, apps/desktop/main/entry.ts, apps/desktop/tests/gate-baseline.md]
+touches: [apps/desktop/tests/desktop/spaces-delete.spec.ts, apps/desktop/tests/unit/spaces-delete-confirm.test.js, apps/desktop/tests/desktop/transient-on-blur.spec.ts, apps/desktop/tests/desktop/page-translate-front-window.spec.ts, apps/desktop/main/hybrid-overlay.ts, apps/desktop/tests/gate-baseline.md]
 depends-on: []
 ---
 
-# Four Linux gate failures on main at 48210abe
+# Three Linux gate failures on main at 48210abe, and the baseline record
 
 The 2026-10-19 Linux gate on `48210abe` failed seven tests. Three passed when re-run alone
 (`hybrid-escape-editable-guard.spec.ts` "ESC with an empty editable focused opens the switcher",
@@ -42,28 +42,25 @@ product code.
    the Spanish offer. The translate code is unchanged since the spec landed (`af689013`); the spec
    has likely never passed on Linux.
 4. **`desktop-serial/modal-self-close-on-blur.spec.ts`** "modal:true window is dismissed when
-   another window takes focus". The modal is still present. Suspected, not confirmed: on Linux
-   `electron-window-backend.ts` sets `restackingTakesFocus`, so `window-kernel.ts
-   platformChoseFocus()` treats the synthetic focus from `entry.ts __peek_test.fireWindowFocus`,
-   which follows a restack, as the platform's own choice; no `OsFocusGained` sweep runs
-   (`selectTransientAutoclose`), and the modal survives. `apps/desktop/CLAUDE.md` ("The
-   `waitOverlayReady` timeout on Linux") records the same swallow for fake hosts, fixed by
-   `installTestBridge showFocused()`. Open: that rule landed `59494974` (2026-09-29), before the
-   last recorded gate, so the timing is unexplained.
+   another window takes focus". The modal is still present. This is the known open product defect
+   Peek `3bb9b6ab`: on Linux `electron-window-backend.ts` sets `restackingTakesFocus`, and
+   `window-kernel.ts platformChoseFocus()` holds an expectation of a platform focus after a
+   restack that never expires when the window manager does not answer, so the next genuine focus
+   is swallowed and no `OsFocusGained` sweep (`selectTransientAutoclose`) runs. The test is
+   correct; it stays failing. Which fix to take for `3bb9b6ab` is undecided, so neither the test,
+   the test bridge nor the kernel changes in this spec.
 
 ## What to do
 
 - Items 1 and 2: apply the test fixes above.
-- Items 3 and 4: first confirm the cause with one logged run each (`main/window-diag.ts wmLog()`
-  lines reach the test output; log the `page-overlay:active` payload in `sendActiveHandoff` for
-  item 3, and the `platformChoseFocus` verdict for the focused id for item 4), then remove the
+- Item 3: first confirm the cause with one logged run (`main/window-diag.ts wmLog()` lines reach
+  the test output; log the `page-overlay:active` payload in `sendActiveHandoff`), then remove the
   diagnostic lines.
-  - Confirmed: fix in the test or the test bridge only. For item 3, make the spec wait until the
-    bridge's active id is the target before polling, or use a fake host for the second window.
-    For item 4, have `fireWindowFocus` report the focus the way `showFocused()` does, as a
-    confirmed focus rather than a world focus after a restack.
+  - Confirmed: fix in the test or the test bridge only: make the spec wait until the bridge's
+    active id is the target before polling, or use a fake host for the second window.
   - Not confirmed: record what the log showed under `**Result**` in the handoff, leave that spec
     untouched, and stop on it.
+- Item 4: no change; record it in the baseline as the known defect `3bb9b6ab`.
 - `gate-baseline.md`: add a dated section "Linux gate on `48210abe` (2026-10-19)" with the runner
   totals (main-process unit 4365 pass / 0 fail, node unit 1321 / 0, desktop 572 / 6 / 24 skipped,
   desktop-serial 54 / 1, components 71 / 0, editor 91 / 0), the three intermittent tests above,
@@ -76,12 +73,11 @@ product code.
 yarn workspace @peek/desktop build
 NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js
 yarn workspace @peek/desktop test:grep "deleting a space|survives a palette focusing|the offer and the status hide"
-HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop-serial --workers=1 --grep "modal:true window is dismissed"
 ```
 
-Done when the node unit tally reports `fail 0`, the `test:grep` run collects 3 tests and the
-serial run collects 1, and every one passes except any item recorded as not confirmed. Record each
-run's pass/fail count under `**Result**` in the handoff.
+Done when the node unit tally reports `fail 0`, the `test:grep` run collects 3 tests and every
+one passes except item 3 if it is recorded as not confirmed. Record the pass/fail count under
+`**Result**` in the handoff.
 
 ## Working rules
 
