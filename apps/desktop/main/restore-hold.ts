@@ -116,6 +116,21 @@ export function planReleaseFocus(
 }
 
 /**
+ * Whether the app was active as the latest desktop switch began. The kernel
+ * state notified for the switch notice still has the app's state from before
+ * the switch; macOS resigns the app a few ms later, so a release that reads
+ * `appActive` after the desktop read sees the OS's reaction, not the user's
+ * state. A notification that carries no new switch keeps the recorded value.
+ */
+export function noteDesktopSwitch(
+  tracked: { switchesSeen: number; activeAtSwitch: boolean },
+  kernel: { desktopSwitchCount: number; appActive: boolean },
+): { switchesSeen: number; activeAtSwitch: boolean } {
+  if (kernel.desktopSwitchCount <= tracked.switchesSeen) return tracked;
+  return { switchesSeen: kernel.desktopSwitchCount, activeAtSwitch: kernel.appActive };
+}
+
+/**
  * Fold still-held descriptors back into a save: a quit while groups are held
  * must re-save them with their recorded desktops, not drop them. The live
  * set's focus wins — when the save already carries a focused window, a held
