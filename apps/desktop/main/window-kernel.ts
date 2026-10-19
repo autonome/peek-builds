@@ -2126,6 +2126,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
 
     for (let i = suffixStart; i < N.length; i++) {
+      if (stackingWouldSwitchDesktop(next, N[i])) continue;
       effects.push({ type: 'SetStacking', id: N[i].id, layer: N[i].layer });
     }
   }
@@ -2536,6 +2537,18 @@ export function onCurrentDesktop(state: State, record: WindowRecord): boolean {
   if (isOnEveryDesktop(record) || state.screens.length === 0) return true;
   if (desktopUnread(state)) return false;
   return record.desktop !== undefined && isCurrentDesktop(state, record.desktop);
+}
+
+// True when re-ordering the window could take the user to another desktop: it
+// is placed on one desktop, and that desktop is not shown, or a switch is
+// still unread so `current` cannot be trusted. Ordering such a window to the
+// front while the app is active switches to its desktop (peek 4fa36692: a
+// stacking replay after a swipe re-ordered the window key on the desktop just
+// left, and the user was taken back there). A window never placed, or on every
+// desktop, is always safe to order.
+export function stackingWouldSwitchDesktop(state: State, record: WindowRecord): boolean {
+  if (isOnEveryDesktop(record) || state.screens.length === 0 || record.desktop === undefined) return false;
+  return desktopUnread(state) || !isCurrentDesktop(state, record.desktop);
 }
 
 // True from a switch notice until a desktop read covering it: `current` still
