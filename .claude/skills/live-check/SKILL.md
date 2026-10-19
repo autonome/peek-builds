@@ -78,8 +78,9 @@ shows up on every launch and never means anything; don't widen it to hide a real
 - **Headless (default):** `PEEK_HEADLESS=1`. The app exiting ends the check; the
   supervisor records the exit code and stops its watchers.
 - **Visible (`--visible`):** a real window, which takes focus once at launch on macOS —
-  ask the user before using it. When the app quits, it is relaunched a second later
-  (`relaunched` event) until `stop`, because a restart is often part of the check.
+  ask the user before using it. A quit ends the check, as in headless mode. Add
+  `--relaunch` only when a restart is part of the check: the app then comes back a second
+  after each quit (`relaunched` event) until `stop`.
 
 ## Refusals (nothing is launched)
 

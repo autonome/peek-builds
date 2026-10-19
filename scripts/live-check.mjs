@@ -22,8 +22,8 @@
  *     launch's stdout/stderr and the profile's main.log filtered to lines that
  *     look like errors (--all passes everything), and every line any --watch
  *     command prints;
- *   - in visible mode relaunches the app whenever it quits, until `stop`;
- *     in headless mode an exit ends the check.
+ *   - with --visible --relaunch, relaunches the app whenever it quits, until
+ *     `stop`; otherwise an exit ends the check.
  *   Unfiltered stdout/stderr go to electron.out.log beside the event log.
  *
  * `stop` kills only processes whose command line contains this worktree's
@@ -225,10 +225,11 @@ function launchRefusal(worktree) {
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 function parseStartArgs(argv) {
-  const opts = { worktree: null, visible: false, profile: null, watches: [], all: false };
+  const opts = { worktree: null, visible: false, relaunch: false, profile: null, watches: [], all: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--visible') opts.visible = true;
+    else if (a === '--relaunch') opts.relaunch = true;
     else if (a === '--all') opts.all = true;
     else if (a === '--profile') opts.profile = argv[++i];
     else if (a === '--watch') opts.watches.push(argv[++i]);
@@ -519,9 +520,9 @@ async function supervise(worktree) {
       electron = null;
       if (stopping) return;
       emit('lifecycle', `exited code=${code} signal=${signal}`);
-      if (opts.visible) {
-        // A quit during a visible check is often part of it (restart to see a
-        // setting persist); bring the app back until told to stop.
+      if (opts.visible && opts.relaunch) {
+        // Asked for when a restart is part of the check (a setting persisting):
+        // bring the app back until told to stop. Without it a quit ends the check.
         setTimeout(() => { if (!stopping) launch(); }, 1_000);
       } else {
         shutdown(code ?? 1);
@@ -562,7 +563,7 @@ async function supervise(worktree) {
 // ── Entry ────────────────────────────────────────────────────────────────────
 
 const USAGE = `usage:
-  live-check start <worktree> [--visible] [--profile <name>] [--watch '<cmd>']... [--all]
+  live-check start <worktree> [--visible [--relaunch]] [--profile <name>] [--watch '<cmd>']... [--all]
   live-check status [<worktree>]
   live-check stop <worktree>
   live-check log-path <worktree>
