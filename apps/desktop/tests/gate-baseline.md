@@ -773,3 +773,23 @@ in the previous section (`hybrid-close-two-hosts-hang.spec.ts`, `hybrid-show-act
 Treat a failure of any of them as a flake rather than a regression until a recording catches it on
 an unchanged tree twice. The INACTIVE case failed in two consecutive gates, but on different trees,
 so it stays intermittent.
+
+### Gates after the transient closing rule (2026-10-19)
+
+Two full gates on `main`, macOS arm64. The first, at `788737cc`, failed 7 `desktop` tests; each was
+traced to a cause and fixed or skipped (test changes `64c42665`, `69b31bc0`, `b5904c4c`; product fix
+`f4a29804`; `dedf1d36` skips the two command-chaining popup tests pending peek `ef7f63a8`). The
+second, at `f4a29804`, was green:
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 4358 | 0 | 1 |
+| node unit | 1331 | 0 | 0 |
+| desktop | 567 | 0 | 26 |
+| desktop-serial | 55 | 0 | 1 |
+| components | 71 | 0 | — |
+| editor | 91 | 0 | — |
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `hybrid-overlay.spec.ts` | move intent moves the content window + overlay follows (P1.4b-3) | intermittent — failed in the `788737cc` gate only (window kept its starting bounds after `page:set-bounds`; cause not found); passes alone and in the `f4a29804` gate |
