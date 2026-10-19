@@ -1016,6 +1016,64 @@ describe('window-kernel: CloseOrHideWindow', () => {
     assert.strictEqual(next.order.find((w) => w.id === wid(1))?.visible, false);
   });
 
+  it('force closes a keepLive window instead of hiding it', () => {
+    // The window switcher's per-card close button: naming one window and asking
+    // for it to end is an explicit request, so keepLive no longer downgrades the
+    // close to a hide. Without `force` the same command still hides (above).
+    const state = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(1),
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          keepLive: true,
+        },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version, force: true });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [{ type: 'WindowClosed', id: wid(1) }]);
+    const next = fold(decision.events, state);
+    assert.strictEqual(next.order.some((w) => w.id === wid(1)), false, 'a forced close removes the window');
+  });
+
+  it('force reaches only the named window — a cascaded keepLive descendant is still hidden', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true, parentId: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version, force: true });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [
+      { type: 'WindowHidden', id: wid(2) },
+      { type: 'WindowClosed', id: wid(1) },
+    ]);
+  });
+
+  it('force does not override the app-lifetime refusal', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', appLifetime: true },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version, force: true });
+    assert.ok('rejected' in decision);
+    assert.strictEqual(decision.rejected, 'app-lifetime-window');
+  });
+
   it('a duplicate WindowHidden (backend echo + late native hide event) is a no-op re-merge', () => {
     // The backend echoes WindowHidden synchronously for every hide it performs, and the OS's own
     // native hide event for the same window lags a tick behind, so the kernel sees the same hide

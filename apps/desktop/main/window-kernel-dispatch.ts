@@ -427,6 +427,11 @@ export function kernelHideRequested(id: WindowId): void {
   kernelExecute({ type: 'HideWindow', id, expectedVersion: getKernelExecutor().getState().version });
 }
 
-export function kernelCloseOrHideRequested(id: WindowId): void {
-  kernelExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getKernelExecutor().getState().version });
+export function kernelCloseOrHideRequested(id: WindowId, force = false): void {
+  kernelExecute({
+    type: 'CloseOrHideWindow',
+    id,
+    ...(force ? { force: true } : {}),
+    expectedVersion: getKernelExecutor().getState().version,
+  });
 }

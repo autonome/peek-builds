@@ -2975,6 +2975,7 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:window:close', { mode: 'on' }, (event, args: {
     token: string;
     id?: number;
+    force?: boolean;
   }, _grant) => {
     const grant = _grant;
     const senderWin = windowFromWebContents(event.sender);
@@ -2986,6 +2987,10 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'window', 'window:close', check.error, args.token);
       return;
     }
+    // `force` ends a keepLive window for good instead of hiding it. It changes
+    // only what the close does, never who may ask: the capability check above
+    // is the same one an ordinary close goes through.
+    const force = args.force === true;
 
     let target: BrowserWindow | null = null;
     if (args.id != null) {
@@ -3003,7 +3008,7 @@ export function registerTileIpcHandlers(): void {
       // invocation stalls" that the repeat-invocation spec catches.
       // Fire-and-forget: closeOrHideWindow is async (hybrid branch awaits a
       // fullscreen exit) but never rejects; this handler is mode:'on' (no result).
-      void closeOrHideWindow(target.id, 'tile-ipc:window-close');
+      void closeOrHideWindow(target.id, 'tile-ipc:window-close', { force });
       return;
     }
     // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route through
@@ -3018,7 +3023,7 @@ export function registerTileIpcHandlers(): void {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
         // Fire-and-forget (async, never rejects) — mode:'on' handler.
-        void closeOrHideWindow(args.id, 'tile-ipc:window-close-hybrid');
+        void closeOrHideWindow(args.id, 'tile-ipc:window-close-hybrid', { force });
       }
     }
   });

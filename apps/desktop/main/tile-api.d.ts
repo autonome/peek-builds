@@ -101,8 +101,9 @@ interface TileWindow {
   /**
    * Close a window. Omit id to close the calling tile's window.
    * Requires `window.manage` (or self-close with any window capability).
+   * `force: true` ends a `keepLive` window for good instead of hiding it.
    */
-  close(id?: number): void;
+  close(id?: number, opts?: { force?: boolean }): void;
 
   /**
    * Get info about the calling tile's window.

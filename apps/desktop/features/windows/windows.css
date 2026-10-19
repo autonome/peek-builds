@@ -205,6 +205,18 @@ peek-card[data-hidden="true"] .card-title {
   color: var(--base04);
 }
 
+/* Per-card close button, at the right end of the header row. */
+.card-close {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* With a Hidden badge present the badge takes the right end, and the
+   close button follows it. */
+.card-hidden-badge + .card-close {
+  margin-left: 0;
+}
+
 .card-hidden-badge {
   font-size: 10px;
   font-weight: 600;
@@ -309,6 +321,14 @@ peek-grid.cards[view-mode="fit"] peek-card > [slot="header"] {
 /* Title — chip is on the wrapper now; title is plain white text. */
 peek-grid.cards[view-mode="fit"] .card-title {
   color: #fff;
+}
+
+/* The close button is the one thing in the header that takes its own
+   clicks. The header overlay above is deliberately pointer-transparent so
+   the whole card stays a single target for picking a window, which would
+   otherwise swallow the button along with everything else. */
+peek-grid.cards[view-mode="fit"] .card-close {
+  pointer-events: auto;
 }
 
 /* Hidden badge — flipped colours so it reads against the dark wrapper

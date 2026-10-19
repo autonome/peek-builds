@@ -350,7 +350,9 @@ export type Command =
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
   | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
   // The keepLive branch point: hide if keepLive, else close. Decided in `decide`, never `evolve`.
-  | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number }
+  // `force` applies to `id` alone and overrides its keepLive, so an explicit "end this window"
+  // closes rather than hides; cascaded descendants keep their own keepLive either way.
+  | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number; force?: boolean }
   // Carries the intrinsic properties; `decide` produces a `WindowRegistered` event.
   | {
       type: 'RegisterWindow';
@@ -2473,8 +2475,10 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       }
       // The branch point: keepLive === true hides, never closes; otherwise it
       // closes. Applied via one closure to `cmd.id` and to every cascaded
-      // descendant alike, so none gets a forced close that ignores its own keepLive.
+      // descendant alike, so no descendant gets a forced close that ignores its
+      // own keepLive — `force` names one window and reaches only that one.
       const dispose = (id: WindowId): Event => {
+        if (cmd.force === true && id === cmd.id) return { type: 'WindowClosed', id };
         const target = state.order.find((w) => w.id === id)!;
         return target.keepLive ? { type: 'WindowHidden', id } : { type: 'WindowClosed', id };
       };

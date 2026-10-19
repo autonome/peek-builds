@@ -741,11 +741,15 @@ function buildAPI(): Record<string, unknown> {
      * Close a window. With no id, closes the caller's own tile window.
      * With an id, closes the target window (requires `window.manage`).
      * Honors keepLive — routes through `closeOrHideWindow` in main.
+     * `{ force: true }` ends the named window for good even when it is
+     * keepLive, for a caller whose close is an explicit "end this window"
+     * rather than a dismissal. Without the option nothing changes.
      */
-    close: (id?: number) => {
+    close: (id?: number, opts?: { force?: boolean }) => {
       ipcRenderer.send('tile:window:close', {
         token: tileToken,
         id,
+        force: opts?.force === true,
       });
     },
 
