@@ -127,6 +127,19 @@ describe('space-name commands show window counts', () => {
     assert.equal(subtitleOf('move to space', 'work'), 'no windows');
   });
 
+  it('refreshes when a window opens', async () => {
+    liveWindows = { 't-work': ['w1'] };
+    await handlers.get('window:opened')({ id: 'w1' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '1 window');
+
+    liveWindows = { 't-work': ['w1', 'w2'] };
+    await handlers.get('window:opened')({ id: 'w2' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '2 windows');
+    liveWindows = {};
+  });
+
   it('adds windows still held for another desktop to the live ones', async () => {
     liveWindows = { 't-work': ['w1', 'w2', 'w3'] };
     heldWindows = { 't-work': 3 };

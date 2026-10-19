@@ -1336,6 +1336,8 @@ const init = async () => {
     refreshSpaceNameCommands();
   });
   api.pubsub.subscribe('app:focus-changed', handleAppFocusChanged);
+  // A window opening changes the counts just as a close does.
+  api.pubsub.subscribe('window:opened', refreshSpaceNameCommands);
 };
 
 const uninit = () => {

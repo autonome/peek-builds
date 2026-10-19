@@ -53,6 +53,7 @@
         "sync:pull-completed",
         "window:focused",
         "window:closed",
+        "window:opened",
         "app:focus-changed",
         "context:changed",
         "spaces:*"
