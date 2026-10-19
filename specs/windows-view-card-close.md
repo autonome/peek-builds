@@ -6,17 +6,23 @@ depends-on: [switcher-search-autofocus]
 
 # Each card in the window switcher has a close button
 
-Peek item `9c1c7637`. The item's premise that hidden windows are not listed is wrong: hidden
-windows are listed with a "Hidden" badge. Every card, hidden or not, gets a close button.
+Peek item `9c1c7637`. Hidden windows are listed only while the switcher's hidden-windows toggle
+(`peek-button.hidden-toggle`, `state.showHidden`) is pressed; every card, including those the
+toggle reveals, gets a close button.
 
 Decision: the card's close button closes the window for good, including a `keepLive` window that
 an ordinary close (Cmd+W) would only hide. Picking a window in the switcher and pressing its close
-button is an explicit request to end it, and hiding would leave the card in place marked "Hidden".
+button is an explicit request to end it, and hiding would only move it out of the default list.
+With the hidden-windows toggle pressed the list also includes chrome windows (the page-host
+overlay, panels, space markers); their cards get no close button, since closing them is not a
+user action. Only windows that pass the toggle-off filter (`CHROME_ROLES`, no `background.html`)
+get one.
 
 ## What the code does now
 
 - `features/windows/windows.js loadWindows()` loads the list once in `init()` via
-  `api.window.list({includeInternal:true})`; `renderWindows()` builds one `createWindowCard(win)`
+  `api.window.list({includeInternal:true, includeHidden: state.showHidden})`, re-run when the
+  hidden-windows toggle changes; `renderWindows()` builds one `createWindowCard(win)`
   `<peek-card>` per window (`dataset.windowId`, a "Hidden" badge when `win.visible === false`).
   Clicking a card (`card-click`) shows it if hidden, sets it as the overlay focus target, and
   closes the switcher. The empty state is `<div class="empty-state">` 'No windows open.' (or 'No
