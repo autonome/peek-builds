@@ -21,6 +21,7 @@ import {
   keyWindow,
   onCurrentDesktop,
   platformChoseFocus,
+  RAISE_PLACEMENT_WAIT_MS,
   react,
   spendPlatformFocusExpectation,
   traceTransientAutoclose,
@@ -411,6 +412,7 @@ export class WindowKernelExecutor {
     });
     this.logTransition(event, prev, next);
     this.logRaiseDropped(prev, next, effects);
+    this.boundRaiseAwait(prev, next);
     this.recordTimeline(event, prev, next, effects);
     this.logDismissalDecisions(event, prev, next);
     this.runEffects(effects);
@@ -429,6 +431,11 @@ export class WindowKernelExecutor {
     if (effects.some((e) => e.type === 'RaiseWindow')) return;
     const id = raiseAsked ? request.id : (assert as { id: WindowId }).id;
     const record = next.order.find((w) => w.id === id);
+    const awaiting = next.raiseAwaitingPlacement;
+    if (raiseAsked && awaiting !== null && awaiting.seq === request.seq) {
+      wmLog('raise-awaiting-placement', { id, seq: awaiting.seq, waitMs: RAISE_PLACEMENT_WAIT_MS });
+      return;
+    }
     wmLog('raise-dropped', {
       id,
       via: raiseAsked ? 'raise-request' : 'focus-assert',
@@ -440,6 +447,18 @@ export class WindowKernelExecutor {
       currentDesktop: next.screens[0]?.current,
       alreadyKey: next.key === id,
     });
+  }
+
+  // A raise request that started waiting for its window's placement gets a deadline; an expiry
+  // naming a request that already settled or was replaced changes nothing.
+  private boundRaiseAwait(prev: State, next: State): void {
+    const awaiting = next.raiseAwaitingPlacement;
+    if (awaiting === null || awaiting.seq === prev.raiseAwaitingPlacement?.seq) return;
+    this.setTimer(() => {
+      if (this.state.raiseAwaitingPlacement?.seq !== awaiting.seq) return;
+      wmLog('raise-dropped', { id: awaiting.id, via: 'placement-timeout', waitMs: RAISE_PLACEMENT_WAIT_MS });
+      this.dispatch({ type: 'RaiseAwaitExpired', seq: awaiting.seq });
+    }, RAISE_PLACEMENT_WAIT_MS);
   }
 
   private escGrabArmed: boolean | null = null;

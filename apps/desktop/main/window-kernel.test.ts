@@ -8787,3 +8787,96 @@ describe('window-kernel: a transient shown on user intent dismisses the other tr
     assert.deepStrictEqual(dismissed(after.effects), []);
   });
 });
+
+// The platform reports a just-shown window's desktop tens of milliseconds after
+// the show; a raise asked for in between waits for that placement instead of
+// being dropped (peek 4fa36692: a dropped raise left no key window on the new
+// desktop, and macOS switched back to the desktop that still had one).
+describe('window-kernel: a raise for a window with no desktop yet waits for its placement', () => {
+  const S = 'S';
+  const PAGE = wid(40);
+  const OTHER = wid(41);
+  const page = (id: WindowId): Event => ({
+    type: 'WindowRegistered', id, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content',
+  });
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+  const step = (state: State, ev: Event): { next: State; effects: Effect[] } => {
+    const next = evolve(state, ev);
+    return { next, effects: react(state, ev, next) };
+  };
+  // The user swiped to desktop 3; the windows released there were shown before the read covered the switch.
+  const releasedUnplaced = (): State =>
+    fold([
+      { type: 'DesktopLayoutReported', screens: [{ id: S, current: '1' }], desktops: [{ id: '1', screen: S }, { id: '3', screen: S }] },
+      { type: 'AppActivated' },
+      page(PAGE),
+      page(OTHER),
+      { type: 'DesktopSwitchObserved' },
+      { type: 'WindowShown', id: PAGE },
+      { type: 'WindowShown', id: OTHER },
+      { type: 'CurrentDesktopChanged', screen: S, desktop: '3' },
+      { type: 'DesktopsRead', switchesSeen: 1 },
+    ]);
+  const placed = (id: WindowId, desktop: string): Event => ({ type: 'WindowPlacementReported', id, screen: S, desktop, onEveryDesktop: false });
+
+  it('waits, then raises once the placement shows the window on the current desktop', () => {
+    const start = releasedUnplaced();
+    assert.strictEqual(windowById(start, PAGE)?.desktop, undefined, 'precondition: no desktop yet');
+    const asked = step(start, { type: 'FocusRaiseRequested', id: PAGE });
+    assert.deepStrictEqual(raises(asked.effects), []);
+    assert.strictEqual(asked.next.raiseAwaitingPlacement?.id, PAGE);
+    const settled = step(asked.next, placed(PAGE, '3'));
+    assert.deepStrictEqual(raises(settled.effects), [{ type: 'RaiseWindow', id: PAGE, opSeq: settled.next.opSeqCounter }]);
+    assert.strictEqual(windowById(settled.next, PAGE)?.lastOpSeq, settled.next.opSeqCounter, 'the raise is stamped');
+    assert.strictEqual(settled.next.raiseAwaitingPlacement, null);
+  });
+
+  it('a placement on a desktop no screen shows ends the wait with no raise', () => {
+    const asked = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: PAGE });
+    const settled = step(asked, placed(PAGE, '1'));
+    assert.deepStrictEqual(raises(settled.effects), []);
+    assert.strictEqual(settled.next.raiseAwaitingPlacement, null);
+  });
+
+  it('another window placed first leaves the wait in place', () => {
+    const asked = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: PAGE });
+    const other = step(asked, placed(OTHER, '3'));
+    assert.deepStrictEqual(raises(other.effects), []);
+    assert.strictEqual(other.next.raiseAwaitingPlacement?.id, PAGE);
+  });
+
+  it('an expired wait raises nothing on a later placement', () => {
+    const asked = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: PAGE });
+    const expired = evolve(asked, { type: 'RaiseAwaitExpired', seq: asked.raiseAwaitingPlacement!.seq });
+    assert.strictEqual(expired.raiseAwaitingPlacement, null);
+    assert.deepStrictEqual(raises(step(expired, placed(PAGE, '3')).effects), []);
+  });
+
+  it('an expiry naming an older request leaves a newer wait alone', () => {
+    const first = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: OTHER });
+    const second = evolve(first, { type: 'FocusRaiseRequested', id: PAGE });
+    const stale = evolve(second, { type: 'RaiseAwaitExpired', seq: first.raiseAwaitingPlacement!.seq });
+    assert.strictEqual(stale.raiseAwaitingPlacement?.id, PAGE);
+  });
+
+  it('a newer raise request replaces the wait', () => {
+    const asked = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: PAGE });
+    const placedOther = evolve(asked, placed(OTHER, '3'));
+    const replaced = step(placedOther, { type: 'FocusRaiseRequested', id: OTHER });
+    assert.deepStrictEqual(raises(replaced.effects), [{ type: 'RaiseWindow', id: OTHER, opSeq: replaced.next.opSeqCounter }]);
+    assert.strictEqual(replaced.next.raiseAwaitingPlacement, null);
+    assert.deepStrictEqual(raises(step(replaced.next, placed(PAGE, '3')).effects), []);
+  });
+
+  it('a window that closes while waiting ends the wait', () => {
+    const asked = evolve(releasedUnplaced(), { type: 'FocusRaiseRequested', id: PAGE });
+    assert.strictEqual(evolve(asked, { type: 'WindowClosed', id: PAGE }).raiseAwaitingPlacement, null);
+  });
+
+  it('a raise for a window on another known desktop is still dropped, not held', () => {
+    const offDesktop = evolve(releasedUnplaced(), placed(PAGE, '1'));
+    const asked = step(offDesktop, { type: 'FocusRaiseRequested', id: PAGE });
+    assert.deepStrictEqual(raises(asked.effects), []);
+    assert.strictEqual(asked.next.raiseAwaitingPlacement, null);
+  });
+});

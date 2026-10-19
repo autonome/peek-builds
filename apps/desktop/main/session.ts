@@ -350,15 +350,9 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
     );
     console.log(`[session] lazy-restore-focus desktop=${desktop} focusedId=${focusPlan.id ?? 'none'} reason=${focusPlan.reason}`);
     if (focusPlan.id != null) {
-      // The released windows have no desktop placement until a read covers
-      // them, and the raise guard drops a raise for a window not known to be on
-      // the current desktop (raising one elsewhere would switch desktops). One
-      // fresh read, bounded, gives them theirs.
-      const focusExecutor = getKernelExecutorForApp();
-      if (focusExecutor.canReadDesktops()) {
-        const waitedMs = await boundedRead(focusExecutor.refreshDesktops('release'), RESTORE_DESKTOP_READ_TIMEOUT_MS);
-        console.log(`[session] lazy-restore-desktop-read waited_ms=${waitedMs}`);
-      }
+      // The released windows may have no desktop placement yet; the window
+      // manager holds the raise until the platform reports one
+      // (`window-kernel.ts placementSettlesRaise`).
       const focusWin = getLiveWindow(focusPlan.id);
       const hybridFocus = focusWin ? null : getHybridWindow(focusPlan.id);
       if (focusWin && !focusWin.isDestroyed()) {

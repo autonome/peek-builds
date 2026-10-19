@@ -28,6 +28,7 @@ import {
   evolve,
   hideProvokesFocusReassignment,
   BASE_LAYER,
+  RAISE_PLACEMENT_WAIT_MS,
   type DesktopMembership,
   type Event,
   type State,
@@ -1268,6 +1269,52 @@ describe('effect performance', () => {
         assert.strictEqual(timers[0].ms, 1500);
         timers[0].fn();
         await wait;
+      });
+    });
+
+    describe('a raise waiting for its window to be placed', () => {
+      function setup() {
+        const backend = new DesktopBackend();
+        const timers: Array<{ fn: () => void; ms: number }> = [];
+        const exec = new WindowKernelExecutor(backend, {
+          headless: false,
+          setTimer: (fn, ms) => {
+            timers.push({ fn, ms });
+            return () => {};
+          },
+        });
+        exec.dispatch({
+          type: 'DesktopLayoutReported',
+          screens: [{ id: 's1', current: '1' }],
+          desktops: [{ id: '1', screen: 's1' }, { id: '3', screen: 's1' }],
+        });
+        exec.dispatch(register(wid(1)));
+        // Shown while a switch is unread, so it has no desktop until the platform places it.
+        exec.dispatch({ type: 'DesktopSwitchObserved' });
+        exec.dispatch({ type: 'WindowShown', id: wid(1) });
+        exec.dispatch({ type: 'CurrentDesktopChanged', screen: 's1', desktop: '3' });
+        exec.dispatch({ type: 'DesktopsRead', switchesSeen: 1 });
+        exec.dispatch({ type: 'FocusRaiseRequested', id: wid(1) });
+        return { exec, backend, timers };
+      }
+      const placed = { type: 'WindowPlacementReported', id: wid(1), screen: 's1', desktop: '3', onEveryDesktop: false } as const;
+
+      it('is raised when the placement arrives inside the bound', () => {
+        const { exec, backend, timers } = setup();
+        assert.deepStrictEqual(backend.of('raiseWindow'), [], 'not raised before the placement');
+        assert.deepStrictEqual(timers.map((t) => t.ms), [RAISE_PLACEMENT_WAIT_MS]);
+        exec.dispatch(placed);
+        assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(1)]);
+        timers[0].fn();
+        assert.strictEqual(backend.of('raiseWindow').length, 1, 'a late expiry changes nothing');
+      });
+
+      it('is dropped when the bound passes first', () => {
+        const { exec, backend, timers } = setup();
+        timers[0].fn();
+        assert.strictEqual(exec.getState().raiseAwaitingPlacement, null);
+        exec.dispatch(placed);
+        assert.deepStrictEqual(backend.of('raiseWindow'), []);
       });
     });
 

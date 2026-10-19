@@ -174,7 +174,16 @@ export interface State {
   // then the platform's churn around the overlay, not the user leaving, so
   // its settle sweeps nothing.
   readonly overlayTransitionSinceResign: boolean;
+  // A raise request for a visible window the platform has not yet placed on a
+  // desktop. The platform reports a just-shown window's desktop tens of
+  // milliseconds after the show, so the request is decided again once a
+  // placement arrives (`placementSettlesRaise`) instead of being dropped for
+  // a desktop not yet known. `RaiseAwaitExpired` bounds the wait.
+  readonly raiseAwaitingPlacement: FocusRaiseRequest | null;
 }
+
+// How long a raise request waits for its window's first desktop placement.
+export const RAISE_PLACEMENT_WAIT_MS = 500;
 
 export interface PlatformFocusExpectation {
   // Windows restacked on a platform where restacking hands a window focus.
@@ -314,6 +323,8 @@ export type Event =
   | { type: 'GuestTeardownRequested' }
   | { type: 'FocusAssertRequested'; id: WindowId }
   | { type: 'FocusRaiseRequested'; id: WindowId; intent?: 'user' | 'named' }
+  // The raise request numbered `seq` waited `RAISE_PLACEMENT_WAIT_MS` with no placement for its window.
+  | { type: 'RaiseAwaitExpired'; seq: number }
   | { type: 'ColdStartFocusArmed'; id: WindowId | null }
   | { type: 'SelectionFocusArmed'; armer: WindowId; target: WindowId | null };
 
@@ -445,6 +456,7 @@ export function initialState(): State {
     desktopSwitchesRead: 0,
     expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
     overlayTransitionSinceResign: false,
+    raiseAwaitingPlacement: null,
   };
 }
 
@@ -542,7 +554,37 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
 }
 
 export function evolve(state: State, ev: Event): State {
-  return followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, evolveEvent(state, ev)));
+  return followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, placementSettlesRaise(evolveEvent(state, ev))));
+}
+
+// A raise request whose only bar is that its window has no desktop yet: the
+// window is shown, the request would otherwise be admitted, and it is not a
+// named request (which reaches any desktop and so needs no placement).
+function awaitsPlacement(state: State, record: WindowRecord, requester: FocusRequester): boolean {
+  return (
+    record.visible &&
+    record.pendingHidden !== true &&
+    (state.appActive || requester.user) &&
+    !requester.named &&
+    !isOnEveryDesktop(record) &&
+    state.screens.length > 0 &&
+    record.desktop === undefined
+  );
+}
+
+// The waiting raise request is asked again, as a fresh request, once its
+// window has a desktop and the current desktop is read; the existing guard
+// (`admitsFocus`) then decides it. A window that closed meanwhile ends the wait.
+function placementSettlesRaise(next: State): State {
+  const waiting = next.raiseAwaitingPlacement;
+  if (waiting === null) return next;
+  const record = next.order.find((w) => w.id === waiting.id);
+  if (record === undefined) return { ...next, raiseAwaitingPlacement: null };
+  if (record.desktop === undefined || desktopUnread(next)) return next;
+  return evolveEvent(
+    { ...next, raiseAwaitingPlacement: null },
+    { type: 'FocusRaiseRequested', id: waiting.id, ...(waiting.intent !== undefined ? { intent: waiting.intent } : {}) },
+  );
 }
 
 // The page chrome overlay over a page opened while another app is active: a
@@ -1771,6 +1813,14 @@ function evolveEvent(state: State, ev: Event): State {
         issuesRaiseRequest && ev.intent === 'user' && targetRecord?.transient === true && targetRecord.visible
           ? new Set(selectTransientAutoclose(state, ev.id))
           : null;
+      const request: FocusRaiseRequest = {
+        id: ev.id,
+        seq: nextRaiseRequestSeq(state),
+        ...(ev.intent !== undefined ? { intent: ev.intent } : {}),
+      };
+      // Not issued only because the window has no desktop yet: decided again on its placement.
+      const awaits =
+        !issuesRaiseRequest && state.key !== ev.id && targetRecord !== undefined && awaitsPlacement(state, targetRecord, requester);
       return {
         ...state,
         order: state.order.map((w) => {
@@ -1785,9 +1835,15 @@ function evolveEvent(state: State, ev: Event): State {
         // non-activating window never is, so the next activation is asked to
         // put the held window in front — the same one-shot latch a restore arms.
         ...(holds ? { pendingColdStartFocus: ev.id } : {}),
-        lastRaiseRequest: { id: ev.id, seq: nextRaiseRequestSeq(state), ...(ev.intent !== undefined ? { intent: ev.intent } : {}) },
+        lastRaiseRequest: request,
+        raiseAwaitingPlacement: awaits ? request : null,
         version: state.version + 1,
       };
+    }
+
+    case 'RaiseAwaitExpired': {
+      if (state.raiseAwaitingPlacement?.seq !== ev.seq) return state;
+      return { ...state, raiseAwaitingPlacement: null, version: state.version + 1 };
     }
 
     case 'ColdStartFocusArmed': {
