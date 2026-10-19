@@ -12,7 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, limitShown, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
-import { recordPick, rankByUsage } from './usage-rank.js';
+import { recordPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
@@ -2768,9 +2768,10 @@ function actionHandlers() {
       const typed = state.typed;
       if (!name) return;
       console.log('[cmd:panel] executeCommandWithParams', JSON.stringify({ name, typed, paramIndex: state.paramIndex }));
-      // The picked option is the suggestion whose value is everything typed after the command.
-      const rest = typed.trim().slice(name.length).trim().toLowerCase();
-      const picked = rest && state.paramSuggestions.find(s => String(s.value).toLowerCase() === rest);
+      // The picked option is the suggestion whose value (or title, for item params whose value is
+      // an id) is everything typed after the command; it is recorded by its value.
+      const rest = typed.trim().slice(name.length).trim();
+      const picked = pickedSuggestion(state.paramSuggestions, rest);
       if (picked) recordParamPick(name, picked.value);
       const create = state.paramSuggestions.length === 0 && state.paramNoMatch
         && state.paramNoMatch.command === name && state.paramNoMatch.run;

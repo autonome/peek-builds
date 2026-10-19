@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'usage-rank.js');
-const { PICK_SCORE, HALF_LIFE_MS, scoreAt, anchorAfterPick, recordPick, rankByUsage } =
+const { PICK_SCORE, HALF_LIFE_MS, scoreAt, anchorAfterPick, recordPick, rankByUsage, pickedSuggestion } =
   await import(modulePath);
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -135,6 +135,32 @@ describe('rankByUsage', () => {
     it('changes nothing with no typed text', () => {
       assert.deepEqual(values(rankByUsage(sug('work', 'homework'), used, 'c', NOW, '')),
         ['homework', 'work']);
+    });
+  });
+
+  describe('pickedSuggestion', () => {
+    const notes = [
+      { title: 'Shopping list', subtitle: '', value: 'note-id-1' },
+      { title: 'Ideas', subtitle: '', value: 'note-id-2' },
+    ];
+
+    it('finds an item suggestion by its typed title and records by its id', () => {
+      const picked = pickedSuggestion(notes, 'shopping LIST');
+      assert.equal(picked.value, 'note-id-1');
+      const usage = recordPick({}, 'edit', picked.value, NOW);
+      assert.deepEqual(rankByUsage(notes, usage, 'edit', NOW, '').map(s => s.value),
+        ['note-id-1', 'note-id-2']);
+      assert.ok(scoreAt(usage.edit['note-id-1'], NOW) > 0);
+    });
+
+    it('finds an enum suggestion by value, preferring value over title', () => {
+      const tags = [{ title: 'b', value: 'a' }, { title: 'a', value: 'b' }];
+      assert.equal(pickedSuggestion(tags, 'a').value, 'a');
+    });
+
+    it('returns null for empty or unmatched text', () => {
+      assert.equal(pickedSuggestion(notes, ''), null);
+      assert.equal(pickedSuggestion(notes, 'nope'), null);
     });
   });
 });

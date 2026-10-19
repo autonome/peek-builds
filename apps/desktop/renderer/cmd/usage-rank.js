@@ -35,6 +35,18 @@ export function recordPick(usage, command, value, now) {
   };
 }
 
+/**
+ * The suggestion that the typed parameter text names: one whose value equals it, else one whose
+ * title does (an item param types the title but its value is the item id), case-insensitively.
+ * Null when nothing matches.
+ */
+export function pickedSuggestion(suggestions, typedParam) {
+  const rest = String(typedParam == null ? '' : typedParam).trim().toLowerCase();
+  if (!rest) return null;
+  const same = (text) => String(text == null ? '' : text).toLowerCase() === rest;
+  return suggestions.find(s => same(s.value)) || suggestions.find(s => same(s.title)) || null;
+}
+
 function withoutPrefix(text, prefix) {
   const lower = String(text == null ? '' : text).toLowerCase();
   const lowerPrefix = (prefix || '').toLowerCase();
