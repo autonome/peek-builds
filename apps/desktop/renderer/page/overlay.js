@@ -769,6 +769,9 @@ api.subscribe('page-overlay:resize-active', (msg) => {
 });
 api.subscribe('page-overlay:bounds', (msg) => {
   if (!isActive(msg) || !msg.bounds) return;
+  // A chrome drag owns activeBounds and publishes it itself; main's echo of
+  // those moves lags the pointer and would rewind it mid-drag.
+  if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
   activeBounds = { ...msg.bounds };
   updateOverlayPositions();
 });

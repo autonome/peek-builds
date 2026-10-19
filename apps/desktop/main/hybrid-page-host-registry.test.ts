@@ -34,6 +34,7 @@ import {
   registerHybridWindowClosedListener,
   markHybridPainted,
   hasHybridPainted,
+  publishHostBoundsOnChange,
   unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 
@@ -584,5 +585,31 @@ describe('window-open registration: chain popup declares its opener as machine p
 
   it('a genuinely real-parent opener is unaffected by the new flag when absent', () => {
     assert.strictEqual(resolveRegistrationParentId(true, 42, false), 42);
+  });
+});
+
+describe('publishHostBoundsOnChange', () => {
+  it('publishes the live bounds on a native resize and on a move', () => {
+    const win = new FakeBaseWindow();
+    const seen: unknown[] = [];
+    publishHostBoundsOnChange(win as unknown as BaseWindow, (b) => seen.push({ ...b }));
+    // Left-edge native resize changes x and width together.
+    win.bounds = { x: 0, y: 20, width: 810, height: 600 };
+    win.emit('resize');
+    win.bounds = { x: 50, y: 60, width: 810, height: 600 };
+    win.emit('move');
+    assert.deepStrictEqual(seen, [
+      { x: 0, y: 20, width: 810, height: 600 },
+      { x: 50, y: 60, width: 810, height: 600 },
+    ]);
+  });
+
+  it('publishes nothing once the window is destroyed', () => {
+    const win = new FakeBaseWindow();
+    const seen: unknown[] = [];
+    publishHostBoundsOnChange(win as unknown as BaseWindow, (b) => seen.push(b));
+    win.destroyed = true;
+    win.emit('resize');
+    assert.deepStrictEqual(seen, []);
   });
 });

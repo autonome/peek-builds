@@ -447,6 +447,25 @@ export function findHybridWindowsByKey(key: string, source?: string): HybridWind
   return found;
 }
 
+/**
+ * Calls `publishBounds` with the host's live outer bounds on every resize and
+ * move, whatever caused it (native border drag, gesture resize, chrome drag,
+ * programmatic set). The chrome overlay caches these bounds for its drag math,
+ * so a change it did not hear about makes the next drag start from stale
+ * x/y/width/height.
+ */
+export function publishHostBoundsOnChange(
+  baseWin: BaseWindow,
+  publishBounds: (bounds: Electron.Rectangle) => void,
+): void {
+  const onChange = (): void => {
+    if (baseWin.isDestroyed()) return;
+    publishBounds(baseWin.getBounds());
+  };
+  baseWin.on('resize', onChange);
+  baseWin.on('move', onChange);
+}
+
 /** Test-only: clear all registry state. */
 export function _resetForTests(): void {
   entries.clear();

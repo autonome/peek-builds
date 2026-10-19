@@ -178,6 +178,7 @@ import {
   claimHybridDeferredLoad,
   // First-paint tracking
   markHybridPainted,
+  publishHostBoundsOnChange,
 } from './hybrid-page-host-registry.js';
 import { pageTranslationLoaded, pageTranslationNavigated } from './page-translate/translate-main.js';
 
@@ -1108,6 +1109,15 @@ function assembleHybridPageHost(
   };
   fillView();
   baseWin.on('resize', fillView);
+
+  // Keep the chrome overlay's cached bounds (its drag math builds page:set-bounds
+  // from them) equal to the host's live bounds on every resize and move, native
+  // border resizes included — they reach no other publisher.
+  publishHostBoundsOnChange(baseWin, (bounds) => {
+    try {
+      publish(getSystemAddress(), 'page-overlay:bounds', { windowId: baseWin.id, bounds });
+    } catch { /* gone */ }
+  });
 
   // P0 seam: mark the content webContents so the permission lookup
   // (registerGuest → findHostWindowId) treats it as page-host content.
@@ -2238,12 +2248,8 @@ export function wireHybridContentEvents(
       // window manager.
       kernelSetBounds(resizeMachineId, resizeBounds);
     }
-    // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
-    // navbar-drag MOVE math + maximize stash, and main (not the renderer) drives
-    // resize now, so without this its activeBounds would go stale.
-    try {
-      publish(getSystemAddress(), 'page-overlay:bounds', { windowId: hostWindowId, bounds: hw.baseWin.getBounds() });
-    } catch { /* gone */ }
+    // The overlay renderer's locally-tracked bounds follow via the host's
+    // resize listener (publishHostBoundsOnChange in assembleHybridPageHost).
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
