@@ -12,6 +12,19 @@ import { findTagByName, filterTaggedItems, toItemSuggestion } from './item-sugge
 
 const api = window.app;
 
+// Rows shown for tag and item params, cut after ranking by use
+export const SUGGESTION_LIMIT = 20;
+// Candidates tag and item completers hand to ranking by use, so a frequently used one outside
+// the completer's own top SUGGESTION_LIMIT still reaches the shown rows
+const CANDIDATE_LIMIT = 200;
+
+/**
+ * Cut ranked suggestions to the shown rows. Enum params are not cut.
+ */
+export function limitShown(paramDef, ranked) {
+  return paramDef.type === 'enum' ? ranked : ranked.slice(0, SUGGESTION_LIMIT);
+}
+
 // ===== Tag Completer =====
 // Fetches tags by frecency with a short TTL cache
 
@@ -61,7 +74,7 @@ export async function completeTag(partial, exclude, paramDef) {
     .map(tag => ({ tag, tier: matchTier(matchText, tag.name) }))
     .filter(({ tier }) => tier !== NO_MATCH)
     .sort((a, b) => a.tier - b.tier)
-    .slice(0, 20)
+    .slice(0, CANDIDATE_LIMIT)
     .map(({ tag }) => ({
       title: prefix + tag.name,
       subtitle: `used ${tag.frequency || 0}x`,
@@ -133,7 +146,7 @@ export async function completeItem(partial, exclude, paramDef) {
     const result = await api.datastore.getItemsByTag(tag.id);
     if (!result.success || !result.data) return [];
 
-    const filterOpts = { search: searchText, limit: 20 };
+    const filterOpts = { search: searchText, limit: CANDIDATE_LIMIT };
     if (paramDef.itemType) {
       filterOpts.itemType = paramDef.itemType;
     }
@@ -143,7 +156,7 @@ export async function completeItem(partial, exclude, paramDef) {
 
   const queryOpts = {
     type: paramDef.itemType || 'text',
-    limit: 20,
+    limit: CANDIDATE_LIMIT,
     sortBy: 'updated'
   };
 

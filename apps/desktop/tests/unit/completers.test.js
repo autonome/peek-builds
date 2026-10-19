@@ -29,7 +29,8 @@ globalThis.window = {
 };
 
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'completers.js');
-const { completeEnum, completeTag, invalidateCache } = await import(modulePath);
+const { completeEnum, completeTag, limitShown, invalidateCache } = await import(modulePath);
+const { rankByUsage } = await import(join(__dirname, '..', '..', 'renderer', 'cmd', 'usage-rank.js'));
 
 /** Point the stubbed datastore at a tag list and drop the TTL cache. */
 function useTags(tags) {
@@ -200,10 +201,28 @@ describe('completeTag', () => {
     assert.equal(results[0].subtitle, 'used 0x');
   });
 
-  it('caps at 20 results', async () => {
-    useTags(Array.from({ length: 30 }, (_, i) => ({ name: `tag${i}`, frequency: 0 })));
+  it('caps the candidates at 200', async () => {
+    useTags(Array.from({ length: 250 }, (_, i) => ({ name: `tag${i}`, frequency: 0 })));
     const results = await completeTag('', new Set(), paramDef);
-    assert.equal(results.length, 20);
+    assert.equal(results.length, 200);
+  });
+
+  it('a tag used often but beyond the completer top 20 reaches the shown rows', async () => {
+    useTags([
+      ...Array.from({ length: 25 }, (_, i) => ({ name: `tag${i}`, frequency: 100 })),
+      { name: 'favorite', frequency: 0 },
+    ]);
+    const candidates = await completeTag('', new Set(), paramDef);
+    const usage = { cmd: { favorite: Date.now() } };
+    const shown = limitShown(paramDef, rankByUsage(candidates, usage, 'cmd', Date.now(), '', ''));
+    assert.equal(shown.length, 20);
+    assert.equal(shown[0].value, 'favorite');
+  });
+
+  it('limitShown leaves enum suggestions uncut', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ value: `v${i}` }));
+    assert.equal(limitShown({ type: 'enum' }, many).length, 30);
+    assert.equal(limitShown({ type: 'item' }, many).length, 20);
   });
 
   describe('matching anywhere in the name', () => {
@@ -221,13 +240,13 @@ describe('completeTag', () => {
       assert.deepEqual(results.map(r => r.value), ['red', 'redo', 'side-red', 'a_red', 'bored']);
     });
 
-    it('applies the 20-result cap after tier ordering', async () => {
+    it('applies the candidate cap after tier ordering', async () => {
       useTags([
-        ...Array.from({ length: 25 }, (_, i) => ({ name: `xred${i}`, frequency: 100 })),
+        ...Array.from({ length: 205 }, (_, i) => ({ name: `xred${i}`, frequency: 100 })),
         { name: 'red', frequency: 0 },
       ]);
       const results = await completeTag('red', new Set(), paramDef);
-      assert.equal(results.length, 20);
+      assert.equal(results.length, 200);
       assert.equal(results[0].value, 'red');
     });
 

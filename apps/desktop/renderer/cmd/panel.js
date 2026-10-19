@@ -10,7 +10,7 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
-import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
+import { getSuggestions, limitShown, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, rankByUsage } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
@@ -632,10 +632,10 @@ async function doUpdateParamSuggestions() {
       )
     : new Set();
 
-  const suggestions = rankByUsage(
+  const suggestions = limitShown(paramDef, rankByUsage(
     await getSuggestions(paramDef, searchPartial, exclude), paramUsage, state.paramCommand, Date.now(),
     searchPartial, prefix
-  );
+  ));
 
   if (generation !== state.paramGeneration) return;
 
