@@ -629,6 +629,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // only: its focus arrives through the `'focus'` listener above, which
       // is where platform-provoked focus is told from the user's.
       const focused = opSeq !== undefined && this.isFocused(win);
+      // A show with no op token is one the platform made by itself; naming the window lets a trace
+      // tell which one, since its desktop read below logs only the trigger.
+      wmLog('native-show', { id, opSeq: opSeq ?? null, focused: this.isFocused(win) });
       kernelWindowShown(id, focused, opSeq);
       this.onDesktopTrigger('window-shown');
     });
