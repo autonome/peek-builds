@@ -31,7 +31,7 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
-import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore } from './restore-hold.js';
+import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 
@@ -362,6 +362,15 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string, a
     );
     console.log(`[session] lazy-restore-focus desktop=${desktop} focusedId=${focusPlan.id ?? 'none'} reason=${focusPlan.reason} activeBeforeSwitch=${activeBeforeSwitch}`);
     if (focusPlan.id != null) {
+      // The released windows have no desktop placement until a read covers
+      // them, and the raise guard drops a raise for a window not known to be on
+      // the current desktop (raising one elsewhere would switch desktops). One
+      // fresh read, bounded, gives them theirs.
+      const focusExecutor = getKernelExecutorForApp();
+      if (focusExecutor.canReadDesktops()) {
+        const waitedMs = await boundedRead(focusExecutor.refreshDesktops('release'), RESTORE_DESKTOP_READ_TIMEOUT_MS);
+        console.log(`[session] lazy-restore-desktop-read waited_ms=${waitedMs}`);
+      }
       // macOS resigns the app right after the desktop change, and a raise
       // without a user intent is suppressed while inactive (`planRaise`).
       const restoreIntent = planRestoreActivation(false, activeBeforeSwitch);
@@ -1742,22 +1751,9 @@ export async function restoreSessionSnapshot(
   // unknown; read once first (bounded) so windows recorded elsewhere are held.
   const restoreExecutor = getKernelExecutorForApp();
   if (shouldReadDesktopBeforeRestore(restoreExecutor.getState().screens[0]?.current ?? null, restoreExecutor.canReadDesktops())) {
-    const readStart = Date.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        restoreExecutor.refreshDesktops('restore'),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, RESTORE_DESKTOP_READ_TIMEOUT_MS);
-        }),
-      ]);
-    } catch {
-      /* restore with what the kernel knows */
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+    const waitedMs = await boundedRead(restoreExecutor.refreshDesktops('restore'), RESTORE_DESKTOP_READ_TIMEOUT_MS);
     console.log(
-      `[session] restore-desktop-read current=${restoreExecutor.getState().screens[0]?.current ?? null} waited_ms=${Date.now() - readStart}`,
+      `[session] restore-desktop-read current=${restoreExecutor.getState().screens[0]?.current ?? null} waited_ms=${waitedMs}`,
     );
   }
   const kernelStateAtRestore = restoreExecutor.getState();

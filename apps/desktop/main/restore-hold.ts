@@ -31,6 +31,29 @@ export function shouldReadDesktopBeforeRestore(current: string | null, canReadDe
   return current === null && canReadDesktops;
 }
 
+/**
+ * Await `read`, giving up after `timeoutMs`. A rejected read is swallowed:
+ * callers go on with what the kernel already knows. Resolves with the time
+ * spent waiting.
+ */
+export async function boundedRead(read: Promise<unknown>, timeoutMs: number): Promise<number> {
+  const start = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      read,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } catch {
+    /* proceed with what the kernel knows */
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return Date.now() - start;
+}
+
 export interface RestorePartition<T> {
   openNow: T[];
   held: Map<string, T[]>;

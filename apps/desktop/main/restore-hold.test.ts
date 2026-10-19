@@ -3,7 +3,22 @@
 // real implementation — the module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore } from './restore-hold.js';
+import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
+
+describe('boundedRead', () => {
+  it('gives up on a read that never resolves after the timeout', async () => {
+    const waited = await boundedRead(new Promise(() => {}), 30);
+    assert.ok(waited >= 25 && waited < 1000, `waited ${waited}`);
+  });
+  it('returns as soon as the read resolves', async () => {
+    const waited = await boundedRead(Promise.resolve(), 5000);
+    assert.ok(waited < 1000, `waited ${waited}`);
+  });
+  it('swallows a rejected read', async () => {
+    const waited = await boundedRead(Promise.reject(new Error('no provider')), 5000);
+    assert.ok(waited < 1000, `waited ${waited}`);
+  });
+});
 
 describe('shouldReadDesktopBeforeRestore', () => {
   it('reads when the current desktop is unknown and reads are possible', () => {
