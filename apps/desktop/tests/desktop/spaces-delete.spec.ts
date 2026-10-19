@@ -65,6 +65,28 @@ function readRow(key: string): Promise<string[] | null> {
   ) as Promise<string[] | null>;
 }
 
+// The saved-window count in the delete confirmation skips the spaces
+// feature's own pages, so a space needs a real page for there to be a window
+// to move. Opened the way the command palette does.
+async function openPage(url: string): Promise<void> {
+  const r = await bgWindow.evaluate(
+    async (u: string) =>
+      await (window as unknown as { app: any }).app.window.open(u, {
+        role: 'content',
+        width: 800,
+        height: 600,
+        trackingSource: 'cmd',
+        trackingSourceId: 'url-direct',
+      }),
+    url,
+  );
+  expect(r?.success, `opening ${url} failed: ${JSON.stringify(r)}`).toBe(true);
+}
+
+function holdsUrl(urls: string[] | null, fragment: string): boolean {
+  return (urls ?? []).some((u) => u.includes(fragment));
+}
+
 function holdsSpaceHome(urls: string[] | null, spaceId: string): boolean {
   return (urls ?? []).some((u) => u.includes('spaces/home.html') && u.includes(encodeURIComponent(spaceId)));
 }
@@ -108,14 +130,18 @@ test.describe('spaces delete @desktop', () => {
     expect(entered?.success, `switch space "${doomed}" failed: ${entered?.error}`).toBe(true);
     const doomedId = entered.spaceId as string;
     await expect.poll(() => spaceHomeWindows(doomedId).length, { timeout: 15000 }).toBe(1);
+    const realPage = 'https://example.com/delete-spec-inactive-page';
+    await openPage(realPage);
 
-    // Leaving for another space saves the doomed space's window into its row.
+    // Leaving for another space saves the doomed space's windows into its row.
     const other = await enterSpace('delete-spec-other');
     expect(other?.success, `switch space failed: ${other?.error}`).toBe(true);
     const otherId = other.spaceId as string;
     await expect.poll(() => spaceHomeWindows(doomedId).length, { timeout: 15000 }).toBe(0);
     expect(holdsSpaceHome(await readRow(doomedId), doomedId), "the space's row never held its window").toBe(true);
+    expect(holdsUrl(await readRow(doomedId), realPage), "the space's row never held its real page").toBe(true);
     expect(holdsSpaceHome(await readRow('default'), doomedId)).toBe(false);
+    expect(holdsUrl(await readRow('default'), realPage)).toBe(false);
 
     await expect.poll(() => spaceHomeWindows(otherId).length, { timeout: 15000 }).toBe(1);
     const spacesPage = spaceHomeWindows(otherId)[0];
@@ -130,6 +156,7 @@ test.describe('spaces delete @desktop', () => {
       })
       .toBe(false);
     expect(holdsSpaceHome(await readRow('default'), doomedId), "the deleted space's window did not move to the default's row").toBe(true);
+    expect(holdsUrl(await readRow('default'), realPage), "the deleted space's real page did not move to the default's row").toBe(true);
     expect(await readRow(doomedId), "the deleted space's own row is still there").toBeNull();
 
     // A space that was not active: nothing on screen changes.
