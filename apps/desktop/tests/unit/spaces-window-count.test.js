@@ -54,6 +54,21 @@ describe('countSpaceWindows with held windows', () => {
   });
 });
 
+describe('countSpaceWindows for the active space', () => {
+  it('ignores the saved snapshot when nothing is live or held', () => {
+    assert.equal(countSpaceWindows([], 5, false, 0, true), 0);
+  });
+
+  it('returns 0 for the active default space with nothing open', () => {
+    assert.equal(countSpaceWindows([], null, true, 0, true), 0);
+    assert.equal(countSpaceWindows(undefined, undefined, true, undefined, true), 0);
+  });
+
+  it('sums live and held windows', () => {
+    assert.equal(countSpaceWindows([1, 2], 9, false, 3, true), 5);
+  });
+});
+
 describe('liveSpaceWindowIds', () => {
   const win = (id, url, extra = {}) => ({ id, url, visible: true, params: { role: 'content' }, ...extra });
 

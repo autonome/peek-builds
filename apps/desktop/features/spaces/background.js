@@ -1069,7 +1069,7 @@ function publishSpaceNameCommands() {
 
 /**
  * Window count per space tag id, the way the Spaces page counts: live windows
- * of the active workspace, else the saved snapshot. A count that cannot be
+ * of the active workspace (plus held ones), else the saved snapshot. A count that cannot be
  * read is left out, so that space shows no subtitle.
  */
 async function countWindowsBySpace(tags) {
@@ -1094,13 +1094,14 @@ async function countWindowsBySpace(tags) {
       if (r?.success && typeof r.count === 'number') heldCount = r.count;
     } catch { /* none held */ }
     let snapshotCount = null;
-    if (live.length === 0 && heldCount === 0) {
+    const isActive = activeSpaceId != null && String(tag.id) === String(activeSpaceId);
+    if (!isActive && live.length === 0 && heldCount === 0) {
       try {
         const r = await api.session.getWorkspaceSnapshotWindowCount(key, SPACES_CHROME_URL_PREFIXES);
         if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
       } catch { /* no snapshot */ }
     }
-    const count = countSpaceWindows(live, snapshotCount, isDefault, heldCount);
+    const count = countSpaceWindows(live, snapshotCount, isDefault, heldCount, isActive);
     if (count != null) counts[tag.id] = count;
   }
   return counts;

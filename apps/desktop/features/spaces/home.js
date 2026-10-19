@@ -276,6 +276,7 @@ const loadSpaces = async () => {
       const r = await api.window.list();
       if (r?.success && Array.isArray(r.windows)) windowList = r.windows;
     } catch { /* leave empty */ }
+    const liveByTag = new Map();
     for (const tag of spaceTags) {
       let tagged = [];
       try {
@@ -283,7 +284,15 @@ const loadSpaces = async () => {
         if (r?.success && Array.isArray(r.data)) tagged = r.data;
       } catch { /* leave empty */ }
       const live = liveSpaceWindowIds(tagged, windowList);
+      liveByTag.set(tag.id, live);
       tag.hasLiveWindows = live.length > 0;
+    }
+    // Resolved between the passes: its fallback reads `hasLiveWindows`, and the
+    // active space's count must skip the snapshot.
+    activeSpaceId = await resolveActiveSpaceId(spaceTags);
+    for (const tag of spaceTags) {
+      const live = liveByTag.get(tag.id);
+      const isActive = activeSpaceId != null && String(tag.id) === String(activeSpaceId);
       // The default workspace's snapshot is stored under the key 'default';
       // every other space under its tag id.
       const key = getSpaceDisplayName(tag) === 'default' ? 'default' : tag.id;
@@ -293,15 +302,14 @@ const loadSpaces = async () => {
         if (r?.success && typeof r.count === 'number') heldCount = r.count;
       } catch { /* none held */ }
       let snapshotCount = null;
-      if (live.length === 0 && heldCount === 0) {
+      if (!isActive && live.length === 0 && heldCount === 0) {
         try {
           const r = await api.session.getWorkspaceSnapshotWindowCount(key, SPACES_CHROME_URL_PREFIXES);
           if (r?.success && typeof r.count === 'number') snapshotCount = r.count;
         } catch { /* no snapshot */ }
       }
-      tag.windowCount = countSpaceWindows(live, snapshotCount, getSpaceDisplayName(tag) === 'default', heldCount);
+      tag.windowCount = countSpaceWindows(live, snapshotCount, getSpaceDisplayName(tag) === 'default', heldCount, isActive);
     }
-    activeSpaceId = await resolveActiveSpaceId(spaceTags);
     // Resolve vivid colors for spaces with default/grey color
     for (const tag of spaceTags) {
       const vivid = resolveVividColor(tag.color, tag.id, activeThemeId);

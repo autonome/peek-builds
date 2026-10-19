@@ -166,11 +166,14 @@ const shouldShowBorder = (appFocused, focusedWindowInNamedSpace) =>
  * none, so it counts 0. `null` only for the default workspace with nothing
  * open or held and no saved snapshot yet (it is saved the first time the
  * default is left), so the caller shows no count rather than a wrong 0.
+ * The active space (`isActiveSpace`) counts only its open and held windows:
+ * 0 when there are none, never the saved snapshot (stale once its last window
+ * closes) and never null.
  */
-const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false, heldCount = 0) => {
+const countSpaceWindows = (liveWindowIds, snapshotCount, isDefaultSpace = false, heldCount = 0, isActiveSpace = false) => {
   const live = Array.isArray(liveWindowIds) ? liveWindowIds.length : 0;
   const held = typeof heldCount === 'number' && heldCount > 0 ? heldCount : 0;
-  if (live + held > 0) return live + held;
+  if (live + held > 0 || isActiveSpace) return live + held;
   if (typeof snapshotCount === 'number') return snapshotCount;
   return isDefaultSpace ? null : 0;
 };
