@@ -231,25 +231,38 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     }, page);
   });
 
-  test('the startup resign→become activation dance does NOT dismiss a fresh slide', async () => {
-    // Reproduces the user-reported "slide hotkey does nothing the first time
-    // after startup" bug: macOS fires a brief did-resign-active → did-become-
-    // active dance during boot window restoration. A slide opened right then
-    // must survive — the resign must NOT close it because a become immediately
-    // follows. (Without the deferred-with-cancel guard, the resign edge closed
-    // the slide instantly.)
-    const qv = await openHybridQuickView('qv-startup-dance');
+  test('the launch activation before the first slide opens does not dismiss it', async () => {
+    // At launch macOS fires a brief did-resign-active → did-become-active pair
+    // during boot window restoration, and it lands BEFORE the first slide
+    // opens. The slide is never followed by a resign until the user leaves Peek.
+    await fireAppResign();
+    await fireAppBecome();
+
+    const qv = await openHybridQuickView('qv-launch-activation');
+    await fireFocus(qv);
     expect(await hybridAlive(qv)).toBe(true);
 
-    await fireAppResign();   // resign edge of the dance
-    await fireAppBecome();    // become edge cancels the pending close
-
-    // Wait well past the settle window; the slide must still be alive.
+    // Wait well past the resign settle window; a late sweep would have run.
     await new Promise((r) => setTimeout(r, 800));
     expect(await hybridAlive(qv)).toBe(true);
 
     await bgWindow.evaluate(async (wid: number) => {
       try { await (window as any).app.window.close(wid); } catch { /* ignore */ }
     }, qv);
+  });
+
+  test('a focused slide closes when the app resigns', async () => {
+    // The closing rule: a focused transient closes on the resign itself, and a
+    // later activation does not bring it back.
+    const qv = await openHybridQuickView('qv-focused-resign');
+    await fireFocus(qv);
+    expect(await hybridAlive(qv)).toBe(true);
+
+    await fireAppResign();
+    await expect.poll(() => hybridAlive(qv), { timeout: 4000 }).toBe(false);
+
+    await fireAppBecome();
+    await new Promise((r) => setTimeout(r, 800));
+    expect(await hybridAlive(qv)).toBe(false);
   });
 });
