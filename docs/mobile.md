@@ -79,7 +79,7 @@ The main list supports pull-to-refresh with a **hold gesture** to prevent accide
 3. Release before 300ms → cancels (bounce back)
 4. Visual feedback shows progress ring filling
 
-**Implementation:** `src/App.tsx` - search for `pullToRefresh` state
+**Implementation:** `apps/mobile/src/App.tsx` - search for `pullToRefresh` state
 
 ### Frecency Algorithm
 
@@ -238,7 +238,7 @@ CREATE TABLE settings (
 
 ### Share Extension
 - `apps/mobile/src-tauri/gen/apple/Peek/ShareViewController.swift` - Full UI share extension
-- `ShareViewController-full-ui.swift.example` - Reference implementation
+- `apps/mobile/ShareViewController-full-ui.swift.example` - Reference implementation
 
 ### App Group Bridge
 - `apps/mobile/src-tauri/AppGroupBridge.m` - Objective-C bridge for App Groups access
@@ -255,7 +255,7 @@ CREATE TABLE settings (
 - **Webhook commands**: `sync_to_webhook`, `auto_sync_if_needed`
 
 ### Frontend
-- `src/App.tsx` - React UI with tabbed navigation (Pages | Notes | Tags)
+- `apps/mobile/src/App.tsx` - React UI with tabbed navigation (Pages | Notes | Tags)
 - `apps/mobile/src/App.css` - Mobile-optimized styling with dark mode
 
 ### Tests
@@ -263,7 +263,7 @@ CREATE TABLE settings (
 
 ### Configuration
 - `apps/mobile/src-tauri/tauri.conf.json` - Bundle ID: `com.dietrich.peek-mobile`
-- `src-tauri/gen/apple/tauri-app_iOS/tauri-app_iOS.entitlements` - App Groups entitlement
+- `apps/mobile/src-tauri/gen/apple/peek-save_iOS/peek-save_iOS.entitlements` - App Groups entitlement
 - `apps/mobile/src-tauri/gen/apple/Peek/Peek.entitlements` - Share extension entitlements
 
 ## Development

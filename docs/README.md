@@ -91,8 +91,6 @@ describes, and change it if the design changed.
 
 - [entity-correlation-design.md](./entity-correlation-design.md) — co-occurrence,
   entity resolution and clustering over extracted entities.
-- [atproto-signature-verification-plan.md](./atproto-signature-verification-plan.md)
-  — verifying that a feature-release record really came from its publisher.
 - [collab-notes-design.md](./collab-notes-design.md) and
   [collab-notes-ux.md](./collab-notes-ux.md) — multi-user notes with no
   Peek-operated server in the data path, and the UX that goes with it.

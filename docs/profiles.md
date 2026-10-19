@@ -613,7 +613,7 @@ Cons:
   - `get_current_profile_slug()` - sync profile (with override support)
   - `append_profile_to_url()` - adds ?profile= to sync URLs
   - `get_profile_info` / `set_profile` - Tauri commands
-- `src/App.tsx` - Profile section in Settings UI
+- `apps/mobile/src/App.tsx` - Profile section in Settings UI
 - `apps/mobile/src/App.css` - Profile banner and selector styles
 
 **Build Scripts:**

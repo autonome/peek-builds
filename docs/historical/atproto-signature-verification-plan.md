@@ -1,5 +1,7 @@
 # atproto Record Signature Verification Plan
 
+*Historical: the plan for cryptographically verifying feature-release records, built as `apps/desktop/main/atproto-verify.ts` through Phase 2 with the icon/screenshot lexicon fields added; not current guidance.*
+
 ## Gap
 
 `apps/desktop/main/atproto-source.ts:356` fetches a `space.peek.feature.release`
