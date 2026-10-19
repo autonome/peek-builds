@@ -1441,6 +1441,40 @@ describe('window-kernel: SetStacking replays only the windows that actually need
       { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
     ]);
   });
+
+  // [A,B,C] -> [B,A,C] replays A then C (above); these vary where A and C live.
+  const reorder = (a: WindowRecord, c: WindowRecord, extra: Partial<State> = {}) => {
+    const b = makeRecord(wid(2), BASE_LAYER);
+    const prev: State = { ...initialState(), screens: [{ id: 'S', current: 'd1' }], ...extra, order: [a, b, c] };
+    const next: State = { ...prev, order: [b, a, c], version: prev.version + 1 };
+    return stacking(react(prev, { type: 'AppActivated' }, next));
+  };
+
+  it('a window placed on a desktop no screen shows is not replayed (peek 4fa36692)', () => {
+    const a = { ...makeRecord(wid(1), BASE_LAYER), desktop: 'd2' };
+    const c = { ...makeRecord(wid(3), BASE_LAYER), desktop: 'd1' };
+    assert.deepStrictEqual(reorder(a, c), [{ type: 'SetStacking', id: wid(3), layer: BASE_LAYER }]);
+  });
+
+  it('while a desktop switch is unread, no placed window is replayed, even one on the shown desktop', () => {
+    const a = { ...makeRecord(wid(1), BASE_LAYER), desktop: 'd1' };
+    const c = { ...makeRecord(wid(3), BASE_LAYER), desktop: 'd1' };
+    const unread = { desktopSwitchCount: 1, desktopSwitchesRead: 0 };
+    assert.strictEqual(desktopUnread({ ...initialState(), ...unread }), true, 'precondition: switch unread');
+    assert.deepStrictEqual(reorder(a, c, unread), []);
+  });
+
+  it('a window never placed, or on every desktop, is still replayed', () => {
+    const a = makeRecord(wid(1), BASE_LAYER);
+    assert.strictEqual(a.desktop, undefined, 'precondition: never placed');
+    const c = { ...makeRecord(wid(3), BASE_LAYER), desktop: 'd2', onEveryDesktop: true };
+    const expected = [
+      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
+      { type: 'SetStacking', id: wid(3), layer: BASE_LAYER },
+    ];
+    assert.deepStrictEqual(reorder(a, c), expected);
+    assert.deepStrictEqual(reorder(a, c, { desktopSwitchCount: 1, desktopSwitchesRead: 0 }), expected);
+  });
 });
 
 // ── closing the key window ──────────────────────────────────────────────────
