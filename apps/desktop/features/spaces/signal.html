@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <!--
-  The per-space desktop marker page (docs/design/space-desktop-return-plan.md):
-  loaded by the 2x2 transparent window a space leaves on its desktop so that
-  re-entering the space can switch macOS back there by raising it
-  (background.js openSignalWindow()). Deliberately empty and deliberately NOT
+  The per-desktop marker page (docs/design/space-desktop-return-plan.md):
+  loaded by the 2x2 transparent window opened once on each visited desktop
+  (main/desktop-marker-manager.ts syncMarkers()), so entering a space can
+  switch macOS to the space's desktop by raising that desktop's marker
+  (main/tile-ipc.ts planSpaceMarkerRaise()). Deliberately empty and deliberately NOT
   home.html: the marker must never match a selector, window count, or page
   pick that means the spaces home UI.
 -->
