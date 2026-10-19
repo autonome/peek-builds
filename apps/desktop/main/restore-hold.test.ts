@@ -3,7 +3,7 @@
 // real implementation — the module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
+import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus } from './restore-hold.js';
 
 const d = (id: number, desktop?: string) =>
   desktop === undefined ? { id } : { id, desktop };
@@ -128,6 +128,24 @@ describe('planLazyRestore (partition + held-focus promotion)', () => {
     const { openNow, held } = planLazyRestore([a], null, ['1', '3']);
     assert.strictEqual(openNow[0], a);
     assert.strictEqual(held.size, 0);
+  });
+});
+
+describe('planReleaseFocus (which released window takes focus)', () => {
+  it('the snapshot-focused window wins', () => {
+    assert.deepStrictEqual(planReleaseFocus([5, 6, 7], 6, true), { id: 6, reason: 'snapshot-focused' });
+  });
+
+  it('no focused marker → the frontmost released window (first opened)', () => {
+    assert.deepStrictEqual(planReleaseFocus([5, 6, 7], null, true), { id: 5, reason: 'frontmost' });
+  });
+
+  it('app inactive or headless → no focus, even with a focused marker', () => {
+    assert.deepStrictEqual(planReleaseFocus([5, 6], 6, false), { id: null, reason: 'not-active' });
+  });
+
+  it('nothing opened → no focus', () => {
+    assert.deepStrictEqual(planReleaseFocus([], null, true), { id: null, reason: 'none-opened' });
   });
 });
 

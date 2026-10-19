@@ -85,6 +85,27 @@ export function planLazyRestore<
 }
 
 /**
+ * Which window of a just-released group takes focus. The user arrived on this
+ * desktop by switching to it; if no released window becomes the key window the
+ * OS returns to the desktop of the one that still is. The snapshot's focused
+ * window wins, else the frontmost (`openedIds` is in front-to-back open order).
+ * Nothing when the app is not active or is headless (`shouldFocus` false), so a
+ * user who arrived in another app is not yanked into Peek.
+ */
+export function planReleaseFocus(
+  openedIds: readonly number[],
+  snapshotFocusedId: number | null,
+  shouldFocus: boolean,
+): { id: number | null; reason: 'snapshot-focused' | 'frontmost' | 'not-active' | 'none-opened' } {
+  if (openedIds.length === 0) return { id: null, reason: 'none-opened' };
+  if (!shouldFocus) return { id: null, reason: 'not-active' };
+  if (snapshotFocusedId != null && openedIds.includes(snapshotFocusedId)) {
+    return { id: snapshotFocusedId, reason: 'snapshot-focused' };
+  }
+  return { id: openedIds[0], reason: 'frontmost' };
+}
+
+/**
  * Fold still-held descriptors back into a save: a quit while groups are held
  * must re-save them with their recorded desktops, not drop them. The live
  * set's focus wins — when the save already carries a focused window, a held

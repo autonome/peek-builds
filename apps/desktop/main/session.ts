@@ -31,7 +31,7 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
-import { planLazyRestore, mergeHeldIntoSave } from './restore-hold.js';
+import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 
@@ -269,6 +269,7 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
     const eagerCount = Math.min(SESSION_EAGER_RESTORE_COUNT, ordered.length);
     let focusedWindowId: number | null = null;
     let opened = 0;
+    const openedIds: number[] = [];
     for (let i = 0; i < ordered.length; i++) {
       const original = unmaximizedRestoreDescriptor(ordered[i]);
       try {
@@ -307,6 +308,7 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
           continue;
         }
         opened++;
+        openedIds.push(openResult.id);
         // BrowserWindows opened show:false need the explicit inactive show; a
         // hybrid page-host was already shown inactive by its open path (which
         // holds only because this loop never runs inside a kernel
@@ -333,9 +335,18 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
     // The held focus applies now that its group is open — but only under the
     // warm-restore rule (app active, not headless), so a user who arrived on
     // this desktop in another app is not yanked into Peek.
-    if (focusedWindowId != null && getKernelExecutorForApp().shouldRestoreFocus(false, false)) {
-      const focusWin = getLiveWindow(focusedWindowId);
-      const hybridFocus = focusWin ? null : getHybridWindow(focusedWindowId);
+    // With no focused marker, the frontmost released window takes it: the user
+    // arrived by switching desktops, and with no key window here the OS returns
+    // to the desktop of the one that still is.
+    const focusPlan = planReleaseFocus(
+      openedIds,
+      focusedWindowId,
+      getKernelExecutorForApp().shouldRestoreFocus(false, false),
+    );
+    console.log(`[session] lazy-restore-focus desktop=${desktop} focusedId=${focusPlan.id ?? 'none'} reason=${focusPlan.reason}`);
+    if (focusPlan.id != null) {
+      const focusWin = getLiveWindow(focusPlan.id);
+      const hybridFocus = focusWin ? null : getHybridWindow(focusPlan.id);
       if (focusWin && !focusWin.isDestroyed()) {
         showWindowHeadlessSafe(focusWin, { active: true });
       } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
