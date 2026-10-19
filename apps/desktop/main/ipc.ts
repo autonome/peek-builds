@@ -2507,10 +2507,11 @@ export function wireHybridContentEvents(
             contentW: placedBounds.width,
             contentH: placedBounds.height,
             isWebPage: true,
-            // A transient popup belongs to the page that opened it: taking key
-            // must not end its opener (`window-kernel.ts
-            // transientAutocloseExemption`, the focuser-relation clause), so it
-            // registers with the opener as its parent. Only the id is read.
+            // A popup registers with the page that opened it as its parent. Only
+            // the id is read. The parent link does not exempt a transient opener
+            // from the closing rule: when the window manager focuses the popup,
+            // it closes a focused transient opener (`window-kernel.ts
+            // transientAutocloseExemption`).
             openerWindow: popupParent as unknown as BrowserWindow | null,
             isRealParent: popupParent !== null,
             deferContentLoad: false,

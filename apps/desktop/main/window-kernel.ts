@@ -2851,8 +2851,8 @@ export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
   return rec.transient === true;
 }
 
-// Which of the four exemption clauses in the transient-dismissal law spared a candidate.
-export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'not-yet-focused';
+// Which of the three exemption clauses in the transient-dismissal law spared a candidate.
+export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'not-yet-focused';
 
 // The one dismissal law; `selectTransientAutoclose`, `traceTransientAutoclose` and `evolve`'s merge arm all call it — its clauses are stated nowhere else.
 //
@@ -2864,19 +2864,17 @@ export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'foc
 // echo of the window the transient was opened over) arriving before the
 // window manager has focused the transient at all.
 //
-// The other clauses do not name a different window the user moved to:
-// `overlay-attached` — the candidate is a page's chrome, whose visibility
-// belongs to its host; `focuser-relation` — the focused window is the
-// candidate's own chrome or a window the candidate opened, so focus stayed
-// inside it. `no-input` spares a click-through window only while the window
-// manager has never focused it.
+// A focused window related to the candidate (its own chrome overlay, or a
+// window it opened) closes it like any other. The other clauses do not name a
+// different focused window: `overlay-attached` — the candidate is a page's
+// chrome, whose visibility belongs to its host; `no-input` spares a
+// click-through window only while the window manager has never focused it.
 export function transientAutocloseExemption(
   rec: WindowRecord,
   focuser: WindowRecord | undefined,
   orderingFloor: number | null,
 ): TransientAutocloseExemption | null {
   if (rec.overlayFor !== undefined) return 'overlay-attached';
-  if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return 'focuser-relation';
   if (rec.focusedSinceShown === true) return null;
   // Policy, not derivation — spares the Space border / chrome overlay cases, not every no-input window.
   if (!rec.acceptsInput) return 'no-input';

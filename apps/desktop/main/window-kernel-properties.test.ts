@@ -646,8 +646,6 @@ function checkAutocloseInvariants(state: State): string[] {
     // Candidacy: the window was opened transient, whatever its role.
     if (rec.transient !== true) return false;
     if (rec.overlayFor !== undefined) return false;
-    const focuser = state.order.find((w) => w.id === focusedId);
-    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return false;
     // A window the pointer passes through is never a victim — until the window manager has focused it.
     if (!rec.acceptsInput && rec.focusedSinceShown !== true) return false;
     return true;
@@ -706,8 +704,8 @@ function checkAutocloseInvariants(state: State): string[] {
 // per transition:
 // 1. When a focus report for another window is adopted (`lastAttention` moves to a new holder),
 //    or the app resigns, every visible transient candidate the window manager has focused since
-//    showing it is dismissed in that same transition — unless it is a page's attached chrome, or
-//    the newly focused window is its own chrome or a window it opened.
+//    showing it is dismissed in that same transition — unless it is a page's attached chrome.
+//    The newly focused window being its own chrome or a window it opened changes nothing.
 // 2. That focus report adopts the reported window: `key` names it and the attention carries the
 //    report's cause, and no RaiseWindow names any other window.
 // 3. A close or hide of a window dismissed because another window was focused
@@ -721,11 +719,9 @@ function checkClosingRule(step: Step): string[] {
   const newFocus = holder !== null && holder !== prev.key ? holder : null;
   const resigned = prev.appActive && !next.appActive;
   if (newFocus !== null || resigned) {
-    const focuser = newFocus === null ? undefined : next.order.find((w) => w.id === newFocus);
     for (const t of prev.order) {
       if (t.id === newFocus) continue;
       if (!t.visible || t.focusedSinceShown !== true || !isTransientAutocloseCandidate(t) || t.overlayFor !== undefined) continue;
-      if (focuser !== undefined && (focuser.parentId === t.id || focuser.overlayFor === t.id)) continue;
       const after = next.order.find((w) => w.id === t.id);
       if (after === undefined || !after.visible || after.pendingHidden === true) continue;
       violations.push(
@@ -792,21 +788,18 @@ function checkAutocloseWiring(step: Step): string[] {
 }
 
 // No transient record may carry hiddenByAppBlur===true unless a
-// focuser/overlay/click-through exemption holds — restated as literal clauses so this catches a
+// overlay/click-through exemption holds — restated as literal clauses so this catches a
 // hide-instead-of-dismiss path even one that never calls selectTransientAutoclose at all.
 function checkTransientHideIsNotDismiss(step: Step): string[] {
   const violations: string[] = [];
-  const holder = step.next.lastAttention?.holder ?? null;
-  const focuser = holder !== null ? step.next.order.find((w) => w.id === holder) : undefined;
   for (const rec of step.next.order) {
     if (rec.hiddenByAppBlur !== true) continue;
     if (rec.transient !== true) continue;
     if (!rec.orderable) continue;
-    if (focuser !== undefined && (focuser.parentId === rec.id || focuser.overlayFor === rec.id)) continue;
     if (rec.overlayFor !== undefined) continue;
     if (!rec.acceptsInput) continue;
     violations.push(
-      `transient record ${rec.id} (role=${rec.role}) carries hiddenByAppBlur===true with none of the three ` +
+      `transient record ${rec.id} (role=${rec.role}) carries hiddenByAppBlur===true with neither of the two ` +
         `exemptions holding — docs/design/window-manager.md § 0: a transient closes on any focus loss, always`,
     );
   }

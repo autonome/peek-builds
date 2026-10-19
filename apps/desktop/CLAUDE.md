@@ -30,8 +30,8 @@ This is the product invariant the app is named for, and it has no exemptions by 
 The window record carries both facts: `focusedSinceShown` (set by a focus report for the shown
 window, cleared by a genuine show or hide) and `closeCause` (`focus-elsewhere` for a dismissal
 the window manager chose, `requested` for a teardown request). The law lives in
-`main/window-kernel.ts transientAutocloseExemption()`; a window's own page chrome or a window it
-opened taking focus is not leaving it. Enforced by the `checkClosingRule` property in
+`main/window-kernel.ts transientAutocloseExemption()`. Any other window includes the transient's
+own page chrome (address bar, Cmd+L) and a window it opened. Enforced by the `checkClosingRule` property in
 `main/window-kernel-properties.test.ts` and the "the transient closing rule" suite in
 `main/window-kernel.test.ts`.
 

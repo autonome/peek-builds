@@ -124,7 +124,7 @@ exactly this, but only against the packaged build, where the first-frame report 
 land after the focus report instead of before it. `react` now carries a third rule, keyed on the
 `orderable` diff itself rather than on `ev.type`: any record whose flag flips this transition is
 checked against the CURRENT `State.lastAttention` — the holder focus already settled on, not a
-fresh report — using `selectTransientAutoclose` unchanged, so none of the four exemptions or the
+fresh report — using `selectTransientAutoclose` unchanged, so none of the exemptions or the
 ordering floor is restated. `window-kernel-properties.test.ts checkAutocloseWiring` carries the
 mirror; `window-kernel.test.ts` pins the hand-built case (host focused with a `world` cause, then
 the quick-view's `WindowContentOrderable` arrives — exactly one `DismissWindow`).
@@ -1556,11 +1556,11 @@ attention change writes — so a blur that nothing answers dismisses nothing. Wh
 reassigns focus at all when the focused window is HIDDEN (as opposed to blurred while still shown)
 is unproven, and only sign-off check 12 can answer it — that case stays open, not settled either
 way. The exemptions are
-relational, never per window kind: an overlay is attached to it (`rec.overlayFor !== undefined`);
-it is click-through (`!rec.acceptsInput`) and so can never be in the user's way; the focuser names
-it as parent (`focuser.parentId === rec.id`) or is its overlay (`focuser.overlayFor === rec.id`);
-and a machine-caused focus spares anything strictly newer than the focuser (the ordering floor,
-above). Transience is `WindowRecord.transient`, decided once at open from the open options and
+never per window kind: the transient is itself a page's attached overlay (`rec.overlayFor !==
+undefined`); it is click-through (`!rec.acceptsInput`) and so can never be in the user's way; and a
+machine-caused focus spares anything strictly newer than the focuser (the ordering floor, above).
+No exemption is made for a related focuser: the transient's own chrome overlay (address bar, Cmd+L)
+or a window it opened taking focus closes it like any other window. Transience is `WindowRecord.transient`, decided once at open from the open options and
 whether Peek is focused (`izui-roles.ts windowIsTransient`), never from role. A transient window
 that holds key taken from another app while the app is inactive also ends the moment that key is
 lost or the app becomes active (`window-kernel.ts holdsKeyTakenFromAnotherApp`), with no new
