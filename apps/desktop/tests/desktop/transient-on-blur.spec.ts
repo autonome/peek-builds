@@ -160,7 +160,7 @@ test.describe('Transient on blur auto-hide @desktop', () => {
   /** True if the window is currently in the list AND visible. */
   async function isVisible(windowId: number): Promise<boolean> {
     return await bgWindow.evaluate(async (wid: number) => {
-      const result = await (window as any).app.window.list({ includeInternal: true });
+      const result = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
       if (!result.success) return false;
       const w = result.windows.find((x: any) => x.id === wid);
       return w !== undefined && w.visible === true;
