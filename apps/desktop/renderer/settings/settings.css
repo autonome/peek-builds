@@ -459,13 +459,3 @@ body {
 .ext-options-content .item-card {
   margin-bottom: 12px;
 }
-
-/* Visual feedback during drag */
-body.is-dragging {
-  cursor: grabbing !important;
-}
-
-body.is-dragging * {
-  cursor: grabbing !important;
-  user-select: none !important;
-}

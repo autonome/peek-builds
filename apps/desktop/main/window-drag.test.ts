@@ -11,8 +11,10 @@ import {
   windowDragVeto,
   claimWindowPress,
   windowDragWindowClosed,
+  resolveDragTarget,
 } from './window-drag-runtime.js';
-import type { WindowId } from './window-kernel.js';
+import { initialState, evolve, BASE_LAYER } from './window-kernel.js';
+import type { Event as KernelEvent, State as KernelState, WindowId } from './window-kernel.js';
 
 type Id = string;
 const RECT = { x: 100, y: 200, width: 640, height: 480 };
@@ -260,5 +262,47 @@ describe('window drag runtime', () => {
     windowDragWindowClosed(A);
     assert.strictEqual(_windowDragStateForTests().phase, 'idle');
     assert.strictEqual(calls.at(-1), 'active false');
+  });
+});
+
+describe('resolveDragTarget', () => {
+  const host = 'wk-1' as WindowId;
+  const overlay = 'wk-2' as WindowId;
+  const tile = 'wk-3' as WindowId;
+
+  const fold = (events: KernelEvent[]): KernelState => events.reduce(evolve, initialState());
+  const scene = (...extra: KernelEvent[]): KernelState =>
+    fold([
+      { type: 'WindowRegistered', id: host, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+      { type: 'WindowRegistered', id: tile, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+      { type: 'WindowShown', id: host },
+      { type: 'WindowShown', id: overlay },
+      { type: 'WindowShown', id: tile },
+      { type: 'OverlayAttached', overlayId: overlay, hostId: host },
+      ...extra,
+    ]);
+
+  it('a press on a page or a tile moves that window', () => {
+    assert.strictEqual(resolveDragTarget(scene(), host), host);
+    assert.strictEqual(resolveDragTarget(scene(), tile), tile);
+  });
+
+  it('a press on the page chrome moves the page it is attached to', () => {
+    assert.strictEqual(resolveDragTarget(scene(), overlay), host);
+  });
+
+  it('a maximized target cannot be moved, whether pressed directly or through its chrome', () => {
+    const state = scene({ type: 'Maximized', id: host, preMaxBounds: null });
+    assert.strictEqual(resolveDragTarget(state, host), null);
+    assert.strictEqual(resolveDragTarget(state, overlay), null);
+  });
+
+  it('a hidden window cannot be moved', () => {
+    assert.strictEqual(resolveDragTarget(scene({ type: 'WindowHidden', id: tile }), tile), null);
+  });
+
+  it('an unregistered window moves nothing', () => {
+    assert.strictEqual(resolveDragTarget(scene(), 'wk-99' as WindowId), null);
   });
 });

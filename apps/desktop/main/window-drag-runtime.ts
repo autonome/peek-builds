@@ -32,8 +32,6 @@ export type WindowPointerEvent =
 export function resolveDragTarget(state: State, source: WindowId): WindowId | null {
   const record = windowById(state, source);
   if (!record) return null;
-  // Until the tile windows move to this path, only page hosts and their chrome arm here.
-  if (record.kind !== 'page-host' && record.overlayFor === undefined) return null;
   const targetId = record.overlayFor ?? source;
   return movableRecord(state, targetId) ? targetId : null;
 }
