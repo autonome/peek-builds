@@ -221,20 +221,10 @@ function drainWindowClose(closedId: WindowId): void {
   if (!capture) return;
   const { electronId, bounds, presentation } = capture;
 
-  // Same `window:closed` publish the old per-window `'closed'` listener sent
-  // (gated on the SAME registry-payload check — only a window that carries an
-  // open-time source/params gets one), just resolved off the WindowId this
-  // notification already gives us instead of a numeric lookup that would no
-  // longer succeed here.
-  const windowData = getWindowOpenPayload(closedId);
-  if (windowData) {
-    publish(windowData.source, 'window:closed', { id: electronId, source: windowData.source });
-  }
-
-  // Close-finalize tail — push to the reopen stack, drop from the registry +
-  // publish `window:removed`, and schedule the close-snapshot. `closedId` is
-  // handed through as `knownWmId` for the same reason `windowData` above is
-  // resolved off it directly.
+  // Close-finalize tail — push to the reopen stack, drop from the registry,
+  // publish `window:closed` + `window:removed`, and schedule the close-snapshot.
+  // `closedId` is handed through as `knownWmId` because the numeric lookup no
+  // longer succeeds here.
   finalizeWindowClose(electronId, { bounds, presentation }, closedId);
 }
 
@@ -464,6 +454,14 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   // reporting a window that no longer exists. After (a) above, which is the
   // last reader of this window's mode entry.
   cleanupWindowContext(windowId);
+  // `window:closed` goes out after the window has left the registry and its
+  // context entries are gone, so a subscriber that recounts windows on it never
+  // sees the closed one. It is published here, not by the BrowserWindow-only
+  // drain, because a hybrid page-host (a BaseWindow) finalizes through this tail
+  // too. Only a window that carries an open-time source gets one.
+  if (windowData) {
+    publish(windowData.source, 'window:closed', { id: windowId, source: windowData.source });
+  }
   try {
     publish('system', 'window:removed', { id: windowId });
   } catch (publishErr) {
