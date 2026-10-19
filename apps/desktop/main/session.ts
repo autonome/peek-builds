@@ -31,9 +31,14 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
-import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus } from './restore-hold.js';
+import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
+
+// Longest a launch restore waits for its one desktop read. The provider bounds
+// its own requests (a few seconds, then falls back), so this only guards a read
+// that never settles; past it, everything opens now, as with no desktop reads.
+const RESTORE_DESKTOP_READ_TIMEOUT_MS = 3000;
 
 export type { WindowContext, WindowDescriptor };
 
@@ -1717,7 +1722,29 @@ export async function restoreSessionSnapshot(
   // now — the pre-lazy behavior, unchanged. When the focused descriptor is
   // held, `planLazyRestore` hands focus to the top-of-stack openNow window;
   // the held descriptor applies its own focus when its group opens.
-  const kernelStateAtRestore = getKernelExecutorForApp().getState();
+  // At launch no desktop read has happened yet, so the current desktop is
+  // unknown; read once first (bounded) so windows recorded elsewhere are held.
+  const restoreExecutor = getKernelExecutorForApp();
+  if (shouldReadDesktopBeforeRestore(restoreExecutor.getState().screens[0]?.current ?? null, restoreExecutor.canReadDesktops())) {
+    const readStart = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        restoreExecutor.refreshDesktops('restore'),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, RESTORE_DESKTOP_READ_TIMEOUT_MS);
+        }),
+      ]);
+    } catch {
+      /* restore with what the kernel knows */
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    console.log(
+      `[session] restore-desktop-read current=${restoreExecutor.getState().screens[0]?.current ?? null} waited_ms=${Date.now() - readStart}`,
+    );
+  }
+  const kernelStateAtRestore = restoreExecutor.getState();
   const currentDesktopAtRestore = kernelStateAtRestore.screens[0]?.current ?? null;
   const { openNow, held } = planLazyRestore(
     validWindows,

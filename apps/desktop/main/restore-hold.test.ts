@@ -3,7 +3,19 @@
 // real implementation — the module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus } from './restore-hold.js';
+import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore } from './restore-hold.js';
+
+describe('shouldReadDesktopBeforeRestore', () => {
+  it('reads when the current desktop is unknown and reads are possible', () => {
+    assert.strictEqual(shouldReadDesktopBeforeRestore(null, true), true);
+  });
+  it('does not read when the current desktop is already known', () => {
+    assert.strictEqual(shouldReadDesktopBeforeRestore('2', true), false);
+  });
+  it('does not read when reads are not possible (headless, tests, no provider)', () => {
+    assert.strictEqual(shouldReadDesktopBeforeRestore(null, false), false);
+  });
+});
 
 const d = (id: number, desktop?: string) =>
   desktop === undefined ? { id } : { id, desktop };

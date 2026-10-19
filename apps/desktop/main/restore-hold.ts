@@ -21,6 +21,16 @@
  * Electron-free on purpose (the `space-desktop-choice.ts` pattern), so the
  * main-process unit runner can import the real implementation.
  */
+/**
+ * Whether a restore should read the desktops before partitioning. At launch no
+ * read has happened yet, so the current desktop is unknown and the partition
+ * would open everything now; when reads are possible, one read first lets
+ * windows recorded on other desktops be held.
+ */
+export function shouldReadDesktopBeforeRestore(current: string | null, canReadDesktops: boolean): boolean {
+  return current === null && canReadDesktops;
+}
+
 export interface RestorePartition<T> {
   openNow: T[];
   held: Map<string, T[]>;

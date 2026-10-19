@@ -227,6 +227,11 @@ export class WindowKernelExecutor {
     return this.backend.placeWindowOnDesktop(id, desktop);
   }
 
+  // Whether `refreshDesktops` reads anything: not under headless, and only on a backend that reads.
+  canReadDesktops(): boolean {
+    return !this.headless && typeof this.backend.refreshDesktops === 'function';
+  }
+
   // Resolves once the backend's fresh read of every window's desktop has reached the kernel.
   async refreshDesktops(trigger: string): Promise<void> {
     await this.backend.refreshDesktops?.(trigger);
