@@ -1,5 +1,7 @@
 # Page-host state machine — design
 
+*Historical: a design for a state machine inside the canvas page-host renderer, which no longer exists; not current guidance.*
+
 **Status:** draft for review  
 **Date:** 2026-04-27  
 **Failing repro:** `tests/desktop/session-restore-page-host.spec.ts` — _maximized page host: maximize state survives save+restore_

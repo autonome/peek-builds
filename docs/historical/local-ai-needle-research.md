@@ -1,5 +1,7 @@
 # Local AI for Peek: Needle + Firefox approaches
 
+*Historical: research into local AI models for entity extraction and workspace detection, with the bake-off results; not current guidance.*
+
 Research dated 2026-09-20. Source file: `Peek-Needle-Firefox-for-entities-and-workspaces.md` (repo root, untracked at filing time). Full text is below so this item stands alone.
 
 ## Related items
@@ -474,7 +476,7 @@ Needle was not run during this research: the research environment blocked Huggin
 
 ## How to run the bake-off (2026-09-21)
 
-The first measurements are done and recorded in `docs/local-ai-needle-research.md` on `main`
+The first measurements are done and recorded in `docs/historical/local-ai-needle-research.md` on `main`
 (the "Results (2026-09-21)" section). What remains needs the account holder's own data on a
 machine with the real profile, because the labels are judgement about which visits belonged to
 the same task, and no synthetic set answers that.

@@ -1,5 +1,7 @@
 # Widgets Research & Architecture
 
+*Historical: the research and architecture behind widget sheets, shipped as the `sheets` feature; not current guidance.*
+
 Status: **Architecture Decided** | Feb 2026
 
 ## Core Insight

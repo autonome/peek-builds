@@ -289,7 +289,7 @@ the writes `POST /mcp/items`, `PATCH`/`DELETE /mcp/items/:id`, `POST /mcp/items/
 **Why this and not remote MCP.** MCP is a protocol for an *agent* to talk to a *tool provider*.
 A worker is not an agent; it is application code that needs a store. Wrapping its every read in
 JSON-RPC tool calls adds a protocol layer, a session, and a tool-schema round trip to something
-that already has a typed store interface (`store/types.js` `PeekStore`) with an HTTP
+that already has a typed store interface (`apps/desktop/features/mcp-server/store/types.js` `PeekStore`) with an HTTP
 implementation already written against it. `docs/mcp-remote-backend-design.md` §1 makes exactly
 this argument for exactly this reason — phase A "removes the requirement" of a local install for
 "a scheduled agent and a cloud session", and only "the phone case genuinely needs" MCP over HTTP,
@@ -302,7 +302,7 @@ MCP remains the right answer for the *other* direction — an agent calling *int
 
 - **A worker's datastore is a subset.** `api.datastore` in `tile-preload.cts` exposes roughly
   fifty methods — addresses, visits, content, tags, item visits, frecency queries, generic
-  `getRow`/`setRow`/`getTable`. `PeekStore` in `store/types.js` has seventeen, two of which are
+  `getRow`/`setRow`/`getTable`. `PeekStore` in `apps/desktop/features/mcp-server/store/types.js` has seventeen, two of which are
   `describe()` and `close()` — so fifteen actual store operations. Everything outside those
   fifteen either does not exist remotely or would have to be added to `/mcp/*` first.
   **This is the largest single gap in the design.** In particular `getRow` / `setRow` /
@@ -469,7 +469,7 @@ absence makes a worker either impossible or unportable.
 
 **Hard requirements.**
 
-1. **ES modules, with a resolver for cross-feature imports.** `feeds/background.js` opens with
+1. **ES modules, with a resolver for cross-feature imports.** `apps/desktop/features/feeds/background.js` opens with
    `import { registerNoun } from 'peek://cmd/nouns.js'`. Bundling at install time is the obvious
    answer and turns this into a build-step requirement rather than a runtime one — but it has to
    be decided, because "just run the file" does not work for a real feature.
@@ -846,7 +846,8 @@ channel, the log sink — are per-target.
 
    What decides it is not cost but binding. `apps/desktop/renderer/cmd/nouns.js` evaluates
    `const api = window.app` once, at its own first import, and holds it for the life of the
-   module. Two instances of `feeds/background.js` importing the same specifier get one cached
+   module. Two instances of `apps/desktop/features/feeds/background.js` importing the same
+   specifier get one cached
    module instance, so the second instance's `registerNoun()` calls landed on the *first*
    instance's API object — measured, not inferred: after the second `init()`, the first API object
    held six noun subscriptions and the second held none. A host that runs more than one feature,

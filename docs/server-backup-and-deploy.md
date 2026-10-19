@@ -184,6 +184,25 @@ the central directory bytes of an otherwise-valid archive directly, rather than 
 write the escape attempt — `archiver` normalizes `../../evil` to `evil` and similar on the way in,
 so a zip built through it can never actually carry the name the guard is checking for.
 
+## What settles this
+
+A backup is proven as an archive (round-trip test, plus the production verification under
+History below), as bytes readable off-box, and as a recovery mechanism — both by the restore
+round-trip test and by the 2026-09-01 rehearsal against the live server recorded under History
+below. What remains manual is getting the
+very first copy off a volume that has none yet, or reconstructing one by hand when the automated
+path itself is suspect — see "Taking a backup by hand".
+
+Backups still live on the same Railway volume as the live database, so they remain no protection
+against volume loss. `GET /backups/:filename` is the first half of fixing that; nothing pulls them
+off-box on a schedule yet.
+
+---
+
+## History
+
+The sections below record how things stood when this document was written. They are kept for their reasoning and are not current guidance.
+
 ## The production restore rehearsal, 2026-09-01
 
 The restore path had never been run against production. It has now, and it works: a rehearsal
@@ -251,15 +270,3 @@ plus its WAL. Take a backup and copy it off the volume first — the 2026-09-01 
 
 Retention is 7 deep and a backup taken by hand counts against it: taking two during the rehearsal
 purged the two oldest daily archives about two days earlier than they would have rotated out.
-
-## What settles this
-
-A backup is proven as an archive (round-trip test, production verification above), as bytes
-readable off-box, and as a recovery mechanism — both by the restore round-trip test and by the
-2026-09-01 rehearsal against the live server described above. What remains manual is getting the
-very first copy off a volume that has none yet, or reconstructing one by hand when the automated
-path itself is suspect — see "Taking a backup by hand".
-
-Backups still live on the same Railway volume as the live database, so they remain no protection
-against volume loss. `GET /backups/:filename` is the first half of fixing that; nothing pulls them
-off-box on a schedule yet.

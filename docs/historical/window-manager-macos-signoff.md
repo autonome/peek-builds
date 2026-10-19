@@ -1,5 +1,7 @@
 # macOS sign-off: the window-kernel branch
 
+*Historical: the macOS sign-off runs for the window-kernel branch, August 2026; not current guidance.*
+
 Branch `wip/window-kernel-executor`, on the `tangled` remote.
 
 **Nothing on this branch has ever run on macOS.** It was written and measured entirely on Linux,

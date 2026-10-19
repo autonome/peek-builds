@@ -1,5 +1,7 @@
 # Editor Extension - Remaining Work
 
+*Historical: a point-in-time comparison of the editor feature against peek-edit; not current guidance.*
+
 Research note documenting what's implemented and what's missing compared to peek-edit.
 
 ## Implemented Features

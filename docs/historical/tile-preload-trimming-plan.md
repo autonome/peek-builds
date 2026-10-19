@@ -1,5 +1,7 @@
 # Plan: Trimming v1-compat API Surface in `tile-preload.ts`
 
+*Historical: the plan for removing the v1-compat API surface from the tile preload, completed in April 2026; not current guidance.*
+
 ## 0. Context and Scope
 
 The overnight audit added v1-compat shims to `apps/desktop/main/tile-preload.ts` so that 26+ migrated features keep working. The shims are a **superset** of the strict capability-gated surface and bypass enforcement: they delegate directly to the legacy `datastore-*`, `registershortcut`, `file-save-dialog`, `context-get`, and `modes:*` handlers in `apps/desktop/main/ipc.ts`, which do not check `CapabilityGrant`.
@@ -135,7 +137,7 @@ Expose unconditionally from config. No capability.
 ### Phase 1 — Inventory and tooling (1-2 days)
 
 1. Audit script `scripts/audit-tile-caps.js`
-2. Usage matrix `docs/tile-preload-trimming-matrix.md`
+2. Usage matrix `docs/historical/tile-preload-trimming-matrix.md`
 3. Capability-violation detector: log once per (tile, shim) pair — drives evidence
 
 ### Phase 2 — Strict-mode API additions (3-5 days)
@@ -253,7 +255,7 @@ Phase 1 logging becomes Phase 4 test assertion: zero `[tile-compat] shim` logs i
 | Phase | Artifact | Location |
 |---|---|---|
 | 1 | Audit script | `scripts/audit-tile-caps.js` |
-| 1 | Usage matrix | `docs/tile-preload-trimming-matrix.md` |
+| 1 | Usage matrix | `docs/historical/tile-preload-trimming-matrix.md` |
 | 1 | Violation logger | `tile-preload.ts` |
 | 2 | Strict handlers | `tile-ipc.ts` |
 | 2 | `TileCapabilities` extensions | `tile-manifest.ts` |

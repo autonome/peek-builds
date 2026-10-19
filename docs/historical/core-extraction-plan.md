@@ -1,5 +1,7 @@
 # Core Extraction Plan — cmd, page, hud
 
+*Historical: the plan for moving cmd, page and hud out of features into the core renderer, since carried out; not current guidance.*
+
 ## Context
 
 During the tiles migration, we identified that cmd, page, and hud aren't features — they're platform infrastructure. Features are things users can install, enable, disable, remove, publish, and distribute. cmd/page/hud are prerequisites for Peek existing.

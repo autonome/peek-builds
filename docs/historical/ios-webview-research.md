@@ -1,5 +1,7 @@
 # iOS Webview Research: Inline vs Popup
 
+*Historical: research into bottom-sheet presentation for the iOS in-app webview; not current guidance.*
+
 Status: **Research Complete** | Priority: Active
 
 ## Overview

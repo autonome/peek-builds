@@ -1,5 +1,7 @@
 # Sync Source Refactor: Replace syncSource with Device IDs
 
+*Historical: the research behind replacing `syncSource` with device ids, since carried out; not current guidance.*
+
 Research doc — Feb 2026
 
 ## Problem

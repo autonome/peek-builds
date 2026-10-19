@@ -1,9 +1,11 @@
 # V1 Removal — Phase 3 Work Packages
 
+*Historical: the Phase 3 work packages for removing the v1 extension runtime, completed in April 2026; not current guidance.*
+
 Break Phase 3 (destructive cleanup of remaining v1 plumbing) into small
 agent-sized tasks. Each package is sized for a 15–20 min agent spawn.
 
-See `docs/v1-removal-plan.md` for background, the rolled-back Phase 3
+See `docs/historical/v1-removal-plan.md` for background, the rolled-back Phase 3
 attempt's lessons, and the Phase 2/2.5 work that's already landed.
 
 ---
@@ -115,10 +117,10 @@ commit body) recommending one of: (a) rewrite tests + delete window,
 (b) delete tests + delete window, (c) keep window as empty shell.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/tests/desktop/smoke.spec.ts` (lines 1383,
+- `./tests/desktop/smoke.spec.ts` (lines 1383,
   4177, 4189, 4359, 5292, 5299, 5379)
-- `/Users/dietrich/misc/mpeek/tests/fixtures/desktop-app.ts:227`
-- `/Users/dietrich/misc/mpeek/tests/README.md:140` (docs reference)
+- `./tests/fixtures/desktop-app.ts:227`
+- `./tests/README.md:140` (docs reference)
 
 **Dependencies:** none
 
@@ -140,10 +142,10 @@ broadcaster loop iterating it. Update callers in `ipc.ts:1199, 1290,
 handlers entirely if no tile uses them.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 73-77,
+- `./apps/desktop/main/main.ts` (lines 73-77,
   247-258, 1335-1343, 1393-1397, 1418-1442, 1447-1450)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts:149-151`
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:97-98, 1199,
+- `./apps/desktop/main/index.ts:149-151`
+- `./apps/desktop/main/ipc.ts:97-98, 1199,
   1290, 1333`
 
 **Dependencies:** none (map is already orphan data)
@@ -172,9 +174,9 @@ corresponding `ipcMain.handle('izui-*')` legacy handler in `ipc.ts` if
 no other caller.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts` (lines
+- `./apps/desktop/main/tile-preload.cts` (lines
   1624, 1636, 1644, 1652, 1660)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (`izui-*` handler
+- `./apps/desktop/main/ipc.ts` (`izui-*` handler
   sites — grep first)
 
 **Dependencies:** none
@@ -204,12 +206,12 @@ non-preload surface → keep. Produce a table: channel → bucket → action.
 Output as a new section in this doc.
 
 **Files to grep (callers):**
-- `/Users/dietrich/misc/mpeek/preload.js`
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts`
-- `/Users/dietrich/misc/mpeek/chrome-extensions/**` (content scripts)
-- `/Users/dietrich/misc/mpeek/apps/tauri-desktop/preload.js` (reference,
+- `./preload.js`
+- `./apps/desktop/main/tile-preload.cts`
+- `./chrome-extensions/**` (content scripts)
+- `./apps/tauri-desktop/preload.js` (reference,
   don't touch)
-- `/Users/dietrich/misc/mpeek/app/**` (legacy `app.*` call sites)
+- `./app/**` (legacy `app.*` call sites)
 
 **Dependencies:** none
 
@@ -233,11 +235,11 @@ derived the same way. Delete `isConsolidatedExtension()` + the
 Features pane still displays everything correctly.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 89, 97,
+- `./apps/desktop/main/main.ts` (lines 89, 97,
   1214, 1225, 1237, 1313-1373, 1380-1413, 1462-1464)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:100, 1300, 1310,
+- `./apps/desktop/main/ipc.ts:100, 1300, 1310,
   1323` (`isConsolidatedExtension` callsite + handlers)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts` (if exported)
+- `./apps/desktop/main/index.ts` (if exported)
 
 **Dependencies:** phase3.1 (if 3.1 recommends deleting the host window,
 the cleanup is tighter)
@@ -265,14 +267,14 @@ at `main.ts:1208`, the broadcaster loop iterating host frames
 the `app/extension-host.html` file. Update smoke tests per 3.1 outcome.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 80, 226-
+- `./apps/desktop/main/main.ts` (lines 80, 226-
   244, 767-771, 1103-1176, 1208, 1321, 1386, 1455-1457)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:2306`
-- `/Users/dietrich/misc/mpeek/app/extension-host.html` — delete
-- `/Users/dietrich/misc/mpeek/tests/desktop/smoke.spec.ts` (lines per
+- `./apps/desktop/main/ipc.ts:2306`
+- `./app/extension-host.html` — delete
+- `./tests/desktop/smoke.spec.ts` (lines per
   3.1)
-- `/Users/dietrich/misc/mpeek/tests/fixtures/desktop-app.ts:227`
-- `/Users/dietrich/misc/mpeek/tests/README.md:140`
+- `./tests/fixtures/desktop-app.ts:227`
+- `./tests/README.md:140`
 
 **Dependencies:** phase3.1 (audit), phase3.5 (rewrites the map consumers
 that reference the host window)
@@ -304,13 +306,13 @@ UNREGISTER_SHORTCUT/MODIFY_WINDOW/CONSOLE/RENDERER_LOG/APP_QUIT/
 APP_RESTART` handler blocks at `ipc.ts:4158-4476`.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (many lines —
+- `./apps/desktop/main/ipc.ts` (many lines —
   see phase3.4 output)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts` (the
+- `./apps/desktop/main/tile-preload.cts` (the
   ~70 `ipcRenderer.invoke('legacy-*')` sites in bucket (b))
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts:16-27`
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts:14`
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts:13`
+- `./apps/desktop/main/config.ts:16-27`
+- `./apps/desktop/main/config.ts:14`
+- `./apps/desktop/main/index.ts:13`
 
 **Dependencies:** phase3.4 (must know bucket per channel), phase3.6
 (host window gone = no frame.send path using IPC_CHANNELS names), phase
@@ -355,13 +357,13 @@ children get `tile-preload.cjs` unconditionally (or throw if not a v2
 tile).
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/preload.js` — delete (2693 LOC)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/entry.ts` (lines 63, 152,
+- `./preload.js` — delete (2693 LOC)
+- `./apps/desktop/main/entry.ts` (lines 63, 152,
   157, 189-211)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts` (preload path
+- `./apps/desktop/main/config.ts` (preload path
   getters/setters)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts` (exports)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (lines 119,
+- `./apps/desktop/main/index.ts` (exports)
+- `./apps/desktop/main/ipc.ts` (lines 119,
   2268, 2670)
 
 **Dependencies:** phase3.7 (all buckets) + phase3.6
@@ -389,8 +391,8 @@ first.
   Tauri-local path if Electron deletion would break `include_str!`.
 - Manifest v3 bump / `type?` field deletion / `windowHints` cleanup —
   Phase 4.
-- `docs/tile-preload-trimming-plan.md`, `docs/tiles-single-file.md`,
-  `docs/command-audit.md` doc updates — Phase 4.
+- `docs/historical/tile-preload-trimming-plan.md`, `docs/tiles-single-file.md`,
+  `docs/historical/command-audit.md` doc updates — Phase 4.
 
 ---
 

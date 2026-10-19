@@ -1,7 +1,9 @@
 # Window Placement Refactor — Sprint Plan
 
+*Historical: the sprint plan for the window-placement refactor, superseded by `docs/window-placement.md`; not current guidance.*
+
 > **Superseded.** The canonical spec is now
-> [docs/window-placement.md](./window-placement.md). The model in this doc
+> [docs/window-placement.md](../window-placement.md). The model in this doc
 > (`manual` + `cursor-display-fallback`) has been replaced by `proportional`,
 > and cursor-display heuristics have been removed in favor of OS-primary.
 > Retained as historical sprint planning.
@@ -281,13 +283,13 @@ followup if found).
 - Manual multi-display repro: cmd panel re-center, page-host stranded
   rescue, slides on cursor display, slides re-anchor on display change.
 - Fix any regressions surfaced; do NOT add new features.
-- Mark `docs/tasks.md` entries 32 + 33 (page-host display switch / slides
+- Mark `docs/historical/tasks.md` entries 32 + 33 (page-host display switch / slides
   anchor) as fully resolved.
 - Add a one-paragraph "Window placement" section to `docs/architecture.md`
   pointing at `window-placement.ts` as the canonical source of truth.
 
 **Files touched:**
-- `docs/tasks.md`
+- `docs/historical/tasks.md`
 - `docs/architecture.md`
 - whatever needs fixing from validation
 

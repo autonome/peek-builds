@@ -1,5 +1,15 @@
 # The Window Manager
 
+**Two modules this document treats as live are gone.** Commit `f189496b` deleted
+`apps/desktop/main/window-state.ts` and `apps/desktop/main/window-os-adapter.ts`; registration now
+runs through `window-machine.ts registerWindowWithMachine()` into
+`electron-window-backend.ts ElectronWindowBackend.registerWindow()`, and every OS effect through
+`window-kernel-executor.ts WindowKernelExecutor.execute()`. Sections below that describe either
+module as still owning something are recording where things stood when they were written.
+The same holds for the HUD: `renderer/hud/background.js openHud()` and the per-widget HUD under
+`renderer/hud/widgets/` no longer exist — the HUD is one pinned window opened by the `hud` command
+in `apps/desktop/renderer/index.js`.
+
 Status: **mandate.** This document is directive, not exploratory. It is not a menu of
 options and not a record of a discussion. It states what the system must become and what
 is forbidden on the way there.
@@ -76,7 +86,7 @@ existing window and does not navigate it.
 ### Open kernel defects
 
 **Three, found by the 2026-08-21 macOS sign-off; one is a hang.** Full evidence in
-`docs/design/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
+`docs/historical/window-manager-macos-signoff.md`, "Results: 2026-08-21 run". All three are
 branch-introduced — none of the kernel files exist on `main`. **That claim now holds only for C.**
 B was re-traced on 2026-08-21 and reproduces on `main`; **A's mechanism is now fully established**
 (see below) — a structural interaction between per-op focus arming and per-producer focus echoes,
@@ -158,7 +168,7 @@ onto the effect; `planRaise` masks only `!appActive && intent !== 'user'`;
 `electron-window-backend.ts raiseWindow` brings the app forward on a user-intended raise (darwin)
 before taking key, because `win.focus()` alone does not activate an app another app has displaced.
 The one producer is the palette's `api.window.open(..., { activation: 'user' })`
-(`renderer/cmd/background.js openPanelWindow`, which the hotkeys and `peek-cli cmd-open` share),
+(`apps/desktop/renderer/cmd/background.js openPanelWindow`, which the hotkeys and `peek-cli cmd-open` share),
 threaded through `ipc.ts` keyed reuse -> `windows.ts showWindowHeadlessSafe` ->
 `window-kernel-dispatch.ts kernelShowRequested`. The live gesture is not yet re-checked by hand.
 
@@ -184,14 +194,14 @@ keepLive reuse (`ShowWindow` then `RaiseWindow` on a hidden window) is unaffecte
 palette that was still hiding is a separate defect in the palette renderer, recorded next.
 
 **Two closes for one Escape, closed (2026-09-05).** The palette renderer's state machine
-(`renderer/cmd/state-machine.js handleEscape`) answered the kernel's ask with "not handled"
+(`apps/desktop/renderer/cmd/state-machine.js handleEscape`) answered the kernel's ask with "not handled"
 (so the kernel dispatched `CloseOrHideWindow`) AND ran its ESCAPE transition's `shutdown` action,
 whose `setTimeout(shutdown, 100)` in `panel.js` calls `api.window.close()` — a second close for
 the same press. Hidden windows are background-throttled, so that timer fired ~760ms later, on a
 palette the next Opt+Space had already re-shown; that late hide is what the raise loop above spun
 on. `handleEscape` now dispatches ESCAPE with `{ kernelCloses: true }` and the `shutdown` action
 declines on that payload; the direct keydown path (no kernel ask, used when the before-input-event
-did not preventDefault) still shuts down itself. `tests/unit/cmd-state-machine.test.js` pins both
+did not preventDefault) still shuts down itself. `apps/desktop/tests/unit/cmd-state-machine.test.js` pins both
 paths, failing-first.
 
 **A keepLive hide of the key holder raised the successor twice (2026-09-05).** Pre-existing:
@@ -364,7 +374,7 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
     first-composited-frame report, so a peek inside its own `loadURL` answers false precisely while
     it is vulnerable.
   - The settle ceiling was not needed either. `hybrid:first-frame`
-    (`chrome-api-polyfills/runtime-external-preload.cjs`, consumed by `session.ts
+    (`apps/desktop/main/chrome-api-polyfills/runtime-external-preload.cjs`, consumed by `session.ts
     installFirstFrameOrderableProducer`) fires on the first composited frame of whatever document
     the content view holds, NOT on the intended navigation succeeding, and `ipc.ts` treats a
     rejected `loadURL` as non-fatal and paints a load-error overlay instead. A hung network, a 404
@@ -376,7 +386,7 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
   - **Deleting `newer-than-focuser` and the ordering floor is WRONG and was not done.** That
     exemption covers two recorded live failures — the slow-open race and the handoff-raise echo —
     and in both the victim is a palette. A palette is registered `kind: 'browser'`
-    (`renderer/cmd/background.js openPanelWindow`) and so is orderable from birth, which means
+    (`apps/desktop/renderer/cmd/background.js openPanelWindow`) and so is orderable from birth, which means
     settled-ness never spares it and deleting the exemption would put both failures back. The two
     mechanisms are not rivals: candidacy governs windows that have shown nothing yet, the ordering
     floor governs windows opened after the focuser. `FocusCause` therefore stays a decision input.
@@ -542,14 +552,14 @@ already use for focus provenance, consumed at both the synthetic echo and the na
 "Resolved: an untokened visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever"
 below. Regression: `hybrid-close-two-hosts-hang.spec.ts` (commit `0230c9e8`), 53 transitions before
 the fix, 2 after. Found by check-driven live use during the macOS sign-off run, not by any spec or
-the full test suite — see `docs/design/window-manager-macos-signoff.md`.
+the full test suite — see `docs/historical/window-manager-macos-signoff.md`.
 
 The retirement of `window-state.ts` / `window-os-adapter.ts` is DONE: commit `f189496b` deleted
 both files along with `window-state.test.ts`. `window-kernel.ts` + `window-kernel-executor.ts`,
 fed by `window-kernel-dispatch.ts` (the dispatch surface production facts and requests reach the
 kernel through), are the only window machine left — no shadow comparison, no
 dual-write, no fallback path. What remains open on this branch is not code defects but unrun
-verification: the macOS sign-off (`docs/design/window-manager-macos-signoff.md`, 12 checks — 1
+verification: the macOS sign-off (`docs/historical/window-manager-macos-signoff.md`, 12 checks — 1
 and 2 observed passing on the 2026-08-19 run, 3-12 not run) and the remaining decision in
 §0.1.10.
 
@@ -650,8 +660,8 @@ asserts no duplicate id among one `react()` call's `DismissWindow` effects and t
 `DismissWindow` names a record whose `pendingHidden` reads true in `next`.
 
 **A panel never activated the app, closed (2026-09-05).** Four transients open with `type: 'panel'`
-(`renderer/cmd/background.js openPanelWindow`, `features/peeks/background.js`,
-`features/slides/background.js`, `features/windows/background.js`) — the open-time declaration
+(`apps/desktop/renderer/cmd/background.js openPanelWindow`, `apps/desktop/features/peeks/background.js`,
+`apps/desktop/features/slides/background.js`, `apps/desktop/features/windows/background.js`) — the open-time declaration
 `window-rules.md` names Panel: a window that shows and takes keystrokes while the app stays in the
 background (G1). The declaration was never stored on the record. `electron-window-backend.ts
 showWindow` keyed "never activates the app" to `windowClass !== 'quick-view'` instead, so peeks and
@@ -852,7 +862,7 @@ window genuinely takes key, unless that window names it as parent
 (`focuser.parentId === rec.id`). `ipc.ts NON_PARENT_ROLES` deliberately withholds that parent link
 from a palette-opened page — the very exclusion this spec guards — so no exemption applies. The
 seam that keeps a genuine child alive is `options.declareParent`, which sets the machine-level
-`parentId` without touching `isRealParent`; `renderer/cmd/panel.js openChainPopup()` uses it. So a
+`parentId` without touching `isRealParent`; `apps/desktop/renderer/cmd/panel.js openChainPopup()` uses it. So a
 chain popup keeps the palette and an opened page dismisses it, which is the intended split.
 
 `izui-escape.spec.ts` now fires the open without awaiting its result, finds the opened window in
@@ -895,7 +905,7 @@ way to reach either role at all.
 
 `hybrid-overlay.spec.ts` "clicking the chrome (overlay focus on content blur) does NOT
 deactivate" failed deterministically at tip `dc1b6051`, before
-`docs/design/overlay-attach-effect-plan.md` was implemented — 2/2 fail there against 1/1 pass on
+`docs/historical/overlay-attach-effect-plan.md` was implemented — 2/2 fail there against 1/1 pass on
 `main`. After the plan landed (`the overlay attach target answers null when the front window is
 not a page host`, `a window declares that it tracks the base-layer top`, `the machine decides
 which host the chrome overlay frames`, `the machine decides the attach target, the overlay only
@@ -1120,12 +1130,12 @@ activity" says the path is unlogged.
 Six commits reached `main`, fixing user-facing bugs found during work on this migration. What
 landed, by what it fixes:
 
-- **Space restore works for the first time.** `features/spaces/background.js` `openSpace()`
-  and `features/groups/home.js` now read the featureId that `session.ts saveSpaceWorkspaces()`
+- **Space restore works for the first time.** `apps/desktop/features/spaces/background.js` `openSpace()`
+  and `apps/desktop/features/groups/home.js` now read the featureId that `session.ts saveSpaceWorkspaces()`
   actually writes (`space-workspaces`); previously both read a namespace nothing writes, so
   `openSpace` always got null and opened the spaces home UI instead of the saved windows. The
   READERS moved, not the writer, so existing profile rows stay readable with no migration.
-  `features/spaces/manifest.json` gained `"settings": { "readForeign": ["space-workspaces"] }`.
+  `apps/desktop/features/spaces/manifest.json` gained `"settings": { "readForeign": ["space-workspaces"] }`.
 - **Hybrid page-hosts stopped being dropped from saved spaces.** `session.ts
   saveSpaceWorkspaces()` projects machine state instead of a `BrowserWindow.fromId`-backed
   liveness guard, which had discarded every `BaseWindow` page-host before any decision.
@@ -1133,7 +1143,7 @@ landed, by what it fixes:
   assignments, so `saveSpaceWorkspaces` survives on `window.app`.
 - **The groups hotkey stopped stealing `CommandOrControl+G` OS-wide** (it shadowed macOS Find
   Again); its manifest entry is removed outright.
-- Behavioral cover: `tests/desktop/space-workspace-page-host.spec.ts`, which asserts its
+- Behavioral cover: `apps/desktop/tests/desktop/space-workspace-page-host.spec.ts`, which asserts its
   preconditions rather than skip-gating them.
 
 The same batch also landed the R2 read-op checking commit. Its `READ_ALLOWLIST` enumerates
@@ -1203,11 +1213,11 @@ or where a headless run diverged from a real one, are closed.
   and `isAppResignSweepEligible` still excludes a window carrying it from the app-resign sweep
   — recorded here as a fact to re-check, since the sweep exclusion was built on the assumption
   that such a window already closes itself on blur, which this change removes.
-- **The command panel's own focus-loss dismissal is gone.** `renderer/cmd/panel.js` no longer
+- **The command panel's own focus-loss dismissal is gone.** `apps/desktop/renderer/cmd/panel.js` no longer
   subscribes to `window:focused` to hide itself; the palette (`role: 'palette'`, in
   `TRANSIENT_ROLES`) is dismissed by the kernel's `selectTransientAutoclose` like every other
   transient role. Cmd+` and Cmd+Shift+` no longer go to native macOS window cycling: they are Window
-  menu items in `main/entry.ts` that call `window-machine.ts cycleContentWindow()`, which picks the
+  menu items in `apps/desktop/main/entry.ts` that call `window-machine.ts cycleContentWindow()`, which picks the
   next or previous content window in open order (`window-cycle.ts cyclableWindowIds()` /
   `cycleTarget()`, transients excluded) and raises it through the kernel
   (`kernelShowRequested(..., { activation: 'user' })`). That raise is a kernel raise, so its focus
@@ -1822,9 +1832,9 @@ flags, because the chrome the main process builds is the conventional part of th
   - `renderer/hud/background.js` `openHud()` opens with `alwaysOnTop: true, focusable: false` and
     no `role`, so `inferIzuiRole` returns `workspace` and `classifyWindowRegistration` returns
     `hud`. This is the real HUD, and it is the only production window that classifies `hud`.
-  - `features/spaces/background.js` `showBorder()` opens the screen-border window with the same
+  - `apps/desktop/features/spaces/background.js` `showBorder()` opens the screen-border window with the same
     two flags but `role: 'overlay'`, so the role arm wins and the class is `overlay`, never `hud`.
-    The `border` entry in `features/spaces/manifest.json` declares the same three options and
+    The `border` entry in `apps/desktop/features/spaces/manifest.json` declares the same three options and
     reaches the same classifier through `tile-launcher.ts` and `main.ts` `registerWindow`.
   - `test-fixture-glue.ts` is `focusable: false` but not always-on-top, and declares the class
     `test-fixture` outright — test-only, and outside the always-on-top-plus-non-focusable pair.
@@ -1835,7 +1845,7 @@ flags, because the chrome the main process builds is the conventional part of th
   between capture and click-through by `hybrid-overlay.ts` `wireClickCapture` (as the pointer
   enters and leaves the chrome) and `wireAppActiveGate` (as the app activates and resigns), using
   `setIgnoreMouseEvents(false)` and `setIgnoreMouseEvents(true, { forward: true })`. The spaces
-  screen border sets it once at creation: `features/spaces/background.js` `showBorder()` calls
+  screen border sets it once at creation: `apps/desktop/features/spaces/background.js` `showBorder()` calls
   `api.window.setIgnoreMouseEvents(id, true, true)`, which lands on the
   `tile:window:set-ignore-mouse` handler in `tile-ipc.ts`. That handler is the general tile-facing
   route, gated on the `window.manage` capability, so it is available to any feature that declares
@@ -2039,7 +2049,7 @@ remaining 37, grouped by process:
 
 | file · symbol | what it does with the value | how a wrong translation fails |
 |---|---|---|
-| `windows.ts resolveFocusedWindowIdForClose` | The Cmd+W close target. Converts `front` → native handle → Electron id for `closeOrHideWindow`. Re-exported from `main/index.ts`; called by `closeFocusedWindow`, the menu handler, the non-darwin shortcut, and the hybrid test bridge. | silent — a `keyWindow` mapping closes the chrome overlay, or no-ops after app-resign nulls key. The correct resolution is the key window when it is itself front-eligible, else `topmost(state, isFrontEligibleWindow)` — not `isContentWindow`, whose role allow-list excludes `role: 'quick-view'` and so would close the page host behind a focused peek instead of the peek itself; the map never lists the reader. |
+| `windows.ts resolveFocusedWindowIdForClose` | The Cmd+W close target. Converts `front` → native handle → Electron id for `closeOrHideWindow`. Re-exported from `apps/desktop/main/index.ts`; called by `closeFocusedWindow`, the menu handler, the non-darwin shortcut, and the hybrid test bridge. | silent — a `keyWindow` mapping closes the chrome overlay, or no-ops after app-resign nulls key. The correct resolution is the key window when it is itself front-eligible, else `topmost(state, isFrontEligibleWindow)` — not `isContentWindow`, whose role allow-list excludes `role: 'quick-view'` and so would close the page host behind a focused peek instead of the peek itself; the map never lists the reader. |
 | `entry.ts onReady` (app-menu template, Window ▸ Close Window click) | Reads `front`, resolves the native window, runs the detached-devtools guard (`isDevToolsOpened() && !wc.isFocused()`), then calls `closeFocusedWindow()` | silent — a wrong front makes the devtools guard mis-fire and closes the parent |
 | `tile-ipc.ts` `tile:dialogs:save` handler | Parents the save dialog over the front window; falls back to the sender | silent (falls back) |
 | `tile-ipc.ts` `tile:dialogs:open` handler | Same parenting | silent |
@@ -2082,23 +2092,23 @@ can.
 `front`-derived persisted fields, and all silent: a wrong id reads or writes another window's
 state, a null id degrades to "No active window".
 
-- `renderer/cmd/panel.js loadCommandContext` — `api.context.get('mode', targetWindowId)`, drives the palette's mode indicator
-- `renderer/cmd/panel.js cycleMode` — `api.context.setMode(…, { windowId })`, a write of per-window mode to the resolved id
+- `apps/desktop/renderer/cmd/panel.js loadCommandContext` — `api.context.get('mode', targetWindowId)`, drives the palette's mode indicator
+- `apps/desktop/renderer/cmd/panel.js cycleMode` — `api.context.setMode(…, { windowId })`, a write of per-window mode to the resolved id
 - `renderer/hud/widgets/window.js refreshWindowInfo` — highlights the focused row
 - `renderer/hud/widgets/mode.js refreshMode` — reads that window's `mode` context
-- `features/spaces/background.js updateBorderVisibility` — shows or hides the space border from the focused window's mode row
-- `features/groups/home.js resolveCurrentGroup` — resolves the active group from the focused window's mode metadata
-- `features/groups/home.js openGroup` — sorts open order by the persisted space-workspace `zOrder`, i.e. by `stackOrder` position
-- `features/tags/background.js getActiveWindow` — picks the page to tag or untag; its docblock is written entirely against `front`'s satellite-exclusion rule
-- `features/windows/background.js` — the `center window`, `maximize window`, `unmaximize window` and `fullscreen` commands, four sites, all targeting the resolved id
-- `features/entities/home.js` — the `extract entities` command's `execute` and the `extractBtn` click handler, two sites, picking which page to extract from
-- `features/windows/windows.js init` — uses `getPreOverlayFocusTarget()` to choose the switcher's initially-selected card
+- `apps/desktop/features/spaces/background.js updateBorderVisibility` — shows or hides the space border from the focused window's mode row
+- `apps/desktop/features/groups/home.js resolveCurrentGroup` — resolves the active group from the focused window's mode metadata
+- `apps/desktop/features/groups/home.js openGroup` — sorts open order by the persisted space-workspace `zOrder`, i.e. by `stackOrder` position
+- `apps/desktop/features/tags/background.js getActiveWindow` — picks the page to tag or untag; its docblock is written entirely against `front`'s satellite-exclusion rule
+- `apps/desktop/features/windows/background.js` — the `center window`, `maximize window`, `unmaximize window` and `fullscreen` commands, four sites, all targeting the resolved id
+- `apps/desktop/features/entities/home.js` — the `extract entities` command's `execute` and the `extractBtn` click handler, two sites, picking which page to extract from
+- `apps/desktop/features/windows/windows.js init` — uses `getPreOverlayFocusTarget()` to choose the switcher's initially-selected card
 
 Confirmed not readers, so absent from both the bullets above and this table: `window-escape.ts`
 (prose mention only; the live escape decision is `decideEscape` inside `window-state.ts`), `main.ts`
 (its `getWindowStateSnapshot()` calls are shadow feeds), `electron-window-backend.ts` (producer, not
 reader), `izui-roles.ts` (comment only), `window-registry.ts` (type declaration and comment only),
-and every file under `chrome-api-polyfills/`.
+and every file under `apps/desktop/main/chrome-api-polyfills/`.
 
 The three highest-risk among all 52: `windows.ts resolveFocusedWindowIdForClose` (destructive and
 silent), `izui-state.ts enterOverlay` (its correctness comment cites two deleted facts by name), and
@@ -2199,12 +2209,12 @@ last-focused window`, which asserted the two orders are reverses for the same pa
 background open is saved BELOW the last-focused window` and `SAVE → RESTORE round trip: a
 background open comes back BELOW the last-focused window`, pinning the kernel's fact (a background
 open registers below the key window) instead of the producer this design deletes. And
-the z-order sort helper that once lived in `renderer/lib/session.js`, which had no callers anywhere
+the z-order sort helper that once lived in `apps/desktop/renderer/lib/session.js`, which had no callers anywhere
 in the tree, is gone.
 
 Two carry-overs, neither blocking: `orderRestoredWindowsBottomToTop`'s legacy branch for snapshots
-that predate `stackIndex` stays until those profiles age out (`tests/helpers/restore-proof/
-inject-session.sql` is the fixture exercising it), and `features/groups/home.js openGroup` sorts
+that predate `stackIndex` stays until those profiles age out (`apps/desktop/tests/helpers/restore-proof/
+inject-session.sql` is the fixture exercising it), and `apps/desktop/features/groups/home.js openGroup` sorts
 descending by the space-workspace `zOrder` to pick open order — under one order that agrees with
 the session reader's descending sort, so it needs no change beyond the field's new provenance.
 
@@ -2441,7 +2451,7 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
    `subscribeFrontChange` → `retarget()` driver, and its seed read (`const currentId =
    frontPageHostOsId(); ... retarget(currentId)`), are both deleted rather than repointed — the
    boot seed is instead the `WindowRegistered` transition that mints the overlay's own record (see
-   `docs/design/overlay-attach-effect-plan.md` § 6, "The boot seed"). `frontPageHostOsId()`
+   `docs/historical/overlay-attach-effect-plan.md` § 6, "The boot seed"). `frontPageHostOsId()`
    (module-private) — deleted with them; it was the single name serving both queries, the hazard
    this design records. `installTestBridge()`'s `setActive(id)` — its `for (let
    i = 0; i < 100; i++)` hide loop over `getFrontPageHostId()` is written against
@@ -3169,8 +3179,8 @@ construction sites falsifies three derivations that would otherwise look correct
   the navbar, and `test-fixture-glue.ts` registers `focusable: false` without being always-on-top.
   It is exactly `focusable !== false`.
 - **`acceptsInput` keys on neither role nor `alwaysOnTop`.** The two production `role: 'overlay'`
-  windows disagree: `features/windows/background.js openWindowsView` takes clicks, while
-  `features/spaces/background.js`'s border passes them through.
+  windows disagree: `apps/desktop/features/windows/background.js openWindowsView` takes clicks, while
+  `apps/desktop/features/spaces/background.js`'s border passes them through.
 - **Peeks and slides (`role: 'quick-view'`) sit at `BASE_LAYER`, not above it.** They declare no
   `alwaysOnTop`, and their above-ness is `type: 'panel'` AppKit behaviour. Placing them above base
   would put them in `isAppResignSweepEligible`'s `layer > BASE_LAYER` half, which its role clause
@@ -3709,7 +3719,7 @@ both policy commits, and passes at this tip. `window-escape.ts escapeClosePolicy
 `escPolicy`, and `window-escape.ts ESC_FALLBACK_ROLES` carries `child-content` for the switcher
 fallback. Nothing else can close the window on ESC: `window-state.ts decideEscape` is the sole
 decider, `tile-preload.cts api.escape.onEscape` only relays handled/unhandled, and the DOM
-`Escape` listeners in `renderer/page/overlay.js` and the `peek-*` components dismiss in-page
+`Escape` listeners in `apps/desktop/renderer/page/overlay.js` and the `peek-*` components dismiss in-page
 widgets only.
 
 Reopening this means re-reversing `a9c4ec88` with a new repro, and flipping that spec — not
@@ -3720,7 +3730,7 @@ behavior, not a generic page host, so it never reuses an already-open window and
 existing page host. The one reuse it does allow is itself: reopening the same peek refocuses that
 peek's own prior window rather than spawning a duplicate.
 
-The mechanism, traced 2026-08-20. `features/peeks/background.js executeItem()` opens with
+The mechanism, traced 2026-08-20. `apps/desktop/features/peeks/background.js executeItem()` opens with
 `role: 'quick-view'`, `pageHost: true`, `modal: true` and `key: peek:<keyNum>` — the slot number,
 not the address, so two slots sharing an address still get a window each. In `ipc.ts`'s
 `windowOpenHandler` the generic URL dedupe — `findWindowByUrl` (its only call site) and
@@ -3806,7 +3816,7 @@ Rule 1 says every window, always, and the reading taken here is the literal one 
 Taking it literally is the reading that requires no exception.
 
 **They already register, through the one shared path.** `background` (`core-glue.ts`), `bridge`
-(`chrome-extensions.ts`), `offscreen` (`chrome-api-polyfills/offscreen.js`), `test-fixture`
+(`chrome-extensions.ts`), `offscreen` (`apps/desktop/main/chrome-api-polyfills/offscreen.js`), `test-fixture`
 (`test-fixture-glue.ts`) and `devtools` (`main.ts`) each call `window-machine.ts`
 `registerWindowWithMachine`, which reaches the reducer through `window-os-adapter.ts`
 `WindowOsAdapter.registerWindow`. There is no second registration path and no bypass, so excluding
@@ -4046,7 +4056,7 @@ production dispatch sites in `hybrid-overlay.ts` — `retarget()` (attach or ret
 host) and `detachOverlayFromMachine()` (`hostId: null`) — alongside their existing dispatch to the
 old machine, never in place of it.
 
-Separately, the chain popup opened by `renderer/cmd/panel.js openChainPopup()` registered with
+Separately, the chain popup opened by `apps/desktop/renderer/cmd/panel.js openChainPopup()` registered with
 `parentId: null`, because `ipc.ts`'s `NON_PARENT_ROLES` excludes the palette that opens it from
 `isRealParent`. It now declares its parent explicitly through a new `declareParent` open option,
 threaded through `ipc.ts` independently of `isRealParent` and consumed only at the legacy
@@ -4061,9 +4071,9 @@ caller of this new option wants changed.
 
 **The behavior this froze**, stated as the production windows it changes. Newly sweeping as
 focusers, because none has any `parentId`/`overlayFor` relation and each genuinely is another window
-taking key: the datastore viewer and diagnostic tool (`renderer/index.js` command handlers) and the
-two OAuth windows (`features/wonderwall/services/base.js`, `features/lex/atproto.js`). The windows
-switcher (`features/windows/background.js openWindowsView`) both starts sweeping as a focuser and
+taking key: the datastore viewer and diagnostic tool (`apps/desktop/renderer/index.js` command handlers) and the
+two OAuth windows (`apps/desktop/features/wonderwall/services/base.js`, `apps/desktop/features/lex/atproto.js`). The windows
+switcher (`apps/desktop/features/windows/background.js openWindowsView`) both starts sweeping as a focuser and
 becomes sweepable as a victim — it is `role: 'overlay'` but parented to nothing and attached to
 nothing, so the relation gives it no exemption in either direction. Remaining exempt through the
 relation rather than through a role: the chain popup toward the palette named by its `parentId`, the
@@ -4775,7 +4785,7 @@ armings gone, and `electron-window-backend.ts pendingHideProvokedFocus` being a 
 boolean, a focus handed to a non-page-host can survive as `OsFocusGained`, after which
 `window-kernel.ts topmostBaseLayerPageHost` answers null and `react` emits
 `AttachOverlayTo(overlay, null)`, detaching the chrome. Against it: the failing runs show the
-renderer demonstrably ready (`tests/helpers/hybrid-page.ts waitOverlayReady` succeeds and the
+renderer demonstrably ready (`apps/desktop/tests/helpers/hybrid-page.ts waitOverlayReady` succeeds and the
 "overlay renderer never became usable" diagnostic never appears), and the detach has never been
 observed. Reading the whole `overlayChromeState()` at the poll inside a full-file run settles it
 — `noActive: true` confirms the chain, a correct `url` refutes it.
@@ -4907,14 +4917,14 @@ Measured A/B, packaged macOS, `session-restore-hybrid-focus.spec.ts`:
 FOCUSED window is hidden, does macOS reassign focus at all? The rule was derived on Linux, where
 the window manager does. If macOS does not, the arming still outlives its provocation and still
 swallows the next genuine focus — far more rarely now, but by the same mechanism. That is check 12
-of `docs/design/window-manager-macos-signoff.md`, which predicted this failure in writing before it
+of `docs/historical/window-manager-macos-signoff.md`, which predicted this failure in writing before it
 was measured, and which is now narrowed to that remaining half. There is **no automated coverage of
 the rule at all** — `pendingHideProvokedFocus` appears in no spec.
 
 #### Resolved: an untokened visibility echo let `AttachOverlayTo` and `HideWindow` alternate forever
 
 Measured 2026-08-19 on macOS, packaged, found by check-driven live use during the macOS sign-off
-run (`docs/design/window-manager-macos-signoff.md`) rather than by any spec, and invisible to both
+run (`docs/historical/window-manager-macos-signoff.md`) rather than by any spec, and invisible to both
 the full ~3200-test suite and to every Linux run. `sample` on the hung main process showed the
 entire thread (6678/6678 samples) inside one synchronous JS call from `node::Environment::RunTimers`,
 repeatedly in `-[NSWindow _doOrderWindow:]` -> `_reallyDoOrderWindowOutRelativeTo:` ->
@@ -4922,7 +4932,7 @@ repeatedly in `-[NSWindow _doOrderWindow:]` -> `_reallyDoOrderWindowOutRelativeT
 renderer-answer timeout.
 
 **Reproduction.** Two hybrid page hosts open on real `http://` URLs, plus a peek opened through the
-peeks feature (`features/peeks/background.js` `executeItem`, `role: 'quick-view'`, `modal: true`,
+peeks feature (`apps/desktop/features/peeks/background.js` `executeItem`, `role: 'quick-view'`, `modal: true`,
 `pageHost: true`), then ESC to close the peek. It terminates only when no base-layer page host
 survives (`topmostBaseLayerPageHost` returns null), which is why two hosts are required.
 
@@ -5012,7 +5022,7 @@ machine cause.
 
 Live repro, 2026-08-21, macOS, `PROFILE=signoff-a` with two hybrid page hosts (ALPHA, BRAVO) open
 on `http://` URLs and Peek frontmost. The peek hotkey was pressed repeatedly; each press published
-`cli:peek-open keyNum=0` and ran `features/peeks/background.js` `executeItem` exactly once.
+`cli:peek-open keyNum=0` and ran `apps/desktop/features/peeks/background.js` `executeItem` exactly once.
 
 **Every peek opened in the run was dismissed.** The presses that "work" and the presses that "fail"
 differ only in WHEN:

@@ -1,5 +1,7 @@
 # Desktop session save/restore: implementation, history, portability, and cost
 
+*Historical: an audit and benchmark of desktop session save and restore; not current guidance.*
+
 ## Executive summary
 
 Peek persists a **logical window-session snapshot**, not native window objects. The current path is read → pure projection → synchronous SQLite write; restore is parse/validate → plan loading → reopen through the normal window-open handler → import saved stacking → activate one saved-focused window. This split is mostly portable. The snapshot, filters, geometry rules, workspace keys, and stack plan can be reused by another toolkit; Electron handle discovery, display queries, dialogs, window creation, load events, and native focus/stack realization cannot.

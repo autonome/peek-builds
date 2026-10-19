@@ -1,5 +1,7 @@
 # Click-through investigation
 
+*Historical: an investigation into click-through for the canvas page host, which no longer exists; not current guidance.*
+
 ## Current state
 
 ### `setIgnoreMouseEvents` call sites

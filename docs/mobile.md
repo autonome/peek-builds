@@ -59,8 +59,8 @@ The app uses an iOS Share Extension with a full UI that allows:
 Each URL card has a "webview" button that opens the URL in a native WKWebView overlay, allowing users to view content without leaving the app.
 
 **Implementation:**
-- **Swift plugin:** `src-tauri/gen/apple/tauri-app_iOS/tauri-app_iOS/WebViewPlugin.swift`
-- **FFI bridge:** `src-tauri/webview-plugin/` - Rust crate exposing C functions
+- **Swift plugin:** `apps/mobile/src-tauri/gen/apple/Sources/peek-save/WebviewPlugin.swift`
+- **FFI bridge:** `apps/mobile/plugins/tauri-plugin-webview/` - Rust crate exposing C functions
 - **React integration:** `App.tsx` calls `window.__TAURI_INVOKE__("plugin:webview|open", { url })`
 
 **Features:**
@@ -237,17 +237,17 @@ CREATE TABLE settings (
 ## Key Files
 
 ### Share Extension
-- `src-tauri/gen/apple/Peek/ShareViewController.swift` - Full UI share extension
+- `apps/mobile/src-tauri/gen/apple/Peek/ShareViewController.swift` - Full UI share extension
 - `ShareViewController-full-ui.swift.example` - Reference implementation
 
 ### App Group Bridge
-- `src-tauri/AppGroupBridge.m` - Objective-C bridge for App Groups access
+- `apps/mobile/src-tauri/AppGroupBridge.m` - Objective-C bridge for App Groups access
 - Provides C functions for Rust FFI:
   - `get_app_group_container_path()` - Returns path to App Group container for SQLite database
   - `get_system_is_dark_mode()` - Returns current system appearance (dark/light mode)
 
 ### Rust Backend
-- `src-tauri/src/lib.rs` - Tauri commands and business logic
+- `apps/mobile/src-tauri/src/lib.rs` - Tauri commands and business logic
 - **Page commands**: `save_url`, `get_saved_urls`, `update_url`, `delete_url`
 - **Text commands**: `save_text`, `get_saved_texts`, `update_text`
 - **Tagset commands**: `save_tagset`, `get_saved_tagsets`, `update_tagset`
@@ -256,15 +256,15 @@ CREATE TABLE settings (
 
 ### Frontend
 - `src/App.tsx` - React UI with tabbed navigation (Pages | Notes | Tags)
-- `src/App.css` - Mobile-optimized styling with dark mode
+- `apps/mobile/src/App.css` - Mobile-optimized styling with dark mode
 
 ### Tests
-- `tests/integration.test.js` - Integration tests against apps/server
+- `apps/mobile/tests/integration.test.js` - Integration tests against apps/server
 
 ### Configuration
-- `src-tauri/tauri.conf.json` - Bundle ID: `com.dietrich.peek-mobile`
+- `apps/mobile/src-tauri/tauri.conf.json` - Bundle ID: `com.dietrich.peek-mobile`
 - `src-tauri/gen/apple/tauri-app_iOS/tauri-app_iOS.entitlements` - App Groups entitlement
-- `src-tauri/gen/apple/Peek/Peek.entitlements` - Share extension entitlements
+- `apps/mobile/src-tauri/gen/apple/Peek/Peek.entitlements` - Share extension entitlements
 
 ## Development
 
@@ -479,7 +479,7 @@ The share extension must be configured in Xcode:
 1. Target: "Peek" (Share Extension)
 2. Bundle ID: `com.dietrich.peek-mobile.share`
 3. Principal Class: `ShareViewController`
-4. Copy `ShareViewController-full-ui.swift.example` to `src-tauri/gen/apple/Peek/ShareViewController.swift`
+4. Copy `ShareViewController-full-ui.swift.example` to `apps/mobile/src-tauri/gen/apple/Peek/ShareViewController.swift`
 5. Ensure entitlements include App Groups
 
 ## iOS Build System Architecture

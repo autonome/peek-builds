@@ -298,7 +298,7 @@ Default: `profile=default` if not specified (backward compatible)
 - `apps/desktop/main/entry.ts` - Profile initialization and selection
 - `apps/desktop/main/ipc.ts` - IPC handlers for profiles
 - `apps/desktop/main/sync.ts` - Per-profile sync configuration
-- `app/settings/settings.js` - Profiles UI section
+- `apps/desktop/renderer/settings/settings.js` - Profiles UI section
 - `preload.js` - Profiles API exposure
 
 **Server:**
@@ -344,7 +344,7 @@ yarn start                    # Should use dev profile
 - `apps/desktop/main/entry.ts` - Profile initialization and selection
 - `apps/desktop/main/ipc.ts` - Profile IPC handlers
 - `apps/desktop/main/sync.ts` - Per-profile sync configuration
-- `app/settings/settings.js` - Profiles UI section
+- `apps/desktop/renderer/settings/settings.js` - Profiles UI section
 - `preload.js` - Profiles API exposure
 
 **Documentation:**
@@ -606,15 +606,15 @@ Cons:
 ### Files
 
 **Implementation:**
-- `src-tauri/AppGroupBridge.m` - `is_app_store_build()` receipt detection
-- `src-tauri/src/lib.rs`:
+- `apps/mobile/src-tauri/AppGroupBridge.m` - `is_app_store_build()` receipt detection
+- `apps/mobile/src-tauri/src/lib.rs`:
   - `get_default_profile()` - auto-detect based on build type
   - `get_db_path()` - profile-specific database filename
   - `get_current_profile_slug()` - sync profile (with override support)
   - `append_profile_to_url()` - adds ?profile= to sync URLs
   - `get_profile_info` / `set_profile` - Tauri commands
 - `src/App.tsx` - Profile section in Settings UI
-- `src/App.css` - Profile banner and selector styles
+- `apps/mobile/src/App.css` - Profile banner and selector styles
 
 **Build Scripts:**
 - `npm run rebuild:ios` - Clean rebuild for simulator

@@ -1,5 +1,7 @@
 # Entity Validation/Evaluation Framework Research
 
+*Historical: research into validating extracted entity types against external knowledge bases; not current guidance.*
+
 **Date:** 2026-02-18
 **Status:** Research — not yet implemented
 

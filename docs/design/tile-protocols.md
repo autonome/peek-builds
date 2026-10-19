@@ -39,9 +39,9 @@ Status: reviewed 2026-10-20; every point below is decided. Nothing is built. The
 
 Every API a tile can call is wired by hand in three places:
 
-- `main/tile-preload.cts`: one `api.<namespace>` object, one wrapper per method, each repeating
+- `apps/desktop/main/tile-preload.cts`: one `api.<namespace>` object, one wrapper per method, each repeating
   the `validationPromise` wait and passing `tileToken` (see `api.atproto` for a typical one).
-- `main/tile-ipc.ts`: one `registerTileIpc('tile:<namespace>:<method>', ...)` handler per method,
+- `apps/desktop/main/tile-ipc.ts`: one `registerTileIpc('tile:<namespace>:<method>', ...)` handler per method,
   each repeating the token and capability check and calling `handleViolation()` on failure.
 - `packages/capabilities/index.js`: the capability's validation, plus `BUILTIN_ONLY_CAPABILITIES`
   or `PRIVILEGED_CAPABILITIES` when it is restricted, and the generated CommonJS copy
@@ -103,13 +103,13 @@ the host, that a tile imports instead of reading `window.app.<name>`.
 
 - It is small (`request`, `sessionInfo`, `uploadBlob`) and has no subscriptions, so it exercises
   the registration, gating and serving without the harder questions events raise.
-- Its main-process side already exists (`tile-ipc.ts` `tile:atproto:*`, `main/atproto-proxy.ts`).
-- Its users are few and current: `features-manager/publish.js` and `lex`.
+- Its main-process side already exists (`tile-ipc.ts` `tile:atproto:*`, `apps/desktop/main/atproto-proxy.ts`).
+- Its users are few and current: `apps/desktop/features/features-manager/publish.js` and `lex`.
 - It is the API a tile is most likely to want from a host that is not Peek.
 
-Done looks like: `features-manager/publish.js` imports the `atproto` protocol and no longer reads
+Done looks like: `apps/desktop/features/features-manager/publish.js` imports the `atproto` protocol and no longer reads
 `api.atproto`; a tile without the capability gets a failed import; the existing live publish spec
-(`tests/desktop-serial/atproto-live-publish.spec.ts`) passes unchanged.
+(`apps/desktop/tests/desktop-serial/atproto-live-publish.spec.ts`) passes unchanged.
 
 ## Declaring protocols in the manifest
 
@@ -168,7 +168,7 @@ They may still import a protocol where that is simpler than the `window.app` equ
   tiles a clean "not available". The call-time check also covers a grant revoked while the tile
   runs.
 - **Two meanings of ready.** The preload sends `tile:lifecycle:ready` on the tick after it loads
-  (`tile-preload.cts api.initialize()`), and `main/tile-lazy.ts` delivers the event that woke a
+  (`tile-preload.cts api.initialize()`), and `apps/desktop/main/tile-lazy.ts` delivers the event that woke a
   lazy tile once that arrives. That is before any protocol `import` resolves. The per-protocol
   queue in "Events from host to tile" is what makes this safe: the wake event waits for the
   protocol's own ready signal rather than the preload's.
@@ -190,7 +190,7 @@ They may still import a protocol where that is simpler than the `window.app` equ
 ## Open questions
 - **Serving path.** A tile loaded from its own host, `peek://<tile-id>/`, resolves
   `/.well-known/web-tiles/<name>.js` to `peek://<tile-id>/.well-known/web-tiles/<name>.js`, so
-  `main/protocol.ts handleProtocolRequest()` knows which tile is asking from the host alone and
+  `apps/desktop/main/protocol.ts handleProtocolRequest()` knows which tile is asking from the host alone and
   can gate by that tile's grant. It currently looks for the file in the tile's own directory. A
   page loaded through the older `peek://ext/<id>/` form would resolve to
   `peek://ext/.well-known/...` instead, with no tile id in it; such pages move to their own host

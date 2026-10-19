@@ -1,5 +1,7 @@
 # Peek Task Queue
 
+*Historical: a record of the April 2026 move of the engineering todo list into Peek itself; not current guidance.*
+
 The active task queue lives in **Peek itself**, not in this file.
 
 Query: items tagged `peek:todo` (intersect with `peek:desktop` / `peek:bug` / `peek:feature` / `peek:test-coverage` / etc. to narrow).

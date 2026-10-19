@@ -178,7 +178,7 @@ This should be surfaced as a **suggestion** in the UI rather than automatically 
 
 We deliberately avoid:
 - **Levenshtein distance**: Too many false positives at short edit distances ("Mars" vs "Musk")
-- **External knowledge bases**: Wikidata validation is being researched separately (see `docs/entity-validation-research.md`) and can feed into resolution later
+- **External knowledge bases**: Wikidata validation is being researched separately (see `docs/historical/entity-validation-research.md`) and can feed into resolution later
 - **ML embeddings**: Overkill for hundreds of entities; adds significant complexity
 
 ---
@@ -432,7 +432,7 @@ The correlation engine should be a **backend module** (`apps/desktop/main/entity
 - It runs on the main process, not in extension renderer
 - The entity extension calls it via IPC
 
-The extension side (`extensions/entities/`) handles UI and user interaction. The backend handles data and computation.
+The extension side (`apps/desktop/features/entities/`) handles UI and user interaction. The backend handles data and computation.
 
 ---
 

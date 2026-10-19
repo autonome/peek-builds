@@ -20,13 +20,13 @@ the per-topic docs linked inline.
 
 There is no "tile type" and no "tile role" in the conceptual model. **Every
 feature is a tile.** If functionality lives outside the tile model it is *core*
-(`app/`), not a feature. See [docs/tiles-single-file.md](./tiles-single-file.md)
+(`apps/desktop/renderer/`), not a feature. See [docs/tiles-single-file.md](./tiles-single-file.md)
 for the rationale and current manifest shape.
 
 ### One renderer mechanic, one preload, one IPC surface
 
-Every renderer in Peek — feature tiles in `features/<id>/`, the bundled core
-renderers in `app/` (the bgWindow orchestrator, the cmd panel, the HUD, the
+Every renderer in Peek — feature tiles in `apps/desktop/features/<id>/`, the bundled core
+renderers in `apps/desktop/renderer/` (the bgWindow orchestrator, the cmd panel, the HUD, the
 page canvas), and the test fixture — runs through the same machinery:
 
 - A single HTML entry point
@@ -39,7 +39,7 @@ page canvas), and the test fixture — runs through the same machinery:
 
 The legacy era — `preload.js`, an `extensionHostWindow` that loaded multiple
 features as iframes, and a parallel set of legacy IPC channels — was removed
-in April 2026 ([docs/v1-removal-plan.md](./v1-removal-plan.md), Status:
+in April 2026 ([docs/historical/v1-removal-plan.md](./historical/v1-removal-plan.md), Status:
 DONE). The tile path is the only path.
 
 ### Manifest schema (v3)
@@ -118,7 +118,7 @@ Built-in feature tiles (mcp-server, windows, websearch, peeks, slides) are **laz
 
 #### Making a tile lazy
 
-Remove `resident: true` from the manifest `TileEntry`. `main/tile-compat.ts`
+Remove `resident: true` from the manifest `TileEntry`. `apps/desktop/main/tile-compat.ts`
 routes any tile with `!resident && (hasCommands || hasLazyEvents)` through
 `registerLazyTile()` instead of the eager launch path. A tile with no
 commands but event-driven behavior needs `lazyEvents: [...]` on its entry
@@ -127,7 +127,7 @@ wakes).
 
 #### Wake triggers
 
-`main/tile-lazy.ts` installs one pre-publish hook via
+`apps/desktop/main/tile-lazy.ts` installs one pre-publish hook via
 `installLoadOnDispatchHook`. The hook's predicate is a single `Set` lookup
 plus a `startsWith` check — it runs on every publish with O(1) cost. It
 intercepts two kinds of publish:
@@ -152,7 +152,7 @@ topic with an `{ error }` shape so the cmd panel returns to IDLE.
 #### Global hotkeys without a renderer
 
 A lazy tile's renderer isn't running at boot, so it cannot register its own
-OS global shortcuts. `main/feature-shortcut-registrar.ts`
+OS global shortcuts. `apps/desktop/main/feature-shortcut-registrar.ts`
 `registerWakeShortcuts(tileId, manifest)` fills the gap: it registers OS
 accelerators in the main process at tile-registration time, with no renderer
 present. Each accelerator's callback publishes the wake topic, which flows
@@ -192,8 +192,9 @@ The renderer computes accelerators from its own settings UI and calls
 
 #### Core page events
 
-`renderer/page/page.js` emits semantic events from its `did-finish-load`
-handler that lazy features wake on, keeping feature logic out of core:
+`apps/desktop/main/ipc.ts` (`wireHybridContentEvents`) emits semantic events
+from the page host's load handler that lazy features wake on, keeping feature
+logic out of core:
 
 - `page:search-engine-discovered` — published when a page advertises an
   OpenSearch descriptor. The websearch tile declares
@@ -237,7 +238,7 @@ async function handler(msg) {
 }
 ```
 
-See `features/websearch/home.js` for the reference implementation.
+See `apps/desktop/features/websearch/home.js` for the reference implementation.
 
 #### Constraints upheld
 
@@ -275,7 +276,7 @@ to back-door a tile renders a loud assertion failure rather than a silent bug.
 [`tile-preload.cts`](../apps/desktop/main/tile-preload.cts) exposes
 `window.app` to the renderer. This is the entire API a tile sees. The shape
 is tracked in [docs/tile-api.md](./tile-api.md); see
-[docs/tile-preload-trimming-plan.md](./tile-preload-trimming-plan.md) for
+[docs/historical/tile-preload-trimming-plan.md](./historical/tile-preload-trimming-plan.md) for
 the in-flight cleanup of the remaining v1-compat shims.
 
 The preload **must** stay a `.cts` (CommonJS TypeScript) file. The backend
@@ -287,9 +288,9 @@ thrown — just an empty `window.app`).
 
 `peek://app/background.html` (loaded as **bgWindow** via the same
 `tile-preload.cts`) is the **core orchestrator** of Peek. It hosts
-`app/index.js`, which initializes the cmd registry, the page canvas
-controller, and the HUD via `initCmd()` / `initPage()` / `initHud()` (all
-consolidated into the core renderer in April 2026). bgWindow is not a tile,
+`apps/desktop/renderer/index.js`, which initializes the cmd registry, the page canvas
+controller and the HUD via `initCmd()` / `initPage()` (all consolidated into
+the core renderer in April 2026). bgWindow is not a tile,
 not a feature, not v1 anything. Every pubsub publish in the system must
 reach it.
 
@@ -356,14 +357,14 @@ exactly which step rejected it.
 ### 3. Cmd panel state machine
 
 **Owns:** the interactive command-bar UI states.
-**Lives in:** [`app/cmd/state-machine.js`](../app/cmd/state-machine.js) (pure
+**Lives in:** [`apps/desktop/renderer/cmd/state-machine.js`](../apps/desktop/renderer/cmd/state-machine.js) (pure
 module — no DOM, no IPC).
 **Doc:** [docs/cmd-state-machine.md](./cmd-state-machine.md)
 
 Ten states: `IDLE`, `TYPING`, `RESULTS_OPEN`, `PARAM_MODE`, `EXECUTING`,
 `OUTPUT_SELECTION`, `CHAIN_MODE`, `CHAIN_POPUP`, `ERROR`, `CLOSING`. Actions
 run *before* `currentState` is updated. The pure module is unit-tested
-exhaustively; the DOM adapter in `app/cmd/panel.js` is the only thing that
+exhaustively; the DOM adapter in `apps/desktop/renderer/cmd/panel.js` is the only thing that
 talks to electron / DOM.
 
 This FSM replaces the previous "every panel.js bug fix added another
@@ -386,7 +387,7 @@ Read that first.
 a pure module with no `screen.*` or `BrowserWindow.*` calls inside; the
 caller passes display state in.
 
-**Historical:** [docs/window-placement-refactor.md](./window-placement-refactor.md) is
+**Historical:** [docs/historical/window-placement-refactor.md](./historical/window-placement-refactor.md) is
 the previous sprint's plan; superseded by the spec above (model has changed:
 `manual` and `cursor-display-fallback` are gone, `proportional` replaces them).
 
@@ -559,20 +560,21 @@ Commands of `type: 'publish'` must publish a `:result` event back so the
 cmd panel proxy resolves. Otherwise the panel hangs for 30 s before
 timing out.
 
-### HUD widgets
+### HUD
 
-HUD widgets live in the core renderer (not a separate tile) and are
-loaded via `initHud()` inside `app/index.js`. They are eager,
-`alwaysOnTop: true`, and `focusable: false`.
+The HUD is one pinned window, not a set of widget tiles. The `hud` command in
+`apps/desktop/renderer/index.js` opens `peek://app/hud/hud.html` under the
+window key `hud-stats` and pins it globally;
+`apps/desktop/renderer/hud/hud.js` polls `api.app.metrics()` and shows memory,
+process, window and pubsub counts.
 
-- App focus drives hide/show via main-process `did-resign-active` /
-  `did-become-active`.
-- The `__hudHidden` flag plus `trackVisibleWindowFocus()` skips
-  non-focusable windows so they don't override focused-window targeting.
+The earlier per-widget HUD at `peek://ext/hud/widgets/*` is gone.
+`apps/desktop/main/migrate-hud.ts` rewrites saved sessions that still name
+those URLs.
 
 ### Cmd panel state machine
 
-`app/cmd/state-machine.js` is a pure module with no DOM/IPC deps. Ten
+`apps/desktop/renderer/cmd/state-machine.js` is a pure module with no DOM/IPC deps. Ten
 states: IDLE, TYPING, RESULTS_OPEN, PARAM_MODE, EXECUTING,
 OUTPUT_SELECTION, CHAIN_MODE, CHAIN_POPUP, ERROR, CLOSING. Actions run
 BEFORE `currentState` is updated. See
@@ -604,7 +606,7 @@ and test coverage notes.
 ### Page widget panels
 
 Page info (top-left) and entities (right-side) live in
-`app/page/page.js`. The entities panel subscribes to `entities:extracted`
+`apps/desktop/renderer/page/overlay.js`. The entities panel subscribes to `entities:extracted`
 pubsub and falls back to DOM extraction after 2 s.
 
 Page-host overlays (load error, etc.) belong inside `.center-column`
@@ -663,13 +665,13 @@ ServerMono lacks the Unicode glyphs.
   it must manually publish.
 - Groups UI listens for: `tag:item-added`, `tag:item-removed`,
   `tag:created`, `item:created`, `item:deleted`, `sync:pull-completed`.
-- The Tags page widget (`app/page/page.js`) also subscribes to
+- The Tags page widget (`apps/desktop/renderer/page/overlay.js`) also subscribes to
   `tag:item-added` / `tag:item-removed` and resolves `currentItemId` on
   the first tag event when null.
 
 ### Noun system
 
-`features/cmd/noun-registry.js` + `features/cmd/nouns.js`. Register a
+`apps/desktop/renderer/cmd/noun-registry.js` + `apps/desktop/renderer/cmd/nouns.js`. Register a
 noun via `registerNoun({ name, singular, query, create, browse, ... })`
 and the system auto-generates: bare command, `list {name}`,
 `new {singular}`, `open {singular}`. Used by groups, tags (with
@@ -684,14 +686,14 @@ registry pollution.
 - `_sync` metadata lives inside the item `metadata` JSON:
   `{ _sync: { createdBy, createdAt, modifiedBy, modifiedAt } }`.
 - `syncSource` was removed from desktop Electron, server, and
-  `sync/sync.js`; it still exists in iOS `lib.rs` and Tauri `sync.rs`
+  `packages/sync/sync.js`; it still exists in iOS `lib.rs` and Tauri `sync.rs`
   pending refactor.
 - Push filter: `syncedAt === 0` OR `updatedAt > syncedAt`.
 - E2E sync tests use `E2E_TEST=true` to bypass auth.
 
 ### "Extension" is a smell when used for tiles
 
-Real Chrome MV3 extensions live in `chrome-extensions/` and keep the
+Real Chrome MV3 extensions live in `apps/desktop/chrome-extensions/` and keep the
 "extension" name. Anywhere else, "extension" used as a synonym for
 tile / feature is a leftover from v1 and should be renamed.
 
@@ -702,7 +704,7 @@ tile / feature is a leftover from v1 and should be renamed.
 - [docs/tiles-single-file.md](./tiles-single-file.md) — the "single-file
   tile" model and the manifest target shape
 - [docs/tile-api.md](./tile-api.md) — the `window.app` surface
-- [docs/tile-preload-trimming-plan.md](./tile-preload-trimming-plan.md) —
+- [docs/historical/tile-preload-trimming-plan.md](./historical/tile-preload-trimming-plan.md) —
   in-flight cleanup of v1-compat shims in the preload
 - [docs/tile-lifecycle-fsm.md](./tile-lifecycle-fsm.md) — lifecycle FSM
   design
@@ -710,5 +712,5 @@ tile / feature is a leftover from v1 and should be renamed.
   design
 - [docs/cmd-state-machine.md](./cmd-state-machine.md) — cmd panel FSM
   design
-- [docs/v1-removal-plan.md](./v1-removal-plan.md) — historical record of
+- [docs/historical/v1-removal-plan.md](./historical/v1-removal-plan.md) — historical record of
   the v1 removal (DONE 2026-04-24)

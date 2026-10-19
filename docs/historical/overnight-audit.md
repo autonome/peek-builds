@@ -1,5 +1,7 @@
 # Overnight Audit — v2 Tile Runtime
 
+*Historical: the record of an audit run over the v2 tile runtime in April 2026; not current guidance.*
+
 Date: 2026-04-15 / 04-16
 
 ## Summary
@@ -152,23 +154,23 @@ c503ccdd (pre-existing) fix(tile): broadcast pubsub messages to v2 tile BrowserW
 
 ## Files Changed (Absolute Paths)
 
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` — exports
+- `./apps/desktop/main/ipc.ts` — exports
   `invokeWindowOpen`; handler body refactored to a named function.
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-ipc.ts` — 4 handlers
+- `./apps/desktop/main/tile-ipc.ts` — 4 handlers
   overhauled (tile:window:open, tile:settings:get/set, tile:theme:info,
   tile:datastore:get/set/query).
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.ts` — expanded
+- `./apps/desktop/main/tile-preload.ts` — expanded
   API surface (+150 lines); added commands shim that accepts both call
   shapes.
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-command-registration.test.ts`
+- `./apps/desktop/main/tile-command-registration.test.ts`
   (new) — 5 unit tests.
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-window-open.test.ts`
+- `./apps/desktop/main/tile-window-open.test.ts`
   (new) — placeholder.
-- `/Users/dietrich/misc/mpeek/tests/desktop/tile-v2-commands.spec.ts`
+- `./tests/desktop/tile-v2-commands.spec.ts`
   (new) — pointer doc.
-- `/Users/dietrich/misc/mpeek/docs/command-audit.md` (new) — 72-command
+- `./command-audit.md` (new) — 72-command
   inventory with status.
-- `/Users/dietrich/misc/mpeek/docs/overnight-audit.md` (this file).
+- `./overnight-audit.md` (this file).
 
 ## Known Remaining Gaps
 

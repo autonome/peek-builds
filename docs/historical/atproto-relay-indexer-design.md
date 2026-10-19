@@ -1,5 +1,7 @@
 # AT Protocol Relay/Indexer for Peek Feature Discovery
 
+*Historical: a design sketch for a network-wide feature-discovery relay in a separate repository, never built; not current guidance.*
+
 Design sketch for the network-wide feature search service (Phase 7, Tier 3 discovery).
 This is a **separate repo** — not built in this worktree. Captured here for review.
 

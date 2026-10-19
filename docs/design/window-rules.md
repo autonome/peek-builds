@@ -128,7 +128,7 @@ Limits and checking notes for a transient page-host window:
 - Live checks run without `DEBUG`. Under `DEBUG` the palette's detached DevTools
   window is an ordinary activating window; showing it activates the app before
   anything else runs, so the first palette press looks broken.
-  `main/window-diag.ts wmLog()` is always on and is enough to follow focus,
+  `apps/desktop/main/window-diag.ts wmLog()` is always on and is enough to follow focus,
   raise and Escape decisions from the launch output.
 
 ## Focus
@@ -186,8 +186,8 @@ for the purpose.
   still never learns about workspaces, the same way it never learns which feature opened an
   ordinary content window. A workspace-pinned window is associated with the one workspace it was
   pinned in; a global HUD window is associated with none, or equivalently with all of them. This
-  association lives in the workspace/session layer (`features/spaces/background.js`,
-  `main/session.ts`), not in `WindowRecord` — see "Workspace interaction" and "Lifecycle" below for
+  association lives in the workspace/session layer (`apps/desktop/features/spaces/background.js`,
+  `apps/desktop/main/session.ts`), not in `WindowRecord` — see "Workspace interaction" and "Lifecycle" below for
   where it is read and written.
 
 ### Pinning and unpinning
@@ -224,7 +224,7 @@ for the purpose.
 The workspace panel (`2a07c0ac`) — a corner window shown while a workspace is active, naming the
 current workspace, with close and switch controls — was removed in `59bbe921`, along with
 `features/spaces/panel.html`, `panel.js` and `panel.css`. Nothing renders it and nothing can
-reopen it; `tests/desktop/spaces-window-locking.spec.ts` asserts that no `spaces/panel.html`
+reopen it; `apps/desktop/tests/desktop/spaces-window-locking.spec.ts` asserts that no `spaces/panel.html`
 window appears. The reasoning below is kept because the *global HUD window* classification it
 established still governs any such window, and because the rest of this section refers to it as
 the worked example of one: it was pinned across workspaces, so it stayed visible whichever
@@ -234,11 +234,11 @@ switch; naming the *current* workspace, rather than being scoped to one, is itse
 the global-HUD reading.
 
 What replaced its controls: the active workspace is named by the right-edge accent and its label
-(`features/spaces/border.html`), by the command palette's mode indicator
-(`renderer/cmd/panel.js updateModeIndicator`) and by the page chrome's space widget
-(`renderer/page/overlay.js buildSpaceModeContent`) — all read-only. Leaving a workspace goes
+(`apps/desktop/features/spaces/border.html`), by the command palette's mode indicator
+(`apps/desktop/renderer/cmd/panel.js updateModeIndicator`) and by the page chrome's space widget
+(`apps/desktop/renderer/page/overlay.js buildSpaceModeContent`) — all read-only. Leaving a workspace goes
 through the `close space` and `switch space` commands, and entering one also through
-a card click in the browse-all Spaces list (`features/spaces/home.js activateSpace`).
+a card click in the browse-all Spaces list (`apps/desktop/features/spaces/home.js activateSpace`).
 
 ### Settling `57b89e6e`'s open questions
 
@@ -253,10 +253,10 @@ a card click in the browse-all Spaces list (`features/spaces/home.js activateSpa
   itself, being dedicated chrome rather than user content, is excluded from the switcher, by role,
   the same way other chrome already is. Pin state is recorded as part of the window's own saved
   state, not tracked separately or specially recreated: a workspace is a named session snapshot
-  (`main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, keyed by workspace id — the
+  (`apps/desktop/main/session.ts saveSessionSnapshot` / `restoreSessionSnapshot`, keyed by workspace id — the
   same functions the app's own boot/quit snapshot uses), and pin scope is a field of the window's
   own context row (`context.pinScope`), carried on its descriptor in whichever snapshot it is
-  saved into (`main/session-projection.ts serializeSession`). A workspace-scoped pin is therefore
+  saved into (`apps/desktop/main/session-projection.ts serializeSession`). A workspace-scoped pin is therefore
   part of that workspace's own saved snapshot, restored with the rest of that workspace's windows
   when it is re-entered. A cross-workspace pin is excluded from every NAMED workspace's snapshot —
   `serializeSession` derives that from the key alone, so no caller has to ask for it — and is never
@@ -269,7 +269,7 @@ a card click in the browse-all Spaces list (`features/spaces/home.js activateSpa
   survives a relaunch too. At boot the pins come back even when the session itself does not (the
   restore-session preference off, or the crash-recovery dialog declined). A live restore into any
   workspace skips a cross-workspace-pinned descriptor outright (it is assumed still open, since
-  leaving a workspace never closes one). `features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
+  leaving a workspace never closes one). `apps/desktop/features/spaces/background.js closeSpace()`/`closeCurrentWorkspaceWindows()`
   closes every live content-role window (`WORKSPACE_CONTENT_ROLES`) rather than asking
   `api.context.getWindowsInSpace` which ones carry the outgoing workspace's mode tag: only one
   workspace's content windows are ever on screen at a time, and a live tag can lag or be
@@ -373,7 +373,7 @@ restored the saved copy beside the one that never left (`specs/spaces-window-loc
 
 ## Recorded failures and the rule that forbids each
 
-| Failure (`window-manager.md` → "Open kernel defects", `window-manager-macos-signoff.md`) | Rule |
+| Failure (`window-manager.md` → "Open kernel defects", `../historical/window-manager-macos-signoff.md`) | Rule |
 |---|---|
 | Palette from another app (Opt+Space) is on screen but dead; typing and Escape go to the other app | G1, F6 |
 | Page opened from the palette over another app shows on every desktop and stays above every app after the user leaves it | G13 |
@@ -414,4 +414,4 @@ Escape was dead, because a closed key window asked for no successor) and passed 
 with every switcher close followed by a raise of the page host; G10 exits fullscreen on Escape and
 never opened the switcher; G11 brought a background page forward by Cmd+Tab and by its chrome
 with no flicker. The kernel read against every rule, with a verdict and sites per rule, is
-`window-rules-audit.md`.
+`../historical/window-rules-audit.md`.

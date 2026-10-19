@@ -64,6 +64,6 @@ change the address, close, or switch windows.
 
 `page-host-hung-load`, `page-host-load-error`, `page-host-restore-hung`,
 `page-host-internal-page-chrome`, `page-host-blocked-renderer` under
-`apps/desktop/tests/desktop/`; unit tests in `main/page-load-error.test.ts`.
+`apps/desktop/tests/desktop/`; unit tests in `apps/desktop/main/page-load-error.test.ts`.
 `hybrid-close-two-hosts-hang.spec.ts` allows up to 16 transitions: a normal close is about
 10, with run-to-run jitter up to 12 (also on `main`), and a runaway is 25 or more.

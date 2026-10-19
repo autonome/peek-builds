@@ -186,7 +186,7 @@ than import the FSM file cross-process.
 - `apps/desktop/main/tile-fsm.ts` — **pure** transition table + `validateTransition(from, trigger) → to | error`. No electron / node imports. Testable in isolation.
 - `apps/desktop/main/tile-lifecycle.ts` — state store + enforcement engine. Wires the pure FSM to BrowserWindow events, token lifecycle, and broadcaster registration. Authoritative `tileId → state` map lives here.
 - `apps/desktop/main/manifest-cache.ts` — SQLite writer + reader for `manifest_cache`. Only write call-sites: feature install path + boot-time manifest discovery. Read API exposed via strict tile IPC for cmd panel / features pane. Distinct from `apps/desktop/main/feature-registry.ts`, which stores install metadata (source, publisher, capability grants, update policy) in `registry.json`.
-- `app/cmd/background.js` — already in the core renderer; stops subscribing to `noun:register-batch` / `cmd:register` for *declared* commands (those come from the cache via IPC). Keeps the subscriptions for *dynamic* registrations from live tiles.
+- `apps/desktop/renderer/cmd/background.js` — already in the core renderer; stops subscribing to `noun:register-batch` / `cmd:register` for *declared* commands (those come from the cache via IPC). Keeps the subscriptions for *dynamic* registrations from live tiles.
 
 ## Phased plan
 
@@ -211,7 +211,7 @@ than import the FSM file cross-process.
    features that declare both a manifest command AND register a noun
    with the same name drop the declarative duplicate; noun registration
    is authoritative (tracked separately in
-   [task #11](../docs/tasks.md)).
+   [task #11](historical/tasks.md)).
 
 ## Non-goals
 

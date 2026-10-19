@@ -1,5 +1,7 @@
 # v1 Removal Smoke Regression Analysis
 
+*Historical: a root-cause pass over thirty smoke-test failures during the v1 removal; not current guidance.*
+
 **Date:** 2026-04-18  
 **Failing:** 30 tests (81 pass / 30 fail)  
 **Analyst:** Agent (automated root-cause run)

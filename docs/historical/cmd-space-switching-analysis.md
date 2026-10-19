@@ -1,5 +1,7 @@
 # Cmd Palette macOS Space Switching Analysis
 
+*Historical: an analysis of the macOS Space switch when the cmd palette opens, and the fix applied; not current guidance.*
+
 ## Problem
 
 When the user is on macOS Desktop Space 2 (or any non-primary Space) and opens the cmd palette via Alt+Space, macOS switches them back to the Space where the Peek app was initially started.
@@ -21,11 +23,11 @@ macOS treats BrowserWindow display Spaces based on the `visibleOnAllWorkspaces` 
 
 ### Key Files
 
-- `/Users/dietrich/misc/mpeek/extensions/cmd/background.js` - `openPanelWindow()` defines the window params
-- `/Users/dietrich/misc/mpeek/extensions/cmd/config.js` - Global shortcut default (Option+Space)
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` - `window-open` IPC handler creates/reuses windows
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/shortcuts.ts` - Global shortcut registration (no app.focus())
-- `/Users/dietrich/misc/mpeek/apps/desktop/main/windows.ts` - `closeOrHideWindow()` handles keepLive hide
+- `./extensions/cmd/background.js` - `openPanelWindow()` defines the window params
+- `./extensions/cmd/config.js` - Global shortcut default (Option+Space)
+- `./apps/desktop/main/ipc.ts` - `window-open` IPC handler creates/reuses windows
+- `./apps/desktop/main/shortcuts.ts` - Global shortcut registration (no app.focus())
+- `./apps/desktop/main/windows.ts` - `closeOrHideWindow()` handles keepLive hide
 
 ### What Was NOT the Cause
 
@@ -35,7 +37,7 @@ macOS treats BrowserWindow display Spaces based on the `visibleOnAllWorkspaces` 
 
 ## Fix Applied
 
-Two changes in `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts`:
+Two changes in `./apps/desktop/main/ipc.ts`:
 
 ### 1. New modal window creation
 

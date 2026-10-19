@@ -519,7 +519,7 @@ document.body.appendChild(grid);
 
 ### Tile preload must stay `.cts`, not `.ts`
 
-[`backend/electron/tile-preload.cts`](backend/electron/tile-preload.cts) — the capability-gated preload exposed as `window.app` to every tile renderer — **must** remain a CommonJS TypeScript file (`.cts`). The backend `tsconfig.json` uses `module: NodeNext`, which emits ESM for plain `.ts` files, and Electron's sandbox preload silently rejects ESM (no API surface, no thrown error — just an empty `window.app` and every tile broken). If you rename or convert this file, the entire app loses its API surface with no obvious failure. See [docs/architecture.md](docs/architecture.md) and [docs/tile-preload-trimming-plan.md](docs/tile-preload-trimming-plan.md).
+[`backend/electron/tile-preload.cts`](backend/electron/tile-preload.cts) — the capability-gated preload exposed as `window.app` to every tile renderer — **must** remain a CommonJS TypeScript file (`.cts`). The backend `tsconfig.json` uses `module: NodeNext`, which emits ESM for plain `.ts` files, and Electron's sandbox preload silently rejects ESM (no API surface, no thrown error — just an empty `window.app` and every tile broken). If you rename or convert this file, the entire app loses its API surface with no obvious failure. See [docs/architecture.md](docs/architecture.md) and [docs/historical/tile-preload-trimming-plan.md](docs/historical/tile-preload-trimming-plan.md).
 
 ### Process Management
 

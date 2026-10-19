@@ -1,5 +1,7 @@
 # Window rules audit
 
+*Historical: an audit of the window kernel against `docs/design/window-rules.md` at one commit; not current guidance.*
+
 The kernel at `dc3febab` read against `window-rules.md`, one line per rule. Verdicts: **holds**
 (one site, agrees), **scattered** (3+ sites must agree for the rule to hold; they do today unless
 noted), **contradicted** (a site does the opposite), **unimplemented** (nothing expresses it).

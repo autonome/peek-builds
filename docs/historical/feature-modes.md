@@ -1,5 +1,7 @@
 # Extension Modes — Research Note
 
+*Historical: a research note proposing a mode API for context-scoped shortcuts; `api.modes` was later removed as unused and `api.context.*` took its place; not current guidance.*
+
 ## Problem
 
 Extensions sometimes need global keyboard shortcuts that are only active during a specific interaction context. For example:

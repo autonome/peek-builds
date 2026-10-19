@@ -1,5 +1,7 @@
 # Plan: the overlay's attach target becomes an effect the kernel emits
 
+*Historical: the plan for making the overlay's attach target an effect the window kernel emits, since implemented; not current guidance.*
+
 Status: **implemented**, through order-of-work step 5 (commits `6a9909fb`, `04bce7ce`,
 `3ce150a2`, `a62e575e`). Step 6 (re-measure before restoring the minimal-stacking commit) is
 also done, with a negative result — see "What this does and does not fix" below. Derived from

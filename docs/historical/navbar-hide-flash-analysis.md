@@ -1,5 +1,7 @@
 # Navbar Hide Flash/Jump Analysis
 
+*Historical: a frame-by-frame analysis of the navbar-hide flash in the canvas page host, which no longer exists; not current guidance.*
+
 ## Overview
 
 When the navbar hides in the page host, the user sees a brief visual flash or jump of the webview content. This document traces the exact sequence of operations that causes it.

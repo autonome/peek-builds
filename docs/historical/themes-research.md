@@ -1,5 +1,7 @@
 # Themes as Extensions: Research & Design
 
+*Historical: research and design for turning themes into extensions; not current guidance.*
+
 Status: **Research** | Feb 2026
 
 ## Current State Analysis

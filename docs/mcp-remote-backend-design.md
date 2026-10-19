@@ -1,5 +1,10 @@
 # MCP remote backend
 
+**The store seam in §2 has since been built.**
+`apps/desktop/features/mcp-server/store/` holds `types.js`, `sqlite-store.js` and
+`remote-store.js`, and `apps/desktop/features/mcp-server/db.js` is gone. The rest of this
+document still reads as a proposal and has not been reconciled against what landed.
+
 How the Peek MCP server gains a remote data backend, so an agent or client with no local
 Peek install — a scheduled agent, a cloud session, a phone — reads and writes the same
 item/tag/event store a local MCP session sees.
@@ -82,7 +87,7 @@ New files under `apps/desktop/features/mcp-server/store/`:
 
 | File | Contents |
 |---|---|
-| `types.js` | `PeekStore` typedef, `ItemView` typedef, `ResolveResult` typedef. No runtime code, same as `sql/types.js`. |
+| `types.js` | `PeekStore` typedef, `ItemView` typedef, `ResolveResult` typedef. No runtime code, same as `apps/server/sql/types.js`. |
 | `sqlite-store.js` | The existing `db.js` body, wrapped so every method is `async`. |
 | `remote-store.js` | HTTP client against `/mcp/*`. |
 | `index.js` | `openStore(config)` — selects by env, mirroring the `SQL_ADAPTER` switch in `apps/server/sql/index.js`. |
@@ -597,7 +602,7 @@ Remote mode is a new flag, `--remote <url>`, plus these changes:
 - **OAuth.** Static minted bearer tokens only (§6).
 - **Any offline cache or write queue** (§7.1). Deliberate, not deferred-by-omission.
 - **Images and blobs.** `create_item` with `type: 'image'` against the remote store is refused
-  with a clear error. `apps/server` has an image path (`saveImage()`, the `storage/` adapter)
+  with a clear error. `apps/server` has an image path (`saveImage()`, the `apps/server/storage/` adapter)
   but the MCP layer has never created images, and wiring multipart upload through the store
   interface is unrelated work.
 - **Field parity beyond §3.1.** `favicon`, `visitCount`, and `lastVisitAt` stay local-only.

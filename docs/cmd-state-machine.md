@@ -1,101 +1,11 @@
 # Cmd Bar State Machine Design
 
-## 1. Current State Analysis
-
-### 1.1 Recent Changes (Last Week)
-
-Four commits touched cmd bar code in the past week, each addressing regressions or behavioral inconsistencies:
-
-**`oyvpktvp` — fix(cmd): restore param mode for connector commands, route item selection through execute**
-- Problem: Param mode (`edit` command's autocomplete) was bypassing `execute()` and directly publishing `editor:open`, which broke chaining, output handling, and lazy extension loading.
-- Fix: `acceptParamSuggestion()` now routes item-type params through `execute()`. Added comments clarifying that param mode should enter for any command with `params`, including connector commands.
-- Regression risk: The routing change means `execute()` must handle `selectedItem` in context, which was not part of the original contract.
-
-**`ourylmsr` — fix(cmd): editor:open lazy-load interceptor + cmd palette blink on hotkey**
-- Problem: When cmd panel fires `editor:open` before the editor extension is loaded, the event is lost. Also, the cmd panel would briefly flash visible then hide when triggered by hotkey while app was not focused (because `did-resign-active` was hiding all `alwaysOnTop` windows, including focusable ones like the cmd panel).
-- Fix: Added `registerLazyEventInterceptors()` in main.ts to catch `editor:open`/`editor:add` and load the editor extension first. Fixed `did-resign-active` to skip focusable `alwaysOnTop` windows.
-- Note: This fix is in main.ts, not panel.js, but it papers over a sequencing issue that a state machine should address (executing a command before its target extension is loaded).
-
-**`llsxksrz` — fix(cmd): param mode Tab fills text, Enter executes with correct item identity**
-- Problem: Tab in param mode was executing the command (calling `acceptParamSuggestion`), and Enter was passing item identity by search text (which could match the wrong item).
-- Fix: Split into `fillParamSuggestion()` (Tab, text-only) and `acceptParamSuggestion()` (Enter, executes). Enter now passes `selectedItem` directly through `execute()`. The `edit` command checks `ctx.selectedItem` first.
-- New tests added for Tab-fills and Enter-executes semantics.
-
-**`nlxwwmyv` — fix(cmd): restore two-tone inline suggestion styling (bold typed, dim completion)**
-- Problem: After Tab-cycling through suggestions, the inline ghost text was using `state.typed` (which now contains the completed command name) for the highlight boundary, making everything bold.
-- Fix: Introduced `state.originalTyped` tracking and used it in `updateCommandUI()` so the bold/dim split reflects what the user actually typed, not what Tab inserted.
-
-### 1.2 Architecture Overview
-
-The cmd bar system spans three execution contexts:
-
-1. **Background process** (`background.js`): Owns the command registry. Handles registration/unregistration from other extensions. Opens the panel window.
-2. **Panel window** (`panel.js` + `commands.js`): The interactive UI. Maintains local command copies via pubsub proxy. Handles all user interaction.
-3. **Commands module** (`commands.js`): Bridges background registry to panel. Creates proxy commands that execute via pubsub round-trip.
-
-The panel is a `keepLive` window -- it is created once and reused by hiding/showing. On visibility change, all modes are reset.
-
-### 1.3 Current State Fields (from `panel.js`)
-
-```javascript
-state = {
-  // Command matching
-  commands: {},           // Object map of command name -> command object
-  matches: [],            // Commands matching current typed text
-  matchIndex: 0,          // Selected match index
-  matchCounts: {},        // Frecency counts (persisted)
-  adaptiveFeedback: {},   // Adaptive matching data (persisted)
-  typed: '',              // Current input text
-  originalTyped: '',      // Text before Tab completion
-  lastExecuted: '',       // Last executed command name
-
-  // UI visibility
-  showResults: false,     // Whether results dropdown is visible
-
-  // Output selection mode
-  outputSelectionMode: false,
-  outputItems: [],
-  outputItemIndex: 0,
-  outputMimeType: null,
-  outputSourceCommand: null,
-
-  // Chain mode
-  chainMode: false,
-  chainContext: null,      // { data, mimeType, title, sourceCommand }
-  chainStack: [],
-
-  // Param mode
-  paramMode: false,
-  paramCommand: null,
-  paramSuggestions: [],
-  paramIndex: -1,
-  paramGeneration: 0,     // Stale async guard
-
-  // Execution
-  executing: false,
-  executingCommand: null,
-  executionTimeout: null,
-  executionError: null,
-}
-```
-
-### 1.4 Current Bugs and Inconsistencies
-
-1. **Escape handler duplication**: Both `api.escape.onEscape()` (IZUI flow, lines 555-606) and `handleSpecialKey()` Escape branch (lines 615-663) implement identical escape-layering logic. If the IZUI escape interception changes, they can drift apart.
-
-2. **No guard against concurrent execution**: `execute()` can be called while a previous command is still running (the `executing` flag is checked nowhere before starting a new execution).
-
-3. **Click handler bypasses state machine**: The click handler on result items (line 2619-2628) calls `execute()` directly and manually updates frecency, duplicating logic from the Enter key path.
-
-4. **`acceptParamSuggestion` for non-item params does not execute**: For non-item-type params (tags, enums), `acceptParamSuggestion()` just fills text and refreshes suggestions -- same as `fillParamSuggestion()`. Enter in param mode only routes through `acceptParamSuggestion` for item-type params (line 670 guard). For tag params, Enter falls through to the normal command execution path, which may or may not work correctly depending on whether the typed text matches the command name.
-
-5. **`originalTyped` not reset on all paths**: `originalTyped` is set in the input handler but not reset when the panel is re-shown via visibility change. It is also not cleared when entering chain mode or output selection mode.
-
-6. **Chain popup timing fragility**: `openChainPopup` uses a hardcoded 300ms delay before publishing content to the popup (line 1210), relying on the popup's ES module loading within that window.
-
-7. **Mode indicator hidden for 'default'**: The CSS rule `display: none` on `[data-mode="default"]` means the mode indicator is invisible most of the time. Mode cycling requires clicking an invisible element first (unless in a non-default mode).
-
----
+The machine described here is implemented in
+`apps/desktop/renderer/cmd/state-machine.js` and driven by
+`apps/desktop/renderer/cmd/panel.js`. Section 1 (the analysis of the panel
+before the machine existed) and sections 3–4 (the test plan and migration path
+that got it there) are under "History" at the bottom; section numbering is kept
+as written.
 
 ## 2. State Machine Specification
 
@@ -351,6 +261,109 @@ The state machine must maintain these invariants at all times:
 6. **paramIndex in bounds**: `paramIndex` must be `>= -1` and `< paramSuggestions.length`.
 7. **outputItemIndex in bounds**: When in output selection mode, `outputItemIndex >= 0` and `< outputItems.length`.
 8. **Escape layering order**: Escape always exits the innermost active mode first: paramMode -> outputSelection -> chainMode -> visible results -> clearText -> close. One press peels exactly one layer — a visible dropdown is dismissed with the typed text left intact.
+
+---
+
+---
+
+## History
+
+The sections below record how things stood when this document was written. They are kept for their reasoning and are not current guidance.
+
+## 1. Current State Analysis
+
+### 1.1 Recent Changes (Last Week)
+
+Four commits touched cmd bar code in the past week, each addressing regressions or behavioral inconsistencies:
+
+**`oyvpktvp` — fix(cmd): restore param mode for connector commands, route item selection through execute**
+- Problem: Param mode (`edit` command's autocomplete) was bypassing `execute()` and directly publishing `editor:open`, which broke chaining, output handling, and lazy extension loading.
+- Fix: `acceptParamSuggestion()` now routes item-type params through `execute()`. Added comments clarifying that param mode should enter for any command with `params`, including connector commands.
+- Regression risk: The routing change means `execute()` must handle `selectedItem` in context, which was not part of the original contract.
+
+**`ourylmsr` — fix(cmd): editor:open lazy-load interceptor + cmd palette blink on hotkey**
+- Problem: When cmd panel fires `editor:open` before the editor extension is loaded, the event is lost. Also, the cmd panel would briefly flash visible then hide when triggered by hotkey while app was not focused (because `did-resign-active` was hiding all `alwaysOnTop` windows, including focusable ones like the cmd panel).
+- Fix: Added `registerLazyEventInterceptors()` in main.ts to catch `editor:open`/`editor:add` and load the editor extension first. Fixed `did-resign-active` to skip focusable `alwaysOnTop` windows.
+- Note: This fix is in main.ts, not panel.js, but it papers over a sequencing issue that a state machine should address (executing a command before its target extension is loaded).
+
+**`llsxksrz` — fix(cmd): param mode Tab fills text, Enter executes with correct item identity**
+- Problem: Tab in param mode was executing the command (calling `acceptParamSuggestion`), and Enter was passing item identity by search text (which could match the wrong item).
+- Fix: Split into `fillParamSuggestion()` (Tab, text-only) and `acceptParamSuggestion()` (Enter, executes). Enter now passes `selectedItem` directly through `execute()`. The `edit` command checks `ctx.selectedItem` first.
+- New tests added for Tab-fills and Enter-executes semantics.
+
+**`nlxwwmyv` — fix(cmd): restore two-tone inline suggestion styling (bold typed, dim completion)**
+- Problem: After Tab-cycling through suggestions, the inline ghost text was using `state.typed` (which now contains the completed command name) for the highlight boundary, making everything bold.
+- Fix: Introduced `state.originalTyped` tracking and used it in `updateCommandUI()` so the bold/dim split reflects what the user actually typed, not what Tab inserted.
+
+### 1.2 Architecture Overview
+
+The cmd bar system spans three execution contexts:
+
+1. **Background process** (`background.js`): Owns the command registry. Handles registration/unregistration from other extensions. Opens the panel window.
+2. **Panel window** (`panel.js` + `commands.js`): The interactive UI. Maintains local command copies via pubsub proxy. Handles all user interaction.
+3. **Commands module** (`commands.js`): Bridges background registry to panel. Creates proxy commands that execute via pubsub round-trip.
+
+The panel is a `keepLive` window -- it is created once and reused by hiding/showing. On visibility change, all modes are reset.
+
+### 1.3 Current State Fields (from `panel.js`)
+
+```javascript
+state = {
+  // Command matching
+  commands: {},           // Object map of command name -> command object
+  matches: [],            // Commands matching current typed text
+  matchIndex: 0,          // Selected match index
+  matchCounts: {},        // Frecency counts (persisted)
+  adaptiveFeedback: {},   // Adaptive matching data (persisted)
+  typed: '',              // Current input text
+  originalTyped: '',      // Text before Tab completion
+  lastExecuted: '',       // Last executed command name
+
+  // UI visibility
+  showResults: false,     // Whether results dropdown is visible
+
+  // Output selection mode
+  outputSelectionMode: false,
+  outputItems: [],
+  outputItemIndex: 0,
+  outputMimeType: null,
+  outputSourceCommand: null,
+
+  // Chain mode
+  chainMode: false,
+  chainContext: null,      // { data, mimeType, title, sourceCommand }
+  chainStack: [],
+
+  // Param mode
+  paramMode: false,
+  paramCommand: null,
+  paramSuggestions: [],
+  paramIndex: -1,
+  paramGeneration: 0,     // Stale async guard
+
+  // Execution
+  executing: false,
+  executingCommand: null,
+  executionTimeout: null,
+  executionError: null,
+}
+```
+
+### 1.4 Current Bugs and Inconsistencies
+
+1. **Escape handler duplication**: Both `api.escape.onEscape()` (IZUI flow, lines 555-606) and `handleSpecialKey()` Escape branch (lines 615-663) implement identical escape-layering logic. If the IZUI escape interception changes, they can drift apart.
+
+2. **No guard against concurrent execution**: `execute()` can be called while a previous command is still running (the `executing` flag is checked nowhere before starting a new execution).
+
+3. **Click handler bypasses state machine**: The click handler on result items (line 2619-2628) calls `execute()` directly and manually updates frecency, duplicating logic from the Enter key path.
+
+4. **`acceptParamSuggestion` for non-item params does not execute**: For non-item-type params (tags, enums), `acceptParamSuggestion()` just fills text and refreshes suggestions -- same as `fillParamSuggestion()`. Enter in param mode only routes through `acceptParamSuggestion` for item-type params (line 670 guard). For tag params, Enter falls through to the normal command execution path, which may or may not work correctly depending on whether the typed text matches the command name.
+
+5. **`originalTyped` not reset on all paths**: `originalTyped` is set in the input handler but not reset when the panel is re-shown via visibility change. It is also not cleared when entering chain mode or output selection mode.
+
+6. **Chain popup timing fragility**: `openChainPopup` uses a hardcoded 300ms delay before publishing content to the popup (line 1210), relying on the popup's ES module loading within that window.
+
+7. **Mode indicator hidden for 'default'**: The CSS rule `display: none` on `[data-mode="default"]` means the mode indicator is invisible most of the time. Mode cycling requires clicking an invisible element first (unless in a non-default mode).
 
 ---
 

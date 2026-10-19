@@ -7,12 +7,12 @@ break instead of chasing symptom-level test failures.
 
 | File | Role |
 |------|------|
-| `app/cmd/index.html` + `cmd-glue.ts` | **Cmd resident renderer.** Hidden, persistent, trustedBuiltin. Owns cmd system bootstrap. URL: `peek://cmd/index.html`. |
-| `app/cmd/background.js` | **Registry provider.** Runs inside the cmd resident. Subscribes to `cmd:register`, `cmd:register-batch`, `noun:register-batch`, `cmd:query-commands`. Holds the canonical command list. Responds to queries with `cmd:query-commands-response`. Loads user settings. |
-| `app/cmd/panel.html` + `panel.js` | **On-demand palette UI.** Opened by the resident via `api.window.open('peek://ext/cmd/panel.html', ...)`. Has its own local `state.commands` map that it maintains from pubsub. trustedBuiltin (as of Cat 1 routing). |
-| `app/cmd/commands.js` | Runs **in the panel renderer**. Populates a local command cache by: (a) loading built-in commands (from `./commands/index.js`), (b) subscribing to `cmd:register`/`cmd:register-batch`/`cmd:query-commands-response`, (c) publishing `cmd:query-commands` on load. Dispatches DOM event `cmd-update-commands` to panel.js. |
-| `app/cmd/state-machine.js` | Pure 10-state FSM. IDLE → TYPING → RESULTS_OPEN → PARAM_MODE → EXECUTING → {OUTPUT_SELECTION, CHAIN_MODE, CHAIN_POPUP} → CLOSING. No DOM / IPC deps. |
-| Feature tiles (`features/*/background.js`) | Register their commands via `api.commands.register({name, accepts, produces, ...})` which in tile-preload publishes a `cmd:register` pubsub event with metadata. |
+| `apps/desktop/renderer/background.html` + `apps/desktop/main/core-glue.ts` | **Core background renderer.** Hidden, persistent, trustedBuiltin. `apps/desktop/renderer/index.js` calls `initCmd()` here to bootstrap the cmd system; the separate `peek://cmd/index.html` resident is gone. URL: `peek://app/background.html`. |
+| `apps/desktop/renderer/cmd/background.js` | **Registry provider.** Runs inside the cmd resident. Subscribes to `cmd:register`, `cmd:register-batch`, `noun:register-batch`, `cmd:query-commands`. Holds the canonical command list. Responds to queries with `cmd:query-commands-response`. Loads user settings. |
+| `apps/desktop/renderer/cmd/panel.html` + `panel.js` | **On-demand palette UI.** Opened by the resident via `api.window.open('peek://ext/cmd/panel.html', ...)`. Has its own local `state.commands` map that it maintains from pubsub. trustedBuiltin (as of Cat 1 routing). |
+| `apps/desktop/renderer/cmd/commands.js` | Runs **in the panel renderer**. Populates a local command cache by: (a) loading built-in commands (from `./commands/index.js`), (b) subscribing to `cmd:register`/`cmd:register-batch`/`cmd:query-commands-response`, (c) publishing `cmd:query-commands` on load. Dispatches DOM event `cmd-update-commands` to panel.js. |
+| `apps/desktop/renderer/cmd/state-machine.js` | Pure 10-state FSM. IDLE → TYPING → RESULTS_OPEN → PARAM_MODE → EXECUTING → {OUTPUT_SELECTION, CHAIN_MODE, CHAIN_POPUP} → CLOSING. No DOM / IPC deps. |
+| Feature tiles (`apps/desktop/features/*/background.js`) | Register their commands via `api.commands.register({name, accepts, produces, ...})` which in tile-preload publishes a `cmd:register` pubsub event with metadata. |
 
 ## Pubsub topics (scope: GLOBAL unless noted)
 
@@ -61,6 +61,12 @@ Non-chain: `cmd:settings-update`, `cmd:settings-changed`, `cmd:unregister`,
 
 5. **Chain stack is an ad-hoc linear array.** Pops on ESC. No branching support, no invariants. If a chain command produces output that re-enters selection, the stack model loses correspondence.
 
+---
+
+## History
+
+The sections below record how things stood when this document was written. They are kept for their reasoning and are not current guidance.
+
 ## Observable test failures (all describe a single architectural gap)
 
 | Test | Asserts | What the architecture can't do reliably |
@@ -89,7 +95,7 @@ State machine changes:
 
 Pubsub changes:
 - Verify the panel window is `registerTrustedBuiltinWindow`-ed so `extensionBroadcaster` sends pubsub to it. Today the panel's token is minted in `ipc.ts` window-open but we may not be calling `registerTrustedBuiltinWindow`.
-- Consolidate mimeType match into one shared util (`app/cmd/mime-match.js`), used by both `hasDownstreamCommands` and `findChainingCommands`.
+- Consolidate mimeType match into one shared util (`apps/desktop/renderer/cmd/mime-match.js`), used by both `hasDownstreamCommands` and `findChainingCommands`.
 
 Scope discipline:
 - `state.commands` is the single source of truth in the panel. Bugs in its population show up here.

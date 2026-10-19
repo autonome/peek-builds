@@ -1,5 +1,7 @@
 # V1 Removal Plan
 
+*Historical: the plan for removing the v1 extension runtime, completed in April 2026; not current guidance.*
+
 ## Status — DONE (2026-04-24)
 
 V1 removal is complete. This document is closed; remaining sections below are
@@ -96,7 +98,7 @@ If the unit test reproduces the failure, fix it in product code. If the unit tes
 - `ensureTileIpcHandlers()` exported from `tile-compat.ts` and called at top of `main.ts::initialize()` so the `tile:*` IPC handlers exist before ANY BrowserWindow is created (was lazy-registered from `loadV2Tile()` previously).
 - Failing reproducer test at `tests/desktop/v2-pubsub-reproducer.spec.ts` — cmd publishes `repro:v2-v2-hello` GLOBAL, hud subscribes. Both report `published: true` / `subscribed: true`, but hud never receives. Documents the bug as a regression test.
 
-**Next probe needed:** something IPC-based or main-process-side that confirms whether `ipcRenderer.send('tile:pubsub:publish')` from cmd's tile-preload actually reaches the main-process handler. Window-level probes from preload don't reach the test's main-world `evaluate` (`contextIsolation` blocks them). File-based probes from main-process work but require running tests from the correct cwd (`/Users/dietrich/misc/mpeek`, not an agent worktree — yarn/tsc respects cwd).
+**Next probe needed:** something IPC-based or main-process-side that confirms whether `ipcRenderer.send('tile:pubsub:publish')` from cmd's tile-preload actually reaches the main-process handler. Window-level probes from preload don't reach the test's main-world `evaluate` (`contextIsolation` blocks them). File-based probes from main-process work but require running tests from the correct cwd (`the repository root`, not an agent worktree — yarn/tsc respects cwd).
 
 **Next angle to try (recommended):** build a bare-bones standalone Electron app (NOT Peek) — `main.ts` + `preload.cjs` + two HTML pages — that does the same v2-style flow: renderer A publishes via `ipcRenderer.send` → main `ipcMain.on` handler → broadcast via `webContents.send` → renderer B's `ipcRenderer.on` fires. If the standalone repro works, the bug is in Peek's specific orchestration (interaction with `extensionHostWindow`, capability tokens, multiple windows on the same `peek://` protocol, etc.). If it fails the same way, the bug is fundamental to the pattern and we have a 200-line reproducer to ship to Electron upstream or fix in our IPC plumbing.
 
@@ -141,7 +143,7 @@ Now that `tile-preload.cts` is the only preload and `tile:*` is the only IPC sur
 - Drop the `windowHints` nested object (already redundant with flat fields).
 - Decide: bump `manifestVersion` to 3 to signal the v1-removal milestone, or drop the field.
 - Update all 26 feature manifests + the 3 core renderers' implicit "manifests" (the privileged-grant declarations) to the canonical shape.
-- Update `docs/tiles-single-file.md`, `docs/tile-preload-trimming-plan.md`, `docs/command-audit.md`.
+- Update `docs/tiles-single-file.md`, `docs/historical/tile-preload-trimming-plan.md`, `docs/historical/command-audit.md`.
 
 Acceptance: one renderer mechanic, one preload, one IPC surface. `tile-preload.cts` shrinks substantially.
 

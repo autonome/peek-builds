@@ -1,6 +1,8 @@
 # Command Audit — Tile Migration
 
-Snapshot generated from `/Users/dietrich/misc/mpeek/features/*/manifest.json` on
+*Historical: a snapshot audit of every feature command during the v2 tile migration; not current guidance.*
+
+Snapshot generated from `./features/*/manifest.json` on
 the overnight audit pass.
 
 ## Summary

@@ -191,7 +191,7 @@ Widgets share the navbar show/hide lifecycle -- they are part of the page chrome
 
 ## Sample Extension
 
-See `extensions/pagewidgets-sample/` for a complete working example that:
+See `apps/desktop/features/pagewidgets-sample/` for a complete working example that:
 
 1. Registers a "Page Summary" widget on startup
 2. Listens for `page:loaded` events

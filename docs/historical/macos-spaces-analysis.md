@@ -1,5 +1,7 @@
 # macOS Spaces Switching: Root Cause Analysis
 
+*Historical: a root-cause analysis of the macOS Space switch when the cmd palette opens; not current guidance.*
+
 ## Problem Statement
 
 When the user is on macOS Desktop Space 2 (or any Space other than where the Peek app was
@@ -15,7 +17,7 @@ to modal windows and reused keepLive windows, but this did NOT fix the issue.
 
 ### Step 1: Global Shortcut Registration
 
-In `/Users/dietrich/misc/mpeek/extensions/cmd/background.js`, the `initShortcut()` function
+In `./extensions/cmd/background.js`, the `initShortcut()` function
 (line 396) registers a global shortcut via the extension API:
 
 ```js
@@ -26,7 +28,7 @@ api.shortcuts.register(prefs.shortcutKey, () => {
 
 The default shortcut key is `Option+Space` (from `config.js` line 32).
 
-This calls through to `/Users/dietrich/misc/mpeek/apps/desktop/main/shortcuts.ts` line 174:
+This calls through to `./apps/desktop/main/shortcuts.ts` line 174:
 
 ```ts
 const ret = globalShortcut.register(shortcut, () => {
@@ -58,7 +60,7 @@ With these params:
 
 ### Step 3: IPC handler 'window-open' in main process
 
-In `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` line 2139, the `window-open` IPC
+In `./apps/desktop/main/ipc.ts` line 2139, the `window-open` IPC
 handler fires.
 
 **FIRST INVOCATION (cold start -- window doesn't exist yet):**

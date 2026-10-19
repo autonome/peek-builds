@@ -1,5 +1,7 @@
 # Groups: Making Workspaces Excellent
 
+*Historical: a February 2026 roadmap for the groups feature; not current guidance.*
+
 Status: **Roadmap** | Feb 2026
 
 ## Current Capabilities
