@@ -23,7 +23,6 @@ import {
   type CommandOutcome,
   type FsSettleOutcome,
 } from './window-kernel-executor.js';
-import { planReleaseFocus } from './restore-hold.js';
 import {
   initialState,
   evolve,
@@ -2014,24 +2013,6 @@ describe('planRestoreFocus (cold-start z-order + frontmost — peek 7bb74c90 / 8
   it('restore carries a user intent on cold start and on a switch begun while active', () => {
     assert.strictEqual(planRestoreActivation(true, false), 'user');
     assert.strictEqual(planRestoreActivation(false, true), 'user');
-  });
-
-  // A held group released on arrival: macOS resigns the app 2 ms after the desktop change, so the
-  // gate reads appActive=false although the app was active as the switch began.
-  it('held release focuses when the app was active before the desktop change and is inactive now', () => {
-    const shouldFocus = planRestoreFocus(false, false, false, true);
-    assert.deepStrictEqual(planReleaseFocus([5, 6], 6, shouldFocus), { id: 6, reason: 'snapshot-focused' });
-    assert.strictEqual(planRestoreActivation(false, true), 'user');
-  });
-
-  it('held release focuses nothing when the app was inactive before the desktop change', () => {
-    const shouldFocus = planRestoreFocus(false, false, false, false);
-    assert.deepStrictEqual(planReleaseFocus([5, 6], 6, shouldFocus), { id: null, reason: 'not-active' });
-  });
-
-  it('held release focuses nothing when headless, even if active before the desktop change', () => {
-    const shouldFocus = planRestoreFocus(false, true, false, true);
-    assert.deepStrictEqual(planReleaseFocus([5, 6], 6, shouldFocus), { id: null, reason: 'not-active' });
   });
 
   it('an ordinary in-session restore carries no intent', () => {

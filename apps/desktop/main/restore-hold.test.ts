@@ -3,7 +3,7 @@
 // real implementation — the module is electron-free, so no mirroring.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
+import { partitionRestoreByDesktop, planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 
 describe('boundedRead', () => {
   it('gives up on a read that never resolves after the timeout', async () => {
@@ -173,23 +173,6 @@ describe('planReleaseFocus (which released window takes focus)', () => {
 
   it('nothing opened → no focus', () => {
     assert.deepStrictEqual(planReleaseFocus([], null, true), { id: null, reason: 'none-opened' });
-  });
-});
-
-describe('noteDesktopSwitch (was the app active as the switch began)', () => {
-  it('a new switch notice records appActive from that notification', () => {
-    const next = noteDesktopSwitch({ switchesSeen: 0, activeAtSwitch: false }, { desktopSwitchCount: 1, appActive: true });
-    assert.deepStrictEqual(next, { switchesSeen: 1, activeAtSwitch: true });
-  });
-
-  it('the resign that follows the notice does not overwrite the recorded value', () => {
-    const next = noteDesktopSwitch({ switchesSeen: 1, activeAtSwitch: true }, { desktopSwitchCount: 1, appActive: false });
-    assert.deepStrictEqual(next, { switchesSeen: 1, activeAtSwitch: true });
-  });
-
-  it('a switch noticed while the app was inactive records false', () => {
-    const next = noteDesktopSwitch({ switchesSeen: 1, activeAtSwitch: true }, { desktopSwitchCount: 2, appActive: false });
-    assert.deepStrictEqual(next, { switchesSeen: 2, activeAtSwitch: false });
   });
 });
 

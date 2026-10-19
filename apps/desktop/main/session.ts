@@ -31,7 +31,7 @@ import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
-import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, noteDesktopSwitch, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
+import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 
@@ -160,8 +160,6 @@ interface HeldRestoreState {
   unsubscribe: () => void;
   /** True while a released group's open loop runs — one release at a time. */
   releaseInFlight: boolean;
-  /** Desktop switch notices seen, and whether the app was active as the latest began (`noteDesktopSwitch`). */
-  switchTracking: { switchesSeen: number; activeAtSwitch: boolean };
 }
 
 let _heldRestore: HeldRestoreState | null = null;
@@ -200,17 +198,8 @@ export function getHeldWindowCount(workspaceKey: string, excludeUrlPrefixes: str
 function installHeldRestore(workspaceKey: string, groups: Map<string, WindowDescriptor[]>): void {
   clearHeldRestore();
   if (groups.size === 0) return;
-  const state: HeldRestoreState = {
-    workspaceKey,
-    groups,
-    unsubscribe: () => {},
-    releaseInFlight: false,
-    switchTracking: { switchesSeen: getKernelExecutorForApp().getState().desktopSwitchCount, activeAtSwitch: false },
-  };
+  const state: HeldRestoreState = { workspaceKey, groups, unsubscribe: () => {}, releaseInFlight: false };
   state.unsubscribe = getKernelExecutorForApp().subscribe((kernelState) => {
-    // Read before anything else: the notification for the switch notice still
-    // carries the app's state from before the switch.
-    state.switchTracking = noteDesktopSwitch(state.switchTracking, kernelState);
     maybeReleaseHeldGroup(state, kernelState);
   });
   _heldRestore = state;
@@ -249,9 +238,8 @@ function maybeReleaseHeldGroup(state: HeldRestoreState, kernelState: State): voi
   // show is decided against a state with no such window and rejected
   // (`no-such-window`) — the window exists but never appears. The boot restore
   // runs outside any notification, which is why its page hosts show.
-  const activeBeforeSwitch = state.switchTracking.activeAtSwitch;
   void Promise.resolve()
-    .then(() => openHeldGroup(group, current, activeBeforeSwitch))
+    .then(() => openHeldGroup(group, current))
     .catch((err) => console.error('[session] lazy-restore open failed:', err))
     .finally(() => {
       state.releaseInFlight = false;
@@ -269,7 +257,7 @@ function maybeReleaseHeldGroup(state: HeldRestoreState, kernelState: State): voi
  * the group was already removed from the hold, so such a save would
  * otherwise drop them.
  */
-async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string, activeBeforeSwitch: boolean): Promise<void> {
+async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): Promise<void> {
   if (!invokeWindowOpen) {
     console.error('[session] lazy-restore open skipped — invokeWindowOpen not initialized');
     return;
@@ -358,9 +346,9 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string, a
     const focusPlan = planReleaseFocus(
       openedIds,
       focusedWindowId,
-      getKernelExecutorForApp().shouldRestoreFocus(false, activeBeforeSwitch),
+      getKernelExecutorForApp().shouldRestoreFocus(false, false),
     );
-    console.log(`[session] lazy-restore-focus desktop=${desktop} focusedId=${focusPlan.id ?? 'none'} reason=${focusPlan.reason} activeBeforeSwitch=${activeBeforeSwitch}`);
+    console.log(`[session] lazy-restore-focus desktop=${desktop} focusedId=${focusPlan.id ?? 'none'} reason=${focusPlan.reason}`);
     if (focusPlan.id != null) {
       // The released windows have no desktop placement until a read covers
       // them, and the raise guard drops a raise for a window not known to be on
@@ -371,16 +359,12 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string, a
         const waitedMs = await boundedRead(focusExecutor.refreshDesktops('release'), RESTORE_DESKTOP_READ_TIMEOUT_MS);
         console.log(`[session] lazy-restore-desktop-read waited_ms=${waitedMs}`);
       }
-      // macOS resigns the app right after the desktop change, and a raise
-      // without a user intent is suppressed while inactive (`planRaise`).
-      const restoreIntent = planRestoreActivation(false, activeBeforeSwitch);
-      const activation = restoreIntent ? ({ activation: restoreIntent }) : undefined;
       const focusWin = getLiveWindow(focusPlan.id);
       const hybridFocus = focusWin ? null : getHybridWindow(focusPlan.id);
       if (focusWin && !focusWin.isDestroyed()) {
-        showWindowHeadlessSafe(focusWin, { active: true, ...activation });
+        showWindowHeadlessSafe(focusWin, { active: true });
       } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
-        showHybridHost(hybridFocus.baseWin, activation);
+        showHybridHost(hybridFocus.baseWin);
       }
     }
   } finally {
