@@ -1110,7 +1110,9 @@ export function addWindowToWorkspaceSnapshot(
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', ?, ?, ?)
     `).run(`session-${rowKey}`, rowKey, JSON.stringify(merged), Date.now());
-    return { success: true, added: merged.windows.length > (existing?.windows.length ?? 0) };
+    const added = merged.windows.length > (existing?.windows.length ?? 0);
+    console.log(`[session:move] workspace=${key} url=${projection.snapshot.windows[0].url.substring(0, 100)} ${added ? 'added' : 'skipped (a keyed window with that url and key is already saved)'} rows=${existing?.windows.length ?? 0}->${merged.windows.length}`);
+    return { success: true, added };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }

@@ -1009,6 +1009,14 @@ async function moveToSpace(targetName) {
       });
       return { success: false, error: added?.error || 'Failed to add the window to the space' };
     }
+    if (!added.added) {
+      // The target row did not take the window (a keyed tile already saved there): closing it would lose it.
+      await api.context.setMode('space', {
+        windowId,
+        metadata: { spaceId: activeSpaceId, spaceName: activeSpaceName, color: activeSpaceColor }
+      });
+      return { success: false, error: `Not moved: "${displayName}" already holds this window` };
+    }
     await api.window.close(windowId);
     publishMembershipChanged(windowId, tag.id);
     return { success: true, windowId, spaceId: tag.id, spaceName: displayName, closed: true };
@@ -1356,6 +1364,7 @@ export const __test = {
   handleAppFocusChanged,
   cancelHideTimer,
   deleteSpace,
+  moveToSpace,
   setActiveSpaceId: (id) => { activeSpaceId = id; },
 };
 

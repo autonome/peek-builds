@@ -1407,9 +1407,15 @@ describe('addDescriptorsToSnapshot', () => {
     assert.deepStrictEqual(snap.windows.map((d) => d.url), ['https://a.test/', 'https://b.test/']);
   });
 
-  it('does not add a window already in the row (same url and key)', () => {
+  it('keeps two keyless windows at the same address', () => {
     const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 1);
     const snap = addDescriptorsToSnapshot(existing, [desc('https://a.test/')], 'tag-1', 'workspace-switch', 2);
+    assert.strictEqual(snap.windows.length, 2);
+  });
+
+  it('does not add a keyed window already in the row (same url and key)', () => {
+    const existing = addDescriptorsToSnapshot(null, [desc('https://a.test/', { key: 'k1' })], 'tag-1', 'workspace-switch', 1);
+    const snap = addDescriptorsToSnapshot(existing, [desc('https://a.test/', { key: 'k1' })], 'tag-1', 'workspace-switch', 2);
     assert.strictEqual(snap.windows.length, 1);
   });
 

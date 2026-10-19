@@ -466,9 +466,12 @@ export function sanitizeParams(params: Record<string, unknown>): Record<string, 
  */
 /**
  * Add window descriptors to a workspace's saved snapshot, keeping every window
- * it already holds. A descriptor already present (same url and window key) is
- * not added again. With no saved snapshot, the result holds just the additions.
- * Pure: returns a new snapshot, never mutates `existing`.
+ * it already holds. A keyed descriptor (a tile whose window key allows one
+ * window per key) already present with the same url and key is not added
+ * again. A keyless window (an ordinary page) is always appended, since two
+ * pages at the same address are two windows. With no saved snapshot, the
+ * result holds just the additions. Pure: returns a new snapshot, never mutates
+ * `existing`.
  */
 export function addDescriptorsToSnapshot(
   existing: SessionSnapshot | null,
@@ -478,15 +481,18 @@ export function addDescriptorsToSnapshot(
   createdAt: number,
 ): SessionSnapshot {
   const windows = existing && Array.isArray(existing.windows) ? [...existing.windows] : [];
-  const identity = (d: WindowDescriptor) => `${d.url}\u0000${d.key ?? ''}`;
-  const seen = new Set(windows.map(identity));
+  const seenKeyed = new Set(windows.filter((d) => d.key).map(descriptorAddress));
   for (const d of additions) {
-    if (seen.has(identity(d))) continue;
-    seen.add(identity(d));
+    if (d.key) {
+      if (seenKeyed.has(descriptorAddress(d))) continue;
+      seenKeyed.add(descriptorAddress(d));
+    }
     windows.push(d);
   }
   return { version: 1, createdAt, reason, workspaceKey, windows };
 }
+
+const descriptorAddress = (d: WindowDescriptor) => `${d.url}\u0000${d.key ?? ''}`;
 
 /**
  * Fold one workspace's saved snapshot into another's, as when a space is
@@ -514,7 +520,15 @@ export function mergeSnapshotIntoWorkspace(
     };
     return { ...d, focused: false, context };
   });
-  return addDescriptorsToSnapshot(target, moved, targetKey, 'workspace-switch', createdAt);
+  // A deleted space's windows collapse into the target's when it already holds the same address.
+  const held = new Set((target && Array.isArray(target.windows) ? target.windows : []).map(descriptorAddress));
+  const fresh = moved.filter((d) => {
+    const address = descriptorAddress(d);
+    if (held.has(address)) return false;
+    held.add(address);
+    return true;
+  });
+  return addDescriptorsToSnapshot(target, fresh, targetKey, 'workspace-switch', createdAt);
 }
 
 export function serializeSession(input: SerializeSessionInput): SessionProjection {
