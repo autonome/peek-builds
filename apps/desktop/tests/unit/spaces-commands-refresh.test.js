@@ -50,7 +50,7 @@ globalThis.window = {
   },
 };
 
-const { default: feature } = await import(join(__dirname, '..', '..', 'features', 'spaces', 'background.js'));
+const { default: feature, __test } = await import(join(__dirname, '..', '..', 'features', 'spaces', 'background.js'));
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -147,6 +147,29 @@ describe('space-name commands show window counts', () => {
     await settle();
     assert.equal(subtitleOf('switch space', 'work'), '6 windows');
     heldWindows = {};
+    liveWindows = {};
+  });
+});
+
+describe('space-name commands mark the current space', () => {
+  const subtitleOf = (commandName, value) => [...registrations].reverse()
+    .find((r) => r.name === commandName)?.params?.[0]?.options.find((o) => o.value === value)?.subtitle;
+
+  it('adds "current" to the active space subtitle and moves it when the active space changes', async () => {
+    tags = [{ id: 't-default', name: 'space:default' }, { id: 't-work', name: 'space:work' }];
+    liveWindows = { 't-work': ['w1', 'w2'] };
+    __test.setActiveSpaceId('t-work');
+    await handlers.get('spaces:membership-changed')({ windowId: 'w2', spaceId: 't-work' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '2 windows · current');
+    assert.equal(subtitleOf('move to space', 'work'), '2 windows · current');
+    assert.equal(subtitleOf('switch space', 'default'), 'no windows');
+
+    __test.setActiveSpaceId('t-default');
+    await handlers.get('spaces:membership-changed')({ windowId: 'w2', spaceId: 't-work' });
+    await settle();
+    assert.equal(subtitleOf('switch space', 'work'), '2 windows');
+    assert.match(subtitleOf('switch space', 'default'), /current$/);
     liveWindows = {};
   });
 });

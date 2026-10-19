@@ -301,18 +301,24 @@ const validateNewSpaceName = (name, existingNames, defaultName) => {
  * Command-panel suggestions for a space-name argument: one entry per space tag,
  * shown by display name (no internal tag prefix), sorted by name. `counts`
  * maps a tag id to its window count; a space with no known count gets no
+ * subtitle. The space whose tag id is `currentId` is marked "current" in its
  * subtitle.
  */
-const spaceNameOptions = (tags, counts) =>
+const spaceNameOptions = (tags, counts, currentId) =>
   (Array.isArray(tags) ? tags : [])
     .filter((t) => t && isSpaceTag(t.name))
-    .map((t) => ({ name: getSpaceDisplayName(t), count: counts?.[t.id] }))
+    .map((t) => ({ name: getSpaceDisplayName(t), count: counts?.[t.id], current: !!currentId && t.id === currentId }))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(({ name, count }) => ({
-      value: name,
-      title: name,
-      ...(typeof count === 'number' ? { subtitle: count === 0 ? 'no windows' : formatWindowCount(count) } : {}),
-    }));
+    .map(({ name, count, current }) => {
+      const parts = [];
+      if (typeof count === 'number') parts.push(count === 0 ? 'no windows' : formatWindowCount(count));
+      if (current) parts.push('current');
+      return {
+        value: name,
+        title: name,
+        ...(parts.length ? { subtitle: parts.join(' · ') } : {}),
+      };
+    });
 
 /**
  * The space name a command message carries: the search text, else the argument

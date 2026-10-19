@@ -498,6 +498,7 @@ async function bootstrapDefaultSpace() {
   activeSpaceId = tag.id;
   activeSpaceName = spaceName;
   activeSpaceColor = tag.color;
+  refreshSpaceNameCommands();
 
   await declareActiveWorkspaceForNewWindows(tag.id, spaceName, windowColor);
   await adoptOpenWindowsInto(tag, spaceName, windowColor);
@@ -567,6 +568,7 @@ async function enterWorkspace(tag, spaceName) {
   activeSpaceId = tag.id;
   activeSpaceName = spaceName;
   activeSpaceColor = tag.color;
+  refreshSpaceNameCommands();
 
   if (isDefault) {
     // The default shows no chrome — see updateBorderVisibility()'s matching
@@ -1112,7 +1114,7 @@ async function refreshSpaceNameCommands() {
       spaceNameRefreshQueued = false;
       try {
         const tags = await listSpaceTags();
-        spaceNameSuggestions = spaceNameOptions(tags, await countWindowsBySpace(tags));
+        spaceNameSuggestions = spaceNameOptions(tags, await countWindowsBySpace(tags), activeSpaceId);
         publishSpaceNameCommands();
       } catch (err) {
         console.error('[ext:spaces] Failed to refresh space name suggestions:', err);
