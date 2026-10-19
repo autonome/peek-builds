@@ -19,6 +19,9 @@ import {
   evaluateIsolationViolations,
   hasDefaultDenyWindowOpen,
   decideExtensionPopupOpen,
+  decideWebContentsIsolation,
+  isolationRefusalMessage,
+  unsafeWebPreferenceOverrides,
 } from './web-contents-policy.js';
 
 describe('isolation check — which webContents types are checked', () => {
@@ -97,5 +100,120 @@ describe('extension popup window.open — which schemes route', () => {
     ]) {
       assert.equal(decideExtensionPopupOpen(url), 'deny', `${url || '<empty string>'} must be denied`);
     }
+  });
+});
+
+describe('isolation refusal — the verdict for a created webContents', () => {
+  it('allows a type the policy does not check, whatever its prefs say', () => {
+    assert.deepEqual(
+      decideWebContentsIsolation({ type: 'backgroundPage', prefs: { nodeIntegration: true } }),
+      { decision: 'allow' },
+    );
+  });
+
+  it('allows a checked type whose prefs are safe', () => {
+    assert.deepEqual(
+      decideWebContentsIsolation({ type: 'window', prefs: { nodeIntegration: false, contextIsolation: true } }),
+      { decision: 'allow' },
+    );
+  });
+
+  it('asks for a navigation recheck when the prefs are not readable yet', () => {
+    // Null prefs used to pass silently, which is how a violating surface could
+    // run unchecked; the answer is now "no verdict yet", never "safe".
+    assert.deepEqual(
+      decideWebContentsIsolation({ type: 'window', prefs: null }),
+      { decision: 'recheck-on-navigation' },
+    );
+  });
+
+  it('refuses a checked type with a violation, naming every one', () => {
+    assert.deepEqual(
+      decideWebContentsIsolation({
+        type: 'window',
+        prefs: { nodeIntegration: true, contextIsolation: false, webSecurity: false },
+      }),
+      {
+        decision: 'refuse',
+        violations: ['nodeIntegration=true', 'contextIsolation=false', 'webSecurity=false'],
+      },
+    );
+  });
+
+  it('refuses on a single violation', () => {
+    assert.deepEqual(
+      decideWebContentsIsolation({ type: 'browserView', prefs: { nodeIntegration: true } }),
+      { decision: 'refuse', violations: ['nodeIntegration=true'] },
+    );
+  });
+});
+
+describe('isolation refusal — the logged line', () => {
+  it('names the webContents, its type, its url and every violation', () => {
+    const line = isolationRefusalMessage({
+      id: 7,
+      type: 'window',
+      url: 'data:text/html,x',
+      violations: ['nodeIntegration=true'],
+    });
+    assert.ok(line.startsWith('[SECURITY] '), `must stay greppable as [SECURITY]: ${line}`);
+    assert.match(line, /webContents 7 \(type=window, url=data:text\/html,x\)/);
+    assert.match(line, /violates isolation policy: nodeIntegration=true/);
+  });
+
+  it('stands in a placeholder for a webContents with no url yet', () => {
+    const line = isolationRefusalMessage({ id: 2, type: 'window', url: '', violations: ['webSecurity=false'] });
+    assert.match(line, /url=<no url yet>/);
+  });
+});
+
+describe('window-open input — which webPreferences overrides are refused', () => {
+  it('names nodeIntegration=true', () => {
+    assert.deepEqual(unsafeWebPreferenceOverrides({ nodeIntegration: true }), ['nodeIntegration=true']);
+  });
+
+  it('names contextIsolation=false', () => {
+    assert.deepEqual(unsafeWebPreferenceOverrides({ contextIsolation: false }), ['contextIsolation=false']);
+  });
+
+  it('names webSecurity=false', () => {
+    assert.deepEqual(unsafeWebPreferenceOverrides({ webSecurity: false }), ['webSecurity=false']);
+  });
+
+  it('names sandbox=false — wider than the isolation check by this one setting', () => {
+    assert.deepEqual(unsafeWebPreferenceOverrides({ sandbox: false }), ['sandbox=false']);
+  });
+
+  it('names all four together, in order', () => {
+    assert.deepEqual(
+      unsafeWebPreferenceOverrides({
+        nodeIntegration: true,
+        contextIsolation: false,
+        webSecurity: false,
+        sandbox: false,
+      }),
+      ['nodeIntegration=true', 'contextIsolation=false', 'webSecurity=false', 'sandbox=false'],
+    );
+  });
+
+  it('passes the safe settings — only an explicitly unsafe value is refused', () => {
+    assert.deepEqual(
+      unsafeWebPreferenceOverrides({
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: true,
+        sandbox: true,
+      }),
+      [],
+    );
+  });
+
+  it('passes empty, absent and non-object input', () => {
+    // An absent key means the caller expressed no opinion, so Peek's own
+    // defaults apply and there is nothing to refuse.
+    assert.deepEqual(unsafeWebPreferenceOverrides({}), []);
+    assert.deepEqual(unsafeWebPreferenceOverrides(null), []);
+    assert.deepEqual(unsafeWebPreferenceOverrides(undefined), []);
+    assert.deepEqual(unsafeWebPreferenceOverrides('nodeIntegration' as unknown as null), []);
   });
 });

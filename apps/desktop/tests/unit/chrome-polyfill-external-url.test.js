@@ -42,11 +42,35 @@ describe('chrome-api-polyfills/_external-url openExternalIfWebUrl', () => {
     assert.deepEqual(shell.openExternal.mock.calls[0].arguments, ['https://example.com/a?b=1']);
   });
 
+  it('hands a plain http URL to the shell too', () => {
+    const shell = { openExternal: mock.fn() };
+    assert.equal(openExternalIfWebUrl(shell, 'http://example.com/'), true);
+    assert.equal(shell.openExternal.mock.callCount(), 1);
+  });
+
   it('does not call the shell for a custom scheme', () => {
     const shell = { openExternal: mock.fn() };
     const result = openExternalIfWebUrl(shell, 'peek://groups/home.html');
     assert.equal(result, false);
     assert.equal(shell.openExternal.mock.callCount(), 0);
+  });
+
+  it('refuses every non-web scheme, so none of them reaches the OS', () => {
+    // http(s) is the whole allowance. `file:` and `javascript:` have no
+    // business at the default handler at all, and `peek:` / `chrome-extension:`
+    // would re-enter the app through the OS, outside the tile path.
+    for (const url of [
+      'file:///etc/passwd',
+      'javascript:alert(1)',
+      'peek://groups/home.html',
+      'chrome-extension://abc/page.html',
+      'data:text/html,x',
+      'about:blank',
+    ]) {
+      const shell = { openExternal: mock.fn() };
+      assert.equal(openExternalIfWebUrl(shell, url), false, `${url} must be refused`);
+      assert.equal(shell.openExternal.mock.callCount(), 0, `${url} must not reach the shell`);
+    }
   });
 });
 

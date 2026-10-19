@@ -208,6 +208,7 @@ import {
   installMainWorldContentScriptInjection,
   installRuntimeExternalCdpPolyfill,
 } from './page-host-compat.js';
+import { unsafeWebPreferenceOverrides } from './web-contents-policy.js';
 import {
   initHybridEditableFocusTracking,
   shouldDeferEscapeToPageForWc,
@@ -1048,7 +1049,7 @@ async function loadHybridContent(
  * WebContentsView ctor at both call sites) leaking — the catch guard covers
  * every throw point with one mechanism.
  */
-function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void {
+export function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void {
   if (!baseWin || baseWin.isDestroyed()) return;
   try {
     let id = getWindowIdFor(baseWin);
@@ -3154,6 +3155,19 @@ export function registerWindowHandlers(): void {
     DEBUG && console.log('window-open', msg);
 
     const { url, options } = msg;
+
+    // Default-deny unsafe webPreferences from the caller, before any window is
+    // built. The direct `new BrowserWindow(winOptions)` branch below spreads
+    // `options.webPreferences` first, so an unsafe override would otherwise
+    // reach a real window and be caught only once that window already existed.
+    const unsafeOverrides = unsafeWebPreferenceOverrides(options?.webPreferences);
+    if (unsafeOverrides.length > 0) {
+      const message =
+        `[SECURITY] window-open refused for ${url}: unsafe webPreferences ` +
+        `overrides (${unsafeOverrides.join(', ')})`;
+      console.error(message);
+      return { success: false, error: message };
+    }
 
     // Always log escapeMode for debugging window lifecycle
     console.log(`[window-open] url: ${url}, source: ${msg.source}, escapeMode: ${options?.escapeMode}, key: ${options?.key}, options keys: ${options ? Object.keys(options).join(',') : 'none'}`);
