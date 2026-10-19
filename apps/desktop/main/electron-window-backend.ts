@@ -914,10 +914,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // Electron's window and web contents `focus()` activate the app for any
   // non-panel, so a window flagged non-activating (`nonactivating-window.ts`)
   // takes key and content focus through the addon instead.
+  //
+  // While the app is already active, an ordinary window takes key through the
+  // addon too. The activation `focus()` would request is redundant there, and
+  // macOS completes it a few hundred ms later by switching back to the desktop
+  // the app's previous key window is on: a window released on arrival after a
+  // desktop switch took key, then the desktop bounced back (peek 4fa36692). If
+  // the window is not key afterwards, `focus()` still runs.
   private takeKey(win: NativeWindow): void {
+    const id = this.getWindowIdFor(win) ?? undefined;
     if (isFlaggedNonActivating(win)) {
-      wmLog('native-make-key-no-activate', { where: 'take-key', id: this.getWindowIdFor(win) ?? undefined });
+      wmLog('native-make-key-no-activate', { where: 'take-key', id });
       makeKeyWithoutActivating(win);
+    } else if (getAppActive() && makeKeyWithoutActivating(win)) {
+      wmLog('native-make-key-no-activate', { where: 'take-key-active', id });
     } else win.focus();
   }
 
@@ -932,6 +942,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       makeKeyWithoutActivating(win);
       const took = focusContentWithoutActivating(win);
       wmLog('native-focus-content-no-activate', { id: wid, took });
+    } else if (getAppActive() && makeKeyWithoutActivating(win) && focusContentWithoutActivating(win)) {
+      // Same reason as `takeKey`: no redundant activation while already active.
+      wmLog('native-focus-content-no-activate', { id: this.getWindowIdFor(win) ?? undefined, took: true, active: true });
     } else {
       wc.focus();
     }
