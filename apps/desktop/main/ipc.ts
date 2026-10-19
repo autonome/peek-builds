@@ -55,6 +55,8 @@ import {
 } from './main.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import {
+  HistoryStepHold,
+  type HistoryStep,
   readNavHistory,
   refreshWindowNavHistory,
   restoreNavHistory,
@@ -972,6 +974,20 @@ async function awaitLoadOutcome(
   return outcome;
 }
 
+/** Back/Forward pressed while a trail replay's load is in flight; see `HistoryStepHold`. */
+const historyStepHold = new HistoryStepHold<Electron.WebContents>();
+
+function applyHistoryStep(wc: Electron.WebContents, step: HistoryStep): void {
+  try {
+    const h = wc.navigationHistory;
+    if (step === 'back') {
+      if (h.canGoBack()) driveUserNavigation(wc, () => h.goBack());
+    } else if (h.canGoForward()) {
+      h.goForward();
+    }
+  } catch { /* wc gone */ }
+}
+
 /**
  * The one way a freshly opened hybrid page-host's content takes its first
  * navigation.
@@ -998,7 +1014,10 @@ async function loadHybridContent(
   trail: NavHistorySnapshot | null,
 ): Promise<'loaded' | 'failed' | 'timed-out'> {
   if (!trail) return loadWithOutcome(contentWC, url, baseWin);
+  historyStepHold.begin(contentWC);
   const begun = restoreNavHistory(contentWC, trail).then((outcome) => {
+    const held = historyStepHold.settle(contentWC);
+    if (held) applyHistoryStep(contentWC, held);
     if (outcome === 'restored') return 'loaded' as const;
     if (outcome === 'load-failed') return 'failed' as const;
     return beginPlainLoad(contentWC, url, baseWin);
@@ -2805,19 +2824,13 @@ export function installHybridNavbarActionRouting(): void {
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
-    try {
-      if (r.wc.navigationHistory.canGoBack()) {
-        driveUserNavigation(r.wc, () => r.wc.navigationHistory.goBack());
-      }
-    } catch { /* wc gone */ }
+    if (!historyStepHold.request(r.wc, 'back')) applyHistoryStep(r.wc, 'back');
   });
 
   subscribe(getSystemAddress(), 'page:go-forward', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
-    try {
-      if (r.wc.navigationHistory.canGoForward()) r.wc.navigationHistory.goForward();
-    } catch { /* wc gone */ }
+    if (!historyStepHold.request(r.wc, 'forward')) applyHistoryStep(r.wc, 'forward');
   });
 
   // ── P1.4b-3: window-interaction routing (resize / move / maximize) ──────────

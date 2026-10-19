@@ -313,6 +313,35 @@ function isNavigationOutcomeError(err: unknown): boolean {
     && typeof (err as { errno?: unknown }).errno === 'number';
 }
 
+export type HistoryStep = 'back' | 'forward';
+
+/**
+ * Holds a Back/Forward pressed while a trail replay is still loading its active
+ * entry. Chromium commits that in-flight load over the step's own navigation and
+ * aborts the step, so the step waits until the replay settles. The latest step
+ * wins. `begin` marks a host as restoring, `request` reports whether a step was
+ * held, and `settle` ends the restore and returns the step to apply, if any.
+ */
+export class HistoryStepHold<Host extends object> {
+  private readonly restoring = new WeakMap<Host, HistoryStep | null>();
+
+  begin(host: Host): void {
+    this.restoring.set(host, null);
+  }
+
+  request(host: Host, step: HistoryStep): boolean {
+    if (!this.restoring.has(host)) return false;
+    this.restoring.set(host, step);
+    return true;
+  }
+
+  settle(host: Host): HistoryStep | null {
+    const held = this.restoring.get(host) ?? null;
+    this.restoring.delete(host);
+    return held;
+  }
+}
+
 /** Replay a trail into a webContents. See `NavHistoryRestoreOutcome`. */
 export async function restoreNavHistory(
   wc: NavHistoryRestoreTarget | null | undefined,

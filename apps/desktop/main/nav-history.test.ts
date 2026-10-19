@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
 import {
+  HistoryStepHold,
   MAX_NAV_HISTORY_ENTRIES,
   MAX_NAV_TITLE_LENGTH,
   captureNavHistory,
@@ -577,5 +578,41 @@ describe('restoreNavHistory', () => {
       },
     };
     assert.strictEqual(await restoreNavHistory(target, history), 'load-failed');
+  });
+});
+
+// ============================================================================
+// HistoryStepHold
+// ============================================================================
+
+describe('HistoryStepHold', () => {
+  it('does not hold a step for a host that is not restoring', () => {
+    const hold = new HistoryStepHold<object>();
+    assert.strictEqual(hold.request({}, 'back'), false);
+  });
+
+  it('holds a step while restoring and hands it back on settle', () => {
+    const hold = new HistoryStepHold<object>();
+    const host = {};
+    hold.begin(host);
+    assert.strictEqual(hold.request(host, 'back'), true);
+    assert.strictEqual(hold.settle(host), 'back');
+    assert.strictEqual(hold.request(host, 'back'), false);
+  });
+
+  it('keeps only the latest step', () => {
+    const hold = new HistoryStepHold<object>();
+    const host = {};
+    hold.begin(host);
+    hold.request(host, 'back');
+    hold.request(host, 'forward');
+    assert.strictEqual(hold.settle(host), 'forward');
+  });
+
+  it('settles to nothing when no step was pressed', () => {
+    const hold = new HistoryStepHold<object>();
+    const host = {};
+    hold.begin(host);
+    assert.strictEqual(hold.settle(host), null);
   });
 });
