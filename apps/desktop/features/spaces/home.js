@@ -1125,6 +1125,29 @@ const init = async () => {
 
   document.addEventListener('keydown', handleKeydown);
 
+  // One reload at a time: events that land while one is running (a space
+  // restore opens many windows) collapse into a single rerun after it.
+  let refreshing = false;
+  let refreshAgain = false;
+  async function refreshSpaces() {
+    if (refreshing) { refreshAgain = true; return; }
+    refreshing = true;
+    try {
+      do {
+        refreshAgain = false;
+        await loadSpaces();
+        if (state.view === VIEW_SPACES) {
+          renderSpaces();
+        } else if (state.view === VIEW_ITEMS && state.currentSpace) {
+          await loadItemsForSpace(state.currentSpace.id);
+          renderItems();
+        }
+      } while (refreshAgain);
+    } finally {
+      refreshing = false;
+    }
+  }
+
   liveQuery({
     api,
     topics: [
@@ -1139,17 +1162,12 @@ const init = async () => {
       'item:updated',
       'sync:pull-completed',
       'spaces:membership-changed',
+      // The window count on each card follows the open windows.
+      'window:opened',
+      'window:closed',
     ],
     runImmediately: false,
-    onUpdate: async () => {
-      await loadSpaces();
-      if (state.view === VIEW_SPACES) {
-        renderSpaces();
-      } else if (state.view === VIEW_ITEMS && state.currentSpace) {
-        await loadItemsForSpace(state.currentSpace.id);
-        renderItems();
-      }
-    },
+    onUpdate: refreshSpaces,
   });
 
   setupCreateSpace();
