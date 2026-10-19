@@ -13,6 +13,7 @@ import {
   keyWindow,
   selectTransientAutoclose,
   traceTransientAutoclose,
+  isTransientAutocloseCandidate,
   isAppResignSweepEligible,
   isContentWindow,
   hostForOverlay,
@@ -645,10 +646,10 @@ function checkAutocloseInvariants(state: State): string[] {
     // Candidacy: the window was opened transient, whatever its role.
     if (rec.transient !== true) return false;
     if (rec.overlayFor !== undefined) return false;
-    // A window the pointer passes through is never a victim.
-    if (!rec.acceptsInput) return false;
     const focuser = state.order.find((w) => w.id === focusedId);
     if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return false;
+    // A window the pointer passes through is never a victim — until the window manager has focused it.
+    if (!rec.acceptsInput && rec.focusedSinceShown !== true) return false;
     return true;
   };
 
@@ -674,12 +675,13 @@ function checkAutocloseInvariants(state: State): string[] {
         violations.push(`machine-caused sweep is not a subset of the world-caused one for ${focusedId}: ${victim}`);
       }
     }
-    // A window newer than the focuser is never in the machine-caused sweep.
+    // A window newer than the focuser is never in the machine-caused sweep while the window
+    // manager has not focused it since its show; once it has, the sweep takes it like any other.
     const focuser = state.order.find((w) => w.id === focusedId);
     if (focuser !== undefined) {
       for (const victim of machine) {
         const rec = state.order.find((w) => w.id === victim)!;
-        if (rec.openSeq > focuser.openSeq) {
+        if (rec.openSeq > focuser.openSeq && rec.focusedSinceShown !== true) {
           violations.push(`machine-caused sweep took a window opened after the focuser: ${victim} > ${focusedId}`);
         }
       }
@@ -697,6 +699,59 @@ function checkAutocloseInvariants(state: State): string[] {
     }
   }
 
+  return violations;
+}
+
+// The closing rule (apps/desktop/CLAUDE.md, "Transient windows: the closing rule"), checked
+// per transition:
+// 1. When a focus report for another window is adopted (`lastAttention` moves to a new holder),
+//    or the app resigns, every visible transient candidate the window manager has focused since
+//    showing it is dismissed in that same transition — unless it is a page's attached chrome, or
+//    the newly focused window is its own chrome or a window it opened.
+// 2. That focus report adopts the reported window: `key` names it and the attention carries the
+//    report's cause, and no RaiseWindow names any other window.
+// 3. A close or hide of a window dismissed because another window was focused
+//    (`closeCause: 'focus-elsewhere'`) issues no RaiseWindow: the window manager focuses nothing
+//    further.
+function checkClosingRule(step: Step): string[] {
+  const { prev, next, effects } = step;
+  const violations: string[] = [];
+  const attentionMoved = next.lastAttention !== null && next.lastAttention.seq !== prev.lastAttention?.seq;
+  const holder = attentionMoved ? next.lastAttention!.holder : null;
+  const newFocus = holder !== null && holder !== prev.key ? holder : null;
+  const resigned = prev.appActive && !next.appActive;
+  if (newFocus !== null || resigned) {
+    const focuser = newFocus === null ? undefined : next.order.find((w) => w.id === newFocus);
+    for (const t of prev.order) {
+      if (t.id === newFocus) continue;
+      if (!t.visible || t.focusedSinceShown !== true || !isTransientAutocloseCandidate(t) || t.overlayFor !== undefined) continue;
+      if (focuser !== undefined && (focuser.parentId === t.id || focuser.overlayFor === t.id)) continue;
+      const after = next.order.find((w) => w.id === t.id);
+      if (after === undefined || !after.visible || after.pendingHidden === true) continue;
+      violations.push(
+        `transient ${t.id} was focused since its show, yet survived ${newFocus !== null ? `the focus of ${newFocus}` : 'the app resigning'}`,
+      );
+    }
+  }
+  if (newFocus !== null) {
+    if (next.key !== newFocus) violations.push(`the focus report for ${newFocus} left key=${next.key}`);
+    const raisedOthers = effects.flatMap((e) => (e.type === 'RaiseWindow' && e.id !== newFocus ? [e.id] : []));
+    if (raisedOthers.length > 0) {
+      violations.push(`the focus report for ${newFocus} raised other window(s): ${JSON.stringify(raisedOthers)}`);
+    }
+  }
+  for (const t of prev.order) {
+    if (t.closeCause !== 'focus-elsewhere') continue;
+    const after = next.order.find((w) => w.id === t.id);
+    const ended = after === undefined || (t.visible && !after.visible);
+    if (!ended) continue;
+    // A switcher's pick is the user naming a window, spent by the switcher's close.
+    if (prev.pendingSelectionFocus?.armer === t.id) continue;
+    const raised = effects.flatMap((e) => (e.type === 'RaiseWindow' ? [e.id] : []));
+    if (raised.length > 0) {
+      violations.push(`the close of ${t.id}, dismissed for focus elsewhere, raised ${JSON.stringify(raised)}`);
+    }
+  }
   return violations;
 }
 
@@ -900,6 +955,10 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
             throw new Error(
               reproMessage(seed, log, i, `transient-dismissal law violation(s): ${hideNotDismissViolations.join('; ')}`),
             );
+          }
+          const closingRuleViolations = checkClosingRule(step);
+          if (closingRuleViolations.length > 0) {
+            throw new Error(reproMessage(seed, log, i, `closing-rule violation(s): ${closingRuleViolations.join('; ')}`));
           }
           const strandedViolations = checkStrandedHideAgreesWithSelector(step);
           if (strandedViolations.length > 0) {
@@ -1438,9 +1497,24 @@ describe('window-kernel: the WindowRegistered key-carry moves staging, not the t
     assert.strictEqual(dismissVerdict(danglingCarryPrefix(), worldCause), true);
   });
 
-  it('a machine-caused refocus spares press 2’s peek identically for both carries (the newer-than-focuser exemption)', () => {
-    assert.strictEqual(dismissVerdict(liveCarryPrefix(), machineCause), false);
-    assert.strictEqual(dismissVerdict(danglingCarryPrefix(), machineCause), false);
+  it('a machine-caused refocus dismisses press 2’s peek identically for both carries once the window manager has focused it', () => {
+    assert.strictEqual(dismissVerdict(liveCarryPrefix(), machineCause), true);
+    assert.strictEqual(dismissVerdict(danglingCarryPrefix(), machineCause), true);
+  });
+
+  // The one hold-off in the closing rule: the stale machine echo of the window the peek was
+  // opened over, arriving before the window manager has focused the peek.
+  const notYetFocusedVerdict = (prefix: State): boolean => {
+    let state = evolve(prefix, registerPeek(peek2));
+    state = evolve(state, { type: 'WindowShown', id: peek2 });
+    const refocus: Event = { type: 'OsFocusGained', id: hostA, cause: machineCause };
+    const next = evolve(state, refocus);
+    return react(state, refocus, next).some((e) => e.type === 'DismissWindow' && e.id === peek2);
+  };
+
+  it('a machine-caused refocus spares press 2’s peek identically for both carries while the window manager has not focused it yet', () => {
+    assert.strictEqual(notYetFocusedVerdict(liveCarryPrefix()), false);
+    assert.strictEqual(notYetFocusedVerdict(danglingCarryPrefix()), false);
   });
 });
 

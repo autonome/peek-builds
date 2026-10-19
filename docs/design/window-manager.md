@@ -380,6 +380,10 @@ backend's `askRendererHandledEscape` now answers `false` synchronously for a `pa
     settled-ness never spares it and deleting the exemption would put both failures back. The two
     mechanisms are not rivals: candidacy governs windows that have shown nothing yet, the ordering
     floor governs windows opened after the focuser. `FocusCause` therefore stays a decision input.
+  - **Narrowed since:** the exemption is now `not-yet-focused` and spares a transient only while
+    the window manager has never focused it since showing it (`WindowRecord.focusedSinceShown`).
+    Both recorded failures are of that kind. Once the transient has been focused, any other
+    window's focus closes it whatever the cause — the closing rule in `apps/desktop/CLAUDE.md`.
 
   **The gating check has been run, and the delayed vanish does NOT reproduce at branch tip
   (`1fbe4754`, 2026-09-04).** The earlier observation — peeks that open successfully vanish

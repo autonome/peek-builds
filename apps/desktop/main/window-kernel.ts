@@ -108,6 +108,21 @@ export interface WindowRecord {
   // to the other app.
   tookKeyFromAnotherApp?: boolean;
 
+  // A lived fact: the window manager has focused this window since it was
+  // last shown. Set by a focus report naming the visible window, cleared by a
+  // genuine show and a genuine hide. Read by `transientAutocloseExemption`:
+  // a transient focused since its show closes on any other window's focus.
+  focusedSinceShown?: boolean;
+
+  // Why the window manager is closing or hiding this window, written in the
+  // transition that marks it `pendingHidden` and cleared by a genuine show.
+  // `focus-elsewhere`: the window manager chose it for dismissal because it
+  // focused another window, opened one over it, or the user left it (a sweep,
+  // a desktop read, the end of focus taken from another app); such a close
+  // focuses nothing further (`successorOnHide`, `refocusesParent`).
+  // `requested`: a teardown request named it (Esc, Cmd+W, a close command).
+  closeCause?: 'focus-elsewhere' | 'requested';
+
   hiddenByAppBlur?: boolean;
 
   // DO NOT DELETE as unread: no rule here branches on it, but `window-escape.ts interpretEscape` reads it outside the kernel.
@@ -554,7 +569,34 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
 }
 
 export function evolve(state: State, ev: Event): State {
-  return followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, placementSettlesRaise(evolveEvent(state, ev))));
+  return markFocusElsewhereCloses(
+    state,
+    followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, placementSettlesRaise(evolveEvent(state, ev)))),
+  );
+}
+
+// Every record this transition newly marks `pendingHidden` that no fresh
+// teardown request names was chosen for dismissal by the window manager —
+// the same test `react`'s dismissal diff applies before it emits
+// `DismissWindow` — and is recorded `closeCause: 'focus-elsewhere'`, so its
+// close or hide focuses nothing further.
+// A teardown request naming a window: doomed now, and its close is the one
+// that may focus the window focused before it. A window the window manager
+// already chose for dismissal keeps that cause.
+function requestedClose(w: WindowRecord): WindowRecord {
+  return { ...w, pendingHidden: true, closeCause: w.pendingHidden === true && w.closeCause === 'focus-elsewhere' ? 'focus-elsewhere' : 'requested' };
+}
+
+function markFocusElsewhereCloses(prev: State, next: State): State {
+  const freshTeardown = next.lastTeardown !== null && next.lastTeardown.seq !== prev.lastTeardown?.seq ? next.lastTeardown : null;
+  const teardownTargetId = freshTeardown !== null && freshTeardown.kind !== 'destroy-all-guests' ? freshTeardown.id : undefined;
+  const dismissed = (w: WindowRecord): boolean =>
+    w.pendingHidden === true &&
+    w.id !== teardownTargetId &&
+    w.closeCause !== 'focus-elsewhere' &&
+    prev.order.find((p) => p.id === w.id)?.pendingHidden !== true;
+  if (!next.order.some(dismissed)) return next;
+  return { ...next, order: next.order.map((w) => (dismissed(w) ? { ...w, closeCause: 'focus-elsewhere' } : w)) };
 }
 
 // A raise request whose only bar is that its window has no desktop yet: the
@@ -715,6 +757,8 @@ function evolveEvent(state: State, ev: Event): State {
           // whatever this window's own `OsFocusGained` already recorded.
           priorKey: existing.priorKey,
           ...(existing.tookKeyFromAnotherApp !== undefined ? { tookKeyFromAnotherApp: existing.tookKeyFromAnotherApp } : {}),
+          ...(existing.focusedSinceShown !== undefined ? { focusedSinceShown: existing.focusedSinceShown } : {}),
+          ...(existing.closeCause !== undefined ? { closeCause: existing.closeCause } : {}),
           ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
           ...(existing.pendingHidden !== undefined ? { pendingHidden: existing.pendingHidden } : {}),
           // Dropping this would silently turn an observed `false` back into "nothing reported yet", a different answer.
@@ -883,8 +927,13 @@ function evolveEvent(state: State, ev: Event): State {
           // A genuine show stamps the current desktop of the window's screen,
           // provisionally until a placement report; a window on every desktop
           // that is not transient keeps the one it was first shown on.
+          // Any show cancels a dismissal, so its cause goes with the `pendingHidden` mark.
+          if (flushed.closeCause !== undefined) delete flushed.closeCause;
           if (w.visible) return flushed;
-          return { ...withShownDesktop(state, w, flushed), lastOpSeq: opSeq };
+          // A genuine show starts a new showing: the window manager has not focused it yet.
+          const fresh: WindowRecord = { ...flushed };
+          delete fresh.focusedSinceShown;
+          return { ...withShownDesktop(state, w, fresh), lastOpSeq: opSeq };
         }),
         opSeqCounter: opSeq,
         version: state.version + 1,
@@ -916,6 +965,7 @@ function evolveEvent(state: State, ev: Event): State {
               visible: false,
               ...(w.pendingHidden === true ? { pendingHidden: false } : {}),
               ...(w.heldAboveOtherApps === true ? { heldAboveOtherApps: false } : {}),
+              ...(w.focusedSinceShown === true && hidesGenuinely ? { focusedSinceShown: false } : {}),
             }
           : w,
       );
@@ -1058,7 +1108,23 @@ function evolveEvent(state: State, ev: Event): State {
       const idx = state.order.findIndex((w) => w.id === ev.id);
       if (idx === -1) {
         const attention: Attention = { holder: ev.id, cause: ev.cause ?? { kind: 'world' }, seq: nextAttentionSeq(state) };
-        return { ...state, key: ev.id, lastAttention: attention, expectedPlatformFocus, version: state.version + 1 };
+        // A window this kernel does not know (another app's, a devtools
+        // window) is still another window: every transient the window manager
+        // has focused since showing it closes. One never focused is left, as
+        // before, since nothing here says the report is not stale.
+        const victims = new Set(
+          selectTransientAutoclose(state, ev.id, attention.cause).filter(
+            (id) => state.order.find((w) => w.id === id)?.focusedSinceShown === true,
+          ),
+        );
+        return {
+          ...state,
+          ...(victims.size > 0 ? { order: state.order.map((w) => (victims.has(w.id) ? { ...w, pendingHidden: true } : w)) } : {}),
+          key: ev.id,
+          lastAttention: attention,
+          expectedPlatformFocus,
+          version: state.version + 1,
+        };
       }
       const record = state.order[idx];
       // A raise echo for the window already holding key re-confirms the standing attention:
@@ -1088,6 +1154,9 @@ function evolveEvent(state: State, ev: Event): State {
         ...record,
         ...(issuesRaise ? { lastOpSeq: opSeq } : {}),
         ...(takesKey ? { priorKey: state.key, tookKeyFromAnotherApp: !state.appActive && record.nonActivating === true } : {}),
+        // Only a visible window counts as focused since its show: a late report
+        // for a hidden window must not carry over into its next showing.
+        ...(record.visible && record.focusedSinceShown !== true ? { focusedSinceShown: true } : {}),
       };
       const order = [...withoutRecord, movedRecord];
       // Mark this transition's own sweep victims `pendingHidden` here, off the
@@ -1140,10 +1209,17 @@ function evolveEvent(state: State, ev: Event): State {
       // is `selectTransientAutoclose`'s answer with no focuser (an app resign
       // names none). `!w.pendingHidden` excludes a transient an earlier sweep
       // already marked, so this cannot resurrect a window already committed to dismissal.
+      //
+      // A transient the window manager has focused since showing it is
+      // dismissed on this edge, not at the settle: the settle's delay and its
+      // `AppActivated` cancel exist for the activation flicker around a
+      // transient that has not been focused yet, and the closing rule allows
+      // no other hold-off. One not yet focused waits for the settle as before.
       const dismissVictims = new Set(selectTransientAutoclose(state, null));
+      const dismissedNow = (w: WindowRecord): boolean => dismissVictims.has(w.id) && w.focusedSinceShown === true;
       const hidesImmediately = (w: WindowRecord): boolean =>
         !w.pendingHidden && !dismissVictims.has(w.id) && w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
-      const hidesSomething = state.order.some(hidesImmediately);
+      const hidesSomething = state.order.some(hidesImmediately) || state.order.some(dismissedNow);
       // Every expectation ends here: the activation's with it, and focus has
       // left every window, so nothing the platform was about to hand out
       // after a restack or a hide is still coming. A hide the platform made
@@ -1156,7 +1232,9 @@ function evolveEvent(state: State, ev: Event): State {
         expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
         overlayTransitionSinceResign: false,
         order: hidesSomething
-          ? state.order.map((w) => (hidesImmediately(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w))
+          ? state.order.map((w) =>
+              dismissedNow(w) ? { ...w, pendingHidden: true } : hidesImmediately(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w,
+            )
           : state.order,
         version: state.version + 1,
       };
@@ -1715,7 +1793,7 @@ function evolveEvent(state: State, ev: Event): State {
     case 'WindowDestroyRequested': {
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
+        order: state.order.map((w) => (w.id === ev.id ? requestedClose(w) : w)),
         lastTeardown: { kind: 'destroy-window', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
@@ -1724,7 +1802,7 @@ function evolveEvent(state: State, ev: Event): State {
     case 'WindowContentCloseRequested': {
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
+        order: state.order.map((w) => (w.id === ev.id ? requestedClose(w) : w)),
         lastTeardown: { kind: 'close-content', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
@@ -1733,7 +1811,7 @@ function evolveEvent(state: State, ev: Event): State {
     case 'WindowDirectCloseRequested': {
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingHidden: true } : w)),
+        order: state.order.map((w) => (w.id === ev.id ? requestedClose(w) : w)),
         lastTeardown: { kind: 'close-window-direct', id: ev.id, seq: nextTeardownSeq(state) },
         version: state.version + 1,
       };
@@ -2774,19 +2852,35 @@ export function isTransientAutocloseCandidate(rec: WindowRecord): boolean {
 }
 
 // Which of the four exemption clauses in the transient-dismissal law spared a candidate.
-export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'newer-than-focuser';
+export type TransientAutocloseExemption = 'overlay-attached' | 'no-input' | 'focuser-relation' | 'not-yet-focused';
 
 // The one dismissal law; `selectTransientAutoclose`, `traceTransientAutoclose` and `evolve`'s merge arm all call it — its clauses are stated nowhere else.
+//
+// The closing rule (apps/desktop/CLAUDE.md, "Transient windows: the closing
+// rule"): when the window manager focuses any window while a transient it has
+// focused since showing it is on screen, that transient closes, whatever
+// caused the focus and whichever window is newer. The only hold-off is
+// `not-yet-focused`: a machine-caused report for an older window (the stale
+// echo of the window the transient was opened over) arriving before the
+// window manager has focused the transient at all.
+//
+// The other clauses do not name a different window the user moved to:
+// `overlay-attached` — the candidate is a page's chrome, whose visibility
+// belongs to its host; `focuser-relation` — the focused window is the
+// candidate's own chrome or a window the candidate opened, so focus stayed
+// inside it. `no-input` spares a click-through window only while the window
+// manager has never focused it.
 export function transientAutocloseExemption(
   rec: WindowRecord,
   focuser: WindowRecord | undefined,
   orderingFloor: number | null,
 ): TransientAutocloseExemption | null {
   if (rec.overlayFor !== undefined) return 'overlay-attached';
+  if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return 'focuser-relation';
+  if (rec.focusedSinceShown === true) return null;
   // Policy, not derivation — spares the Space border / chrome overlay cases, not every no-input window.
   if (!rec.acceptsInput) return 'no-input';
-  if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return 'focuser-relation';
-  if (orderingFloor !== null && rec.openSeq > orderingFloor) return 'newer-than-focuser';
+  if (orderingFloor !== null && rec.openSeq > orderingFloor) return 'not-yet-focused';
   return null;
 }
 
@@ -2982,13 +3076,18 @@ function refocusesParent(state: State, closedRecord: WindowRecord, parent: Windo
   return (
     closedRecord.id === state.key &&
     state.appActive === true &&
+    closedRecord.closeCause !== 'focus-elsewhere' &&
     closedRecord.tookKeyFromAnotherApp !== true &&
     isContentWindow(parent) &&
     admitsFocus(state, parent, MACHINE_REQUEST)
   );
 }
 
+// A window the window manager dismissed because it focused another window
+// (`closeCause: 'focus-elsewhere'`) has no successor: that other window stays
+// focused and the window manager focuses nothing further.
 function successorOnHide(state: State, hiddenRecord: WindowRecord): WindowRecord | null {
+  if (hiddenRecord.closeCause === 'focus-elsewhere') return null;
   if (hiddenRecord.priorKey === null || hiddenRecord.tookKeyFromAnotherApp === true) return null;
   const prior = state.order.find((w) => w.id === hiddenRecord.priorKey);
   if (prior !== undefined && admitsFocus(state, prior, MACHINE_REQUEST)) return prior;

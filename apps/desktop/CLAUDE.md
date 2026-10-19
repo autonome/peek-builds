@@ -11,6 +11,32 @@ For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see 
 
 ---
 
+## Transient windows: the closing rule
+
+A transient window (a peek, a slide, the palette, the switcher) ends when the user leaves it.
+This is the product invariant the app is named for, and it has no exemptions by cause:
+
+- **When the window manager focuses any window while one of our transient windows is focused,
+  it closes that transient (hides it if opened keep-live).** Ours or another app's, whatever
+  caused the focus — a click, the window switcher, Cmd+Tab, an app switch, a raise the window
+  manager made itself — and whichever window is newer. The app resigning closes a focused
+  transient on the resign itself, with no settle delay and no cancel by a later activation.
+  **Sole exception:** a stale focus report arriving before the window manager has ever focused
+  that transient (the echo of the window it was opened over, landing after the open).
+- **When the window manager closes a transient because it focused another window, it focuses
+  nothing further.** When the user closes the focused transient (Esc, Cmd+W, a close command),
+  the window manager focuses the window it had focused before it showed the transient.
+
+The window record carries both facts: `focusedSinceShown` (set by a focus report for the shown
+window, cleared by a genuine show or hide) and `closeCause` (`focus-elsewhere` for a dismissal
+the window manager chose, `requested` for a teardown request). The law lives in
+`main/window-kernel.ts transientAutocloseExemption()`; a window's own page chrome or a window it
+opened taking focus is not leaving it. Enforced by the `checkClosingRule` property in
+`main/window-kernel-properties.test.ts` and the "the transient closing rule" suite in
+`main/window-kernel.test.ts`.
+
+---
+
 ## Electron is ONE backend, not the design
 
 Peek targets other window backends — `apps/tauri-desktop/` already exists, and more are

@@ -4607,12 +4607,12 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
-  it('a repeated non-stale MACHINE echo spares a newer transient via newer-than-focuser; a WORLD-caused focus on the same holder dismisses it', () => {
+  it('a repeated non-stale MACHINE echo spares a newer transient the window manager has not focused yet (not-yet-focused); a WORLD-caused focus on the same holder dismisses it', () => {
     // electron-window-backend.ts attachNativeListeners: a page-host's host
     // BaseWindow 'focus' and its content WebContentsView 'focus' both call
     // takeFocusCause(id) for the same window id, so a single machine-issued
     // focus operation can provoke two OsFocusGained reports carrying the SAME
-    // opSeq. selectTransientAutoclose's newer-than-focuser exemption spares a
+    // opSeq. selectTransientAutoclose's not-yet-focused exemption spares a
     // newer transient from both reports — it re-derives the ordering test
     // fresh from cause.kind and focuser.openSeq on every call. The live
     // defect (docs/design/window-manager.md "Open kernel defects", Defect A)
@@ -4649,12 +4649,12 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(
       selectTransientAutoclose(secondEcho, hostA, cause),
       [],
-      'peek2 survives the REPEATED machine echo too — newer-than-focuser is re-derived fresh, not consumed by the first report',
+      'peek2 survives the REPEATED machine echo too — not-yet-focused is re-derived fresh, not consumed by the first report',
     );
 
     // The same second report, relabelled `world` instead of `machine`, is the
     // shape the live defect took while the backend consumed the arming on its
-    // first read: a world cause yields no ordering floor for newer-than-focuser
+    // first read: a world cause yields no ordering floor for not-yet-focused
     // to compare against, so it does not fire and the transient is swept. The
     // backend now keeps the arming until the window's own blur, so a second
     // producer's echo of the same op reads `machine`; this assertion pins what
@@ -4667,6 +4667,134 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+});
+
+// apps/desktop/CLAUDE.md, "Transient windows: the closing rule".
+describe('window-kernel: the transient closing rule', () => {
+  const hostA = wid(1);
+  const hostB = wid(5);
+  const peek1 = wid(2);
+  const peek2 = wid(3);
+  const regHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered', id, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content',
+  });
+  const regPeek = (id: WindowId, keepLive = false): Event => ({
+    type: 'WindowRegistered', id, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary',
+    role: 'quick-view', transient: true, keepLive,
+  });
+  const machine = (opSeq: number): FocusCause => ({ kind: 'machine', opSeq });
+  const world: FocusCause = { kind: 'world' };
+
+  // hostA focused, then peek1 shown over it. `focusPeek` decides whether the window manager has
+  // focused peek1 yet.
+  const peekOverHost = (focusPeek: boolean, keepLive = false): State => {
+    const base = fold([
+      regHost(hostA),
+      { type: 'WindowContentOrderable', id: hostA },
+      { type: 'WindowShown', id: hostA },
+      { type: 'OsFocusGained', id: hostA, cause: world },
+      regPeek(peek1, keepLive),
+      { type: 'WindowShown', id: peek1 },
+    ]);
+    return focusPeek ? fold([{ type: 'OsFocusGained', id: peek1, cause: machine(base.opSeqCounter) }], base) : base;
+  };
+
+  it('a machine-caused focus of the OLDER window it was opened over dismisses a focused transient', () => {
+    const focused = peekOverHost(true);
+    assert.strictEqual(focused.key, peek1);
+    assert.strictEqual(focused.order.find((w) => w.id === peek1)?.focusedSinceShown, true);
+    // A window switcher raising hostA: the raise is the window manager's, so its echo is machine-caused.
+    const raised = { ...focused, opSeqCounter: focused.opSeqCounter + 1, order: focused.order.map((w) => (w.id === hostA ? { ...w, lastOpSeq: focused.opSeqCounter + 1 } : w)) };
+    const ev: Event = { type: 'OsFocusGained', id: hostA, cause: machine(raised.opSeqCounter) };
+    const next = evolve(raised, ev);
+    assert.ok(react(raised, ev, next).some((e) => e.type === 'DismissWindow' && e.id === peek1), 'peek1 is dismissed');
+    assert.strictEqual(next.order.find((w) => w.id === peek1)?.closeCause, 'focus-elsewhere');
+  });
+
+  it('a keep-live transient is dismissed the same way, and its hide keeps the window', () => {
+    const focused = peekOverHost(true, true);
+    const ev: Event = { type: 'OsFocusGained', id: hostA, cause: machine(focused.opSeqCounter) };
+    const next = evolve(focused, ev);
+    assert.ok(react(focused, ev, next).some((e) => e.type === 'DismissWindow' && e.id === peek1));
+    const { state: hidden, effects } = foldWithEffects([{ type: 'WindowHidden', id: peek1 }], next);
+    assert.strictEqual(hidden.order.find((w) => w.id === peek1)?.visible, false, 'still registered, hidden');
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'RaiseWindow'), [], 'the hide focuses nothing further');
+  });
+
+  it('a machine-caused echo of the older window, before the window manager has focused the transient, spares it', () => {
+    const shown = peekOverHost(false);
+    const ev: Event = { type: 'OsFocusGained', id: hostA, cause: machine(shown.opSeqCounter) };
+    const next = evolve(shown, ev);
+    assert.ok(!react(shown, ev, next).some((e) => e.type === 'DismissWindow'), 'peek1 is not dismissed');
+    assert.notStrictEqual(next.order.find((w) => w.id === peek1)?.pendingHidden, true);
+  });
+
+  it('macOS focusing another of our windows dismisses the focused transient, adopts that window, and raises nothing else', () => {
+    const focused = fold([regHost(hostB), { type: 'WindowContentOrderable', id: hostB }, { type: 'WindowShown', id: hostB }], peekOverHost(true));
+    assert.strictEqual(focused.key, peek1);
+    const ev: Event = { type: 'OsFocusGained', id: hostB, cause: world };
+    const next = evolve(focused, ev);
+    const effects = react(focused, ev, next);
+    assert.strictEqual(next.key, hostB, 'the window manager records hostB as focused');
+    assert.deepStrictEqual(next.lastAttention?.cause, world, 'with the macOS (world) cause');
+    assert.ok(effects.some((e) => e.type === 'DismissWindow' && e.id === peek1), 'peek1 is dismissed');
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'RaiseWindow' && e.id !== hostB),
+      [],
+      'no focus request for any other window',
+    );
+    const closed = foldWithEffects([{ type: 'WindowClosed', id: peek1 }], next);
+    assert.deepStrictEqual(closed.effects.filter((e) => e.type === 'RaiseWindow'), [], 'the close focuses nothing further');
+    assert.strictEqual(closed.state.key, hostB);
+  });
+
+  it('opening a new transient over a focused one closes the old one without focusing the window it was opened over', () => {
+    const focused = peekOverHost(true);
+    const { state, effects } = foldWithEffects(
+      [
+        regPeek(peek2),
+        { type: 'WindowShown', id: peek2 },
+        { type: 'FocusRaiseRequested', id: peek2, intent: 'user' },
+      ],
+      focused,
+    );
+    assert.ok(effects.some((e) => e.type === 'DismissWindow' && e.id === peek1), 'peek1 is dismissed by peek2 opening over it');
+    assert.strictEqual(state.key, peek1, 'peek1 is still the recorded focus when its close arrives');
+    const closed = foldWithEffects([{ type: 'WindowClosed', id: peek1 }], state);
+    assert.deepStrictEqual(
+      closed.effects.filter((e) => e.type === 'RaiseWindow'),
+      [],
+      'no raise of hostA (the window focused before peek1) after the close',
+    );
+    assert.strictEqual(closed.state.lastRaiseRequest?.id, peek2, 'the standing raise request is still peek2');
+    const arrived = foldWithEffects([{ type: 'OsFocusGained', id: peek2, cause: machine(closed.state.opSeqCounter) }], closed.state);
+    assert.strictEqual(arrived.state.key, peek2, 'peek2 stays focused');
+    assert.deepStrictEqual(arrived.effects.filter((e) => e.type === 'RaiseWindow' && e.id !== peek2), []);
+  });
+
+  it('the user closing the focused transient focuses the window it was opened over', () => {
+    const focused = peekOverHost(true);
+    const { state } = foldWithEffects([{ type: 'WindowDirectCloseRequested', id: peek1 }], focused);
+    assert.strictEqual(state.order.find((w) => w.id === peek1)?.closeCause, 'requested');
+    const closed = foldWithEffects([{ type: 'WindowClosed', id: peek1 }], state);
+    assert.ok(closed.effects.some((e) => e.type === 'RaiseWindow' && e.id === hostA), 'hostA is focused again');
+  });
+
+  it('the app resigning dismisses a focused transient on the resign itself; activation does not bring it back', () => {
+    const focused = peekOverHost(true);
+    const { state: resigned, effects } = foldWithEffects([{ type: 'AppResigned' }], focused);
+    assert.ok(effects.some((e) => e.type === 'DismissWindow' && e.id === peek1), 'dismissed on the resign edge');
+    const activated = fold([{ type: 'AppActivated' }], resigned);
+    assert.strictEqual(activated.order.find((w) => w.id === peek1)?.pendingHidden, true, 'activation cancels nothing');
+  });
+
+  it('the app resigning leaves a transient not yet focused to the settle, which activation cancels', () => {
+    const shown = peekOverHost(false);
+    const { state: resigned, effects } = foldWithEffects([{ type: 'AppResigned' }], shown);
+    assert.ok(!effects.some((e) => e.type === 'DismissWindow'), 'not dismissed on the edge');
+    const { effects: after } = foldWithEffects([{ type: 'AppActivated' }, { type: 'AppResignSettled' }], resigned);
+    assert.ok(!after.some((e) => e.type === 'DismissWindow'), 'the activation cancelled the settle');
+  });
 });
 
 describe('window-kernel: isNonParentRole', () => {
