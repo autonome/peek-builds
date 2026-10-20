@@ -347,6 +347,14 @@ export interface TileCapabilities {
 
 // ─── Tile Definition Types ───────────────────────────────────────────
 
+/** One schedule on a tile entry: publish `topic` every `everyMinutes`. */
+export interface TileScheduleEntry {
+  /** Pubsub topic published when the schedule comes due. */
+  topic: string;
+  /** Interval in whole minutes, minimum 1. */
+  everyMinutes: number;
+}
+
 /**
  * A tile entry point — each tile in the manifest creates one context.
  *
@@ -388,6 +396,16 @@ export interface TileEntry {
    * Only meaningful when `lazy: true`.
    */
   lazyEvents?: string[];
+  /**
+   * Schedules that make this tile run unattended. Each entry names a pubsub
+   * topic and how often it comes due; when it does, main publishes the topic,
+   * which loads the tile if it is asleep and reaches its handler if it is
+   * already awake. The interval is fixed by the manifest. An entry that has
+   * never fired, or whose last run is more than one interval old, is due at
+   * startup and fires ONCE — never once per interval missed while the app was
+   * closed. Only meaningful when `lazy: true`.
+   */
+  schedule?: TileScheduleEntry[];
   /**
    * If true, the BrowserWindow's `close` event is intercepted and the window
    * is hidden instead of destroyed. State (DOM, JS heap, registered commands,

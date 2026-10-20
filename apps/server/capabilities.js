@@ -137,6 +137,28 @@ function validateTileManifest(json) {
           }
         }
       }
+
+      // Validate schedule (optional array of { topic, everyMinutes })
+      if (tile.schedule !== undefined) {
+        if (!Array.isArray(tile.schedule)) {
+          errors.push({ path: `${prefix}.schedule`, message: 'schedule must be an array of { topic, everyMinutes }' });
+        } else {
+          for (let j = 0; j < tile.schedule.length; j++) {
+            const sched = tile.schedule[j];
+            const schedPrefix = `${prefix}.schedule[${j}]`;
+            if (!sched || typeof sched !== 'object' || Array.isArray(sched)) {
+              errors.push({ path: schedPrefix, message: 'schedule entries must be objects with topic and everyMinutes' });
+              continue;
+            }
+            if (typeof sched.topic !== 'string' || sched.topic.length === 0) {
+              errors.push({ path: `${schedPrefix}.topic`, message: 'schedule topic is required and must be a non-empty string' });
+            }
+            if (!Number.isInteger(sched.everyMinutes) || sched.everyMinutes < 1) {
+              errors.push({ path: `${schedPrefix}.everyMinutes`, message: 'schedule everyMinutes must be an integer >= 1' });
+            }
+          }
+        }
+      }
     }
   }
 

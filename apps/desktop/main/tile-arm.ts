@@ -22,6 +22,7 @@
 
 import { registerLazyTile, unregisterLazyTile, backfillWakeDeclaration } from './tile-lazy.js';
 import { registerWakeShortcuts, unregisterManifestShortcuts, wakeDeclarationBackfillNeeded } from './feature-shortcut-registrar.js';
+import { registerTileSchedule, unregisterTileSchedule, hasScheduleEntries } from './tile-schedule.js';
 import { launchTile, isTileLoaded, type TileLaunchResult } from './tile-launcher.js';
 import { registerTilePath } from './protocol.js';
 import { type TileManifest } from './tile-manifest.js';
@@ -41,17 +42,19 @@ export interface TileCompatConfig {
 }
 
 /**
- * Whether a manifest is a lazy tile — no resident entry, but it has commands
- * and/or lazyEvents to wake on. The single predicate that routes a feature
- * down the lazy branch, used by `loadOrArmFeatureTile` for both boot and the
- * live re-enable.
+ * Whether a manifest is a lazy tile — no resident entry, but it has commands,
+ * lazyEvents, and/or a schedule to wake on. The single predicate that routes a
+ * feature down the lazy branch, used by `loadOrArmFeatureTile` for both boot
+ * and the live re-enable. A schedule counts the same as a lazyEvent: its topic
+ * wakes the tile through the very same dispatch hook, so a feature whose only
+ * trigger is a timer still has to be armed.
  */
 export function isLazyTileManifest(manifest: TileManifest): boolean {
   const residentEntry = manifest.tiles.find(t => t.resident === true);
   if (residentEntry) return false;
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
   const hasCommands = !!(manifest.commands && manifest.commands.length > 0);
-  return hasCommands || hasLazyEvents;
+  return hasCommands || hasLazyEvents || hasScheduleEntries(manifest);
 }
 
 /**
@@ -75,6 +78,10 @@ export function isLazyTileManifest(manifest: TileManifest): boolean {
 export function armLazyTile(tile: AnnotatedTile, config: TileCompatConfig): void {
   registerLazyTile(tile.manifest, tile.path, config.tilePreloadPath);
   registerWakeShortcuts(tile.id, tile.manifest);
+  // Manifest-declared schedules get their main-side timers here, so a feature
+  // enabled mid-session starts running on its own and the disable below stops
+  // it. Nothing fires until `startTileSchedules()` — see tile-schedule.ts.
+  registerTileSchedule(tile.manifest);
   // Migrated-profile self-heal: a feature whose REAL hotkeys are settings-
   // derived (peeks/slides) only persists them when its renderer boots. On a
   // profile that has saved settings but never declared (settings predate the
@@ -136,10 +143,12 @@ export function loadOrArmFeatureTile(tile: AnnotatedTile, config: TileCompatConf
 /**
  * Disarm a lazy tile: tear down everything `armLazyTile` set up. Used when a
  * lazy feature is DISABLED or REMOVED mid-session so the cycle is clean and
- * leaves no stale OS accelerators or load-on-dispatch matches.
+ * leaves no stale OS accelerators, timers, or load-on-dispatch matches.
  *
  *   - `unregisterManifestShortcuts` drops the OS accelerators the registrar
  *     owns for this tile (keyed by `lazyShortcutSource(tileId)`).
+ *   - `unregisterTileSchedule` clears its schedule timers, so a disabled
+ *     feature stops running unattended.
  *   - `unregisterLazyTile` removes the tile from the lazy registry (so the
  *     dispatch hook stops matching its commands/lazyEvents) and drops its
  *     command-palette entries via `cmd:unregister`.
@@ -150,6 +159,7 @@ export function loadOrArmFeatureTile(tile: AnnotatedTile, config: TileCompatConf
  */
 export function disarmLazyTile(tileId: string): void {
   unregisterManifestShortcuts(tileId);
+  unregisterTileSchedule(tileId);
   unregisterLazyTile(tileId);
   DEBUG && console.log(`[tile-arm] Disarmed lazy tile ${tileId}`);
 }

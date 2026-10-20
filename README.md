@@ -63,7 +63,7 @@ Peek uses the language of "features" (and, at the implementation level, "tiles")
 
 Coming:
 - "native" web apps — using Peek as a way to "install" web pages on the local device as separate applications
-- "Peeklets" HUD — select parts of pages to add to a collection rendered as an overlay
+- Peeklets — a feature that runs unattended, woken on a schedule or an event
 
 ## Keyboard Shortcuts
 

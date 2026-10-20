@@ -27,6 +27,7 @@ import {
 } from './tile-lifecycle.js';
 import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
+import { startTileSchedules } from './tile-schedule.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish, subscribe, unsubscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1334,6 +1335,16 @@ export async function loadFeatures(): Promise<number> {
     DEBUG && console.log(`[feature] Feature startup: ${loadedTileIds.size} tiles loaded`);
   } catch (err) {
     console.error('[feature] Feature startup failed:', err);
+  }
+
+  // ── Manifest-declared schedules ──
+  // Every feature has been armed by now, so a schedule that is already due can
+  // publish its wake topic into a complete registry. Arming happened per tile
+  // above (tile-arm); this only releases the timers.
+  try {
+    startTileSchedules();
+  } catch (err) {
+    console.error('[tile-schedule] start failed:', err);
   }
 
   // ── Rule Engine ──

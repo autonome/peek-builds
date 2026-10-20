@@ -11,7 +11,10 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "lazy": true,
+      "schedule": [
+        { "topic": "feeds:poll", "everyMinutes": 15 }
+      ]
     },
     {
       "id": "feeds-reader",
@@ -29,7 +32,8 @@
         "ext:ready",
         "ext:feeds:shutdown",
         "app:shutdown",
-        "item:created"
+        "item:created",
+        "feeds:poll"
       ]
     },
     "datastore": {
