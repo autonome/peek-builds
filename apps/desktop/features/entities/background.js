@@ -22,6 +22,7 @@
 import { extractRegexEntities } from './extractors/regex.js';
 import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
+import { extractMapUrlEntities, isMapShortLink } from './extractors/map-url.js';
 import { processEntities } from './entity-matcher.js';
 import { getEntities } from './entity-store.js';
 import { ensureNameDatabase } from './name-validator.js';
@@ -105,9 +106,48 @@ async function enrichUrlItem(url, pageMetadata) {
 
 // ==================== Extraction Pipeline ====================
 
+function safeExtract(fn, name) {
+  try {
+    const result = fn();
+    return Array.isArray(result) ? result : [];
+  } catch (err) {
+    console.warn(`[entities] ${name} extractor threw:`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Follow a map short link's redirect once and report where it lands. Returns null when
+ * the expansion fails, in which case no place is read and nothing else changes.
+ */
+async function expandShortLink(url) {
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    return response?.url || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the place a map URL names, if it names one. This runs before the page fetch, so a
+ * map link yields a place even when the page cannot be read at all.
+ */
+async function extractMapPlace(url) {
+  const mapUrl = isMapShortLink(url) ? await expandShortLink(url) : url;
+  if (!mapUrl) return [];
+  return safeExtract(() => extractMapUrlEntities(mapUrl), 'map-url');
+}
+
 async function extractEntities(url, title = '') {
+  const mapRaw = await extractMapPlace(url);
+
   const content = await getPageContent(url);
-  if (!content) return [];
+  if (!content) {
+    if (mapRaw.length === 0) return [];
+    // The URL alone named a place; the page adds nothing to it.
+    return await processEntities(mapRaw, { url, title }, CONFIDENCE_THRESHOLD);
+  }
 
   const html = content.html || '';
   const text = content.text || '';
@@ -120,23 +160,13 @@ async function extractEntities(url, title = '') {
     console.warn('[entities] Page metadata enrichment failed:', err.message);
   }
 
-  const safeExtract = (fn, name) => {
-    try {
-      const result = fn();
-      return Array.isArray(result) ? result : [];
-    } catch (err) {
-      console.warn(`[entities] ${name} extractor threw:`, err.message);
-      return [];
-    }
-  };
-
   const [regexEntities, microformatEntities, structuredDataEntities] = await Promise.all([
     Promise.resolve(safeExtract(() => extractRegexEntities(text, url), 'regex')),
     Promise.resolve(safeExtract(() => extractMicroformatEntities(html, url), 'microformats')),
     Promise.resolve(safeExtract(() => extractStructuredDataEntities(html, url), 'structured-data')),
   ]);
 
-  const allRaw = [...structuredDataEntities, ...microformatEntities, ...regexEntities];
+  const allRaw = [...mapRaw, ...structuredDataEntities, ...microformatEntities, ...regexEntities];
   if (allRaw.length === 0) return [];
 
   return await processEntities(allRaw, { url, title: pageTitle }, CONFIDENCE_THRESHOLD);
