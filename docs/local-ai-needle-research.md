@@ -207,6 +207,70 @@ under `.tmp/` in the `track/local-ai-needle` worktree (`needle_smoke.py`,
 track's rules. The MCP tool schemas were extracted programmatically from
 `apps/desktop/features/mcp-server/server.js`'s `TOOLS` array rather than transcribed by hand.
 
+## Results (2026-10-20): the smoke test repeated on macOS
+
+Same 8 utterances, a fresh `Needle` agent over all 13 tools, `reset()` before every call. The two
+extraction texts are reconstructions of the same shape, since the originals were not kept: an
+event announcement (two people, the Mozilla AI Summit, the Linux Foundation, the Fairmont Hotel
+in San Francisco, March 12, 2027) and a call note (one person, one company, an RFP due "next
+Friday", Legal reviewing terms). Each extraction mode ran in its own process.
+
+**What loaded.** Apple Silicon (arm64), macOS 26.7.1, Python 3.9.6. `pip install cactus-needle`
+now resolves **3.2.8** (the Linux run had 3.0.4), which fetches engine **3.3.3** (was 3.0.1) and
+`needle3.cact` at 35.34 MB, sha256 `c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38`,
+from `Cactus-Compute/needle3`. The package sends anonymous usage events to a Supabase endpoint
+by default. The run set `NEEDLE_TELEMETRY=0`, and any Peek integration has to do the same.
+3.2.8 also adds a `stateless=True` constructor option and a warning after 4 calls with no reset,
+both aimed at the carry-over hazard found on Linux.
+
+**`complete()`: 5/8 exactly right, the same score as Linux, but with different misses.**
+
+| Utterance | Needle called | Verdict (Linux verdict) |
+| --- | --- | --- |
+| show me all my todo tasks | `list_tasks({tags:["todo"]})` | correct (correct) |
+| mark item a1b2c3d4 as done | `delete_item({itemId})` | **wrong tool, and a destructive one** (correct) |
+| search my items for the mcp server fix | `search_items({query:"mcp server fix"})` | correct (wrong tool) |
+| tag item a1b2c3d4 with project-x | `tag_item({itemId, tagName:"project-x"})` | correct (correct) |
+| what tags do I have | `list_tags({})` | correct (correct) |
+| create a note that says buy milk… | `create_item({type:"note", content})` | wrong value, `note` is not a type (same) |
+| list tasks for the mobile project | `list_tasks({project:"mobile"})` | correct (correct) |
+| record that I finished the design review… | `record_event({itemId, type:"finished", value:"finished"})` | content lost (same) |
+
+The `search_items` blind spot is gone. In its place, "mark as done" became a soft delete at
+confidence 0.29, well above the 0.1 suppression floor. Any routing layer has to confirm
+mutating calls before running them, whatever the confidence. Warm latency was 35–80 ms per call
+(160–330 ms on Linux). Cold init took 7.1 s.
+
+**Memory: 214 MB peak RSS for the 13-tool agent, 136 MB for a single-schema extraction.** The
+engine's own `peak_ram_mb` reported 136 MB. Both figures are for the whole Python process, so
+they are not directly comparable with the Linux 99–105 MB. The "under 150 MB" bar in the bake-off
+plan has to be measured in the process Peek would actually run it in.
+
+**`extract()`: no fabrication this time, but under-extraction, plus an API hazard.** Strict and
+loose runs, each in a fresh process, gave identical results, so the three-way non-determinism
+seen on Linux did not reproduce on this engine.
+
+- Event text: the engine's own reasoning identified the event name, venue and date
+  (`'March 12, 2027' -> date '2027-03-12'`), but emitted no live call. It produced two
+  *suppressed* calls at confidence 0.011, which split the two people between them, filed the
+  summit under `organizations` and the hotel under another `organizations` entry, and left
+  `events` and `places` empty. `extract()` falls back to `suppressed_calls[0]` when there is no
+  live call and returns it without saying so. The caller got half the people, no event, and no
+  sign that the engine had rejected its own answer.
+- Note text: no call at all, confidence 0.82, reasoning "No calling or contacts tool available".
+  The engine read "Call with Priya Raman" as a request to place a call. It invented no events,
+  where the Linux engine invented two.
+
+So on this engine the fabrication finding is replaced by an extraction step that can silently
+return its own rejected guess or nothing. Entity scoring in the bake-off has to count missed
+entities as well as invented ones, and must call the engine below `extract()` so that
+suppressed output is visible.
+
+**Repro.** The harness was rewritten for this run and kept outside the repo: `extract_tools.cjs`
+converts the `TOOLS` array, and `smoke.py <tools.json> complete|extract-loose|extract-strict`
+prints one JSON result with the provenance above attached. Nothing here is an accuracy figure.
+It is 8 utterances and 2 texts, run once each.
+
 ---
 
 Use Needle as Peek's action and extraction layer, not as its clustering engine. Clustering and workspace suggestion should copy Firefox's embed-then-cluster pipeline, fed with Peek's richer visit signals.
