@@ -97,9 +97,12 @@ window moved under the pointer — without any message from main.
 
 ## The chrome overlay during a drag
 
-The runtime publishes `window:drag-active {active}` as a drag starts and ends.
-The overlay freezes its click-through state while it is set, as it does for an
-edge resize: flipping it mid-drag would take the pointer stream away from the
-webContents the press landed in. The overlay's cached host bounds keep
+The runtime publishes `window:drag-active {active}` from the press that arms a
+gesture until the gesture ends, so for every click as well as every drag. While
+it is set the overlay freezes its click-through state, as it does for an edge
+resize (flipping it mid-drag would take the pointer stream away from the
+webContents the press landed in), and the chrome does not hide: hover-leave and
+load-settled hides wait for the gesture to end, so the chrome stays put for the
+whole press-and-hold and drag. The overlay's cached host bounds keep
 following through `publishHostBoundsOnChange()`; the overlay still needs them
 for maximize and panel positioning.

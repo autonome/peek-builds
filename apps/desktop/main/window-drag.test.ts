@@ -36,10 +36,33 @@ const held: DragEvent<Id> = { type: 'holdElapsed', bounds: RECT };
 const move = (x: number, y: number, buttonHeld: boolean | null = true): DragEvent<Id> => ({ type: 'move', x, y, buttonHeld });
 
 describe('stepWindowDrag', () => {
-  it('a press starts the hold timer', () => {
+  it('a press starts the hold timer and announces the gesture', () => {
     const r = run([press()]);
     assert.strictEqual(r.state.phase, 'pending');
-    assert.deepStrictEqual(r.effects, [{ type: 'startHoldTimer', ms: 1000 }]);
+    assert.deepStrictEqual(r.effects, [{ type: 'startHoldTimer', ms: 1000 }, { type: 'dragActive', active: true }]);
+  });
+
+  it('the gesture stays announced from the press through the hold and the drag', () => {
+    const r = run([press(), move(11, 11), held, move(50, 50), move(60, 60)]);
+    assert.strictEqual(r.state.phase, 'dragging');
+    assert.deepStrictEqual(r.effects.filter((e) => e.type === 'dragActive'), [{ type: 'dragActive', active: true }]);
+  });
+
+  it('every way out of a pending or ready gesture withdraws the announcement', () => {
+    const ends: DragEvent<Id>[][] = [
+      [press(), { type: 'release' }],
+      [press(), move(10 + HOLD_TOLERANCE_PX + 1, 10)],
+      [press(), { type: 'veto', source: 'a' }],
+      [press(), { type: 'holdElapsed', bounds: null }],
+      [press(), { type: 'windowGone', id: 'a' }],
+      [press(), held, { type: 'release' }],
+      [press(), held, move(20, 20, false)],
+    ];
+    for (const events of ends) {
+      const r = run(events);
+      assert.strictEqual(r.state.phase, 'idle');
+      assert.deepStrictEqual(r.effects.at(-1), { type: 'dragActive', active: false }, JSON.stringify(events));
+    }
   });
 
   it('a press with no movable target stays idle', () => {
@@ -79,9 +102,8 @@ describe('stepWindowDrag', () => {
   it('after the hold, moving past the threshold drags the target from the press point', () => {
     const r = run([press('a'), held, move(10 + MOVE_THRESHOLD_PX + 1, 10)]);
     assert.strictEqual(r.state.phase, 'dragging');
-    assert.deepStrictEqual(r.effects.slice(-3), [
+    assert.deepStrictEqual(r.effects.slice(-2), [
       { type: 'indicator', ids: ['a'], cursor: 'grabbing' },
-      { type: 'dragActive', active: true },
       { type: 'setBounds', id: 'a', bounds: { ...RECT, x: RECT.x + MOVE_THRESHOLD_PX + 1 } },
     ]);
   });
@@ -107,9 +129,9 @@ describe('stepWindowDrag', () => {
     ]);
   });
 
-  it('release before the hold stops the timer only', () => {
+  it('release before the hold stops the timer and withdraws the announcement', () => {
     const r = run([press(), { type: 'release' }]);
-    assert.deepStrictEqual(r.effects.at(-1), { type: 'stopHoldTimer' });
+    assert.deepStrictEqual(r.effects.slice(-2), [{ type: 'stopHoldTimer' }, { type: 'dragActive', active: false }]);
     assert.strictEqual(r.state.phase, 'idle');
   });
 
@@ -194,9 +216,9 @@ describe('window drag runtime', () => {
     windowDragPointer(A, { type: 'move', x: 20, y: 30, buttonHeld: true });
     windowDragPointer(A, { type: 'release' });
     assert.deepStrictEqual(calls, [
+      'active true',
       `cursor ${A} grab`,
       `cursor ${A} grabbing`,
-      'active true',
       `bounds ${A} ${RECT.x + 20},${RECT.y + 30}`,
       `cursor ${A} null`,
       'active false',
@@ -217,7 +239,7 @@ describe('window drag runtime', () => {
     bounds = null;
     fire();
     assert.strictEqual(_windowDragStateForTests().phase, 'idle');
-    assert.deepStrictEqual(calls, []);
+    assert.deepStrictEqual(calls, ['active true', 'active false']);
   });
 
   it('moves from another window are not part of the gesture', () => {

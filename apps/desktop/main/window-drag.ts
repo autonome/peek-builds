@@ -54,15 +54,15 @@ function indicatorIds<Id>(s: { source: Id; target: Id }): Id[] {
   return s.source === s.target ? [s.source] : [s.source, s.target];
 }
 
-// The effects that take any state back to idle.
+// The effects that take any state back to idle. `dragActive` spans the whole
+// gesture, press to end, so the page chrome holds still for all of it.
 function endEffects<Id>(state: DragState<Id>): DragEffect<Id>[] {
   switch (state.phase) {
     case 'idle':
       return [];
     case 'pending':
-      return [{ type: 'stopHoldTimer' }];
+      return [{ type: 'stopHoldTimer' }, { type: 'dragActive', active: false }];
     case 'ready':
-      return [{ type: 'indicator', ids: indicatorIds(state), cursor: null }];
     case 'dragging':
       return [
         { type: 'indicator', ids: indicatorIds(state), cursor: null },
@@ -95,7 +95,7 @@ export function stepWindowDrag<Id>(state: DragState<Id>, event: DragEvent<Id>): 
       // ended it may have been delivered to another window.
       const effects = endEffects(state);
       if (event.target === null) return { state: IDLE, effects };
-      effects.push({ type: 'startHoldTimer', ms: Math.max(0, event.holdMs) });
+      effects.push({ type: 'startHoldTimer', ms: Math.max(0, event.holdMs) }, { type: 'dragActive', active: true });
       return {
         state: { phase: 'pending', source: event.source, target: event.target, press: { x: event.x, y: event.y } },
         effects,
@@ -104,7 +104,7 @@ export function stepWindowDrag<Id>(state: DragState<Id>, event: DragEvent<Id>): 
 
     case 'holdElapsed': {
       if (state.phase !== 'pending') return { state, effects: [] };
-      if (event.bounds === null) return { state: IDLE, effects: [] };
+      if (event.bounds === null) return { state: IDLE, effects: [{ type: 'dragActive', active: false }] };
       const next: DragState<Id> = { ...state, phase: 'ready', startBounds: { ...event.bounds } };
       return { state: next, effects: [{ type: 'indicator', ids: indicatorIds(next), cursor: 'grab' }] };
     }
@@ -128,7 +128,6 @@ export function stepWindowDrag<Id>(state: DragState<Id>, event: DragEvent<Id>): 
           state: next,
           effects: [
             { type: 'indicator', ids: indicatorIds(next), cursor: 'grabbing' },
-            { type: 'dragActive', active: true },
             { type: 'setBounds', id: next.target, bounds: followRect(next, event.x, event.y) },
           ],
         };

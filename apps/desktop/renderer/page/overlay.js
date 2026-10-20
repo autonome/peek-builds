@@ -499,6 +499,12 @@ navbar.addEventListener('dismiss',() => { hideNavbar(); });
 
 // ── Navbar show/hide (trigger-zone hover), mirrors page.js behavior ───────────
 let hideTimer = null;
+// Whether the window manager's hold-to-drag holds a press (main's
+// window:drag-active, from the press until the gesture ends — most presses end
+// as clicks). While true the chrome does not hide, and the capture-loop leaves
+// the capture state as the press found it — captured for a press on the
+// chrome, click-through for a press on the page.
+let windowDragActive = false;
 // Who holds the navbar visible: the active page's load (navbar-load-reveal.js
 // SHOWN_BY_LOAD), the user (SHOWN_BY_USER), or null while it is hidden. Only a
 // load-held navbar hides when the load settles and its dwell has run.
@@ -588,14 +594,21 @@ function applyLoadReveal(event, loading) {
   if (r.show) revealNavbar();
   navbarShownBy = r.shownBy;
   navbarShownAt = r.shownAt;
-  if (r.hideAfterMs === 0) hideNavbar();
+  if (r.hideAfterMs === 0) hideLoadShownNavbar();
   else if (r.hideAfterMs != null) {
     loadHideTimer = setTimeout(() => {
       loadHideTimer = null;
       // The user may have taken the bar over during the dwell (hover, Cmd+L).
-      if (navbarShownBy === SHOWN_BY_LOAD) hideNavbar();
+      if (navbarShownBy === SHOWN_BY_LOAD) hideLoadShownNavbar();
     }, r.hideAfterMs);
   }
+}
+// A load-driven hide that lands during a held press waits for the gesture to
+// end (see windowDragActive).
+let loadHideDeferred = false;
+function hideLoadShownNavbar() {
+  if (windowDragActive) { loadHideDeferred = true; return; }
+  hideNavbar();
 }
 function revealNavbar() {
   cancelHide();
@@ -618,12 +631,16 @@ function hideNavbar() {
   document.body.classList.remove('panels-visible');
 }
 function scheduleHide() {
+  // The chrome holds still for a whole press-and-hold and window drag (see
+  // windowDragActive); the first move after it ends reschedules the hide.
+  if (windowDragActive) return;
   // A bar the active page's load is holding stays up while the pointer moves
   // over the page; the load settling takes it down (navbar-load-reveal.js).
   if (!pointerLeaveHides(navbarShownBy)) return;
   cancelHide();
   hideTimer = setTimeout(() => {
     window.__overlayHidePending = false;
+    if (windowDragActive) return;
     // Keep visible while the user is typing in the URL field.
     if (navbar.shadowRoot && navbar.shadowRoot.activeElement) return;
     hideNavbar();
@@ -681,11 +698,7 @@ let captureOn = false;
 // must not go opaque (e.g. the navbar trigger zone) mid-resize or it would starve
 // and freeze the drag.
 let resizeActive = false;
-// Whether the window manager's hold-to-drag is moving a window (main's
-// window:drag-active). While true the capture-loop leaves the capture state as
-// the press found it — captured for a press on the chrome, click-through for a
-// press on the page.
-let windowDragActive = false;
+// windowDragActive (declared beside hideTimer) freezes the capture state too.
 function setCapture(want) {
   const next = !!want;
   if (next === captureOn) return;
@@ -849,6 +862,11 @@ api.subscribe('page-overlay:maximize-state', (msg) => {
 // one this overlay has not been retargeted to yet.
 api.subscribe('window:drag-active', (msg) => {
   windowDragActive = !!(msg && msg.active);
+  if (windowDragActive) { cancelHide(); return; }
+  if (loadHideDeferred) {
+    loadHideDeferred = false;
+    if (navbarShownBy === SHOWN_BY_LOAD) hideNavbar();
+  }
 });
 
 // Top-border reveal (peek 363e7cff): the overlay's own forwarded-`mousemove`
