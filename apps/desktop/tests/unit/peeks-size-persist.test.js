@@ -18,6 +18,9 @@ const store = {
   items: [
     { keyNum: 1, address: 'https://a.example/', enabled: true, width: 800, height: 600 },
     { keyNum: 2, address: 'https://b.example/', enabled: true },
+    { keyNum: 4, address: 'https://d.example/', enabled: true, width: 1024, height: 768 },
+    { keyNum: 5, address: 'https://e.example/', enabled: true, width: 900, height: 500 },
+    { keyNum: 6, address: 'https://f.example/', enabled: true, width: null, height: null },
   ],
 };
 const writes = [];
@@ -63,17 +66,54 @@ describe('peeks keep their resized size', () => {
   });
 
   it('keeps using the item size for a peek never resized', async () => {
+    await handlers.get('cli:peek-open')({ args: ['5'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, 900);
+    assert.equal(opened.height, 500);
+    assert.equal(opened.relativeSize, undefined);
+  });
+
+  it('sends a display-relative size for a peek with no size of its own', async () => {
     await handlers.get('cli:peek-open')({ args: ['2'] });
     await settle();
     const opened = opens.at(-1);
-    assert.equal(opened.width, 800);
-    assert.equal(opened.height, 600);
+    assert.equal(opened.width, undefined);
+    assert.equal(opened.height, undefined);
+    assert.deepEqual(opened.relativeSize, { widthFraction: 0.60, heightFraction: 0.80 });
+  });
+
+  it('sends a display-relative size for a peek still carrying the old shipped 1024x768', async () => {
+    await handlers.get('cli:peek-open')({ args: ['4'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, undefined);
+    assert.deepEqual(opened.relativeSize, { widthFraction: 0.60, heightFraction: 0.80 });
+  });
+
+  it('sends a display-relative size for a peek whose Options size was cleared', async () => {
+    await handlers.get('cli:peek-open')({ args: ['6'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, undefined);
+    assert.deepEqual(opened.relativeSize, { widthFraction: 0.60, heightFraction: 0.80 });
   });
 
   it('ignores a resize for a window it did not open', async () => {
     await handlers.get('window:resized')({ key: 'https://x.example/:Left', width: 300, height: 300 });
     await settle();
     assert.deepEqual(store.sizes, { 'peek:1': { width: 1100, height: 700, optionsWidth: 800, optionsHeight: 600 } });
+  });
+
+  it('a resize wins over the display-relative size at the next open', async () => {
+    await handlers.get('window:resized')({ key: 'peek:2', width: 1234, height: 567 });
+    await settle();
+    await handlers.get('cli:peek-open')({ args: ['2'] });
+    await settle();
+    const opened = opens.at(-1);
+    assert.equal(opened.width, 1234);
+    assert.equal(opened.height, 567);
+    assert.equal(opened.relativeSize, undefined);
   });
 
   it('loads saved sizes after a restart', async () => {

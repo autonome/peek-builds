@@ -67,14 +67,12 @@ const itemSchema = {
       "default": false
     },
     "height": {
-      "description": "User-defined height of slide page",
-      "type": "integer",
-      "default": 768
+      "description": "User-defined height of slide page - left empty, the slide opens at a height relative to the display",
+      "type": "integer"
     },
     "width": {
-      "description": "User-defined width of slide page",
-      "type": "integer",
-      "default": 1024
+      "description": "User-defined width of slide page - left empty, the slide opens at a width relative to the display",
+      "type": "integer"
     },
     "enabled": {
       "description": "Whether this slide is enabled or not.",
@@ -83,7 +81,7 @@ const itemSchema = {
     },
   },
   "required": [ "screenEdge", "title", "address", "persistState", "keepLive", "allowSound",
-                "height", "width", "enabled" ]
+                "enabled" ]
 };
 
 const listSchema = {
@@ -114,8 +112,6 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 768,
-      width: 1024,
       enabled: true,
     },
     {
@@ -125,8 +121,6 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 768,
-      width: 1024,
       enabled: false,
     },
     {
@@ -136,8 +130,6 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 768,
-      width: 1024,
       enabled: false,
     },
     {
@@ -147,11 +139,22 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 768,
-      width: 1024,
       enabled: false,
     },
   ]
+};
+
+// The size a slide opens at when no resize is remembered and Options carries no
+// size: a share of the work area of whichever display it opens on. Nearly full
+// height and about a third of the width, so it reads as a panel beside the
+// desktop rather than a window over it. The 800 px floor keeps a page in a slide
+// above the breakpoint below which most sites switch to their mobile layout; on a
+// display too narrow for both, the floor wins and the clamp to the work area
+// takes it from there.
+const relativeSize = {
+  widthFraction: 0.35,
+  heightFraction: 0.90,
+  minWidth: 800,
 };
 
 export {
@@ -159,5 +162,6 @@ export {
   labels,
   schemas,
   storageKeys,
-  defaults
+  defaults,
+  relativeSize
 };

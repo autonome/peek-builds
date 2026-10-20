@@ -5,6 +5,7 @@
 // (the unit-test runner's mode), since 'electron' resolves to a path string there, not the module.
 // Runtime access goes through getElectron() via createRequire instead.
 import type { BrowserWindow as BrowserWindowType, WebContents } from 'electron';
+import type { NavHistoryEntry } from './nav-history.js';
 import { createRequire } from 'node:module';
 
 const requireElectron = createRequire(import.meta.url);
@@ -51,6 +52,17 @@ export interface WindowDescriptor {
   desktop?: string;
   focused: boolean;
   context?: WindowContext;
+  // The window's back/forward trail at save time, so a relaunch restores the
+  // whole trail rather than just the leaf URL (nav-history.ts owns the shape
+  // and the size rule). LOCAL MACHINE STATE: the `session`/`snapshot`
+  // `feature_settings` rows this descriptor persists into are not read by
+  // sync.ts, and a trail must never leave the device — it describes one
+  // machine's browsing and can carry query strings and one-time URLs. Both
+  // keys are optional and stay ABSENT rather than null when there is no trail:
+  // every descriptor written before they existed lacks them, and such a
+  // descriptor must keep restoring at its leaf URL.
+  navHistory?: NavHistoryEntry[];
+  navHistoryIndex?: number;
 }
 
 export function getLiveWindow(id: number): BrowserWindowType | null {

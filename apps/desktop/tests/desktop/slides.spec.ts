@@ -147,6 +147,83 @@ test.describe('Slides @desktop', () => {
     } catch { /* ignore */ }
   }
 
+  // ── Display-relative default size ──────────────────────────────────────
+  //
+  // A slide whose item carries neither a remembered resize nor an Options
+  // size sends no pixel pair at all. It asks for a share of the work area of
+  // whichever display it opens on, and main resolves it there. These are the
+  // fractions `features/slides/config.js` sends.
+  const SLIDE_RELATIVE = { widthFraction: 0.35, heightFraction: 0.90, minWidth: 800 };
+
+  test('a slide with no size set opens at a share of its display work area', async () => {
+    const address = 'https://relative-size.example/';
+    const result = await bgWindow.evaluate(async (args: { addr: string; rel: object }) => {
+      return await (window as any).app.window.open('about:blank', {
+        role: 'quick-view',
+        address: args.addr,
+        modal: true,
+        type: 'panel',
+        relativeSize: args.rel,
+        key: `${args.addr}:Up`,
+        screenEdge: 'Up',
+        show: false,
+      });
+    }, { addr: address, rel: SLIDE_RELATIVE });
+    if (!result.success) {
+      throw new Error(`slide open failed: ${JSON.stringify(result)}`);
+    }
+
+    const alignment = await getSlideAlignment(result.id as number);
+    expect(alignment).not.toBeNull();
+    const { bounds, work } = alignment!;
+
+    const expectedWidth = Math.min(
+      work.width,
+      Math.max(Math.round(0.35 * work.width), 800),
+    );
+    const expectedHeight = Math.min(work.height, Math.round(0.90 * work.height));
+    expect(Math.abs(bounds.width - expectedWidth)).toBeLessThanOrEqual(2);
+    expect(Math.abs(bounds.height - expectedHeight)).toBeLessThanOrEqual(2);
+
+    // The floor only matters where the work area has room for it.
+    expect(bounds.width).toBeGreaterThanOrEqual(Math.min(800, work.width) - 2);
+
+    // Still anchored to the top edge, X-centered, like any Up slide.
+    expect(bounds.y).toBe(work.y);
+    expect(Math.abs(bounds.x - (work.x + Math.round((work.width - bounds.width) / 2))))
+      .toBeLessThanOrEqual(2);
+
+    await closeWindow(result.id as number);
+  });
+
+  test('an explicit size still wins over the display-relative one', async () => {
+    const address = 'https://explicit-size.example/';
+    const result = await bgWindow.evaluate(async (args: { addr: string; rel: object }) => {
+      return await (window as any).app.window.open('about:blank', {
+        role: 'quick-view',
+        address: args.addr,
+        modal: true,
+        type: 'panel',
+        width: 640,
+        height: 480,
+        relativeSize: args.rel,
+        key: `${args.addr}:Up`,
+        screenEdge: 'Up',
+        show: false,
+      });
+    }, { addr: address, rel: SLIDE_RELATIVE });
+    if (!result.success) {
+      throw new Error(`slide open failed: ${JSON.stringify(result)}`);
+    }
+
+    const alignment = await getSlideAlignment(result.id as number);
+    expect(alignment).not.toBeNull();
+    expect(alignment!.bounds.width).toBe(640);
+    expect(alignment!.bounds.height).toBe(480);
+
+    await closeWindow(result.id as number);
+  });
+
   test('Up screenEdge anchors to top, X-centered on its display', async () => {
     const id = await openSlide('Up', 'https://slide-up.example.com');
     const got = await getSlideAlignment(id);

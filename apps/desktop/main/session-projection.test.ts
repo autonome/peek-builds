@@ -94,6 +94,7 @@ import {
   type SessionSaveWindow,
   type SessionSavePresentation,
 } from './session-projection.js';
+import type { NavHistorySnapshot } from './nav-history.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import type { FsMode, Rectangle, State, WindowId, WindowRecord } from './window-kernel.js';
 import { initialState, isFrontEligibleWindow } from './window-kernel.js';
@@ -1611,5 +1612,106 @@ describe('session-projection — unmaximizedRestoreDescriptor', () => {
     assert.strictEqual(out.url, 'https://a.test');
     assert.strictEqual(input.params.maximized, true);
     assert.deepStrictEqual(input.bounds, MAXIMIZED_RECT);
+  });
+});
+
+// ============================================================================
+// Back/forward trail
+//
+// The trail is the one descriptor field whose SOURCE is not the kernel or the
+// presenter: it arrives on the save-window row, read from the per-window cache
+// in `nav-history.ts`. These cases pin both halves of the on-disk promise — a
+// window with a trail writes both keys, in that order, after `context`; a
+// window without one writes neither key at all, which is what keeps the
+// byte-identical sweep above passing unmodified for every world in it (none
+// carries a trail).
+// ============================================================================
+
+describe('session-projection — the back/forward trail', () => {
+  /**
+   * `inputFor` with a trail attached to named windows. Built by overriding the
+   * save-window rows rather than by teaching the shared fixture builders about
+   * trails, so every world the on-disk-shape sweep drives stays exactly what it
+   * was.
+   */
+  function inputWithTrails(world: World, trails: Record<number, NavHistorySnapshot>): SerializeSessionInput {
+    const base = inputFor(world);
+    return {
+      ...base,
+      windows: base.windows.map((w) => {
+        const trail = trails[w.nativeId];
+        return trail ? { ...w, navHistory: trail } : w;
+      }),
+    };
+  }
+
+  const ONE_WINDOW: World = {
+    fixtures: [contentFixture(1, 'w1')],
+    records: [makeRecord('w1', { bounds: { x: 5, y: 6, width: 700, height: 800 } })],
+    front: 'w1',
+    frontNativeId: 1,
+  };
+
+  const TRAIL: NavHistorySnapshot = {
+    navHistory: [
+      { url: 'https://example.com/a', title: 'A' },
+      { url: 'https://example.com/b', title: 'B' },
+      { url: 'https://example.com/', title: 'W1' },
+    ],
+    navHistoryIndex: 2,
+  };
+
+  it('a window with a trail writes both keys, with the entries and index it was given', () => {
+    const projected = serializeSession(inputWithTrails(ONE_WINDOW, { 1: TRAIL }));
+    assert.strictEqual(projected.snapshot.windows.length, 1);
+    const descriptor = projected.snapshot.windows[0];
+    assert.deepStrictEqual(descriptor.navHistory, TRAIL.navHistory);
+    assert.strictEqual(descriptor.navHistoryIndex, 2);
+  });
+
+  it('the two keys land after context, so no existing field moves', () => {
+    const projected = serializeSession(inputWithTrails(ONE_WINDOW, { 1: TRAIL }));
+    assert.deepStrictEqual(Object.keys(projected.snapshot.windows[0]), [
+      'url',
+      'key',
+      'title',
+      'bounds',
+      'source',
+      'params',
+      'zOrder',
+      'stackIndex',
+      'focused',
+      'context',
+      'navHistory',
+      'navHistoryIndex',
+    ]);
+  });
+
+  it('a window with no trail carries neither key — not an explicit undefined', () => {
+    // An explicit `navHistory: undefined` would survive `Object.keys` and
+    // change this object's shape even though `JSON.stringify` drops the value,
+    // which is exactly what the byte-identical sweep compares.
+    const projected = serializeSession(inputWithTrails(ONE_WINDOW, {}));
+    const descriptor = projected.snapshot.windows[0];
+    assert.strictEqual('navHistory' in descriptor, false);
+    assert.strictEqual('navHistoryIndex' in descriptor, false);
+    assert.strictEqual(JSON.stringify(projected.snapshot).includes('navHistory'), false);
+  });
+
+  it('one window with a trail leaves its trail-less sibling untouched', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2', { address: 'https://other.example/' })],
+      records: [
+        makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 } }),
+        makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 } }),
+      ],
+      front: 'w1',
+      frontNativeId: 1,
+    };
+    const projected = serializeSession(inputWithTrails(world, { 2: TRAIL }));
+    const [first, second] = projected.snapshot.windows;
+    assert.strictEqual('navHistory' in first, false);
+    assert.deepStrictEqual(second.navHistory, TRAIL.navHistory);
+    assert.strictEqual(second.navHistoryIndex, 2);
   });
 });

@@ -511,6 +511,10 @@ const init = async () => {
   // Render windows
   renderWindows();
 
+  // Put the caret in the search box so typing filters straight away. The view
+  // is created fresh on every open, so this covers every entry point.
+  searchInput.focus();
+
   // Dismiss the overlay if any new window opens (cmd+n, cmd palette,
   // a tile-spawned window, etc.). Without this, the new window appears
   // *behind* the overlay because we're alwaysOnTop. Filter out our own

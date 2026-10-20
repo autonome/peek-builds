@@ -57,6 +57,7 @@
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { savedWindowUrl } from './page-load-error.js';
+import type { NavHistorySnapshot } from './nav-history.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import type { State, WindowId, WindowRecord } from './window-kernel.js';
 
@@ -112,6 +113,15 @@ export interface SessionSaveWindow {
    * destroyed. NOT the descriptor's URL — that is `presentation.address`.
    */
   url: string;
+  /**
+   * The window's back/forward trail, or absent when it has none. Read from the
+   * per-window cache in `nav-history.ts`, never from a live webContents: a
+   * window restored beyond the eager count has not navigated yet and would
+   * report no entries at all, so a live read would replace its saved trail with
+   * nothing. The pair rides as one field because they only mean anything
+   * together — the index indexes the entries.
+   */
+  navHistory?: NavHistorySnapshot;
 }
 
 /**
@@ -732,6 +742,16 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       // .topmostContentWindowId`.
       focused: w.machineId != null && w.machineId === input.topmostContentWindowId,
       context: windowContext,
+      // The back/forward trail, written only when there is one. Spread rather
+      // than assigned so a window without a trail serializes to exactly the
+      // JSON text it always has: `JSON.stringify` drops an undefined value but
+      // an explicit `navHistory: undefined` still changes this object's key
+      // set, which the on-disk shape sweep in `session-projection.test.ts`
+      // compares. Both keys land after `context`, so an existing descriptor's
+      // key order is untouched.
+      ...(w.navHistory
+        ? { navHistory: w.navHistory.navHistory, navHistoryIndex: w.navHistory.navHistoryIndex }
+        : {}),
     });
   }
 

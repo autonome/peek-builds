@@ -57,6 +57,7 @@ import { getWindowPresentation, getRestorableBounds } from './window-presenter.j
 import {
   HistoryStepHold,
   type HistoryStep,
+  getWindowNavHistory,
   readNavHistory,
   refreshWindowNavHistory,
   restoreNavHistory,
@@ -142,6 +143,7 @@ import { trackWindow } from './display-watcher.js';
 import {
   computePlacement,
   computeInitialBounds,
+  parseRelativeSize,
   toProportional,
   ownDisplay,
   type Placement,
@@ -1194,7 +1196,14 @@ function assembleHybridPageHost(
     try {
       const deferredUrl = claimHybridDeferredLoad(baseWin.id);
       if (deferredUrl && !view.webContents.isDestroyed()) {
-        void loadWithOutcome(view.webContents, deferredUrl, baseWin);
+        // Through the same load helper the eager restore and undo-close use, so
+        // a window restored beyond the eager count comes back with its whole
+        // back/forward trail on first activation rather than just its leaf
+        // page. The trail comes from the cache the open seeded from the saved
+        // descriptor — this window's content has never navigated, so it has no
+        // trail of its own to read — and a window with no saved trail gets a
+        // plain load, exactly as before.
+        void loadHybridContent(view.webContents, deferredUrl, baseWin, getWindowNavHistory(baseWin.id));
       }
     } catch {
       /* a torn-down wc mid-focus must not wedge the focus handler */
@@ -3657,8 +3666,18 @@ export function registerWindowHandlers(): void {
     // intent wins, so we override with `computeInitialBounds` output.
     // Off-screen explicit x/y were already dropped earlier in the
     // off-screen-bounds-validation block above.
+    //
+    // A caller with no size of its own may instead ask for one relative to the
+    // display it lands on (peeks and slides do, when no resize is remembered and
+    // no size is set in Options). An explicit width/height always wins over it.
+    const callerProvidedSize =
+      parseInt(options.width) > 0 && parseInt(options.height) > 0;
+    const relativeSize = callerProvidedSize
+      ? undefined
+      : parseRelativeSize((options as { relativeSize?: unknown }).relativeSize);
     const needsCompute =
       mappedEdge !== undefined ||
+      relativeSize !== undefined ||
       winOptions.x === undefined || winOptions.y === undefined;
     if (needsCompute) {
       const winW = winOptions.width as number || APP_DEF_WIDTH;
@@ -3669,7 +3688,7 @@ export function registerWindowHandlers(): void {
       }
       const initial = computeInitialBounds(
         placement,
-        { width: winW, height: winH },
+        relativeSize ?? { width: winW, height: winH },
         liveDisplays,
         livePrimaryId,
         parentBounds,

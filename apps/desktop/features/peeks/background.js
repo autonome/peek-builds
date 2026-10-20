@@ -7,7 +7,7 @@
  * Uses api.settings for datastore-backed settings storage
  */
 
-import { id, labels, schemas, storageKeys, defaults } from './config.js';
+import { id, labels, schemas, storageKeys, defaults, relativeSize } from './config.js';
 
 const api = window.app;
 
@@ -108,20 +108,43 @@ const resizeStillApplies = (saved, item) => {
     && optionsDim(saved.optionsHeight) === optionsDim(item.height);
 };
 
-const executeItem = (item) => {
-  console.log('[ext:peeks] executeItem', item);
+// The width and height every item carried before peeks opened at a size relative
+// to the display. Nearly every saved profile still holds it on every row, so a row
+// at exactly that size has no size of its own and opens like a fresh one. The rows
+// are left as they are; only this reading of them changed.
+const SHIPPED_SIZE = { width: 1024, height: 768 };
+
+// The size set in the Options panel, or null when the row carries none — an empty
+// field, or the size peeks used to ship with.
+const optionsSize = (item) => {
+  const width = optionsDim(item.width);
+  const height = optionsDim(item.height);
+  if (!(width > 0) || !(height > 0)) return null;
+  if (width === SHIPPED_SIZE.width && height === SHIPPED_SIZE.height) return null;
+  return { width, height };
+};
+
+// Highest first: a remembered resize that still applies, the Options size, then a
+// size relative to the display the peek opens on. The last is a pair of fractions
+// rather than pixels because only main knows which display that is.
+const sizeFor = (item) => {
   const saved = savedSizes[windowKeyFor(item)];
   const resized = resizeStillApplies(saved, item) ? saved : null;
-  const height = (resized && resized.height) || item.height || 600;
-  const width = (resized && resized.width) || item.width || 800;
+  if (resized && resized.width > 0 && resized.height > 0) {
+    return { width: resized.width, height: resized.height };
+  }
+  return optionsSize(item) || { relativeSize };
+};
+
+const executeItem = (item) => {
+  console.log('[ext:peeks] executeItem', item);
 
   const params = {
     // IZUI role
     role: 'quick-view',
 
     // browserwindow
-    height,
-    width,
+    ...sizeFor(item),
 
     // modal behavior
     modal: true,
