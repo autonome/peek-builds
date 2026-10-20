@@ -17,6 +17,9 @@ Status: proposal under review. Nothing here is built.
   process through the preload. The `tiles-protocol-up-`/`-down-` `postMessage` form is used only
   across hosts, so Peek's own tiles gain no extra layer and Peek checks message senders only where
   it hosts third-party tiles.
+- **Hosting third-party Web Tiles is a goal, not the first slice (2026-10-20).** It is mostly
+  isolation and security work and no protocol depends on it. The first slice moves `atproto`
+  alone.
 
 ## Problem
 
