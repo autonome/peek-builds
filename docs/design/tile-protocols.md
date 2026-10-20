@@ -7,6 +7,12 @@ Status: proposal under review. Nothing here is built.
 - **Direction (2026-10-20).** Tile APIs move from `window.app` to Web Tiles protocols, one API
   at a time, with core surfaces staying on `window.app`. A tile written this way can run in any
   Web Tiles host, and a new API is declared in one place instead of three.
+- **Denied reads as absent, for now (2026-10-20).** A protocol whose capability the tile lacks is
+  not served, so its import fails as it would in a host without it; the main process still checks
+  every call. This keeps tiles to one fallback path, but a tile cannot tell a refusal from a
+  missing API and a grant made while it is open needs a reload. Web Tiles has no way to signal
+  either, so the gap goes to the spec's authors as an issue; the decision is revisited if the spec
+  adds one.
 
 ## Problem
 
