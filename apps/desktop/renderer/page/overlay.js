@@ -84,6 +84,7 @@ import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost, widgetActionFromPath } from './page-widgets.js';
 import { navbarLoadReveal, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
+import { normalizeUrlForCompare } from './url-compare.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -1710,23 +1711,7 @@ function makeInfoRow(labelText, valueText, truncated = false) {
 // ── Tags ──────────────────────────────────────────────────────────────────────
 // Pure api.datastore + tag pubsub, keyed on the active URL. Ported verbatim from
 // page.js (resolveItemId/loadTagsForCurrentPage/renderTags/add/removeTagToPage).
-function normalizeUrlForCompare(u) {
-  try {
-    const parsed = new URL(u);
-    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-    if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
-      parsed.port = '';
-    }
-    if (parsed.search) {
-      const params = new URLSearchParams(parsed.search);
-      const sortedParams = new URLSearchParams([...params.entries()].sort());
-      parsed.search = sortedParams.toString();
-    }
-    return parsed.toString();
-  } catch { return u; }
-}
+// normalizeUrlForCompare lives in ./url-compare.js so it can be tested under node.
 
 async function resolveItemId(url) {
   if (!isHttp(url)) return null;

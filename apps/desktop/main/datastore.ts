@@ -3071,31 +3071,6 @@ export function detectModeFromUrl(url: string): MajorModeId {
 }
 
 /**
- * Update mode for navigation - sets context based on URL
- */
-export function updateModeForNavigation(windowId: number, url: string): void {
-  const detectedMode = detectModeFromUrl(url);
-  const currentEntry = getContextEntry('mode', windowId);
-
-  // Don't override space/group mode with page mode — they persist through navigation
-  if (
-    (currentEntry?.value === 'space' || currentEntry?.value === 'group') &&
-    detectedMode === 'page'
-  ) {
-    DEBUG && console.log('main', `Preserving ${currentEntry.value} mode for window ${windowId} during navigation`);
-    return;
-  }
-
-  if (!currentEntry || currentEntry.value !== detectedMode) {
-    addContextEntry('mode', detectedMode, {
-      windowId,
-      source: 'navigation',
-      metadata: { url }
-    });
-  }
-}
-
-/**
  * Check if mode conditions are satisfied for a window
  * Used by shortcuts system for mode-conditional shortcuts
  */

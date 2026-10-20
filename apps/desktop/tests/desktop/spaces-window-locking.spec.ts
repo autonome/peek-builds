@@ -380,9 +380,10 @@ test.describe('workspace membership: every window opened in a workspace belongs 
     // the SAME `mode` context key `closeCurrentWorkspaceWindows()` reads for
     // workspace membership (`'space'`/`'group'`), since it is a raw
     // unconditional overwrite (`tile-preload.cts` `setMode` →
-    // `contextStrict.set('mode', …)`) with none of the protection
-    // `updateModeForNavigation` (`datastore.ts`) gives space/group against a
-    // page-mode overwrite. A window that loaded an item this way kept its
+    // `contextStrict.set('mode', …)`). A window's mode is otherwise written
+    // once, when the window opens (`ipc.ts`), and no navigation rewrites it,
+    // so this overwrite was the one way to lose space/group membership. A
+    // window that loaded an item this way kept its
     // window open forever, excluded from every workspace's session save too.
     const theta = 'lock-theta';
     const iota = 'lock-iota';
