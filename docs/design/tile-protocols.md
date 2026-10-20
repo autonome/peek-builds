@@ -20,6 +20,9 @@ Status: proposal under review. Nothing here is built.
 - **Hosting third-party Web Tiles is a goal, not the first slice (2026-10-20).** It is mostly
   isolation and security work and no protocol depends on it. The first slice moves `atproto`
   alone.
+- **The manifest `protocols` field ships now (2026-10-20).** Peek reads it whether or not MASL
+  adopts it, and declines to open a tile missing a `required` protocol, saying which, instead of
+  letting it fail partway. A later rename to match the spec touches only Peek's own manifests.
 
 ## Problem
 
