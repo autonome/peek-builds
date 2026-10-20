@@ -1,0 +1,9 @@
+{
+  "labels": {},
+  "storageKeys": {
+    "STARTED": "startedItemIds"
+  },
+  "defaults": {
+    "startedItemIds": []
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "manifestVersion": 3,
+  "id": "reminders",
+  "shortname": "reminders",
+  "name": "Reminders",
+  "description": "A remind:<duration> tag brings an item back when it comes due",
+  "version": "1.0.0",
+  "builtin": true,
+  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true,
+      "schedule": [
+        { "topic": "reminders:check", "everyMinutes": 5 }
+      ]
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "app:shutdown",
+        "reminders:check",
+        "cmd:execute:search"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags"]
+    },
+    "settings": true,
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "reminders",
+      "description": "List items whose reminder has come due",
+      "action": { "type": "execute" }
+    }
+  ]
+}
