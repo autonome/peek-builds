@@ -18,6 +18,16 @@ import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
+// The panel's pure computations. `updateAdaptiveFeedback` is aliased because the
+// panel keeps a same-named wrapper that also logs and persists the result.
+import {
+  findChainingCommands,
+  buildExecutionContext,
+  getTabCycleIndex,
+  getAdaptiveScore,
+  getFrecencyScore,
+  updateAdaptiveFeedback as applyAdaptiveFeedback,
+} from './panel-logic.js';
 
 log('cmd:panel', 'loaded');
 
@@ -482,10 +492,10 @@ function findMatchingCommands(text) {
     if (aTokenPrefix && !bTokenPrefix) return -1;
     if (bTokenPrefix && !aTokenPrefix) return 1;
 
-    const aAdaptive = getAdaptiveScore(commandPart, a);
-    const bAdaptive = getAdaptiveScore(commandPart, b);
-    const aFrecency = getFrecencyScore(a);
-    const bFrecency = getFrecencyScore(b);
+    const aAdaptive = getAdaptiveScore(state.adaptiveFeedback, commandPart, a);
+    const bAdaptive = getAdaptiveScore(state.adaptiveFeedback, commandPart, b);
+    const aFrecency = getFrecencyScore(state.matchCounts, a);
+    const bFrecency = getFrecencyScore(state.matchCounts, b);
 
     const aScore = (aAdaptive * 3) + aFrecency;
     const bScore = (bAdaptive * 3) + bFrecency;
@@ -508,65 +518,8 @@ function findMatchingCommands(text) {
 
 function updateAdaptiveFeedback(typed, name) {
   log('cmd:panel', 'updateAdaptiveFeedback', typed, '->', name);
-
-  // Apply decay to existing entries for this typed prefix (adapts to changing behavior)
-  const DECAY = 0.95;
-  const PRUNE_THRESHOLD = 0.1;
-  if (state.adaptiveFeedback[typed]) {
-    for (const key of Object.keys(state.adaptiveFeedback[typed])) {
-      state.adaptiveFeedback[typed][key] *= DECAY;
-      if (state.adaptiveFeedback[typed][key] < PRUNE_THRESHOLD) {
-        delete state.adaptiveFeedback[typed][key];
-      }
-    }
-  }
-
-  if (!state.adaptiveFeedback[typed]) {
-    state.adaptiveFeedback[typed] = {};
-  }
-  if (!state.adaptiveFeedback[typed][name]) {
-    state.adaptiveFeedback[typed][name] = 0;
-  }
-  state.adaptiveFeedback[typed][name]++;
-
-  const lowerName = name.toLowerCase();
-  const lowerTyped = typed.toLowerCase();
-  const words = lowerName.split(/[\s-]+/);
-
-  for (const word of words) {
-    if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) continue;
-    for (let len = 2; len <= word.length; len++) {
-      const sub = word.substring(0, len);
-      // Decay sub-prefix entries too
-      if (state.adaptiveFeedback[sub]) {
-        for (const key of Object.keys(state.adaptiveFeedback[sub])) {
-          state.adaptiveFeedback[sub][key] *= DECAY;
-          if (state.adaptiveFeedback[sub][key] < PRUNE_THRESHOLD) {
-            delete state.adaptiveFeedback[sub][key];
-          }
-        }
-      }
-      if (!state.adaptiveFeedback[sub]) state.adaptiveFeedback[sub] = {};
-      if (!state.adaptiveFeedback[sub][name]) state.adaptiveFeedback[sub][name] = 0;
-      state.adaptiveFeedback[sub][name] += 0.25;
-    }
-  }
-
+  applyAdaptiveFeedback(state.adaptiveFeedback, typed, name);
   saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
-}
-
-function getAdaptiveScore(typed, name) {
-  const k = 3;
-  const feedback = state.adaptiveFeedback[typed];
-  if (!feedback || !feedback[name]) return 0;
-  return feedback[name] / (feedback[name] + k);
-}
-
-function getFrecencyScore(name) {
-  const k = 10;
-  const count = state.matchCounts[name] || 0;
-  if (count === 0) return 0;
-  return count / (count + k);
 }
 
 function updateMatchCount(name) {
@@ -650,56 +603,23 @@ async function doUpdateParamSuggestions() {
 
 // ===== Execution Context Builder =====
 
-function buildExecutionContext(name, typed) {
-  const trimmed = typed.trim();
-  const nameLower = name.toLowerCase();
-  const trimmedLower = trimmed.toLowerCase();
-  let rest;
-  if (trimmedLower.startsWith(nameLower)) {
-    rest = trimmed.slice(name.length).trim();
-  } else {
-    const spaceIdx = trimmed.indexOf(' ');
-    const firstWord = spaceIdx > 0 ? trimmedLower.slice(0, spaceIdx) : trimmedLower;
-    if (nameLower.startsWith(firstWord)) {
-      rest = spaceIdx > 0 ? trimmed.slice(spaceIdx + 1).trim() : '';
-    } else {
-      rest = trimmed;
-    }
-  }
-  const params = rest.length > 0 ? rest.split(/\s+/) : [];
-  const search = rest.length > 0 ? rest : null;
-
+function executionContextFor(name, typed) {
   // Also include the raw input value for defensive extraction by handlers
   const inputEl = document.getElementById('command-input');
-  const inputValue = inputEl ? inputEl.value : typed;
-
-  const context = { typed, name, params, search, value: inputValue };
-
-  if ((machine.getState() === States.CHAIN_MODE || machine.getState() === States.EXECUTING) && state.chainContext) {
-    context.input = state.chainContext.data;
-    context.inputMimeType = state.chainContext.mimeType;
-    context.inputTitle = state.chainContext.title;
-    context.inputSource = state.chainContext.sourceCommand;
-  }
-
-  return context;
+  const inChain = machine.getState() === States.CHAIN_MODE || machine.getState() === States.EXECUTING;
+  return buildExecutionContext(
+    name,
+    typed,
+    inputEl ? inputEl.value : typed,
+    inChain ? state.chainContext : null,
+  );
 }
 
 // ===== Chain Mode Functions =====
 
-function mimeTypeMatches(pattern, actual) {
-  if (!pattern || !actual) return false;
-  if (pattern === '*/*' || pattern === actual) return true;
-  const [pType, pSub] = pattern.split('/');
-  const [aType] = actual.split('/');
-  return pSub === '*' && pType === aType;
-}
-
-function findChainingCommands(mimeType) {
-  return Object.values(state.commands).filter(cmd => {
-    if (!cmd.accepts?.length) return false;
-    return cmd.accepts.some(acceptedType => mimeTypeMatches(acceptedType, mimeType));
-  });
+/** The registered commands that accept `mimeType` as chained input. */
+function chainingCommandsFor(mimeType) {
+  return findChainingCommands(state.commands, mimeType);
 }
 
 async function doEnterChainMode(output, sourceCommand) {
@@ -716,7 +636,7 @@ async function doEnterChainMode(output, sourceCommand) {
 
   state.chainStack.push({ ...state.chainContext });
 
-  const chainingCommands = findChainingCommands(output.mimeType);
+  const chainingCommands = chainingCommandsFor(output.mimeType);
   log('cmd:panel', 'Found', chainingCommands.length, 'commands accepting', output.mimeType);
 
   state.typed = '';
@@ -766,7 +686,7 @@ function doChainUndo() {
   state.chainStack.pop();
   state.chainContext = { ...state.chainStack[state.chainStack.length - 1] };
 
-  const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+  const chainingCommands = chainingCommandsFor(state.chainContext.mimeType);
   state.matches = chainingCommands.map(cmd => cmd.name);
   state.matchIndex = 0;
 
@@ -1250,7 +1170,7 @@ async function doExecute(name, typed, extra = {}) {
   }
 
   log('cmd:panel', 'executing cmd', name, typed);
-  const context = buildExecutionContext(name, typed);
+  const context = executionContextFor(name, typed);
   if (extra.selectedItem) {
     context.selectedItem = extra.selectedItem;
   }
@@ -1289,7 +1209,7 @@ async function doExecute(name, typed, extra = {}) {
       const outputMimeType = result.output.mimeType;
 
       // Check for downstream commands to set hasDownstream
-      const downstreamCommands = findChainingCommands(outputMimeType);
+      const downstreamCommands = chainingCommandsFor(outputMimeType);
       payload.hasDownstream = downstreamCommands.length > 0;
     }
 
@@ -2381,7 +2301,7 @@ function actionHandlers() {
       if (typed) {
         const isChainState = machine.getState() === States.CHAIN_MODE;
         if (isChainState && state.chainContext) {
-          const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+          const chainingCommands = chainingCommandsFor(state.chainContext.mimeType);
           const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
           const allMatches = findMatchingCommands(typed);
           state.matches = allMatches.filter(name => chainingNames.has(name));
@@ -2409,12 +2329,12 @@ function actionHandlers() {
 
     computeChainMatches() {
       if (state.typed && state.chainContext) {
-        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        const chainingCommands = chainingCommandsFor(state.chainContext.mimeType);
         const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
         const allMatches = findMatchingCommands(state.typed);
         state.matches = allMatches.filter(name => chainingNames.has(name));
       } else if (state.chainContext) {
-        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        const chainingCommands = chainingCommandsFor(state.chainContext.mimeType);
         state.matches = chainingCommands.map(cmd => cmd.name);
       } else {
         state.matches = [];
@@ -2497,15 +2417,12 @@ function actionHandlers() {
 
     tabCompleteCommand() {
       const input = commandInput();
-      const currentMatch = state.matches[state.matchIndex];
-      const currentValue = (input ? input.value : state.typed).trim();
-
-      const alreadyCompleted = currentValue === currentMatch ||
-                                currentValue.startsWith(currentMatch + ' ');
-
-      if (alreadyCompleted && state.matches.length > 1) {
-        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
-      }
+      state.matchIndex = getTabCycleIndex({
+        matches: state.matches,
+        matchIndex: state.matchIndex,
+        inputValue: input ? input.value : state.typed,
+        shiftKey: false,
+      });
 
       const match = state.matches[state.matchIndex];
       state.typed = match + ' ';
@@ -2517,15 +2434,12 @@ function actionHandlers() {
 
     shiftTabCycleCommand() {
       const input = commandInput();
-      const currentMatch = state.matches[state.matchIndex];
-      const currentValue = (input ? input.value : state.typed).trim();
-
-      const alreadyCompleted = currentValue === currentMatch ||
-                                currentValue.startsWith(currentMatch + ' ');
-
-      if (alreadyCompleted && state.matches.length > 1) {
-        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
-      }
+      state.matchIndex = getTabCycleIndex({
+        matches: state.matches,
+        matchIndex: state.matchIndex,
+        inputValue: input ? input.value : state.typed,
+        shiftKey: true,
+      });
 
       const match = state.matches[state.matchIndex];
       state.typed = match + ' ';
@@ -2537,15 +2451,12 @@ function actionHandlers() {
 
     tabCycleInResults() {
       const input = commandInput();
-      const currentMatch = state.matches[state.matchIndex];
-      const currentValue = (input ? input.value : state.typed).trim();
-
-      const alreadyCompleted = currentValue === currentMatch ||
-                                currentValue.startsWith(currentMatch + ' ');
-
-      if (alreadyCompleted && state.matches.length > 1) {
-        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
-      }
+      state.matchIndex = getTabCycleIndex({
+        matches: state.matches,
+        matchIndex: state.matchIndex,
+        inputValue: input ? input.value : state.typed,
+        shiftKey: false,
+      });
 
       const match = state.matches[state.matchIndex];
       state.typed = match + ' ';
@@ -2557,15 +2468,12 @@ function actionHandlers() {
 
     shiftTabCycleInResults() {
       const input = commandInput();
-      const currentMatch = state.matches[state.matchIndex];
-      const currentValue = (input ? input.value : state.typed).trim();
-
-      const alreadyCompleted = currentValue === currentMatch ||
-                                currentValue.startsWith(currentMatch + ' ');
-
-      if (alreadyCompleted && state.matches.length > 1) {
-        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
-      }
+      state.matchIndex = getTabCycleIndex({
+        matches: state.matches,
+        matchIndex: state.matchIndex,
+        inputValue: input ? input.value : state.typed,
+        shiftKey: true,
+      });
 
       const match = state.matches[state.matchIndex];
       state.typed = match + ' ';

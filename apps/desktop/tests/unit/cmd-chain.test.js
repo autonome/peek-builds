@@ -1,319 +1,23 @@
 /**
- * Unit tests for command chaining/pipe system
+ * Unit tests for command chaining — matching a command to the previous step's
+ * output, and the two formats the files feature can convert a chain step into.
  *
- * Tests extracted pure functions from:
- * - extensions/cmd/panel.js: mimeTypeMatches, findChainingCommands,
- *   buildExecutionContext (chain context), isTextMimeType, chain state
- * - extensions/files/background.js: markdown formatter (heuristic converter)
+ * Exercises the shipping code:
+ * - renderer/cmd/panel-logic.js: mimeTypeMatches, findChainingCommands,
+ *   buildExecutionContext
+ * - features/files/formatters.js: jsonToCsv, formatAsMarkdown
  *
- * These are logic-only tests -- no DOM, no Electron, no extensions runtime.
+ * Run via: node --test tests/unit/cmd-chain.test.js
  */
-
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
-// ============================================================================
-// mimeTypeMatches (from extensions/cmd/panel.js)
-// ============================================================================
-
-/**
- * Check if a MIME pattern matches an actual MIME type.
- * Supports wildcards like *‌/‌* for any type, text/‌* for text subtypes.
- */
-function mimeTypeMatches(pattern: string | null, actual: string | null): boolean {
-  if (!pattern || !actual) return false;
-  if (pattern === '*/*' || pattern === actual) return true;
-
-  const [pType, pSub] = pattern.split('/');
-  const [aType, aSub] = actual.split('/');
-
-  // Wildcard subtype (e.g., "text/*" matches "text/plain")
-  return pSub === '*' && pType === aType;
-}
-
-// ============================================================================
-// isTextMimeType (from extensions/cmd/panel.js)
-// ============================================================================
-
-function isTextMimeType(mimeType: string | null): boolean {
-  if (!mimeType) return false;
-  return mimeType.startsWith('text/');
-}
-
-// ============================================================================
-// findChainingCommands (from extensions/cmd/panel.js)
-// ============================================================================
-
-interface CommandDef {
-  name: string;
-  description?: string;
-  accepts?: string[];
-  produces?: string[];
-}
-
-function findChainingCommands(commands: { [name: string]: CommandDef }, mimeType: string): CommandDef[] {
-  return Object.values(commands).filter(cmd => {
-    if (!cmd.accepts?.length) return false;
-    return cmd.accepts.some(acceptedType => mimeTypeMatches(acceptedType, mimeType));
-  });
-}
-
-// ============================================================================
-// buildExecutionContext (from extensions/cmd/panel.js)
-// ============================================================================
-
-interface ChainContext {
-  data: unknown;
-  mimeType: string;
-  title: string;
-  sourceCommand: string;
-}
-
-interface ExecutionContext {
-  typed: string;
-  name: string;
-  params: string[];
-  search: string | null;
-  input?: unknown;
-  inputMimeType?: string;
-  inputTitle?: string;
-  inputSource?: string;
-}
-
-function buildExecutionContext(
-  name: string,
-  typed: string,
-  chainMode: boolean,
-  chainContext: ChainContext | null
-): ExecutionContext {
-  const trimmed = typed.trim();
-  const rest = trimmed.startsWith(name) ? trimmed.slice(name.length).trim() : trimmed;
-  const params = rest.length > 0 ? rest.split(/\s+/) : [];
-  const search = rest.length > 0 ? rest : null;
-
-  const context: ExecutionContext = {
-    typed,
-    name,
-    params,
-    search,
-  };
-
-  // Add chain data if in chain mode
-  if (chainMode && chainContext) {
-    context.input = chainContext.data;
-    context.inputMimeType = chainContext.mimeType;
-    context.inputTitle = chainContext.title;
-    context.inputSource = chainContext.sourceCommand;
-  }
-
-  return context;
-}
-
-// ============================================================================
-// jsonToCsv (from extensions/files/background.js)
-// ============================================================================
-
-function jsonToCsv(data: unknown[]): string {
-  if (!Array.isArray(data) || data.length === 0) {
-    return '';
-  }
-
-  const keys = new Set<string>();
-  data.forEach(item => {
-    if (typeof item === 'object' && item !== null) {
-      Object.keys(item).forEach(key => keys.add(key));
-    }
-  });
-
-  const headers = Array.from(keys);
-
-  const escapeValue = (val: unknown): string => {
-    if (val === null || val === undefined) return '';
-    const str = String(val);
-    if (str.includes(',') || str.includes('\n') || str.includes('"')) {
-      return '"' + str.replace(/"/g, '""') + '"';
-    }
-    return str;
-  };
-
-  const lines: string[] = [];
-  lines.push(headers.map(escapeValue).join(','));
-
-  data.forEach(item => {
-    if (typeof item === 'object' && item !== null) {
-      const row = headers.map(header => escapeValue((item as Record<string, unknown>)[header]));
-      lines.push(row.join(','));
-    } else {
-      lines.push(escapeValue(item));
-    }
-  });
-
-  return lines.join('\n');
-}
-
-// ============================================================================
-// Markdown formatter (from extensions/files/background.js)
-// ============================================================================
-
-function formatAsMarkdown(
-  data: unknown,
-  inputTitle?: string
-): string {
-  let items: unknown[];
-
-  if (typeof data === 'string') {
-    try {
-      items = JSON.parse(data);
-    } catch (e) {
-      items = [{ content: data }];
-    }
-  } else if (Array.isArray(data)) {
-    items = data;
-  } else {
-    items = [data];
-  }
-
-  if (!Array.isArray(items)) {
-    items = [items];
-  }
-
-  // Fields to skip in metadata display (internal/noise)
-  const SKIP_FIELDS = new Set([
-    'id', '_id', '_rev',
-    'content',
-    '_tags', 'tags',
-    'metadata',
-    'createdAt', 'updatedAt', 'deletedAt', 'syncedAt',
-    'frecencyScore', 'visitCount', 'lastVisitAt',
-    '_sync', 'syncSource', 'sync_source',
-    'type',
-    'name', 'title',
-  ]);
-
-  // Detect common type across items
-  const types = new Set(items.map((item: any) => item?.type).filter(Boolean));
-  const commonType = types.size === 1 ? types.values().next().value : null;
-
-  // Detect common tags across items
-  let commonTags: string[] = [];
-  if (items.length > 0) {
-    const allTagSets = items.map((item: any) => new Set(item?._tags || []));
-    if (allTagSets.length > 0 && allTagSets[0].size > 0) {
-      commonTags = ([...allTagSets[0]] as string[]).filter((tag: string) =>
-        allTagSets.every(tagSet => tagSet.has(tag))
-      );
-    }
-  }
-
-  // Build document title
-  let docTitle: string;
-  if (inputTitle) {
-    docTitle = inputTitle;
-  } else if (commonType) {
-    const typeName = commonType.charAt(0).toUpperCase() + commonType.slice(1) + 's';
-    docTitle = typeName;
-    if (commonTags.length > 0) {
-      docTitle += ' ' + commonTags.map((t: string) => '#' + t).join(' ');
-    }
-  } else {
-    docTitle = 'Export';
-  }
-
-  const lines: string[] = [];
-  lines.push(`# ${docTitle}`);
-  lines.push('');
-
-  items.forEach((item: any, index: number) => {
-    if (typeof item !== 'object' || item === null) {
-      lines.push(`- ${String(item)}`);
-      lines.push('');
-      return;
-    }
-
-    // Extract heading from item
-    const content = item.content || '';
-    const contentLines = content.split('\n');
-    let heading = (contentLines[0] || '').replace(/^#+\s*/, '').trim();
-    if (!heading) {
-      heading = item.name || item.title || `Item ${index + 1}`;
-    }
-    if (heading.length > 80) {
-      heading = heading.substring(0, 77) + '...';
-    }
-
-    lines.push(`## ${heading}`);
-
-    // Show tags (filter out common tags to reduce noise)
-    const tags = item._tags || [];
-    const uniqueTags = tags.filter((t: string) => !commonTags.includes(t));
-    if (uniqueTags.length > 0) {
-      lines.push(`- Tags: ${uniqueTags.map((t: string) => '#' + t).join(', ')}`);
-    } else if (tags.length > 0 && commonTags.length === 0) {
-      lines.push(`- Tags: ${tags.map((t: string) => '#' + t).join(', ')}`);
-    }
-
-    // Show date
-    if (item.createdAt) {
-      const date = new Date(item.createdAt);
-      if (!isNaN(date.getTime())) {
-        lines.push(`- Created: ${date.toLocaleDateString()}`);
-      }
-    }
-
-    // Show metadata fields
-    if (item.metadata) {
-      try {
-        const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-        if (typeof meta === 'object' && meta !== null) {
-          for (const [key, value] of Object.entries(meta)) {
-            if (SKIP_FIELDS.has(key) || key.startsWith('_')) continue;
-            if (value === null || value === undefined || value === '') continue;
-            const displayVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
-            if (displayVal.length > 200) continue;
-            lines.push(`- ${key}: ${displayVal}`);
-          }
-        }
-      } catch (e) {
-        // Not valid JSON metadata, skip
-      }
-    }
-
-    // Show non-standard fields that aren't in the skip list
-    for (const [key, value] of Object.entries(item)) {
-      if (SKIP_FIELDS.has(key) || key.startsWith('_')) continue;
-      if (value === null || value === undefined || value === '') continue;
-      if (typeof value === 'object') continue;
-      const displayVal = String(value);
-      if (displayVal.length > 200) continue;
-      lines.push(`- ${key}: ${displayVal}`);
-    }
-
-    lines.push('');
-
-    // Show content body (skip first line if used as heading)
-    const isContentHeading = heading === contentLines[0]?.replace(/^#+\s*/, '').trim();
-    const body = isContentHeading
-      ? contentLines.slice(1).join('\n').trim()
-      : content.trim();
-
-    if (body) {
-      lines.push(body);
-      lines.push('');
-    }
-
-    // Separator between items (skip after last item)
-    if (index < items.length - 1) {
-      lines.push('---');
-      lines.push('');
-    }
-  });
-
-  return lines.join('\n');
-}
-
-// ============================================================================
-// Tests: MIME Type Matching
-// ============================================================================
+import {
+  mimeTypeMatches,
+  findChainingCommands,
+  buildExecutionContext,
+} from '../../renderer/cmd/panel-logic.js';
+import { jsonToCsv, formatAsMarkdown } from '../../features/files/formatters.js';
 
 describe('Command Chain -- mimeTypeMatches', () => {
   it('exact match returns true', () => {
@@ -357,41 +61,8 @@ describe('Command Chain -- mimeTypeMatches', () => {
   });
 });
 
-// ============================================================================
-// Tests: isTextMimeType
-// ============================================================================
-
-describe('Command Chain -- isTextMimeType', () => {
-  it('text/ prefix is text', () => {
-    assert.strictEqual(isTextMimeType('text/plain'), true);
-    assert.strictEqual(isTextMimeType('text/markdown'), true);
-    assert.strictEqual(isTextMimeType('text/csv'), true);
-    assert.strictEqual(isTextMimeType('text/html'), true);
-  });
-
-  it('application/json is not text', () => {
-    assert.strictEqual(isTextMimeType('application/json'), false);
-  });
-
-  it('image types are not text', () => {
-    assert.strictEqual(isTextMimeType('image/png'), false);
-  });
-
-  it('null returns false', () => {
-    assert.strictEqual(isTextMimeType(null), false);
-  });
-
-  it('empty string returns false', () => {
-    assert.strictEqual(isTextMimeType(''), false);
-  });
-});
-
-// ============================================================================
-// Tests: findChainingCommands
-// ============================================================================
-
 describe('Command Chain -- findChainingCommands', () => {
-  const commands: { [name: string]: CommandDef } = {
+  const commands = {
     'csv': {
       name: 'csv',
       description: 'Convert JSON to CSV',
@@ -471,7 +142,7 @@ describe('Command Chain -- findChainingCommands', () => {
 
   it('returns empty array for unknown mime type with no wildcard commands', () => {
     // Remove wildcard command to test pure matching
-    const noWildcard: { [name: string]: CommandDef } = {
+    const noWildcard = {
       'csv': commands['csv'],
       'markdown': commands['markdown'],
     };
@@ -487,13 +158,9 @@ describe('Command Chain -- findChainingCommands', () => {
   });
 });
 
-// ============================================================================
-// Tests: buildExecutionContext
-// ============================================================================
-
 describe('Command Chain -- buildExecutionContext', () => {
   it('builds basic context without chain data', () => {
-    const ctx = buildExecutionContext('csv', 'csv', false, null);
+    const ctx = buildExecutionContext('csv', 'csv', 'csv', null);
     assert.strictEqual(ctx.typed, 'csv');
     assert.strictEqual(ctx.name, 'csv');
     assert.deepStrictEqual(ctx.params, []);
@@ -502,22 +169,49 @@ describe('Command Chain -- buildExecutionContext', () => {
     assert.strictEqual(ctx.inputMimeType, undefined);
   });
 
+  it('carries the live input field value through as "value"', () => {
+    // The panel reads the input element; handlers that need the raw text use it
+    // rather than re-deriving it from the matched command name.
+    const ctx = buildExecutionContext('save', 'save out.csv', 'save out.csv ', null);
+    assert.strictEqual(ctx.value, 'save out.csv ');
+  });
+
   it('extracts parameters from typed text', () => {
-    const ctx = buildExecutionContext('save', 'save output.csv', false, null);
+    const ctx = buildExecutionContext('save', 'save output.csv', 'save output.csv', null);
     assert.strictEqual(ctx.name, 'save');
     assert.deepStrictEqual(ctx.params, ['output.csv']);
     assert.strictEqual(ctx.search, 'output.csv');
   });
 
-  it('includes chain context when in chain mode', () => {
-    const chainContext: ChainContext = {
+  it('matches the command name case-insensitively', () => {
+    const ctx = buildExecutionContext('save', 'SAVE output.csv', 'SAVE output.csv', null);
+    assert.deepStrictEqual(ctx.params, ['output.csv']);
+    assert.strictEqual(ctx.search, 'output.csv');
+  });
+
+  it('strips a partially typed command name off the parameters', () => {
+    // Enter on a highlighted match runs the full command while the input still
+    // holds the abbreviation the user typed.
+    const ctx = buildExecutionContext('save as note', 'sav my text', 'sav my text', null);
+    assert.deepStrictEqual(ctx.params, ['my', 'text']);
+    assert.strictEqual(ctx.search, 'my text');
+  });
+
+  it('keeps the whole text as parameters when it is not the command name', () => {
+    const ctx = buildExecutionContext('save', 'zzz output.csv', 'zzz output.csv', null);
+    assert.deepStrictEqual(ctx.params, ['zzz', 'output.csv']);
+    assert.strictEqual(ctx.search, 'zzz output.csv');
+  });
+
+  it('includes chain context when chaining', () => {
+    const chainContext = {
       data: [{ id: '1', content: 'hello' }],
       mimeType: 'application/json',
       title: 'Notes',
       sourceCommand: 'list notes',
     };
 
-    const ctx = buildExecutionContext('csv', 'csv', true, chainContext);
+    const ctx = buildExecutionContext('csv', 'csv', 'csv', chainContext);
     assert.strictEqual(ctx.name, 'csv');
     assert.deepStrictEqual(ctx.input, chainContext.data);
     assert.strictEqual(ctx.inputMimeType, 'application/json');
@@ -525,111 +219,21 @@ describe('Command Chain -- buildExecutionContext', () => {
     assert.strictEqual(ctx.inputSource, 'list notes');
   });
 
-  it('does not include chain data when chainMode is false', () => {
-    const chainContext: ChainContext = {
-      data: 'some data',
-      mimeType: 'text/plain',
-      title: 'Test',
-      sourceCommand: 'test',
-    };
-
-    const ctx = buildExecutionContext('save', 'save', false, chainContext);
-    assert.strictEqual(ctx.input, undefined);
-    assert.strictEqual(ctx.inputMimeType, undefined);
-  });
-
-  it('does not include chain data when chainContext is null', () => {
-    const ctx = buildExecutionContext('save', 'save', true, null);
+  it('omits chain data when the caller is not chaining', () => {
+    // The panel passes no chain context unless it is in chain or executing
+    // state, so a leftover chain step cannot leak into a plain invocation.
+    const ctx = buildExecutionContext('save', 'save', 'save', null);
     assert.strictEqual(ctx.input, undefined);
     assert.strictEqual(ctx.inputMimeType, undefined);
   });
 
   it('handles command with multiple parameters', () => {
-    const ctx = buildExecutionContext('save', 'save my-file.md --force', false, null);
+    const typed = 'save my-file.md --force';
+    const ctx = buildExecutionContext('save', typed, typed, null);
     assert.deepStrictEqual(ctx.params, ['my-file.md', '--force']);
     assert.strictEqual(ctx.search, 'my-file.md --force');
   });
 });
-
-// ============================================================================
-// Tests: Chain State Tracking
-// ============================================================================
-
-describe('Command Chain -- chain state tracking', () => {
-  it('chain stack records step history', () => {
-    const chainStack: ChainContext[] = [];
-
-    // Step 1: list notes produces JSON
-    const step1: ChainContext = {
-      data: [{ id: '1', content: 'note 1' }, { id: '2', content: 'note 2' }],
-      mimeType: 'application/json',
-      title: 'Notes #todo',
-      sourceCommand: 'list notes',
-    };
-    chainStack.push({ ...step1 });
-
-    assert.strictEqual(chainStack.length, 1);
-    assert.strictEqual(chainStack[0].sourceCommand, 'list notes');
-
-    // Step 2: markdown converts JSON to markdown
-    const step2: ChainContext = {
-      data: '# Notes\n\n## note 1\n\n## note 2\n',
-      mimeType: 'text/markdown',
-      title: 'Notes #todo',
-      sourceCommand: 'markdown',
-    };
-    chainStack.push({ ...step2 });
-
-    assert.strictEqual(chainStack.length, 2);
-    assert.strictEqual(chainStack[1].mimeType, 'text/markdown');
-    assert.strictEqual(chainStack[1].sourceCommand, 'markdown');
-  });
-
-  it('chain undo pops the last step', () => {
-    const chainStack: ChainContext[] = [];
-
-    chainStack.push({
-      data: [{ id: '1' }],
-      mimeType: 'application/json',
-      title: 'Notes',
-      sourceCommand: 'list notes',
-    });
-    chainStack.push({
-      data: '# Notes\n...',
-      mimeType: 'text/markdown',
-      title: 'Notes',
-      sourceCommand: 'markdown',
-    });
-
-    assert.strictEqual(chainStack.length, 2);
-
-    // Undo: pop current, restore previous
-    chainStack.pop();
-    const restored = chainStack[chainStack.length - 1];
-
-    assert.strictEqual(chainStack.length, 1);
-    assert.strictEqual(restored.mimeType, 'application/json');
-    assert.strictEqual(restored.sourceCommand, 'list notes');
-  });
-
-  it('undo exits chain mode when stack has one item', () => {
-    const chainStack: ChainContext[] = [];
-
-    chainStack.push({
-      data: [{ id: '1' }],
-      mimeType: 'application/json',
-      title: 'Notes',
-      sourceCommand: 'list notes',
-    });
-
-    // When stack has <= 1 item, undo should exit chain mode
-    assert.ok(chainStack.length <= 1, 'Stack with one item should signal exit');
-  });
-});
-
-// ============================================================================
-// Tests: jsonToCsv
-// ============================================================================
 
 describe('Command Chain -- jsonToCsv', () => {
   it('converts array of objects to CSV', () => {
@@ -686,10 +290,6 @@ describe('Command Chain -- jsonToCsv', () => {
   });
 });
 
-// ============================================================================
-// Tests: Markdown Formatter
-// ============================================================================
-
 describe('Command Chain -- markdown formatter', () => {
   it('formats a list of notes with tags into markdown', () => {
     const notes = [
@@ -707,7 +307,7 @@ describe('Command Chain -- markdown formatter', () => {
       },
     ];
 
-    const md = formatAsMarkdown(notes);
+    const { markdown: md } = formatAsMarkdown(notes);
 
     // H1 with type + common tags
     assert.ok(md.startsWith('# Texts #todo'), 'Should start with H1 containing type and common tag');
@@ -731,6 +331,12 @@ describe('Command Chain -- markdown formatter', () => {
     assert.ok(md.includes('---'), 'Should have separator between items');
   });
 
+  it('reports the document title alongside the markdown', () => {
+    // The command passes this back as the chain output's title.
+    const { docTitle } = formatAsMarkdown([{ type: 'text', content: 'x', _tags: ['todo'] }]);
+    assert.strictEqual(docTitle, 'Texts #todo');
+  });
+
   it('handles single item (not a list)', () => {
     const item = {
       type: 'text',
@@ -738,7 +344,7 @@ describe('Command Chain -- markdown formatter', () => {
       _tags: ['idea'],
     };
 
-    const md = formatAsMarkdown(item);
+    const { markdown: md } = formatAsMarkdown(item);
 
     assert.ok(md.startsWith('# Texts'), 'Should have H1 with type');
     assert.ok(md.includes('## Solo note'), 'Should have H2 for the item');
@@ -752,7 +358,7 @@ describe('Command Chain -- markdown formatter', () => {
       { type: 'url', name: 'GitHub', url: 'https://github.com' },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     // Should use name for heading when content is empty
     assert.ok(md.includes('## Example Site'), 'Should use name as heading');
@@ -764,7 +370,7 @@ describe('Command Chain -- markdown formatter', () => {
   });
 
   it('handles empty input (empty array)', () => {
-    const md = formatAsMarkdown([]);
+    const { markdown: md } = formatAsMarkdown([]);
 
     // Should still have a title
     assert.ok(md.startsWith('# Export'), 'Empty array without type should use "Export"');
@@ -786,7 +392,7 @@ describe('Command Chain -- markdown formatter', () => {
       },
     ];
 
-    const md = formatAsMarkdown(notes);
+    const { markdown: md } = formatAsMarkdown(notes);
     const lines = md.split('\n');
 
     // First line should be H1
@@ -806,8 +412,9 @@ describe('Command Chain -- markdown formatter', () => {
   });
 
   it('uses inputTitle when provided', () => {
-    const md = formatAsMarkdown([{ content: 'test' }], 'My Custom Title');
+    const { markdown: md, docTitle } = formatAsMarkdown([{ content: 'test' }], 'My Custom Title');
     assert.ok(md.startsWith('# My Custom Title'), 'Should use provided inputTitle');
+    assert.strictEqual(docTitle, 'My Custom Title');
   });
 
   it('handles items with metadata JSON field', () => {
@@ -819,7 +426,7 @@ describe('Command Chain -- markdown formatter', () => {
       },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     assert.ok(md.includes('- source: clipboard'), 'Should display metadata fields');
     assert.ok(md.includes('- priority: high'), 'Should display metadata fields');
@@ -835,7 +442,7 @@ describe('Command Chain -- markdown formatter', () => {
       },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     assert.ok(md.includes('- source: web'), 'Should display metadata object fields');
     assert.ok(md.includes('- priority: low'), 'Should display metadata object fields');
@@ -845,18 +452,18 @@ describe('Command Chain -- markdown formatter', () => {
     const longHeading = 'A'.repeat(100);
     const items = [{ content: longHeading }];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
     const h2Line = md.split('\n').find(l => l.startsWith('## '));
 
     assert.ok(h2Line, 'Should have an H2 line');
     // 3 for "## " prefix + 77 for truncated heading + 3 for "..."
-    assert.ok(h2Line!.length <= 83, 'Heading should be truncated');
-    assert.ok(h2Line!.includes('...'), 'Truncated heading should end with ...');
+    assert.ok(h2Line.length <= 83, 'Heading should be truncated');
+    assert.ok(h2Line.includes('...'), 'Truncated heading should end with ...');
   });
 
   it('strips markdown heading prefix from content first line', () => {
     const items = [{ content: '## My Heading\nBody text' }];
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     // The heading should be "My Heading" (stripped of ##)
     assert.ok(md.includes('## My Heading'), 'Should strip content heading markers');
@@ -866,7 +473,7 @@ describe('Command Chain -- markdown formatter', () => {
 
   it('handles primitive array items', () => {
     const items = ['string item 1', 'string item 2'];
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     assert.ok(md.includes('- string item 1'), 'Should render primitives as list items');
     assert.ok(md.includes('- string item 2'), 'Should render primitives as list items');
@@ -889,7 +496,7 @@ describe('Command Chain -- markdown formatter', () => {
       },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     // None of the skip fields should appear as metadata bullets
     assert.ok(!md.includes('- id:'), 'Should skip id field');
@@ -908,7 +515,7 @@ describe('Command Chain -- markdown formatter', () => {
       { type: 'text', content: 'Note B', _tags: ['shared', 'unique-b'] },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     // "shared" should be in the H1 title, not in individual items
     assert.ok(md.includes('# Texts #shared'), 'Common tag should be in title');
@@ -928,7 +535,7 @@ describe('Command Chain -- markdown formatter', () => {
       { type: 'url', content: 'https://example.com' },
     ];
 
-    const md = formatAsMarkdown(items);
+    const { markdown: md } = formatAsMarkdown(items);
 
     // No common type, should use "Export" as title
     assert.ok(md.startsWith('# Export'), 'Mixed types should use "Export" title');
@@ -939,14 +546,14 @@ describe('Command Chain -- markdown formatter', () => {
       { type: 'text', content: 'Parsed from string', _tags: ['test'] },
     ]);
 
-    const md = formatAsMarkdown(jsonStr);
+    const { markdown: md } = formatAsMarkdown(jsonStr);
 
     assert.ok(md.includes('## Parsed from string'), 'Should parse JSON string input');
   });
 
   it('handles non-JSON string as single item with content', () => {
     const plainText = 'Just a plain text string, not JSON';
-    const md = formatAsMarkdown(plainText);
+    const { markdown: md } = formatAsMarkdown(plainText);
 
     assert.ok(md.includes(plainText), 'Should include the plain text as content');
   });
