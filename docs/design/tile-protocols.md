@@ -23,6 +23,11 @@ Status: proposal under review. Nothing here is built.
 - **The manifest `protocols` field ships now (2026-10-20).** Peek reads it whether or not MASL
   adopts it, and declines to open a tile missing a `required` protocol, saying which, instead of
   letting it fail partway. A later rename to match the spec touches only Peek's own manifests.
+- **Events split three ways and queue until ready (2026-10-20).** Lifecycle maps to
+  `visibilitychange` and `pagehide` once a test confirms Electron fires them for Peek's hide, show
+  and close; data events are protocol-module handlers; Peek-only hooks are protocols. The
+  host-side registration holds each tile's events until that tile's protocol signals ready, so a
+  lazy tile cannot miss the event that woke it. The added latency is unmeasured.
 
 ## Problem
 
