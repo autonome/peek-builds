@@ -21,20 +21,31 @@ import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
 import { labels } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
+import {
+  isWebUrl,
+  parseTagMetadata,
+  isGroupTag,
+  normalizeUrlForCompare,
+  deduplicateByUrl,
+  filterGroups as filterGroupsBy,
+  filterAddresses as filterAddressesBy,
+  sortGroups as sortGroupsBy,
+  sortAddresses as sortAddressesBy,
+  annotatePinnedFirst,
+  addPinnedId,
+  removePinnedId,
+  resolveCurrentGroup as resolveCurrentGroupWith,
+  closeGroup as closeGroupWith,
+  restoreGroup as restoreGroupWith,
+  switchGroup as switchGroupWith,
+  highlightActiveGroup,
+  formatGroupsTitle
+} from './group-logic.js';
 
 const api = window.app;
 
 // Tag action rules cache for rendering affordances on address cards
 let actionRulesCache = null;
-
-/**
- * Check if a URL is a navigable web URL (http/https only)
- * Excludes peek:// and other internal URLs
- */
-const isWebUrl = (url) => {
-  if (!url) return false;
-  return url.startsWith('http://') || url.startsWith('https://');
-};
 
 // View states
 const VIEW_GROUPS = 'groups';
@@ -81,27 +92,6 @@ let state = {
 
 // Expose state for debugging in tests
 window._groupsState = state;
-
-/**
- * Parse tag metadata JSON safely
- */
-const parseTagMetadata = (tag) => {
-  if (!tag.metadata) return {};
-  if (typeof tag.metadata === 'object') return tag.metadata;
-  try {
-    return JSON.parse(tag.metadata);
-  } catch {
-    return {};
-  }
-};
-
-/**
- * Check if a tag is promoted to a group (has isGroup: true in metadata)
- */
-const isGroupTag = (tag) => {
-  const meta = parseTagMetadata(tag);
-  return meta.isGroup === true;
-};
 
 /**
  * Promote a tag to a group by setting isGroup: true in its metadata
@@ -229,55 +219,12 @@ const updateToolbarSortOptions = () => {
 /**
  * Sort groups by current view preferences
  */
-const sortGroups = (groups) => {
-  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
-  return groups.sort((a, b) => {
-    switch (viewPrefs.sortBy) {
-      case 'name':
-        return dir * (a.name || '').localeCompare(b.name || '');
-      case 'count': {
-        const ca = a.isSpecial ? (a.frequency || 0) : (a.addressCount || 0);
-        const cb = b.isSpecial ? (b.frequency || 0) : (b.addressCount || 0);
-        return dir * (ca - cb);
-      }
-      case 'recent': {
-        const ra = a.updatedAt || a.createdAt || 0;
-        const rb = b.updatedAt || b.createdAt || 0;
-        return dir * (ra - rb);
-      }
-      default:
-        return 0;
-    }
-  });
-};
+const sortGroups = (groups) => sortGroupsBy(groups, viewPrefs.sortBy, viewPrefs.sortDirection);
 
 /**
  * Sort addresses by current view preferences
  */
-const sortAddresses = (addresses) => {
-  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
-  return addresses.sort((a, b) => {
-    switch (viewPrefs.sortBy) {
-      case 'name': {
-        const na = (a.title || a.uri || a.content || '').toLowerCase();
-        const nb = (b.title || b.uri || b.content || '').toLowerCase();
-        return dir * na.localeCompare(nb);
-      }
-      case 'count': {
-        const ca = a.visitCount || 0;
-        const cb = b.visitCount || 0;
-        return dir * (ca - cb);
-      }
-      case 'recent': {
-        const ra = a.updatedAt || a.createdAt || 0;
-        const rb = b.updatedAt || b.createdAt || 0;
-        return dir * (ra - rb);
-      }
-      default:
-        return 0;
-    }
-  });
-};
+const sortAddresses = (addresses) => sortAddressesBy(addresses, viewPrefs.sortBy, viewPrefs.sortDirection);
 
 /**
  * Set up create group UI (button, form, submit/cancel)
@@ -354,12 +301,21 @@ const bgAddress = 'peek://groups/home.html';
 // Track the groups window ID for mode cleanup (from bg-initiated opens)
 let groupsWindowId = null;
 
-// Track the current active group context (bulk-open path)
-let activeGroupId = null;
-let activeGroupName = null;
+// Track the current active group context (bulk-open path). Held in one object
+// so group-logic.js can update it in place.
+const groupState = { activeGroupId: null, activeGroupName: null };
 
 // Track suspended (hidden) group windows: groupId -> [windowId, ...]
 const suspendedGroups = new Map();
+
+// What group-logic.js needs from this renderer. `openGroup` is read through a
+// getter because it is defined further down the file than the first use.
+const groupDeps = {
+  api,
+  groupState,
+  suspendedGroups,
+  get openGroup() { return openGroup; }
+};
 
 let isOpeningGroups = false;
 const openGroupsWindow = async () => {
@@ -412,115 +368,19 @@ const exitGroupMode = async (groupId) => {
 };
 
 /** Resolve current group from active context or last focused window */
-const resolveCurrentGroup = async () => {
-  if (activeGroupId) {
-    return { groupId: activeGroupId, groupName: activeGroupName };
-  }
-  try {
-    const targetWindowId = await api.window.getFocusedVisibleWindowId();
-    if (targetWindowId) {
-      const modeResult = await api.context.get('mode', targetWindowId);
-      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
-        return {
-          groupId: modeResult.data.metadata.groupId,
-          groupName: modeResult.data.metadata.groupName || ''
-        };
-      }
-    }
-  } catch {
-  }
-  return null;
-};
+const resolveCurrentGroup = () =>
+  resolveCurrentGroupWith(api, groupState.activeGroupId, groupState.activeGroupName);
 
 /** Close (suspend) a group — hide all windows in the group context */
-const closeGroup = async (groupId = null, groupName = null) => {
-  if (!groupId) {
-    const current = await resolveCurrentGroup();
-    if (current) { groupId = current.groupId; groupName = current.groupName; }
-  }
-  if (!groupId) return { success: false, error: 'No active group to close' };
-
-  try {
-    await api.session.saveWorkspaceSnapshot(groupId);
-  } catch {
-  }
-
-  const result = await api.context.getWindowsInSpace(groupId);
-  if (!result.success || !result.data || result.data.length === 0) {
-    return { success: false, error: 'No windows found in group' };
-  }
-
-  const windowIds = result.data;
-  const hiddenIds = [];
-  for (const windowId of windowIds) {
-    try {
-      await api.window.hide(windowId);
-      hiddenIds.push(windowId);
-    } catch {
-    }
-  }
-  suspendedGroups.set(groupId, hiddenIds);
-
-  if (activeGroupId === groupId) {
-    activeGroupId = null;
-    activeGroupName = null;
-  }
-
-  console.log(`[ext:groups] Closed group "${groupName || groupId}": hid ${hiddenIds.length} window(s)`);
-  return { success: true, count: hiddenIds.length, groupId, groupName };
-};
+const closeGroup = (groupId = null, groupName = null) =>
+  closeGroupWith(groupDeps, groupId, groupName);
 
 /** Restore a suspended group — show all hidden windows */
-const restoreGroup = async (groupId, groupName = null) => {
-  const hiddenIds = suspendedGroups.get(groupId);
-  if (!hiddenIds || hiddenIds.length === 0) {
-    if (groupName) return openGroup(groupName);
-    return { success: false, error: 'Group not suspended and no name to open' };
-  }
-
-  let restoredCount = 0;
-  const failedIds = [];
-  for (const windowId of hiddenIds) {
-    try {
-      const exists = await api.window.exists(windowId);
-      if (exists?.exists) {
-        await api.window.show(windowId);
-        restoredCount++;
-      } else {
-        failedIds.push(windowId);
-      }
-    } catch {
-      failedIds.push(windowId);
-    }
-  }
-  suspendedGroups.delete(groupId);
-
-  if (failedIds.length > 0 && groupName) {
-    console.log(`[ext:groups] ${failedIds.length} windows destroyed while suspended, re-opening group`);
-    return openGroup(groupName);
-  }
-
-  activeGroupId = groupId;
-  activeGroupName = groupName;
-  console.log(`[ext:groups] Restored group "${groupName || groupId}": showed ${restoredCount} window(s)`);
-  return { success: true, count: restoredCount };
-};
+const restoreGroup = (groupId, groupName = null) =>
+  restoreGroupWith(groupDeps, groupId, groupName);
 
 /** Switch from current group to target group */
-const switchGroup = async (targetGroupName) => {
-  if (!targetGroupName) return { success: false, error: 'Usage: switch group <name>' };
-  const tagsResult = await api.datastore.getTagsByFrecency();
-  if (!tagsResult.success) return { success: false, error: 'Failed to get tags' };
-  const targetTag = tagsResult.data.find(t => t.name.toLowerCase() === targetGroupName.toLowerCase());
-  if (!targetTag) return { success: false, error: `Group "${targetGroupName}" not found` };
-  const current = await resolveCurrentGroup();
-  if (current && current.groupId !== targetTag.id) {
-    await closeGroup(current.groupId, current.groupName);
-  }
-  const result = await restoreGroup(targetTag.id, targetTag.name);
-  console.log(`[ext:groups] Switched to group "${targetGroupName}"`);
-  return result;
-};
+const switchGroup = (targetGroupName) => switchGroupWith(groupDeps, targetGroupName);
 
 // ===== Pins =====
 
@@ -542,8 +402,6 @@ const savePinnedItems = async (groupId, pinnedItemIds) => {
     console.error('[ext:groups] Failed to save pins:', err);
   }
 };
-
-// Note: normalizeUrlForCompare already defined in home.js (line ~519) — reused below.
 
 const getOrCreateUrlItem = async (url, title = '') => {
   const result = await api.datastore.findUrlItem(url);
@@ -569,8 +427,7 @@ const pinItem = async (url, groupId = null) => {
   if (!item) return { success: false, error: 'Failed to find or create item for URL' };
 
   const pins = await getPinnedItems(groupId);
-  if (!pins.includes(item.id)) {
-    pins.push(item.id);
+  if (addPinnedId(pins, item.id)) {
     await savePinnedItems(groupId, pins);
   }
 
@@ -591,9 +448,7 @@ const unpinItem = async (url, groupId = null) => {
   if (!item) return { success: false, error: 'Item not found' };
 
   const pins = await getPinnedItems(groupId);
-  const idx = pins.indexOf(item.id);
-  if (idx !== -1) {
-    pins.splice(idx, 1);
+  if (removePinnedId(pins, item.id)) {
     await savePinnedItems(groupId, pins);
   }
 
@@ -705,8 +560,8 @@ const openGroup = async (groupName) => {
   const pinnedItemIds = await getPinnedItems(tag.id);
   const pinnedSet = new Set(pinnedItemIds);
 
-  activeGroupId = tag.id;
-  activeGroupName = tag.name;
+  groupState.activeGroupId = tag.id;
+  groupState.activeGroupName = tag.name;
 
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
@@ -788,20 +643,11 @@ const initCommands = () => {
         filtered = filtered.filter(g => g.name.toLowerCase().includes(s));
       }
 
-      if (current) {
-        const activeIdx = filtered.findIndex(g => g.id === current.groupId);
-        if (activeIdx > 0) {
-          const [active] = filtered.splice(activeIdx, 1);
-          active.name = `${active.name} (active)`;
-          filtered.unshift(active);
-        }
-      }
+      filtered = highlightActiveGroup(filtered, current);
 
       if (filtered.length === 0) return { output: 'No groups found.', mimeType: 'text/plain' };
 
-      const title = current
-        ? `Groups (${filtered.length}) [scope: ${current.groupName}]`
-        : `Groups (${filtered.length})`;
+      const title = formatGroupsTitle(filtered.length, current);
 
       return {
         success: true,
@@ -1028,38 +874,6 @@ const loadTags = async () => {
 };
 
 /**
- * Normalize a URL for deduplication comparison
- */
-const normalizeUrlForCompare = (url) => {
-  try {
-    const u = new URL(url);
-    let normalized = u.protocol + '//' + u.hostname.toLowerCase();
-    if (u.port && u.port !== '80' && u.port !== '443') normalized += ':' + u.port;
-    let path = u.pathname;
-    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
-    normalized += path + u.search + u.hash;
-    return normalized;
-  } catch {
-    return url;
-  }
-};
-
-/**
- * Deduplicate items by URL content, keeping the most recently updated one
- */
-const deduplicateByUrl = (items) => {
-  const seen = new Map();
-  for (const item of items) {
-    const normalized = normalizeUrlForCompare(item.content);
-    const existing = seen.get(normalized);
-    if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
-      seen.set(normalized, item);
-    }
-  }
-  return Array.from(seen.values());
-};
-
-/**
  * Load URL items for a specific tag (only http/https URLs)
  */
 const loadAddressesForTag = async (tagId) => {
@@ -1075,13 +889,7 @@ const loadAddressesForTag = async (tagId) => {
     try {
       const pinsResult = await api.settings.get(`pins:${tagId}`);
       if (!pinsResult.error && Array.isArray(pinsResult.value)) {
-        const pinnedSet = new Set(pinsResult.value);
-        addresses = addresses.map(addr => ({
-          ...addr,
-          _pinned: pinnedSet.has(addr.id)
-        }));
-        // Sort pinned items first
-        addresses.sort((a, b) => (b._pinned ? 1 : 0) - (a._pinned ? 1 : 0));
+        addresses = annotatePinnedFirst(addresses, pinsResult.value);
       }
     } catch {
     }
@@ -1096,25 +904,13 @@ const loadAddressesForTag = async (tagId) => {
 /**
  * Filter groups by search query
  */
-const filterGroups = (groups) => {
-  if (!state.searchQuery) return groups;
-  const q = state.searchQuery.toLowerCase();
-  return groups.filter(tag => tag.name.toLowerCase().includes(q));
-};
+const filterGroups = (groups) => filterGroupsBy(groups, state.searchQuery);
 
 /**
  * Filter addresses by search query (title or URL)
  * Handles both Address (uri) and Item (content) objects
  */
-const filterAddresses = (addresses) => {
-  if (!state.searchQuery) return addresses;
-  const q = state.searchQuery.toLowerCase();
-  return addresses.filter(addr => {
-    const url = addr.uri || addr.content || '';
-    return (addr.title || '').toLowerCase().includes(q) ||
-      url.toLowerCase().includes(q);
-  });
-};
+const filterAddresses = (addresses) => filterAddressesBy(addresses, state.searchQuery);
 
 /**
  * Create inline sort controls (dropdown + direction toggle) and append to a container.
