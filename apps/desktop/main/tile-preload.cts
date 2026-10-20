@@ -2972,10 +2972,12 @@ __preloadMark('preload-done');
   // when screen position changed by more than window position did; that click
   // is swallowed.
   const WINDOW_MOVED_PX = 3;
-  let pressScreenX = 0, pressScreenY = 0, pressClientX = 0, pressClientY = 0;
+  const HOLD_LOG_MS = 500;
+  let pressScreenX = 0, pressScreenY = 0, pressClientX = 0, pressClientY = 0, pressAt = 0;
 
   window.addEventListener('mousedown', (e: MouseEvent) => {
     if (e.button !== 0) return;
+    pressAt = performance.now();
     pressScreenX = e.screenX; pressScreenY = e.screenY;
     pressClientX = e.clientX; pressClientY = e.clientY;
     if (pressBlocked(e)) ipcRenderer.send(PRESS_BLOCKED);
@@ -2985,7 +2987,14 @@ __preloadMark('preload-done');
     if (e.button !== 0) return;
     const windowDx = (e.screenX - pressScreenX) - (e.clientX - pressClientX);
     const windowDy = (e.screenY - pressScreenY) - (e.clientY - pressClientY);
-    if (Math.abs(windowDx) > WINDOW_MOVED_PX || Math.abs(windowDy) > WINDOW_MOVED_PX) {
+    const moved = Math.abs(windowDx) > WINDOW_MOVED_PX || Math.abs(windowDy) > WINDOW_MOVED_PX;
+    // A click ending a press long enough to have been a hold: what the guard
+    // saw, for a live check of the click guard.
+    if (performance.now() - pressAt > HOLD_LOG_MS) {
+      console.log(`[window-drag] click after a held press windowDx=${windowDx} windowDy=${windowDy} swallowed=${moved}`);
+    }
+    if (moved) {
+      // The window moved under the pointer: this click ends a window drag.
       e.stopImmediatePropagation();
       e.preventDefault();
       return;

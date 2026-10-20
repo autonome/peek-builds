@@ -6,6 +6,7 @@
 import { stepWindowDrag, initialDragState } from './window-drag.js';
 import type { DragCursor, DragEffect, DragEvent, DragRect, DragState } from './window-drag.js';
 import { windowById } from './window-kernel.js';
+import { wmLog } from './window-diag.js';
 import type { State, WindowId } from './window-kernel.js';
 
 export interface WindowDragDeps {
@@ -111,13 +112,19 @@ function run(effect: DragEffect<WindowId>): void {
 function onHoldElapsed(): void {
   holdTimer = null;
   if (!deps || state.phase !== 'pending') return;
-  dispatch({ type: 'holdElapsed', bounds: deps.movableBounds(state.target) });
+  const bounds = deps.movableBounds(state.target);
+  wmLog('window-drag-hold', { target: state.target, movable: bounds !== null });
+  dispatch({ type: 'holdElapsed', bounds });
 }
 
 export function windowDragPointer(source: WindowId, event: WindowPointerEvent): void {
   if (!deps) return;
   if (event.type === 'press') {
-    const target = preClaimed.has(source) ? null : deps.resolveTarget(source);
+    const claimed = preClaimed.has(source);
+    const target = claimed ? null : deps.resolveTarget(source);
+    // One line per press: whether a press reached this runtime at all is the
+    // first question a live check of the gesture asks.
+    wmLog('window-drag-press', { source, target, claimed });
     dispatch({ type: 'press', source, target, x: event.x, y: event.y, holdMs: deps.holdMs() });
     return;
   }
@@ -129,6 +136,7 @@ export function windowDragPointer(source: WindowId, event: WindowPointerEvent): 
 
 // The renderer of `source` judged the current press not draggable.
 export function windowDragVeto(source: WindowId): void {
+  wmLog('window-drag-veto', { source, phase: state.phase });
   dispatch({ type: 'veto', source });
 }
 
