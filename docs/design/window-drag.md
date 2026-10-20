@@ -68,10 +68,15 @@ judgement (`tile-preload.cts`, "Press blockers"):
 
 - the press is inside an element carrying `data-no-drag` (including `<body>`,
   which opts the whole window out),
-- the press is on a text field or contenteditable that already has focus
-  (shadow-DOM aware, so the navbar URL field counts),
-- the press is inside the current text selection (that press starts a
-  selection drag).
+- the press is on the text field or contenteditable being edited: it has focus
+  and the user typed in it, or placed the caret or a selection in it with a
+  completed click, since it took focus (shadow-DOM aware, so the navbar URL
+  field counts). Focus alone is not editing: a field focused by Cmd+L or
+  autofocus, or left focused while its window was in the background, still
+  drags on hold. Focus moving elsewhere or the window losing focus ends the
+  edit,
+- the press is inside the current page-text selection (that press starts a
+  selection drag); a text field's own selection is covered by the rule above.
 
 Web pages in page hosts load no preload, so a press on page content is never
 vetoed; only moving before the hold elapses cancels there.

@@ -2901,23 +2901,60 @@ __preloadMark('preload-done');
 {
   const PRESS_BLOCKED = 'window-drag:press-blocked';
 
+  const NOT_TEXT_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit']);
+  const isTextField = (el: HTMLElement): boolean => {
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'input') return !NOT_TEXT_INPUTS.has(((el as HTMLInputElement).type || 'text').toLowerCase());
+    return tag === 'textarea' || el.isContentEditable;
+  };
+
+  // The innermost text field on an event's composed path (shadow-DOM aware, so
+  // the navbar URL field is seen rather than its retargeted host).
+  const textFieldOnPath = (e: Event): HTMLElement | null => {
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    for (const node of path) {
+      if (node && (node as Node).nodeType === 1 && isTextField(node as HTMLElement)) return node as HTMLElement;
+    }
+    return null;
+  };
+
+  // The text field the user is editing: typed in, or placed the caret or a
+  // selection in with a completed click, since it last took focus. Focus
+  // alone — Cmd+L, autofocus, a field left focused while the window was in
+  // the background — is not editing, so a hold on such a field still drags.
+  let editingField: HTMLElement | null = null;
+  window.addEventListener('keydown', (e) => { editingField = textFieldOnPath(e) ?? editingField; }, true);
+  window.addEventListener('input', (e) => { editingField = textFieldOnPath(e) ?? editingField; }, true);
+  window.addEventListener('focusin', (e) => {
+    if (textFieldOnPath(e) !== editingField) editingField = null;
+  }, true);
+  window.addEventListener('focusout', (e) => {
+    if (textFieldOnPath(e) === editingField) editingField = null;
+  }, true);
+  // The window leaving the foreground ends the edit; returning to it does not
+  // resume one until the user interacts with the field again.
+  window.addEventListener('blur', () => { editingField = null; });
+
   // Walks composedPath so an element inside a shadow root is seen, not its
   // retargeted host. `data-no-drag` on <body> opts the whole window out.
   const pressBlocked = (e: MouseEvent): boolean => {
     const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    let onTextField = false;
     for (const node of path) {
       if (!node || (node as Node).nodeType !== 1) continue;
       const el = node as HTMLElement;
       if (el.closest('[data-no-drag]')) return true;
-      // Only a text field that already has focus blocks: a first press on an
-      // unfocused field can still start a hold, a press while editing places
-      // the caret. Focus inside a shadow tree is that root's activeElement.
+      if (!isTextField(el)) continue;
+      onTextField = true;
+      // A press in the field being edited places the caret or extends the
+      // selection. Focus inside a shadow tree is that root's activeElement.
       const root = el.getRootNode() as Document | ShadowRoot;
       const focused = !!root && (root as { activeElement?: Element | null }).activeElement === el;
-      const tag = (el.tagName || '').toLowerCase();
-      if ((tag === 'input' || tag === 'textarea') && focused) return true;
-      if (el.isContentEditable && focused) return true;
+      if (focused && el === editingField) return true;
     }
+    // A text field's own selection is covered by the editing rule above; the
+    // document selection rule is for page text.
+    if (onTextField) return false;
     // A press inside the current selection starts a selection drag.
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
@@ -2951,7 +2988,10 @@ __preloadMark('preload-done');
     if (Math.abs(windowDx) > WINDOW_MOVED_PX || Math.abs(windowDy) > WINDOW_MOVED_PX) {
       e.stopImmediatePropagation();
       e.preventDefault();
+      return;
     }
+    // A completed click in a text field placed the caret or a selection there.
+    editingField = textFieldOnPath(e) ?? editingField;
   }, true);
 }
 
