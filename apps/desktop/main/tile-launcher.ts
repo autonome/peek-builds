@@ -461,6 +461,10 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     // (which never set this) and window-open (which sometimes inherited
     // it from callers) was the Phase D trigger — nothing opts in now.
     autoHideMenuBar: true,
+    // The press that activates an inactive tile reaches its webContents,
+    // where hold-to-drag reads it (docs/design/window-drag.md). macOS
+    // otherwise swallows it into the activation.
+    acceptFirstMouse: true,
     // System-theme background prevents a white flash on dark mode. Skip
     // for transparent tiles — setting backgroundColor defeats transparency.
     backgroundColor: transparentResolved ? undefined : _getSystemThemeBackgroundColor?.(),

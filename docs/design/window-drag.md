@@ -49,6 +49,15 @@ another page. A press arms only when the target is visible, not maximized and
 not fullscreen; the same checks run again when the hold elapses, and the
 target's bounds are read then, so a resize between press and hold is kept.
 
+A press on an inactive window counts only if it reaches that window's
+webContents. On macOS the press that activates a window is swallowed into the
+activation unless the window accepts the first mouse, so page hosts
+(`ipc.ts createHybridHostBaseWindow()`), windows from the window-open path and
+tile windows (`tile-launcher.ts createTileBrowserWindow()`) are constructed
+with `acceptFirstMouse: true` (guarded by `window-construction-gate.test.ts`).
+The side effect: the activating click also clicks the content under it, as it
+does on every other platform.
+
 ## What blocks a press
 
 Blockers are facts only the renderer knows (which element is under the

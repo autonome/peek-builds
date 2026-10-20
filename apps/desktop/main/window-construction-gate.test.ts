@@ -187,6 +187,27 @@ describe('window construction — forbidden webPreferences literals', () => {
   });
 });
 
+/**
+ * Hold-to-drag (docs/design/window-drag.md) reads the press from the window's
+ * webContents. On macOS the press that activates an inactive window reaches
+ * the webContents only when the window accepts the first mouse, so every
+ * window kind the gesture serves opts in at construction.
+ */
+const FIRST_MOUSE: Array<{ file: string; count: number; where: string }> = [
+  { file: 'ipc.ts', count: 2, where: 'createHybridHostBaseWindow() and the window-open winOptions' },
+  { file: 'tile-launcher.ts', count: 1, where: 'createTileBrowserWindow() baseline' },
+];
+
+describe('window construction — the activating press reaches the page', () => {
+  for (const { file, count, where } of FIRST_MOUSE) {
+    it(`${file}: ${where} accept the first mouse`, () => {
+      const lines = readSourceLines(path.join(MAIN_SRC_DIR, file)).filter((l) => !isCommentLine(l));
+      const found = lines.filter((l) => /^\s*acceptFirstMouse\s*:\s*true\b/.test(l)).length;
+      assert.equal(found, count, `${file}: expected ${count} \`acceptFirstMouse: true\` (${where}), found ${found}`);
+    });
+  }
+});
+
 describe('window construction — scanner self-check', () => {
   it('the scanner sees the known construction sites', () => {
     const actual = scanInventory();

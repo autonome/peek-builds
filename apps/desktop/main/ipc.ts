@@ -839,6 +839,10 @@ function createHybridHostBaseWindow(
     height: rect.height,
     frame: false,
     transparent: false,
+    // The press that activates an inactive host must reach its webContents:
+    // hold-to-drag reads it there (docs/design/window-drag.md). macOS
+    // otherwise swallows it into the activation.
+    acceptFirstMouse: true,
     roundedCorners: true,
     hasShadow: !isHeadless(),
     show: false,
@@ -3494,6 +3498,9 @@ export function registerWindowHandlers(): void {
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages are always frameless
+      // The activating press reaches the webContents, where hold-to-drag
+      // reads it (docs/design/window-drag.md).
+      acceptFirstMouse: true,
       ...options,
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
