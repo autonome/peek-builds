@@ -13,6 +13,10 @@ Status: proposal under review. Nothing here is built.
   missing API and a grant made while it is open needs a reload. Web Tiles has no way to signal
   either, so the gap goes to the spec's authors as an issue; the decision is revisited if the spec
   adds one.
+- **Transport stays IPC inside Peek (2026-10-20).** A Peek tile's protocol module calls the main
+  process through the preload. The `tiles-protocol-up-`/`-down-` `postMessage` form is used only
+  across hosts, so Peek's own tiles gain no extra layer and Peek checks message senders only where
+  it hosts third-party tiles.
 
 ## Problem
 
