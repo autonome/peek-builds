@@ -1,6 +1,7 @@
 # Tile APIs as Web Tiles protocols
 
-Status: proposal under review. Nothing here is built.
+Status: reviewed 2026-10-20; every point below is decided. Nothing is built. The first slice is
+`specs/tile-protocol-atproto.md`.
 
 ## Decided
 
@@ -28,6 +29,11 @@ Status: proposal under review. Nothing here is built.
   and close; data events are protocol-module handlers; Peek-only hooks are protocols. The
   host-side registration holds each tile's events until that tile's protocol signals ready, so a
   lazy tile cannot miss the event that woke it. The added latency is unmeasured.
+- **Modules are served from each tile's own host (2026-10-20).** A tile at `peek://<tile-id>/`
+  requests `peek://<tile-id>/.well-known/web-tiles/<name>.js`, so `main/protocol.ts` knows the
+  requesting tile from the host and gates on its grant. A page on the shared `peek://ext/<id>/`
+  form moves to its own host before it uses a protocol, since a shared host carries no tile
+  identity.
 
 ## Problem
 
