@@ -1,9 +1,21 @@
 # Tile APIs as Web Tiles protocols
 
-Status: reviewed 2026-10-20; every point below is decided. Nothing is built. The first slice is
-`specs/tile-protocol-atproto.md`.
+Status: reviewed 2026-10-20; every point below is decided. The first slice,
+`specs/tile-protocol-atproto.md`, is built; the rest is not.
 
 ## Decided
+
+- **The first slice is built (2026-10-20).** `main/tile-protocols.ts` holds the registry: a
+  protocol is declared once with its name, gating capability and methods, which derives the
+  `tile:protocol:<name>:<method>` handlers, the capability check on every call, and the module
+  served at `peek://<tile-id>/.well-known/web-tiles/<name>.js`. `atproto` is declared that way and
+  the features-manager publish wizard imports it. The manifest `protocols` field is read and a
+  tile missing a `required` protocol is not opened. What remains on `api.atproto`: the
+  `window.app.atproto` copy and the `tile:atproto:*` channels, because `features/lex/atproto.js`
+  still reads them, as do `tests/desktop/atproto-session-info.spec.ts` and
+  `tests/unit/lex-atproto-proxy.test.js`. Both paths run the same handler bodies and the same
+  `network` gate. The per-tile host-to-tile event queue is a named place in the registry and
+  nothing enqueues yet, since `atproto` pushes no events.
 
 - **Direction (2026-10-20).** Tile APIs move from `window.app` to Web Tiles protocols, one API
   at a time, with core surfaces staying on `window.app`. A tile written this way can run in any

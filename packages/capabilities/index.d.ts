@@ -572,6 +572,17 @@ export interface TileManifest {
   /** Event-dispatch rules contributed by this feature. */
   rules?: TileRule[];
   /** Settings schema file path */
+  /**
+   * The Web Tiles protocols this tile imports, each mapped to how the tile
+   * depends on it. A `required` protocol the host does not provide — because
+   * no such protocol is registered, or because the tile lacks the capability
+   * that gates it — stops the tile being opened at all, rather than letting
+   * it fail partway. An `optional` one never blocks opening; the tile imports
+   * it in a `try`.
+   *
+   *   "protocols": { "atproto": "required", "data": "optional" }
+   */
+  protocols?: Record<string, 'required' | 'optional'>;
   settingsSchema?: string;
   /**
    * Default settings values, loaded from the `settingsSchema` file's

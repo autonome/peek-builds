@@ -1305,7 +1305,27 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── Web Tiles protocols: the one generic bridge ──
+  //
+  // A protocol module served at peek://<tile-id>/.well-known/web-tiles/<name>.js
+  // reaches its main-process methods through this single call. Serving a
+  // module is not the gate — any tile can call this directly whatever modules
+  // it was served — so the main process checks the token and the protocol's
+  // capability on every call (main/tile-protocols.ts). Resolves to whatever
+  // the method returns, including an `{ error }` refusal.
+
+  api.tileProtocol = async (protocol: string, method: string, args?: unknown[]) => {
+    const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+    return ipcRenderer.invoke(`tile:protocol:${protocol}:${method}`, {
+      token: tileToken,
+      args: Array.isArray(args) ? args : [],
+    });
+  };
+
   // ── AT Protocol DPoP proxy (if `network` granted) ──
+  //
+  // Also reachable as the `atproto` protocol module; this `window.app` copy
+  // stays while features/lex/atproto.js still reads it.
   //
   // Exposes the main-process DPoP request proxy (see atproto-proxy.ts /
   // tile-ipc.ts handlers) so tiles can make non-CORS, DPoP-signed XRPC

@@ -21,7 +21,8 @@ import {
   type TileManifest,
   type ParsedManifest,
 } from './tile-manifest.js';
-import { type AnnotatedTile, loadTile, type TileCompatConfig } from './tile-compat.js';
+import { type AnnotatedTile, loadTile, ensureTileIpcHandlers, type TileCompatConfig } from './tile-compat.js';
+import { unsatisfiedRequiredProtocols } from './tile-protocols.js';
 import * as manifestCache from './manifest-cache.js';
 import { DEBUG } from './config.js';
 
@@ -172,6 +173,23 @@ function loadTileFromEntry(
       loaded: false,
       skipped: true,
       error: 'Feature not yet approved by user',
+    };
+  }
+
+  // Which protocols exist is only known once the protocol declarations have
+  // run, and they sit beside the tile IPC handlers — which `loadTile()` below
+  // would otherwise register for the first time, after the check that follows.
+  ensureTileIpcHandlers();
+
+  // A tile that declares a `required` Web Tiles protocol this host cannot
+  // give it is not opened, naming the protocol, rather than loading and
+  // failing partway through its own startup. An `optional` one never blocks.
+  const missingProtocols = unsatisfiedRequiredProtocols(manifest);
+  if (missingProtocols.length > 0) {
+    return {
+      id: entry.id,
+      loaded: false,
+      error: `Feature ${entry.id} requires protocol(s) not available to it: ${missingProtocols.join(', ')}`,
     };
   }
 

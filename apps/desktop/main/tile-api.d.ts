@@ -854,6 +854,20 @@ interface TileAPI {
   sync: TileSync;
   izui: TileIzui;
   session: TileSession;
+
+  // ── Web Tiles protocols ────────────────────────────────────────────
+
+  /**
+   * The one bridge every Web Tiles protocol module calls. A tile normally
+   * reaches a protocol by importing its module
+   * (`await import('/.well-known/web-tiles/<name>.js')`) rather than calling
+   * this directly. The main process checks the tile token and the protocol's
+   * gating capability on every call, so calling it directly grants nothing.
+   *
+   * Resolves to whatever the protocol method returns, including an
+   * `{ error }` refusal; rejects if the protocol or method is not registered.
+   */
+  tileProtocol(protocol: string, method: string, args?: unknown[]): Promise<unknown>;
 }
 
 // ─── Augment window global ───────────────────────────────────────────

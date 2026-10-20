@@ -222,7 +222,10 @@ test.describe('live atproto login, publish, install @live', () => {
     let recordUri = '';
     try {
       await bgWindow.evaluate(async () => {
-        await (window as any).app.window.open('peek://ext/features-manager/publish.html', {
+        // The wizard's own host, not the legacy shared `peek://ext/` form: a
+        // shared host carries no tile identity, so a page on it is never
+        // served the `atproto` protocol module the wizard now imports.
+        await (window as any).app.window.open('peek://features-manager/publish.html', {
           role: 'workspace', key: 'live-publish', width: 900, height: 700, title: 'Publish',
         });
       });

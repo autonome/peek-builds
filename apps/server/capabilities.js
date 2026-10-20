@@ -522,6 +522,25 @@ function validateTileManifest(json) {
     }
   }
 
+  // Validate the `protocols` field — the Web Tiles protocols this tile
+  // imports, each mapped to how it depends on them. A `required` protocol the
+  // host cannot provide stops the tile being opened; an `optional` one never
+  // does. Any other value is a manifest error.
+  if (json.protocols !== undefined) {
+    if (typeof json.protocols !== 'object' || json.protocols === null || Array.isArray(json.protocols)) {
+      errors.push({ path: 'protocols', message: 'protocols must be an object mapping protocol name to "required" or "optional"' });
+    } else {
+      for (const [name, requirement] of Object.entries(json.protocols)) {
+        if (requirement !== 'required' && requirement !== 'optional') {
+          errors.push({
+            path: `protocols.${name}`,
+            message: `invalid requirement: ${JSON.stringify(requirement)} (expected "required" or "optional")`,
+          });
+        }
+      }
+    }
+  }
+
   return errors;
 }
 

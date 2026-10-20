@@ -10,6 +10,19 @@
 const api = window.app;
 const hasPeekAPI = !!api;
 
+// The AT Protocol surface this wizard publishes through is the `atproto` Web
+// Tiles protocol, imported from this tile's own host. The manifest lists it as
+// `required`, so the tile would not have opened without it; the import still
+// starts here rather than at first use so a failure surfaces at page load.
+// `window.__peekAtprotoProtocolResolved` is how a spec observes that.
+const atprotoModulePromise = import('/.well-known/web-tiles/atproto.js');
+window.__peekAtprotoProtocolResolved = atprotoModulePromise.then(() => true, () => false);
+
+/** The imported `atproto` protocol module. */
+async function atproto() {
+  return atprotoModulePromise;
+}
+
 // ─── Known categories ──────────────────────────────────────────────
 
 const CATEGORIES = [
@@ -517,7 +530,7 @@ function unwrapProxyResult(res, what) {
 /** Upload bytes as a blob via the main-process DPoP proxy. Returns the blob ref. */
 async function proxyUploadBlob(bytes, mimeType) {
   const url = `${lexSession.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
-  const res = await api.atproto.uploadBlob(url, bytesToBase64(bytes), mimeType);
+  const res = await (await atproto()).uploadBlob(url, bytesToBase64(bytes), mimeType);
   const body = unwrapProxyResult(res, 'Blob upload');
   if (!body || !body.blob) throw new Error('Blob upload returned no blob ref');
   return body.blob;
@@ -526,7 +539,7 @@ async function proxyUploadBlob(bytes, mimeType) {
 /** POST an XRPC JSON request via the main-process DPoP proxy. Returns the JSON body. */
 async function proxyXrpcPost(nsid, jsonBody) {
   const url = `${lexSession.pdsUrl}/xrpc/${nsid}`;
-  const res = await api.atproto.request('POST', url, jsonBody);
+  const res = await (await atproto()).request('POST', url, jsonBody);
   return unwrapProxyResult(res, `XRPC POST ${nsid}`);
 }
 
@@ -741,7 +754,7 @@ async function loadLexSession() {
   // Called again each time step 3 renders, because Lex publishes no event
   // when the user logs in after this page opened.
   try {
-    const info = await api.atproto.sessionInfo();
+    const info = await (await atproto()).sessionInfo();
     console.log('[features-manager:publish] session info:', JSON.stringify(info));
     lexSession = info && info.signedIn
       ? { handle: info.handle || '', did: info.did || '', pdsUrl: info.pdsUrl }
