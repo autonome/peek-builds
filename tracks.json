@@ -10,7 +10,7 @@
   },
   "specWatch": {
     "specs": "specs",
-    "maxLive": 5,
+    "maxLive": 13,
     "maxRounds": 1
   }
 }
