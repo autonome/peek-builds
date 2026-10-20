@@ -35,6 +35,12 @@ export function recordPick(usage, command, value, now) {
   };
 }
 
+/** `usage` with a pick of the suggestion at `index` (by its value); unchanged when there is none. */
+export function recordSuggestionPick(usage, command, suggestions, index, now) {
+  const suggestion = suggestions[index];
+  return suggestion ? recordPick(usage, command, suggestion.value, now) : usage;
+}
+
 /**
  * The suggestion that the typed parameter text names: one whose value equals it, else one whose
  * title does (an item param types the title but its value is the item id), case-insensitively.

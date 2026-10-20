@@ -12,7 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, limitShown, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
-import { recordPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
+import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
@@ -2684,6 +2684,10 @@ function actionHandlers() {
         const commandName = state.paramCommand;
         const typed = commandName + ' ' + (suggestion.title || suggestion.value || '');
         const selectedItem = suggestion._item;
+
+        // An item pick runs here, not through executeCommandWithParams; count it by the item id.
+        paramUsage = recordSuggestionPick(paramUsage, commandName, state.paramSuggestions, idx, Date.now());
+        api.settings.set(STORAGE_KEY_PARAM_USAGE, paramUsage);
 
         // Record frecency
         const commandPart = (state.originalTyped || typed).split(' ')[0];

@@ -11,8 +11,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'usage-rank.js');
-const { PICK_SCORE, HALF_LIFE_MS, scoreAt, anchorAfterPick, recordPick, rankByUsage, pickedSuggestion } =
-  await import(modulePath);
+const { PICK_SCORE, HALF_LIFE_MS, scoreAt, anchorAfterPick, recordPick, rankByUsage, pickedSuggestion,
+  recordSuggestionPick } = await import(modulePath);
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_800_000_000_000;
@@ -162,5 +162,23 @@ describe('rankByUsage', () => {
       assert.equal(pickedSuggestion(notes, ''), null);
       assert.equal(pickedSuggestion(notes, 'nope'), null);
     });
+  });
+});
+
+describe('recordSuggestionPick (picking an item suggestion by index)', () => {
+  const notes = [
+    { title: 'Never picked', subtitle: '', value: 'ID-A' },
+    { title: 'Picked often', subtitle: '', value: 'ID-B' },
+  ];
+
+  it('records the pick under the suggestion value, so the next ranking puts it first', () => {
+    const usage = recordSuggestionPick({}, 'edit', notes, 1, NOW);
+    assert.deepEqual(values(rankByUsage(notes, usage, 'edit', NOW + DAY, '', '')), ['ID-B', 'ID-A']);
+  });
+
+  it('leaves usage alone for an index with no suggestion', () => {
+    const usage = {};
+    assert.equal(recordSuggestionPick(usage, 'edit', notes, -1, NOW), usage);
+    assert.equal(recordSuggestionPick(usage, 'edit', notes, 2, NOW), usage);
   });
 });
