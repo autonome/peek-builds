@@ -1045,13 +1045,50 @@ document.addEventListener('mouseup', () => holdDrag.onUp());
 // reveal loop still owns the gutter case (where the overlay sees moves natively);
 // both feeding showNavbar/scheduleHide is idempotent (cancelHide/scheduleHide
 // guard each other), so the two paths never fight.
+//
+// A reveal can arrive with a dwell on it (`delayMs`, peek bf879b8c): a page flush
+// with the top of the screen draws its own account menu / home link / site nav
+// exactly where the navbar lands, so the bar must not drop on a cursor merely
+// crossing the top edge. Main owns that decision (it owns the host geometry) and
+// hands the wait down; `pendingReveal` below is the whole of it on this side.
+//
+// The timer here measures HUMAN dwell — "the cursor has stayed in the band for two
+// seconds" — which is the gesture's definition, not a guess about when some other
+// code has run. There is no state transition to wait for instead: the only events
+// are band enter and band exit, and the whole point is that enter alone must not
+// reveal. It is the same shape as the 400ms `hideTimer` above. Nothing races it;
+// the single pending handle is cleared on fire and on band exit.
+let pendingReveal = null;
+function cancelPendingReveal() {
+  if (pendingReveal) { clearTimeout(pendingReveal); pendingReveal = null; }
+}
+/** Arm the one pending reveal. Already armed → the dwell keeps running: a second
+ * 'reveal' is the same gesture arriving again, and restarting would mean the bar
+ * never appears while the cursor jitters in and out of the band. */
+function revealAfter(delayMs) {
+  if (pendingReveal) return;
+  pendingReveal = setTimeout(() => {
+    pendingReveal = null;
+    showNavbar();
+  }, delayMs);
+}
 api.subscribe('page-overlay:content-pointer', (msg) => {
   if (!isActive(msg)) return;
   if (msg.phase === 'down') holdDrag.onDown(msg.screenX, msg.screenY);
   else if (msg.phase === 'move') holdDrag.onMove(msg.screenX, msg.screenY);
   else if (msg.phase === 'up') holdDrag.onUp();
-  else if (msg.phase === 'reveal') showNavbar();
-  else if (msg.phase === 'reveal-out') scheduleHide();
+  else if (msg.phase === 'reveal') {
+    // No delay (a host with gutter above it, or a message carrying no delayMs)
+    // reveals at once, exactly as the trigger-zone hover does.
+    const delayMs = Number(msg.delayMs) > 0 ? Number(msg.delayMs) : 0;
+    if (delayMs === 0) { cancelPendingReveal(); showNavbar(); }
+    else revealAfter(delayMs);
+  } else if (msg.phase === 'reveal-out') {
+    // Leaving the band before the dwell runs out means the cursor was passing
+    // through: drop the pending reveal, so the bar never appears at all.
+    cancelPendingReveal();
+    scheduleHide();
+  }
   // No 'edge' phase: edge/corner RESIZE is owned entirely by main (cursor +
   // drag against the content WC); the overlay only learns a resize is active via
   // page-overlay:resize-active (above) so it stays click-through during the drag.

@@ -122,6 +122,7 @@ import {
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
+import { revealDelayMs } from './overlay-frame.js';
 import { wmLog } from './window-diag.js';
 import {
   inferIzuiRole,
@@ -2196,6 +2197,20 @@ export function wireHybridContentEvents(
   // workArea → no clear; UNMAXIMIZE_REQUESTED clears the flag before its
   // SET_BOUNDS(preMaxBounds) → early-return; and the band drag (`applyResize`)
   // already ran `exitMaximizeForResize()` at press → early-return.
+  // The work area of the display the host sits on, or null when the screen is
+  // unavailable (some test envs). Read by the reveal band to decide how much room
+  // the host has above it — `overlay-frame.ts revealDelayMs` owns that rule, and
+  // the lookup is guarded because it runs inside the raw input stream.
+  const hostWorkArea = (
+    b: { x: number; y: number; width: number; height: number },
+  ): { x: number; y: number; width: number; height: number } | null => {
+    try {
+      return screen.getDisplayNearestPoint({
+        x: b.x + Math.floor(b.width / 2),
+        y: b.y + Math.floor(b.height / 2),
+      }).workArea;
+    } catch { return null; }
+  };
   const fillsWorkArea = (b: { x: number; y: number; width: number; height: number }): boolean => {
     const wa = screen.getDisplayNearestPoint({
       x: b.x + Math.floor(b.width / 2),
@@ -2342,9 +2357,17 @@ export function wireHybridContentEvents(
         if (!inRevealBand) {
           if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
             inRevealBand = true;
-            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal' });
+            // How long the overlay waits before the navbar covers the page (peek
+            // bf879b8c). A host with no room above it has the page's own account
+            // menu / home link / site nav exactly where the navbar lands, so the
+            // reveal has to be a deliberate dwell rather than a crossing. Main
+            // owns the geometry, so it owns the decision; the overlay just honors
+            // the delay it is handed.
+            const delayMs = revealDelayMs(bounds, hostWorkArea(bounds));
+            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal', delayMs });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {
-              windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
+              windowId: hostWindowId, phase: 'reveal', delayMs,
+              screenX: input.globalX, screenY: input.globalY,
             });
           }
         } else {

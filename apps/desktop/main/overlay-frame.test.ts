@@ -8,12 +8,20 @@
  * the work-area clamp (peek `06d363fc` — mirrors the OS's keep-on-screen
  * clamp so the computed frame matches the post-show `getBounds()`), and
  * `workArea === null` (screen unavailable — no parity check, no clamp).
+ *
+ * Also covers `revealDelayMs`: how long the top-border hover gesture waits
+ * before the navbar covers a page with no room above it (peek `bf879b8c`).
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
-import { expandToOverlayFrame, OVERLAY_GUTTERS } from './overlay-frame.js';
+import {
+  expandToOverlayFrame,
+  OVERLAY_GUTTERS,
+  REVEAL_DELAY_MS,
+  revealDelayMs,
+} from './overlay-frame.js';
 import type { Rectangle } from './window-kernel.js';
 
 describe('expandToOverlayFrame — chrome overlay frame geometry', () => {
@@ -91,5 +99,55 @@ describe('expandToOverlayFrame — chrome overlay frame geometry', () => {
 
   it('OVERLAY_GUTTERS matches the documented canvas-era values', () => {
     assert.deepStrictEqual(OVERLAY_GUTTERS, { left: 218, right: 218, top: 44, bottom: 8 });
+  });
+});
+
+describe('revealDelayMs — top-border reveal dwell (peek bf879b8c)', () => {
+  it('delays for a maximized host (bounds equal the work area)', () => {
+    const workArea: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    const host: Rectangle = { ...workArea };
+    assert.strictEqual(revealDelayMs(host, workArea), REVEAL_DELAY_MS);
+  });
+
+  it('delays for a floating host a few px below the work-area top', () => {
+    const workArea: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    const host: Rectangle = { x: 300, y: 6, width: 800, height: 600 };
+    assert.strictEqual(revealDelayMs(host, workArea), REVEAL_DELAY_MS);
+  });
+
+  it('delays right up to a full top gutter of room above the host', () => {
+    const workArea: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    const host: Rectangle = { x: 300, y: OVERLAY_GUTTERS.top, width: 800, height: 600 };
+    assert.strictEqual(revealDelayMs(host, workArea), REVEAL_DELAY_MS);
+  });
+
+  it('reveals at once for a host with more than a top gutter of room above it', () => {
+    const workArea: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    const host: Rectangle = { x: 300, y: OVERLAY_GUTTERS.top + 1, width: 800, height: 600 };
+    assert.strictEqual(revealDelayMs(host, workArea), 0);
+  });
+
+  it('measures room against the work area, not the screen (non-zero work-area y)', () => {
+    // A menu bar or top panel pushes the work area down: a host flush with the
+    // work-area top has a screen-space y of 25 and still has no room above it.
+    const workArea: Rectangle = { x: 0, y: 25, width: 1920, height: 1055 };
+    assert.strictEqual(revealDelayMs({ x: 300, y: 25, width: 800, height: 600 }, workArea), REVEAL_DELAY_MS);
+    assert.strictEqual(revealDelayMs({ x: 300, y: 60, width: 800, height: 600 }, workArea), REVEAL_DELAY_MS);
+    // 25 + 44 = 69 is the last delaying y; one px further down has room.
+    assert.strictEqual(revealDelayMs({ x: 300, y: 70, width: 800, height: 600 }, workArea), 0);
+  });
+
+  it('delays for a host whose top edge sits above the work area (it has no room either)', () => {
+    const workArea: Rectangle = { x: 0, y: 25, width: 1920, height: 1055 };
+    const host: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    assert.strictEqual(revealDelayMs(host, workArea), REVEAL_DELAY_MS);
+  });
+
+  it('reveals at once when the work area is unavailable (nothing to measure against)', () => {
+    assert.strictEqual(revealDelayMs({ x: 0, y: 0, width: 800, height: 600 }, null), 0);
+  });
+
+  it('the dwell is the documented 2 seconds', () => {
+    assert.strictEqual(REVEAL_DELAY_MS, 2000);
   });
 });
