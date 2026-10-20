@@ -14,6 +14,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'entities', 'extractors', 'map-url.js');
 
 const { extractMapUrlEntities, isMapShortLink } = await import(modulePath);
+const { validateEntityType } = await import(
+  join(__dirname, '..', '..', 'features', 'entities', 'name-validator.js')
+);
 
 const PLACES = [
   {
@@ -65,9 +68,9 @@ const PLACES = [
     mapProvider: 'google',
   },
   {
-    label: 'Google Maps coordinates alone are named by their coordinates',
+    label: 'Google Maps coordinates alone are named "Location <lat>, <lng>"',
     url: 'https://www.google.com/maps/@52.3731,4.8922,15z',
-    name: '52.3731, 4.8922',
+    name: 'Location 52.37, 4.89',
     latitude: 52.3731,
     longitude: 4.8922,
     mapProvider: 'google',
@@ -75,7 +78,7 @@ const PLACES = [
   {
     label: 'Google Maps q parameter holding coordinates',
     url: 'https://maps.google.com/maps?q=52.3731,4.8922',
-    name: '52.3731, 4.8922',
+    name: 'Location 52.37, 4.89',
     latitude: 52.3731,
     longitude: 4.8922,
     mapProvider: 'google',
@@ -124,7 +127,7 @@ const PLACES = [
   {
     label: 'Apple Maps with coordinates alone',
     url: 'https://maps.apple.com/?ll=-22.9519,-43.2105',
-    name: '-22.9519, -43.2105',
+    name: 'Location -22.95, -43.21',
     latitude: -22.9519,
     longitude: -43.2105,
     mapProvider: 'apple',
@@ -132,7 +135,7 @@ const PLACES = [
   {
     label: 'OpenStreetMap marker query',
     url: 'https://www.openstreetmap.org/?mlat=52.3731&mlon=4.8922#map=17/52.3731/4.8922',
-    name: '52.3731, 4.8922',
+    name: 'Location 52.37, 4.89',
     latitude: 52.3731,
     longitude: 4.8922,
     mapProvider: 'openstreetmap',
@@ -140,7 +143,7 @@ const PLACES = [
   {
     label: 'OpenStreetMap map hash alone, both coordinates negative',
     url: 'https://www.openstreetmap.org/#map=15/-22.9519/-43.2105',
-    name: '-22.9519, -43.2105',
+    name: 'Location -22.95, -43.21',
     latitude: -22.9519,
     longitude: -43.2105,
     mapProvider: 'openstreetmap',
@@ -148,7 +151,7 @@ const PLACES = [
   {
     label: 'Bing Maps centre point',
     url: 'https://www.bing.com/maps?cp=52.3731~4.8922&lvl=15',
-    name: '52.3731, 4.8922',
+    name: 'Location 52.37, 4.89',
     latitude: 52.3731,
     longitude: 4.8922,
     mapProvider: 'bing',
@@ -209,6 +212,21 @@ describe('extractMapUrlEntities', () => {
     assert.equal(entity.attributes.latitude, undefined);
     assert.equal(entity.attributes.longitude, undefined);
   });
+
+  for (const [label, url, name] of [
+    ['an OpenStreetMap URL with coordinates only', 'https://www.openstreetmap.org/?mlat=52.3731&mlon=4.8922', 'Location 52.37, 4.89'],
+    ['a Bing URL with coordinates only', 'https://www.bing.com/maps?cp=52.3731~4.8922&lvl=15', 'Location 52.37, 4.89'],
+  ]) {
+    it(`${label} gives a storable place keeping full coordinates`, () => {
+      const [entity] = extractMapUrlEntities(url);
+      assert.equal(entity.name, name);
+      assert.equal(entity.attributes.latitude, 52.3731);
+      assert.equal(entity.attributes.longitude, 4.8922);
+      // The name must not read as all-numeric/punctuation, which the entity matcher drops.
+      assert.ok(/[A-Za-z]/.test(entity.name));
+      assert.equal(validateEntityType(entity.name, entity.entityType).valid, true);
+    });
+  }
 
   it('reads the place from the expanded URL it is given, not from a short link', () => {
     const expanded = 'https://www.google.com/maps/place/Rijksmuseum/@52.3600,4.8852,17z';

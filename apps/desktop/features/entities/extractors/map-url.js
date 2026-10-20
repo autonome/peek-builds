@@ -92,7 +92,7 @@ function readOpenStreetMap(parsed) {
     if (hash) place = coords(hash[1], hash[2]);
   }
 
-  // OpenStreetMap URLs carry no place name, so a found place is named by its coordinates.
+  // OpenStreetMap URLs carry no place name, so a found place gets a coordinate-based name.
   return { name: '', place };
 }
 
@@ -153,7 +153,9 @@ export function extractMapUrlEntities(url) {
       name = '';
     }
 
-    if (!name && place) name = `${place.latitude}, ${place.longitude}`;
+    // Coordinates alone would be dropped as an all-numeric name by the entity matcher, so the
+    // name carries a word and rounds to 2 decimals; the full coordinates stay in attributes.
+    if (!name && place) name = `Location ${place.latitude.toFixed(2)}, ${place.longitude.toFixed(2)}`;
     if (!name) return [];
 
     const attributes = {};
