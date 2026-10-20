@@ -1,6 +1,12 @@
 # Tile APIs as Web Tiles protocols
 
-Status: proposal. Nothing here is built.
+Status: proposal under review. Nothing here is built.
+
+## Decided
+
+- **Direction (2026-10-20).** Tile APIs move from `window.app` to Web Tiles protocols, one API
+  at a time, with core surfaces staying on `window.app`. A tile written this way can run in any
+  Web Tiles host, and a new API is declared in one place instead of three.
 
 ## Problem
 
