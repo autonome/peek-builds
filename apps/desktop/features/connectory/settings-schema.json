@@ -1,0 +1,9 @@
+{
+  "labels": {},
+  "storageKeys": {
+    "SEEN": "seen"
+  },
+  "defaults": {
+    "seen": {}
+  }
+}

@@ -1,0 +1,10 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Connectory Test//Escaped text//EN
+BEGIN:VEVENT
+UID:escaped-1@example.org
+SUMMARY:Jazz\, Funk and Soul\; a night out
+DTSTART:20260410T200000
+LOCATION:12 Rua do Norte\, Lisbon\nSecond floor\, ring the bell
+END:VEVENT
+END:VCALENDAR

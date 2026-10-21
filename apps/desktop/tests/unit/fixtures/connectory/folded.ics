@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Connectory Test//Folded//EN
+BEGIN:VEVENT
+UID:folded-1@example.org
+SUMMARY:A very long event name that the calendar wrapped acros
+ s two lines
+DTSTART:20260115T183000
+DTEND:20260115T203000
+LOCATION:The Hall
+	way Stage
+URL:https://example.org/events/folded-1
+END:VEVENT
+END:VCALENDAR
