@@ -894,6 +894,18 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
     const id = await makeActiveWithUrl('https://ent-a.example.com/x');
     await waitOverlayReady();
 
+    // Attaching asks the real entities feature for this URL. Its (empty)
+    // answer must land before the injected one, or it overwrites it.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s?.entities?.text ?? '';
+        }),
+      )
+      .toContain('No entities detected');
+
     // Publish an entities response on the SAME topic the entities feature uses,
     // keyed on the active URL → the panel renders it.
     await app.evaluateMain!(async () => {
