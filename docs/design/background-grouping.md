@@ -1,7 +1,7 @@
 # Background grouping with corrections as labels
 
 Status: proposal, not built. The settled rules this builds on live in
-`docs/local-ai-needle-research.md` ("Task detection and automatic workspaces, Firefox-style",
+`docs/historical/local-ai-needle-research.md` ("Task detection and automatic workspaces, Firefox-style",
 "Bake-off plan"). This document replaces only one part of that plan: where the labelled data
 comes from.
 
