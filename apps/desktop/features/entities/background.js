@@ -24,6 +24,7 @@ import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { extractMapUrlEntities, isMapShortLink } from './extractors/map-url.js';
 import { processEntities } from './entity-matcher.js';
+import { filterFeedPageEntities } from './feed-filter.js';
 import { getEntities } from './entity-store.js';
 import { ensureNameDatabase } from './name-validator.js';
 
@@ -166,7 +167,11 @@ async function extractEntities(url, title = '') {
     Promise.resolve(safeExtract(() => extractStructuredDataEntities(html, url), 'structured-data')),
   ]);
 
-  const allRaw = [...mapRaw, ...structuredDataEntities, ...microformatEntities, ...regexEntities];
+  const pageRaw = filterFeedPageEntities(
+    [...structuredDataEntities, ...microformatEntities, ...regexEntities],
+    { title: pageTitle },
+  );
+  const allRaw = [...mapRaw, ...pageRaw];
   if (allRaw.length === 0) return [];
 
   return await processEntities(allRaw, { url, title: pageTitle }, CONFIDENCE_THRESHOLD);

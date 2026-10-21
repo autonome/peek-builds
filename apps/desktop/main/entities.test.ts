@@ -312,6 +312,65 @@ describe('Entity Recognition Extension', () => {
         assert.deepStrictEqual(persons('Maria Garcia Principal. Later, Maria Garcia said hello.'), ['Maria Garcia']);
       });
     });
+
+    describe('feed pages', () => {
+      let filterFeedPageEntities: (entities: any[], page: { title?: string; text?: string }) => any[];
+
+      before(async () => {
+        const validator = await import(resolve(extensionsDir, 'name-validator.js'));
+        await validator.ensureNameDatabase();
+        const feedMod = await import(resolve(extensionsDir, 'feed-filter.js'));
+        filterFeedPageEntities = feedMod.filterFeedPageEntities;
+      });
+
+      const FEED_AUTHORS = [
+        'John Smith', 'James Johnson', 'Robert Williams', 'Michael Brown', 'David Jones',
+        'William Miller', 'Richard Davis', 'Joseph Wilson', 'Thomas Moore', 'Charles Taylor',
+        'Daniel Anderson', 'Paul Thomas', 'Mark Jackson', 'George White', 'Steven Harris',
+      ];
+      // A timeline: navigation, then one post per author.
+      const feedText = 'Home Explore Notifications Messages\n' +
+        FEED_AUTHORS.map(name => `${name} posted 2h ago\nThis is a post about the weather today.`).join('\n');
+
+      const run = (text: string, title: string) =>
+        filterFeedPageEntities(extractRegexEntities(text, 'https://example.com'), { title, text });
+
+      it('the feed fixture names one person per author', () => {
+        const persons = extractRegexEntities(feedText, 'https://example.com')
+          .filter(e => e.entityType === 'person').map(e => e.name);
+        assert.deepStrictEqual(persons.sort(), [...FEED_AUTHORS].sort());
+      });
+
+      it('drops the names a feed lists', () => {
+        const persons = run(feedText, 'Home / Social').filter(e => e.entityType === 'person');
+        assert.deepStrictEqual(persons, []);
+      });
+
+      it('keeps a name that is in the title of a feed page', () => {
+        const persons = run(feedText, 'Michael Brown (@mbrown) / Social')
+          .filter(e => e.entityType === 'person').map(e => e.name);
+        assert.deepStrictEqual(persons, ['Michael Brown']);
+      });
+
+      it('drops other pattern matches on a feed page, such as email addresses', () => {
+        const text = feedText + '\nReply to someone@example.org';
+        const emails = run(text, 'Inbox').filter(e => e.entityType === 'email');
+        assert.deepStrictEqual(emails, []);
+      });
+
+      it('keeps every entity of an ordinary article', () => {
+        const text = 'Maria Garcia and John Smith met with Robert Williams to discuss the plan. ' +
+          'Write to press@example.org for details.';
+        const raw = extractRegexEntities(text, 'https://example.com');
+        assert.deepStrictEqual(filterFeedPageEntities(raw, { title: 'Budget talks', text }), raw);
+      });
+
+      it('leaves structured-data entities on a feed page alone', () => {
+        const brand = { name: 'Social', entityType: 'organization', confidence: 0.9, extractor: 'json-ld', attributes: {} };
+        const raw = [brand, ...extractRegexEntities(feedText, 'https://example.com')];
+        assert.deepStrictEqual(filterFeedPageEntities(raw, { title: 'Home', text: feedText }), [brand]);
+      });
+    });
   });
 
   // ─── Microformats Extractor ─────────────────────────────────────────
