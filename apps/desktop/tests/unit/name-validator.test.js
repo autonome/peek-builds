@@ -8,7 +8,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'entities', 'name-validator.js');
 
 // Dynamic import since the module uses ESM exports
-const { classifyNamePattern, isLikelyPersonName, validateEntityType, loadNameDatabaseSync } = await import(modulePath);
+const {
+  classifyNamePattern,
+  isLikelyPersonName,
+  validateEntityType,
+  loadNameDatabaseSync,
+  isKnownSurname,
+  trimTrailingTitleWords,
+} = await import(modulePath);
 
 // Load the name database synchronously before tests
 const namesPath = join(__dirname, '..', '..', 'features', 'entities', 'data', 'names.json');
@@ -573,5 +580,62 @@ describe('validateEntityType', () => {
       const r = validateEntityType('https://example.com', 'event');
       assert.equal(r.valid, false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Words that are never part of a person name
+// ---------------------------------------------------------------------------
+
+describe('isLikelyPersonName — non-name words', () => {
+  it('rejects a calendar weekday header ("Su Mo Tu")', () => {
+    const r = isLikelyPersonName('Su Mo Tu');
+    assert.equal(r.likely, false);
+  });
+
+  it('rejects a capitalized product word pair ("Mac Os")', () => {
+    const r = isLikelyPersonName('Mac Os');
+    assert.equal(r.likely, false);
+  });
+
+  it('rejects a name with a job title attached ("Mary Johnson Principal")', () => {
+    const r = isLikelyPersonName('Mary Johnson Principal');
+    assert.equal(r.likely, false);
+  });
+
+  it('still accepts a leading honorific that is also a title word ("Professor Mary Johnson")', () => {
+    const r = isLikelyPersonName('Professor Mary Johnson');
+    assert.equal(r.likely, true);
+  });
+
+  it('still accepts a plain first name + surname ("Mary Johnson")', () => {
+    const r = isLikelyPersonName('Mary Johnson');
+    assert.equal(r.likely, true);
+  });
+});
+
+describe('isKnownSurname', () => {
+  it('finds a surname from the database, case-insensitively', () => {
+    assert.equal(isKnownSurname('Johnson'), true);
+    assert.equal(isKnownSurname('johnson'), true);
+  });
+
+  it('rejects a word that is not a surname', () => {
+    assert.equal(isKnownSurname('Os'), false);
+    assert.equal(isKnownSurname(''), false);
+  });
+});
+
+describe('trimTrailingTitleWords', () => {
+  it('drops a job title glued after a name', () => {
+    assert.equal(trimTrailingTitleWords('Maria Garcia Principal'), 'Maria Garcia');
+  });
+
+  it('drops several trailing title words', () => {
+    assert.equal(trimTrailingTitleWords('Maria Garcia Senior Engineer'), 'Maria Garcia');
+  });
+
+  it('leaves a name without a title unchanged', () => {
+    assert.equal(trimTrailingTitleWords('Maria Garcia'), 'Maria Garcia');
   });
 });

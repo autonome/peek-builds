@@ -263,6 +263,55 @@ describe('Entity Recognition Extension', () => {
         // Date and price regex extraction is disabled (too noisy)
       });
     });
+
+    describe('person name extraction', () => {
+      before(async () => {
+        const validator = await import(resolve(extensionsDir, 'name-validator.js'));
+        await validator.ensureNameDatabase();
+      });
+
+      const persons = (text: string) =>
+        extractRegexEntities(text, 'https://example.com')
+          .filter(e => e.entityType === 'person')
+          .map(e => e.name);
+
+      it('finds a plain first name + surname', () => {
+        assert.deepStrictEqual(persons('The talk was given by Maria Garcia last week.'), ['Maria Garcia']);
+      });
+
+      it('does not report a calendar weekday header as a person', () => {
+        assert.deepStrictEqual(persons('October 2026\nSu Mo Tu We Th Fr Sa\n1 2 3 4 5 6 7'), []);
+      });
+
+      it('does not report ordinary capitalized words as a person', () => {
+        assert.deepStrictEqual(persons('Download for Mac Os today.'), []);
+        assert.deepStrictEqual(persons('Requires Mac Pro hardware.'), []);
+      });
+
+      it('does not accept a known first name followed by a non-surname', () => {
+        assert.deepStrictEqual(persons('Ask Mary Xyzzyplugh about it.'), []);
+      });
+
+      it('accepts an unknown surname when an honorific precedes it', () => {
+        assert.deepStrictEqual(persons('Office hours with Dr. Mary Xyzzyplugh on Fridays.'), ['Mary Xyzzyplugh']);
+      });
+
+      it('trims a job title glued onto a name', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Principal\nAcme Widgets'), ['Maria Garcia']);
+      });
+
+      it('keeps the name when an unrelated capitalized word follows it', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Acme joined the board.'), ['Maria Garcia']);
+      });
+
+      it('finds a name preceded by a capitalized non-name word', () => {
+        assert.deepStrictEqual(persons('Speaker Maria Garcia will open.'), ['Maria Garcia']);
+      });
+
+      it('reports a name once when it appears with and without a title', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Principal. Later, Maria Garcia said hello.'), ['Maria Garcia']);
+      });
+    });
   });
 
   // ─── Microformats Extractor ─────────────────────────────────────────
