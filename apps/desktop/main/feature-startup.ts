@@ -95,7 +95,7 @@ export function getAtprotoSource(): AtprotoSource | null {
  * errors with a warning — a feature with an unreadable manifest
  * shouldn't bring down startup or every subsequent registry mutation.
  */
-function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
+export function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
   try {
     const manifestPath = path.join(entry.path, 'manifest.json');
     manifestCache.upsertFromManifest(entry.id, manifestPath, entry.source.type === 'builtin');

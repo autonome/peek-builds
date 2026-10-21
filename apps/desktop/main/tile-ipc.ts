@@ -119,6 +119,7 @@ import {
 import type { TableName } from '../types/index.js';
 import { installFromBundle, isPublishableFeatureFile, previewLocalDirectory, registerLocalDirectory } from './feature-installer.js';
 import { evaluateFeatureApproval } from './feature-approval.js';
+import { syncLocalFeatureWatches } from './local-feature-reload.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -1605,6 +1606,7 @@ export function registerTileIpcHandlers(): void {
         console.error(`[tile-ipc] Failed to re-arm ${args.id} on enable:`, err);
       }
 
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:enabled', { id: args.id });
     }
     return { success: result };
@@ -1662,6 +1664,7 @@ export function registerTileIpcHandlers(): void {
       // Safe/idempotent for resident-only or never-armed tiles.
       disarmLazyTile(args.id);
 
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:disabled', { id: args.id });
     }
     return { success: result };
@@ -1729,6 +1732,7 @@ export function registerTileIpcHandlers(): void {
         entry.grantedCapabilities as unknown as Record<string, unknown>
       );
 
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:removed', { id: args.id });
     }
     return { success: result };
@@ -1928,6 +1932,7 @@ export function registerTileIpcHandlers(): void {
       } catch (err) {
         console.error(`[tile-ipc] Failed to arm ${entry.id} after local install:`, err);
       }
+      syncLocalFeatureWatches();
 
       return { success: true, entry };
     } catch (err) {

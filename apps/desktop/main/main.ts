@@ -20,6 +20,7 @@ import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
 import { discoverFeatures, loadFeatureManifest, isBuiltinFeatureEnabled } from './tile-feature-state.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
+import { syncLocalFeatureWatches } from './local-feature-reload.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import {
   registerTileLifecycleIpc,
@@ -1348,6 +1349,7 @@ export async function loadFeatures(): Promise<number> {
   try {
     const holdOverride = parseInt(process.env.PEEK_SCHEDULE_BOOT_HOLD_MS ?? '', 10);
     startTileSchedules(Number.isNaN(holdOverride) ? SCHEDULE_BOOT_HOLD_MS : holdOverride);
+    syncLocalFeatureWatches();
   } catch (err) {
     console.error('[tile-schedule] start failed:', err);
   }

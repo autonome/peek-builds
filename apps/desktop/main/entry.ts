@@ -89,6 +89,7 @@ import {
 } from './index.js';
 
 import { startHotReload, stopHotReload } from './hotreload.js';
+import { stopLocalFeatureWatches } from './local-feature-reload.js';
 import { checkAndRunDailyBackup } from './backup.js';
 import { initThumbnailDir, cleanupThumbnails } from './thumbnails.js';
 import { getActiveThumbnailHashes, getContextEntry } from './datastore.js';
@@ -1186,6 +1187,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
   try { disposePageTranslation(); } catch (e) { DEBUG && console.error('[lifecycle] disposePageTranslation error:', e); }
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
+  try { stopLocalFeatureWatches(); } catch (e) { DEBUG && console.error('[lifecycle] stopLocalFeatureWatches error:', e); }
   try { cleanupThumbnails(getActiveThumbnailHashes); } catch (e) { DEBUG && console.error('[lifecycle] cleanupThumbnails error:', e); }
   try { shutdown(); } catch (e) { DEBUG && console.error('[lifecycle] shutdown error:', e); }
   // Tear down page-host guests BEFORE Electron closes their host windows during
