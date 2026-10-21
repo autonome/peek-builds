@@ -83,7 +83,9 @@ export async function reloadLocalFeature(featureId: string): Promise<LocalReload
       const win = bounds && getTileWindow(featureId, entryId);
       if (win && !win.isDestroyed()) {
         win.setBounds(bounds);
-        win.show();
+        // A reload comes from a file edit elsewhere: re-show without
+        // activating the app or taking focus from what the user is doing.
+        win.showInactive();
       }
     }
   } catch (err) {
