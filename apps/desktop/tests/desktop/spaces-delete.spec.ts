@@ -97,22 +97,31 @@ function spaceHomeWindows(spaceId: string): Page[] {
     .filter((p) => !p.isClosed() && p.url().includes('spaces/home.html') && p.url().includes(encodeURIComponent(spaceId)));
 }
 
+const CONFIRM_MARK = '[spaces-delete confirm] ';
+
 /**
  * Click the delete button on a space's card in `page`, answering the
  * confirmation yes. Returns the question the page asked.
+ *
+ * The question comes back through the page's console rather than a read of
+ * the page after the click: deleting the active space closes the very page
+ * that asked, so a later read races that close.
  */
 async function deleteFromCard(page: Page, tagId: string): Promise<string | null> {
   const button = page.locator(`peek-card.space-card[data-tag-id="${tagId}"] .space-delete-btn`);
   await expect(button, 'the space card has no delete button').toHaveCount(1, { timeout: 15000 });
-  await page.evaluate(() => {
-    (window as any).__lastConfirm = null;
+  await page.evaluate((mark: string) => {
     (window as any).confirm = (msg: string) => {
-      (window as any).__lastConfirm = msg;
+      console.log(mark + msg);
       return true;
     };
-  });
+  }, CONFIRM_MARK);
+  const asked = page
+    .waitForEvent('console', { predicate: (m) => m.text().startsWith(CONFIRM_MARK), timeout: 15000 })
+    .then((m) => m.text().slice(CONFIRM_MARK.length))
+    .catch(() => null);
   await button.click();
-  return (await page.evaluate(() => (window as any).__lastConfirm)) as string | null;
+  return asked;
 }
 
 test.describe('spaces delete @desktop', () => {
