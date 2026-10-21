@@ -255,6 +255,34 @@ describe('tile-schedule', () => {
     unwatch('never:poll');
   });
 
+  it('a start hold keeps due entries from firing until it has passed', () => {
+    watch('held:never');
+    watch('held:missed');
+    watch('held:recent');
+    store.setScheduleLastRun('held', 'held:missed', time.now - 7 * 60 * MINUTE);
+    // Due in 40 s, after the hold ends: the hold does not delay it further.
+    store.setScheduleLastRun('held', 'held:recent', time.now - 15 * MINUTE + 40 * 1000);
+    registerTileSchedule(makeManifest('held', [
+      { topic: 'held:never', everyMinutes: 15 },
+      { topic: 'held:missed', everyMinutes: 15 },
+      { topic: 'held:recent', everyMinutes: 15 },
+    ]));
+
+    startTileSchedules(30 * 1000);
+    time.advance(29 * 1000);
+    assert.strictEqual(fires.length, 0, 'nothing fires during the hold');
+
+    time.advance(1000);
+    assert.deepStrictEqual(fires.map(f => f.topic).sort(), ['held:missed', 'held:never']);
+
+    time.advance(10 * 1000);
+    assert.strictEqual(fires.length, 3, 'an entry due after the hold fires on its own time');
+
+    unwatch('held:never');
+    unwatch('held:missed');
+    unwatch('held:recent');
+  });
+
   it('the publish carries scheduledAt and the previous lastRunAt from the system address', () => {
     watch('payload:poll');
     const armedAt = time.now;

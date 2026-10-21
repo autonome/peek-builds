@@ -27,7 +27,7 @@ import {
 } from './tile-lifecycle.js';
 import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
-import { startTileSchedules } from './tile-schedule.js';
+import { startTileSchedules, SCHEDULE_BOOT_HOLD_MS } from './tile-schedule.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish, subscribe, unsubscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1340,9 +1340,12 @@ export async function loadFeatures(): Promise<number> {
   // ── Manifest-declared schedules ──
   // Every feature has been armed by now, so a schedule that is already due can
   // publish its wake topic into a complete registry. Arming happened per tile
-  // above (tile-arm); this only releases the timers.
+  // above (tile-arm); this only releases the timers. A due schedule waits out
+  // a settle period so its tile is not woken into the boot set;
+  // PEEK_SCHEDULE_BOOT_HOLD_MS overrides the period (tests set 0).
   try {
-    startTileSchedules();
+    const holdOverride = parseInt(process.env.PEEK_SCHEDULE_BOOT_HOLD_MS ?? '', 10);
+    startTileSchedules(Number.isNaN(holdOverride) ? SCHEDULE_BOOT_HOLD_MS : holdOverride);
   } catch (err) {
     console.error('[tile-schedule] start failed:', err);
   }

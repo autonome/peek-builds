@@ -58,7 +58,11 @@ const scheduleRuns = (tileId: string): Promise<Array<{ topic: string; lastRunAt:
 
 test.describe('Feeds Schedule Wake @desktop', () => {
   test.beforeAll(async () => {
-    ({ app, bgWindow } = await createPerDescribeApp('feeds-schedule-wake'));
+    // Boot normally holds a due schedule for a settle period; this spec is
+    // about the fire itself, so it runs without the hold.
+    ({ app, bgWindow } = await createPerDescribeApp('feeds-schedule-wake', {
+      env: { PEEK_SCHEDULE_BOOT_HOLD_MS: '0' },
+    }));
     await waitForExtensionsReady(bgWindow, 15000);
   });
 

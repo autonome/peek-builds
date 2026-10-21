@@ -15,7 +15,8 @@
  * disabling a feature stops its schedule and re-enabling it starts it again.
  * Nothing fires until `startTileSchedules()` runs, which happens once boot has
  * finished registering tiles — otherwise a due-at-startup entry would publish
- * into a half-built registry.
+ * into a half-built registry. Boot also holds every fire for a settle period
+ * after that, so a due schedule never wakes its tile during boot itself.
  *
  * The last fire time is persisted per profile. On arming, an entry that has
  * never fired, or whose last run is more than one interval old, is due and
@@ -36,6 +37,9 @@ import { type TileManifest, type TileScheduleEntry } from './tile-manifest.js';
 import { DEBUG } from './config.js';
 
 const MS_PER_MINUTE = 60 * 1000;
+
+/** How long after boot a due schedule waits before it may fire. */
+export const SCHEDULE_BOOT_HOLD_MS = 30 * 1000;
 
 // ─── Injection (for testability) ────────────────────────────────────
 
@@ -97,6 +101,7 @@ export function __resetTileScheduleStateForTest(): void {
   }
   scheduledTiles.clear();
   started = false;
+  firstFireNotBefore = 0;
 }
 
 // ─── State ──────────────────────────────────────────────────────────
@@ -185,13 +190,21 @@ export function unregisterTileSchedule(tileId: string): void {
   DEBUG && console.log(`[tile-schedule] Unregistered schedules for ${tileId}`);
 }
 
+/** No entry fires before this time. Set by `startTileSchedules()`. */
+let firstFireNotBefore = 0;
+
 /**
  * Arm every registered schedule. Called once boot has finished registering
  * tiles; registrations after it arm on arrival. Idempotent.
+ *
+ * `holdMs` keeps any fire, a due-at-startup one included, from landing until
+ * that long after this call. Boot passes a hold so a due schedule wakes its
+ * tile after the app has settled rather than adding a window to the boot set.
  */
-export function startTileSchedules(): void {
+export function startTileSchedules(holdMs = 0): void {
   if (started) return;
   started = true;
+  firstFireNotBefore = clock.now() + Math.max(0, holdMs);
   for (const [tileId, armed] of scheduledTiles) {
     for (const entry of armed) armEntry(tileId, entry);
   }
@@ -201,14 +214,11 @@ export function startTileSchedules(): void {
 
 function armEntry(tileId: string, entry: ArmedEntry): void {
   const lastRunAt = store.getScheduleLastRun(tileId, entry.topic);
-  if (lastRunAt === null) {
-    // Never fired — due now.
-    scheduleFire(tileId, entry, 0);
-    return;
-  }
-  // However many intervals were missed, the entry is due once, not once each.
-  const remaining = lastRunAt + entry.intervalMs - clock.now();
-  scheduleFire(tileId, entry, Math.max(0, remaining));
+  // Never fired — due now. Otherwise, however many intervals were missed, the
+  // entry is due once, not once each.
+  const remaining = lastRunAt === null ? 0 : lastRunAt + entry.intervalMs - clock.now();
+  const held = firstFireNotBefore - clock.now();
+  scheduleFire(tileId, entry, Math.max(0, remaining, held));
 }
 
 function scheduleFire(tileId: string, entry: ArmedEntry, delayMs: number): void {
