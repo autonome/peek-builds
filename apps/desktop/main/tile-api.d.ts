@@ -561,8 +561,16 @@ interface TileNetwork {
   /**
    * Domain-gated HTTP fetch.
    * Requires `network.domains` allowlist to include the request domain.
+   * The body comes back as text in `body`, or, with
+   * `responseType: 'bytes'`, untouched in `bytes`.
    */
-  fetch(url: string, options?: Record<string, unknown>): Promise<{ data?: unknown; error?: string }>;
+  fetch(
+    url: string,
+    options?: { method?: string; headers?: Record<string, string>; body?: string; responseType?: 'text' | 'bytes' },
+  ): Promise<
+    | { status: number; statusText: string; headers: Record<string, string>; body?: string; bytes?: Uint8Array; error?: undefined }
+    | { error: string }
+  >;
 }
 
 // ─── Features ────────────────────────────────────────────────────────

@@ -4828,17 +4828,27 @@ export function registerTileIpcHandlers(): void {
         body: args.options?.body as string,
       });
 
-      const body = await response.text();
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => {
         headers[key] = value;
       });
 
+      // `responseType: 'bytes'` returns the body untouched as `bytes`
+      // (a Uint8Array), for binary content a text decode would corrupt.
+      if (args.options?.responseType === 'bytes') {
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+          bytes: new Uint8Array(await response.arrayBuffer()),
+        };
+      }
+
       return {
         status: response.status,
         statusText: response.statusText,
         headers,
-        body,
+        body: await response.text(),
       };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
