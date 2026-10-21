@@ -565,6 +565,24 @@ export class WindowKernelExecutor {
   }
 
   private logDismissalDecisions(event: Event, prev: State, next: State): void {
+    // Which transition chose each window for dismissal, and the record facts
+    // the choosing rules read. The sweep traces below name a holder and a
+    // cause, but several rules mark a victim with no focus report behind them
+    // (an app resign, a window painting, the end of a key taken from another
+    // app), and a trace that only shows the effect cannot tell them apart.
+    for (const record of next.order) {
+      if (record.pendingHidden !== true) continue;
+      if (prev.order.find((w) => w.id === record.id)?.pendingHidden === true) continue;
+      wmLog('dismiss-mark', {
+        id: record.id,
+        on: event.type,
+        focusedSinceShown: record.focusedSinceShown === true,
+        transient: record.transient === true,
+        key: next.key,
+        appActive: next.appActive,
+      });
+    }
+
     const attention = next.lastAttention;
     if (attention !== null && attention.seq !== prev.lastAttention?.seq) {
       const holder = attention.holder;

@@ -3012,6 +3012,26 @@ export function hideProvokesFocusReassignment(windowFocused: boolean, appActive:
   return windowFocused && appActive;
 }
 
+// Whether a show that has just happened is what focused the window, so the
+// show is reported as a focus as well as a visibility change. Both halves must
+// hold, and both failures in specs/linux-focus-hidden-and-resign.md are one
+// half being assumed.
+//
+// `showAskedToActivate` — only a show that asked for focus can have given it.
+// A window held off screen can keep the platform's input focus (X11 hands
+// focus to a window that is not mapped, and the focus is still on it when it
+// maps again), and a window declared non-activating is put on screen without
+// focus and takes key only through a later raise. Reading either as this
+// show's focus ends every transient the window manager has focused, and marks
+// the shown window focused since its show when nothing focused it.
+//
+// `platformReportsFocused` — an activating show can be refused (another
+// application holds focus, or the window cannot take key), and then it focused
+// nothing either.
+export function showConfirmsFocus(showAskedToActivate: boolean, platformReportsFocused: boolean): boolean {
+  return showAskedToActivate && platformReportsFocused;
+}
+
 export interface PlatformFocusFacts {
   // Restacking a window hands it focus on this platform.
   restackingTakesFocus: boolean;

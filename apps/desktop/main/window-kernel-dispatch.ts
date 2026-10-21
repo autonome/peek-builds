@@ -5,7 +5,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type MaximizeAllMarkEntry, type MaximizeAllMode, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { showConfirmsFocus, type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type MaximizeAllMarkEntry, type MaximizeAllMode, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 
@@ -213,11 +213,18 @@ export function kernelOsFocusSettled(): void {
 export function kernelWindowShown(id: WindowId, focused = false, opSeq?: number): void {
   kernelDispatch({ type: 'WindowShown', id, opSeq });
   // A show no backend op asked for (a window visible at creation, reported at
-  // registration and at the open handler) cannot make a window key when it was
-  // declared unable to become key. Taken as a focus it would move key off the
-  // window that really holds it and end a transient one (the command panel).
+  // registration and at the open handler) reports a focus only for a window
+  // that show could have focused: one able to become key, and one that does
+  // not decline activation. A window declared non-activating is put on screen
+  // without focus and takes key only through a later raise, which reports its
+  // own focus under its own op; reading this show as a focus claims one the
+  // window manager never gave. Taken as a focus it moves key off the window
+  // that really holds it, ends a transient one (the command panel), and marks
+  // the shown window focused — enough for the next app resign to dismiss a
+  // peek nobody had focused (specs/linux-focus-hidden-and-resign.md, failure 2).
   const record = opSeq === undefined ? getKernelExecutor().getState().order.find((w) => w.id === id) : undefined;
-  if (focused && record?.canBecomeKey !== false) {
+  const showActivates = opSeq !== undefined || (record?.canBecomeKey !== false && record?.nonActivating !== true);
+  if (showConfirmsFocus(showActivates, focused)) {
     kernelDispatch({ type: 'OsFocusGained', id, cause: opSeq === undefined ? undefined : { kind: 'machine', opSeq } });
   }
 }

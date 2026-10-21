@@ -82,7 +82,7 @@ export function translatePointerInput(
   }
   return null;
 }
-import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, windowById } from './window-kernel.js';
+import { FULLSCREEN_SETTLE_TIMEOUT_MS, isOnEveryDesktop, onCurrentDesktop, showConfirmsFocus, windowById } from './window-kernel.js';
 // The executor does not import this backend, so this is not a cycle.
 import { planRaiseRealization } from './window-kernel-executor.js';
 import {
@@ -212,7 +212,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // Armed before the native show/hide call that can provoke it — a
   // `BaseWindow`'s native 'show'/'hide' can fire ahead of this method's own
   // synthetic echo, so the listener needs the token armed first.
-  private readonly pendingShowOpSeq = new Map<WindowId, number>();
+  //
+  // `activates` records which native call the token belongs to, because only
+  // an activating show can have given the window focus; see
+  // `showConfirmsFocus`.
+  private readonly pendingShowOpSeq = new Map<WindowId, { opSeq: number; activates: boolean }>();
   // Page chrome overlays this backend flagged non-activating because the kernel
   // marked them so (over a held page); it unflags exactly these.
   private readonly chromeFlagged = new Set<WindowId>();
@@ -659,27 +663,30 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('show', () => {
       // AppKit can deliver a stale 'show' after the machine already hid this
       // window again — validate against ground truth before echoing.
-      const opSeq = this.pendingShowOpSeq.get(id);
+      const pending = this.pendingShowOpSeq.get(id);
       this.pendingShowOpSeq.delete(id);
       if (win.isDestroyed() || !win.isVisible()) return;
       // Only a show this backend performed confirms focus, under its own op
-      // token. A show the platform made by itself (AppKit re-showing the page
-      // chrome after a desktop switch and handing it key) reports visibility
-      // only: its focus arrives through the `'focus'` listener above, which
-      // is where platform-provoked focus is told from the user's.
-      const focused = opSeq !== undefined && this.isFocused(win);
+      // token, and only one that asked to activate. A show the platform made by
+      // itself (AppKit re-showing the page chrome after a desktop switch and
+      // handing it key) reports visibility only: its focus arrives through the
+      // `'focus'` listener above, which is where platform-provoked focus is
+      // told from the user's.
+      const focused = showConfirmsFocus(pending?.activates === true, this.isFocused(win));
       // A show with no op token is one the platform made by itself; naming the window lets a trace
       // tell which one, since its desktop read below logs only the trigger.
       const shownState = getKernelExecutor().getState();
       wmLog('native-show', {
         id,
-        opSeq: opSeq ?? null,
-        focused: this.isFocused(win),
+        opSeq: pending?.opSeq ?? null,
+        activates: pending?.activates ?? null,
+        osFocused: this.isFocused(win),
+        focused,
         desktop: windowById(shownState, id)?.desktop ?? null,
         currentDesktop: shownState.screens[0]?.current ?? null,
         appActive: getAppActive(),
       });
-      kernelWindowShown(id, focused, opSeq);
+      kernelWindowShown(id, focused, pending?.opSeq);
       this.onDesktopTrigger('window-shown');
     });
     win.on('hide', () => {
@@ -1285,7 +1292,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // Arm BEFORE either native call below — see `pendingShowOpSeq`'s doc:
     // the native `'show'` this provokes can land ahead of this method's own
     // synthetic echo, so the listener needs the token armed first.
-    this.pendingShowOpSeq.set(id, opSeq);
+    this.pendingShowOpSeq.set(id, { opSeq, activates: activate });
     if (isHeadless()) {
       try {
         win.setOpacity(0);
@@ -1322,9 +1329,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       } catch {
         /* showInactive unsupported in some envs */
       }
-      // `showInactive()` emits no native 'show' event, so a token armed above
-      // would never be retired by the listener — retire it here instead,
-      // since the synthetic echo `showWindow` emits carries the same opSeq.
+      // On macOS `showInactive()` emits no native 'show' event, so a token
+      // armed above would never be retired by the listener — retire it here
+      // instead, since the synthetic echo `showWindow` emits carries the same
+      // opSeq. Where it DOES emit one (X11), the listener has already run by
+      // now, with `activates: false` armed, which is what stops it reading the
+      // window's pre-existing focus as this show's. See `showConfirmsFocus`.
       this.pendingShowOpSeq.delete(id);
     }
   }

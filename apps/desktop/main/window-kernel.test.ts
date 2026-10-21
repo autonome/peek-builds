@@ -33,6 +33,7 @@ import {
   inMaximizeAllScope,
   maximizeAllScope,
   platformChoseFocus,
+  showConfirmsFocus,
   LAUNCHER_ROLES,
   roleIn,
   BASE_LAYER,
@@ -4950,6 +4951,60 @@ describe('window-kernel: the transient closing rule', () => {
     assert.ok(!effects.some((e) => e.type === 'DismissWindow'), 'not dismissed on the edge');
     const { effects: after } = foldWithEffects([{ type: 'AppActivated' }, { type: 'AppResignSettled' }], resigned);
     assert.ok(!after.some((e) => e.type === 'DismissWindow'), 'the activation cancelled the settle');
+  });
+});
+
+// A window held off screen can keep the platform's input focus — X11 hands
+// focus to an unmapped window, and the focus is still on it when it maps again
+// — and a window declared non-activating is shown without focus at all. So the
+// answer the platform gives right after a show is only this show's focus when
+// the show asked to activate. Two feeds consult this before they report a show
+// as a focus: `electron-window-backend.ts`'s `win.on('show')` listener and
+// `window-kernel-dispatch.ts kernelWindowShown`.
+// specs/linux-focus-hidden-and-resign.md, failures 1 and 2.
+describe('window-kernel: whether a show is what focused the window', () => {
+  it('an activating show the platform answers focused is a focus', () => {
+    assert.strictEqual(showConfirmsFocus(true, true), true);
+  });
+
+  it('a show that asked for no focus is never a focus, whatever the platform answers', () => {
+    assert.strictEqual(showConfirmsFocus(false, true), false, 'the window kept this focus from before it went off screen');
+    assert.strictEqual(showConfirmsFocus(false, false), false);
+  });
+
+  it('an activating show the platform refused is not a focus either', () => {
+    assert.strictEqual(showConfirmsFocus(true, false), false);
+  });
+
+  // The consequence the predicate's answer selects between, stated against the
+  // kernel: the cmd panel up and focused, the page chrome coming back on screen.
+  const regPanel: Event = {
+    type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true,
+    class: 'palette', role: 'palette', transient: true,
+  };
+  const regChrome: Event = {
+    type: 'WindowRegistered', id: wid(2), kind: 'browser', layer: 1, canBecomeKey: true, acceptsInput: true,
+    class: 'overlay', role: 'overlay',
+  };
+  const panelUpChromeHidden = (): State => {
+    const state = fold([regChrome, regPanel, { type: 'WindowShown', id: wid(1) }]);
+    return fold([{ type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: state.opSeqCounter } }], state);
+  };
+
+  it('a show reported as no focus leaves the focused panel up', () => {
+    const before = panelUpChromeHidden();
+    assert.strictEqual(before.key, wid(1), 'precondition: the panel holds key');
+    const after = foldWithEffects([{ type: 'WindowShown', id: wid(2) }], before);
+    assert.deepStrictEqual(after.effects.filter((e) => e.type === 'DismissWindow'), []);
+    assert.strictEqual(after.state.key, wid(1));
+  });
+
+  it('the same show reported as a focus sweeps the panel — which is why the report must be truthful', () => {
+    const before = panelUpChromeHidden();
+    const shown = fold([{ type: 'WindowShown', id: wid(2) }], before);
+    const report: Event = { type: 'OsFocusGained', id: wid(2), cause: { kind: 'machine', opSeq: shown.opSeqCounter } };
+    const after = foldWithEffects([report], shown);
+    assert.deepStrictEqual(after.effects.filter((e) => e.type === 'DismissWindow'), [{ type: 'DismissWindow', id: wid(1) }]);
   });
 });
 

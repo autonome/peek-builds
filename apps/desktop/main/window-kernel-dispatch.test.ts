@@ -778,6 +778,69 @@ describe('window-kernel-dispatch: a shown-and-focused report for a window that c
   });
 });
 
+// A peek, a slide and the palette are opened `type: 'panel'` — declared
+// non-activating, so the backend puts them on screen without focus and they
+// take key only through a later raise, which reports its own focus under its
+// own op. The open path's "visible at creation, so report it shown" feed used
+// to claim focus for them anyway, which marked the window focused since its
+// show — and the closing rule then let the next app resign dismiss a peek the
+// window manager had never focused.
+// specs/linux-focus-hidden-and-resign.md, failure 2.
+describe('window-kernel-dispatch: a shown-and-focused report for a window that declines activation', () => {
+  beforeEach(() => {
+    _resetKernelForTests();
+  });
+
+  const settings = wid(150);
+  const peek = wid(151);
+  const registerPeek = (id: WindowId): void => {
+    kernelRegisterWindow({
+      id,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      role: 'quick-view',
+      transient: true,
+      nonActivating: true,
+    });
+  };
+  // The user is working in the settings window; the peek is opened over it.
+  const peekOpenedOverSettings = (): void => {
+    registerVisibleContentWindow(settings);
+    kernelOsFocusGained(settings);
+    kernelAppActivated();
+    registerPeek(peek);
+    kernelWindowShown(peek, true);
+  };
+
+  it('does not take key from the window the user is in, and does not mark the peek focused', () => {
+    peekOpenedOverSettings();
+    const state = getKernelExecutor().getState();
+    assert.strictEqual(state.key, settings, 'a window that declines activation takes no key from a show');
+    const record = state.order.find((w) => w.id === peek);
+    assert.strictEqual(record?.visible, true, 'the peek itself is shown');
+    assert.notStrictEqual(record?.focusedSinceShown, true, 'the window manager has not focused it');
+  });
+
+  it('so an app resign does not dismiss it', () => {
+    peekOpenedOverSettings();
+    kernelAppResigned();
+    const record = getKernelExecutor().getState().order.find((w) => w.id === peek);
+    assert.notStrictEqual(record?.pendingHidden, true, 'a transient nobody focused is not closed by a resign');
+    assert.strictEqual(record?.visible, true);
+  });
+
+  it('still takes key when the report names the op the backend issued — a raise did ask for the focus', () => {
+    registerVisibleContentWindow(settings);
+    kernelOsFocusGained(settings);
+    registerPeek(peek);
+    kernelWindowShown(peek, true, 9);
+    assert.strictEqual(getKernelExecutor().getState().key, peek);
+  });
+});
+
 describe('window-kernel-dispatch: overlay attach/detach feed (peek 7fffa286)', () => {
   beforeEach(() => {
     _resetKernelForTests();
