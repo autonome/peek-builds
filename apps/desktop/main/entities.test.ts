@@ -371,6 +371,59 @@ describe('Entity Recognition Extension', () => {
         assert.deepStrictEqual(filterFeedPageEntities(raw, { title: 'Home', text: feedText }), [brand]);
       });
     });
+
+    describe('structured data above pattern matches', () => {
+      let preferStructuredData: (entities: any[]) => any[];
+
+      before(async () => {
+        const mod = await import(resolve(extensionsDir, 'source-precedence.js'));
+        preferStructuredData = mod.preferStructuredData;
+      });
+
+      const entity = (name: string, entityType: string, extractor: string, confidence = 0.8) =>
+        ({ name, entityType, extractor, confidence, attributes: {} });
+
+      it('keeps the structured-data entity when a pattern match names the same thing', () => {
+        const ld = entity('Acme Widgets', 'organization', 'json-ld', 0.85);
+        const out = preferStructuredData([entity('acme widgets', 'organization', 'regex-ner', 0.9), ld]);
+        assert.deepStrictEqual(out, [ld]);
+      });
+
+      it('drops a pattern match whose type disagrees with structured data for the same name', () => {
+        const og = entity('Maria Garcia', 'organization', 'opengraph');
+        const out = preferStructuredData([entity('Maria Garcia', 'person', 'regex-ner', 0.71), og]);
+        assert.deepStrictEqual(out, [og]);
+      });
+
+      it('compares names ignoring case, accents and spacing', () => {
+        const mf = entity('José  Núñez', 'person', 'microformats', 0.95);
+        const out = preferStructuredData([mf, entity('jose nunez', 'person', 'regex-ner', 0.71)]);
+        assert.deepStrictEqual(out, [mf]);
+      });
+
+      it('treats a map-URL place as structured data', () => {
+        const map = entity('10 Downing Street', 'place', 'map-url', 0.9);
+        const out = preferStructuredData([entity('10 Downing Street', 'place', 'regex', 0.75), map]);
+        assert.deepStrictEqual(out, [map]);
+      });
+
+      it('keeps pattern matches that structured data does not name', () => {
+        const raw = [
+          entity('Acme Widgets', 'organization', 'json-ld'),
+          entity('Maria Garcia', 'person', 'regex-ner', 0.71),
+          entity('press@example.org', 'email', 'regex', 0.9),
+        ];
+        assert.deepStrictEqual(preferStructuredData(raw), raw);
+      });
+
+      it('keeps every structured-data entity, even two that share a name', () => {
+        const raw = [
+          entity('Acme', 'organization', 'json-ld'),
+          entity('Acme', 'product', 'opengraph'),
+        ];
+        assert.deepStrictEqual(preferStructuredData(raw), raw);
+      });
+    });
   });
 
   // ─── Microformats Extractor ─────────────────────────────────────────

@@ -18,10 +18,10 @@
  * of the feed, so its author would survive the filter.
  */
 
+import { PATTERN_EXTRACTORS } from './source-precedence.js';
+
 // Distinct pattern-matched person names above which a page is treated as a feed.
 const FEED_PERSON_THRESHOLD = 10;
-
-const PATTERN_EXTRACTORS = new Set(['regex', 'regex-ner']);
 
 /**
  * Whether a set of extracted entities looks like it came from a feed page.
