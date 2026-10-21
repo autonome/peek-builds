@@ -859,3 +859,40 @@ A page host hiding itself 126 ms after being brought forward, and the chrome det
 window active, is product behaviour rather than a test artifact, so under the rule that shipped code
 is presumed correct (peek `57895545`) this is recorded rather than worked around. Pinning the
 opSeq-12 owner needs an op-source field in the hide effect's log line.
+
+### Linux gates on `b445b3af` and `dcacfea8` (2026-10-21)
+
+`b445b3af` had eleven failures: the five already recorded above (`hybrid-cmd-click-open`,
+`hybrid-escape-editable-guard`, `page-translate-front-window`, `windows-hidden-surface`,
+`desktop-serial/modal-self-close-on-blur`) and six new ones. Each new one was first run alone.
+
+| runner | `b445b3af` pass / fail / skipped | `dcacfea8` pass / fail / skipped |
+|---|---|---|
+| main-process unit | 4135 / 0 / — | 4136 / 0 / 1 |
+| node unit | 1548 / 0 / — | 1550 / 0 / — |
+| desktop | 591 / 9 / 26 | 593 / 7 / 26 |
+| desktop-serial | 53 / 2 / — | 53 / 2 / 1 |
+| components | 90 / 0 / — | 90 / 0 / — |
+| editor | 91 / 0 / — | 91 / 0 / — |
+
+The six new failures at `b445b3af`:
+
+| Spec | Test | Alone | Verdict |
+|---|---|---|---|
+| `boot-window-inventory.spec.ts` | fixed boot inventory: no new resident tile sneaks into the boot set | fails | fixed (`762d92d6`) — `reminders` and `feeds` declare a manifest `schedule`; on a fresh profile neither had fired, so `tile-schedule.ts` fired both as boot finished and their background tiles joined the boot set (6 against 4). Boot now holds every schedule fire for `SCHEDULE_BOOT_HOLD_MS` (30 s) |
+| `spaces-delete.spec.ts` | deleting the active space reopens its windows in the default space | fails | fixed (`821f817e`) — deleting the active space closes the spaces page that asked the question, and the spec read `__lastConfirm` back from that page after the click. The question now comes back through the page's console |
+| `spaces-delete.spec.ts` | the default space cannot be deleted | fails | fixed (`821f817e`) — failed only because the test before it did |
+| `hybrid-overlay.spec.ts` | entities panel renders active-URL entities and swaps on retarget | passes | fixed (`e021afb7`) — the overlay's own `entities:get-for-url` request is answered by the lazy entities tile about 1.5 s later with an empty list; under load that answer landed after the injected one and replaced it. The spec waits for it first |
+| `peeks.spec.ts` | an explicit size still wins over the display-relative one | passes | open, `specs/linux-focus-hidden-and-resign.md` — an app resign 26 ms after the peek opened dismissed the never-focused peek while `about:blank` loaded (`ERR_FAILED (-2)`). Passed at `dcacfea8` |
+| `desktop-serial/cmd-switch-to-page.spec.ts` | the URL action follows a window opening and closing while the panel stays up | passes alone, fails after "a page open only in a hidden peek" | open, same spec — the hidden chrome overlay keeps OS focus from the previous test, so its next non-activating show reports `focused=true` and the sweep dismisses the cmd panel. Failed again at `dcacfea8` |
+
+At `dcacfea8` the fixed four pass. `hybrid-cmd-click-open` passed. Four tests failed that are not
+recorded elsewhere in this file; each passes when its spec file runs alone, and none touches the
+schedule, spaces or entities code changed here:
+
+| Spec | Test | Error |
+|---|---|---|
+| `features-toggle-lazy-rearm.spec.ts` | second disable/enable cycle is clean and idempotent | `Window matching windows/windows.html not found within 15000ms` |
+| `hybrid-resize-exits-maximize.spec.ts` | resizing out of maximize leaves the overlay mirror in sync, so the next toggle maximizes | maximize state mismatch |
+| `hybrid-resize-exits-maximize.spec.ts` | a native OS resize out of maximize clears the stale maximize state | maximize state mismatch |
+| `todo-commands.spec.ts` | todo with only tags, or nothing, creates no item | `Expected: true, Received: false` |
