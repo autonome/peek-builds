@@ -120,6 +120,7 @@ import type { TableName } from '../types/index.js';
 import { installFromBundle, isPublishableFeatureFile, previewLocalDirectory, registerLocalDirectory } from './feature-installer.js';
 import { evaluateFeatureApproval } from './feature-approval.js';
 import { syncLocalFeatureWatches } from './local-feature-reload.js';
+import { clearFeatureLoadError } from './feature-load-errors.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -1606,6 +1607,7 @@ export function registerTileIpcHandlers(): void {
         console.error(`[tile-ipc] Failed to re-arm ${args.id} on enable:`, err);
       }
 
+      clearFeatureLoadError(args.id);
       syncLocalFeatureWatches();
       publish('feature-registry', 'feature:enabled', { id: args.id });
     }
@@ -1934,6 +1936,8 @@ export function registerTileIpcHandlers(): void {
       } catch (err) {
         console.error(`[tile-ipc] Failed to arm ${entry.id} after local install:`, err);
       }
+      // An approval answers a "needs re-approval" error left by boot or a reload.
+      clearFeatureLoadError(entry.id);
       syncLocalFeatureWatches();
 
       return { success: true, entry };
