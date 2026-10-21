@@ -1711,7 +1711,9 @@ export function registerTileIpcHandlers(): void {
 
     const result = registry.unregisterFeature(args.id);
     if (result) {
-      if (entry.source.type !== 'dev') {
+      // dev and local features are registered in place: the folder is the
+      // author's own, so removing the feature leaves it on disk.
+      if (entry.source.type !== 'dev' && entry.source.type !== 'local') {
         try {
           if (fs.existsSync(entry.path)) {
             fs.rmSync(entry.path, { recursive: true });
