@@ -27,6 +27,8 @@ import { getFeatureRegistry, upsertManifestCacheForEntry } from './feature-start
 import { setFeatureLoadError, clearFeatureLoadError } from './feature-load-errors.js';
 import { publish } from './pubsub.js';
 import { getTilePreloadPath } from './config.js';
+import { getWindowIdFor } from './window-machine.js';
+import { kernelSetBounds, kernelShowRequested } from './window-kernel-dispatch.js';
 import { LocalFeatureWatcher, nodeFolderWatchPort } from './local-feature-watch.js';
 
 export interface LocalReloadResult {
@@ -81,11 +83,12 @@ export async function reloadLocalFeature(featureId: string): Promise<LocalReload
       launchTile({ tilePath: entry.path, manifest, preloadPath: tilePreloadPath, entryId });
       const bounds = shown.get(entryId);
       const win = bounds && getTileWindow(featureId, entryId);
-      if (win && !win.isDestroyed()) {
-        win.setBounds(bounds);
+      const winId = win && !win.isDestroyed() ? getWindowIdFor(win) : null;
+      if (bounds && winId != null) {
+        kernelSetBounds(winId, bounds);
         // A reload comes from a file edit elsewhere: re-show without
         // activating the app or taking focus from what the user is doing.
-        win.showInactive();
+        kernelShowRequested(winId, false);
       }
     }
   } catch (err) {

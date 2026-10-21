@@ -146,6 +146,8 @@ const WRITE_ALLOWLIST = [
     why: 'better-sqlite3 profiles DB close — not a window' },
   { file: 'apps/desktop/main/entry.ts', call: 'close', count: 1,
     why: 'early-boot sqlite handle close (earlyDb) — not a window' },
+  { file: 'apps/desktop/main/local-feature-watch.ts', call: 'close', count: 2,
+    why: 'folder-watch handle close in LocalFeatureWatcher and fs.FSWatcher close in nodeFolderWatchPort — not a window' },
   { file: 'apps/desktop/main/hotreload.ts', call: 'close', count: 1,
     why: 'fs.FSWatcher close on hot-reload teardown — not a window' },
   { file: 'apps/desktop/main/oauth-loopback.ts', call: 'close', count: 1,
