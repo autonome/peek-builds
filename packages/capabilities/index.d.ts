@@ -74,6 +74,22 @@ export interface WindowCapability {
 }
 
 /**
+ * Automation capability: drive pages the tile opened itself.
+ *
+ * Grants `tile:automation:run` (navigate, wait for a selector, run a
+ * script, click, print to PDF) against a window the tile opened through
+ * `tile:window:open`, only while that window's page is on one of
+ * `origins`. Any feature may request it; the origin list is the scope.
+ */
+export interface AutomationCapability {
+  /**
+   * Origins the tile may drive: `https://host`, `http://host:port`, or
+   * `https://*.host` for any subdomain of host. No paths.
+   */
+  origins: string[];
+}
+
+/**
  * Filesystem capability: which paths the tile can access
  */
 export interface FilesystemCapability {
@@ -343,6 +359,8 @@ export interface TileCapabilities {
   izui?: IzuiCapability;
   /** Can register / unregister event-dispatch rules at runtime */
   rules?: boolean;
+  /** Can drive pages it opened, on the listed origins */
+  automation?: AutomationCapability;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────

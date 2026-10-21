@@ -97,6 +97,8 @@ export interface HybridWindowEntry {
   baseWin: BaseWindow;
   contentWC: WebContents;
   key?: string;
+  /** The address of the feature that opened this window, when one did. */
+  source?: string;
   /** The static open address this window was created for (dedup key). */
   requestedUrl?: string;
   /**
@@ -173,6 +175,7 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     baseWin: e.baseWin,
     contentWC: e.contentWC,
     key: e.key,
+    source: e.source,
     requestedUrl: e.requestedUrl,
     url: () => safeUrl(e.contentWC) || e.deferredLoad?.url || '',
     title: () => safeTitle(e.contentWC) || e.deferredLoad?.title || '',

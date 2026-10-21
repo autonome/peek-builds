@@ -475,6 +475,34 @@ interface TileFilesystem {
   write(path: string, content: string): Promise<{ success: boolean; error?: string }>;
 }
 
+// ─── Page automation ─────────────────────────────────────────────────
+
+type TileAutomationResult =
+  | { ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array }
+  | { ok: false; error: string; url?: string };
+
+/**
+ * Drive a page window the tile opened with `window.open`. Requires the
+ * `automation` capability; every operation except `url` also requires the
+ * page's current origin to be in `automation.origins`, and `navigate`
+ * requires the destination's origin to be. Timeouts default to 10 s and
+ * are capped at 120 s.
+ */
+interface TileAutomation {
+  /** Current URL and title, allowed on any origin (to notice a login redirect). */
+  url(windowId: number): Promise<TileAutomationResult>;
+  /** Load `url`; resolves when the load finishes. */
+  navigate(windowId: number, url: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Resolve once `selector` matches an element in the page. */
+  waitFor(windowId: number, selector: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Run `script` in the page; its (structured-clonable) result is `value`. */
+  eval(windowId: number, script: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Click the first element matching `selector`, as a user gesture. */
+  click(windowId: number, selector: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Print the page to PDF (Electron `printToPDF` options); bytes in `pdf`. */
+  printToPDF(windowId: number, options?: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+}
+
 // ─── Dialogs ─────────────────────────────────────────────────────────
 
 interface TileDialogs {
@@ -849,6 +877,7 @@ interface TileAPI {
   filesystem: TileFilesystem;
   dialogs: TileDialogs;
   network: TileNetwork;
+  automation: TileAutomation;
   features: TileFeatures;
   oauth: TileOAuth;
   sync: TileSync;

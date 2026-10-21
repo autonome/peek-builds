@@ -274,6 +274,7 @@ export { checkEscapeAllowed, type EscapeCheckResult } from './tile-escape-enforc
 export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './tile-session-enforcement.js';
 export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
 import { isNetworkDomainAllowed } from './tile-network-enforcement.js';
+import { checkAutomationAllowed, parseAutomationOp, runAutomationOp, tileWindowSource } from './page-automation.js';
 export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -2958,7 +2959,8 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Window handler not initialized' };
     }
 
-    const source = `peek://${activeGrant.tileId}/background`;
+    // The automation opener check (page-automation.ts) matches this source.
+    const source = tileWindowSource(activeGrant.tileId);
     DEBUG && console.log(`[tile:window:open] ${activeGrant.tileId} opening ${args.url}`);
     try {
       return await invokeWindowOpen(event, {
@@ -4741,6 +4743,36 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ── Page automation ──
+  //
+  // Drives a page host the calling tile opened through `tile:window:open`,
+  // on the origins its manifest lists under `capabilities.automation`. The
+  // gate and the operations live in page-automation.ts; this handler only
+  // resolves the window to its content webContents.
+
+  registerTileIpc('tile:automation:run', { mode: 'handle' }, async (event, args: {
+    token: string;
+    windowId: number;
+    op: unknown;
+  }, _grant) => {
+    const grant = _grant;
+    const op = parseAutomationOp(args?.op);
+    if (!op) return { ok: false, error: 'Malformed automation op' };
+    const hybrid = typeof args.windowId === 'number' ? getHybridWindow(args.windowId) : null;
+    const contentWC = hybrid && !hybrid.contentWC.isDestroyed() ? hybrid.contentWC : null;
+    if (!hybrid || !contentWC) return { ok: false, error: `No page window with id ${args.windowId}` };
+
+    const check = checkAutomationAllowed(grant, op, {
+      windowSource: hybrid.source,
+      currentUrl: contentWC.getURL(),
+    });
+    if (!check.ok) {
+      handleViolation(grant, 'automation', `automation:${op.op}`, check.error, args.token);
+      return { ok: false, error: check.error };
+    }
+    return runAutomationOp(contentWC, op);
   });
 
   // ── AT Protocol DPoP proxy ──

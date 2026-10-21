@@ -103,6 +103,9 @@ export function compareCapabilities(
   // ── Network domains ──
   diffSet(cur.network?.domains, nxt.network?.domains, 'network', result);
 
+  // ── Page-automation origins ──
+  diffSet(cur.automation?.origins, nxt.automation?.origins, 'automation', result);
+
   // ── Datastore tables ──
   diffSet(cur.datastore?.tables, nxt.datastore?.tables, 'datastore', result);
 

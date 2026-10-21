@@ -40,6 +40,24 @@ const MAX_NETWORK_DOMAINS = 50;
 /** Maximum number of datastore tables */
 const MAX_DATASTORE_TABLES = 20;
 
+/** Maximum number of page-automation origins */
+const MAX_AUTOMATION_ORIGINS = 20;
+
+/**
+ * Whether `value` is an origin a manifest may list under
+ * `capabilities.automation.origins`: `http(s)://host[:port]`, or
+ * `https://*.host` for any subdomain of host. No path, query or fragment.
+ */
+function isValidAutomationOrigin(value) {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  const m = /^(https?):\/\/(\*\.)?([a-z0-9.-]+)(:\d{1,5})?$/i.exec(value);
+  if (!m) return false;
+  if (m[2] && m[1].toLowerCase() !== 'https') return false;
+  const host = m[3].toLowerCase();
+  if (host === 'localhost') return !m[2];
+  return host.includes('.') && !host.startsWith('.') && !host.endsWith('.') && !host.includes('..');
+}
+
 /** Capabilities that require explicit user approval (not auto-granted) */
 const PRIVILEGED_CAPABILITIES = new Set([
   'filesystem',
@@ -395,6 +413,28 @@ function validateTileManifest(json) {
       }
     }
 
+    // Validate automation capability shape — { origins: string[] }.
+    // Each origin is `scheme://host[:port]` (http or https) or a wildcard
+    // host `https://*.example.com`; paths are not allowed because the
+    // runtime check compares origins only.
+    if (caps.automation !== undefined) {
+      const ac = caps.automation;
+      if (!ac || typeof ac !== 'object' || Array.isArray(ac)) {
+        errors.push({ path: 'capabilities.automation', message: 'automation must be { origins: string[] }' });
+      } else if (!Array.isArray(ac.origins) || ac.origins.length === 0) {
+        errors.push({ path: 'capabilities.automation.origins', message: 'origins must be a non-empty array of origin strings' });
+      } else {
+        if (ac.origins.length > MAX_AUTOMATION_ORIGINS) {
+          errors.push({ path: 'capabilities.automation.origins', message: `maximum ${MAX_AUTOMATION_ORIGINS} origins` });
+        }
+        for (let i = 0; i < ac.origins.length; i++) {
+          if (!isValidAutomationOrigin(ac.origins[i])) {
+            errors.push({ path: `capabilities.automation.origins[${i}]`, message: 'origin must be http(s)://host[:port] or https://*.host, with no path' });
+          }
+        }
+      }
+    }
+
     // Validate session capability shape — boolean only for now.
     if (caps.session !== undefined && typeof caps.session !== 'boolean') {
       errors.push({ path: 'capabilities.session', message: 'session must be a boolean' });
@@ -717,6 +757,13 @@ function resolveCapabilities(tileId, requested, isBuiltin) {
     } else if (typeof requested.features === 'object') {
       granted.features = { ...requested.features };
     }
+  }
+
+  // Automation: grant as requested to any feature; the runtime gate
+  // (`apps/desktop/main/page-automation.ts`) confines every operation to
+  // windows the tile opened itself whose page is on a listed origin.
+  if (requested.automation && Array.isArray(requested.automation.origins)) {
+    granted.automation = { origins: [...requested.automation.origins] };
   }
 
   // Session: grant as requested (boolean-only for now).

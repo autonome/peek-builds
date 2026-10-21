@@ -1322,6 +1322,32 @@ function buildAPI(): Record<string, unknown> {
     });
   };
 
+  // ── Page automation (if `automation` granted) ──
+  //
+  // Drives a page window this tile opened with `api.window.open`, on the
+  // origins listed in the manifest's `capabilities.automation.origins`.
+  // Every method resolves to `{ ok: true, url, title, ... }` or
+  // `{ ok: false, error }`; none throws on a refused or failed operation.
+
+  const runAutomation = async (windowId: number, op: Record<string, unknown>) => {
+    const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+    return ipcRenderer.invoke('tile:automation:run', { token: tileToken, windowId, op });
+  };
+
+  api.automation = {
+    url: (windowId: number) => runAutomation(windowId, { op: 'url' }),
+    navigate: (windowId: number, url: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'navigate', url, ...opts }),
+    waitFor: (windowId: number, selector: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'waitFor', selector, ...opts }),
+    eval: (windowId: number, script: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'eval', script, ...opts }),
+    click: (windowId: number, selector: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'click', selector, ...opts }),
+    printToPDF: (windowId: number, options?: Record<string, unknown>, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'printToPDF', options, ...opts }),
+  };
+
   // ── AT Protocol DPoP proxy (if `network` granted) ──
   //
   // Also reachable as the `atproto` protocol module; this `window.app` copy
