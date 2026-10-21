@@ -115,7 +115,7 @@ import {
   type RulesDb,
 } from './rules.js';
 import type { TableName } from '../types/index.js';
-import { installFromBundle, isPublishableFeatureFile } from './feature-installer.js';
+import { installFromBundle, isPublishableFeatureFile, previewLocalDirectory, registerLocalDirectory } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -1831,6 +1831,94 @@ export function registerTileIpcHandlers(): void {
       });
 
       return { success: true, entry: result.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Installation failed: ${message}` };
+    }
+  });
+
+  registerTileIpc('tile:features:install-local-preview', { mode: 'handle' }, async (event, args: {
+    token: string;
+    directoryPath: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkFeaturesAllowed(grant, 'install', 'local');
+    if (!check.ok) {
+      handleViolation(grant, 'features', 'features:install-local-preview', check.error, args.token);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const preview = previewLocalDirectory(args.directoryPath, registry);
+    if (!preview.success) return { error: preview.error };
+    return {
+      manifest: preview.manifest,
+      granted: preview.granted,
+      denied: preview.denied,
+      alreadyInstalled: preview.alreadyInstalled,
+    };
+  });
+
+  registerTileIpc('tile:features:install-local', { mode: 'handle' }, async (event, args: {
+    token: string;
+    directoryPath: string;
+    userApproved: boolean;
+    tilePreloadPath?: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkFeaturesAllowed(grant, 'install', 'local');
+    if (!check.ok) {
+      handleViolation(grant, 'features', 'features:install-local', check.error, args.token);
+      return { error: check.error };
+    }
+
+    if (!args.userApproved) {
+      return { error: 'User approval required before installation' };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    try {
+      const result = registerLocalDirectory(args.directoryPath, registry, { userApproved: true });
+      if (!result.success) {
+        return { error: result.error };
+      }
+      const entry = result.entry!;
+
+      registry.saveRegistry();
+
+      writeFeatureHistory(
+        entry.id,
+        'install',
+        entry.source.version,
+        'local',
+        args.directoryPath,
+        undefined,
+        entry.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      publish('feature-registry', 'feature:installed', {
+        id: entry.id,
+        name: entry.name,
+        source: entry.source,
+      });
+
+      // Arm the feature live (same path as tile:features:enable) so it loads
+      // without a restart.
+      try {
+        const parsed = parseManifestFile(path.join(entry.path, 'manifest.json'));
+        if (parsed?.version === 'tile' && parsed.manifest) {
+          const annotated: AnnotatedTile = { id: entry.id, path: entry.path, manifest: parsed.manifest };
+          loadOrArmFeatureTile(annotated, { tilePreloadPath: args.tilePreloadPath || getTilePreloadPath() });
+        }
+      } catch (err) {
+        console.error(`[tile-ipc] Failed to arm ${entry.id} after local install:`, err);
+      }
+
+      return { success: true, entry };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Installation failed: ${message}` };

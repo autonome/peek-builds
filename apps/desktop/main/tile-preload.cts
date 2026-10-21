@@ -1969,6 +1969,10 @@ function buildAPI(): Record<string, unknown> {
       }),
     install: (atUri: string, userApproved: boolean) =>
       ipcRenderer.invoke('tile:features:install', { token: tileToken, atUri, userApproved }),
+    installLocalPreview: (directoryPath: string) =>
+      ipcRenderer.invoke('tile:features:install-local-preview', { token: tileToken, directoryPath }),
+    installLocal: (directoryPath: string, userApproved: boolean) =>
+      ipcRenderer.invoke('tile:features:install-local', { token: tileToken, directoryPath, userApproved }),
     resolvePublisher: (query: string) =>
       ipcRenderer.invoke('tile:features:browse-resolve-publisher', { token: tileToken, query }),
     settingsSchema: (id: string) =>
@@ -1994,6 +1998,10 @@ function buildAPI(): Record<string, unknown> {
       featuresStrict.previewCapabilities(mc, id as string),
     install: (atUri: unknown, userApproved: unknown) =>
       featuresStrict.install(atUri as string, userApproved as boolean),
+    installLocalPreview: (directoryPath: unknown) =>
+      featuresStrict.installLocalPreview(directoryPath as string),
+    installLocal: (directoryPath: unknown, userApproved: unknown) =>
+      featuresStrict.installLocal(directoryPath as string, userApproved as boolean),
     resolvePublisher: (query: unknown) =>
       featuresStrict.resolvePublisher(query as string),
     settingsSchema: (id: unknown) =>

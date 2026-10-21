@@ -360,6 +360,7 @@ const createSubmitBtn = document.getElementById('create-submit-btn');
 let features = [];
 let searchFilter = '';
 let pendingInstallUri = null;  // AT URI currently being previewed
+let pendingInstallDir = null;  // local folder currently being previewed
 let pendingCapReviewId = null; // Feature ID pending capability review
 let createDirSelected = null;  // Selected directory for feature creation
 let hasFocusedSearchInput = false; // Focus the search field once, after the initial list renders.
@@ -1095,6 +1096,7 @@ function updateCreateSubmitState() {
 }
 
 createFeatureBtn.addEventListener('click', showCreateForm);
+document.getElementById('add-from-folder-btn').addEventListener('click', () => pickLocalFolder());
 createCancelBtn.addEventListener('click', hideCreateForm);
 
 createPickDirBtn.addEventListener('click', async () => {
@@ -1402,6 +1404,7 @@ function hideStatus() {
 function hidePreview() {
   installPreview.style.display = 'none';
   pendingInstallUri = null;
+  pendingInstallDir = null;
 }
 
 function formatCapabilityName(name) {
@@ -1467,64 +1470,14 @@ async function resolveAtUri(atUri) {
 
     hideStatus();
 
-    // Show preview
     pendingInstallUri = atUri;
-    previewTitle.textContent = manifest.name || manifest.id;
-
-    // Meta info
-    previewMeta.innerHTML = '';
-    const metaRows = [
+    pendingInstallDir = null;
+    showInstallPreview(manifest, [
       ['ID', manifest.id],
       ['Version', source.version || manifest.version || 'unknown'],
       ['Publisher', source.publisherName || source.publisher || 'unknown'],
       ['DID', source.publisher || 'unknown'],
-    ];
-
-    if (manifest.description) {
-      metaRows.push(['Description', manifest.description]);
-    }
-
-    for (const [label, value] of metaRows) {
-      const row = document.createElement('div');
-      row.className = 'preview-meta-row';
-      row.innerHTML = `<span class="preview-meta-label">${label}</span><span class="preview-meta-value">${escapeHtml(value)}</span>`;
-      previewMeta.appendChild(row);
-    }
-
-    // Capabilities
-    previewCapabilities.innerHTML = '';
-
-    if (capResult && !capResult.error) {
-      const grantedItems = renderCapabilityList(capResult.granted);
-      const deniedItems = capResult.denied || [];
-
-      if (grantedItems.length > 0 || deniedItems.length > 0) {
-        const heading = document.createElement('h3');
-        heading.textContent = 'Capabilities';
-        previewCapabilities.appendChild(heading);
-
-        const list = document.createElement('ul');
-        list.className = 'capability-list';
-
-        for (const item of grantedItems) {
-          const li = document.createElement('li');
-          li.className = 'capability-item granted';
-          li.textContent = item;
-          list.appendChild(li);
-        }
-
-        for (const item of deniedItems) {
-          const li = document.createElement('li');
-          li.className = 'capability-item denied';
-          li.textContent = `${formatCapabilityName(item)} (denied)`;
-          list.appendChild(li);
-        }
-
-        previewCapabilities.appendChild(list);
-      }
-    }
-
-    installPreview.style.display = '';
+    ], capResult);
 
   } catch (err) {
     console.error('[features-manager] resolve error:', err);
@@ -1532,15 +1485,106 @@ async function resolveAtUri(atUri) {
   }
 }
 
+// Fill and show the shared approval panel (meta rows + capability list).
+function showInstallPreview(manifest, metaRows, capResult) {
+  previewTitle.textContent = manifest.name || manifest.id;
+
+  previewMeta.innerHTML = '';
+  if (manifest.description) {
+    metaRows.push(['Description', manifest.description]);
+  }
+  for (const [label, value] of metaRows) {
+    const row = document.createElement('div');
+    row.className = 'preview-meta-row';
+    row.innerHTML = `<span class="preview-meta-label">${label}</span><span class="preview-meta-value">${escapeHtml(value)}</span>`;
+    previewMeta.appendChild(row);
+  }
+
+  previewCapabilities.innerHTML = '';
+  if (capResult && !capResult.error) {
+    const grantedItems = renderCapabilityList(capResult.granted);
+    const deniedItems = capResult.denied || [];
+
+    if (grantedItems.length > 0 || deniedItems.length > 0) {
+      const heading = document.createElement('h3');
+      heading.textContent = 'Capabilities';
+      previewCapabilities.appendChild(heading);
+
+      const list = document.createElement('ul');
+      list.className = 'capability-list';
+
+      for (const item of grantedItems) {
+        const li = document.createElement('li');
+        li.className = 'capability-item granted';
+        li.textContent = item;
+        list.appendChild(li);
+      }
+
+      for (const item of deniedItems) {
+        const li = document.createElement('li');
+        li.className = 'capability-item denied';
+        li.textContent = `${formatCapabilityName(item)} (denied)`;
+        list.appendChild(li);
+      }
+
+      previewCapabilities.appendChild(list);
+    }
+  }
+
+  installPreview.style.display = '';
+}
+
+// "Add from folder": pick a directory, preview what it would be granted,
+// then register it in place once the user approves in the shared panel.
+async function pickLocalFolder() {
+  if (!hasPeekAPI) return;
+
+  hidePreview();
+  try {
+    const picked = await api.features.devPickDirectory();
+    if (picked.error) {
+      showStatus(picked.error, 'error');
+      return;
+    }
+    if (picked.canceled || !picked.path) return;
+
+    showStatus('Reading feature folder...');
+    const preview = await api.features.installLocalPreview(picked.path);
+    if (preview.error) {
+      showStatus(preview.error, 'error');
+      return;
+    }
+
+    hideStatus();
+    pendingInstallDir = picked.path;
+    pendingInstallUri = null;
+    const metaRows = [
+      ['ID', preview.manifest.id],
+      ['Version', preview.manifest.version || 'unknown'],
+      ['Folder', picked.path],
+    ];
+    if (preview.alreadyInstalled) {
+      metaRows.push(['Already installed', `source: ${preview.alreadyInstalled}`]);
+    }
+    showInstallPreview(preview.manifest, metaRows, preview);
+  } catch (err) {
+    console.error('[features-manager] add-from-folder error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
 async function confirmInstall() {
-  if (!hasPeekAPI || !pendingInstallUri) return;
+  if (!hasPeekAPI || (!pendingInstallUri && !pendingInstallDir)) return;
 
   const atUri = pendingInstallUri;
+  const localDir = pendingInstallDir;
   hidePreview();
   showStatus('Installing feature...');
 
   try {
-    const result = await api.features.install(atUri, true);
+    const result = localDir
+      ? await api.features.installLocal(localDir, true)
+      : await api.features.install(atUri, true);
 
     if (result.error) {
       showStatus(`Install failed: ${result.error}`, 'error');

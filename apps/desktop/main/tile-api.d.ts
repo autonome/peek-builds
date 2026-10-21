@@ -573,6 +573,16 @@ interface TileFeatures {
   previewCapabilities(featureId: string, manifestCapabilities: unknown): Promise<{ granted?: unknown; denied?: string[]; error?: string }>;
   /** Install a feature from atproto. Requires `features.install` + atproto source. */
   install(atUri: string, userApproved: boolean): Promise<{ success?: boolean; featureId?: string; error?: string }>;
+  /** Preview what registering a feature folder in place would grant. Requires `features.install` + local source. */
+  installLocalPreview(directoryPath: string): Promise<{
+    manifest?: { id: string; name: string; version?: string; description?: string };
+    granted?: unknown;
+    denied?: string[];
+    alreadyInstalled?: string;
+    error?: string;
+  }>;
+  /** Register a feature folder in place and load it. Requires `features.install` + local source, and `userApproved: true`. */
+  installLocal(directoryPath: string, userApproved: boolean): Promise<{ success?: boolean; entry?: unknown; error?: string }>;
   /** Resolve publisher handle/DID. Requires `features.install` + atproto source. */
   resolvePublisher(query: string): Promise<{ did?: string; handle?: string; error?: string }>;
   /** Check all features for updates. Requires `features.update`. */
