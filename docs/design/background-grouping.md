@@ -138,7 +138,49 @@ local, because together they amount to a detailed browsing log.
 - Whether to join entity observations to items by looking up the URL each time, or to change
   `addObservation()` so it records the item id.
 
-## First step
+## First step: result (2026-10-21)
+
+The grouper ran over a copy of a real profile covering 14 days: 584 visits, 278 web pages after
+filtering, 66 sessions. The script and the report stayed outside the repo, because the report
+lists real page titles.
+
+**What the data turned out to hold.**
+
+- No page text. For a url item, `items.content` is the URL itself, so text similarity has
+  only titles to work with. Where the title is just the URL, query strings and hashes leak into
+  the title tokens and into group names.
+- Every page carries `from:history`. A tag on most pages has to be excluded, or it adds the
+  same constant to every pair. Here that constant was the only thing holding two of the
+  better groups above the cutoff.
+- `items.deletedAt` is `0` for live items, not null.
+- The entity signal is almost empty: it contributed 0.05 or less to every group once the
+  entities seen on many pages were dropped.
+
+**What came out.**
+
+| Cutoff | Groups | Pages grouped | Character |
+| --- | --- | --- | --- |
+| 0.20 | 16 | 82 of 278 | Nearly all one site each: a code host, a mail client, a maps site, a few sign-in flows |
+| 0.15 | 19 | 141 of 278 | Also the two real multi-site tasks of that fortnight (a property search, 18 pages; a house-swap search, 14 pages), held together almost entirely by session co-occurrence, alongside groups of unrelated pages that also got through on co-occurrence alone |
+
+**Verdict: not good enough to show as proposals yet.** Grouping a site's pages together is
+correct but adds nothing a person couldn't do with a domain filter. The groups that would
+actually help, tasks spanning several sites, come only from session co-occurrence. At the
+cutoff where they appear, that same signal also produces groups of unrelated pages.
+
+**Before rerunning:**
+
+1. Drop sign-in, OAuth and redirect pages before grouping. They formed groups of their own.
+2. Treat a title that is just a URL as having no title.
+3. Weight co-occurrence by dwell time and interaction (`item_visits.duration`,
+   `item_visits.interacted`) rather than by presence alone.
+4. Name groups from title words only, never URL fragments.
+
+The one signal that could tie a listing page to a spreadsheet about the same purchase is title
+meaning across different sites. That is the case for an embedding signal, and it is the first
+thing the bake-off should add to this baseline.
+
+## First step (as planned)
 
 Run the heuristic grouper offline, read-only, against a copy of the real profile's
 `datastore.sqlite`, never the live profile, over the last two weeks. The output is a
