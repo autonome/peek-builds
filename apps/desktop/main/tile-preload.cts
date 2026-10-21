@@ -1346,6 +1346,12 @@ function buildAPI(): Record<string, unknown> {
       runAutomation(windowId, { op: 'click', selector, ...opts }),
     printToPDF: (windowId: number, options?: Record<string, unknown>, opts: { timeoutMs?: number } = {}) =>
       runAutomation(windowId, { op: 'printToPDF', options, ...opts }),
+    // Needs `automation.downloads: true`. While on, downloads the window
+    // starts are not saved to disk; each completes into `nextDownload`.
+    captureDownloads: (windowId: number, enabled: boolean) =>
+      runAutomation(windowId, { op: 'captureDownloads', enabled }),
+    nextDownload: (windowId: number, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'nextDownload', ...opts }),
   };
 
   // ── AT Protocol DPoP proxy (if `network` granted) ──

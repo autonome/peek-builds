@@ -99,6 +99,14 @@ describe('compareCapabilities', () => {
     assert.equal(compareCapabilities(caps({}), current).expanded, true);
   });
 
+  it('detects newly requested download capture as expanded', () => {
+    const current = caps({ automation: { origins: ['https://bank.example'] } });
+    const next = caps({ automation: { origins: ['https://bank.example'], downloads: true } });
+    const result = compareCapabilities(current, next);
+    assert.equal(result.expanded, true);
+    assert.deepEqual(result.added, ['automation.downloads']);
+  });
+
   it('detects an added boolean capability as expanded', () => {
     const result = compareCapabilities(caps({ commands: true }), caps({ commands: true, shortcuts: true }));
     assert.equal(result.changed, true);

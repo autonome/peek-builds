@@ -478,7 +478,10 @@ interface TileFilesystem {
 // ─── Page automation ─────────────────────────────────────────────────
 
 type TileAutomationResult =
-  | { ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array }
+  | {
+    ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array;
+    download?: { name: string; mimeType: string; url: string; size: number; bytes: Uint8Array };
+  }
   | { ok: false; error: string; url?: string };
 
 /**
@@ -501,6 +504,17 @@ interface TileAutomation {
   click(windowId: number, selector: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
   /** Print the page to PDF (Electron `printToPDF` options); bytes in `pdf`. */
   printToPDF(windowId: number, options?: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /**
+   * Turn download capture on or off for the window. Requires
+   * `automation.downloads: true`; not origin-gated. While on, downloads the
+   * window starts are not saved to the Downloads folder.
+   */
+  captureDownloads(windowId: number, enabled: boolean): Promise<TileAutomationResult>;
+  /**
+   * The next completed download from the window (queued or awaited), as
+   * bytes in `download`. Downloads over 100 MB are refused.
+   */
+  nextDownload(windowId: number, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
 }
 
 // ─── Dialogs ─────────────────────────────────────────────────────────

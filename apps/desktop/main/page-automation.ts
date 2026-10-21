@@ -18,11 +18,17 @@
  * the allowed origins (a login on another host, say) can still be asked for
  * its URL but cannot be scripted until it comes back.
  *
+ * With `automation.downloads: true` the tile may also turn on download capture
+ * for the window and collect each completed download as bytes
+ * (download-capture.ts). Those two operations skip the origin check, since a
+ * file is often served from another host than the page that offers it.
+ *
  * Pure module: no Electron import. `tile-ipc.ts` resolves the window and hands
  * its content webContents in as an `AutomationTarget`.
  */
 
 import type { CapabilityGrant } from './tile-manifest.js';
+import type { CapturedDownload, CaptureOutcome } from './download-capture.js';
 
 /** The slice of an Electron `WebContents` the operations use. */
 export interface AutomationTarget {
@@ -40,10 +46,24 @@ export type AutomationOp =
   | { op: 'waitFor'; selector: string; timeoutMs?: number }
   | { op: 'eval'; script: string; timeoutMs?: number }
   | { op: 'click'; selector: string; timeoutMs?: number }
-  | { op: 'printToPDF'; options?: Record<string, unknown>; timeoutMs?: number };
+  | { op: 'printToPDF'; options?: Record<string, unknown>; timeoutMs?: number }
+  | { op: 'captureDownloads'; enabled: boolean }
+  | { op: 'nextDownload'; timeoutMs?: number };
+
+/** Download ops: allowed only with `automation.downloads: true`, on any page origin. */
+const DOWNLOAD_OPS = new Set<AutomationOp['op']>(['captureDownloads', 'nextDownload']);
+
+/**
+ * Download capture for the target window (download-capture.ts), bound by the
+ * caller to the window's webContents.
+ */
+export interface AutomationDownloads {
+  setEnabled(enabled: boolean): void;
+  next(timeoutMs: number): Promise<CaptureOutcome>;
+}
 
 export type AutomationResult =
-  | { ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array }
+  | { ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array; download?: CapturedDownload }
   | { ok: false; error: string; url?: string };
 
 export type AutomationCheck = { ok: true } | { ok: false; error: string };
@@ -119,6 +139,14 @@ export function checkAutomationAllowed(
     return { ok: false, error: 'window was not opened by this tile' };
   }
   if (op.op === 'url') return { ok: true };
+  if (DOWNLOAD_OPS.has(op.op)) {
+    // Not origin-gated: a statement export is often served from another host
+    // (a file CDN, a signed URL). The window is still one this tile opened.
+    if (!grant.trustedBuiltin && grant.capabilities.automation?.downloads !== true) {
+      return { ok: false, error: 'automation.downloads capability not granted' };
+    }
+    return { ok: true };
+  }
 
   const blank = target.currentUrl === '' || target.currentUrl === 'about:blank';
   if (op.op === 'navigate') {
@@ -187,9 +215,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * `checkAutomationAllowed`; this re-reads nothing about the grant. Errors come
  * back as `{ ok: false }`, never as a rejection.
  */
-export async function runAutomationOp(target: AutomationTarget, op: AutomationOp): Promise<AutomationResult> {
+export async function runAutomationOp(
+  target: AutomationTarget,
+  op: AutomationOp,
+  downloads?: AutomationDownloads,
+): Promise<AutomationResult> {
   if (target.isDestroyed()) return { ok: false, error: 'window is closed' };
-  const done = (extra: { value?: unknown; pdf?: Uint8Array } = {}): AutomationResult => ({
+  const done = (extra: { value?: unknown; pdf?: Uint8Array; download?: CapturedDownload } = {}): AutomationResult => ({
     ok: true,
     url: target.isDestroyed() ? '' : target.getURL(),
     title: target.isDestroyed() ? '' : target.getTitle(),
@@ -228,6 +260,17 @@ export async function runAutomationOp(target: AutomationTarget, op: AutomationOp
         const data = await withTimeout(target.printToPDF(op.options ?? { printBackground: true }), timeoutMs, 'printToPDF');
         return done({ pdf: new Uint8Array(data) });
       }
+      case 'captureDownloads': {
+        if (!downloads) return { ok: false, error: 'download capture unavailable' };
+        downloads.setEnabled(op.enabled);
+        return done();
+      }
+      case 'nextDownload': {
+        if (!downloads) return { ok: false, error: 'download capture unavailable' };
+        const outcome = await downloads.next(timeoutMs);
+        if (!outcome.ok) return { ok: false, error: outcome.error, url: target.isDestroyed() ? undefined : target.getURL() };
+        return done({ download: outcome.download });
+      }
       default: {
         const unknownOp: never = op;
         return { ok: false, error: `unknown automation op: ${String((unknownOp as { op?: unknown }).op)}` };
@@ -262,6 +305,10 @@ export function parseAutomationOp(raw: unknown): AutomationOp | null {
       const options = o.options && typeof o.options === 'object' ? o.options as Record<string, unknown> : undefined;
       return { op: 'printToPDF', options, timeoutMs };
     }
+    case 'captureDownloads':
+      return typeof o.enabled === 'boolean' ? { op: 'captureDownloads', enabled: o.enabled } : null;
+    case 'nextDownload':
+      return { op: 'nextDownload', timeoutMs };
     default:
       return null;
   }

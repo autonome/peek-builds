@@ -421,6 +421,9 @@ export function validateTileManifest(json) {
           }
         }
       }
+      if (ac && typeof ac === 'object' && ac.downloads !== undefined && typeof ac.downloads !== 'boolean') {
+        errors.push({ path: 'capabilities.automation.downloads', message: 'downloads must be a boolean' });
+      }
     }
 
     // Validate session capability shape — boolean only for now.
@@ -752,6 +755,7 @@ export function resolveCapabilities(tileId, requested, isBuiltin) {
   // windows the tile opened itself whose page is on a listed origin.
   if (requested.automation && Array.isArray(requested.automation.origins)) {
     granted.automation = { origins: [...requested.automation.origins] };
+    if (requested.automation.downloads === true) granted.automation.downloads = true;
   }
 
   // Session: grant as requested (boolean-only for now).

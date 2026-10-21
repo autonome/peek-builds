@@ -87,6 +87,11 @@ export interface AutomationCapability {
    * `https://*.host` for any subdomain of host. No paths.
    */
   origins: string[];
+  /**
+   * May capture downloads started in those windows and receive them as
+   * bytes instead of having them saved to the Downloads folder.
+   */
+  downloads?: boolean;
 }
 
 /**

@@ -275,6 +275,7 @@ export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './
 export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
 import { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 import { checkAutomationAllowed, parseAutomationOp, runAutomationOp, tileWindowSource } from './page-automation.js';
+import { downloadCapture } from './download-capture.js';
 export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -4772,7 +4773,16 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'automation', `automation:${op.op}`, check.error, args.token);
       return { ok: false, error: check.error };
     }
-    return runAutomationOp(contentWC, op);
+    const wcId = contentWC.id;
+    return runAutomationOp(contentWC, op, {
+      setEnabled: (enabled) => {
+        if (!enabled) { downloadCapture.disarm(wcId); return; }
+        if (downloadCapture.isArmed(wcId)) return;
+        downloadCapture.arm(wcId);
+        contentWC.once('destroyed', () => downloadCapture.disarm(wcId));
+      },
+      next: (timeoutMs) => downloadCapture.next(wcId, timeoutMs),
+    });
   });
 
   // ── AT Protocol DPoP proxy ──
