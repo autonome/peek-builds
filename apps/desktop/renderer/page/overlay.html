@@ -339,8 +339,8 @@
     .tag-btn .tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tag-btn .tag-remove { font-size: 12px; line-height: 1; opacity: 0.5; transition: opacity 0.1s; flex-shrink: 0; }
     .tag-btn:hover .tag-remove { opacity: 1; color: #f87171; }
-    .tags-input-row { position: relative; }
-    .tags-input-wrapper { position: relative; }
+    .tags-input-row { position: relative; display: flex; align-items: center; gap: 4px; }
+    .tags-input-wrapper { position: relative; flex: 1; min-width: 0; }
     .tags-input {
       width: 100%;
       background: color-mix(in srgb, var(--theme-bg-tertiary) 30%, transparent);
@@ -367,6 +367,29 @@
       pointer-events: none;
       white-space: nowrap;
       overflow: hidden;
+    }
+
+    /* Keep / drop — the page's research judgement, beside the tag input. */
+    .page-state-btn {
+      flex-shrink: 0;
+      background: color-mix(in srgb, var(--theme-bg-tertiary) 30%, transparent);
+      border: 1px solid color-mix(in srgb, var(--theme-border) 40%, transparent);
+      border-radius: 5px;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 7px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+    .page-state-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      color: var(--theme-text, #fff);
+    }
+    .page-state-btn.is-active {
+      background: color-mix(in srgb, var(--theme-accent) 25%, transparent);
+      border-color: var(--theme-accent, rgba(100, 150, 255, 0.5));
+      color: var(--theme-text, #fff);
     }
 
     /* Entities */
@@ -984,6 +1007,8 @@
             <input type="text" class="tags-input" id="tags-input" placeholder="Add tag..." autocomplete="off" spellcheck="false">
             <span class="tags-suggestion" id="tags-suggestion"></span>
           </div>
+          <button class="page-state-btn" id="page-keep-btn" title="Keep this page">Keep</button>
+          <button class="page-state-btn" id="page-drop-btn" title="Drop this page">Drop</button>
         </div>
       </div>
     </div>

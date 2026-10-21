@@ -1,0 +1,51 @@
+{
+  "manifestVersion": 3,
+  "id": "research",
+  "shortname": "research",
+  "name": "Research",
+  "description": "Keep or drop a page, with a one-line note",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "cmd:execute:*",
+        "ext:ready",
+        "ext:research:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags"]
+    },
+    "window": {
+      "query": true
+    },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "keep",
+      "description": "Keep the active page, with an optional one-line note",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "drop",
+      "description": "Drop the active page, with an optional one-line note",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "unjudge",
+      "description": "Clear the active page's kept or dropped state, keeping its note",
+      "action": { "type": "execute" }
+    }
+  ]
+}

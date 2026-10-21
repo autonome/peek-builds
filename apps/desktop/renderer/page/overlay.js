@@ -85,6 +85,7 @@ import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost, widgetActionFromPath } from './page-widgets.js';
 import { navbarLoadReveal, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
 import { normalizeUrlForCompare } from './url-compare.js';
+import { stateFromTags, planPageState } from 'peek://app/lib/page-state.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -1586,6 +1587,8 @@ const tagsBody = document.getElementById('tags-body');
 const tagsList = document.getElementById('tags-list');
 const tagsInput = document.getElementById('tags-input');
 const tagsSuggestion = document.getElementById('tags-suggestion');
+const pageKeepBtn = document.getElementById('page-keep-btn');
+const pageDropBtn = document.getElementById('page-drop-btn');
 const entitiesPanel = document.getElementById('entities-panel');
 const entitiesBody = document.getElementById('entities-body');
 const entitiesRescanBtn = document.getElementById('entities-rescan-btn');
@@ -1622,6 +1625,7 @@ function clearPanels() {
   for (const p of [pageInfoPanel, tagsPanel, entitiesPanel, extensionsPanel]) {
     if (p) p.classList.remove('has-data');
   }
+  renderPageState();
   // P1.4b-6: notes + widgets belong to the active window too — clear them on the
   // same boundary (retarget / active→null) so a prior window's notes/widgets
   // never bleed into the next active window's chrome.
@@ -1779,6 +1783,56 @@ function renderTags() {
   // The Tags panel always offers the add-tag input, so it always has-data once
   // an active URL is set (matches page.js always showing it alongside chrome).
   if (tagsPanel) tagsPanel.classList.add('has-data');
+  renderPageState();
+}
+
+// ── Keep / drop ───────────────────────────────────────────────────────────────
+// A page is kept or dropped by a tag on its URL item, so the state is already in
+// the tags `renderTags()` just painted — no extra query. Every rule about which
+// tag goes and which stays lives in lib/page-state.js.
+
+/** The kept/dropped state of the active page, from the tags currently loaded. */
+function currentPageState() {
+  return stateFromTags(currentPageTags.map((t) => t.name));
+}
+
+/** Show the button matching the current state as active. */
+function renderPageState() {
+  const state = currentPageState();
+  if (pageKeepBtn) pageKeepBtn.classList.toggle('is-active', state === 'kept');
+  if (pageDropBtn) pageDropBtn.classList.toggle('is-active', state === 'dropped');
+}
+
+/**
+ * Apply a keep, drop or clear to the active page through the same datastore calls
+ * `addTagToPage()` / `removeTagFromPage()` use. No note is set from the overlay.
+ */
+async function applyPageState(action) {
+  if (!isHttp(activeUrl)) return;
+  const token = panelToken;
+  const plan = planPageState(currentPageTags.map((t) => t.name), action);
+  // Resolve the tag ids before the first await: each call below reloads
+  // currentPageTags, so the snapshot the plan was made from would be gone.
+  const toRemove = plan.removeTags
+    .map((name) => currentPageTags.find((t) => t.name.toLowerCase() === name))
+    .filter(Boolean);
+  for (const tag of toRemove) {
+    await removeTagFromPage(tag.id);
+    if (token !== panelToken) return; // active window changed mid-apply
+  }
+  if (plan.addTag) await addTagToPage(plan.addTag);
+}
+
+if (pageKeepBtn) {
+  pageKeepBtn.addEventListener('click', () => {
+    // Clicking the active button clears the state.
+    applyPageState(currentPageState() === 'kept' ? 'clear' : 'keep');
+  });
+}
+if (pageDropBtn) {
+  pageDropBtn.addEventListener('click', () => {
+    applyPageState(currentPageState() === 'dropped' ? 'clear' : 'drop');
+  });
 }
 
 async function addTagToPage(tagName) {
