@@ -2814,6 +2814,55 @@ describe('Entity Recognition Extension', () => {
       });
     });
 
+    // ── Open Graph: the site's own name ───────────────────────────────
+    //
+    // Most pages carry no structured entity, but many name the site they
+    // belong to in og:site_name. That name is the site's brand.
+
+    describe('Open Graph - site name', () => {
+      it('names the site as an organization on a page with nothing else', () => {
+        const html = `<html><head>
+          <meta property="og:type" content="website">
+          <meta property="og:title" content="someuser/somerepo: a tool">
+          <meta property="og:site_name" content="GitHub">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://github.com/someuser/somerepo');
+        const org = result.find(e => e.extractor === 'opengraph' && e.entityType === 'organization');
+        assert.ok(org, 'og:site_name should yield an organization');
+        assert.strictEqual(org!.name, 'GitHub');
+        assert.strictEqual(org!.attributes.role, 'site');
+        assert.ok(org!.confidence >= 0.7, 'must clear the storage threshold');
+      });
+
+      it('names the site even when an og:type=profile page yields no person', () => {
+        const html = `<html><head>
+          <meta property="og:type" content="profile">
+          <meta property="og:title" content="IndieWeb">
+          <meta property="og:site_name" content="IndieWeb Wiki">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://indieweb.org/');
+        const org = result.find(e => e.extractor === 'opengraph' && e.entityType === 'organization');
+        assert.ok(org);
+        assert.strictEqual(org!.name, 'IndieWeb Wiki');
+      });
+
+      it('skips a site name that reads as a sentence, not a name', () => {
+        const html = `<html><head>
+          <meta property="og:site_name" content="The Ultimate Directory of tools and applications for Bluesky">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://example.com');
+        assert.strictEqual(result.filter(e => e.extractor === 'opengraph').length, 0);
+      });
+
+      it('skips a site name that is a URL or host', () => {
+        const html = `<html><head>
+          <meta property="og:site_name" content="https://example.com">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://example.com');
+        assert.strictEqual(result.filter(e => e.extractor === 'opengraph').length, 0);
+      });
+    });
+
     // ── Meta tags: Realistic scenarios ────────────────────────────────
 
     describe('meta tags - realistic scenarios', () => {
