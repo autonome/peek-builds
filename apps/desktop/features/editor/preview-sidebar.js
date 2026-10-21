@@ -21,7 +21,7 @@ function escapeHtml(text) {
  * @param {string} [basePath] - Base directory for resolving relative paths
  * @returns {string|null} - Resolved src or null if blocked
  */
-function resolveImgSrc(src, basePath) {
+export function resolveImgSrc(src, basePath) {
   // Allow https:// and data:image/ always
   if (/^(https:\/\/|data:image\/)/i.test(src)) return src;
 

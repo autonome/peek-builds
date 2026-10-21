@@ -77,7 +77,7 @@ decides no rule).
 - One commit of the parked track carries over: `5f888241` (the devtools-opened / devtools-closed
   handlers in `main.ts` assert focus on the devtools host, not the topmost content window). It is
   cherry-picked into this track at commit 12 below (decision 6). Its lines in
-  `docs/design/window-rules.md` and `docs/design/window-rules-audit.md` that describe the parked
+  `docs/design/window-rules.md` and `docs/historical/window-rules-audit.md` that describe the parked
   track's F7 are dropped in favour of the spec's F7 when resolving the pick.
 - Everything else in the parked track is superseded by the spec's F7 and F9 design: its transient /
   application split, its removal of the successor choice for application-window closes, and its
@@ -236,7 +236,7 @@ helper's reads; if they fail, nothing has yet been built on them.
      `ipc.ts openNewPageWindow`. The devtools-opened / devtools-closed handlers in `main.ts` take
      `5f888241` from track `close-raises-other-desktop` (decision 6).
    - **9c requests by id:** `tile:window:focus` and `tile:window:show` carry `named`, false unless
-     the request is a switcher pick (`features/windows/windows.js`).
+     the request is a switcher pick (`apps/desktop/features/windows/windows.js`).
    - **9d the static check** of spec section 4 "Enforcement", with the finders and `topmost` as
      its listed names and an allowlist that only shrinks.
 10. Decision 4 (focus filters). Done: `State.expectedPlatformFocus` holds the three expectations.
@@ -319,7 +319,7 @@ join-all-Spaces. Pages opened from the palette became panels in `e77f6cdc` (2026
 attempt to open them as ordinary windows outright (`41b76804`) was reverted minutes later
 (`e5046f79`). The reopen path (`a2137355`, `ipc.ts reopenWindowAsOrdinary()`) creates a new
 window through the generic open, so it lands on the desktop the user is on when it runs.
-`docs/macos-spaces-analysis.md` records the earlier Spaces root causes.
+`docs/historical/macos-spaces-analysis.md` records the earlier Spaces root causes.
 
 **AppKit facts.** A managed window (default collection behaviour) belongs to the desktop active
 when it is first ordered on screen and stays bound to it after `orderOut`; showing it again takes

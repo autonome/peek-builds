@@ -19,3 +19,30 @@ export const splitTrailingTags = (text) => {
   }
   return { body, tags: [...new Set(tags)] };
 };
+
+/**
+ * Check if input is a tagset (hashtag syntax like "#foo #bar").
+ * Returns the parsed tag names if it is a tagset, or null otherwise.
+ */
+export const parseTagset = (text) => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return null;
+  // Split on whitespace and check that every token starts with #
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return null;
+  const allHashtags = tokens.every(t => /^#[^\s#]+$/.test(t));
+  if (!allHashtags) return null;
+  // Strip the # prefix from each tag name
+  return tokens.map(t => t.slice(1));
+};
+
+/**
+ * Detect item type from input
+ */
+export const detectType = (text) => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return 'url';
+  if (parseTagset(trimmed)) return 'tagset';
+  return 'text';
+};

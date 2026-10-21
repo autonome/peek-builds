@@ -237,8 +237,8 @@ export function registerLazyTile(
   const tileId = manifest.id;
   lazyTileRegistry.set(tileId, { manifest, tilePath, preloadPath });
 
-  // Add any declared lazyEvents topics to the predicate set.
-  for (const topic of collectLazyEventTopics(manifest)) {
+  // Add any declared lazyEvents and schedule topics to the predicate set.
+  for (const topic of collectWakeTopics(manifest)) {
     declaredLazyEventTopics.add(topic);
   }
 
@@ -350,11 +350,38 @@ function collectLazyEventTopics(manifest: TileManifest): string[] {
  * with a still-registered tile survive. Cheap (run only on the rare
  * register/unregister path, never per publish).
  */
+function collectScheduleTopics(manifest: TileManifest): string[] {
+  const topics = new Set<string>();
+  if (!Array.isArray(manifest.tiles)) return [];
+  for (const tile of manifest.tiles) {
+    if (!Array.isArray(tile.schedule)) continue;
+    for (const entry of tile.schedule) {
+      if (entry && typeof entry.topic === 'string' && entry.topic.length > 0) {
+        topics.add(entry.topic);
+      }
+    }
+  }
+  return Array.from(topics);
+}
+
+/**
+ * Every topic that wakes this tile through the dispatch hook: the entries'
+ * declared `lazyEvents` plus the topics their schedules publish. A schedule
+ * topic takes exactly the same wake path as a lazyEvent — main publishes it
+ * when it comes due and the hook loads the owner if it is asleep.
+ */
+function collectWakeTopics(manifest: TileManifest): string[] {
+  return Array.from(new Set([
+    ...collectLazyEventTopics(manifest),
+    ...collectScheduleTopics(manifest),
+  ]));
+}
+
 function rebuildDeclaredLazyEventTopics(): void {
   declaredLazyEventTopics.clear();
   declaredNounTopics.clear();
   for (const { manifest } of lazyTileRegistry.values()) {
-    for (const topic of collectLazyEventTopics(manifest)) {
+    for (const topic of collectWakeTopics(manifest)) {
       declaredLazyEventTopics.add(topic);
     }
     for (const topic of collectNounTopics(manifest)) {
@@ -760,7 +787,7 @@ function findTileByNounTopic(topic: string): { tileId: string } | null {
 
 function findTileByLazyEventTopic(topic: string): { tileId: string } | null {
   for (const [tileId, config] of lazyTileRegistry) {
-    if (collectLazyEventTopics(config.manifest).includes(topic)) {
+    if (collectWakeTopics(config.manifest).includes(topic)) {
       return { tileId };
     }
   }

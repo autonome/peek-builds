@@ -1,7 +1,7 @@
 /**
  * Unit tests for the space-deletion confirmation helpers in
- * features/spaces/config.js: the prompt text, and the spaces-page address
- * the `delete space` command opens to ask it.
+ * features/spaces/config.js: the prompt text, the count it asks about, and
+ * the spaces-page address the `delete space` command opens to ask it.
  *
  * Run via: node --test tests/unit/spaces-delete-confirm.test.js
  */
@@ -12,7 +12,13 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'spaces', 'config.js');
-const { deleteSpaceConfirmText, deleteSpacePromptUrl, deleteSpaceNameFromQuery } = await import(modulePath);
+const {
+  deleteSpaceConfirmText,
+  deleteSpacePromptUrl,
+  deleteSpaceNameFromQuery,
+  countSpaceWindows,
+  liveSpaceWindowIds,
+} = await import(modulePath);
 
 describe('deleteSpaceConfirmText', () => {
   it('names the space and how many windows move to the default space', () => {
@@ -40,6 +46,29 @@ describe('deleteSpaceConfirmText', () => {
     assert.equal(
       deleteSpaceConfirmText('Work', null),
       'Delete space "Work"? Any windows in it will move to the default space.'
+    );
+  });
+});
+
+describe('the count the question asks about', () => {
+  const spacesHome = { id: 1, url: 'peek://spaces/home.html?spaceId=7', visible: true };
+  const webPage = { id: 2, url: 'https://example.com/page', visible: true };
+
+  it('asks nothing to move for a space holding only its own spaces page', () => {
+    const live = liveSpaceWindowIds([1], [spacesHome]);
+    assert.deepEqual(live, []);
+    assert.equal(
+      deleteSpaceConfirmText('Work', countSpaceWindows(live, 0)),
+      'Delete space "Work"? It has no windows to move.'
+    );
+  });
+
+  it('counts the web page beside the spaces page as the one window that moves', () => {
+    const live = liveSpaceWindowIds([1, 2], [spacesHome, webPage]);
+    assert.deepEqual(live, [2]);
+    assert.equal(
+      deleteSpaceConfirmText('Work', countSpaceWindows(live, null)),
+      'Delete space "Work"? Its 1 window will move to the default space.'
     );
   });
 });

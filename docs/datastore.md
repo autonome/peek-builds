@@ -211,4 +211,4 @@ See `docs/sync.md` for sync architecture details.
 - `apps/desktop/main/datastore.ts` - Electron SQLite implementation
 - `apps/tauri-desktop/src-tauri/src/datastore.rs` - Tauri SQLite implementation
 - `apps/server/db.js` - Server SQLite implementation
-- `app/datastore/` - Shared schema and helpers
+- `apps/desktop/renderer/datastore/` - Shared schema and helpers

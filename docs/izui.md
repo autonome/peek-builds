@@ -198,7 +198,7 @@ Tests cover:
 | `apps/desktop/main/main.ts` | Window lifecycle hooks, overlay close |
 | `apps/desktop/main/windows.ts` | ESC handler with IZUI integration |
 | `preload.js` | `api.izui.*` namespace for renderers |
-| `extensions/cmd/panel.js` | Mode display based on transient state |
+| `apps/desktop/renderer/cmd/panel.js` | Mode display based on transient state |
 
 ## Common Scenarios
 

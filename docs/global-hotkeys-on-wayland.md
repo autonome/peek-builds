@@ -89,11 +89,11 @@ Implementation files:
 - `apps/desktop/main/tile-preload.cts` — `api.platform = { os, isWayland }` and `api.app.getCliHelperPath()` exposed to renderers
 - `apps/desktop/main/entry.ts` — calls `ensureCliHelperShadow()` at startup; reconciles socket against `cliSocketEnabled` pref on every prefs publish
 - `scripts/peek-cli.mjs` — non-Electron Node CLI helper. Auto-discovers the live socket, sends one verb, exits in milliseconds. Honours `$PEEK_PROFILE` for explicit selection.
-- `app/cmd/background.js` — subscribes to `cli:cmd-open`
-- `features/peeks/background.js` — subscribes to `cli:peek-open`, takes `keyNum` arg
-- `features/slides/background.js` — subscribes to `cli:slide-open`, takes edge arg
-- `app/config.js` — `cliSocketEnabled` core pref (default true)
-- `app/settings/settings.js` — `cliSocketEnabled` checkbox + verb list with copy-to-clipboard in Keyboard Shortcuts group (verb list Wayland-only; checkbox everywhere)
+- `apps/desktop/renderer/cmd/background.js` — subscribes to `cli:cmd-open`
+- `apps/desktop/features/peeks/background.js` — subscribes to `cli:peek-open`, takes `keyNum` arg
+- `apps/desktop/features/slides/background.js` — subscribes to `cli:slide-open`, takes edge arg
+- `apps/desktop/renderer/config.js` — `cliSocketEnabled` core pref (default true)
+- `apps/desktop/renderer/settings/settings.js` — `cliSocketEnabled` checkbox + verb list with copy-to-clipboard in Keyboard Shortcuts group (verb list Wayland-only; checkbox everywhere)
 - `electron-builder.yml` — `scripts/peek-cli.mjs` whitelisted back into the bundle and added to `asarUnpack`; Linux targets include `AppImage` and `deb`
 
 ### Ship gaps
@@ -240,7 +240,7 @@ Don't trigger eagerly. Trigger on the first user action that requires it (openin
 
 #### Fallback layering
 
-Current code in `app/cmd/background.js`, `features/peeks/background.js`, and `features/slides/background.js` already registers the same shortcut as both global and local. **Keep this.** On Wayland-without-portal-backend: global call no-ops, local call works when a Peek window is focused. The new portal path slots in cleanly above this.
+Current code in `apps/desktop/renderer/cmd/background.js`, `apps/desktop/features/peeks/background.js`, and `apps/desktop/features/slides/background.js` already registers the same shortcut as both global and local. **Keep this.** On Wayland-without-portal-backend: global call no-ops, local call works when a Peek window is focused. The new portal path slots in cleanly above this.
 
 ### D. Risks (sorted by severity)
 
@@ -262,7 +262,7 @@ Only proceed past step 1 if risks D.1 and D.2 prove benign for the target distro
 6. Implement unregister via the portal's session-close semantics (the portal lacks a per-shortcut unregister; in v2 you re-call BindShortcuts with the new full set). Add a debounced "rebind" pass so churn from peeks/slides reinit doesn't spam the portal.
 7. Reconnect/error handling for D-Bus drops.
 8. Remove the env flag, make portal the default on Wayland when introspection confirms backend availability.
-9. Update `app/cmd/background.js`, `features/peeks/background.js`, `features/slides/background.js` to drop the duplicate local-fallback registration in the portal-available case (still keep it as the no-portal fallback).
+9. Update `apps/desktop/renderer/cmd/background.js`, `apps/desktop/features/peeks/background.js`, `apps/desktop/features/slides/background.js` to drop the duplicate local-fallback registration in the portal-available case (still keep it as the no-portal fallback).
 
 ### F. Bail-out criteria
 

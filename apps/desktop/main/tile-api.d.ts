@@ -101,8 +101,9 @@ interface TileWindow {
   /**
    * Close a window. Omit id to close the calling tile's window.
    * Requires `window.manage` (or self-close with any window capability).
+   * `force: true` ends a `keepLive` window for good instead of hiding it.
    */
-  close(id?: number): void;
+  close(id?: number, opts?: { force?: boolean }): void;
 
   /**
    * Get info about the calling tile's window.
@@ -853,6 +854,20 @@ interface TileAPI {
   sync: TileSync;
   izui: TileIzui;
   session: TileSession;
+
+  // ── Web Tiles protocols ────────────────────────────────────────────
+
+  /**
+   * The one bridge every Web Tiles protocol module calls. A tile normally
+   * reaches a protocol by importing its module
+   * (`await import('/.well-known/web-tiles/<name>.js')`) rather than calling
+   * this directly. The main process checks the tile token and the protocol's
+   * gating capability on every call, so calling it directly grants nothing.
+   *
+   * Resolves to whatever the protocol method returns, including an
+   * `{ error }` refusal; rejects if the protocol or method is not registered.
+   */
+  tileProtocol(protocol: string, method: string, args?: unknown[]): Promise<unknown>;
 }
 
 // ─── Augment window global ───────────────────────────────────────────

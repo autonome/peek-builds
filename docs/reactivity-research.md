@@ -115,6 +115,29 @@ function debounce(fn, ms) {
 - No feed-level events yet (feeds are poll-based)
 - No signal-based reactive queries (Phase 3, future)
 
+## Files
+
+| File | Purpose |
+|------|---------|
+| `apps/desktop/main/ipc.ts` | Event emission (IPC handlers) |
+| `apps/desktop/main/pubsub.ts` | PubSub engine (unchanged) |
+| `apps/desktop/features/groups/home.js` | Tag + item event subscriptions |
+| `apps/desktop/features/tags/home.js` | Tag + item event subscriptions |
+| `apps/desktop/tests/desktop/smoke.spec.ts` (since deleted) | Integration tests |
+
+## Future Work
+
+- **Phase 3**: Reactive queries using Signals
+- **Address events**: `address:created`, `address:updated`, `address:deleted`
+- **Batch events**: Optional `tag:batch-complete` for large operations
+- **Feed change events**: When feeds infrastructure evolves
+
+---
+
+## History
+
+The sections below record how things stood when this document was written. They are kept for their reasoning and are not current guidance.
+
 ## Approaches Considered & Rejected
 
 ### Feeds as Tags
@@ -140,20 +163,3 @@ Integration tests in `tests/desktop/smoke.spec.ts`:
 - item:created emitted when item added
 - item:updated emitted when item updated
 - item:deleted emitted when item deleted
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `apps/desktop/main/ipc.ts` | Event emission (IPC handlers) |
-| `apps/desktop/main/pubsub.ts` | PubSub engine (unchanged) |
-| `extensions/groups/home.js` | Tag + item event subscriptions |
-| `extensions/tags/home.js` | Tag + item event subscriptions |
-| `tests/desktop/smoke.spec.ts` | Integration tests |
-
-## Future Work
-
-- **Phase 3**: Reactive queries using Signals
-- **Address events**: `address:created`, `address:updated`, `address:deleted`
-- **Batch events**: Optional `tag:batch-complete` for large operations
-- **Feed change events**: When feeds infrastructure evolves

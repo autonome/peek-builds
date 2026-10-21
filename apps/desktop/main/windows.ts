@@ -366,8 +366,16 @@ export function applyDockPreference(): void {
 // dispatches it into the kernel's CloseOrHideWindow command. Whether that closes, hides,
 // refuses, or cascades onto other windows is decided entirely by window-kernel.ts decide; a
 // fullscreen-exit preamble for the hybrid branch is the only policy left here.
-export async function closeOrHideWindow(id: number, source: string = 'unknown'): Promise<void> {
+// `force: true` carries one extra intention into that command: end THIS window for good even
+// when it is keepLive, which a plain close would answer by hiding. Hybrid page hosts and
+// BrowserWindows take the same path, so the option means the same thing for both.
+export async function closeOrHideWindow(
+  id: number,
+  source: string = 'unknown',
+  options: { force?: boolean } = {},
+): Promise<void> {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
+  const force = options.force === true;
 
   try {
     const win = getLiveWindow(id);
@@ -393,8 +401,8 @@ export async function closeOrHideWindow(id: number, source: string = 'unknown'):
         }
         if (hybrid.baseWin.isDestroyed()) return;
         if (machineId != null) {
-          wmLog('close-or-hide-dispatch', { id, machineId, source });
-          kernelCloseOrHideRequested(machineId);
+          wmLog('close-or-hide-dispatch', { id, machineId, source, force });
+          kernelCloseOrHideRequested(machineId, force);
         } else {
           // Not machine-registered: route through closeHostWindow so the content WebContents
           // (registered as a guest of baseWin.id) is destroyed before the BaseWindow closes —
@@ -428,8 +436,8 @@ export async function closeOrHideWindow(id: number, source: string = 'unknown'):
     // window-kernel.ts decide — this seam only resolves the machine id and dispatches into it.
     const wmId = getWindowIdFor(id);
     if (wmId != null) {
-      wmLog('close-or-hide-dispatch', { id, wmId, source });
-      kernelCloseOrHideRequested(wmId);
+      wmLog('close-or-hide-dispatch', { id, wmId, source, force });
+      kernelCloseOrHideRequested(wmId, force);
     } else {
       DEBUG && console.log('Window entry has no machine id, closing directly');
       wmLog('close-or-hide-no-machine-id', { id });

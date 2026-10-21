@@ -31,6 +31,7 @@ import {
   getTileManifest,
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
+import { registerTileProtocol } from './tile-protocols.js';
 import { performAtprotoRequest, isAtprotoHostAllowed, type AtprotoRequest } from './atproto-proxy.js';
 import { readAtprotoSession, writeAtprotoSession } from './atproto-session-store.js';
 import { parseManifestFile } from './tile-manifest.js';
@@ -2975,6 +2976,7 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:window:close', { mode: 'on' }, (event, args: {
     token: string;
     id?: number;
+    force?: boolean;
   }, _grant) => {
     const grant = _grant;
     const senderWin = windowFromWebContents(event.sender);
@@ -2986,6 +2988,10 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'window', 'window:close', check.error, args.token);
       return;
     }
+    // `force` ends a keepLive window for good instead of hiding it. It changes
+    // only what the close does, never who may ask: the capability check above
+    // is the same one an ordinary close goes through.
+    const force = args.force === true;
 
     let target: BrowserWindow | null = null;
     if (args.id != null) {
@@ -3003,7 +3009,7 @@ export function registerTileIpcHandlers(): void {
       // invocation stalls" that the repeat-invocation spec catches.
       // Fire-and-forget: closeOrHideWindow is async (hybrid branch awaits a
       // fullscreen exit) but never rejects; this handler is mode:'on' (no result).
-      void closeOrHideWindow(target.id, 'tile-ipc:window-close');
+      void closeOrHideWindow(target.id, 'tile-ipc:window-close', { force });
       return;
     }
     // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route through
@@ -3018,7 +3024,7 @@ export function registerTileIpcHandlers(): void {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
         // Fire-and-forget (async, never rejects) — mode:'on' handler.
-        void closeOrHideWindow(args.id, 'tile-ipc:window-close-hybrid');
+        void closeOrHideWindow(args.id, 'tile-ipc:window-close-hybrid', { force });
       }
     }
   });
@@ -4804,30 +4810,37 @@ export function registerTileIpcHandlers(): void {
     }
   };
 
-  registerTileIpc('tile:atproto:request', { mode: 'handle' }, async (event, args: {
-    token: string;
-    method: 'GET' | 'POST';
-    url: string;
-    jsonBody?: unknown;
-  }, _grant) => {
-    if (args.method !== 'GET' && args.method !== 'POST') {
-      return { error: `Unsupported method: ${args.method}` };
+  // The three operations, each reachable two ways: the `tile:atproto:*`
+  // channels below (what `window.app.atproto` calls) and the `atproto` Web
+  // Tiles protocol registered after them. Both paths run the same body, the
+  // same `network` gate and return the same shapes.
+
+  const atprotoRequest = async (
+    grant: CapabilityGrant | null,
+    token: string,
+    method: unknown,
+    url: unknown,
+    jsonBody: unknown,
+  ): Promise<Record<string, unknown>> => {
+    if (method !== 'GET' && method !== 'POST') {
+      return { error: `Unsupported method: ${String(method)}` };
     }
-    return runAtprotoProxy(_grant, args.token, {
-      method: args.method,
-      url: args.url,
-      jsonBody: args.jsonBody,
+    return runAtprotoProxy(grant, token, {
+      method,
+      url: url as string,
+      jsonBody,
     });
-  });
+  };
 
   // Who the proxy would act as: handle + DID only, never token material.
   // Reads the same stored session the proxy signs with, so "signed in" here
   // means exactly "a request would be sent".
-  registerTileIpc('tile:atproto:session-info', { mode: 'handle' }, async (event, args: {
-    token: string;
-  }, _grant) => {
-    if (!_grant || !hasCapability(_grant, 'network')) {
-      handleViolation(_grant, 'network', 'atproto:session-info', 'network capability not granted', args.token);
+  const atprotoSessionInfo = async (
+    grant: CapabilityGrant | null,
+    token: string,
+  ): Promise<Record<string, unknown>> => {
+    if (!grant || !hasCapability(grant, 'network')) {
+      handleViolation(grant, 'network', 'atproto:session-info', 'network capability not granted', token);
       return { error: 'Network capability not granted' };
     }
     const session = readAtprotoSession();
@@ -4839,7 +4852,42 @@ export function registerTileIpcHandlers(): void {
       did: session.did ?? null,
       pdsUrl: session.pdsUrl,
     };
-  });
+  };
+
+  const atprotoUploadBlob = async (
+    grant: CapabilityGrant | null,
+    token: string,
+    url: unknown,
+    dataBase64: unknown,
+    contentType: unknown,
+  ): Promise<Record<string, unknown>> => {
+    if (typeof dataBase64 !== 'string' || typeof contentType !== 'string') {
+      return { error: 'upload-blob requires dataBase64 + contentType strings' };
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(Buffer.from(dataBase64, 'base64'));
+    } catch {
+      return { error: 'Invalid base64 blob data' };
+    }
+    return runAtprotoProxy(grant, token, {
+      method: 'POST',
+      url: url as string,
+      binaryBody: bytes,
+      contentType,
+    });
+  };
+
+  registerTileIpc('tile:atproto:request', { mode: 'handle' }, async (event, args: {
+    token: string;
+    method: 'GET' | 'POST';
+    url: string;
+    jsonBody?: unknown;
+  }, _grant) => atprotoRequest(_grant, args.token, args.method, args.url, args.jsonBody));
+
+  registerTileIpc('tile:atproto:session-info', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => atprotoSessionInfo(_grant, args.token));
 
   registerTileIpc('tile:atproto:upload-blob', { mode: 'handle' }, async (event, args: {
     token: string;
@@ -4847,22 +4895,24 @@ export function registerTileIpcHandlers(): void {
     // base64-encoded bytes + content type (binary travels as base64 over IPC).
     dataBase64: string;
     contentType: string;
-  }, _grant) => {
-    if (typeof args.dataBase64 !== 'string' || typeof args.contentType !== 'string') {
-      return { error: 'upload-blob requires dataBase64 + contentType strings' };
-    }
-    let bytes: Uint8Array;
-    try {
-      bytes = new Uint8Array(Buffer.from(args.dataBase64, 'base64'));
-    } catch {
-      return { error: 'Invalid base64 blob data' };
-    }
-    return runAtprotoProxy(_grant, args.token, {
-      method: 'POST',
-      url: args.url,
-      binaryBody: bytes,
-      contentType: args.contentType,
-    });
+  }, _grant) => atprotoUploadBlob(_grant, args.token, args.url, args.dataBase64, args.contentType));
+
+  // ── `atproto` as a Web Tiles protocol ──
+  //
+  // Declared once, which derives the `tile:protocol:atproto:*` handlers and
+  // the module served at `peek://<tile-id>/.well-known/web-tiles/atproto.js`.
+  // A tile reaches the same three operations by importing that module instead
+  // of reading `window.app.atproto`; the `window.app` copy stays while
+  // features/lex/atproto.js still uses it.
+
+  registerTileProtocol({
+    name: 'atproto',
+    capability: 'network',
+    methods: {
+      request: (grant, args, token) => atprotoRequest(grant, token, args[0], args[1], args[2]),
+      sessionInfo: (grant, _args, token) => atprotoSessionInfo(grant, token),
+      uploadBlob: (grant, args, token) => atprotoUploadBlob(grant, token, args[0], args[1], args[2]),
+    },
   });
 
   // ── Filesystem ──

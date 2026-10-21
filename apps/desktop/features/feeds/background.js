@@ -6,14 +6,15 @@
  * - Using item_events for feed entries
  * - Polling feeds and parsing RSS/Atom
  * - Commands for subscribing and viewing feeds
+ * - Running unattended: the poll interval is declared as a schedule on the
+ *   background tile in manifest.json, so main owns the timer and wakes this
+ *   tile when a poll comes due. This tile holds no timer of its own, which is
+ *   what lets it sleep between polls.
  */
 
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
-const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-
-let pollTimer = null;
 
 // ==================== Feed Parsing ====================
 
@@ -366,17 +367,16 @@ const extension = {
   },
 
   init() {
+    // The schedule wake handler goes first and stays synchronous: the publish
+    // that woke this tile is delivered as soon as the preload reports ready,
+    // and a handler registered after an await would miss it.
+    api.pubsub.subscribe('feeds:poll', () => pollAllFeeds());
+
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
     // Register global shortcut (Option+Shift+F to avoid conflict with lists' Option+F)
     api.shortcuts.register('Option+Shift+F', openFeedsUI, { global: true });
-
-    // Start polling timer
-    pollTimer = setInterval(pollAllFeeds, POLL_INTERVAL_MS);
-
-    // Initial poll after short delay
-    setTimeout(pollAllFeeds, 5000);
 
     // React to feed item changes from other sources
     api.pubsub.subscribe('item:created', async (msg) => {
@@ -391,12 +391,6 @@ const extension = {
   },
 
   uninit() {
-
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-
     api.shortcuts.unregister('Option+Shift+F', { global: true });
     unregisterNoun('feeds');
     api.commands.unregister('refresh feeds');

@@ -171,11 +171,16 @@ test.describe('Transient on blur auto-hide @desktop', () => {
    * Wait until the given window is no longer visible (closed/destroyed or
    * hidden via closeOrHideWindow). Polls the window list deterministically;
    * no fixed sleep.
+   *
+   * `includeHidden: true` so the list carries app chrome (the overlay and
+   * signal roles) and windows that are off screen. Without it a chrome window
+   * is absent from the list whatever its state, which reads as hidden and
+   * would pass before anything hid it.
    */
   async function waitForHidden(windowId: number, timeout = 3000): Promise<void> {
     await bgWindow.waitForFunction(
       async (wid: number) => {
-        const result = await (window as any).app.window.list({ includeInternal: true });
+        const result = await (window as any).app.window.list({ includeInternal: true, includeHidden: true });
         if (!result.success) return false;
         const w = result.windows.find((x: any) => x.id === wid);
         return w === undefined || w.visible !== true;

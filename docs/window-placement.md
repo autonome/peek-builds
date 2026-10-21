@@ -1,7 +1,7 @@
 # Window Placement — Spec
 
 **Status:** canonical. Supersedes the model in
-[`window-placement-refactor.md`](./window-placement-refactor.md), which is
+[`historical/window-placement-refactor.md`](./historical/window-placement-refactor.md), which is
 retained as historical sprint planning.
 
 **Scope:** core window-manager behavior. Platform-agnostic spec; current

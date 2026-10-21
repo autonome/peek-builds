@@ -21,6 +21,7 @@ import { DEBUG } from './config.js';
 import { getTileManifest } from './tile-launcher.js';
 import { isLazyTileRegistered, getLazyTileManifest } from './tile-lazy.js';
 import { resolveTileOriginCSP, injectCSPHeader } from './tile-csp.js';
+import { protocolModuleForRequest } from './tile-protocols.js';
 
 export const APP_SCHEME = 'peek';
 export const APP_PROTOCOL = `${APP_SCHEME}:`;
@@ -693,6 +694,33 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
       // (eager tiles) or a registered lazy manifest (not yet instantiated).
       const tileManifest = getTileManifest(host);
       const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
+
+      // Web Tiles protocol module:
+      //   peek://<tile-id>/.well-known/web-tiles/<name>.js
+      // The host names the requesting tile, so the capabilities consulted
+      // here are that tile's. A protocol that is not registered, or whose
+      // capability the tile does not hold, is served nothing and falls
+      // through to the ordinary file lookup below — which 404s, so the tile's
+      // `import()` rejects identically in both cases. The legacy
+      // `peek://ext/<id>/` form returns from its own branch above and so is
+      // never served a protocol.
+      const protocolCapabilities =
+        (tileManifest ?? getLazyTileManifest(host))?.capabilities ?? null;
+      const protocolSource = protocolModuleForRequest(host, tilePathSuffix, protocolCapabilities);
+      if (protocolSource !== null) {
+        const moduleResponse = new Response(protocolSource, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/javascript; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          },
+        });
+        if (!isTileOrigin) return moduleResponse;
+        return injectCSPHeader(
+          moduleResponse,
+          resolveTileOriginCSP(tileManifest, getLazyTileManifest(host)),
+        );
+      }
 
       // Security: ensure path stays within the tile folder. For tile origins
       // we still want CSP on the 403, so we synthesize the forbidden response

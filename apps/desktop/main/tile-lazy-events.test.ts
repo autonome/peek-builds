@@ -482,3 +482,71 @@ describe('tile manifest lazyEvents validation', () => {
     assert.ok(errors.some(e => e.path.includes('lazyEvents[2]')));
   });
 });
+
+describe('tile manifest schedule validation', () => {
+  let validateTileManifest: typeof import('./tile-manifest.js').validateTileManifest;
+
+  before(async () => {
+    const m = await import('./tile-manifest.js');
+    validateTileManifest = m.validateTileManifest;
+  });
+
+  const base = {
+    manifestVersion: 3,
+    id: 't',
+    name: 'T',
+    capabilities: {},
+  };
+
+  const withSchedule = (schedule: unknown) => validateTileManifest({
+    ...base,
+    tiles: [
+      {
+        id: 'background',
+        url: 'bg.html',
+        lazy: true,
+        schedule,
+      },
+    ],
+  } as Record<string, unknown>);
+
+  it('accepts a schedule of { topic, everyMinutes }', () => {
+    const errors = withSchedule([
+      { topic: 'feeds:poll', everyMinutes: 15 },
+      { topic: 'remindme:due', everyMinutes: 1 },
+    ]);
+    assert.strictEqual(errors.length, 0);
+  });
+
+  it('rejects a non-array schedule', () => {
+    const errors = withSchedule({ topic: 'feeds:poll', everyMinutes: 15 });
+    assert.ok(errors.some(e => e.path.endsWith('.schedule')));
+  });
+
+  it('rejects a schedule entry with a missing or empty topic', () => {
+    const errors = withSchedule([
+      { everyMinutes: 15 },
+      { topic: '', everyMinutes: 15 },
+    ]);
+    assert.ok(errors.some(e => e.path.includes('schedule[0].topic')));
+    assert.ok(errors.some(e => e.path.includes('schedule[1].topic')));
+  });
+
+  it('rejects a zero, negative or fractional everyMinutes', () => {
+    const errors = withSchedule([
+      { topic: 'a:poll', everyMinutes: 0 },
+      { topic: 'b:poll', everyMinutes: -5 },
+      { topic: 'c:poll', everyMinutes: 1.5 },
+      { topic: 'd:poll', everyMinutes: '15' },
+    ]);
+    assert.ok(errors.some(e => e.path.includes('schedule[0].everyMinutes')));
+    assert.ok(errors.some(e => e.path.includes('schedule[1].everyMinutes')));
+    assert.ok(errors.some(e => e.path.includes('schedule[2].everyMinutes')));
+    assert.ok(errors.some(e => e.path.includes('schedule[3].everyMinutes')));
+  });
+
+  it('rejects a schedule entry that is not an object', () => {
+    const errors = withSchedule(['feeds:poll']);
+    assert.ok(errors.some(e => e.path.endsWith('.schedule[0]')));
+  });
+});

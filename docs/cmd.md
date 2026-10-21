@@ -203,9 +203,8 @@ api.commands.register({
 | `commands.js` | Command proxy/dispatch to background |
 | `config.js` | Extension configuration and defaults |
 | `download.html` | Save dialog window (non-modal for native dialog) |
-| `commands/lists.js` | Lists command implementation |
-| `commands/csv.js` | CSV converter command |
-| `commands/save.js` | File save command |
+| `apps/desktop/features/lists/home.js` | The `lists` command, registered by the lists feature |
+| `apps/desktop/features/files/background.js` | The `csv` and `save` commands, registered by the files feature |
 
 ### Provider Pattern
 

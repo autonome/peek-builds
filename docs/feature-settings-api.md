@@ -6,12 +6,12 @@ Extensions and core UI code access global settings through seven different mecha
 
 | Mechanism | Used by | Problem |
 |-----------|---------|---------|
-| `app/config.js` | Settings UI | Renderer-side schema + defaults; not accessible to extensions |
-| `backend/config.ts` | Backend only | Node-side constants, inaccessible from `peek://` pages |
+| `apps/desktop/renderer/config.js` | Settings UI | Renderer-side schema + defaults; not accessible to extensions |
+| `apps/desktop/main/config.ts` | Backend only | Node-side constants, inaccessible from `peek://` pages |
 | `ipcRenderer.invoke('get-app-prefs')` | `preload.js` drag logic | Raw IPC, bypasses API layer, unavailable on Tauri |
-| `api.invoke('get-app-prefs')` | `app/page/page.js` | Same handler, different call site; dumps entire prefs blob |
+| `api.invoke('get-app-prefs')` | the canvas page host, removed 2026-07 | Same handler, different call site; dumps entire prefs blob |
 | `api.settings.*` (preload) | Extensions | Scoped to extension-owned settings only; no global read |
-| `api.settings.getExtKey('editor', 'prefs')` | `tags/home.js` | Cross-extension reads with no access control |
+| `api.settings.getExtKey('editor', 'prefs')` | `apps/desktop/features/tags/home.js` | Cross-extension reads with no access control |
 | `topic:core:prefs` pubsub | `entry.ts`, `ipc.ts` | Broadcasts full prefs at SYSTEM scope, unfiltered |
 
 **Core problem:** Extensions that need to read a global setting (e.g., `dragHoldDelay`, `hideTitleBar`) must either use raw IPC calls that only work on Electron, or subscribe to a SYSTEM-scope pubsub topic that exposes every setting.
@@ -71,7 +71,7 @@ interface ISettingsApi {
 
 ## Settings Registry
 
-Create `app/settings-registry.js` as the single source of truth for setting metadata:
+Create `apps/desktop/renderer/settings-registry.js` as the single source of truth for setting metadata:
 
 ```js
 // app/settings-registry.js
@@ -156,7 +156,7 @@ export function isPublic(key) {
 }
 ```
 
-This replaces the defaults in `app/config.js` and the schema definitions. The existing `prefsSchema` JSON Schema in `config.js` can be generated from the registry if needed for validation.
+This replaces the defaults in `apps/desktop/renderer/config.js` and the schema definitions. The existing `prefsSchema` JSON Schema in `config.js` can be generated from the registry if needed for validation.
 
 ## Reactive Updates
 
@@ -238,7 +238,7 @@ Not an IPC handler per se -- this is the notification pushed to renderers after 
 
 ### Phase 1: Add API (non-breaking)
 
-1. Create `app/settings-registry.js` with scope declarations and defaults.
+1. Create `apps/desktop/renderer/settings-registry.js` with scope declarations and defaults.
 2. Add `global-settings-get` IPC handler to `apps/desktop/main/ipc.ts`, reading from existing `_prefs` cache.
 3. Add `api.settings.global.get()` and `api.settings.global.subscribe()` to `preload.js`.
 4. Add stubs returning defaults to `apps/tauri-desktop/preload.js`.
@@ -250,14 +250,14 @@ No existing code changes. The old mechanisms continue to work.
 Replace direct IPC calls with the new API:
 
 - `preload.js` L2485: `ipcRenderer.invoke('get-app-prefs')` -> use internal `_prefs` or registry default (preload is itself the implementation layer, so it reads directly)
-- `app/page/page.js` L472: `api.invoke('get-app-prefs')` -> `api.settings.global.get(['dragHoldDelay'])`
-- `tags/home.js`: `api.settings.getExtKey('editor', 'prefs')` -> if reading global, use `api.settings.global.get()`; if truly cross-extension, keep as-is (separate concern)
+- the canvas page host (removed 2026-07): `api.invoke('get-app-prefs')` -> `api.settings.global.get(['dragHoldDelay'])`
+- `apps/desktop/features/tags/home.js`: `api.settings.getExtKey('editor', 'prefs')` -> if reading global, use `api.settings.global.get()`; if truly cross-extension, keep as-is (separate concern)
 
 ### Phase 3: Consolidate config sources
 
-- Move defaults from `app/config.js` `defaults.prefs` to `settings-registry.js`.
-- Import registry into `app/config.js` for backward compat (or deprecate `config.js` prefs entirely).
-- Remove `APP_DEF_WIDTH`/`APP_DEF_HEIGHT` from `backend/config.ts` if they become registry entries.
+- Move defaults from `apps/desktop/renderer/config.js` `defaults.prefs` to `settings-registry.js`.
+- Import registry into `apps/desktop/renderer/config.js` for backward compat (or deprecate `config.js` prefs entirely).
+- Remove `APP_DEF_WIDTH`/`APP_DEF_HEIGHT` from `apps/desktop/main/config.ts` if they become registry entries.
 
 ### Phase 4: Deprecate `topic:core:prefs`
 

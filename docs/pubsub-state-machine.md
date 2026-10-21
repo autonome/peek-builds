@@ -28,7 +28,7 @@ fixed identity (source address) and a fixed set of legal capabilities.
 
 | Role | Identity | Notes |
 |---|---|---|
-| **Core** | `peek://app/...` | bgWindow (`app/background.html` → `app/index.js` runs cmd registry / page / hud) + cmd panel UI window (`app/cmd/panel.html`). Both carry `trustedBuiltin`; pubsub doesn't distinguish them. First-class publisher AND subscriber; every publish must reach bgWindow. |
+| **Core** | `peek://app/...` | bgWindow (`apps/desktop/renderer/background.html` → `apps/desktop/renderer/index.js` runs cmd registry / page / hud) + cmd panel UI window (`apps/desktop/renderer/cmd/panel.html`). Both carry `trustedBuiltin`; pubsub doesn't distinguish them. First-class publisher AND subscriber; every publish must reach bgWindow. |
 | **Tile** | `peek://{tileId}/{entry}` | One per tile BrowserWindow. Capability-gated via tile token. |
 | **System** | `peek://system/` | Main-process code publishing on its own behalf (e.g., `tag:item-added` from datastore IPC handlers, `window:focus-changed` from app events). Not a window, not a renderer. In-process call to `publish()`; no token, no IPC hop. |
 | **Webview guest** | `peek://{feature}/...` webContents inside a `<webview>` | Hosted inside tile windows. Receives broadcasts via the same pubsub forwarding path. |
@@ -134,7 +134,7 @@ A feature tile may **not** publish to another feature's topic namespace. If
 A needs data from B, it calls B's registered command (`api.commands.call`
 → `cmd:execute:{b-command}` round-trip), which goes through the full
 dispatch state machine. This rule exists because ad-hoc cross-feature
-topics (see tasks.md: websearch bg↔home round-trip) are the most common
+topics (see historical/tasks.md: websearch bg↔home round-trip) are the most common
 source of fragile pubsub.
 
 ### Topics that are NOT pubsub: private lifecycle IPC
@@ -312,8 +312,8 @@ The `scope` argument (`SYSTEM=1 | SELF=2 | GLOBAL=3`) is vestigial.
 
 Survey results (2026-04-23):
 - `api.scopes.GLOBAL` — ~100 sites across `app/**`.
-- `api.scopes.SYSTEM` — 4 sites (3 in `app/index.js`, 1 in
-  `app/settings/settings.js`).
+- `api.scopes.SYSTEM` — 4 sites (3 in `apps/desktop/renderer/index.js`, 1 in
+  `apps/desktop/renderer/settings/settings.js`).
 - `api.scopes.SELF` — **zero sites**.
 
 Preload's `publishImpl` defaults missing scope to `SELF`, but since no
@@ -342,7 +342,7 @@ publishes T, every subscriber S that will ever receive T during this boot
 must already be registered.
 
 **Enforcement**:
-- **Core subscribers land first.** `app/index.js` subscribes to
+- **Core subscribers land first.** `apps/desktop/renderer/index.js` subscribes to
   `cmd:register`, `cmd:register-batch`, `noun:register-batch`, and all
   core-managed domain topics during its synchronous init, BEFORE any tile
   is transitioned to `loading`. The main process waits for bgWindow's
@@ -495,7 +495,7 @@ Test boundaries:
 4. **Phase 4 — Private lifecycle IPC + subscribe-before-publish.**
    Split `tile:ready` / `tile:shutdown` off the pubsub bus onto private
    `tile:lifecycle:*` IPC channels handled directly in
-   `tile-lifecycle.ts`. `app/index.js` wires all core subscribers
+   `tile-lifecycle.ts`. `apps/desktop/renderer/index.js` wires all core subscribers
    during synchronous init; main process gates first tile
    `registered → loading` on bgWindow's private lifecycle-ready IPC.
    Add `tile:state-changed` as the public observer mirror. **Test**:
@@ -547,7 +547,7 @@ Each phase is independently shippable and each has a narrow failure mode.
   notification appears, panel returns to IDLE within 10s.
 - **Regression**: the 2026-04-23 repro `tests/desktop/cmd-execute-twice.
   spec.ts` still passes. Add companion that fires 5x in a row from the
-  panel UI (per tasks.md item).
+  panel UI (per historical/tasks.md item).
 - **Regression**: full desktop suite stays green after each phase.
 
 ## References
@@ -568,7 +568,7 @@ Each phase is independently shippable and each has a narrow failure mode.
   Phase 1; this is the bug site for bgWindow exclusion).
 - `apps/desktop/main/tile-lazy.ts` — pre-publish hook for
   load-on-dispatch.
-- `app/background.html`, `app/index.js`, `app/cmd/background.js` — core
+- `apps/desktop/renderer/background.html`, `apps/desktop/renderer/index.js`, `apps/desktop/renderer/cmd/background.js` — core
   renderer entry points + subscribers.
-- `docs/tasks.md` Current-Priority section — bugs this machine makes
+- `docs/historical/tasks.md` Current-Priority section — bugs this machine makes
   impossible.

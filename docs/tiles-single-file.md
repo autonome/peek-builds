@@ -7,7 +7,7 @@ subscribe to events, hold state, show a UI, or stay completely hidden. Some tile
 never show anything. Some show themselves when a command fires. Some do all of it.
 
 There is no "tile role" and no "tile type" in the conceptual model. **Every feature
-is a tile.** If functionality lives outside the tile model it is core (`app/`), not a
+is a tile.** If functionality lives outside the tile model it is core (`apps/desktop/renderer/`), not a
 feature. The old `type: "background"` / `type: "window"` distinction was never a
 meaningful conceptual split — it was a launcher implementation detail leaking into
 the manifest format.
@@ -181,13 +181,13 @@ window instantly — no startup cost on invocation.
 ## Lazy loading interaction
 
 Every built-in tile is lazy in practice: loaded on first use via the load-on-dispatch
-hook in `main/tile-lazy.ts`, armed at boot by `armLazyTile` (`main/tile-arm.ts`). See
+hook in `apps/desktop/main/tile-lazy.ts`, armed at boot by `armLazyTile` (`apps/desktop/main/tile-arm.ts`). See
 "Lazy feature activation" in `docs/architecture.md` for the full mechanics.
 
 A `resident: true` tile is loaded at startup (hidden) instead — `api.initialize()`
 runs immediately, commands are registered before any user action, no lazy
 stub/replay needed — but the path is unused: no shipped feature manifest sets
-`resident: true`, and `isLazyTileManifest` (`main/tile-arm.ts`) arms anything without
+`resident: true`, and `isLazyTileManifest` (`apps/desktop/main/tile-arm.ts`) arms anything without
 a resident entry lazily by default.
 
 ---
@@ -232,6 +232,12 @@ a resident entry lazily by default.
 - Added type declarations for `showSelf()` and `hideSelf()` on `TileWindow`.
 
 ---
+
+---
+
+## History
+
+The sections below record how things stood when this document was written. They are kept for their reasoning and are not current guidance.
 
 ## Tiles converted (proof-of-concept)
 

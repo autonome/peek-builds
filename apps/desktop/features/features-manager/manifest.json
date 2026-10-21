@@ -40,6 +40,9 @@
       "title": "Publish Feature"
     }
   ],
+  "protocols": {
+    "atproto": "required"
+  },
   "capabilities": {
     "features": {
       "read": true,

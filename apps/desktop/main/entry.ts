@@ -117,13 +117,17 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer, getActiveWorkspaceKey, DEFAULT_WORKSPACE_KEY, snapshotRowKey } from './session.js';
 import { installDesktopMarkerManager, stopDesktopMarkerManager } from './desktop-marker-manager.js';
-import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor } from './window-machine.js';
-import { getKernelExecutor, kernelAppActivated, kernelAppResigned } from './window-kernel-dispatch.js';
-import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
+import { cycleContentWindow, getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor, registerWindowWithMachine } from './window-machine.js';
+import { getKernelExecutor, kernelAppActivated, kernelAppResigned, kernelDestroyWindow } from './window-kernel-dispatch.js';
+import { getHybridWindow, getHybridContentWC, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
+import { destroyUnassembledHybridHost } from './ipc.js';
+import { closeHostWindow } from './windows.js';
 import {
-  isIsolationCheckedType,
   evaluateIsolationViolations,
+  decideWebContentsIsolation,
+  isolationRefusalMessage,
   hasDefaultDenyWindowOpen,
+  type IsolationPrefs,
 } from './web-contents-policy.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -139,7 +143,7 @@ import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
-import { planBeforeQuit, runDeferredQuitCleanup, type QuitCleanupPhase } from './izui-roles.js';
+import { planBeforeQuit, runDeferredQuitCleanup, deriveWindowSurface, isSatelliteRegistration, type QuitCleanupPhase } from './izui-roles.js';
 import { enforceSandboxOnWebContents } from './sandbox-enforcement.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -588,6 +592,221 @@ for (const arg of process.argv) {
 
 const systemAddress = getSystemAddress();
 
+/**
+ * Preload selection for a `<webview>` guest about to attach. Extracted from the
+ * `will-attach-webview` handler so the handler can read the RESULTING
+ * preferences and refuse the attach — the old inline body returned early from
+ * two branches, which left no single place the finished prefs were visible.
+ */
+function applyWebviewPreferences(
+  webPreferences: Electron.WebPreferences,
+  params: Record<string, string>,
+): void {
+  // For http(s) URLs that match a loaded extension's
+  // externally_connectable.matches, install the runtime-external preload
+  // which polyfills chrome.runtime.sendMessage(extId, msg) →
+  // chrome.runtime.onMessageExternal in the BG SW. Only one preload per
+  // webview is supported by Electron, and peek:// URLs already have their
+  // own (tile-preload). The runtime-external bridge is irrelevant for
+  // peek:// URLs anyway, so this check keeps both paths exclusive.
+  if (params.src && (params.src.startsWith('http://') || params.src.startsWith('https://'))) {
+    // Shared selection: matches a loaded extension's externally_connectable
+    // OR its ISOLATED-world content scripts → runtime-external compat preload
+    // (+ flags). Identical logic now drives the hybrid WebContentsView path
+    // in ipc.ts. These prefs run sandboxed (sandbox:true globally, peek
+    // 06d363fc) — Electron 43 fixed the sandbox_bundle init crash that
+    // originally forced sandbox:false on Proton's auth flow.
+    const rtPrefs = getRuntimeExternalWebPrefsForUrl(params.src, 'webview');
+    if (rtPrefs) {
+      webPreferences.preload = rtPrefs.preload;
+      webPreferences.additionalArguments = [
+        ...(webPreferences.additionalArguments ?? []),
+        ...rtPrefs.additionalArguments,
+      ];
+      webPreferences.sandbox = rtPrefs.sandbox;
+      webPreferences.contextIsolation = rtPrefs.contextIsolation;
+      return;
+    }
+  }
+
+  if (params.src && params.src.startsWith('peek://')) {
+    const tilePreloadPath = getTilePreloadPath();
+    if (!tilePreloadPath) return;
+
+    const tileWebPrefs = getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest);
+    if (tileWebPrefs) {
+      webPreferences.preload = tileWebPrefs.preload;
+      // Cast: Electron's WebPreferences type for webviews omits
+      // additionalArguments in some versions, but the runtime accepts
+      // it (set in BrowserWindow webPrefs the same way).
+      (webPreferences as { additionalArguments?: string[] }).additionalArguments =
+        tileWebPrefs.additionalArguments;
+      DEBUG && console.log(
+        `[webview] Injecting tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
+      );
+    } else {
+      // Any peek:// URL that reaches here is either a developer-extension
+      // webview that needs a tile manifest, or a bug. Log a warning so it
+      // surfaces.
+      console.warn(`[webview] No tile-preload found for peek:// webview ${params.src} — no preload injected`);
+    }
+  }
+}
+
+/**
+ * `getLastWebPreferences` exists at runtime (returning null for surfaces whose
+ * prefs are not readable until a page loads) but is not in the public typings,
+ * so it is reached through a cast. A surface that rejects pref inspection reads
+ * as null, which the caller treats as "no verdict yet" rather than as safe.
+ */
+function readIsolationPrefs(contents: Electron.WebContents): Electron.WebPreferences | null {
+  try {
+    const getter = (contents as unknown as {
+      getLastWebPreferences?: () => Electron.WebPreferences | null;
+    }).getLastWebPreferences;
+    return typeof getter === 'function' ? getter.call(contents) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tear down the window that owns a refused webContents, through the window
+ * machine wherever the machine knows the window. Answers false when the owner
+ * is not reachable yet — a hybrid content view is created before
+ * `registerHybridWindow` runs, and `BrowserWindow.fromWebContents` is null
+ * while the window's own constructor is still on the stack — so the caller can
+ * ask again at the first navigation, by which point both have resolved.
+ */
+function tearDownRefusedWindow(contents: Electron.WebContents): boolean {
+  // A hybrid page host is a BaseWindow and is invisible to
+  // BrowserWindow.fromWebContents, so the registry is asked first.
+  const hybrid = getHybridWindowByContentWC(contents);
+  if (hybrid) {
+    destroyUnassembledHybridHost(hybrid.baseWin);
+    return true;
+  }
+
+  const win = BrowserWindow.fromWebContents(contents);
+  if (!win || win.isDestroyed()) return false;
+
+  if (getWindowIdFor(win) != null) {
+    closeHostWindow(win.id, win);
+    return true;
+  }
+
+  // A window that never registered with the machine — which is exactly what a
+  // raw `new BrowserWindow` outside Peek's pipeline is. The machine is the only
+  // thing allowed to operate an OS window (docs/design/window-manager.md §1
+  // R2), so the window is registered first and then destroyed through it, the
+  // same two steps `ipc.ts destroyUnassembledHybridHost` takes for a host that
+  // failed mid-assembly. It registers as a hidden infrastructure satellite so
+  // that a window which exists only to be destroyed never reaches the session
+  // snapshot or the window list.
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'utility',
+    class: 'bridge',
+    satellite: isSatelliteRegistration('utility', { windowClass: 'bridge' }),
+    ...deriveWindowSurface({}),
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
+  const registeredId = getWindowIdFor(win);
+  if (registeredId == null) return false;
+  kernelDestroyWindow(registeredId);
+  return true;
+}
+
+/**
+ * Refuse a webContents whose preferences violate the isolation policy, in every
+ * build: it loads no content and its owning window is torn down. Unlike
+ * `sandbox-enforcement.ts fatalSandboxViolation`, a refusal never exits the app
+ * — the offending window is contained, and the rest of the app keeps running.
+ *
+ * The verdict is read twice at most, both times at a deterministic point and
+ * never on a timer: once at creation, and once on the first
+ * `did-start-navigation` for surfaces whose preferences are not readable until
+ * a page loads (the shape `sandbox-enforcement.ts` uses). The navigation pass
+ * runs before the navigation commits.
+ *
+ * The owning window is torn down on that same first `did-start-navigation`,
+ * and never at creation, for two reasons that both point at the same moment.
+ * Creation is too early to KNOW the owner — a hybrid content view is created
+ * before `registerHybridWindow` runs. And where the owner IS already
+ * resolvable, destroying it at creation destroys a BrowserWindow from inside
+ * its own constructor, which tears down the renderer while Chromium is still
+ * forking it and kills the whole browser process (observed as `Zygote could
+ * not fork` followed by the app vanishing). By the first navigation both
+ * problems are gone. Until then the webContents is already inert: every
+ * navigation is blocked and `window.open` is denied, so no content runs in a
+ * window waiting to be torn down.
+ */
+function installIsolationRefusal(contents: Electron.WebContents): void {
+  const type = contents.getType();
+  let state: 'open' | 'allowed' | 'refused' = 'open';
+  let ownerTornDown = false;
+
+  const tearDown = (): void => {
+    if (!ownerTornDown) ownerTornDown = tearDownRefusedWindow(contents);
+  };
+
+  const stopLoading = (): void => {
+    try { contents.stop(); } catch { /* a destroyed webContents has nothing to stop */ }
+  };
+
+  const refuse = (violations: string[]): void => {
+    state = 'refused';
+    let url = '';
+    try { url = contents.getURL(); } catch { /* url is diagnostic only */ }
+    console.error(isolationRefusalMessage({ id: contents.id, type, url, violations }));
+    // Nothing this webContents asks for is granted from here on: no popup, and
+    // no navigation, so no content ever runs in it even if the teardown below
+    // has to wait for the owner to resolve.
+    try {
+      contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    } catch { /* some surfaces reject a handler; the navigation block still holds */ }
+    // No stopLoading() or tearDown() here — see the note above on why
+    // creation is the wrong moment to touch the window. The first navigation
+    // does both.
+  };
+
+  const decide = (): void => {
+    if (state !== 'open') return;
+    const verdict = decideWebContentsIsolation({ type, prefs: readIsolationPrefs(contents) });
+    if (verdict.decision === 'refuse') refuse(verdict.violations);
+    else if (verdict.decision === 'allow') state = 'allowed';
+    // 'recheck-on-navigation' leaves the verdict open for the navigation pass.
+  };
+
+  decide();
+
+  // `will-navigate` and `will-redirect` are cancellable; `did-start-navigation`
+  // is not, so it is stopped instead. All three are installed because a refused
+  // webContents must not reach a commit by any route.
+  const blockNavigation = (event: Electron.Event): void => {
+    if (state !== 'refused') return;
+    event.preventDefault();
+    stopLoading();
+  };
+  contents.on('will-navigate', blockNavigation);
+  contents.on('will-redirect', blockNavigation);
+  contents.on('did-start-navigation', () => {
+    decide();
+    if (state !== 'refused') return;
+    // Both acts are deferred to the end of this turn of the loop. Destroying a
+    // window from inside its own navigation callback kills the whole browser
+    // process — Chromium is mid-navigation and the WebContents is on the
+    // stack. This is not a timer, a retry or a poll: it is the same turn,
+    // after the event returns, and it runs exactly once.
+    setImmediate(() => {
+      stopLoading();
+      tearDown();
+    });
+  });
+}
+
 // Inject tile-preload into <webview> elements that load peek:// URLs.
 // This gives internal widget pages (e.g., widget-demo cards) access to
 // window.app API while leaving external web content webviews untouched.
@@ -619,37 +838,10 @@ app.on('web-contents-created', (_event, contents) => {
   // Skips: extension background pages (Electron's built-in extension
   // support owns these).
   //
-  // Behavior: log loudly always; throw in dev/test so violations cannot
-  // be missed. Production stays up — crashing real users is worse than
-  // a logged warning — but the assert path makes regressions impossible
-  // to land via PR.
-  {
-    const type = contents.getType();
-    if (isIsolationCheckedType(type)) {
-      try {
-        // `getLastWebPreferences` exists at runtime on Electron 40
-        // (returns null for some surfaces) but is not in the public
-        // typings; cast through unknown so the type check stays clean.
-        const getter = (contents as unknown as {
-          getLastWebPreferences?: () => Electron.WebPreferences | null;
-        }).getLastWebPreferences;
-        const prefs = typeof getter === 'function' ? getter.call(contents) : null;
-        const violations = evaluateIsolationViolations(prefs);
-        if (violations.length > 0) {
-          const url = contents.getURL() || '<no url yet>';
-          const msg = `[SECURITY] webContents ${contents.id} (type=${type}, url=${url}) violates isolation policy: ${violations.join(', ')}`;
-          console.error(msg);
-          if (process.env.NODE_ENV !== 'production') {
-            throw new Error(msg);
-          }
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith('[SECURITY]')) throw err;
-        // Inspecting prefs may fail on some surface types; swallow
-        // non-security errors so we don't break legitimate flows.
-      }
-    }
-  }
+  // A violation is REFUSED in every build, production included: the
+  // webContents loads nothing and its window is torn down. See
+  // installIsolationRefusal below.
+  installIsolationRefusal(contents);
 
   // Forward console errors/warnings from EVERY chrome-extension:// webContents
   // to main stderr. Extension popups, options pages, BG SW, etc. have no
@@ -730,55 +922,20 @@ app.on('web-contents-created', (_event, contents) => {
     console.error('[download] Failed to register handler on new webContents session:', err);
   }
 
-  contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
-    // For http(s) URLs that match a loaded extension's
-    // externally_connectable.matches, install the runtime-external preload
-    // which polyfills chrome.runtime.sendMessage(extId, msg) →
-    // chrome.runtime.onMessageExternal in the BG SW. Only one preload per
-    // webview is supported by Electron, and peek:// URLs already have their
-    // own (tile-preload). The runtime-external bridge is irrelevant for
-    // peek:// URLs anyway, so this check keeps both paths exclusive.
-    if (params.src && (params.src.startsWith('http://') || params.src.startsWith('https://'))) {
-      // Shared selection: matches a loaded extension's externally_connectable
-      // OR its ISOLATED-world content scripts → runtime-external compat preload
-      // (+ flags). Identical logic now drives the hybrid WebContentsView path
-      // in ipc.ts. These prefs run sandboxed (sandbox:true globally, peek
-      // 06d363fc) — Electron 43 fixed the sandbox_bundle init crash that
-      // originally forced sandbox:false on Proton's auth flow.
-      const rtPrefs = getRuntimeExternalWebPrefsForUrl(params.src, 'webview');
-      if (rtPrefs) {
-        webPreferences.preload = rtPrefs.preload;
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          ...rtPrefs.additionalArguments,
-        ];
-        webPreferences.sandbox = rtPrefs.sandbox;
-        webPreferences.contextIsolation = rtPrefs.contextIsolation;
-        return;
-      }
-    }
+  contents.on('will-attach-webview', (wvEvent, webPreferences, params) => {
+    applyWebviewPreferences(webPreferences, params);
 
-    if (params.src && params.src.startsWith('peek://')) {
-      const tilePreloadPath = getTilePreloadPath();
-      if (!tilePreloadPath) return;
-
-      const tileWebPrefs = getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest);
-      if (tileWebPrefs) {
-        webPreferences.preload = tileWebPrefs.preload;
-        // Cast: Electron's WebPreferences type for webviews omits
-        // additionalArguments in some versions, but the runtime accepts
-        // it (set in BrowserWindow webPrefs the same way).
-        (webPreferences as { additionalArguments?: string[] }).additionalArguments =
-          tileWebPrefs.additionalArguments;
-        DEBUG && console.log(
-          `[webview] Injecting tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
-        );
-      } else {
-        // Any peek:// URL that reaches here is either a developer-extension
-        // webview that needs a tile manifest, or a bug. Log a warning so it
-        // surfaces.
-        console.warn(`[webview] No tile-preload found for peek:// webview ${params.src} — no preload injected`);
-      }
+    // Refuse the attach when the prefs the guest would end up with violate the
+    // isolation policy. Preload selection above is the only thing that writes
+    // them, so this reads the resulting set rather than the requested one — a
+    // `<webview>` tag asking for nodeIntegration gets no guest at all.
+    const violations = evaluateIsolationViolations(webPreferences as IsolationPrefs);
+    if (violations.length > 0) {
+      console.error(
+        `[SECURITY] refusing <webview> attach for ${params.src || '<no src>'}: ` +
+        `${violations.join(', ')}`
+      );
+      wvEvent.preventDefault();
     }
   });
 

@@ -4,7 +4,7 @@ Themes control the visual appearance of Peek, including colors and typography. T
 
 ## Theme Structure
 
-Each theme lives in its own directory under `themes/`:
+Each theme lives in its own directory under `apps/desktop/themes/`:
 
 ```
 themes/
@@ -202,7 +202,7 @@ Theme settings are stored in the `extension_settings` datastore table:
 
 ## Creating a New Theme
 
-1. Create a new directory under `themes/`:
+1. Create a new directory under `apps/desktop/themes/`:
    ```
    themes/mytheme/
      manifest.json

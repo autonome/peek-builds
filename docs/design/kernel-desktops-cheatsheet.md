@@ -24,7 +24,7 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
   `ipc.ts windowOpenHandler`; it sets `options.activation = 'user'` and logs
   `page-opens-transient`. It never reuses an existing window.
 - Built as an ordinary window flagged non-activating (`nonactivating-window.ts flagNonActivating`,
-  addon `native/nonactivating-window/nonactivating_window.mm`), `options.nonActivating = true`.
+  addon `apps/desktop/native/nonactivating-window/nonactivating_window.mm`), `options.nonActivating = true`.
   It belongs to the desktop it opened on. Without the addon it is a panel (`options.type =
   'panel'`); the log line's `ordinary=` says which.
 - Recorded as `WindowRecord.nonActivating` (`izui-roles.ts windowNonActivating`: a panel, or
@@ -61,7 +61,7 @@ rules in `docs/design/window-rules.md`. Anchors are `file` + symbol.
 - The macOS switch notice (`NSWorkspaceActiveSpaceDidChangeNotification`) arrives after the
   switch animation and names no desktop. `attachSpaceChangeListener` sends
   `DesktopSwitchObserved`, then `onDesktopTrigger('space-changed')` queues `syncDesktops`.
-- `syncDesktops` reads the helper (`native/desktop-helper/main.swift`, through
+- `syncDesktops` reads the helper (`apps/desktop/native/desktop-helper/main.swift`, through
   `desktop-provider-mac.ts` and `FailSafeDesktopProvider`), sends `DesktopLayoutReported` /
   `CurrentDesktopChanged`, then `WindowPlacementReported` per changed window, then `DesktopsRead`.
 - Between the notice and the read (5–30 ms) `desktopUnread` holds, and only on-every-desktop

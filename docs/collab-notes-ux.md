@@ -4,7 +4,7 @@
 **Scope:** user journeys, surface allocation per platform, and UX-driven
 design decisions that aren't visible in the protocol spec.
 **Task:** peek task `053db0fe-5c8d-4fd5-a6e9-6316ab6ae059`.
-**Dependent feature:** [contacts](./../features/contacts/) — peek task
+**Dependent feature:** contacts (`apps/desktop/features/contacts/`, not built) — peek task
 `af8abc4a-bb88-41ed-b432-4e8ec8f30030`.
 
 ---
@@ -88,7 +88,7 @@ Peek desktop has a rich UI vocabulary; we lean on it rather than inventing.
 
 A page-host window at `peek://collab-notes/note/<noteId>`. Standard
 page-host chrome (navbar, address bar, ESC handling per
-`docs/page-host-state-machine.md`). Content area renders the editor —
+`docs/historical/page-host-state-machine.md`). Content area renders the editor —
 Automerge-aware text widget rendering `title` and `body`. Width follows
 window resize; the placement engine (see
 `docs/window-placement.md`) treats it as a content window — `proportional`

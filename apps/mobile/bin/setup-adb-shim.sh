@@ -17,7 +17,9 @@
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _WRAPPER_ADB="$_SCRIPT_DIR/adb"
 _REAL_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-_SHIM_DIR="${TMPDIR:-/tmp}peek-android-shim"
+_TMP_BASE="${TMPDIR:-/tmp}"
+_TMP_BASE="${_TMP_BASE%/}"
+_SHIM_DIR="$_TMP_BASE/peek-android-shim"
 
 if [ ! -d "$_REAL_HOME" ]; then
   echo "setup-adb-shim: ANDROID_HOME not found: $_REAL_HOME" >&2

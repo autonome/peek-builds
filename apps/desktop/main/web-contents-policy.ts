@@ -12,8 +12,14 @@
  *
  * So the decisions live here, with no `electron` import (same shape as the
  * pure functions in `sandbox-enforcement.ts`), and `web-contents-policy.test.ts`
- * pins each branch. The callers keep every log line, message format, throw rule
- * and handler shape they had — this module answers what to do, never does it.
+ * pins each branch. The callers keep every log line, message format and handler
+ * shape they had — this module answers what to do, never does it.
+ *
+ * Two more decisions joined the original three once an isolation violation
+ * became a refusal rather than a log line: the verdict for a created
+ * webContents (`decideWebContentsIsolation`, with `isolationRefusalMessage` for
+ * what it logs) and the input check that refuses a window-open request before a
+ * window exists (`unsafeWebPreferenceOverrides`).
  */
 
 /**
@@ -48,6 +54,81 @@ export function evaluateIsolationViolations(prefs: IsolationPrefs | null): strin
   if (prefs.contextIsolation === false) violations.push('contextIsolation=false');
   if (prefs.webSecurity === false) violations.push('webSecurity=false');
   return violations;
+}
+
+/**
+ * What to do with a webContents whose isolation prefs have just been read.
+ *
+ * `recheck-on-navigation` is the null-prefs answer: some surfaces do not expose
+ * `getLastWebPreferences()` until a page loads, so no verdict can be reached at
+ * creation and the caller asks again on the first navigation (the shape
+ * `sandbox-enforcement.ts` already uses). A null-prefs surface is never
+ * silently allowed.
+ */
+export type IsolationVerdict =
+  | { decision: 'allow' }
+  | { decision: 'recheck-on-navigation' }
+  | { decision: 'refuse'; violations: string[] };
+
+/**
+ * The refusal decision for one webContents, in every build. A violation is
+ * refused outright rather than logged: the webContents loads no content and its
+ * owning window is torn down. There is no environment branch — a release build
+ * that let the window run was the unsafe case this replaces.
+ */
+export function decideWebContentsIsolation(args: {
+  type: string;
+  prefs: IsolationPrefs | null;
+}): IsolationVerdict {
+  if (!isIsolationCheckedType(args.type)) return { decision: 'allow' };
+  if (!args.prefs) return { decision: 'recheck-on-navigation' };
+  const violations = evaluateIsolationViolations(args.prefs);
+  if (violations.length > 0) return { decision: 'refuse', violations };
+  return { decision: 'allow' };
+}
+
+/** The single `[SECURITY]` line a refusal logs, pinned here so a test owns its shape. */
+export function isolationRefusalMessage(args: {
+  id: number;
+  type: string;
+  url: string;
+  violations: string[];
+}): string {
+  const url = args.url || '<no url yet>';
+  return (
+    `[SECURITY] webContents ${args.id} (type=${args.type}, url=${url}) violates isolation ` +
+    `policy: ${args.violations.join(', ')} — refused: no content will load in it and its ` +
+    `window is being torn down`
+  );
+}
+
+/**
+ * The webPreferences a caller is never allowed to ask a new window for. Wider
+ * than `IsolationPrefs` by one setting: `sandbox` belongs here because a
+ * window-open request can be refused before anything is built, whereas a
+ * created webContents running unsandboxed is already fatal
+ * (`sandbox-enforcement.ts`), so the isolation check has no use for it.
+ */
+export interface WebPreferenceOverrides extends IsolationPrefs {
+  sandbox?: boolean;
+}
+
+/**
+ * Names every unsafe override a window-open request carries, so the request can
+ * be refused before a window exists. As with `evaluateIsolationViolations`,
+ * only an EXPLICITLY unsafe value counts — an absent key means the caller
+ * expressed no opinion and Peek's own defaults apply.
+ */
+export function unsafeWebPreferenceOverrides(
+  prefs: WebPreferenceOverrides | null | undefined,
+): string[] {
+  if (!prefs || typeof prefs !== 'object') return [];
+  const unsafe: string[] = [];
+  if (prefs.nodeIntegration === true) unsafe.push('nodeIntegration=true');
+  if (prefs.contextIsolation === false) unsafe.push('contextIsolation=false');
+  if (prefs.webSecurity === false) unsafe.push('webSecurity=false');
+  if (prefs.sandbox === false) unsafe.push('sandbox=false');
+  return unsafe;
 }
 
 /**

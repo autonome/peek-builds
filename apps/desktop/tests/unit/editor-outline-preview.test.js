@@ -1,221 +1,23 @@
 /**
- * Unit tests for editor outline (parseHeaders) and preview (renderMarkdown) modules.
+ * Unit tests for editor outline (parseHeaders), preview (renderMarkdown,
+ * resolveImgSrc) and highlight serialisation.
  *
- * Tests pure functions without DOM/CodeMirror dependencies.
+ * The real modules are imported. outline-sidebar.js pulls in
+ * @codemirror/language and highlights.js pulls in @codemirror/state and
+ * @codemirror/view; all three load under plain node with no DOM, so the
+ * functions under test need no stub.
+ *
  * Run via: node --test tests/unit/editor-outline-preview.test.js
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// parseHeaders is exported from outline-sidebar.js but the module also
-// imports @codemirror/language which requires a browser-like environment.
-// We need to mock the import or extract the function.
-// Since parseHeaders is a pure function, we can test it directly by extracting
-// the logic inline.
-
-// ---------------------------------------------------------------------------
-// parseHeaders (extracted from outline-sidebar.js for testability)
-// ---------------------------------------------------------------------------
-
-function parseHeaders(text) {
-  const headers = [];
-  const lines = text.split('\n');
-  let offset = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
-
-    if (match) {
-      headers.push({
-        level: match[1].length,
-        text: match[2].trim(),
-        line: i + 1,
-        offset: offset,
-      });
-    }
-
-    offset += line.length + 1; // +1 for newline
-  }
-
-  return headers;
-}
-
-// ---------------------------------------------------------------------------
-// escapeHtml + renderMarkdown (extracted from preview-sidebar.js)
-// ---------------------------------------------------------------------------
-
-function escapeHtml(text) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function resolveImgSrc(src, basePath) {
-  if (/^(https:\/\/|data:image\/)/i.test(src)) return src;
-  if (/^file:\/\//i.test(src)) return src;
-  if (/^javascript:/i.test(src.replace(/\s/g, ''))) return null;
-  if (/^http:\/\//i.test(src)) return null;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(src)) return null;
-  if (basePath) {
-    const base = basePath.replace(/\/+$/, '');
-    let resolved;
-    if (src.startsWith('/')) {
-      resolved = src;
-    } else {
-      resolved = base + '/' + src;
-    }
-    const parts = resolved.split('/');
-    const normalized = [];
-    for (const part of parts) {
-      if (part === '.' || part === '') continue;
-      if (part === '..') {
-        normalized.pop();
-      } else {
-        normalized.push(part);
-      }
-    }
-    const normalizedPath = '/' + normalized.join('/');
-    return 'peek://local-file' + normalizedPath;
-  }
-  return null;
-}
-
-function restoreImgTags(html, basePath) {
-  return html.replace(
-    /&lt;img\s+((?:(?!&gt;).)+?)\/?\s*&gt;/gi,
-    (match, attrs) => {
-      const unescaped = attrs
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
-      const allowed = ['src', 'alt', 'width', 'height', 'title', 'loading', 'style'];
-      const result = [];
-      const attrRegex = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g;
-      let m;
-      while ((m = attrRegex.exec(unescaped)) !== null) {
-        const name = m[1].toLowerCase();
-        const value = m[2] ?? m[3] ?? m[4];
-        if (!allowed.includes(name)) continue;
-        if (name === 'src') {
-          const resolved = resolveImgSrc(value, basePath);
-          if (!resolved) continue;
-          const safeValue = resolved.replace(/"/g, '&quot;');
-          result.push(`${name}="${safeValue}"`);
-          continue;
-        }
-        const safeValue = value.replace(/"/g, '&quot;');
-        result.push(`${name}="${safeValue}"`);
-      }
-      if (!result.find(a => a.startsWith('src='))) return match;
-      if (!result.find(a => a.startsWith('style='))) {
-        result.push('style="max-width:100%"');
-      }
-      return `<img ${result.join(' ')}>`;
-    }
-  );
-}
-
-function resolveMarkdownImgSrc(src, basePath) {
-  const resolved = resolveImgSrc(src, basePath);
-  return resolved || '';
-}
-
-function renderMarkdown(text, options) {
-  const basePath = options?.basePath;
-  let html = escapeHtml(text);
-
-  // Restore safe HTML img tags
-  html = restoreImgTags(html, basePath);
-
-  // Code blocks (``` ... ```)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
-  });
-
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // Headers
-  html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
-  html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
-  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Bold and italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/___(.+?)___/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
-  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-
-  // Images — resolve src against basePath
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
-    const resolved = resolveMarkdownImgSrc(src, basePath);
-    if (!resolved) return `![${alt}](${src})`; // leave as text if blocked
-    return `<img src="${resolved}" alt="${alt}" style="max-width:100%">`;
-  });
-
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-
-  // Horizontal rule
-  html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
-
-  // Blockquotes
-  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // Unordered lists
-  html = html.replace(/^[-*+] (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-
-  // Ordered lists
-  html = html.replace(/^\d+[.)] (.+)$/gm, '<li>$1</li>');
-
-  // Paragraphs
-  const lines = html.split('\n');
-  const result = [];
-  let inParagraph = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const isBlock = /^<(h[1-6]|pre|ul|ol|li|blockquote|hr|img)/.test(line);
-    const isEmpty = line.trim() === '';
-
-    if (isBlock) {
-      if (inParagraph) {
-        result.push('</p>');
-        inParagraph = false;
-      }
-      result.push(line);
-    } else if (isEmpty) {
-      if (inParagraph) {
-        result.push('</p>');
-        inParagraph = false;
-      }
-    } else {
-      if (!inParagraph) {
-        result.push('<p>');
-        inParagraph = true;
-      }
-      result.push(line);
-    }
-  }
-
-  if (inParagraph) {
-    result.push('</p>');
-  }
-
-  return result.join('\n');
-}
+import { parseHeaders } from '../../features/editor/outline-sidebar.js';
+import { renderMarkdown, resolveImgSrc } from '../../features/editor/preview-sidebar.js';
+import {
+  serializeHighlights,
+  deserializeHighlights,
+} from '../../features/editor/highlights.js';
 
 // ===========================================================================
 // parseHeaders tests
@@ -676,39 +478,6 @@ describe('resolveImgSrc - non-image file types', () => {
 // ===========================================================================
 // Highlight serialization/deserialization tests
 // ===========================================================================
-
-// Inline the pure functions from highlights.js (they depend on CodeMirror
-// StateField which can't run in Node, but serialize/deserialize are pure)
-
-function generateHighlightId() {
-  return 'hl-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 8);
-}
-
-function serializeHighlights(highlights) {
-  return highlights.map(hl => ({
-    id: hl.id,
-    from: hl.from,
-    to: hl.to,
-    text: hl.text,
-    note: hl.note || '',
-    color: hl.color,
-  }));
-}
-
-function deserializeHighlights(data, docLength) {
-  if (!Array.isArray(data)) return [];
-  return data.filter(hl =>
-    hl && typeof hl.from === 'number' && typeof hl.to === 'number' &&
-    hl.from >= 0 && hl.to <= docLength && hl.from < hl.to
-  ).map(hl => ({
-    id: hl.id || generateHighlightId(),
-    from: hl.from,
-    to: hl.to,
-    text: hl.text || '',
-    note: hl.note || '',
-    color: hl.color || 'var(--base0A)',
-  }));
-}
 
 describe('serializeHighlights', () => {
   it('serializes highlights with empty text field', () => {

@@ -26,7 +26,9 @@
  * out of scope by design.
  *
  * Usage: node scripts/lint-test-honesty.mjs [root ...]
- * Exit 0 = clean, 1 = violations (paths + reasons printed), 2 = bad invocation.
+ * Exit 0 = clean, 1 = violations (paths + reasons printed), 2 = bad invocation
+ * (including a scan root that is missing or holds no test files — scanning
+ * nothing must not read as a pass).
  */
 
 import fs from 'node:fs';
@@ -85,7 +87,7 @@ function collectTestFiles(dir) {
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return out; // missing root is not an error (e.g. an app without that dir)
+    return out; // unreadable subdirectory → nothing from it; roots are checked separately
   }
   for (const e of entries) {
     const full = path.join(dir, e.name);
@@ -97,6 +99,33 @@ function collectTestFiles(dir) {
     }
   }
   return out;
+}
+
+/**
+ * Collect the test files under every scan root, refusing to scan nothing.
+ * A root that is missing, or that holds no test file at all, almost always
+ * means the lint was invoked from the wrong directory or with a stale path —
+ * which used to print the success line having checked zero files.
+ */
+function collectAllTestFiles(rootList) {
+  const missing = [];
+  const empty = [];
+  const files = [];
+  for (const root of rootList) {
+    if (!fs.existsSync(root)) { missing.push(root); continue; }
+    const found = collectTestFiles(root);
+    if (!found.length) { empty.push(root); continue; }
+    files.push(...found);
+  }
+  if (missing.length || empty.length) {
+    console.error('\n✖ test-honesty lint could not scan what it was asked to scan:\n');
+    for (const root of missing) console.error(`  ${root}\n    → scan root does not exist`);
+    for (const root of empty) console.error(`  ${root}\n    → scan root contains no test files`);
+    console.error(`\nResolved relative to the current directory: ${process.cwd()}` +
+      '\nRun from the repo root, or pass the roots to scan as arguments.\n');
+    process.exit(2);
+  }
+  return files;
 }
 
 /** Extract every static import/require/dynamic-import specifier string. */
@@ -152,6 +181,10 @@ function isProductSpecifier(spec) {
 
 const violations = [];
 
+// Check the roots in either mode: a missing or test-free root means the
+// invocation is wrong, not that the tree is clean.
+const allFiles = collectAllTestFiles(scanRoots);
+
 // Build the file list: changed-only (when --changed and git can resolve it),
 // else a full scan of the roots.
 let files = null;
@@ -169,7 +202,7 @@ if (changedBase) {
     process.exit(0);
   }
 } else {
-  files = scanRoots.flatMap(collectTestFiles);
+  files = allFiles;
 }
 
 {

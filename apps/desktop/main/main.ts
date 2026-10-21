@@ -27,6 +27,7 @@ import {
 } from './tile-lifecycle.js';
 import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
+import { startTileSchedules } from './tile-schedule.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish, subscribe, unsubscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
@@ -37,7 +38,16 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { closedWindowSaveBounds } from './session-projection.js';
+import {
+  createClosedWindowEntry,
+  getClosedWindowCount,
+  getClosedWindowStack,
+  replaceClosedWindowStack,
+  pushClosedWindow as stackPushClosedWindow,
+  popClosedWindow as stackPopClosedWindow,
+  type ClosedWindowEntry,
+  type ClosedWindowModeEntry,
+} from './closed-window-stack.js';
 import {
   initWindowStateMachine,
   registerWindowWithMachine,
@@ -358,68 +368,23 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   // Skip during quit — session.ts already pushes all open windows during before-quit,
   // so pushing here too would create duplicates that shadow session-restored windows.
   if (windowData && !_suppressClosedWindowPush) {
-    const address = windowData.params.address as string | undefined;
-    const role = windowData.params.role as string | undefined;
-    const isKeepLive = windowData.params.keepLive === true;
-    const isModal = windowData.params.modal === true;
-    const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-    const isPeekUrl = address && address.startsWith('peek://');
-    const isBackgroundPage = address && address.includes('background.html');
-    const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
-    const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
-
-    if (isReopenable && isContentRole && !isKeepLive && !isModal) {
-      // Check for space mode context
-      let spaceMode: ClosedWindowEntry['spaceMode'] = null;
-      try {
-        const modeEntry = getContextEntry('mode', windowId);
-        if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
-          spaceMode = {
-            spaceId: modeEntry.metadata.spaceId as string,
-            spaceName: modeEntry.metadata.spaceName as string,
-            color: modeEntry.metadata.color as string | undefined,
-          };
-        }
-      } catch {
-        // Context may be cleaned up already during shutdown
-      }
-
-      // Pull bounds from the presentation captured pre-destruction. The
-      // presenter reads the window-state machine via the ONE restorable-geometry
-      // rule (window-presenter.ts getRestorableBounds, §5 step 7D) for every
-      // window kind, so a fullscreen window reopens at a sane rect. Maximize is
-      // not restored: a maximized window is saved at its pre-maximize rect.
-      const saveBounds = closedWindowSaveBounds(captured.presentation, captured.bounds);
-
-      // Use the current navigated URL if available (tracks where user actually was)
-      const currentUrl = windowData.params.currentUrl as string | undefined;
-      const scrollX = windowData.params.scrollX as number | undefined;
-      const scrollY = windowData.params.scrollY as number | undefined;
-
-      // Back/forward trail. Read from the per-window cache in nav-history.ts,
-      // never from a live webContents: a hybrid page-host's content webContents
-      // is destroyed before this tail runs (windows.ts closeHostWindow -> the
-      // kernel close effect -> electron-window-backend.ts
-      // destroyGuestsThenClose), so there is nothing left here to read it from.
-      // Spread only when a trail exists, so an entry without one carries no
-      // explicit `undefined` keys into the persisted JSON.
-      const trail = getWindowNavHistory(windowId);
-
-      pushClosedWindow({
-        url: currentUrl || address,
-        originalUrl: currentUrl ? address : undefined,
-        source: windowData.source,
-        bounds: saveBounds,
-        spaceMode,
-        role: role || undefined,
-        scrollX: scrollX || undefined,
-        scrollY: scrollY || undefined,
-        ...(trail
-          ? { navHistory: trail.navHistory, navHistoryIndex: trail.navHistoryIndex }
-          : {}),
-        timestamp: Date.now(),
-      });
+    // Space mode context, read before `cleanupWindowContext` below drops it.
+    let modeEntry: ClosedWindowModeEntry | null = null;
+    try {
+      modeEntry = getContextEntry('mode', windowId) ?? null;
+    } catch {
+      // Context may be cleaned up already during shutdown
     }
+
+    // Back/forward trail. Read from the per-window cache in nav-history.ts,
+    // never from a live webContents: a hybrid page-host's content webContents
+    // is destroyed before this tail runs (windows.ts closeHostWindow -> the
+    // kernel close effect -> electron-window-backend.ts
+    // destroyGuestsThenClose), so there is nothing left here to read it from.
+    const trail = getWindowNavHistory(windowId);
+
+    const entry = createClosedWindowEntry(windowData.params, modeEntry, captured, windowData.source, trail);
+    if (entry) pushClosedWindow(entry);
   }
 
   // The cache is keyed by window id and ids are reused, so a trail must never
@@ -527,36 +492,11 @@ const devTiles = new Map<string, { path: string }>();
 // extension-ui, test-fixture, devtools) carry none and stay invisible to
 // these accessors, preserving the old registry's membership.
 
-// Recently closed windows stack (in-memory, most recent last)
-const MAX_CLOSED_WINDOWS = 50;
-
-export interface ClosedWindowEntry {
-  url: string;           // Current URL at time of close (where user actually was)
-  originalUrl?: string;  // Original URL the window was opened with
-  source: string;
-  bounds: { x: number; y: number; width: number; height: number } | null;
-  spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
-  role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
-  scrollX?: number;      // Scroll position at time of close
-  scrollY?: number;
-  // Legacy: only entries persisted by older builds carry these; reopen reads them
-  // to come back unmaximized at `preMaximizeBounds`. New entries never set them.
-  maximized?: boolean;
-  preMaximizeBounds?: { x: number; y: number; width: number; height: number };
-  // Back/forward trail the window had at close, so undo-close brings the whole
-  // trail back instead of just the leaf URL (nav-history.ts owns the shape and
-  // the size rule). LOCAL MACHINE STATE: the `session`/`closed-window-stack`
-  // `feature_settings` row this stack persists into is not read by sync.ts, and
-  // a trail must never leave the device — it describes one machine's browsing
-  // and can carry query strings and one-time URLs. Both fields are optional
-  // because every entry persisted before they existed lacks them, and such an
-  // entry must keep reopening at its leaf URL.
-  navHistory?: NavHistoryEntry[];
-  navHistoryIndex?: number;
-  timestamp: number;
-}
-
-const closedWindowStack: ClosedWindowEntry[] = [];
+// The recently-closed-window stack itself — its store, cap and entry building — lives in
+// `closed-window-stack.ts`, Electron-free. What stays here is the persistence, the debug
+// logging and the quit-time suppression flag below. The read-only accessors are re-exported
+// so callers keep reaching the stack through this module.
+export { getClosedWindowCount, getClosedWindowStack, type ClosedWindowEntry };
 
 // Flag to suppress closed-window-stack pushes during quit.
 // session.ts already pushes all open windows during before-quit,
@@ -1397,6 +1337,16 @@ export async function loadFeatures(): Promise<number> {
     console.error('[feature] Feature startup failed:', err);
   }
 
+  // ── Manifest-declared schedules ──
+  // Every feature has been armed by now, so a schedule that is already due can
+  // publish its wake topic into a complete registry. Arming happened per tile
+  // above (tile-arm); this only releases the timers.
+  try {
+    startTileSchedules();
+  } catch (err) {
+    console.error('[tile-schedule] start failed:', err);
+  }
+
   // ── Rule Engine ──
   // Stage 2 of peek MCP plan 3d7d9239. The engine subscribes to every
   // concrete topic referenced by an enabled rule and dispatches
@@ -1728,11 +1678,8 @@ export function getAllWindows(): Array<[number, { source: string; params: Record
  * Persists to DB so the stack survives restarts.
  */
 export function pushClosedWindow(entry: ClosedWindowEntry): void {
-  closedWindowStack.push(entry);
-  if (closedWindowStack.length > MAX_CLOSED_WINDOWS) {
-    closedWindowStack.shift();
-  }
-  DEBUG && console.log('[reopen] Pushed closed window:', entry.url, 'stack size:', closedWindowStack.length);
+  stackPushClosedWindow(entry);
+  DEBUG && console.log('[reopen] Pushed closed window:', entry.url, 'stack size:', getClosedWindowCount());
   saveClosedWindowStack();
 }
 
@@ -1741,25 +1688,10 @@ export function pushClosedWindow(entry: ClosedWindowEntry): void {
  * Persists to DB so the stack survives restarts.
  */
 export function popClosedWindow(): ClosedWindowEntry | undefined {
-  const entry = closedWindowStack.pop();
-  DEBUG && console.log('[reopen] Popped closed window:', entry?.url, 'stack size:', closedWindowStack.length);
+  const entry = stackPopClosedWindow();
+  DEBUG && console.log('[reopen] Popped closed window:', entry?.url, 'stack size:', getClosedWindowCount());
   saveClosedWindowStack();
   return entry;
-}
-
-/**
- * Get the number of closed windows in the stack
- */
-export function getClosedWindowCount(): number {
-  return closedWindowStack.length;
-}
-
-/**
- * Get a copy of the current closed window stack.
- * Used by session save to persist the stack.
- */
-export function getClosedWindowStack(): ClosedWindowEntry[] {
-  return [...closedWindowStack];
 }
 
 /**
@@ -1775,12 +1707,12 @@ export function saveClosedWindowStack(): void {
   }
 
   try {
-    const data = JSON.stringify(closedWindowStack);
+    const data = JSON.stringify(getClosedWindowStack());
     db.prepare(`
       INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', 'closed-window-stack', ?, ?)
     `).run('session-closed-window-stack', data, Date.now());
-    DEBUG && console.log(`[reopen] Saved closed window stack (${closedWindowStack.length} entries)`);
+    DEBUG && console.log(`[reopen] Saved closed window stack (${getClosedWindowCount()} entries)`);
   } catch (error) {
     console.error('[reopen] Failed to save closed window stack:', error);
   }
@@ -1806,11 +1738,8 @@ export function loadClosedWindowStack(): void {
     if (row?.value) {
       const entries: ClosedWindowEntry[] = JSON.parse(row.value);
       if (Array.isArray(entries)) {
-        closedWindowStack.length = 0;
-        for (const entry of entries) {
-          closedWindowStack.push(entry);
-        }
-        DEBUG && console.log(`[reopen] Loaded closed window stack (${closedWindowStack.length} entries)`);
+        replaceClosedWindowStack(entries);
+        DEBUG && console.log(`[reopen] Loaded closed window stack (${getClosedWindowCount()} entries)`);
       }
     }
   } catch (error) {

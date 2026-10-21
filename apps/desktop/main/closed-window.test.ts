@@ -1,169 +1,47 @@
 /**
  * Unit tests for closed window stack and reopen-last-closed logic
  *
- * Tests the pure logic extracted from main.ts:
+ * Tests the real `main/closed-window-stack.ts`, which `main.ts` calls:
  * - pushClosedWindow / popClosedWindow: LIFO stack with max capacity
  * - createClosedWindowEntry: determines whether a closed window should be saved
  *   and builds the entry with correct spaceMode capture
  *
- * All functions are pure (no Electron dependencies) so they can run
+ * That module is pure (no Electron dependencies) so these can run
  * under ELECTRON_RUN_AS_NODE=1 without a real display server.
  */
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import { closedWindowSaveBounds } from './session-projection.js';
-
-// ============================================================================
-// Types (mirrored from main.ts)
-// ============================================================================
+import {
+  createClosedWindowEntry,
+  getClosedWindowCount,
+  popClosedWindow,
+  pushClosedWindow,
+  replaceClosedWindowStack,
+  type CapturedCloseBounds,
+  type ClosedWindowEntry,
+  type ClosedWindowModeEntry,
+} from './closed-window-stack.js';
 
 interface Rect { x: number; y: number; width: number; height: number }
 
-interface ClosedWindowEntry {
-  url: string;
-  originalUrl?: string;
-  source: string;
-  bounds: Rect | null;
-  spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
-  role?: string;
-  scrollX?: number;
-  scrollY?: number;
-  timestamp: number;
-}
-
-interface WindowParams {
-  address?: string;
-  currentUrl?: string;
-  scrollX?: number;
-  scrollY?: number;
-  role?: string;
-  keepLive?: boolean;
-  modal?: boolean;
-}
-
-interface ContextEntry {
-  value: string;
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * Mirrors `CapturedClosePresentation` (main.ts): the bounds/presentation
- * captured pre-destroy in the window's `'close'` listener. `presentation` is
- * the `WindowPresentation` shape as it matters here — bounds/maximized/
- * preMaxBounds — null when the presenter couldn't resolve one (e.g. the
- * window was already gone), in which case `bounds` is the raw fallback.
- */
-interface Captured {
-  bounds: Rect | null;
-  presentation: { bounds: Rect; maximized: boolean; preMaxBounds: Rect | null } | null;
-}
-
 // ============================================================================
-// Pure logic functions (extracted from main.ts - identical implementations)
+// Fixtures
 // ============================================================================
 
-const MAX_CLOSED_WINDOWS = 50;
-
-let closedWindowStack: ClosedWindowEntry[] = [];
-
-function pushClosedWindow(entry: ClosedWindowEntry): void {
-  closedWindowStack.push(entry);
-  if (closedWindowStack.length > MAX_CLOSED_WINDOWS) {
-    closedWindowStack.shift();
-  }
-}
-
-function popClosedWindow(): ClosedWindowEntry | undefined {
-  return closedWindowStack.pop();
-}
-
-function getClosedWindowCount(): number {
-  return closedWindowStack.length;
-}
-
-/**
- * Determine whether a closed window should be saved to the stack,
- * and if so, build the ClosedWindowEntry.
- *
- * Extracted from `finalizeWindowClose` in main.ts. Canvas pages used to get
- * a bounds adjustment here (subtracting the fixed canvas chrome margin from
- * window bounds) — that fallback was gated on the canvas shell URL and was
- * deleted along with the canvas page-host: `saveBounds` is now always
- * `captured.presentation?.bounds ?? captured.bounds`, a straight
- * passthrough. The presenter (hybrid or otherwise) is the only place bounds
- * get computed; this function no longer does any geometry math of its own.
- */
-function createClosedWindowEntry(
-  params: WindowParams,
-  modeEntry: ContextEntry | null,
-  captured: Captured,
-  source: string,
-): ClosedWindowEntry | null {
-  const address = params.address;
-  const role = params.role;
-  const isKeepLive = params.keepLive === true;
-  const isModal = params.modal === true;
-  const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-  const isPeekUrl = address && address.startsWith('peek://');
-  const isBackgroundPage = address && address.includes('background.html');
-  const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
-  const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
-
-  if (!isReopenable || !isContentRole || isKeepLive || isModal) {
-    return null;
-  }
-
-  // Check for space mode context
-  let spaceMode: ClosedWindowEntry['spaceMode'] = null;
-  if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
-    spaceMode = {
-      spaceId: modeEntry.metadata.spaceId as string,
-      spaceName: modeEntry.metadata.spaceName as string,
-      color: modeEntry.metadata.color as string | undefined,
-    };
-  }
-
-  // Pull bounds + maximize state from the presentation captured
-  // pre-destruction, falling back to the raw captured bounds when no
-  // presentation resolved (e.g. the window was already gone).
-  const saveBounds = closedWindowSaveBounds(captured.presentation, captured.bounds);
-
-  // Use the current navigated URL if available (tracks where user actually was)
-  const currentUrl = params.currentUrl;
-  const scrollX = params.scrollX;
-  const scrollY = params.scrollY;
-
-  return {
-    url: currentUrl || address!,
-    originalUrl: currentUrl ? address : undefined,
-    source,
-    bounds: saveBounds,
-    spaceMode,
-    role: params.role || undefined,
-    scrollX: scrollX || undefined,
-    scrollY: scrollY || undefined,
-    timestamp: Date.now(),
-  };
-}
-
-/** Build a `Captured` with only raw bounds (no presentation) — the common test shape. */
-function capturedBounds(bounds: Rect | null): Captured {
+/** Build a `CapturedCloseBounds` with only raw bounds (no presentation) — the common test shape. */
+function capturedBounds(bounds: Rect | null): CapturedCloseBounds {
   return { bounds, presentation: null };
 }
 
-/** Build a `Captured` with a presentation (bounds/maximized/preMaxBounds). */
+/** Build a `CapturedCloseBounds` with a presentation (bounds/maximized/preMaxBounds). */
 function capturedPresentation(
   bounds: Rect,
   maximized = false,
   preMaxBounds: Rect | null = null,
-): Captured {
+): CapturedCloseBounds {
   return { bounds, presentation: { bounds, maximized, preMaxBounds } };
 }
-
-// ============================================================================
-// Helper
-// ============================================================================
 
 function makeEntry(overrides?: Partial<ClosedWindowEntry>): ClosedWindowEntry {
   return {
@@ -182,7 +60,7 @@ function makeEntry(overrides?: Partial<ClosedWindowEntry>): ClosedWindowEntry {
 
 describe('Closed window stack operations', () => {
   beforeEach(() => {
-    closedWindowStack = [];
+    replaceClosedWindowStack([]);
   });
 
   it('push and pop returns the same entry', () => {
@@ -238,7 +116,7 @@ describe('Closed window stack operations', () => {
 
 describe('Space mode capture', () => {
   it('captures spaceMode when context.mode is space with spaceId/spaceName', () => {
-    const modeEntry: ContextEntry = {
+    const modeEntry: ClosedWindowModeEntry = {
       value: 'space',
       metadata: { spaceId: 'sp-123', spaceName: 'Work' },
     };
@@ -257,7 +135,7 @@ describe('Space mode capture', () => {
   });
 
   it('captures space mode color when present', () => {
-    const modeEntry: ContextEntry = {
+    const modeEntry: ClosedWindowModeEntry = {
       value: 'space',
       metadata: { spaceId: 'sp-456', spaceName: 'Personal', color: '#ff0000' },
     };
@@ -275,7 +153,7 @@ describe('Space mode capture', () => {
   });
 
   it('spaceMode is null when context.mode is page', () => {
-    const modeEntry: ContextEntry = { value: 'page', metadata: {} };
+    const modeEntry: ClosedWindowModeEntry = { value: 'page', metadata: {} };
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       modeEntry,
@@ -478,7 +356,7 @@ describe('Entry creation logic', () => {
   });
 
   it('entry uses spaceMode field (not groupMode)', () => {
-    const modeEntry: ContextEntry = {
+    const modeEntry: ClosedWindowModeEntry = {
       value: 'space',
       metadata: { spaceId: 'sp-1', spaceName: 'TestSpace' },
     };
@@ -566,6 +444,42 @@ describe('Entry creation logic', () => {
     assert.notStrictEqual(entry, null);
     assert.strictEqual(entry!.scrollX, undefined);
     assert.strictEqual(entry!.scrollY, undefined);
+  });
+});
+
+describe('Back/forward trail capture', () => {
+  it('carries the trail onto the entry when one was cached for the window', () => {
+    const trail = {
+      navHistory: [
+        { url: 'https://example.com/a', title: 'A' },
+        { url: 'https://example.com/b', title: 'B' },
+      ],
+      navHistoryIndex: 1,
+    };
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedBounds(null),
+      'test-ext',
+      trail,
+    );
+    assert.notStrictEqual(entry, null);
+    assert.deepStrictEqual(entry!.navHistory, trail.navHistory);
+    assert.strictEqual(entry!.navHistoryIndex, 1);
+  });
+
+  it('writes no trail keys at all when the window had none', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedBounds(null),
+      'test-ext',
+      null,
+    );
+    assert.notStrictEqual(entry, null);
+    // Absent rather than explicitly undefined, so the persisted JSON stays clean.
+    assert.strictEqual('navHistory' in entry!, false);
+    assert.strictEqual('navHistoryIndex' in entry!, false);
   });
 });
 

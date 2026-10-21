@@ -195,6 +195,19 @@ const handleKeydown = (e) => {
 const CHROME_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher', 'panel']);
 
 /**
+ * Whether a window is one the default list shows — user content rather than
+ * dedicated chrome or an extension background page. The toggle-off list is
+ * exactly these, and so is the set of cards that carry a close button: a card
+ * the hidden-windows toggle reveals for a page-host overlay, a panel or a
+ * space marker gets none, because ending one of those is not a user action.
+ */
+const isUserWindow = (w) => {
+  const url = w.url || '';
+  if (url.includes('background.html')) return false;
+  return !CHROME_ROLES.has(w.params?.role);
+};
+
+/**
  * Load the windows to show. Hidden windows (a dismissed peek or slide kept
  * alive, a pin-hidden page) are left out by `api.window.list` itself unless
  * the hidden-windows toggle is pressed.
@@ -217,13 +230,9 @@ const loadWindows = async () => {
       if (url.includes('windows.html')) return false;
       // With the hidden-windows toggle pressed, every other window is listed
       if (state.showHidden) return true;
-      // Skip background pages
-      if (url.includes('background.html')) return false;
-      // Skip dedicated chrome, by role
-      const role = w.params?.role;
-      if (CHROME_ROLES.has(role)) return false;
-      // Include everything else (content windows and peek:// UI pages)
-      return true;
+      // Skip background pages and dedicated chrome (by role); include
+      // everything else (content windows and peek:// UI pages)
+      return isUserWindow(w);
     });
   } else {
     console.error('[windows] Failed to load windows:', result.error);
@@ -318,6 +327,53 @@ const createThumbnail = (win) => {
 };
 
 /**
+ * The card's close button. Pressing it ends the window for good — including
+ * one marked keepLive, which an ordinary close would answer by hiding — since
+ * picking a window here and pressing close is an explicit request to end it,
+ * and hiding would only move it out of the default list. Both the click and
+ * the Enter/Space keypress are stopped from reaching `peek-card`, which would
+ * otherwise read them as picking the card and switch to the window instead.
+ * The switcher stays open; the card goes away, and the last one leaves the
+ * empty state behind.
+ */
+const createCloseButton = (win) => {
+  const button = document.createElement('peek-button');
+  button.className = 'card-close';
+  button.variant = 'ghost';
+  button.size = 'sm';
+  button.label = 'Close window';
+  button.title = 'Close window';
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 14 14');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of ['M3 3L11 11', 'M11 3L3 11']) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(path);
+  }
+  button.appendChild(svg);
+
+  button.addEventListener('click', (e) => {
+    e.stopPropagation();
+    api.window.close(win.id, { force: true });
+    state.windows = state.windows.filter(w => w.id !== win.id);
+    renderWindows();
+  });
+  button.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+  });
+
+  return button;
+};
+
+/**
  * Create a card element for a window
  */
 const createWindowCard = (win) => {
@@ -358,6 +414,10 @@ const createWindowCard = (win) => {
     badge.className = 'card-hidden-badge';
     badge.textContent = 'Hidden';
     header.appendChild(badge);
+  }
+
+  if (isUserWindow(win)) {
+    header.appendChild(createCloseButton(win));
   }
 
   card.appendChild(header);

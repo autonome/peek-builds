@@ -1,6 +1,6 @@
 ---
 enabled: true
-touches: [apps/desktop/main/group-mode.test.ts, apps/desktop/main/space-mode.test.ts, apps/desktop/main/page-navigation.test.ts, apps/desktop/tests/unit/url-compare.test.js, apps/desktop/tests/unit/space-mode.test.js, apps/desktop/renderer/page/overlay.js, apps/desktop/renderer/page/url-compare.js, apps/desktop/features/spaces/config.js, apps/desktop/features/spaces/background.js, apps/desktop/features/spaces/space-logic.js]
+touches: [apps/desktop/main/group-mode.test.ts, apps/desktop/main/space-mode.test.ts, apps/desktop/main/page-navigation.test.ts, apps/desktop/tests/unit/url-compare.test.js, apps/desktop/tests/unit/space-mode.test.js, apps/desktop/renderer/page/overlay.js, apps/desktop/renderer/page/url-compare.js, apps/desktop/features/spaces/config.js, apps/desktop/features/spaces/background.js, apps/desktop/features/spaces/space-logic.js, apps/desktop/main/datastore.ts, apps/desktop/tests/desktop/spaces-window-locking.spec.ts]
 depends-on: []
 ---
 
@@ -36,16 +36,18 @@ does not change.
 - `main/space-mode.test.ts` copies:
   - `isSpaceTag`, `getSpaceDisplayName` and `toSpaceTagName`. These are real and exported from
     `features/spaces/config.js`.
-  - `detectModeFromUrl` and `shouldPreserveMode`. The real code is `main/datastore.ts
-    detectModeFromUrl` and `updateModeForNavigation`, both exported. Other main-process tests,
+  - `detectModeFromUrl` and `shouldPreserveMode`. The real `main/datastore.ts detectModeFromUrl`
+    is exported and called from `main/ipc.ts` when a window opens. `shouldPreserveMode` copies
+    `main/datastore.ts updateModeForNavigation`, which has no callers. A window's `mode` context
+    entry is set once when the window opens (`ipc.ts`, `inheritedModeForNewWindow`, else
+    `detectModeFromUrl`), and no navigation path rewrites it. Other main-process tests,
     `datastore.test.ts` among them, import `datastore.ts`.
   - `shouldAutoTagForSpace`, `resolveSpaceBorderColor` and `shouldShowSpaceBorder`. The real
     versions are inline in `features/spaces/background.js`.
 
-  Known difference: the copy's `shouldPreserveMode` keeps space mode when navigation detects
-  `'default'` as well as `'page'`. The real `updateModeForNavigation` keeps `space` or `group` mode
-  only against `'page'`, so a space window that navigates to a non-web URL drops to default. The
-  test follows the real behaviour; the difference is already filed as a separate question.
+  Shipped behaviour, decided 2026-10-20 as intended (Peek `056ddc56`): a space or group window
+  keeps its mode through every navigation, to a web page or not, because nothing rewrites mode
+  after the window opens. `updateModeForNavigation` is dead code and goes.
 
 ## What goes
 
@@ -56,9 +58,12 @@ does not change.
    copies of this function for now; merging them is out of scope.
 2. Delete the `shouldHandleNavKey` copy and every case that uses it, unless the search finds a real
    counterpart. `page-navigation.test.ts` is deleted if nothing remains.
-3. `space-mode`: test the `config.js` helpers by importing them. Test `detectModeFromUrl` and
-   `updateModeForNavigation` from `datastore.ts` in the main-process runner, the way
-   `datastore.test.ts` sets up a datastore, asserting the mode context entry after navigation. For
+3. `space-mode`: test the `config.js` helpers by importing them. Test `detectModeFromUrl` from
+   `datastore.ts` in the main-process runner. Delete `updateModeForNavigation` from `datastore.ts`
+   along with the `shouldPreserveMode` copy and its cases, after confirming with a repo-wide search
+   that it still has no caller. Reword the comment in
+   `tests/desktop/spaces-window-locking.spec.ts` that cites its protection so it describes mode as
+   set once at window open. For
    the three functions inline in `spaces/background.js`, move each one that is pure into a new
    `features/spaces/space-logic.js`. Call sites in `background.js` import it back, with bodies moved
    verbatim and no behaviour change. The cases then import it. Any that cannot be lifted without

@@ -147,6 +147,9 @@ test.describe('spaces delete @desktop', () => {
     const spacesPage = spaceHomeWindows(otherId)[0];
     const question = await deleteFromCard(spacesPage, doomedId);
     expect(question).toContain(`Delete space "${doomed}"?`);
+    // The real page is the one window that moves; the space's own page is
+    // spaces chrome and never counts (`SPACES_CHROME_URL_PREFIXES`).
+    expect(question).toContain('1 window');
     expect(question).toContain('default space');
 
     await expect

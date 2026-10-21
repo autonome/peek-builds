@@ -366,6 +366,15 @@ const createTableStatements = `
   CREATE TABLE IF NOT EXISTS lazy_wake_declared (
     ownerTileId TEXT PRIMARY KEY
   );
+
+  -- One row per manifest-declared schedule entry, holding the last time it
+  -- fired so a restart does not reset the interval clock.
+  CREATE TABLE IF NOT EXISTS tile_schedule_runs (
+    ownerTileId TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    lastRunAt INTEGER NOT NULL,
+    PRIMARY KEY (ownerTileId, topic)
+  );
 `;
 
 // ==================== node:sqlite compatibility shim ====================
@@ -3071,31 +3080,6 @@ export function detectModeFromUrl(url: string): MajorModeId {
 }
 
 /**
- * Update mode for navigation - sets context based on URL
- */
-export function updateModeForNavigation(windowId: number, url: string): void {
-  const detectedMode = detectModeFromUrl(url);
-  const currentEntry = getContextEntry('mode', windowId);
-
-  // Don't override space/group mode with page mode — they persist through navigation
-  if (
-    (currentEntry?.value === 'space' || currentEntry?.value === 'group') &&
-    detectedMode === 'page'
-  ) {
-    DEBUG && console.log('main', `Preserving ${currentEntry.value} mode for window ${windowId} during navigation`);
-    return;
-  }
-
-  if (!currentEntry || currentEntry.value !== detectedMode) {
-    addContextEntry('mode', detectedMode, {
-      windowId,
-      source: 'navigation',
-      metadata: { url }
-    });
-  }
-}
-
-/**
  * Check if mode conditions are satisfied for a window
  * Used by shortcuts system for mode-conditional shortcuts
  */
@@ -3290,6 +3274,25 @@ export function getAllWakeShortcuts(): Map<string, WakeShortcut[]> {
     byTile.set(r.ownerTileId, list);
   }
   return byTile;
+}
+
+/**
+ * Last time a manifest-declared schedule entry fired, or null if it never has.
+ * A never-fired entry counts as due, so a fresh profile runs the job soon after
+ * the app starts.
+ */
+export function getScheduleLastRun(ownerTileId: string, topic: string): number | null {
+  const row = getDb()
+    .prepare('SELECT lastRunAt FROM tile_schedule_runs WHERE ownerTileId = ? AND topic = ?')
+    .get(ownerTileId, topic) as { lastRunAt: number } | undefined;
+  return row ? row.lastRunAt : null;
+}
+
+/** Record that a schedule entry fired at `lastRunAt`. */
+export function setScheduleLastRun(ownerTileId: string, topic: string, lastRunAt: number): void {
+  getDb()
+    .prepare('INSERT OR REPLACE INTO tile_schedule_runs (ownerTileId, topic, lastRunAt) VALUES (?, ?, ?)')
+    .run(ownerTileId, topic, lastRunAt);
 }
 
 /**

@@ -2,7 +2,7 @@
 
 This document lists the API surfaces available to tiles after Phase 4 shim removal.
 All surfaces are injected via `contextBridge.exposeInMainWorld('app', api)` from
-`apps/desktop/main/tile-preload.ts`. Deprecated compat shims are gone; calling any
+`apps/desktop/main/tile-preload.cts`. Deprecated compat shims are gone; calling any
 removed name throws `Error('[tile-preload] ... removed in Phase 4; use ...')`.
 
 ---

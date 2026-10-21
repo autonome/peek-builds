@@ -793,3 +793,69 @@ second, at `f4a29804`, was green:
 | Spec | Test | Verdict |
 |---|---|---|
 | `hybrid-overlay.spec.ts` | move intent moves the content window + overlay follows (P1.4b-3) | intermittent — failed in the `788737cc` gate only (window kept its starting bounds after `page:set-bounds`; cause not found); passes alone and in the `f4a29804` gate |
+
+### Linux gate on `48210abe` (2026-10-19)
+
+Seven tests failed. Three pass when re-run alone and are intermittent; four fail alone too. None of
+the seven was in this file before. Two of the four were already fixed on `main` after this gate ran
+(`69b31bc0`, `64c42665`, neither an ancestor of `48210abe`), which is why their causes read as
+settled below.
+
+| runner | pass | fail | skipped |
+|---|---|---|---|
+| main-process unit | 4365 | 0 | — |
+| node unit | 1321 | 0 | — |
+| desktop | 572 | 6 | 24 |
+| desktop-serial | 54 | 1 | — |
+| components | 71 | 0 | — |
+| editor | 91 | 0 | — |
+
+Intermittent — each passes when re-run alone:
+
+| Spec | Test |
+|---|---|
+| `hybrid-escape-editable-guard.spec.ts` | ESC with an empty editable focused opens the switcher |
+| `permission-prompt.spec.ts` | Remember + Allow persists |
+| `windows-hidden-surface.spec.ts` | the switcher hidden-windows toggle lists a hidden quick-view window |
+
+Deterministic — each fails alone too:
+
+| Spec | Test | Verdict |
+|---|---|---|
+| `spaces-delete.spec.ts` | deleting a space that is not active moves its saved windows to the default space and removes it | fixed — the only window the test put in the space was its own `peek://spaces/home.html`, which `features/spaces/config.js SPACES_CHROME_URL_PREFIXES` excludes from the count, so `It has no windows to move.` was the right question. The spec now opens an ordinary web page in the space (`69b31bc0`) and asserts the count names it |
+| `transient-on-blur.spec.ts` | overlay attached to a host survives a palette focusing (ownership, not role) | fixed — `tile:window:list` leaves app chrome out unless the caller passes `includeHidden: true` (`fd83aad4`), so the spec could not see the overlay at all. `isVisible()` passes it (`64c42665`) and `waitForHidden()` now does too |
+| `page-translate-front-window.spec.ts` | the offer and the status hide with another window in front and come back with theirs | still failing — the spec has never passed on Linux (it landed `af689013`, 2026-10-13, and the translate code is unchanged since). Cause recorded below; not the one first suspected |
+| `desktop-serial/modal-self-close-on-blur.spec.ts` | modal:true window is dismissed when another window takes focus | still failing — the test is correct. Known open product defect, peek `3bb9b6ab`: off macOS `electron-window-backend.ts` sets `restackingTakesFocus`, and `window-kernel.ts platformChoseFocus()` holds an expectation of a platform focus after a restack that never expires when the window manager does not answer, so the next genuine focus is swallowed and no `OsFocusGained` sweep (`selectTransientAutoclose`) runs. Which fix to take is undecided |
+
+#### What the translate front-window log showed
+
+Logged by a `window-diag.ts wmLog()` line in `hybrid-overlay.ts sendActiveHandoff`, since removed.
+The four events below span 170 ms with no test action between them, and `Spanish` / `English` name
+the two page hosts the spec opens:
+
+```
+t+0     page-overlay:active -> Spanish   (the bridge's setActive(Spanish) applied; opSeq 10)
+t+126   effect-hide Spanish, effect-hide overlay, page-overlay:active -> null   (opSeq 12)
+t+138   effect-show overlay, effect-show English, page-overlay:active -> English   (opSeq 13, 14)
+t+167   page-overlay:active -> null
+```
+
+So `setActive` does report the target: the handoff names the Spanish window and its url. Then,
+unasked, the Spanish host is hidden, the English host comes back, and the chrome detaches with no
+active window for the rest of the ten-second poll. The translate tile tracks the front window from
+this topic (`features/translate/background.js handleFrontWindow` → `window-views.js setFront`), so
+it closes the widget and nothing redraws it; `widgetBody` stays null.
+
+The suspected cause was that `sendActiveHandoff` reports a window other than the target. It does
+not. What precedes the unasked hide is the window manager handing world focus to the chrome overlay
+twice (`focus-cause-taken id=<overlay> kind=world`) before the machine's own expected focus for the
+Spanish host arrives. The hide that follows is not the transient sweep — every `transient-sweep`
+line in the run reports `dismissed=0` — and `selectTransientAutoclose` would exempt the host anyway
+(`transientAutocloseExemption` returns `overlay-attached` for a record with `overlayFor` set). Which
+code issues the opSeq-12 hide is unresolved; the hide-then-show-the-other-host shape matches the
+bridge's own `setActive` drain, but nothing called it.
+
+A page host hiding itself 126 ms after being brought forward, and the chrome detaching with no
+window active, is product behaviour rather than a test artifact, so under the rule that shipped code
+is presumed correct (peek `57895545`) this is recorded rather than worked around. Pinning the
+opSeq-12 owner needs an op-source field in the hide effect's log line.

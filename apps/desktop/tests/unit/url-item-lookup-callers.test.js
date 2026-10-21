@@ -52,7 +52,7 @@ function makeApi(stored) {
 
 describe('url item lookup for slash-terminated urls', () => {
   it('groups getOrCreateUrlItem reuses the stored slash-less item', async () => {
-    const normalizeSrc = extract('features/groups/home.js', 'const normalizeUrlForCompare = ', '\n};\n');
+    const normalizeSrc = extract('features/groups/group-logic.js', 'const normalizeUrlForCompare = ', '\n};\n');
     const fnSrc = extract('features/groups/home.js', 'const getOrCreateUrlItem = ', '\n};\n');
     const { api, calls } = makeApi([{ id: 'a1', content: 'https://example.com/post' }]);
     const getOrCreateUrlItem = new Function('api', `${normalizeSrc}\n${fnSrc}\nreturn getOrCreateUrlItem;`)(api);
