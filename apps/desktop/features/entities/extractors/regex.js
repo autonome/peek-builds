@@ -180,13 +180,35 @@ function extractPriceContext(text, matchIndex) {
   return name || null;
 }
 
+// Lower-case words a venue or person name may contain ("Bank of America",
+// "Musée de la Ville"). Any other lower-case word marks the text as prose.
+const NAME_JOINERS = new Set(['of', 'the', 'and', 'at', 'on', 'de', 'la', 'le', 'du', 'des', 'del', 'van', 'von', 'da', 'di']);
+
+/**
+ * Whether the text before an address reads as the name of what is there (a venue,
+ * business or person) rather than unrelated page text. Page text arrives with line
+ * breaks collapsed, so the words before an address are usually a date, a sentence
+ * or a footer; only a short, capitalised run of words without digits passes.
+ * @param {string} label
+ * @returns {boolean}
+ */
+function isNameShapedLabel(label) {
+  if (/\d/.test(label)) return false;
+  const words = label.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 5) return false;
+  return words.every(w => /^[\p{Lu}&]/u.test(w) || NAME_JOINERS.has(w));
+}
+
 /**
  * Extract the name/label associated with a street address.
  * Looks at the text before the address (up to 100 chars) for a business name,
- * person name, or venue title. Common patterns:
+ * person name, or venue title, taking only what follows the last line break or
+ * sentence boundary. Common patterns:
  *   - "Joe's Pizza\n123 Main St" (newline-separated)
  *   - "Madison Square Garden, 4 Pennsylvania Plaza"
  *   - "Ship to: John Doe 456 Oak Ave"
+ * The label is never part of the place's name: the place is the address itself,
+ * so the same address seen on two pages is one entity.
  * @param {string} text - Full text
  * @param {number} matchIndex - Index of the address match in text
  * @returns {string|null} Name/label or null
@@ -195,8 +217,9 @@ function extractAddressContext(text, matchIndex) {
   const beforeStart = Math.max(0, matchIndex - 100);
   const before = text.slice(beforeStart, matchIndex).trim();
 
-  // Split by newlines, bullets, pipes — the label is typically on the line above or same line
-  const segments = before.split(/[\n\r|•·–—]/).filter(s => s.trim().length > 0);
+  // Split by line breaks, bullets, pipes and sentence or field boundaries: the label is
+  // what sits between the last of them and the address.
+  const segments = before.split(/[\n\r|•·–—.!?:;©]/).filter(s => s.trim().length > 0);
   const lastSegment = (segments.length > 0 ? segments[segments.length - 1] : '').trim();
 
   if (!lastSegment || lastSegment.length < 2) return null;
@@ -213,15 +236,9 @@ function extractAddressContext(text, matchIndex) {
   // Reject generic noise
   const noiseWords = /^(?:the|a|an|and|or|for|to|in|on|at|is|it|our|your|home|menu|contact|address|location|directions|map|visit|find)\s*$/i;
   if (noiseWords.test(cleaned)) return null;
+  if (!isNameShapedLabel(cleaned)) return null;
 
-  // Take up to ~60 chars, trim to word boundary
-  let label = cleaned.slice(-60).trim();
-  if (cleaned.length > 60) {
-    const spaceIdx = label.indexOf(' ');
-    if (spaceIdx > 0) label = label.slice(spaceIdx + 1);
-  }
-
-  return label || null;
+  return cleaned;
 }
 
 // A personal honorific directly before a capitalized sequence ("Dr. ", "Ms ").
@@ -380,7 +397,7 @@ export function extractRegexEntities(text, url) {
     if (label) attrs.label = label;
 
     entities.push({
-      name: label ? `${label}, ${normalized}` : normalized,
+      name: normalized,
       entityType: 'place',
       confidence: 0.75,
       extractor: 'regex',

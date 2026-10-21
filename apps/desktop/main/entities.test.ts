@@ -1373,6 +1373,57 @@ describe('Entity Recognition Extension', () => {
       });
     });
 
+    // ── Street addresses: the place is the address itself ───────────
+    //
+    // Page text reaches the extractor with tags and line breaks collapsed to single
+    // spaces, so the text before an address is usually unrelated page content.
+
+    describe('street addresses', () => {
+      const places = (text: string) =>
+        extractRegexEntities(text, 'https://example.com').filter(e => e.entityType === 'place');
+
+      it('does not run a weekday, date and time into the place name', () => {
+        const result = places('Tue, Oct 21, 2026 7:30 PM 455 Market Street, San Francisco, CA 94105');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '455 Market Street, San Francisco, CA 94105');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('does not run an order-confirmation sentence into the place name', () => {
+        const result = places('Thanks for your order! Your package will be delivered to 12 Oak Lane, Springfield');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '12 Oak Lane, Springfield');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('does not run a copyright line into the place name', () => {
+        const result = places('© 2026 Acme Widgets Inc. All rights reserved. 100 Pine Street, Seattle, WA 98101');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '100 Pine Street, Seattle, WA 98101');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('keeps a venue name just before the address as a label, not in the name', () => {
+        const result = places('Madison Square Garden, 4 Pennsylvania Plaza Way, New York');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '4 Pennsylvania Plaza Way, New York');
+        assert.strictEqual(result[0].attributes.label, 'Madison Square Garden');
+      });
+
+      it('keeps the recipient after a "Ship to:" prompt as the label', () => {
+        const result = places('Ship to: John Doe 456 Oak Ave');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '456 Oak Ave');
+        assert.strictEqual(result[0].attributes.label, 'John Doe');
+      });
+
+      it('gives the same address on two pages the same name', () => {
+        const a = places('Visit our flagship store at 9 Elm Street, Boston');
+        const b = places('Joe Bloggs 9 Elm Street, Boston');
+        assert.strictEqual(a[0].name, b[0].name);
+      });
+    });
+
     // ── Dates: All months, different formats, edge cases ─────────────
 
     // Date regex extraction was intentionally disabled (too noisy).
