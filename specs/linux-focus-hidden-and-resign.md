@@ -1,14 +1,6 @@
 ---
 enabled: true
-touches:
-  - apps/desktop/main/window-kernel.ts
-  - apps/desktop/main/window-state.ts
-  - apps/desktop/main/window-kernel-executor.ts
-  - apps/desktop/main/electron-window-backend.ts
-  - apps/desktop/main/window-kernel.test.ts
-  - apps/desktop/main/window-state.test.ts
-  - apps/desktop/tests/desktop-serial/cmd-switch-to-page.spec.ts
-  - apps/desktop/tests/desktop/peeks.spec.ts
+touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-state.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/electron-window-backend.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-state.test.ts, apps/desktop/tests/desktop-serial/cmd-switch-to-page.spec.ts, apps/desktop/tests/desktop/peeks.spec.ts]
 depends-on: []
 ---
 
