@@ -1322,6 +1322,24 @@ function buildAPI(): Record<string, unknown> {
     });
   };
 
+  // ── Secrets (if `secrets` granted) ──
+  //
+  // The feature's own secrets, encrypted at rest. Every method resolves to
+  // `{ ok: true, value }` or `{ ok: false, error }`.
+
+  const runSecrets = async (op: Record<string, unknown>) => {
+    const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+    return ipcRenderer.invoke('tile:secrets:run', { token: tileToken, ...op });
+  };
+
+  api.secrets = {
+    available: () => runSecrets({ op: 'available' }),
+    get: (name: string) => runSecrets({ op: 'get', name }),
+    set: (name: string, value: string) => runSecrets({ op: 'set', name, value }),
+    delete: (name: string) => runSecrets({ op: 'delete', name }),
+    list: () => runSecrets({ op: 'list' }),
+  };
+
   // ── Page automation (if `automation` granted) ──
   //
   // Drives a page window this tile opened with `api.window.open`, on the

@@ -31,6 +31,8 @@ import {
   getTileManifest,
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
+import { EncryptedFileSecretStore, type SecretStore } from './feature-secrets.js';
+import { electronSecretCipher } from './electron-secret-cipher.js';
 import { registerTileProtocol } from './tile-protocols.js';
 import { performAtprotoRequest, isAtprotoHostAllowed, type AtprotoRequest } from './atproto-proxy.js';
 import { readAtprotoSession, writeAtprotoSession } from './atproto-session-store.js';
@@ -5703,6 +5705,39 @@ export function registerTileIpcHandlers(): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
+    }
+  });
+
+  // ── Secrets ──
+  //
+  // Values a feature keeps for itself, scoped like settings to the tile's
+  // feature id and encrypted at rest (feature-secrets.ts). Values never go
+  // to logs or violation reports.
+
+  let secretStore: SecretStore | null = null;
+  // userData is the profile's own directory by the time a tile can call.
+  const getFeatureSecretStore = (): SecretStore =>
+    (secretStore ??= new EncryptedFileSecretStore(path.join(app.getPath('userData'), 'feature-secrets.json'), electronSecretCipher));
+
+  registerTileIpc('tile:secrets:run', { mode: 'handle' }, async (event, args: {
+    token: string;
+    op: 'get' | 'set' | 'delete' | 'list' | 'available';
+    name?: string;
+    value?: string;
+  }, _grant) => {
+    const grant = _grant;
+    if (!grant || !hasCapability(grant, 'secrets')) {
+      handleViolation(grant, 'secrets', `secrets:${args?.op}`, 'secrets capability not granted', args?.token);
+      return { ok: false, error: 'Secrets capability not granted' };
+    }
+    const store = getFeatureSecretStore();
+    switch (args?.op) {
+      case 'available': return { ok: true, value: store.available() };
+      case 'get': return store.get(grant.tileId, args.name as string);
+      case 'set': return store.set(grant.tileId, args.name as string, args.value as string);
+      case 'delete': return store.delete(grant.tileId, args.name as string);
+      case 'list': return store.list(grant.tileId);
+      default: return { ok: false, error: 'Unknown secrets operation' };
     }
   });
 

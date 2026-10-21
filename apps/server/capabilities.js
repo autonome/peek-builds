@@ -439,6 +439,10 @@ function validateTileManifest(json) {
     }
 
     // Validate session capability shape — boolean only for now.
+    if (caps.secrets !== undefined && typeof caps.secrets !== 'boolean') {
+      errors.push({ path: 'capabilities.secrets', message: 'secrets must be a boolean' });
+    }
+
     if (caps.session !== undefined && typeof caps.session !== 'boolean') {
       errors.push({ path: 'capabilities.session', message: 'session must be a boolean' });
     }
@@ -773,6 +777,12 @@ function resolveCapabilities(tileId, requested, isBuiltin) {
   // Session: grant as requested (boolean-only for now).
   if (requested.session) {
     granted.session = true;
+  }
+
+  // Secrets: grant as requested; each feature reads and writes only its own
+  // (`apps/desktop/main/feature-secrets.ts`).
+  if (requested.secrets) {
+    granted.secrets = true;
   }
 
   // IZUI: boolean grant. Passes through 1:1.

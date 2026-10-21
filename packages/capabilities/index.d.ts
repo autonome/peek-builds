@@ -366,6 +366,8 @@ export interface TileCapabilities {
   rules?: boolean;
   /** Can drive pages it opened, on the listed origins */
   automation?: AutomationCapability;
+  /** Can keep its own secrets (tokens, passwords), encrypted at rest */
+  secrets?: boolean;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────

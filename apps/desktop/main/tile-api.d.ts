@@ -475,6 +475,28 @@ interface TileFilesystem {
   write(path: string, content: string): Promise<{ success: boolean; error?: string }>;
 }
 
+// ─── Secrets ─────────────────────────────────────────────────────────
+
+type TileSecretResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * The feature's own secrets (an API token, a password), encrypted at rest
+ * by the platform. Requires the `secrets` capability. Names are 1–128 of
+ * letters, digits, `.`, `_`, `:` and `-`; values are strings up to 16 KB.
+ * Every write and read is refused when the platform cannot protect them.
+ */
+interface TileSecrets {
+  /** Whether secrets can be protected on this machine right now. */
+  available(): Promise<TileSecretResult<boolean>>;
+  /** The value, or `null` when nothing is stored under `name`. */
+  get(name: string): Promise<TileSecretResult<string | null>>;
+  set(name: string, value: string): Promise<TileSecretResult<true>>;
+  /** `true` when something was removed. */
+  delete(name: string): Promise<TileSecretResult<boolean>>;
+  /** Stored names, without values. */
+  list(): Promise<TileSecretResult<string[]>>;
+}
+
 // ─── Page automation ─────────────────────────────────────────────────
 
 type TileAutomationResult =
@@ -902,6 +924,7 @@ interface TileAPI {
   dialogs: TileDialogs;
   network: TileNetwork;
   automation: TileAutomation;
+  secrets: TileSecrets;
   features: TileFeatures;
   oauth: TileOAuth;
   sync: TileSync;
