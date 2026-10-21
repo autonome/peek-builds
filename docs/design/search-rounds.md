@@ -1,6 +1,7 @@
 # Search rounds: research as repeated search, open, sort, refine
 
-Status: design, not built. Peek `df3ffc86`. Nothing here is decided until a first slice is picked.
+Status: slice 1 (keep and drop a page) built, `specs/research-keep-drop.md`; the rest is design.
+Peek `df3ffc86`. Decisions so far are under "Decided".
 
 ## The flow
 
@@ -40,8 +41,8 @@ What goes wrong today:
   - `done`, for a kept page that has been acted on (booked, cooked, bought).
 
   The one-line judgement goes in the URL item's `notes` metadata, which tag-query views already
-  show. Tags are global to the URL item, not per space: a recipe kept in one research reads as
-  kept in another. *Open question* below.
+  show. Slice 1's tags are global to the URL item; state moves to per research, with other
+  researches' judgements shown as context, per "Decided" below.
 - **Seen in this research** = the URL item already carries the space tag when it is opened again.
   Visit history adds "seen anywhere, n times, last on <date>" for free.
 - **A round** is one search run from a window in the space. Recording each query as a text item
@@ -94,16 +95,24 @@ In that view:
    a browser colours visited links but per research. The most useful surface and the most
    expensive: it needs a script in third-party pages. Later.
 
+## Decided
+
+- **Closing without judging** (2026-10-21). Closing a page that was never kept or dropped leaves
+  it unjudged, and the research view shows it as unjudged. Closing may later come to mean
+  dropped, once the flow has been used for real research; nothing is built for that yet.
+  `window:closed` carries only the window id, so any close-time behaviour must read the URL
+  before the window is torn down.
+- **State belongs to one research, and stays visible to others** (2026-10-21). Keeping or
+  dropping a page records the judgement for the research it was made in, so a hotel kept for one
+  trip can be dropped for another. Every judgement persists after its research ends, and any other
+  research that meets the same page can see it as context ("kept for Lisbon trip"). It informs a
+  judgement and never sets one. Slice 1 stores a single global `kept`/`dropped` tag
+  (`renderer/lib/page-state.js`), so the slice that adds the research view also moves state to a
+  per-research form (per-space tags such as `kept:<space>`, or item metadata keyed by space) and
+  says what happens to judgements made outside any space.
+
 ## Open questions
 
-- **Closing without judging.** Does closing a *new* page mean dropped, stay new, or prompt? A
-  prompt on every close is noisy; silently dropping loses "maybe". Leaning: stays new, and the
-  research view shows it as unjudged. `window:closed` carries only the window id, so any
-  close-time behaviour must read the URL before the window is torn down.
-- **Global or per-research state.** A `kept` tag on the URL item is shared by every research that
-  touches it. Per-space state needs state tags namespaced per space (`kept:<space>`) or state in
-  item metadata keyed by space. Global is simpler and probably right for recipes, wrong for a
-  hotel kept for one trip and dropped for another.
 - **URL identity.** `findUrlItem()` matches the URL after `normalizeUrl()`, which keeps tracking
   parameters and fragments. Listing sites put session and tracking parameters in result links, so
   the same listing can arrive as several URL items and read as unseen. Needs per-site or common
