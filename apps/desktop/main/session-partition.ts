@@ -344,10 +344,12 @@ function _registerDownloadHandlerImpl(ses: Session): void {
       // unit-tested truth table; this call site only gathers the signals and acts.
       const hybrid = getHybridWindowByContentWC(webContents);
       const win = windowFromWebContents(webContents);
+      const pageUrl = webContents.getURL();
       const target = downloadCloseTarget({
         isHybridContent: hybrid !== null,
         hybridPainted: hybrid !== null && hasHybridPainted(hybrid.windowId),
         hasBrowserWindow: win !== null,
+        browserWindowShowsPage: !!pageUrl && pageUrl !== 'about:blank' && pageUrl !== item.getURL(),
       });
       if (target === 'hybrid-host' && hybrid) {
         DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
