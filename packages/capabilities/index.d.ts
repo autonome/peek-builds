@@ -571,7 +571,6 @@ export interface TileManifest {
   wakeShortcutsFromSettings?: boolean;
   /** Event-dispatch rules contributed by this feature. */
   rules?: TileRule[];
-  /** Settings schema file path */
   /**
    * The Web Tiles protocols this tile imports, each mapped to how the tile
    * depends on it. A `required` protocol the host does not provide — because
@@ -583,6 +582,7 @@ export interface TileManifest {
    *   "protocols": { "atproto": "required", "data": "optional" }
    */
   protocols?: Record<string, 'required' | 'optional'>;
+  /** Settings schema file path */
   settingsSchema?: string;
   /**
    * Default settings values, loaded from the `settingsSchema` file's
