@@ -1,0 +1,254 @@
+{
+  "searchinfo": {
+    "search": "Stand by Me"
+  },
+  "search": [
+    {
+      "id": "Q122341926",
+      "title": "Q122341926",
+      "pageid": 116664238,
+      "concepturi": "http://www.wikidata.org/entity/Q122341926",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q122341926",
+      "display": {
+        "label": {
+          "value": "Stand By Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "2021 video game",
+          "language": "en"
+        }
+      },
+      "label": "Stand By Me",
+      "description": "2021 video game",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand By Me"
+      }
+    },
+    {
+      "id": "Q141790772",
+      "title": "Q141790772",
+      "pageid": 135366822,
+      "concepturi": "http://www.wikidata.org/entity/Q141790772",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q141790772",
+      "display": {
+        "label": {
+          "value": "Stand By Me",
+          "language": "en"
+        }
+      },
+      "label": "Stand By Me",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand By Me"
+      }
+    },
+    {
+      "id": "Q494722",
+      "title": "Q494722",
+      "pageid": 465456,
+      "concepturi": "http://www.wikidata.org/entity/Q494722",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q494722",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "1986 film directed by Rob Reiner",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "1986 film directed by Rob Reiner",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q1513654",
+      "title": "Q1513654",
+      "pageid": 1450860,
+      "concepturi": "http://www.wikidata.org/entity/Q1513654",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q1513654",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "song written and composed by Ben E. King, Jerry Leiber and Mike Stoller, originally recorded by Ben E. King in 1961",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "song written and composed by Ben E. King, Jerry Leiber and Mike Stoller, originally recorded by Ben E. King in 1961",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q23419212",
+      "title": "Q23419212",
+      "pageid": 25427712,
+      "concepturi": "http://www.wikidata.org/entity/Q23419212",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q23419212",
+      "display": {
+        "label": {
+          "value": "Stand By Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "episode of Grey's Anatomy (S5 E18)",
+          "language": "en"
+        }
+      },
+      "label": "Stand By Me",
+      "description": "episode of Grey's Anatomy (S5 E18)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand By Me"
+      }
+    },
+    {
+      "id": "Q109578890",
+      "title": "Q109578890",
+      "pageid": 104708485,
+      "concepturi": "http://www.wikidata.org/entity/Q109578890",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q109578890",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "vocal track by Ben E. King; 1961 studio recording",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "vocal track by Ben E. King; 1961 studio recording",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q28624370",
+      "title": "Q28624370",
+      "pageid": 30304588,
+      "concepturi": "http://www.wikidata.org/entity/Q28624370",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q28624370",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "episode of The Vampire Diaries (S4 E15)",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "episode of The Vampire Diaries (S4 E15)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q3968134",
+      "title": "Q3968134",
+      "pageid": 3783784,
+      "concepturi": "http://www.wikidata.org/entity/Q3968134",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q3968134",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "Shayne Ward song",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "Shayne Ward song",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q7598131",
+      "title": "Q7598131",
+      "pageid": 7516899,
+      "concepturi": "http://www.wikidata.org/entity/Q7598131",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q7598131",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "2007 single by the Brilliant Green",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "2007 single by the Brilliant Green",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    },
+    {
+      "id": "Q29599119",
+      "title": "Q29599119",
+      "pageid": 31244882,
+      "concepturi": "http://www.wikidata.org/entity/Q29599119",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q29599119",
+      "display": {
+        "label": {
+          "value": "Stand by Me",
+          "language": "en"
+        },
+        "description": {
+          "value": "episode of Casualty",
+          "language": "en"
+        }
+      },
+      "label": "Stand by Me",
+      "description": "episode of Casualty",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand by Me"
+      }
+    }
+  ],
+  "search-continue": 10,
+  "success": 1
+}

@@ -1,0 +1,1462 @@
+{
+  "type": "item",
+  "id": "Q28405615",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Arrival"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "326e3d41d1e9c34715e880be6e1c6a1e822e4317",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 4830453,
+              "id": "Q4830453"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$dc4bc1cd-4538-dff9-49c5-91bce3c040d5",
+        "rank": "normal"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "1efb02900b17a541204e5d1b5cfaa44a460e6e6f",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 786820,
+              "id": "Q786820"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$e367bc64-4be9-3dca-9f55-5ab4f6b50a11",
+        "rank": "normal"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "af3410ae4f813c757b304403dd1af5becc963ebe",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 891723,
+              "id": "Q891723"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$0565B40A-A90D-438D-91BF-DE5D6AA39564",
+        "rank": "normal"
+      }
+    ],
+    "P17": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P17",
+          "hash": "a44880420787fb348836dc51d3babc5227c4ef7e",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 145,
+              "id": "Q145"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$8fbdddd5-4c7f-1c43-9f9a-9dc8d9f9c63d",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "5cc3349a930d512886d74a23aa323ab046efcd71",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "9ed06ba187e9d6eb3d6b5831ff40d8510610a817",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 257303,
+                      "id": "Q257303"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P2622": [
+                {
+                  "snaktype": "value",
+                  "property": "P2622",
+                  "hash": "e1892a8008329298b9fa6f208ea9e3540b2f6895",
+                  "datavalue": {
+                    "value": "09475811",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P2622"
+            ]
+          },
+          {
+            "hash": "8cba48790b8c385597d2093fbb8b712b9d4d86ab",
+            "snaks": {
+              "P2657": [
+                {
+                  "snaktype": "value",
+                  "property": "P2657",
+                  "hash": "d1b35d03c6ac774e779c74012868d9910c49467d",
+                  "datavalue": {
+                    "value": "104315245793-44",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "99341f3740169e72deba3a0eb24a5e4b0acce305",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2022-05-22T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P2657",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P571": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P571",
+          "hash": "de625b1025d7186e2176c29edb6ef0d13dc0e10d",
+          "datavalue": {
+            "value": {
+              "time": "+2015-03-06T00:00:00Z",
+              "timezone": 0,
+              "before": 0,
+              "after": 0,
+              "precision": 11,
+              "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+            },
+            "type": "time"
+          },
+          "datatype": "time"
+        },
+        "type": "statement",
+        "id": "Q28405615$801f6b8e-4883-970b-09be-c714e24cb4e3",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "5cc3349a930d512886d74a23aa323ab046efcd71",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "9ed06ba187e9d6eb3d6b5831ff40d8510610a817",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 257303,
+                      "id": "Q257303"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P2622": [
+                {
+                  "snaktype": "value",
+                  "property": "P2622",
+                  "hash": "e1892a8008329298b9fa6f208ea9e3540b2f6895",
+                  "datavalue": {
+                    "value": "09475811",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P2622"
+            ]
+          }
+        ]
+      }
+    ],
+    "P452": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P452",
+          "hash": "feafdbce8e7b861a40de45ecd2f5b9e7ec0210ce",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 190117,
+              "id": "Q190117"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$0c463d35-4ef0-3f57-04c1-047548a512f3",
+        "rank": "normal"
+      }
+    ],
+    "P1056": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1056",
+          "hash": "eba3c442d7b2c6a27ec395107d51d3fe1089c4b7",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 13629441,
+              "id": "Q13629441"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$5663cf61-4694-6640-037c-95cecc635055",
+        "rank": "normal"
+      }
+    ],
+    "P856": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P856",
+          "hash": "7ede796b8d15d95dd27369b514d268b171a26dfd",
+          "datavalue": {
+            "value": "https://arrival.com/",
+            "type": "string"
+          },
+          "datatype": "url"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P407": [
+            {
+              "snaktype": "value",
+              "property": "P407",
+              "hash": "daf1c4fcb58181b02dff9cc89deb084004ddae4b",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 1860,
+                  "id": "Q1860"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P407"
+        ],
+        "id": "Q28405615$a5cc7fbe-4012-1ed1-982c-57a2617d5b14",
+        "rank": "normal"
+      }
+    ],
+    "P1448": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1448",
+          "hash": "00d701559ab8cbfe5c00e64ef0c22220db83e4a0",
+          "datavalue": {
+            "value": {
+              "text": "Arrival Limited",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q28405615$f37301e5-45ea-b36b-1375-8789bf70392f",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "5cc3349a930d512886d74a23aa323ab046efcd71",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "9ed06ba187e9d6eb3d6b5831ff40d8510610a817",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 257303,
+                      "id": "Q257303"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P2622": [
+                {
+                  "snaktype": "value",
+                  "property": "P2622",
+                  "hash": "e1892a8008329298b9fa6f208ea9e3540b2f6895",
+                  "datavalue": {
+                    "value": "09475811",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P2622"
+            ]
+          }
+        ]
+      }
+    ],
+    "P159": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P159",
+          "hash": "2af16b395e120a14a68ac0e70ccfbcd5d2abfafb",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 84,
+              "id": "Q84"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P6375": [
+            {
+              "snaktype": "value",
+              "property": "P6375",
+              "hash": "3cafe27023ed45742d78f7cce0cf455c973538c9",
+              "datavalue": {
+                "value": {
+                  "text": "Beaumont House, Avonmore Road, London, England W14 8TS UK",
+                  "language": "en"
+                },
+                "type": "monolingualtext"
+              },
+              "datatype": "monolingualtext"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P6375"
+        ],
+        "id": "Q28405615$1973b8ec-4eb3-92b3-6d80-14a7d3eb5c07",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "5cc3349a930d512886d74a23aa323ab046efcd71",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "9ed06ba187e9d6eb3d6b5831ff40d8510610a817",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 257303,
+                      "id": "Q257303"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P2622": [
+                {
+                  "snaktype": "value",
+                  "property": "P2622",
+                  "hash": "e1892a8008329298b9fa6f208ea9e3540b2f6895",
+                  "datavalue": {
+                    "value": "09475811",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P2622"
+            ]
+          }
+        ]
+      }
+    ],
+    "P1454": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1454",
+          "hash": "411179a6899a55ae5536ddbc7591ca3c6f6e7725",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 6832945,
+              "id": "Q6832945"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$2b2b744f-467b-7d50-ab66-d283839c80fc",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "e36676fe1c5759aabf3ae250b467b89c89a78cbc",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "9ed06ba187e9d6eb3d6b5831ff40d8510610a817",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 257303,
+                      "id": "Q257303"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P2622": [
+                {
+                  "snaktype": "value",
+                  "property": "P2622",
+                  "hash": "e1892a8008329298b9fa6f208ea9e3540b2f6895",
+                  "datavalue": {
+                    "value": "09475811",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ],
+              "P5997": [
+                {
+                  "snaktype": "value",
+                  "property": "P5997",
+                  "hash": "be4bd34da45c20478a3e5eabe467e01a96816f6d",
+                  "datavalue": {
+                    "value": "Private limited company",
+                    "type": "string"
+                  },
+                  "datatype": "string"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P2622",
+              "P5997"
+            ]
+          }
+        ]
+      }
+    ],
+    "P2671": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2671",
+          "hash": "9f91732d5a6d61b7de7042f873e5de72d69416b8",
+          "datavalue": {
+            "value": "/g/11c5rtjwf0",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$3F79C981-4B82-4C1F-820A-E2AEF85E4EE2",
+        "rank": "normal"
+      }
+    ],
+    "P112": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P112",
+          "hash": "eb9d1246e11af2c6ffcc733ca83a55843a68ce04",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 4410115,
+              "id": "Q4410115"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28405615$EE9CC0CC-2DBB-4BC6-99BB-60695D0CCD2D",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "5126e821d7e258d2f9f5a0528448d3147aa98b05",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "d2aeafcb126d61b4a6a381c57d04028c4477081b",
+                  "datavalue": {
+                    "value": "https://en.wikipedia.org/w/index.php?title=Arrival_(company)&oldid=1039967958",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ],
+    "P2657": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2657",
+          "hash": "d1b35d03c6ac774e779c74012868d9910c49467d",
+          "datavalue": {
+            "value": "104315245793-44",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$DFACE375-F10C-4F5B-AB3E-194B9708CC40",
+        "rank": "normal"
+      }
+    ],
+    "P18": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P18",
+          "hash": "5354a83b5f64a5c92775d86be19169a67b754091",
+          "datavalue": {
+            "value": "Arrival Van Beta 015 Fully Charged Europe 2022 09.JPG",
+            "type": "string"
+          },
+          "datatype": "commonsMedia"
+        },
+        "type": "statement",
+        "id": "Q28405615$261efa1c-45db-5f9b-4d3b-e9b6dfe255b0",
+        "rank": "normal"
+      }
+    ],
+    "P2002": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2002",
+          "hash": "55a5e2bba167e99c623f5f361413ff4cdc29fe0b",
+          "datavalue": {
+            "value": "arrival",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P6552": [
+            {
+              "snaktype": "value",
+              "property": "P6552",
+              "hash": "02d349cabb3b199231b16182151c3f6acd4bffd6",
+              "datavalue": {
+                "value": "719807500774678529",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          ],
+          "P1552": [
+            {
+              "snaktype": "value",
+              "property": "P1552",
+              "hash": "62f0039d240f7eeba6c6908a0d8807a6188324a1",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 28378282,
+                  "id": "Q28378282"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          ],
+          "P580": [
+            {
+              "snaktype": "value",
+              "property": "P580",
+              "hash": "25bbea6ac338bd3fa79f2dd72e8ba44c0fef1243",
+              "datavalue": {
+                "value": {
+                  "time": "+2016-04-12T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "a9e916d0cc4578b84d34c2eb80d64d8bb8465531",
+              "datavalue": {
+                "value": {
+                  "time": "+2022-11-29T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P6552",
+          "P1552",
+          "P580",
+          "P585"
+        ],
+        "id": "Q28405615$4d7429ab-4693-d220-2a13-9f0e53536f83",
+        "rank": "normal"
+      }
+    ],
+    "P8687": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8687",
+          "hash": "7503c81c21dd38d42acbd525a5889467ecc28ab8",
+          "datavalue": {
+            "value": {
+              "amount": "+29280",
+              "unit": "1"
+            },
+            "type": "quantity"
+          },
+          "datatype": "quantity"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P6552": [
+            {
+              "snaktype": "value",
+              "property": "P6552",
+              "hash": "02d349cabb3b199231b16182151c3f6acd4bffd6",
+              "datavalue": {
+                "value": "719807500774678529",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "d85ea85769f978b2954f8ecc772527ca2de4824b",
+              "datavalue": {
+                "value": {
+                  "time": "+2022-12-06T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P6552",
+          "P585"
+        ],
+        "id": "Q28405615$d5550964-45e2-4297-b303-41b3c74b6102",
+        "rank": "preferred"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8687",
+          "hash": "2f6f735c3dfdb628d04eddbddf8f51d7d84f0284",
+          "datavalue": {
+            "value": {
+              "amount": "+38400",
+              "unit": "1",
+              "upperBound": "+38499",
+              "lowerBound": "+38400"
+            },
+            "type": "quantity"
+          },
+          "datatype": "quantity"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P2397": [
+            {
+              "snaktype": "value",
+              "property": "P2397",
+              "hash": "81af7dbc0bfb653805b8957371030ae141b20b1e",
+              "datavalue": {
+                "value": "UCbhn0OHHbTEmgrl19dAEK_w",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "f34436e43c04db43425ddeda0648c6c9f07ac6a2",
+              "datavalue": {
+                "value": {
+                  "time": "+2024-09-28T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P2397",
+          "P585"
+        ],
+        "id": "Q28405615$28470387-96da-4f83-88db-0d98e0757723",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "832ab66666b84ae0100351173008ad69fa4ebf5b",
+            "snaks": {
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "87c17baac7ea46e9e1467b5c352eca0e30ff54de",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-09-28T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "e6e6374525f7d680f01ff599745f367fb1369b87",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 8056784,
+                      "id": "Q8056784"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P813",
+              "P248"
+            ]
+          }
+        ]
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8687",
+          "hash": "14566c92fd0f4f1fa488205449125003d7dc4000",
+          "datavalue": {
+            "value": {
+              "amount": "+37600",
+              "unit": "1",
+              "upperBound": "+37699",
+              "lowerBound": "+37600"
+            },
+            "type": "quantity"
+          },
+          "datatype": "quantity"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P2397": [
+            {
+              "snaktype": "value",
+              "property": "P2397",
+              "hash": "81af7dbc0bfb653805b8957371030ae141b20b1e",
+              "datavalue": {
+                "value": "UCbhn0OHHbTEmgrl19dAEK_w",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "9e528b66e7c3cc6cf9c7f432fe591f378bceae7a",
+              "datavalue": {
+                "value": {
+                  "time": "+2025-10-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P2397",
+          "P585"
+        ],
+        "id": "Q28405615$16f9cbea-bba1-494e-bed0-7ee23e5fcb5d",
+        "rank": "preferred",
+        "references": [
+          {
+            "hash": "67395673f56700ae9c37d63c036cbb74a109de48",
+            "snaks": {
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "60bbdb33256c704074782d3dc941909ffe684843",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2025-10-01T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "e6e6374525f7d680f01ff599745f367fb1369b87",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 8056784,
+                      "id": "Q8056784"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P813",
+              "P248"
+            ]
+          }
+        ]
+      }
+    ],
+    "P414": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P414",
+          "hash": "56dd8a5b3b528fdc99f1238fb73f1bc8f3858bfc",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 82059,
+              "id": "Q82059"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P249": [
+            {
+              "snaktype": "value",
+              "property": "P249",
+              "hash": "621e3df9996a193144113683e3bf58a083184c99",
+              "datavalue": {
+                "value": "ARVL",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P249"
+        ],
+        "id": "Q28405615$27DA14CF-DE1E-4057-9CBC-AC2A5433A64D",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "f4e6d74912eeabefb007940b1730e5b9c61f2f77",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "87ad14682e86975f53aa35712be987d8582c3d2f",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2023-01-31T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "f7ba4bc7170942fdbbd650fd4318ffad613752c6",
+                  "datavalue": {
+                    "value": "https://en.wikipedia.org/w/index.php?title=Arrival_(company)&oldid=1136570706",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ],
+    "P2088": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2088",
+          "hash": "877696fa5fc0b82462e4444c4d3df16a21e8f3d2",
+          "datavalue": {
+            "value": "arrival-f90c",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$55A4795C-0F72-47F5-B5A8-29953F774507",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fe428f78f65d2f60d733d483ea818cbba37a5137",
+            "snaks": {
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "3c0059db36ba383861ee8d7b0549508a3ce759a0",
+                  "datavalue": {
+                    "value": "https://www.crunchbase.com/organization/arrival-f90c",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P1476": [
+                {
+                  "snaktype": "value",
+                  "property": "P1476",
+                  "hash": "d937e66cf896ac4ec96bda0441c06383a0bd41d8",
+                  "datavalue": {
+                    "value": {
+                      "text": "Arrival - Crunchbase Company Profile & Funding",
+                      "language": "en"
+                    },
+                    "type": "monolingualtext"
+                  },
+                  "datatype": "monolingualtext"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "87ad14682e86975f53aa35712be987d8582c3d2f",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2023-01-31T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P854",
+              "P1476",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P154": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P154",
+          "hash": "cb11b1923b9856b235ce248bc7df8e0f260216ca",
+          "datavalue": {
+            "value": "Arrival-logo-1300x700-1-768x414.png",
+            "type": "string"
+          },
+          "datatype": "commonsMedia"
+        },
+        "type": "statement",
+        "id": "Q28405615$59455888-471c-5f36-1766-79b8f3a663fb",
+        "rank": "normal"
+      }
+    ],
+    "P4264": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4264",
+          "hash": "3e1bff87266447a8f867f951c45c469a13df63a7",
+          "datavalue": {
+            "value": "arrival",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$0db5ee04-45f2-70f3-67e5-11cc7f7cde49",
+        "rank": "normal"
+      }
+    ],
+    "P2003": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2003",
+          "hash": "3605c970044bfcc33368a48902f12bf7df255e25",
+          "datavalue": {
+            "value": "arrival.uk",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$729d479b-4898-25d6-1d35-88e82367b6be",
+        "rank": "normal"
+      }
+    ],
+    "P2013": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2013",
+          "hash": "f0005c4bb16f2390ac6ea29df4f314c652867bb1",
+          "datavalue": {
+            "value": "Arrival",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$c4c227c3-4c6e-1305-7068-9651a79a38f9",
+        "rank": "normal"
+      }
+    ],
+    "P373": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P373",
+          "hash": "d3fe41bff6fb3ed2f659c603cdd4901eeefd30b2",
+          "datavalue": {
+            "value": "Arrival Limited",
+            "type": "string"
+          },
+          "datatype": "string"
+        },
+        "type": "statement",
+        "id": "Q28405615$b25d1a4e-442a-f940-74c5-e5a0143936c6",
+        "rank": "normal"
+      }
+    ],
+    "P11245": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P11245",
+          "hash": "2bc17831e6122b2a558b69036dab0b2f0239c2da",
+          "datavalue": {
+            "value": "ARRIVALUK",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P2397": [
+            {
+              "snaktype": "value",
+              "property": "P2397",
+              "hash": "81af7dbc0bfb653805b8957371030ae141b20b1e",
+              "datavalue": {
+                "value": "UCbhn0OHHbTEmgrl19dAEK_w",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P2397"
+        ],
+        "id": "Q28405615$b35a4c5e-49b1-f9c6-8e70-4c8629e1aa6f",
+        "rank": "normal"
+      }
+    ],
+    "P5337": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P5337",
+          "hash": "f0b1281e24d07cb18df688da1dacd565efdaed11",
+          "datavalue": {
+            "value": "CAAqLAgKIiZDQkFTRmdvTkwyY3ZNVEZqTlhKMGFuZG1NQklGWlc0dFIwSW9BQVAB",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$ee906754-4faf-e9e2-47ac-8cdf0bee3faf",
+        "rank": "normal"
+      }
+    ],
+    "P2397": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2397",
+          "hash": "81af7dbc0bfb653805b8957371030ae141b20b1e",
+          "datavalue": {
+            "value": "UCbhn0OHHbTEmgrl19dAEK_w",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P580": [
+            {
+              "snaktype": "value",
+              "property": "P580",
+              "hash": "25bbea6ac338bd3fa79f2dd72e8ba44c0fef1243",
+              "datavalue": {
+                "value": {
+                  "time": "+2016-04-12T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ],
+          "P1810": [
+            {
+              "snaktype": "value",
+              "property": "P1810",
+              "hash": "960da036d7534614eaf470169416f3c365d6384c",
+              "datavalue": {
+                "value": "Arrival",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ],
+          "P3744": [
+            {
+              "snaktype": "value",
+              "property": "P3744",
+              "hash": "5a8e6cf979b8d094c799c8dce33613ea1a67bfb2",
+              "datavalue": {
+                "value": {
+                  "amount": "+38500",
+                  "unit": "1"
+                },
+                "type": "quantity"
+              },
+              "datatype": "quantity"
+            }
+          ],
+          "P3740": [
+            {
+              "snaktype": "value",
+              "property": "P3740",
+              "hash": "7caabc345c8f455bf183ff35b87531b236e65106",
+              "datavalue": {
+                "value": {
+                  "amount": "+36",
+                  "unit": "1"
+                },
+                "type": "quantity"
+              },
+              "datatype": "quantity"
+            }
+          ],
+          "P5436": [
+            {
+              "snaktype": "value",
+              "property": "P5436",
+              "hash": "9168f027a4c7b210654041755106d7c20db578f7",
+              "datavalue": {
+                "value": {
+                  "amount": "+3727100",
+                  "unit": "1"
+                },
+                "type": "quantity"
+              },
+              "datatype": "quantity"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "12b797532d744a749e48f512019816d3d9ea1830",
+              "datavalue": {
+                "value": {
+                  "time": "+2024-08-18T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P580",
+          "P1810",
+          "P3744",
+          "P3740",
+          "P5436",
+          "P585"
+        ],
+        "id": "Q28405615$264A6070-5EBC-45A7-A909-724AF26BBE4D",
+        "rank": "normal"
+      }
+    ],
+    "P946": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P946",
+          "hash": "b22e53379420cb8b4168c92ff456c87ae662f8ae",
+          "datavalue": {
+            "value": "LU2314763264",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$5ebbf71b-4828-b58b-3057-c591b2eb4862",
+        "rank": "normal"
+      }
+    ],
+    "P14750": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P14750",
+          "hash": "814e70fc51e8097dcf46d7ea17a548bc939aa458",
+          "datavalue": {
+            "value": "A625-3E45-4C2C-0610-ED83",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28405615$F6BF6686-DB1F-4824-B258-EB0F9C151EE3",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {
+    "enwiki": {
+      "site": "enwiki",
+      "title": "Arrival (company)",
+      "badges": []
+    }
+  }
+}

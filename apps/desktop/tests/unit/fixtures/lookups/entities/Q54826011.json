@@ -1,0 +1,364 @@
+{
+  "type": "item",
+  "id": "Q54826011",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "The Expanse"
+    }
+  },
+  "claims": {
+    "P629": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P629",
+          "hash": "45983cb3f9b7146a858cd0465b597cd69b552202",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 7732812,
+              "id": "Q7732812"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$19AF909E-3AB0-4487-BAF8-9EF3A5BEAA8C",
+        "rank": "normal"
+      }
+    ],
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "7d261aaf92dd9be13f2bd79d7024b98d449f1f89",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 3331189,
+              "id": "Q3331189"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$77BD6AD3-987E-4E06-8B08-94798D3FA703",
+        "rank": "normal"
+      }
+    ],
+    "P407": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P407",
+          "hash": "daf1c4fcb58181b02dff9cc89deb084004ddae4b",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1860,
+              "id": "Q1860"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$4E3B4BFF-E9BC-4072-8293-1C8F932BE74F",
+        "rank": "normal"
+      }
+    ],
+    "P1476": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1476",
+          "hash": "089e6b442b704d4fcbea8e203cd4525d13267fa8",
+          "datavalue": {
+            "value": {
+              "text": "The Expanse",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q54826011$2BD74991-29F3-4E02-AD88-FCE900D57744",
+        "rank": "normal"
+      }
+    ],
+    "P957": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P957",
+          "hash": "6818409a1a032541dd2a3a21355113c074d349d8",
+          "datavalue": {
+            "value": "0-7434-8485-1",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q54826011$07B1C26C-9CED-467C-89E2-2868BA9AF15E",
+        "rank": "normal"
+      }
+    ],
+    "P1104": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1104",
+          "hash": "eea1d4a463081d7f634b6cad3d29f3ce9af4483a",
+          "datavalue": {
+            "value": {
+              "amount": "+256",
+              "unit": "1"
+            },
+            "type": "quantity"
+          },
+          "datatype": "quantity"
+        },
+        "type": "statement",
+        "id": "Q54826011$DFA78313-5707-4526-A362-8E5B28B12562",
+        "rank": "normal"
+      }
+    ],
+    "P437": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P437",
+          "hash": "e53882f6a0105e063c280269005b4ec4792fab21",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 990683,
+              "id": "Q990683"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$7B227E15-32FB-49F6-A600-5F269E7551ED",
+        "rank": "normal"
+      }
+    ],
+    "P123": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P123",
+          "hash": "7ad13381f4e663d2348ab59add92b81a7471479e",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 7206385,
+              "id": "Q7206385"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$87E916BF-0E6D-46DD-8C31-6156D45B59CF",
+        "rank": "normal"
+      }
+    ],
+    "P648": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P648",
+          "hash": "bfd7261ef568acb9e6c95de7acb7f1065bdbc303",
+          "datavalue": {
+            "value": "OL3321181M",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q54826011$99FDE90B-8694-4127-9D9E-B3CF529AC5EB",
+        "rank": "normal"
+      }
+    ],
+    "P50": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P50",
+          "hash": "3547aea65d0883318d2302686e708f2dadbdbeaa",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 2329943,
+              "id": "Q2329943"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q54826011$37CF11CC-7EC5-4E38-A791-17357D8CFE21",
+        "rank": "normal"
+      }
+    ],
+    "P2969": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2969",
+          "hash": "e26011d7b8ec9b1966e4e3f3a981f96fb27b2e3c",
+          "datavalue": {
+            "value": "422909",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1810": [
+            {
+              "snaktype": "value",
+              "property": "P1810",
+              "hash": "d74d9e62d5f83b0b45093fbe97445cfd114bc362",
+              "datavalue": {
+                "value": "The Expanse (Star Trek: Enterprise #6)",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ],
+          "P585": [
+            {
+              "snaktype": "value",
+              "property": "P585",
+              "hash": "33415601d5df14acfdcfd9f87983067f9d2ec1f9",
+              "datavalue": {
+                "value": {
+                  "time": "+2020-10-15T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1810",
+          "P585"
+        ],
+        "id": "Q54826011$2324293E-D5A2-4102-8296-A77D2D0170C8",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "cffa611c6aad8d17a276ceeadfcf0485822fdf23",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "a0e84923b8d99fc8a5013954ac16befd8e4f4696",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 2359213,
+                      "id": "Q2359213"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "545d9b8648933e56e3044cdcc8d1dc9938754e01",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 33057,
+                      "id": "Q33057"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "4cd457067783b44ddec06d3bacf9a8995f37bcf4",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2020-09-05T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P3452",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P6721": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P6721",
+          "hash": "f11ff87dd351cb8829c3f3daf13e625f5fac1f73",
+          "datavalue": {
+            "value": "1699679444",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q54826011$BD27AD95-9232-4B65-B968-BE0DA170D01D",
+        "rank": "normal"
+      }
+    ],
+    "P5749": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P5749",
+          "hash": "9a8dcfa3ae94adc33dace1766d0185a4b2ef31f4",
+          "datavalue": {
+            "value": "0743484851",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q54826011$99CBEA09-FB0F-4449-85B2-2D62065E2111",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {}
+}

@@ -1,0 +1,795 @@
+{
+  "type": "item",
+  "id": "Q2882166",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "The Piano Tuner"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "56d2ce980dfb7e5844c4c8777065c37181767334",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 47461344,
+              "id": "Q47461344"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "q2882166$A79ED1D9-FDD5-4098-9CFD-CEBE3C50F29B",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P50": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P50",
+          "hash": "42288a904613b13231ee6323605314832e4b2fb1",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 2111663,
+              "id": "Q2111663"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "q2882166$34F50561-6490-4815-9BE8-78FCF5008D88",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P123": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P123",
+          "hash": "a16fe43aea0ea8f9f09886758876085c1505a4e0",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1431868,
+              "id": "Q1431868"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "q2882166$BC643981-A305-4117-AFAA-69F9814CD047",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P243": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P243",
+          "hash": "5eb6830ba8b33106b70f072d20445ac5af13b11a",
+          "datavalue": {
+            "value": "53051198",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "q2882166$59FA0109-141E-44D0-93AD-B443D142AEE2",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P921": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P921",
+          "hash": "ee8b3d2d260ed56a353b0314245dd0e79910407b",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 638,
+              "id": "Q638"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$AAE33A2F-3F4A-4014-952B-C76C3891F92C",
+        "rank": "normal"
+      }
+    ],
+    "P495": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P495",
+          "hash": "7f985e15819b74ed189d022e004890e66d2ae42e",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 30,
+              "id": "Q30"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$87508CEF-E417-4762-AA44-A9D92D660CA7",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P577": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P577",
+          "hash": "6e4c72503964f214691496be01a2a67e98a75530",
+          "datavalue": {
+            "value": {
+              "time": "+2002-00-00T00:00:00Z",
+              "timezone": 0,
+              "before": 0,
+              "after": 0,
+              "precision": 9,
+              "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+            },
+            "type": "time"
+          },
+          "datatype": "time"
+        },
+        "type": "statement",
+        "id": "Q2882166$3A784F2D-D82B-4C0B-8239-24B5034881EA",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P407": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P407",
+          "hash": "daf1c4fcb58181b02dff9cc89deb084004ddae4b",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1860,
+              "id": "Q1860"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$82E3E63C-C14D-4258-BE1B-F848995D19F5",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P1476": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1476",
+          "hash": "c91984519f87970d34ba6f7f929407ac6d8d9701",
+          "datavalue": {
+            "value": {
+              "text": "The Piano Tuner",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q2882166$13966BB9-C6D2-4D97-A5FD-8043B4C3DCB1",
+        "rank": "normal"
+      }
+    ],
+    "P5331": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P5331",
+          "hash": "c1e38ce5cc818a795d58e65b3533e33a23d98625",
+          "datavalue": {
+            "value": "6426229",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$190B84C7-3EE7-4FAC-B223-07181A1A9E39",
+        "rank": "normal"
+      }
+    ],
+    "P724": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P724",
+          "hash": "b9e8874ed573eff0b97d2fa7618800884ee38527",
+          "datavalue": {
+            "value": "pianotuner000maso",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$C6EB2CB4-F1B1-4182-A611-CAE333EF0134",
+        "rank": "normal"
+      }
+    ],
+    "P648": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P648",
+          "hash": "283eae9e9a6ee7f36b7f8a651051aa1c6a114870",
+          "datavalue": {
+            "value": "OL5956196W",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$16E6F5BE-DE2A-4D29-A85A-F7E49A9993AB",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3c330fc9c084e2e0de2656d2d0b5b8d64a93c095",
+            "snaks": {
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "385e2bedf39190163c8ab987083244a6b433cda8",
+                  "datavalue": {
+                    "value": "https://archive.org/details/pianotuner000maso",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "ed3dc00c7ee1aea146060543e42ef7ee988ab67f",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2019-02-03T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P854",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P8383": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8383",
+          "hash": "0e705f11a23d02fb024bcad0d5ff3fa55b88b9fe",
+          "datavalue": {
+            "value": "2557116",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$4f66556a-885d-40a8-be58-762892f2214e",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "beae309597a1e2b2989578457715da79a4a354fe",
+            "snaks": {
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "8eff9352009a4ea5ac974ecbfc5102c6a56bc237",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2020-09-18T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "a0e84923b8d99fc8a5013954ac16befd8e4f4696",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 2359213,
+                      "id": "Q2359213"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P813",
+              "P248"
+            ]
+          }
+        ]
+      }
+    ],
+    "P646": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P646",
+          "hash": "9545a99c6d18c402b00f3ec26c49fef5c836a22b",
+          "datavalue": {
+            "value": "/m/0g09dn",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$B1B7C9ED-E935-4D17-9A5B-AB3259E9D70F",
+        "rank": "normal"
+      }
+    ],
+    "P7937": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P7937",
+          "hash": "1f3796a438db67e51d8cac2bad920878e37e51c9",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 8261,
+              "id": "Q8261"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$7E8C9953-95D2-46ED-86F5-C79F0F165FC2",
+        "rank": "normal"
+      }
+    ],
+    "P840": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P840",
+          "hash": "62a9a2357869d3d8f0fd9e266b3e030300bf22d5",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 836,
+              "id": "Q836"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$B0267A2C-076D-4B84-B304-48D6430B31D3",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "0f7a574df258214eaad2e20cabf055daad546fef",
+            "snaks": {
+              "P648": [
+                {
+                  "snaktype": "value",
+                  "property": "P648",
+                  "hash": "283eae9e9a6ee7f36b7f8a651051aa1c6a114870",
+                  "datavalue": {
+                    "value": "OL5956196W",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P648"
+            ]
+          }
+        ]
+      }
+    ],
+    "P973": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P973",
+          "hash": "413b1f4bc91d5c872374f6b81cf8b0bdfebd332c",
+          "datavalue": {
+            "value": "https://www.nytimes.com/2002/09/29/books/a-few-strings-loose.html",
+            "type": "string"
+          },
+          "datatype": "url"
+        },
+        "type": "statement",
+        "id": "Q2882166$748B8BFD-039D-40C2-AB7D-279C11B9D4FA",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "0f7a574df258214eaad2e20cabf055daad546fef",
+            "snaks": {
+              "P648": [
+                {
+                  "snaktype": "value",
+                  "property": "P648",
+                  "hash": "283eae9e9a6ee7f36b7f8a651051aa1c6a114870",
+                  "datavalue": {
+                    "value": "OL5956196W",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P648"
+            ]
+          }
+        ]
+      }
+    ],
+    "P747": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P747",
+          "hash": "bcda67dcc6e717cc16605d0f503c8fcb850e08d9",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 132687160,
+              "id": "Q132687160"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P437": [
+            {
+              "snaktype": "value",
+              "property": "P437",
+              "hash": "2c2da1a41cc385eef1f3224f6e58e68f21becd6e",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 193934,
+                  "id": "Q193934"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P437"
+        ],
+        "id": "Q2882166$923D6A0A-2F38-4AC7-9331-127EDB6E05C1",
+        "rank": "normal"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P747",
+          "hash": "8315873f03e91b69caa35f49f7992bef8b083d58",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 136435665,
+              "id": "Q136435665"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q2882166$6a41575d-4610-5cea-4ee2-bbb88f02061f",
+        "rank": "normal"
+      }
+    ],
+    "P1085": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1085",
+          "hash": "64e20a0e92e730efdb32f3900249b912ba076b38",
+          "datavalue": {
+            "value": "7937",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$8B8B42CB-B264-4A39-BC0A-DCFFD2C59510",
+        "rank": "normal"
+      }
+    ],
+    "P9818": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P9818",
+          "hash": "4d605fe5d27975a9eb2f7de13f83645091b2c199",
+          "datavalue": {
+            "value": "108771",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1810": [
+            {
+              "snaktype": "value",
+              "property": "P1810",
+              "hash": "aca52fbe56ae94a30fd291281329cc3d03eb3f6d",
+              "datavalue": {
+                "value": "The Piano Tuner",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1810"
+        ],
+        "id": "Q2882166$2BE83EDD-6526-4D75-BAD3-6F58339F66C0",
+        "rank": "normal"
+      }
+    ],
+    "P7439": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P7439",
+          "hash": "d9ecc7f788c311849019355ae277573b14a01975",
+          "datavalue": {
+            "value": "279549",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q2882166$80858949-9CA3-4783-8BC7-AEBB9E4CAAE0",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {
+    "enwiki": {
+      "site": "enwiki",
+      "title": "The Piano Tuner (2002 novel)",
+      "badges": [
+        "Q70893996"
+      ]
+    }
+  }
+}

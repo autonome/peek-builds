@@ -1,0 +1,137 @@
+{
+  "type": "item",
+  "id": "Q6457972",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "urban East Norwegian"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "b0e46d00702a2d52bc5af776bdecb3b08f0e5370",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 33384,
+              "id": "Q33384"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q6457972$d4d29d57-4ce6-cfee-70b3-94465f7587bd",
+        "rank": "normal"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "0dd613171f316fc6932c4c486a86675f1062f137",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1367114,
+              "id": "Q1367114"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q6457972$b2387270-4fb5-81bc-ebba-c908afd844fa",
+        "rank": "normal"
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "0c9b2533c878b1d74ef416a796dd6d8afdd83b80",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 20825842,
+              "id": "Q20825842"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q6457972$033deae9-4289-0e06-efad-c90c22f99902",
+        "rank": "normal"
+      }
+    ],
+    "P279": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P279",
+          "hash": "2fe9d3dd67db4326f3041b41eb2059379c8806c1",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 19399429,
+              "id": "Q19399429"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q6457972$82315140-4ea4-52f1-7e87-4b573fdb747a",
+        "rank": "normal"
+      }
+    ],
+    "P2671": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2671",
+          "hash": "e4b4db661719a7d28f0a66be62458f8d4a5d5fa4",
+          "datavalue": {
+            "value": "/g/1230jyfd",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q6457972$267A71F5-1B9D-4F69-A999-3435A08722D2",
+        "rank": "normal"
+      }
+    ],
+    "P17": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P17",
+          "hash": "6b641ae447361ea7b9069dd798128243a1cdca37",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 20,
+              "id": "Q20"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q6457972$AD2DBAEE-3AA0-4F21-B02C-745B63D75460",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {
+    "enwiki": {
+      "site": "enwiki",
+      "title": "Urban East Norwegian",
+      "badges": []
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "manifestVersion": 3,
+  "id": "lookups",
+  "shortname": "lookups",
+  "name": "Lookups",
+  "description": "A to-watch, to-read or to-listen tag resolves a typed title to the work it names",
+  "version": "1.0.0",
+  "builtin": true,
+  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true,
+      "schedule": [
+        { "topic": "lookups:check", "everyMinutes": 360 }
+      ]
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "app:shutdown",
+        "lookups:check",
+        "lookups:resolved"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags"]
+    },
+    "network": {
+      "domains": ["www.wikidata.org", "127.0.0.1"]
+    },
+    "settings": true,
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "lookups",
+      "description": "Look up the items tagged to-watch, to-read or to-listen now",
+      "action": { "type": "execute" }
+    }
+  ]
+}

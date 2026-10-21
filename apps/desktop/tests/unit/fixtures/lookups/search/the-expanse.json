@@ -1,0 +1,259 @@
+{
+  "searchinfo": {
+    "search": "The Expanse"
+  },
+  "search": [
+    {
+      "id": "Q110029348",
+      "title": "Q110029348",
+      "pageid": 105121105,
+      "concepturi": "http://www.wikidata.org/entity/Q110029348",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q110029348",
+      "display": {
+        "label": {
+          "value": "The Expanse: A Telltale Series",
+          "language": "en"
+        },
+        "description": {
+          "value": "2023 video game developed by Telltale Games and Deck Nine Games",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse: A Telltale Series",
+      "description": "2023 video game developed by Telltale Games and Deck Nine Games",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse: A Telltale Series"
+      }
+    },
+    {
+      "id": "Q18389644",
+      "title": "Q18389644",
+      "pageid": 19923734,
+      "concepturi": "http://www.wikidata.org/entity/Q18389644",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q18389644",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "American science fiction television series",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "American science fiction television series",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q134990688",
+      "title": "Q134990688",
+      "pageid": 128815076,
+      "concepturi": "http://www.wikidata.org/entity/Q134990688",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q134990688",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "2021 video game developed by Phoebus76",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "2021 video game developed by Phoebus76",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q19610143",
+      "title": "Q19610143",
+      "pageid": 21209542,
+      "concepturi": "http://www.wikidata.org/entity/Q19610143",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q19610143",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "series of space opera novels by James S. A. Corey (collective pseudonym)",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "series of space opera novels by James S. A. Corey (collective pseudonym)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q7732812",
+      "title": "Q7732812",
+      "pageid": 7660195,
+      "concepturi": "http://www.wikidata.org/entity/Q7732812",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q7732812",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "2003 novel by J.M. Dillard",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "2003 novel by J.M. Dillard",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q1027348",
+      "title": "Q1027348",
+      "pageid": 976624,
+      "concepturi": "http://www.wikidata.org/entity/Q1027348",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q1027348",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "episode of Star Trek: Enterprise (S2 E26)",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "episode of Star Trek: Enterprise (S2 E26)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q54826012",
+      "title": "Q54826012",
+      "pageid": 54925179,
+      "concepturi": "http://www.wikidata.org/entity/Q54826012",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q54826012",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "e-book edition of The Expanse",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "e-book edition of The Expanse",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q54826011",
+      "title": "Q54826011",
+      "pageid": 54925178,
+      "concepturi": "http://www.wikidata.org/entity/Q54826011",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q54826011",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "original edition of The Expanse novel",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "original edition of The Expanse novel",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q131519400",
+      "title": "Q131519400",
+      "pageid": 125430134,
+      "concepturi": "http://www.wikidata.org/entity/Q131519400",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q131519400",
+      "display": {
+        "label": {
+          "value": "The Expanse",
+          "language": "en"
+        },
+        "description": {
+          "value": "American science fiction media franchise",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse",
+      "description": "American science fiction media franchise",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse"
+      }
+    },
+    {
+      "id": "Q54805614",
+      "title": "Q54805614",
+      "pageid": 54905456,
+      "concepturi": "http://www.wikidata.org/entity/Q54805614",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q54805614",
+      "display": {
+        "label": {
+          "value": "The Expanse, season 3",
+          "language": "en"
+        },
+        "description": {
+          "value": "season of television series",
+          "language": "en"
+        }
+      },
+      "label": "The Expanse, season 3",
+      "description": "season of television series",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Expanse, season 3"
+      }
+    }
+  ],
+  "search-continue": 10,
+  "success": 1
+}

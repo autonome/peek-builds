@@ -1,0 +1,242 @@
+{
+  "searchinfo": {
+    "search": "The Piano Tuner"
+  },
+  "search": [
+    {
+      "id": "Q2882166",
+      "title": "Q2882166",
+      "pageid": 2759202,
+      "concepturi": "http://www.wikidata.org/entity/Q2882166",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q2882166",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner",
+          "language": "en"
+        },
+        "description": {
+          "value": "historical novel by Daniel Mason",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner",
+      "description": "historical novel by Daniel Mason",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Piano Tuner"
+      }
+    },
+    {
+      "id": "Q3201414",
+      "title": "Q3201414",
+      "pageid": 3056869,
+      "concepturi": "http://www.wikidata.org/entity/Q3201414",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q3201414",
+      "display": {
+        "label": {
+          "value": "L'Accordeur",
+          "language": "en"
+        },
+        "description": {
+          "value": "2010 film by Olivier Treiner",
+          "language": "en"
+        }
+      },
+      "label": "L'Accordeur",
+      "description": "2010 film by Olivier Treiner",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "The Piano Tuner"
+      },
+      "aliases": [
+        "The Piano Tuner"
+      ]
+    },
+    {
+      "id": "Q140206719",
+      "title": "Q140206719",
+      "pageid": 133644285,
+      "concepturi": "http://www.wikidata.org/entity/Q140206719",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q140206719",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner",
+          "language": "en"
+        },
+        "description": {
+          "value": "2002 novel by Daniel Mason",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner",
+      "description": "2002 novel by Daniel Mason",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Piano Tuner"
+      }
+    },
+    {
+      "id": "Q132687160",
+      "title": "Q132687160",
+      "pageid": 126545743,
+      "concepturi": "http://www.wikidata.org/entity/Q132687160",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q132687160",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner",
+          "language": "mul"
+        },
+        "description": {
+          "value": "paperback edition (en)",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner",
+      "description": "paperback edition (en)",
+      "match": {
+        "type": "label",
+        "language": "mul",
+        "text": "The Piano Tuner"
+      }
+    },
+    {
+      "id": "Q136235413",
+      "title": "Q136235413",
+      "pageid": 129943377,
+      "concepturi": "http://www.wikidata.org/entity/Q136235413",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q136235413",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner",
+          "language": "mul"
+        },
+        "description": {
+          "value": "book 1986",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner",
+      "description": "book 1986",
+      "match": {
+        "type": "label",
+        "language": "mul",
+        "text": "The Piano Tuner"
+      }
+    },
+    {
+      "id": "Q477447",
+      "title": "Q477447",
+      "pageid": 450041,
+      "concepturi": "http://www.wikidata.org/entity/Q477447",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q477447",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner of Earthquakes",
+          "language": "en"
+        },
+        "description": {
+          "value": "2005 film by Stephen Quay, Timothy Quay",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner of Earthquakes",
+      "description": "2005 film by Stephen Quay, Timothy Quay",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Piano Tuner of Earthquakes"
+      }
+    },
+    {
+      "id": "Q130660452",
+      "title": "Q130660452",
+      "pageid": 124589852,
+      "concepturi": "http://www.wikidata.org/entity/Q130660452",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q130660452",
+      "display": {
+        "label": {
+          "value": "Tuner",
+          "language": "en"
+        },
+        "description": {
+          "value": "2025 film directed by Daniel Roher",
+          "language": "en"
+        }
+      },
+      "label": "Tuner",
+      "description": "2025 film directed by Daniel Roher",
+      "match": {
+        "type": "label",
+        "language": "de",
+        "text": "The Piano Tuner"
+      },
+      "aliases": [
+        "The Piano Tuner"
+      ]
+    },
+    {
+      "id": "Q139503951",
+      "title": "Q139503951",
+      "pageid": 132959710,
+      "concepturi": "http://www.wikidata.org/entity/Q139503951",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q139503951",
+      "display": {
+        "label": {
+          "value": "The Piano Tuner",
+          "language": "en"
+        },
+        "description": {
+          "value": "Wikimedia disambiguation page",
+          "language": "en"
+        }
+      },
+      "label": "The Piano Tuner",
+      "description": "Wikimedia disambiguation page",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "The Piano Tuner"
+      }
+    },
+    {
+      "id": "Q4025267",
+      "title": "Q4025267",
+      "pageid": 3837257,
+      "concepturi": "http://www.wikidata.org/entity/Q4025267",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q4025267",
+      "display": {
+        "label": {
+          "value": "È arrivato l'accordatore",
+          "language": "en"
+        },
+        "description": {
+          "value": "1952 Italian film by Duilio Coletti",
+          "language": "en"
+        }
+      },
+      "label": "È arrivato l'accordatore",
+      "description": "1952 Italian film by Duilio Coletti",
+      "match": {
+        "type": "label",
+        "language": "es",
+        "text": "The Piano Tuner Has Arrived"
+      },
+      "aliases": [
+        "The Piano Tuner Has Arrived"
+      ]
+    }
+  ],
+  "success": 1
+}

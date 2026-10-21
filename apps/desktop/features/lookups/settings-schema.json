@@ -1,0 +1,11 @@
+{
+  "labels": {
+    "apiBase": "Wikidata API address"
+  },
+  "storageKeys": {
+    "API_BASE": "apiBase"
+  },
+  "defaults": {
+    "apiBase": "https://www.wikidata.org/w/api.php"
+  }
+}

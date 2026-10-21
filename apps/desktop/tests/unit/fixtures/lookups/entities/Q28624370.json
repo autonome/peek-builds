@@ -1,0 +1,813 @@
+{
+  "type": "item",
+  "id": "Q28624370",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Stand by Me"
+    }
+  },
+  "claims": {
+    "P345": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P345",
+          "hash": "4426d8b6b2be3e91457a47f7b8a57d310c3c3a6a",
+          "datavalue": {
+            "value": "tt2663500",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$355B8A0E-6DB9-4DE1-829E-C48793AC9EA5",
+        "rank": "normal"
+      }
+    ],
+    "P155": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P155",
+          "hash": "5fa6a3e2620ec3f174d5ac085a13bfa20b11d01a",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 28622917,
+              "id": "Q28622917"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28624370$e3c02d93-43f3-f67c-f4a6-b2d03cd49802",
+        "rank": "normal"
+      }
+    ],
+    "P156": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P156",
+          "hash": "d33b3acbc3da06c3af0b44674c8a5862fbec618b",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 28624622,
+              "id": "Q28624622"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28624370$48f52294-4c5d-feb7-fb68-1a8db4381aaf",
+        "rank": "normal"
+      }
+    ],
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "2d3761f68cf1248dc8fbf0b5eaa1f7fff03df987",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 21191270,
+              "id": "Q21191270"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28624370$9F9CDF70-590E-4FA8-AB04-12A2C60CE70D",
+        "rank": "normal"
+      }
+    ],
+    "P179": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P179",
+          "hash": "30c67afd177e4e3d555c683c154b4fbd629cd4f1",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 28537,
+              "id": "Q28537"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "0518e95b39897864fb5ed301afb76ce4489e249b",
+              "datavalue": {
+                "value": "81",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q28624370$8D1E0E7E-6476-49EF-891E-B68F0E82C2E5",
+        "rank": "normal"
+      }
+    ],
+    "P4908": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4908",
+          "hash": "661e1b25a45be23f8c1e9b52fd9cd850abda600c",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 2701447,
+              "id": "Q2701447"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "1c30b5edfe37c20fba82e77d50973f05e0b11f6f",
+              "datavalue": {
+                "value": "15",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q28624370$594247bb-4438-5fe4-4f5f-5b201bedc6c6",
+        "rank": "normal"
+      }
+    ],
+    "P577": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P577",
+          "hash": "822ca9506487598aa5725a69fbb09ef5f333a3ab",
+          "datavalue": {
+            "value": {
+              "time": "+2013-02-21T00:00:00Z",
+              "timezone": 0,
+              "before": 0,
+              "after": 0,
+              "precision": 11,
+              "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+            },
+            "type": "time"
+          },
+          "datatype": "time"
+        },
+        "type": "statement",
+        "id": "Q28624370$9E021AA1-0FC0-49EC-8A49-5EBA42E8F6CB",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "be11b3f673d21ac12b61a9b02fc2507981a3313f",
+            "snaks": {
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "10ed7e9ea08adae3c58e0c576a23880165bd80e5",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2017-04-15T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "283f4ac27da2c68d484e0cd42b7990af056b4a9a",
+                  "datavalue": {
+                    "value": "http://www.omdbapi.com/?i=tt2663500",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P813",
+              "P854"
+            ]
+          }
+        ]
+      }
+    ],
+    "P1258": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1258",
+          "hash": "9c8e86694e2a8164fa61675e018292ad49bd1c99",
+          "datavalue": {
+            "value": "tv/the_vampire_diaries/s04/e15",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$5F7F75E7-68AE-47D8-B70F-F788253D624C",
+        "rank": "normal"
+      }
+    ],
+    "P1562": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1562",
+          "hash": "5c611a40de0e43ebdcbc3ee0dfbc0383b1e32a71",
+          "datavalue": {
+            "value": "v578102",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$647EB2A7-6283-4CFC-B9DE-D42FFE00C1CE",
+        "rank": "normal"
+      }
+    ],
+    "P2529": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2529",
+          "hash": "bc3ec2e1653148f1ba1ac4bbc2f5880078fd0711",
+          "datavalue": {
+            "value": "458215",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$70DDDDDC-A00A-46F6-B3C7-9C89CFDA4487",
+        "rank": "normal"
+      }
+    ],
+    "P4665": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4665",
+          "hash": "04a0d4e557e0e0db3770bcb50b30c5bd704c8e0a",
+          "datavalue": {
+            "value": "2336087",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$3D5E09F4-4ABE-445B-9C44-98044FAD03EE",
+        "rank": "normal"
+      }
+    ],
+    "P3302": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3302",
+          "hash": "eaf1a8cbb77a4f1728a4cfb5736d0395ded5ecac",
+          "datavalue": {
+            "value": "72718",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$4F50E20F-BE24-4114-9A51-64F4848A08CD",
+        "rank": "normal"
+      }
+    ],
+    "P2638": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2638",
+          "hash": "8ce273260b833c7d74296f75f46e096aca410f8b",
+          "datavalue": {
+            "value": "shows/the-vampire-diaries/stand-by-me-2657456",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$3978A35A-6103-4389-B130-51A667F15BE0",
+        "rank": "normal"
+      }
+    ],
+    "P2704": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2704",
+          "hash": "d74179fa36a2b15570951e4a84f67479bd2b0430",
+          "datavalue": {
+            "value": "10.5240/120F-0C86-F344-48FF-E242-R",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$306A0B07-9EC5-4981-8D52-43F752CAE13C",
+        "rank": "normal"
+      }
+    ],
+    "P3212": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3212",
+          "hash": "b03e19e257dc6d9599cfde9e351ce63fbc2bcd6a",
+          "datavalue": {
+            "value": "0000-0002-7978-004C-G-0000-0000-Q",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$239287E9-0F17-4ABA-87E3-51B7634516A3",
+        "rank": "normal"
+      }
+    ],
+    "P1476": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1476",
+          "hash": "5244632ee3e65ca85d9e0efe14c756595d353e0f",
+          "datavalue": {
+            "value": {
+              "text": "Stand by Me",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q28624370$5F759B20-944A-4917-9385-5E5F6AC90BFC",
+        "rank": "normal"
+      }
+    ],
+    "P364": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P364",
+          "hash": "cc2c15fb58feeae8fe7a641c0e2ddaf3f48e59f8",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1860,
+              "id": "Q1860"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28624370$7EF28322-5358-4552-BEE9-8847DC34DB80",
+        "rank": "normal"
+      }
+    ],
+    "P57": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P57",
+          "hash": "6b26c749a58f5ccafcebd469289dcc80777b217e",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 118126330,
+              "id": "Q118126330"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q28624370$A3EFC470-B365-4075-920F-E8111DE899C4",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "320846ce0c29d7bc164c4991eff961f67eb7c613",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "6ff43c6ce02fc9e2012771b5595093e7f0c33162",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 37312,
+                      "id": "Q37312"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P345": [
+                {
+                  "snaktype": "value",
+                  "property": "P345",
+                  "hash": "4426d8b6b2be3e91457a47f7b8a57d310c3c3a6a",
+                  "datavalue": {
+                    "value": "tt2663500",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P345"
+            ]
+          }
+        ]
+      }
+    ],
+    "P8013": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8013",
+          "hash": "12addfae8ed31a41089eca12322b0812e28ddd9d",
+          "datavalue": {
+            "value": "shows/the-vampire-diaries/seasons/4/episodes/15",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$0df5df37-7d80-470e-a033-996734ce3b0a",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "0f0f0f2155bd6e3ec1a91c2ae2d845e211064c42",
+            "snaks": {
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "4d175d24510f326201a08d8330e5159bc36fb1c5",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 28537,
+                      "id": "Q28537"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P518": [
+                {
+                  "snaktype": "value",
+                  "property": "P518",
+                  "hash": "c7d9e261c72700982d9bd83c8b5dd8a46fdec7f5",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 120493751,
+                      "id": "Q120493751"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "7d76f6674592505e6660b3faeb04d6ab2ae7c419",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-13T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P3452",
+              "P518",
+              "P813"
+            ]
+          },
+          {
+            "hash": "d0aff43d6726bcb10b033532dc0492c1764ed780",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "fcc69088e6134a1e916e47e9ade1d0df0241a232",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 84591894,
+                      "id": "Q84591894"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P887": [
+                {
+                  "snaktype": "value",
+                  "property": "P887",
+                  "hash": "2009eafb2646ea71bee7372b061e8521ee613fc2",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 69652283,
+                      "id": "Q69652283"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "257025540437a19a38a021f68040ffb848c53573",
+                  "datavalue": {
+                    "value": "https://trakt.tv/shows/the-vampire-diaries/seasons/4/episodes/15",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "7d76f6674592505e6660b3faeb04d6ab2ae7c419",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-13T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P887",
+              "P854",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P1712": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1712",
+          "hash": "07187fedb26754055111f8219bc4673c22b2bc55",
+          "datavalue": {
+            "value": "tv/the-vampire-diaries/season-4/episode-15-stand-by-me",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$4e9713d6-5ef0-4f94-ae72-4c72b7fcb2a9",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "135a4bb175caa5d9ff6d602ecbb9d13710c1f76b",
+            "snaks": {
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "d11d5ab5456706b0f9805cc1af6c49d0fa5749db",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 2701447,
+                      "id": "Q2701447"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "276bd81b91868acdbccdef47989ebeeedf8d9452",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2025-01-03T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P3452",
+              "P813"
+            ]
+          },
+          {
+            "hash": "beb6039482548ac2956702b6b98ab1ced9736b9e",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "c021e77da9cbd25343b4762361ca2e9ef889597a",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 150248,
+                      "id": "Q150248"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P887": [
+                {
+                  "snaktype": "value",
+                  "property": "P887",
+                  "hash": "2009eafb2646ea71bee7372b061e8521ee613fc2",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 69652283,
+                      "id": "Q69652283"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P1712": [
+                {
+                  "snaktype": "value",
+                  "property": "P1712",
+                  "hash": "671a0ed1d6822d7b55da73c7c757dcec452dae52",
+                  "datavalue": {
+                    "value": "tv/the-vampire-diaries/season-4",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "276bd81b91868acdbccdef47989ebeeedf8d9452",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2025-01-03T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P1810": [
+                {
+                  "snaktype": "value",
+                  "property": "P1810",
+                  "hash": "06947cb14d35c794913daaefc4fda78161f92566",
+                  "datavalue": {
+                    "value": "Stand by Me",
+                    "type": "string"
+                  },
+                  "datatype": "string"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P887",
+              "P1712",
+              "P813",
+              "P1810"
+            ]
+          }
+        ]
+      }
+    ],
+    "P2047": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2047",
+          "hash": "40310e76bf840444352f84750a26ca1df48b6ee0",
+          "datavalue": {
+            "value": {
+              "amount": "+41",
+              "unit": "http://www.wikidata.org/entity/Q7727"
+            },
+            "type": "quantity"
+          },
+          "datatype": "quantity"
+        },
+        "type": "statement",
+        "id": "Q28624370$34968AC1-45D1-434E-90C9-EC192BDBE1F4",
+        "rank": "normal"
+      }
+    ],
+    "P11294": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P11294",
+          "hash": "85810eb8ae1e46252a398fcb5fdc956a9b78a693",
+          "datavalue": {
+            "value": "2676",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q28624370$B015189B-F5DE-4726-805C-0DEC5A47D799",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {}
+}

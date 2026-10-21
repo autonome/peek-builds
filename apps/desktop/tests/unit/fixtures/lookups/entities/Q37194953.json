@@ -1,0 +1,275 @@
+{
+  "type": "item",
+  "id": "Q37194953",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Stand"
+    }
+  },
+  "claims": {
+    "P3880": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3880",
+          "hash": "109f9b90cc501f0985cce966a279f3e72683f902",
+          "datavalue": {
+            "value": "STNT11",
+            "type": "string"
+          },
+          "datatype": "string"
+        },
+        "type": "statement",
+        "id": "Q37194953$A93FA299-751C-4208-8996-02F1047A39E7",
+        "rank": "normal"
+      }
+    ],
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "3a01d0950849b76433d9aeec3107b57e86bb6378",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 101352,
+              "id": "Q101352"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q37194953$AA02727E-52A2-49EA-AEF7-AAC4D44E72E6",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "8c376f30a6c29ed08110a46e989a72b2b9c967a6",
+            "snaks": {
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "14bbd3989e616652210ba16280e1dea0166635f9",
+                  "datavalue": {
+                    "value": "https://www2.census.gov/topics/genealogy/2010surnames/names.zip",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "8ca6dda9dbd16cf0adc91f7ee0ba2810cd79dea6",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 523716,
+                      "id": "Q523716"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P854",
+              "P248"
+            ]
+          }
+        ]
+      }
+    ],
+    "P3879": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3879",
+          "hash": "eaa0dd7ffb885e7fa1695ce37e156b26ec344df7",
+          "datavalue": {
+            "value": "8262",
+            "type": "string"
+          },
+          "datatype": "string"
+        },
+        "type": "statement",
+        "id": "Q37194953$7B40CAC8-D6B5-4B46-B198-A658203C973C",
+        "rank": "normal"
+      }
+    ],
+    "P3878": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3878",
+          "hash": "720717a929153c8e7c319454b8642659da28c303",
+          "datavalue": {
+            "value": "S353",
+            "type": "string"
+          },
+          "datatype": "string"
+        },
+        "type": "statement",
+        "id": "Q37194953$63441927-B338-43FF-B84E-3BCD061AE259",
+        "rank": "normal"
+      }
+    ],
+    "P1889": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1889",
+          "hash": "73d047ca78c499ccd07a7232b8de5a0376122c8c",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 342013,
+              "id": "Q342013"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1013": [
+            {
+              "snaktype": "value",
+              "property": "P1013",
+              "hash": "94271bee1daecc0a84c7ff0e80a6f5e76c330944",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 27924673,
+                  "id": "Q27924673"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1013"
+        ],
+        "id": "Q37194953$8F6B6B02-F25A-4C24-97C9-36C9D7DA0510",
+        "rank": "normal"
+      }
+    ],
+    "P1705": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1705",
+          "hash": "7ea3687a315487ea5c5c52fd236431d33fd4ed2c",
+          "datavalue": {
+            "value": {
+              "text": "Stand",
+              "language": "mul"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q37194953$169892D3-BD51-4E81-8D6C-D71D8331C57C",
+        "rank": "normal"
+      }
+    ],
+    "P282": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P282",
+          "hash": "1346363b216aa5bd0a728b8de9ac249b9ddf210f",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 8229,
+              "id": "Q8229"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q37194953$29323187-F5AF-4060-9944-B262ED49F19F",
+        "rank": "normal"
+      }
+    ],
+    "P3370": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P3370",
+          "hash": "7f0298825d0d04e16be8a69167e2eff615ba8b32",
+          "datavalue": {
+            "value": "STAND",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q37194953$0C14C178-A0F3-4B85-8045-C2EBDD9D32C6",
+        "rank": "normal"
+      }
+    ],
+    "P9644": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P9644",
+          "hash": "3f275cafabff795c4a5664c4702f6d7dbacc8f36",
+          "datavalue": {
+            "value": "STAND",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q37194953$DDE55E28-E30E-445C-8B00-10AD2141EFE6",
+        "rank": "normal"
+      }
+    ],
+    "P4839": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4839",
+          "hash": "2a62754df6c1c5c249e0f09fd9f27635e3c99c87",
+          "datavalue": {
+            "value": "Entity[\"Surname\", \"Stand\"]",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q37194953$24A1D22B-B5EA-4D50-B281-7899E11C5CBE",
+        "rank": "normal"
+      }
+    ],
+    "P373": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P373",
+          "hash": "71a94313c329c412a95fe7a27772188edc60a4b7",
+          "datavalue": {
+            "value": "Stand (surname)",
+            "type": "string"
+          },
+          "datatype": "string"
+        },
+        "type": "statement",
+        "id": "Q37194953$892277CB-50EF-4D40-8FC6-A7FC5085E744",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {}
+}

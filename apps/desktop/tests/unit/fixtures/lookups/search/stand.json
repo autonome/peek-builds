@@ -1,0 +1,271 @@
+{
+  "searchinfo": {
+    "search": "Stand"
+  },
+  "search": [
+    {
+      "id": "Q1777301",
+      "title": "Q1777301",
+      "pageid": 1709244,
+      "concepturi": "http://www.wikidata.org/entity/Q1777301",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q1777301",
+      "display": {
+        "label": {
+          "value": "standard time",
+          "language": "en"
+        },
+        "description": {
+          "value": "synchronization of clocks within a geographical area or region",
+          "language": "en"
+        }
+      },
+      "label": "standard time",
+      "description": "synchronization of clocks within a geographical area or region",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "standard time"
+      }
+    },
+    {
+      "id": "Q2309248",
+      "title": "Q2309248",
+      "pageid": 2230729,
+      "concepturi": "http://www.wikidata.org/entity/Q2309248",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q2309248",
+      "display": {
+        "label": {
+          "value": "Stand",
+          "language": "en"
+        },
+        "description": {
+          "value": "song by the American alternative rock band R.E.M.",
+          "language": "en"
+        }
+      },
+      "label": "Stand",
+      "description": "song by the American alternative rock band R.E.M.",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand"
+      }
+    },
+    {
+      "id": "Q1510380",
+      "title": "Q1510380",
+      "pageid": 1447632,
+      "concepturi": "http://www.wikidata.org/entity/Q1510380",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q1510380",
+      "display": {
+        "label": {
+          "value": "grove",
+          "language": "en"
+        },
+        "description": {
+          "value": "small group of trees of less than 5,000 m²",
+          "language": "en"
+        }
+      },
+      "label": "grove",
+      "description": "small group of trees of less than 5,000 m²",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "stand"
+      },
+      "aliases": [
+        "stand"
+      ]
+    },
+    {
+      "id": "Q37194953",
+      "title": "Q37194953",
+      "pageid": 38573051,
+      "concepturi": "http://www.wikidata.org/entity/Q37194953",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q37194953",
+      "display": {
+        "label": {
+          "value": "Stand",
+          "language": "en"
+        },
+        "description": {
+          "value": "family name",
+          "language": "en"
+        }
+      },
+      "label": "Stand",
+      "description": "family name",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Stand"
+      }
+    },
+    {
+      "id": "Q262828",
+      "title": "Q262828",
+      "pageid": 254879,
+      "concepturi": "http://www.wikidata.org/entity/Q262828",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q262828",
+      "display": {
+        "label": {
+          "value": "Standard Taiwanese Mandarin",
+          "language": "en"
+        },
+        "description": {
+          "value": "variety of Modern Standard Chinese serving as the official language of the Republic of China (Taiwan)",
+          "language": "en"
+        }
+      },
+      "label": "Standard Taiwanese Mandarin",
+      "description": "variety of Modern Standard Chinese serving as the official language of the Republic of China (Taiwan)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Standard Taiwanese Mandarin"
+      }
+    },
+    {
+      "id": "Q1999572",
+      "title": "Q1999572",
+      "pageid": 1928076,
+      "concepturi": "http://www.wikidata.org/entity/Q1999572",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q1999572",
+      "display": {
+        "label": {
+          "value": "standard-gauge railway",
+          "language": "en"
+        },
+        "description": {
+          "value": "rail track gauge – international standard gauge (1435 mm, 4 ft 8 1⁄2 in)",
+          "language": "en"
+        }
+      },
+      "label": "standard-gauge railway",
+      "description": "rail track gauge – international standard gauge (1435 mm, 4 ft 8 1⁄2 in)",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "standard-gauge railway"
+      }
+    },
+    {
+      "id": "Q180684",
+      "title": "Q180684",
+      "pageid": 179905,
+      "concepturi": "http://www.wikidata.org/entity/Q180684",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q180684",
+      "display": {
+        "label": {
+          "value": "conflict",
+          "language": "en"
+        },
+        "description": {
+          "value": "a situation in which unacceptable differences in interests, expectations, values, or opinions occur between individuals or groups",
+          "language": "en"
+        }
+      },
+      "label": "conflict",
+      "description": "a situation in which unacceptable differences in interests, expectations, values, or opinions occur between individuals or groups",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "standoff"
+      },
+      "aliases": [
+        "standoff"
+      ]
+    },
+    {
+      "id": "Q6457972",
+      "title": "Q6457972",
+      "pageid": 6274743,
+      "concepturi": "http://www.wikidata.org/entity/Q6457972",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q6457972",
+      "display": {
+        "label": {
+          "value": "urban East Norwegian",
+          "language": "en"
+        },
+        "description": {
+          "value": "sociolect spoken in Oslo and surrounding areas",
+          "language": "en"
+        }
+      },
+      "label": "urban East Norwegian",
+      "description": "sociolect spoken in Oslo and surrounding areas",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "Standard East Norwegian"
+      },
+      "aliases": [
+        "Standard East Norwegian"
+      ]
+    },
+    {
+      "id": "Q3093009",
+      "title": "Q3093009",
+      "pageid": 2955943,
+      "concepturi": "http://www.wikidata.org/entity/Q3093009",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q3093009",
+      "display": {
+        "label": {
+          "value": "dais",
+          "language": "en"
+        },
+        "description": {
+          "value": "raised platform",
+          "language": "en"
+        }
+      },
+      "label": "dais",
+      "description": "raised platform",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "stand"
+      },
+      "aliases": [
+        "stand"
+      ]
+    },
+    {
+      "id": "Q727694",
+      "title": "Q727694",
+      "pageid": 684132,
+      "concepturi": "http://www.wikidata.org/entity/Q727694",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q727694",
+      "display": {
+        "label": {
+          "value": "Standard Chinese",
+          "language": "en"
+        },
+        "description": {
+          "value": "standard form of the Chinese language",
+          "language": "en"
+        }
+      },
+      "label": "Standard Chinese",
+      "description": "standard form of the Chinese language",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Standard Chinese"
+      }
+    }
+  ],
+  "search-continue": 10,
+  "success": 1
+}

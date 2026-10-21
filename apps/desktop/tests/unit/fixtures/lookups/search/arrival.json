@@ -1,0 +1,268 @@
+{
+  "searchinfo": {
+    "search": "Arrival"
+  },
+  "search": [
+    {
+      "id": "Q20382729",
+      "title": "Q20382729",
+      "pageid": 22131638,
+      "concepturi": "http://www.wikidata.org/entity/Q20382729",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q20382729",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "2016 science fiction film by Denis Villeneuve",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "2016 science fiction film by Denis Villeneuve",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q12769393",
+      "title": "Q12769393",
+      "pageid": 14152739,
+      "concepturi": "http://www.wikidata.org/entity/Q12769393",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q12769393",
+      "display": {
+        "label": {
+          "value": "end",
+          "language": "en"
+        },
+        "description": {
+          "value": "termination of something",
+          "language": "en"
+        }
+      },
+      "label": "end",
+      "description": "termination of something",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "arrival"
+      },
+      "aliases": [
+        "arrival"
+      ]
+    },
+    {
+      "id": "Q2578989",
+      "title": "Q2578989",
+      "pageid": 2488424,
+      "concepturi": "http://www.wikidata.org/entity/Q2578989",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q2578989",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "2000 studio album by Journey",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "2000 studio album by Journey",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q105954404",
+      "title": "Q105954404",
+      "pageid": 101298937,
+      "concepturi": "http://www.wikidata.org/entity/Q105954404",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q105954404",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "instrumental track by ABBA; 1976 studio recording",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "instrumental track by ABBA; 1976 studio recording",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q115108099",
+      "title": "Q115108099",
+      "pageid": 109751235,
+      "concepturi": "http://www.wikidata.org/entity/Q115108099",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q115108099",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "instrumental track by Mike Oldfield; 1980 studio recording; cover version",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "instrumental track by Mike Oldfield; 1980 studio recording; cover version",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q162392",
+      "title": "Q162392",
+      "pageid": 163209,
+      "concepturi": "http://www.wikidata.org/entity/Q162392",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q162392",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "1976 studio album by ABBA",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "1976 studio album by ABBA",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q540318",
+      "title": "Q540318",
+      "pageid": 508873,
+      "concepturi": "http://www.wikidata.org/entity/Q540318",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q540318",
+      "display": {
+        "label": {
+          "value": "The Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "1996 film directed by David Twohy",
+          "language": "en"
+        }
+      },
+      "label": "The Arrival",
+      "description": "1996 film directed by David Twohy",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "Arrival"
+      },
+      "aliases": [
+        "Arrival"
+      ]
+    },
+    {
+      "id": "Q2506273",
+      "title": "Q2506273",
+      "pageid": 2419372,
+      "concepturi": "http://www.wikidata.org/entity/Q2506273",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q2506273",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "instrumental composition composed by Benny Andersson and Björn Ulvaeus, recorded by ABBA and released in 1976",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "instrumental composition composed by Benny Andersson and Björn Ulvaeus, recorded by ABBA and released in 1976",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    },
+    {
+      "id": "Q287921",
+      "title": "Q287921",
+      "pageid": 278343,
+      "concepturi": "http://www.wikidata.org/entity/Q287921",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q287921",
+      "display": {
+        "label": {
+          "value": "The Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "2004 album by Hypocrisy",
+          "language": "en"
+        }
+      },
+      "label": "The Arrival",
+      "description": "2004 album by Hypocrisy",
+      "match": {
+        "type": "alias",
+        "language": "en",
+        "text": "Arrival"
+      },
+      "aliases": [
+        "Arrival"
+      ]
+    },
+    {
+      "id": "Q28405615",
+      "title": "Q28405615",
+      "pageid": 30101411,
+      "concepturi": "http://www.wikidata.org/entity/Q28405615",
+      "repository": "wikidata",
+      "url": "//www.wikidata.org/wiki/Q28405615",
+      "display": {
+        "label": {
+          "value": "Arrival",
+          "language": "en"
+        },
+        "description": {
+          "value": "electric vehicle designer and manufacturer",
+          "language": "en"
+        }
+      },
+      "label": "Arrival",
+      "description": "electric vehicle designer and manufacturer",
+      "match": {
+        "type": "label",
+        "language": "en",
+        "text": "Arrival"
+      }
+    }
+  ],
+  "search-continue": 10,
+  "success": 1
+}

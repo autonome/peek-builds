@@ -1,0 +1,428 @@
+{
+  "type": "item",
+  "id": "Q141790772",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Stand By Me"
+    }
+  },
+  "claims": {
+    "P18": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P18",
+          "hash": "3439785af36ee03fef42602a9c1c8d5cde21ee0e",
+          "datavalue": {
+            "value": "02 Stanite iza mene 100x120.jpg",
+            "type": "string"
+          },
+          "datatype": "commonsMedia"
+        },
+        "type": "statement",
+        "id": "Q141790772$A5DAF0A8-0D5A-47C7-87D9-4B25645C9D47",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3067aedc5a1d104aaa5192d0d5047f6e5801908d",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "5d3b16d350189b0a81818758208505444c86c127",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 565,
+                      "id": "Q565"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "9204c8139d25a11ebdc4f16e859fc7c088c5ae46",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2026-10-20T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "9ff038fd518aa48190d3dea6e6f438ec8956066e",
+                  "datavalue": {
+                    "value": "https://commons.wikimedia.org/wiki/File:02_Stanite_iza_mene_100x120.jpg",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ],
+    "P170": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P170",
+          "hash": "e662cc1be859724e41b217b1f5f86778d279d9b2",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 141790659,
+              "id": "Q141790659"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q141790772$633F4D2A-D8DB-4FC5-96AE-F5D4C1E07404",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3067aedc5a1d104aaa5192d0d5047f6e5801908d",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "5d3b16d350189b0a81818758208505444c86c127",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 565,
+                      "id": "Q565"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "9204c8139d25a11ebdc4f16e859fc7c088c5ae46",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2026-10-20T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "9ff038fd518aa48190d3dea6e6f438ec8956066e",
+                  "datavalue": {
+                    "value": "https://commons.wikimedia.org/wiki/File:02_Stanite_iza_mene_100x120.jpg",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ],
+    "P186": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P186",
+          "hash": "71b8c3a9aada5161bd30692f732bc347daba35cf",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 296955,
+              "id": "Q296955"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q141790772$6047AA70-7F1B-43E6-9E4E-97EB1E089CE8",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3067aedc5a1d104aaa5192d0d5047f6e5801908d",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "5d3b16d350189b0a81818758208505444c86c127",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 565,
+                      "id": "Q565"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "9204c8139d25a11ebdc4f16e859fc7c088c5ae46",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2026-10-20T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "9ff038fd518aa48190d3dea6e6f438ec8956066e",
+                  "datavalue": {
+                    "value": "https://commons.wikimedia.org/wiki/File:02_Stanite_iza_mene_100x120.jpg",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      },
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P186",
+          "hash": "2276ba6f3bd45e3014bbf0141ff11aec3a0a216a",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 12321255,
+              "id": "Q12321255"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P518": [
+            {
+              "snaktype": "value",
+              "property": "P518",
+              "hash": "741c2f726bfd42522b6ee31f850ec9ff7d4b7c41",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 861259,
+                  "id": "Q861259"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P518"
+        ],
+        "id": "Q141790772$69EED9DA-032E-49FF-8C13-BCC6A1A2972D",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3067aedc5a1d104aaa5192d0d5047f6e5801908d",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "5d3b16d350189b0a81818758208505444c86c127",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 565,
+                      "id": "Q565"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "9204c8139d25a11ebdc4f16e859fc7c088c5ae46",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2026-10-20T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "9ff038fd518aa48190d3dea6e6f438ec8956066e",
+                  "datavalue": {
+                    "value": "https://commons.wikimedia.org/wiki/File:02_Stanite_iza_mene_100x120.jpg",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ],
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "dfce24c3a9083b334aa9fc35a67b162acd19286f",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 3305213,
+              "id": "Q3305213"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q141790772$3E3AB64E-BA1C-4F0B-A8DC-E586AFEA2B9F",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "3067aedc5a1d104aaa5192d0d5047f6e5801908d",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "5d3b16d350189b0a81818758208505444c86c127",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 565,
+                      "id": "Q565"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "9204c8139d25a11ebdc4f16e859fc7c088c5ae46",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2026-10-20T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P4656": [
+                {
+                  "snaktype": "value",
+                  "property": "P4656",
+                  "hash": "9ff038fd518aa48190d3dea6e6f438ec8956066e",
+                  "datavalue": {
+                    "value": "https://commons.wikimedia.org/wiki/File:02_Stanite_iza_mene_100x120.jpg",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143",
+              "P813",
+              "P4656"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sitelinks": {}
+}

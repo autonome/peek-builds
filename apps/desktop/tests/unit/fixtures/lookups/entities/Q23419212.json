@@ -1,0 +1,779 @@
+{
+  "type": "item",
+  "id": "Q23419212",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Stand By Me"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "2d3761f68cf1248dc8fbf0b5eaa1f7fff03df987",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 21191270,
+              "id": "Q21191270"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$1F09EC9B-2035-46A9-92C2-B9528F33E927",
+        "rank": "normal"
+      }
+    ],
+    "P179": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P179",
+          "hash": "7857313a2ead704b9b2f9b26ad8c7d0804ad4962",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 438406,
+              "id": "Q438406"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "896638648ec18b5754e582e3989ad9ecf26f9054",
+              "datavalue": {
+                "value": "96",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q23419212$F537CC11-4701-4E80-9323-16A71F0447A1",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P156": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P156",
+          "hash": "c7cf0a927c67948eccd40c76d1f397b29e9f95ef",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 23419209,
+              "id": "Q23419209"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$21E92560-B2AA-40A3-AD9C-0E024824C6A2",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P345": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P345",
+          "hash": "b5f6fd113057b9eade0d519df08969eac4aefa96",
+          "datavalue": {
+            "value": "tt1263288",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$68FA1671-6247-4D0F-942F-FEB2B1B3F093",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P155": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P155",
+          "hash": "c38a846c7986ec37147ad9c5664e3016fb44f6e0",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 50322713,
+              "id": "Q50322713"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$A3A16343-4148-495E-A348-9974327D6350",
+        "rank": "normal"
+      }
+    ],
+    "P4908": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4908",
+          "hash": "6b59dc4186058f32a4a22294bfbc6a353e7f410c",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1840631,
+              "id": "Q1840631"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "618cb6a0b47e3e935e91ad6a5bd476a8d3f4fb33",
+              "datavalue": {
+                "value": "18",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q23419212$6A5A87AF-4B94-4E70-846A-0AC42037AC49",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "fa278ebfc458360e5aed63d5058cca83c46134f1",
+            "snaks": {
+              "P143": [
+                {
+                  "snaktype": "value",
+                  "property": "P143",
+                  "hash": "e4f6d9441d0600513c4533c672b5ab472dc73694",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 328,
+                      "id": "Q328"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P143"
+            ]
+          }
+        ]
+      }
+    ],
+    "P1476": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1476",
+          "hash": "cd68ca4f52298074e3bf7d1c589e648dfca042ad",
+          "datavalue": {
+            "value": {
+              "text": "Stand By Me",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q23419212$0B6870B7-4614-4CBB-9484-5D8A6445170D",
+        "rank": "normal"
+      }
+    ],
+    "P364": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P364",
+          "hash": "cc2c15fb58feeae8fe7a641c0e2ddaf3f48e59f8",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1860,
+              "id": "Q1860"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$07DE45C8-E09F-4A02-BF86-16DE9AFADB38",
+        "rank": "normal"
+      }
+    ],
+    "P138": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P138",
+          "hash": "fcbce7c0d1ff053267afba087c6d2ffb7f912477",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1513654,
+              "id": "Q1513654"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$b6277ec6-44df-bbd5-fbd1-389c40e25ad5",
+        "rank": "normal"
+      }
+    ],
+    "P57": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P57",
+          "hash": "7f070e95716bdd241146c90baa5603264aed657f",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 6187572,
+              "id": "Q6187572"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$c6600429-4a28-48b8-44e3-0937bc9be536",
+        "rank": "normal"
+      }
+    ],
+    "P2671": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P2671",
+          "hash": "6a882500c244e3b1772fa503ab1ee5fa88711242",
+          "datavalue": {
+            "value": "/g/122np3x2",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$3E551F50-D50A-4573-8CD6-88C2C572E668",
+        "rank": "normal"
+      }
+    ],
+    "P8411": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8411",
+          "hash": "db73a33d5e11a0526f6035fd468725f4ead02219",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 16917,
+              "id": "Q16917"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q23419212$7AAFEA34-2681-48F6-859F-3454BCA7A0A7",
+        "rank": "normal"
+      }
+    ],
+    "P8013": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8013",
+          "hash": "e3bcce44fef26773dc3598ad3749f0053c49cffe",
+          "datavalue": {
+            "value": "shows/grey-s-anatomy/seasons/5/episodes/18",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$5c022ba0-c14a-4462-be45-46afbefe7527",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "03ab3033314825801324e7268ff0a477a08a58b4",
+            "snaks": {
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "c5a05103f6f2b537e1976a3108e92bae53a532cc",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 438406,
+                      "id": "Q438406"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P518": [
+                {
+                  "snaktype": "value",
+                  "property": "P518",
+                  "hash": "c7d9e261c72700982d9bd83c8b5dd8a46fdec7f5",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 120493751,
+                      "id": "Q120493751"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "404f02782f51ba80150645303a002606bc314ad2",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-10T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P3452",
+              "P518",
+              "P813"
+            ]
+          },
+          {
+            "hash": "3965c7b0a88fd30bb56cb5d74609ed544253f410",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "fcc69088e6134a1e916e47e9ade1d0df0241a232",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 84591894,
+                      "id": "Q84591894"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P887": [
+                {
+                  "snaktype": "value",
+                  "property": "P887",
+                  "hash": "2009eafb2646ea71bee7372b061e8521ee613fc2",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 69652283,
+                      "id": "Q69652283"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "9e49190749225a6bd24bcbc10919b211c37649b8",
+                  "datavalue": {
+                    "value": "https://trakt.tv/shows/grey-s-anatomy/seasons/5/episodes/18",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "404f02782f51ba80150645303a002606bc314ad2",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-10T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P887",
+              "P854",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P577": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P577",
+          "hash": "6beec2da324972a1265f6cc841e4287e8f52d4f2",
+          "datavalue": {
+            "value": {
+              "time": "+2009-03-19T00:00:00Z",
+              "timezone": 0,
+              "before": 0,
+              "after": 0,
+              "precision": 11,
+              "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+            },
+            "type": "time"
+          },
+          "datatype": "time"
+        },
+        "type": "statement",
+        "id": "Q23419212$FCA9F7C4-45E7-4850-83AB-6781396B1D28",
+        "rank": "normal"
+      }
+    ],
+    "P7043": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P7043",
+          "hash": "6bf36c5492f1468d17edeb7b083eb6d9a83b2f36",
+          "datavalue": {
+            "value": "440644",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$8FF4CF19-210A-4721-A690-5C006D225657",
+        "rank": "normal"
+      }
+    ],
+    "P12559": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P12559",
+          "hash": "38bc8b5c4c14d23037a8d9f6fe2ba7196b592040",
+          "datavalue": {
+            "value": "64373",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$96C768EF-AFB2-45D5-8A39-8AA05C1943D2",
+        "rank": "normal"
+      }
+    ],
+    "P1712": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1712",
+          "hash": "5c939187a759b3d658b41ff813218637756b211d",
+          "datavalue": {
+            "value": "tv/greys-anatomy/season-5/episode-18-stand-by-me",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$aad485be-51f0-44b9-924e-b98e147abac3",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "c346f7dbce14f4df35a474d59f8a0b890bd7667d",
+            "snaks": {
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "c5a05103f6f2b537e1976a3108e92bae53a532cc",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 438406,
+                      "id": "Q438406"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "fb29f661a9094a9e9025d6b2b702f12d78d57846",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2025-01-06T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P3452",
+              "P813"
+            ]
+          },
+          {
+            "hash": "0fd0373d1421e1958393a8028422170df89cf8e3",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "c021e77da9cbd25343b4762361ca2e9ef889597a",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 150248,
+                      "id": "Q150248"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P887": [
+                {
+                  "snaktype": "value",
+                  "property": "P887",
+                  "hash": "2009eafb2646ea71bee7372b061e8521ee613fc2",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 69652283,
+                      "id": "Q69652283"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P1712": [
+                {
+                  "snaktype": "value",
+                  "property": "P1712",
+                  "hash": "6444f17e9752b930174cb101b332d5bba2d29b95",
+                  "datavalue": {
+                    "value": "tv/greys-anatomy/season-5",
+                    "type": "string"
+                  },
+                  "datatype": "external-id"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "fb29f661a9094a9e9025d6b2b702f12d78d57846",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2025-01-06T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ],
+              "P1810": [
+                {
+                  "snaktype": "value",
+                  "property": "P1810",
+                  "hash": "06947cb14d35c794913daaefc4fda78161f92566",
+                  "datavalue": {
+                    "value": "Stand by Me",
+                    "type": "string"
+                  },
+                  "datatype": "string"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P887",
+              "P1712",
+              "P813",
+              "P1810"
+            ]
+          }
+        ]
+      }
+    ],
+    "P11294": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P11294",
+          "hash": "b06d127b3317f96a447c39bf68e1f4b4d43588e0",
+          "datavalue": {
+            "value": "3171",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q23419212$E6F0AF75-79AB-40A6-9277-6D7366580747",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {
+    "enwiki": {
+      "site": "enwiki",
+      "title": "Stand by Me (Grey's Anatomy)",
+      "badges": []
+    }
+  }
+}

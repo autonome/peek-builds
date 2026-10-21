@@ -1,0 +1,426 @@
+{
+  "type": "item",
+  "id": "Q29599119",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "Stand by Me"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "2d3761f68cf1248dc8fbf0b5eaa1f7fff03df987",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 21191270,
+              "id": "Q21191270"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q29599119$C807316F-2B63-4905-BC69-CAC6FB5D9575",
+        "rank": "normal"
+      }
+    ],
+    "P179": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P179",
+          "hash": "fc0598ee8162ff63e3292712d1ebb9423c381628",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 2316316,
+              "id": "Q2316316"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "dc9df307fcc89949a1cb840d9abe3f90736d77a9",
+              "datavalue": {
+                "value": "662",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q29599119$591C868E-D0D7-48FE-8325-83507EF66C18",
+        "rank": "normal"
+      }
+    ],
+    "P345": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P345",
+          "hash": "06dbf6d51265e0926d71b757bbb48274b8a1cab4",
+          "datavalue": {
+            "value": "tt1379284",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q29599119$CA06727C-C8A3-4938-87F4-8D5581AD0517",
+        "rank": "normal"
+      }
+    ],
+    "P156": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P156",
+          "hash": "0d627a7b581e3f9cf9ae11b989b653afef2fad29",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 29599125,
+              "id": "Q29599125"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q29599119$A9F94316-5E45-4D30-8C74-6E0B60DF8392",
+        "rank": "normal"
+      }
+    ],
+    "P155": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P155",
+          "hash": "21d0034f9afff82e281cb701ee6270eca2721b69",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 29599113,
+              "id": "Q29599113"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q29599119$A8A23EC8-93E8-4FAE-B63F-A589F2ED01E8",
+        "rank": "normal"
+      }
+    ],
+    "P4908": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P4908",
+          "hash": "202e0d39ed7fb6c9da6521cf00f38a08011c1d53",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 5050899,
+              "id": "Q5050899"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "qualifiers": {
+          "P1545": [
+            {
+              "snaktype": "value",
+              "property": "P1545",
+              "hash": "daace348f57611d02238053c33432416124ce9a9",
+              "datavalue": {
+                "value": "25",
+                "type": "string"
+              },
+              "datatype": "string"
+            }
+          ]
+        },
+        "qualifiers-order": [
+          "P1545"
+        ],
+        "id": "Q29599119$CAC54ADC-68B5-42BC-86DA-E492D2B7D527",
+        "rank": "normal"
+      }
+    ],
+    "P577": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P577",
+          "hash": "3ead639becb8bd89461f5c3f93aa9eaf1b179c2e",
+          "datavalue": {
+            "value": {
+              "time": "+2009-02-14T00:00:00Z",
+              "timezone": 0,
+              "before": 0,
+              "after": 0,
+              "precision": 11,
+              "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+            },
+            "type": "time"
+          },
+          "datatype": "time"
+        },
+        "type": "statement",
+        "id": "Q29599119$2CE12CEF-877F-4FBA-839B-E013EA51834B",
+        "rank": "normal"
+      }
+    ],
+    "P1476": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P1476",
+          "hash": "5244632ee3e65ca85d9e0efe14c756595d353e0f",
+          "datavalue": {
+            "value": {
+              "text": "Stand by Me",
+              "language": "en"
+            },
+            "type": "monolingualtext"
+          },
+          "datatype": "monolingualtext"
+        },
+        "type": "statement",
+        "id": "Q29599119$D68CDCA9-E287-47CB-88C3-9ACF84831B67",
+        "rank": "normal"
+      }
+    ],
+    "P364": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P364",
+          "hash": "cc2c15fb58feeae8fe7a641c0e2ddaf3f48e59f8",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 1860,
+              "id": "Q1860"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q29599119$20400884-F144-4015-BE1E-6C315FEF1CE3",
+        "rank": "normal"
+      }
+    ],
+    "P495": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P495",
+          "hash": "7fff5adac725cc34fb5c6dcfe502e2a7bbd045b2",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 145,
+              "id": "Q145"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q29599119$E1D97AB3-CCAA-4352-B927-9D73C04953CB",
+        "rank": "normal"
+      }
+    ],
+    "P8013": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P8013",
+          "hash": "5d0773e2eafaa1a6e1926d458354bab46e2809ae",
+          "datavalue": {
+            "value": "shows/casualty/seasons/23/episodes/25",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q29599119$1d4fadb4-e6b1-43c3-ad56-95f52d50df3f",
+        "rank": "normal",
+        "references": [
+          {
+            "hash": "af411390ba92a6d0c1985c7961cea7c43a409b10",
+            "snaks": {
+              "P3452": [
+                {
+                  "snaktype": "value",
+                  "property": "P3452",
+                  "hash": "5dcb5356ca70cbb3d3ae333f87ca507e83c3d65b",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 2316316,
+                      "id": "Q2316316"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P518": [
+                {
+                  "snaktype": "value",
+                  "property": "P518",
+                  "hash": "c7d9e261c72700982d9bd83c8b5dd8a46fdec7f5",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 120493751,
+                      "id": "Q120493751"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "e8bcf05094551ad7689cefdd22e54e1b6d96ed7f",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-09T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P3452",
+              "P518",
+              "P813"
+            ]
+          },
+          {
+            "hash": "47fbf00191aa5f87e5b164c56ff24730e3febb1e",
+            "snaks": {
+              "P248": [
+                {
+                  "snaktype": "value",
+                  "property": "P248",
+                  "hash": "fcc69088e6134a1e916e47e9ade1d0df0241a232",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 84591894,
+                      "id": "Q84591894"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P887": [
+                {
+                  "snaktype": "value",
+                  "property": "P887",
+                  "hash": "2009eafb2646ea71bee7372b061e8521ee613fc2",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 69652283,
+                      "id": "Q69652283"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ],
+              "P854": [
+                {
+                  "snaktype": "value",
+                  "property": "P854",
+                  "hash": "d89632c2a823a5dc6209582c216f8d7c03fc443c",
+                  "datavalue": {
+                    "value": "https://trakt.tv/shows/casualty/seasons/23/episodes/25",
+                    "type": "string"
+                  },
+                  "datatype": "url"
+                }
+              ],
+              "P813": [
+                {
+                  "snaktype": "value",
+                  "property": "P813",
+                  "hash": "e8bcf05094551ad7689cefdd22e54e1b6d96ed7f",
+                  "datavalue": {
+                    "value": {
+                      "time": "+2024-06-09T00:00:00Z",
+                      "timezone": 0,
+                      "before": 0,
+                      "after": 0,
+                      "precision": 11,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                    },
+                    "type": "time"
+                  },
+                  "datatype": "time"
+                }
+              ]
+            },
+            "snaks-order": [
+              "P248",
+              "P887",
+              "P854",
+              "P813"
+            ]
+          }
+        ]
+      }
+    ],
+    "P11294": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P11294",
+          "hash": "9e0a796775b43a8fda20bf9381cfae991c53afc3",
+          "datavalue": {
+            "value": "64825",
+            "type": "string"
+          },
+          "datatype": "external-id"
+        },
+        "type": "statement",
+        "id": "Q29599119$8B50F527-F7CC-49B7-AED9-05FEE642E3C3",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {}
+}

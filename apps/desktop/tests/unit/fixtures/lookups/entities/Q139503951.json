@@ -1,0 +1,34 @@
+{
+  "type": "item",
+  "id": "Q139503951",
+  "labels": {
+    "en": {
+      "language": "en",
+      "value": "The Piano Tuner"
+    }
+  },
+  "claims": {
+    "P31": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P31",
+          "hash": "0ebb78ffecd3415a2dbc8db900881ff784fead2a",
+          "datavalue": {
+            "value": {
+              "entity-type": "item",
+              "numeric-id": 4167410,
+              "id": "Q4167410"
+            },
+            "type": "wikibase-entityid"
+          },
+          "datatype": "wikibase-item"
+        },
+        "type": "statement",
+        "id": "Q139503951$79774a0c-4dda-c566-bd5b-beec4cd166da",
+        "rank": "normal"
+      }
+    ]
+  },
+  "sitelinks": {}
+}
