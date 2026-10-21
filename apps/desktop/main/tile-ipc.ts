@@ -116,6 +116,7 @@ import {
 } from './rules.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle, isPublishableFeatureFile, previewLocalDirectory, registerLocalDirectory } from './feature-installer.js';
+import { evaluateFeatureApproval } from './feature-approval.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -1569,6 +1570,14 @@ export function registerTileIpcHandlers(): void {
     if (!entry) return { error: `Feature not found: ${args.id}` };
     if (!sourceTypeAllowed(grant, entry.source.type)) {
       return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
+    }
+
+    // An enable must not arm a feature the loader would skip: unapproved, or a
+    // local folder whose manifest now asks for more than was approved.
+    const enableManifest = parseManifestFile(path.join(entry.path, 'manifest.json'));
+    if (enableManifest?.version === 'tile' && enableManifest.manifest) {
+      const approval = evaluateFeatureApproval(entry, enableManifest.manifest);
+      if (!approval.allow) return { error: approval.error };
     }
 
     const result = registry.enableFeature(args.id);

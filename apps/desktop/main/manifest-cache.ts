@@ -100,9 +100,12 @@ export interface ManifestShortcutDecl {
  *
  * The manifest's declared `id` must match the passed `featureId`.
  *
+ * `isBuiltin` comes from the registry entry's source, never from the
+ * manifest's own `builtin` field.
+ *
  * Throws on parse error (caller decides whether to skip or surface).
  */
-export function upsertFromManifest(featureId: string, manifestPath: string): ManifestCacheRow {
+export function upsertFromManifest(featureId: string, manifestPath: string, isBuiltin = false): ManifestCacheRow {
   const parseResult = parseManifestFile(manifestPath);
   if (!parseResult) {
     throw new Error(`[manifest-cache] ${featureId}: manifest missing or invalid at ${manifestPath}`);
@@ -117,7 +120,7 @@ export function upsertFromManifest(featureId: string, manifestPath: string): Man
 
   // Resolve capabilities the same way the tile launcher does so the
   // cached grant matches what the tile would receive at load time.
-  const capabilities = resolveCapabilities(manifest.id, manifest.capabilities ?? {}, manifest.builtin === true);
+  const capabilities = resolveCapabilities(manifest.id, manifest.capabilities ?? {}, isBuiltin);
 
   const commands = extractCommands(manifest);
   const nouns = extractNouns(manifest);

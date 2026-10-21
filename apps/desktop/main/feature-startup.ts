@@ -19,6 +19,7 @@ import { collectLoadErrors } from './feature-list-entries.js';
 import { resetFeatureLoadErrors, setFeatureLoadError } from './feature-load-errors.js';
 import { AtprotoSource } from './atproto-source.js';
 import * as manifestCache from './manifest-cache.js';
+import { setFeatureEntryLookup } from './feature-trust.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 import { isEphemeralProfile } from './config.js';
 import { getDb } from './datastore.js';
@@ -97,7 +98,7 @@ export function getAtprotoSource(): AtprotoSource | null {
 function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
   try {
     const manifestPath = path.join(entry.path, 'manifest.json');
-    manifestCache.upsertFromManifest(entry.id, manifestPath);
+    manifestCache.upsertFromManifest(entry.id, manifestPath, entry.source.type === 'builtin');
   } catch (err) {
     console.warn(`[feature-startup] manifest-cache upsert failed for ${entry.id}:`, err);
   }
@@ -193,6 +194,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
 
   // Store singleton references for IPC handlers
   _registry = registry;
+  setFeatureEntryLookup((id) => registry.getFeature(id));
   _atprotoSource = new AtprotoSource({ peekVersion: config.peekVersion });
 
   // Wire manifest-cache to registry mutations. Every subsequent

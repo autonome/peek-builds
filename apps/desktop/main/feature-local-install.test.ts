@@ -20,7 +20,8 @@ import {
   computeManifestHash,
 } from './feature-installer.js';
 import { evaluateFeatureApproval } from './feature-approval.js';
-import type { TileManifest } from './tile-manifest.js';
+import { setFeatureEntryLookup, isBuiltinFeature, checkLaunchApproval } from './feature-trust.js';
+import { resolveCapabilities, type TileManifest } from './tile-manifest.js';
 
 let tmpDir: string;
 let registryDir: string;
@@ -217,5 +218,62 @@ describe('evaluateFeatureApproval', () => {
       makeManifest('builtin-feat', { theme: true }) as unknown as TileManifest,
     );
     assert.deepStrictEqual(decision, { allow: true });
+  });
+});
+
+describe('feature-trust', () => {
+  function lookupFor(registry: FeatureRegistry) {
+    setFeatureEntryLookup((id) => registry.getFeature(id));
+  }
+
+  afterEach(() => {
+    setFeatureEntryLookup(() => undefined);
+  });
+
+  it('a local entry whose manifest says builtin:true resolves as non-builtin', () => {
+    const dir = writeFeatureDir('claims-builtin', {
+      ...makeManifest('claims-builtin', { commands: true, sync: true }),
+      builtin: true,
+    });
+    const registry = newRegistry();
+    registerLocalDirectory(dir, registry, { userApproved: true });
+    lookupFor(registry);
+
+    assert.strictEqual(isBuiltinFeature('claims-builtin'), false);
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8'));
+    const grant = resolveCapabilities('claims-builtin', manifest.capabilities, isBuiltinFeature('claims-builtin'));
+    assert.ok(grant.denied.includes('sync'));
+  });
+
+  it('a registry builtin resolves as builtin, and an unregistered id does not', () => {
+    const registry = newRegistry();
+    registry.registerFeature({
+      id: 'shipped',
+      name: 'Shipped',
+      path: path.join(tmpDir, 'shipped'),
+      source: { type: 'builtin', version: '1.0.0' },
+      grantedCapabilities: {},
+      userApproved: true,
+      installedAt: new Date().toISOString(),
+    });
+    lookupFor(registry);
+
+    assert.strictEqual(isBuiltinFeature('shipped'), true);
+    assert.strictEqual(isBuiltinFeature('nobody'), false);
+    const grant = resolveCapabilities('shipped', { commands: true, sync: true }, isBuiltinFeature('shipped'));
+    assert.deepStrictEqual(grant.denied, []);
+  });
+
+  it('launch approval refuses a local entry that expanded its capabilities', () => {
+    const dir = writeFeatureDir('grows-later', makeManifest('grows-later', { commands: true }));
+    const registry = newRegistry();
+    registerLocalDirectory(dir, registry, { userApproved: true });
+    lookupFor(registry);
+
+    const edited = makeManifest('grows-later', { commands: true, theme: true }) as unknown as TileManifest;
+    const decision = checkLaunchApproval(edited);
+    assert.strictEqual(decision.allow, false);
+    assert.ok(!decision.allow && decision.error.includes('needs re-approval'));
+    assert.deepStrictEqual(checkLaunchApproval(makeManifest('grows-later', { commands: true }) as unknown as TileManifest), { allow: true });
   });
 });

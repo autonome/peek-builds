@@ -315,6 +315,8 @@ function readLocalManifest(dir: string): LocalManifestRead {
     const msgs = errors.map(e => `${e.path}: ${e.message}`).join('; ');
     return { ok: false, error: `Invalid manifest: ${msgs}` };
   }
+  // The manifest's own `builtin` field is ignored: callers resolve
+  // capabilities as non-builtin, and loading derives builtin from the registry.
   return { ok: true, manifest: raw as unknown as TileManifest, manifestJson };
 }
 
