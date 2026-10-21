@@ -12,7 +12,7 @@
 
 import path from 'node:path';
 
-import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
+import { FeatureRegistry, migrateLegacyRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
 import { collectLoadErrors } from './feature-list-entries.js';
@@ -28,8 +28,12 @@ import type { TileRule } from './tile-manifest.js';
 // ─── Types ──────────────────────────────────────────────────────────
 
 export interface FeatureStartupConfig {
-  /** App data directory (e.g., app.getPath('userData')) */
+  /** Per-profile data directory; holds registry.json and installed features/ */
   appDataDir: string;
+  /** Profile name, decides whether the legacy shared registry is migrated */
+  profile?: string;
+  /** Top-level data directory that held the registry shared by all profiles */
+  legacyAppDataDir?: string;
   /** Path to the repo/app features/ directory for builtins */
   builtinFeaturesDir: string;
   /** Path to the tile preload script */
@@ -176,7 +180,14 @@ function fireFsmTriggerForFeature(entry: FeatureRegistryEntry, trigger: string):
  * 3. Load all features via tile loader
  */
 export function initializeFeatures(config: FeatureStartupConfig): FeatureStartupResult {
-  // 1. Load registry
+  // 1. Load registry (seeding the default profile from the old shared one)
+  if (config.profile && config.legacyAppDataDir) {
+    migrateLegacyRegistry({
+      profile: config.profile,
+      legacyDir: config.legacyAppDataDir,
+      profileDir: config.appDataDir,
+    });
+  }
   const registry = new FeatureRegistry(config.appDataDir);
   registry.loadRegistry();
 

@@ -1325,7 +1325,9 @@ export async function loadFeatures(): Promise<number> {
   // This runs AFTER initCmd so tile-lazy's cmd:register-batch publishes reach cmd.
   try {
     const featureResult: FeatureStartupResult = initializeFeatures({
-      appDataDir: config.userDataPath,
+      appDataDir: path.join(config.userDataPath, config.profile),
+      profile: config.profile,
+      legacyAppDataDir: config.userDataPath,
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
     });
