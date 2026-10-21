@@ -19,7 +19,7 @@
 
 import path from 'node:path';
 
-import { launchTile, isTileLoaded, unloadTile, getTileManifest } from './tile-launcher.js';
+import { launchTile, isTileLoaded, unloadTile, getTileManifest, getTileWindow } from './tile-launcher.js';
 import { loadOrArmFeatureTile, disarmLazyTile } from './tile-arm.js';
 import { parseManifestFile } from './tile-manifest.js';
 import { evaluateFeatureApproval } from './feature-approval.js';
@@ -42,6 +42,13 @@ export async function reloadLocalFeature(featureId: string): Promise<LocalReload
 
   const previous = getTileManifest(featureId);
   const wasRunning = previous ? previous.tiles.filter(t => isTileLoaded(featureId, t.id)).map(t => t.id) : [];
+  // Tile windows are created hidden, so a relaunched window comes back only
+  // if it was showing, at the bounds it had.
+  const shown = new Map<string, Electron.Rectangle>();
+  for (const entryId of wasRunning) {
+    const win = getTileWindow(featureId, entryId);
+    if (win && !win.isDestroyed() && win.isVisible()) shown.set(entryId, win.getBounds());
+  }
   for (const entryId of wasRunning) {
     try {
       await unloadTile(featureId, entryId);
@@ -72,6 +79,12 @@ export async function reloadLocalFeature(featureId: string): Promise<LocalReload
     for (const entryId of wasRunning) {
       if (!manifest.tiles.some(t => t.id === entryId) || isTileLoaded(featureId, entryId)) continue;
       launchTile({ tilePath: entry.path, manifest, preloadPath: tilePreloadPath, entryId });
+      const bounds = shown.get(entryId);
+      const win = bounds && getTileWindow(featureId, entryId);
+      if (win && !win.isDestroyed()) {
+        win.setBounds(bounds);
+        win.show();
+      }
     }
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
