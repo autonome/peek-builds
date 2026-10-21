@@ -97,6 +97,11 @@ In that view:
 
 ## Decided
 
+- **Judgement is set aside** (2026-10-21). Kept, dropped and done as page states, and the notes
+  that go with them, are not the direction for now; the design centres on the larger flows
+  (starting a research, the open set, rounds, memory across rounds, finishing). Slice 1's
+  `keep`/`drop` commands and overlay buttons stay built but are not extended. The two judgement
+  decisions below stand in case judgement returns.
 - **Closing without judging** (2026-10-21). Closing a page that was never kept or dropped leaves
   it unjudged, and the research view shows it as unjudged. Closing may later come to mean
   dropped, once the flow has been used for real research; nothing is built for that yet.
