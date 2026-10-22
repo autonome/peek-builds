@@ -2382,7 +2382,10 @@ export function wireHybridContentEvents(
             });
           }
         } else {
-          if (dy < 0 || dy > REVEAL_EXIT_PX) {
+          // Above the host top is not an exit: on a host flush with the screen
+          // top that is the menu bar / screen edge, where the pointer rests
+          // during the reveal dwell. Only moving down into the page leaves.
+          if (dy > REVEAL_EXIT_PX) {
             inRevealBand = false;
             wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal-out' });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {

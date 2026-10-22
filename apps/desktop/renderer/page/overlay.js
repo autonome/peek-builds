@@ -541,7 +541,13 @@ function requestReveal({ immediate = false } = {}) {
     showNavbar();
   }, revealDelay);
 }
-function requestHide() {
+/** `e` is the pointer event behind the request, when there is one. Leaving
+ *  through the top edge of the overlay (clientY <= 0) is not leaving the band: on
+ *  a host flush with the screen top the pointer is now resting against the menu
+ *  bar / screen edge, which is exactly the dwell gesture, so a pending reveal
+ *  keeps running. */
+function requestHide(e) {
+  if (pendingReveal && e && typeof e.clientY === 'number' && e.clientY <= 0) return;
   cancelPendingReveal();
   scheduleHide();
 }
@@ -759,7 +765,7 @@ document.addEventListener('mousemove', (e) => {
     // content window (and so the edges stay click-through → content topmost →
     // main's injected resize cursor shows), and schedule the navbar hide.
     setCapture(false);
-    requestHide();
+    requestHide(e);
   }
 });
 
