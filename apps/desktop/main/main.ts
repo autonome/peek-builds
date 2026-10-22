@@ -77,6 +77,7 @@ import {
 import type { WindowId } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
 import { createResizeReporter } from './window-resize-report.js';
+import { flushOpenVisitDwell, initVisitDwell } from './visit-dwell-owner.js';
 import {
   setWindowOpenPayload,
   getWindowOpenPayload,
@@ -800,6 +801,10 @@ export async function initialize(): Promise<void> {
       resizeReporter.observe(state.order);
     });
   }
+
+  // Time on page: the same notification tells the dwell owner which window is
+  // in front of the user, and when a window with an open visit has gone.
+  initVisitDwell();
 
   // Broadcast OS-level app focus changes for listeners outside the window
   // machine (HUD, spaces feature — see their `app:focus-changed` subscribers).
@@ -1777,6 +1782,14 @@ export async function shutdown(): Promise<void> {
   publish(getSystemAddress(), 'app:shutdown', {
     timestamp: Date.now()
   });
+
+  // Every page still open ends its visit here, while the database is still
+  // open. A visit open when the process dies without this keeps duration 0.
+  try {
+    flushOpenVisitDwell();
+  } catch (err) {
+    console.error('[main] flushing time on page during shutdown failed:', err);
+  }
 
   // Signal every tile and wait for the shared grace period before closing.
   try {

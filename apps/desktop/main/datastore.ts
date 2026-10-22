@@ -3335,6 +3335,14 @@ export function trackWindowLoad(uri: string, options: {
   return { visitId: navResult.visitId, addressId: navResult.itemId, itemId: navResult.itemId, created: navResult.created };
 }
 
+/**
+ * Milliseconds the page of this visit was in front of the user. Written once,
+ * when the visit ends; a visit whose process died while it was open keeps 0.
+ */
+export function setItemVisitDuration(visitId: string, durationMs: number): void {
+  getDb().prepare('UPDATE item_visits SET duration = ? WHERE id = ?').run(Math.max(0, Math.round(durationMs)), visitId);
+}
+
 // ==================== Content Operations ====================
 
 export function addContent(options: ContentOptions = {}): { id: string } {

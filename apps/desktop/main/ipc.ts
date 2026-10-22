@@ -7,6 +7,7 @@
 
 import { ipcMain, nativeTheme, dialog, BrowserWindow, BaseWindow, WebContentsView, app, screen, webContents, net } from 'electron';
 import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
+import { noteVisitStarted } from './visit-dwell-owner.js';
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
@@ -1265,6 +1266,7 @@ function assembleHybridPageHost(
         windowType: options.modal ? 'modal' : 'main',
         title: options.title || '',
       });
+      noteVisitStarted(baseWin.id, trackResult.visitId);
       if (trackResult.created) {
         publish('system', 'item:created', {
           itemId: trackResult.itemId,
@@ -2672,6 +2674,7 @@ export function wireHybridContentEvents(
         windowType: options?.modal ? 'modal' : 'main',
         title: (contentWC.getTitle() !== 'Loading...' ? contentWC.getTitle() : '') || '',
       });
+      noteVisitStarted(hostWindowId, navTrack.visitId);
       if (navTrack.created) {
         publish('system', 'item:created', {
           itemId: navTrack.itemId,
@@ -4433,6 +4436,7 @@ export function registerWindowHandlers(): void {
             windowType: options.modal ? 'modal' : 'main',
             title: options.title || (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
+          noteVisitStarted(win.id, trackResult.visitId);
           if (trackResult.created) {
             publish('system', 'item:created', {
               itemId: trackResult.itemId,
@@ -4480,6 +4484,7 @@ export function registerWindowHandlers(): void {
             windowType: options.modal ? 'modal' : 'main',
             title: (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
+          noteVisitStarted(win.id, navTrack.visitId);
           if (navTrack.created) {
             publish('system', 'item:created', {
               itemId: navTrack.itemId,
