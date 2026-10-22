@@ -87,6 +87,9 @@ class NoopKernelBackend implements WindowBackend {
   hideApp(): void {
     recordEffect('hideApp');
   }
+  activateApp(id: WindowId): void {
+    recordEffect('activateApp', id);
+  }
   setStacking(id: WindowId, level: StackingLevel): void {
     recordEffect('setStacking', id, level);
   }
@@ -247,6 +250,10 @@ export function kernelWindowPlacementReported(
 
 export function kernelAppActivated(): void {
   kernelDispatch({ type: 'AppActivated' });
+}
+
+export function kernelPressedInNonActivatingWindow(id: WindowId): void {
+  kernelDispatch({ type: 'PressedInNonActivatingWindow', id });
 }
 
 export function kernelAppResigned(): void {

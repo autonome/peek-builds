@@ -104,6 +104,10 @@ export interface WindowBackend {
 
   hideApp(): void;
 
+  // Make the app the active one while `id` stays the window holding input. A
+  // platform without a notion of an inactive app answers with nothing.
+  activateApp(id: WindowId): void;
+
   // `level` rides the call rather than record state, so a pinned window (the
   // chrome overlay) realizes as a floating-level re-assert instead of a plain
   // relative raise.

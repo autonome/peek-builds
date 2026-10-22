@@ -887,13 +887,33 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     kernelWindowShown(id, true, opSeq);
   }
 
-  private reassertUserRaise(id: WindowId, opSeq: number): void {
+  // macOS only: activating the app is what makes the platform deliver
+  // trackpad gestures to a window that opened without activating it. The
+  // platform then hands key to the window that was key when the app last
+  // resigned, so the asked-for window is re-asserted once activation settles.
+  activateApp(id: WindowId): void {
+    if (process.platform !== 'darwin' || isHeadless()) return;
+    const entry = this.windows.get(id);
+    if (!entry || entry.win.isDestroyed()) return;
+    wmLog('activate-app', { id, kernelActive: getAppActive() });
+    try {
+      app.focus({ steal: true });
+    } catch {
+      /* activation refused by the OS */
+      return;
+    }
+    this.userRaiseReassert.arm(id, 0, [250, 600], () => {
+      this.reassertUserRaise(id, null);
+    });
+  }
+
+  private reassertUserRaise(id: WindowId, opSeq: number | null): void {
     const entry = this.windows.get(id);
     if (!entry || entry.win.isDestroyed() || isHeadless()) return;
     if (this.isFocused(entry.win)) return;
     wmLog('reassert-user-raise', { id });
     try {
-      this.armSelfCausedFocus(id, opSeq);
+      if (opSeq !== null) this.armSelfCausedFocus(id, opSeq);
       this.reorderToTop(entry.win);
       this.takeKey(entry.win);
       const wc = entry.rendererWC;

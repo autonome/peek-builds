@@ -195,6 +195,17 @@ export interface State {
   // placement arrives (`placementSettlesRaise`) instead of being dropped for
   // a desktop not yet known. `RaiseAwaitExpired` bounds the wait.
   readonly raiseAwaitingPlacement: FocusRaiseRequest | null;
+  // The last time a press inside a window that never activates the app asked
+  // for the app to become active (`PressedInNonActivatingWindow`). The platform
+  // delivers trackpad gestures (pinch, smart zoom) only to the active app, so
+  // a peek that is never active would never see them.
+  readonly lastAppActivationRequest: AppActivationRequest | null;
+}
+
+export interface AppActivationRequest {
+  // The window the press landed in; it keeps key through the activation.
+  id: WindowId;
+  seq: number;
 }
 
 // How long a raise request waits for its window's first desktop placement.
@@ -302,6 +313,9 @@ export type Event =
   | { type: 'OsFocusLost'; id: WindowId }
   | { type: 'AppResigned' }
   | { type: 'AppActivated' }
+  // The user pressed inside this window's content. Reported for every press;
+  // only a shown, never-activating window while the app is inactive acts on it.
+  | { type: 'PressedInNonActivatingWindow'; id: WindowId }
   | { type: 'AppResignSettled' }
   // An overlay (the switcher) opened or closed. Either can make the platform
   // resign and re-activate the app on its own.
@@ -439,6 +453,8 @@ export type Effect =
   // Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window.
   | { type: 'DestroyAllGuests' }
   | { type: 'HideApp' }
+  // Make the app the active one while this window keeps key and stays open.
+  | { type: 'ActivateApp'; id: WindowId }
   // Keep this window above other applications' windows without activating the
   // app or focusing the window — emitted when `heldAboveOtherApps` goes true.
   | { type: 'HoldAboveOtherApps'; id: WindowId }
@@ -474,6 +490,7 @@ export function initialState(): State {
     expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
     overlayTransitionSinceResign: false,
     raiseAwaitingPlacement: null,
+    lastAppActivationRequest: null,
   };
 }
 
@@ -707,6 +724,9 @@ function followHeldHostOverlayVisibility(prev: State, next: State): State {
 function markEndedKeyTakenFromAnotherApp(prev: State, next: State): State {
   const ended = (w: WindowRecord): boolean => {
     if (!w.visible || w.pendingHidden === true) return false;
+    // The user pressed inside this very window, and the app is coming forward
+    // because of it: the window is being used, not left behind.
+    if (next.lastAppActivationRequest?.id === w.id && next.expectedPlatformFocus.activation === w.id) return false;
     const before = prev.order.find((p) => p.id === w.id);
     return before !== undefined && holdsKeyTakenFromAnotherApp(prev, before) && !holdsKeyTakenFromAnotherApp(next, w);
   };
@@ -1299,6 +1319,16 @@ function evolveEvent(state: State, ev: Event): State {
         (raisedRecord.visible || appBlurRevealAdmits(state, raisedRecord))
           ? raisedRecord.id
           : null;
+      // The activation a press in a non-activating window asked for is the one
+      // arriving now; keep its expectation, which this arm would otherwise reset.
+      const pressRequest = state.lastAppActivationRequest;
+      const pressActivation =
+        !state.appActive &&
+        pressRequest !== null &&
+        state.expectedPlatformFocus.activation === pressRequest.id &&
+        state.order.some((w) => w.id === pressRequest.id && w.visible)
+          ? pressRequest.id
+          : null;
       return {
         ...state,
         appActive: true,
@@ -1332,7 +1362,7 @@ function evolveEvent(state: State, ev: Event): State {
           activation:
             latchedCandidate !== undefined && (latchedCandidate.visible || appBlurRevealAdmits(state, latchedCandidate))
               ? latchedCandidate.id
-              : userRaisedWhileInactive,
+              : userRaisedWhileInactive ?? pressActivation,
         },
         // The other half of the ratchet: the user has come to Peek, so
         // whatever is on screen is somewhere they are now. Unconditional and one-way.
@@ -1341,6 +1371,31 @@ function evolveEvent(state: State, ev: Event): State {
         // to re-raise anything must not bump the assert `seq`.
         lastFocusAssert:
           latched !== null && !latchEnds ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
+        version: state.version + 1,
+      };
+    }
+
+    case 'PressedInNonActivatingWindow': {
+      // A press in a shown window that never activates the app, while the app
+      // is inactive, asks for the activation (react emits `ActivateApp`). The
+      // window is the one the user is working in, so the activation is its
+      // own doing: the focus the platform hands out while activating is
+      // expected, and swallowed, rather than read as the user moving to
+      // another window, which the closing rule would answer by closing it.
+      const pressed = state.order.find((w) => w.id === ev.id);
+      if (
+        state.appActive ||
+        pressed === undefined ||
+        pressed.nonActivating !== true ||
+        !pressed.visible ||
+        pressed.pendingHidden === true
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        lastAppActivationRequest: { id: ev.id, seq: (state.lastAppActivationRequest?.seq ?? 0) + 1 },
+        expectedPlatformFocus: { ...state.expectedPlatformFocus, activation: ev.id },
         version: state.version + 1,
       };
     }
@@ -2251,6 +2306,12 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   const heldAfter = next.order.some(holdsAppOnScreen);
   if (heldBefore && !heldAfter) {
     effects.push({ type: 'HideApp' });
+  }
+
+  // App activation: a structural diff of `State.lastAppActivationRequest`.
+  const activationRequest = next.lastAppActivationRequest;
+  if (activationRequest !== null && activationRequest.seq !== prev.lastAppActivationRequest?.seq) {
+    effects.push({ type: 'ActivateApp', id: activationRequest.id });
   }
 
   // Focus assert: a structural diff of `State.lastFocusAssert`, same shape as
