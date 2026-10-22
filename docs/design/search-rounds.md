@@ -123,6 +123,16 @@ The research view should be built on whichever of those lands, not as its own wi
   `did-finish-load`): median 112/137 ms on versus 123/130 ms off, 90th percentile 139/162 ms on
   versus 156/147 ms off. No measurable difference; the spread between runs of one setting is
   larger. Input latency is unaffected because no code runs in the page.
+- **Search rounds** (`features/websearch/search-rounds.js`, spec
+  `specs/research-search-rounds.md`). Every web search is a `text` item, content the trimmed
+  query, tagged `search-round`; each run adds an item event whose metadata has kind `search-run`,
+  the engine id and the result URL. The space is the mode of the front content window
+  (`api.window.getFocusedVisibleWindowId()`, which skips the palette). The tile tags both the
+  search item and the result page into that space itself, because `main/ipc.ts
+  createHybridPageHost()` publishes `item:created` before it writes the window's space mode, and
+  a repeat visit publishes no `item:created` at all, so `features/spaces/background.js
+  handleItemCreated()` cannot be relied on for it. Known cost: `findRoundItem()` does one
+  `getItemTags` call per text item whose content contains the query.
 - **Rebuilding the cost harness.** Copy the shape of `tests/desktop/visit-dwell.spec.ts`
   (per-describe app plus a local `http` server). Through `DesktopApp.evaluateMain`, install an
   `app.on('web-contents-created')` hook that records `Date.now()` on `did-start-loading` and the
@@ -170,7 +180,7 @@ feeds both designs.
    records typing volume, typing speed and the number of fields typed into.
 4. **The research view** on the app-wide maximized treatment once one of the filed issues
    lands.
-5. **Rounds**: `search-round` items for searches run from a space.
+5. **Rounds**: `search-round` items for searches run from a space. Built; see "Built".
 
 ## Set aside
 
