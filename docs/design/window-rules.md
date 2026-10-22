@@ -65,6 +65,20 @@ Each term is followed by the name the code uses for it.
 - **G15 see-through.** A card-grid view can be flipped, one window at a time, between its normal look and the switcher's frosted, see-through one (`see-through view`, `tile-ipc.ts tile:window:set-see-through`). Turning it on maximizes the window through the kernel's own `Maximize`; turning it off restores the window to the exact bounds it had before, but only when the switch was what maximized it — a window already maximized by hand when the switch went on stays maximized when it goes off, since nothing else asked for it to shrink. The switch never raises a window, never puts one on top and never hides another: being the frontmost thing on screen is the switcher's own behaviour and not part of this look. A window whose view does not declare the switch (`seeThrough: true` on its manifest tile entry) refuses the request and nothing about it changes, rather than half-applying it. The state is a window param, so a view that was see-through when the session was saved comes back see-through and, by G12, maximized.
 - **G16 maximize-all.** Entering maximize-all maximizes every ordinary window on the screen and desktop the user is on, and leaving it returns each window the mode maximized to the exact size and position it had before. Eligible is an ordinary page or tile window that is visible and in scope; every transient, every hidden keep-alive window, the page chrome, and any window that cannot take key are left alone. The scope is the screen and desktop current when the mode begins and does not follow the user afterwards. A window already maximized at that moment is not the mode's to restore and stays maximized when the mode ends; a window opened or shown in scope while the mode is on is maximized too. The user outranks the mode: a window the user unmaximizes or drags out of maximize is theirs from then on, and maximizing it again by hand does not hand it back. The mode, its scope and which windows it maximized are kernel state (`window-kernel.ts admitToMaximizeAll()`), recorded in the saved session and re-established on restore, so leaving the mode after a relaunch still puts those windows back (`specs/maximize-all.md`).
 
+  One app-wide switch sits over the per-window one (`see-through views everywhere`,
+  `tile-ipc.ts tile:window:set-see-through-everywhere`). Turning it on puts every open window whose
+  view declares the switch into the see-through look and makes every declaring window opened
+  afterwards open that way; turning it off puts them all back. Each window is set through the same
+  path the per-window switch uses, so every rule above holds for each of them individually — the
+  maximize, the exact restore, and a window already maximized staying maximized. The per-window
+  switch keeps working under it: `see-through view` on one window overrides the app-wide state for
+  that window alone, and that override lasts until the app-wide switch is next flipped, which sets
+  every declaring window again. The app-wide setting is stored with the app's other settings rather
+  than in a renderer, so it survives a restart; each window's own state still comes from its session
+  params, which is how a per-window override outlives a restart. A window opened while the switch is
+  on is maximized by the same kernel `Maximize`, so turning the switch off puts it at the size its
+  opener asked for.
+
 ### Opening a page from another app: which app holds OS focus at each step
 
 The purpose of G1 is that a page can be opened as a transient page-host window without leaving
@@ -403,6 +417,7 @@ restored the saved copy beside the one that never left (`specs/spaces-window-loc
 | Leaving maximize-all leaves a window maximized, puts back one the user had already maximized, or overrides a window the user resized while the mode was on | G16 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
 | Turning the see-through look off shrinks a window the user had maximized by hand, lands it somewhere other than its exact earlier bounds, raises it above other windows, or the switch half-applies to a view that does not support it | G15 |
+| The app-wide see-through switch misses an open window whose view declares it, reaches a window whose view does not, forgets its state across a restart, or a window opened while it is on opens in the normal look | G15 |
 
 Open against these rules: nothing. G1/F6 closed at `7e2eab6c` and G3/F7 at `a86b030c`, both
 verified by hand on the packaged build on 2026-09-12: with another app frontmost, the global

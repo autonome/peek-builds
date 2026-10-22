@@ -144,6 +144,23 @@ const commandDefinitions = [
     }
   },
   {
+    name: 'see-through views everywhere',
+    description: 'Turn the see-through look on or off for every card view that supports it',
+    execute: async (ctx) => {
+      // One app-wide switch. Read before writing, as the per-window
+      // command does, so the flip is decided here and main is told
+      // explicitly which way to go. Main applies it to every open window
+      // whose view declares the switch, through the same per-window path,
+      // and remembers the choice so a card view opened later opens that
+      // way too.
+      const state = await api.window.getSeeThroughEverywhere();
+      if (!state || state.success !== true) {
+        return { success: false, error: state?.error || 'Cannot read the app-wide see-through setting' };
+      }
+      return api.window.setSeeThroughEverywhere(state.data?.on !== true);
+    }
+  },
+  {
     name: 'maximize all windows',
     description: 'Maximize every window here; run again to put them all back',
     execute: async (ctx) => {

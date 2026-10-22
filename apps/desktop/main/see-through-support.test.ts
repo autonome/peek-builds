@@ -5,6 +5,7 @@ import {
   parsePeekTileUrl,
   entryDeclaresSeeThrough,
   urlSupportsSeeThrough,
+  seeThroughForNewWindow,
   type SeeThroughManifestLike,
 } from './see-through-support.js';
 
@@ -89,5 +90,71 @@ describe('see-through-support — urlSupportsSeeThrough', () => {
 
   it('is false for a page, which is what the command reports as a failure', () => {
     assert.strictEqual(urlSupportsSeeThrough('https://example.com/', lookup), false);
+  });
+});
+
+describe('see-through-support — seeThroughForNewWindow', () => {
+  const lookupManifest = (tileId: string) => (tileId === 'tags' ? tagsManifest : null);
+
+  it('opens a declared card view see-through and maximized while the app-wide switch is on', () => {
+    assert.deepStrictEqual(
+      seeThroughForNewWindow({ url: 'peek://tags/home.html', appWideOn: true, lookupManifest }),
+      { seeThrough: true, seeThroughMaximized: true },
+    );
+  });
+
+  it('decides nothing while the app-wide switch is off', () => {
+    assert.strictEqual(
+      seeThroughForNewWindow({ url: 'peek://tags/home.html', appWideOn: false, lookupManifest }),
+      null,
+    );
+  });
+
+  it('decides nothing for a window whose view does not declare the switch', () => {
+    assert.strictEqual(
+      seeThroughForNewWindow({ url: 'peek://tags/background.html', appWideOn: true, lookupManifest }),
+      null,
+    );
+    assert.strictEqual(
+      seeThroughForNewWindow({ url: 'https://example.com/', appWideOn: true, lookupManifest }),
+      null,
+    );
+    assert.strictEqual(
+      seeThroughForNewWindow({ url: 'peek://groups/home.html', appWideOn: true, lookupManifest }),
+      null,
+    );
+  });
+
+  it('leaves a restored window its own saved state, false included', () => {
+    assert.strictEqual(
+      seeThroughForNewWindow({
+        url: 'peek://tags/home.html',
+        appWideOn: true,
+        requestedSeeThrough: false,
+        lookupManifest,
+      }),
+      null,
+    );
+    assert.strictEqual(
+      seeThroughForNewWindow({
+        url: 'peek://tags/home.html',
+        appWideOn: true,
+        requestedSeeThrough: true,
+        lookupManifest,
+      }),
+      null,
+    );
+  });
+
+  it('ignores a non-boolean request and decides for itself', () => {
+    assert.deepStrictEqual(
+      seeThroughForNewWindow({
+        url: 'peek://tags/home.html',
+        appWideOn: true,
+        requestedSeeThrough: 'yes',
+        lookupManifest,
+      }),
+      { seeThrough: true, seeThroughMaximized: true },
+    );
   });
 });

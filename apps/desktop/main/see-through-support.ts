@@ -77,3 +77,39 @@ export function urlSupportsSeeThrough(
   if (!parsed) return false;
   return entryDeclaresSeeThrough(lookupManifest(parsed.tileId), parsed.path);
 }
+
+/** The window params the app-wide switch writes on a window being created. */
+export interface NewWindowSeeThrough {
+  seeThrough: boolean;
+  /** Whether the switch is what maximized it, so turning it off restores. */
+  seeThroughMaximized: boolean;
+}
+
+/**
+ * What the app-wide switch makes of a window being created: the params to
+ * write, or null to leave the window exactly as its opener asked for it.
+ *
+ * Three things have to be true before the switch decides anything. The
+ * opener must not have asked for a state of its own — a session restore
+ * replays the saved `seeThrough`, including a saved `false`, and that
+ * answer outranks the app-wide default, which is what makes the per-window
+ * override survive a restart. The app-wide switch must be on. And the
+ * window's view must declare the switch in its manifest, so the app-wide
+ * state reaches the same windows the per-window command does and no list
+ * of views exists anywhere.
+ *
+ * `seeThroughMaximized` comes back true because the switch is what asks
+ * for the maximize here, so turning it off later puts the window back at
+ * the size its opener asked for (docs/design/window-rules.md G15).
+ */
+export function seeThroughForNewWindow(input: {
+  url: string;
+  appWideOn: boolean;
+  requestedSeeThrough?: unknown;
+  lookupManifest: (tileId: string) => SeeThroughManifestLike | null;
+}): NewWindowSeeThrough | null {
+  if (typeof input.requestedSeeThrough === 'boolean') return null;
+  if (input.appWideOn !== true) return null;
+  if (!urlSupportsSeeThrough(input.url, input.lookupManifest)) return null;
+  return { seeThrough: true, seeThroughMaximized: true };
+}

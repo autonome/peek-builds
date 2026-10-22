@@ -126,7 +126,7 @@ import { clearFeatureLoadError } from './feature-load-errors.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
-import { invokeWindowOpen, reopenLastClosedWindow, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
+import { invokeWindowOpen, reopenLastClosedWindow, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref, getSeeThroughEverywhere, setSeeThroughEverywhere } from './ipc.js';
 import {
   getWindowInfo,
   validateThemeCSS,
@@ -4061,6 +4061,89 @@ export function registerTileIpcHandlers(): void {
 
   const UNSUPPORTED_VIEW = 'This view does not support the see-through switch';
 
+  /**
+   * Apply the see-through look to one window: the two params the session
+   * saves, the conditional maximize and restore, and the announcement its
+   * renderer draws from.
+   *
+   * Both switches go through here — the per-window one and the app-wide
+   * one — so what the look does to a window is described once and the
+   * app-wide switch cannot drift from the per-window rules.
+   *
+   * Maximize is part of the switch, and the restore is conditional: ON
+   * maximizes through the kernel's own `Maximize` only when the window is
+   * not maximized already, and records that the switch is what did it.
+   * OFF unmaximizes only on that record, so a window the user (or
+   * maximize-all) had already maximized stays maximized when the switch
+   * goes off. The switch never raises a window or puts it on top — being
+   * the frontmost thing on screen is the windows switcher's own behaviour,
+   * not this one's (docs/design/window-rules.md G15).
+   *
+   * Both flags live in the open registry's params bag (the `placement`
+   * precedent in tile:window:set-bounds), which is what session save
+   * projects, so the switch survives a restart.
+   */
+  const applySeeThroughToWindow = (
+    win: BrowserWindow,
+    on: boolean,
+    sourceTileId: string,
+  ): { success: boolean; data?: { seeThrough: boolean }; error?: string } => {
+    if (!urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough)) {
+      return { success: false, error: UNSUPPORTED_VIEW };
+    }
+    const info = getWindowInfo(win.id);
+    if (!info) {
+      return { success: false, error: 'Window not found in the open registry' };
+    }
+    const machineId = getWindowIdFor(win);
+    if (machineId == null) {
+      return { success: false, error: 'Window not registered with window-state machine' };
+    }
+
+    if (on) {
+      const recBefore = getMachineWindowRecord(machineId);
+      if (recBefore?.maximized === true) {
+        // Already maximized by something else — leave it that way on the
+        // way out.
+        info.params.seeThroughMaximized = false;
+      } else {
+        const currentBounds = win.getBounds();
+        const workArea = screen.getDisplayMatching(currentBounds).workArea;
+        kernelMaximize(machineId, {
+          x: workArea.x,
+          y: workArea.y,
+          width: workArea.width,
+          height: workArea.height,
+        });
+        info.params.seeThroughMaximized = true;
+      }
+      info.params.seeThrough = true;
+    } else {
+      info.params.seeThrough = false;
+      if (info.params.seeThroughMaximized === true) {
+        // Only unmaximize a window that still IS maximized. The switch
+        // can be on across a hand-unmaximize, and the kernel's
+        // `Unmaximize` restores its own pre-maximize stash — so asking
+        // for it on an already-restored window would snap it back to the
+        // rect the user had just dragged it out of.
+        if (getMachineWindowRecord(machineId)?.maximized === true) {
+          kernelUnmaximize(machineId);
+        }
+        info.params.seeThroughMaximized = false;
+      }
+    }
+
+    // The renderer draws the look. Pubsub rather than a directed send so
+    // the view declares the topic in its own manifest and both switches
+    // announce the change the same way.
+    publish(
+      `peek://${sourceTileId}/background`,
+      'window:see-through',
+      { windowId: win.id, seeThrough: on },
+    );
+    return { success: true, data: { seeThrough: on } };
+  };
+
   // ── tile:window:get-see-through ───────────────────────────────────
   //
   // Report whether a window's view supports the see-through switch and,
@@ -4114,18 +4197,8 @@ export function registerTileIpcHandlers(): void {
   // declare it answers `{ success: false, error }` and nothing changes, so
   // the switch never half-applies to a page or a background tile.
   //
-  // Maximize is part of the switch, and the restore is conditional: ON
-  // maximizes through the kernel's own `Maximize` only when the window is
-  // not maximized already, and records that the switch is what did it.
-  // OFF unmaximizes only on that record, so a window the user (or
-  // maximize-all) had already maximized stays maximized when the switch
-  // goes off. The switch never raises a window or puts it on top — being
-  // the frontmost thing on screen is the windows switcher's own behaviour,
-  // not this one's (docs/design/window-rules.md G15).
-  //
-  // Both flags live in the open registry's params bag (the `placement`
-  // precedent in tile:window:set-bounds), which is what session save
-  // projects, so the switch survives a restart.
+  // What the look does to a window lives in `applySeeThroughToWindow`
+  // above, which the app-wide switch calls too.
   registerTileIpc('tile:window:set-see-through', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
@@ -4155,62 +4228,85 @@ export function registerTileIpcHandlers(): void {
         // names the real reason nothing happened.
         return { success: false, error: target.exists ? UNSUPPORTED_VIEW : 'Window not found' };
       }
-      const win = target.win;
-      if (!urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough)) {
-        return { success: false, error: UNSUPPORTED_VIEW };
-      }
-      const info = getWindowInfo(win.id);
-      if (!info) {
-        return { success: false, error: 'Window not found in the open registry' };
-      }
-      const machineId = getWindowIdFor(win);
-      if (machineId == null) {
-        return { success: false, error: 'Window not registered with window-state machine' };
-      }
+      return applySeeThroughToWindow(target.win, args.on, grant.tileId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
 
+  // ── tile:window:get-see-through-everywhere ────────────────────────
+  //
+  // Report the app-wide see-through switch: `{ success, data: { on } }`.
+  // The `see-through views everywhere` command reads it to decide which
+  // way to flip. Gated by `window.query`, the same capability reading
+  // another window's state needs.
+  registerTileIpc('tile:window:get-see-through-everywhere', { mode: 'handle' }, (_event, args: {
+    token: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'get-see-through', { ownWindow: false });
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:get-see-through-everywhere', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      return { success: true, data: { on: getSeeThroughEverywhere() } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-see-through-everywhere ────────────────────────
+  //
+  // Turn the see-through look on or off everywhere: store the app-wide
+  // setting, then put every open window whose view declares the switch
+  // into that state. Gated by `window.manage`, as the per-window switch
+  // is.
+  //
+  // Two things make this one switch rather than two mechanisms. Every
+  // window goes through `applySeeThroughToWindow`, so each one follows the
+  // per-window rules — maximized on, exact restore off, an
+  // already-maximized window left maximized. And because every declaring
+  // window is set, a per-window override made since the last flip is
+  // overwritten here: the override holds for that window until the
+  // app-wide switch is next flipped, which is the whole of its lifetime.
+  //
+  // The setting is stored before the windows are flipped, so a window
+  // opening while this runs reads the state it is about to be put into
+  // rather than the one it is leaving.
+  //
+  // A window whose view does not declare the switch is skipped, not
+  // reported: "every view that supports it" is the command, and a page
+  // being left alone is the answer rather than a failure.
+  registerTileIpc('tile:window:set-see-through-everywhere', { mode: 'handle' }, async (_event, args: {
+    token: string;
+    on?: boolean;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'set-see-through');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:set-see-through-everywhere', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      // `on` is explicit rather than a toggle, for the reason the
+      // per-window handler gives.
+      if (typeof args.on !== 'boolean') {
+        return { success: false, error: `Invalid see-through state: ${typeof args.on}` };
+      }
       const on = args.on;
-      if (on) {
-        const recBefore = getMachineWindowRecord(machineId);
-        if (recBefore?.maximized === true) {
-          // Already maximized by something else — leave it that way on the
-          // way out.
-          info.params.seeThroughMaximized = false;
-        } else {
-          const currentBounds = win.getBounds();
-          const workArea = screen.getDisplayMatching(currentBounds).workArea;
-          kernelMaximize(machineId, {
-            x: workArea.x,
-            y: workArea.y,
-            width: workArea.width,
-            height: workArea.height,
-          });
-          info.params.seeThroughMaximized = true;
-        }
-        info.params.seeThrough = true;
-      } else {
-        info.params.seeThrough = false;
-        if (info.params.seeThroughMaximized === true) {
-          // Only unmaximize a window that still IS maximized. The switch
-          // can be on across a hand-unmaximize, and the kernel's
-          // `Unmaximize` restores its own pre-maximize stash — so asking
-          // for it on an already-restored window would snap it back to the
-          // rect the user had just dragged it out of.
-          if (getMachineWindowRecord(machineId)?.maximized === true) {
-            kernelUnmaximize(machineId);
-          }
-          info.params.seeThroughMaximized = false;
-        }
-      }
+      setSeeThroughEverywhere(on);
 
-      // The renderer draws the look. Pubsub rather than a directed send so
-      // the view declares the topic in its own manifest and any future
-      // observer (the app-wide switch) sees the same message.
-      publish(
-        `peek://${grant.tileId}/background`,
-        'window:see-through',
-        { windowId: win.id, seeThrough: on },
-      );
-      return { success: true, data: { seeThrough: on } };
+      let applied = 0;
+      for (const win of getAllLiveWindows()) {
+        if (!urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough)) continue;
+        if (applySeeThroughToWindow(win, on, grant.tileId).success) applied += 1;
+      }
+      return { success: true, data: { on, applied } };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

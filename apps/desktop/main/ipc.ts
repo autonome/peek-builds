@@ -77,9 +77,10 @@ import {
   DEBUG,
 } from './config.js';
 
-import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow } from './tile-launcher.js';
+import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow, getTileManifest } from './tile-launcher.js';
 import { lookupPseudoTile } from './pseudo-tiles.js';
 import { getLazyTileManifest } from './tile-lazy.js';
+import { seeThroughForNewWindow } from './see-through-support.js';
 
 import {
   captureThumbnail,
@@ -556,6 +557,56 @@ export function setDarkModeSetting(value: string): void {
  */
 export function applyDarkModeSetting(mode: string): void {
   nativeTheme.themeSource = (mode === 'force') ? 'dark' : 'system';
+}
+
+/**
+ * The app-wide see-through switch.
+ *
+ * One boolean, kept beside the app's other settings — the `core`
+ * feature_settings namespace that already holds the theme and dark-mode
+ * choices — rather than in a renderer's localStorage. Main reads it while a
+ * window is being created, so a card view opened while the switch is on
+ * opens see-through, and the choice survives a restart. Each window's own
+ * state stays a window param restored from the session, which is what lets
+ * a per-window override outlive one (docs/design/window-rules.md G15).
+ *
+ * The query is written out here rather than going through
+ * `getThemeSetting`/`setThemeSetting` because this value is a boolean and
+ * those two are typed for the theme's strings.
+ */
+const CORE_SETTINGS_FEATURE_ID = 'core';
+const SEE_THROUGH_EVERYWHERE_KEY = 'seeThroughEverywhere';
+
+export function getSeeThroughEverywhere(): boolean {
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
+    ).get(CORE_SETTINGS_FEATURE_ID, SEE_THROUGH_EVERYWHERE_KEY) as { value: string } | undefined;
+    if (!row?.value) return false;
+    try {
+      return JSON.parse(row.value) === true;
+    } catch {
+      return false;
+    }
+  } catch {
+    // No datastore yet (very early boot) is the same answer as "off".
+    return false;
+  }
+}
+
+export function setSeeThroughEverywhere(on: boolean): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    `${CORE_SETTINGS_FEATURE_ID}_${SEE_THROUGH_EVERYWHERE_KEY}`,
+    CORE_SETTINGS_FEATURE_ID,
+    SEE_THROUGH_EVERYWHERE_KEY,
+    JSON.stringify(on === true),
+    Date.now(),
+  );
 }
 
 
@@ -3243,6 +3294,25 @@ export function registerWindowHandlers(): void {
 
     const { url, options } = msg;
 
+    // The app-wide see-through switch decides a declaring card view's look
+    // as the window is created, by writing the same two window params the
+    // per-window switch writes — there is no second mechanism and no list
+    // of views, only the manifest declaration. A null answer leaves the
+    // opener's own request alone, which is what keeps a session restore
+    // replaying a saved `false` (a per-window override) intact.
+    const appWideSeeThrough = options
+      ? seeThroughForNewWindow({
+        url,
+        appWideOn: getSeeThroughEverywhere(),
+        requestedSeeThrough: options.seeThrough,
+        lookupManifest: (tileId: string) => getTileManifest(tileId) ?? getLazyTileManifest(tileId),
+      })
+      : null;
+    if (appWideSeeThrough) {
+      options.seeThrough = appWideSeeThrough.seeThrough;
+      options.seeThroughMaximized = appWideSeeThrough.seeThroughMaximized;
+    }
+
     // Default-deny unsafe webPreferences from the caller, before any window is
     // built. The direct `new BrowserWindow(winOptions)` branch below spreads
     // `options.webPreferences` first, so an unsafe override would otherwise
@@ -4636,6 +4706,23 @@ export function registerWindowHandlers(): void {
       // oversize hint so the workArea-clamp produces a fill-the-screen
       // rectangle on whichever display the just-opened window actually sits
       // on — keeps every position decision flowing through the pure module.
+      // A window the app-wide switch opened see-through is maximized the
+      // same way the per-window switch maximizes one: through the kernel's
+      // own Maximize, which records the rect to come back to, so turning
+      // the switch off later puts the window at the size its opener asked
+      // for (docs/design/window-rules.md G15). `options.maximize` below
+      // only repositions bounds and leaves the window unmaximized, so it
+      // is not the same thing.
+      if (appWideSeeThrough) {
+        const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
+        kernelMaximize(machineWindowId, {
+          x: workArea.x,
+          y: workArea.y,
+          width: workArea.width,
+          height: workArea.height,
+        });
+      }
+
       if (options.maximize === true && !isHeadless()) {
         const result = computePlacement({
           placement: { mode: 'centered' },

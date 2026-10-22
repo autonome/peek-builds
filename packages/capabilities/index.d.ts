@@ -414,6 +414,11 @@ export interface TileEntry {
    * windows the switch applies to — there is no list of URLs anywhere else.
    * A window that declares it must also be created transparent, since
    * transparency can only be set when a window is created.
+   *
+   * The declaration is also what the app-wide switch
+   * (`see-through views everywhere`) acts on: it flips every open window
+   * that declares it, and a declaring window opened while the switch is on
+   * opens see-through.
    */
   seeThrough?: boolean;
   /** Window role for the IZUI system */

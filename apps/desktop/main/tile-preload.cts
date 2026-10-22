@@ -1004,6 +1004,35 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Read the app-wide see-through switch: `{ success, data: { on } }`.
+     *
+     * One setting for the whole app, stored beside the app's other
+     * settings, so it survives a restart. Requires `window.query`.
+     */
+    getSeeThroughEverywhere: () => {
+      return ipcRenderer.invoke('tile:window:get-see-through-everywhere', {
+        token: tileToken,
+      });
+    },
+
+    /**
+     * Turn the see-through look on or off for every open window whose view
+     * declares the switch, and remember the choice so a declaring window
+     * opened later opens that way too. `on` is explicit, not a toggle.
+     *
+     * Each window is flipped through the same per-window path
+     * `setSeeThrough` uses, so the maximize and the exact restore behave
+     * identically. Flipping this resets every declaring window, which ends
+     * any per-window override. Requires `window.manage`.
+     */
+    setSeeThroughEverywhere: (on: boolean) => {
+      return ipcRenderer.invoke('tile:window:set-see-through-everywhere', {
+        token: tileToken,
+        on,
+      });
+    },
+
+    /**
      * Toggle fullscreen on a window. Requires `window.manage` (or
      * trustedBuiltin).
      */

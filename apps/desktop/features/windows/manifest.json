@@ -83,6 +83,11 @@
       "name": "see-through view",
       "description": "Flip the active card view between its normal look and the see-through one",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "see-through views everywhere",
+      "description": "Turn the see-through look on or off for every card view that supports it",
+      "action": { "type": "execute" }
     }
   ],
   "shortcuts": [
