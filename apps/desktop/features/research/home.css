@@ -1,0 +1,117 @@
+@import url('peek://theme/variables.css');
+
+/* The window is created transparent so the see-through switch can frost it;
+   the normal look is this opaque background. see-through.css replaces the
+   base colours with translucent ones when <body> carries `see-through`. */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--base00);
+  color: var(--base05);
+  font-family: var(--theme-font-sans);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.research-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 18px 10px;
+  flex-shrink: 0;
+}
+
+.research-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-count {
+  font-size: 11px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+/* One row per line: a list, not a grid. */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 18px 18px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: transparent;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 4px;
+}
+
+peek-card[selected] {
+  --peek-card-bg: var(--base02);
+}
+
+.card-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-url {
+  font-size: 11px;
+}
+
+.card-meta {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* Time on page, and the marker for a page open in a window right now. */
+.card-research-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.card-time-on-page {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-open-marker {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--base02);
+  color: var(--base0D);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.empty-state {
+  display: none;
+  padding: 18px;
+  opacity: 0.6;
+}
+
+.empty-state.visible {
+  display: block;
+}
