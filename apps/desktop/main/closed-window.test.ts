@@ -498,7 +498,7 @@ describe('Maximize state capture', () => {
     assert.strictEqual('preMaximizeBounds' in entry!, false);
   });
 
-  it('saves the pre-maximize bounds, with no maximize fields, when the presentation is maximized', () => {
+  it('saves the pre-maximize bounds and records maximized when the presentation is maximized', () => {
     const workAreaBounds = { x: 0, y: 0, width: 1920, height: 1080 };
     const preMax = { x: 100, y: 100, width: 800, height: 600 };
     const entry = createClosedWindowEntry(
@@ -509,7 +509,7 @@ describe('Maximize state capture', () => {
     );
     assert.notStrictEqual(entry, null);
     assert.deepStrictEqual(entry!.bounds, preMax);
-    assert.strictEqual('maximized' in entry!, false);
+    assert.strictEqual(entry!.maximized, true);
     assert.strictEqual('preMaximizeBounds' in entry!, false);
   });
 
@@ -523,7 +523,7 @@ describe('Maximize state capture', () => {
     );
     assert.notStrictEqual(entry, null);
     assert.deepStrictEqual(entry!.bounds, workAreaBounds);
-    assert.strictEqual('maximized' in entry!, false);
+    assert.strictEqual(entry!.maximized, true);
   });
 
   it('falls back to the raw captured bounds when captured has no presentation at all', () => {

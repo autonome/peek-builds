@@ -122,6 +122,42 @@ import {
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
+import { contentInsetInFrame, revealDelayMs } from './overlay-frame.js';
+
+/**
+ * The hover-reveal dwell for a host at `b` (see `overlay-frame.ts revealDelayMs`),
+ * read against the work area of the display it sits on. Guarded: it runs inside
+ * the raw input stream and bounds events, and `screen` is missing in some test
+ * envs, where the reveal stays immediate.
+ */
+function revealDelayForHostBounds(b: { x: number; y: number; width: number; height: number }): number {
+  try {
+    const workArea = screen.getDisplayNearestPoint({
+      x: b.x + Math.floor(b.width / 2),
+      y: b.y + Math.floor(b.height / 2),
+    }).workArea;
+    return revealDelayMs(b, workArea);
+  } catch {
+    return 0;
+  }
+}
+
+/** Where a host at `b` sits inside its work-area-clamped overlay frame (see
+ *  `overlay-frame.ts contentInsetInFrame`); null when `screen` is unavailable,
+ *  which leaves the renderer on the plain gutters. */
+function contentInsetForHostBounds(
+  b: { x: number; y: number; width: number; height: number },
+): { left: number; top: number } | null {
+  try {
+    const workArea = screen.getDisplayNearestPoint({
+      x: b.x + Math.floor(b.width / 2),
+      y: b.y + Math.floor(b.height / 2),
+    }).workArea;
+    return contentInsetInFrame(b, workArea);
+  } catch {
+    return null;
+  }
+}
 import { wmLog } from './window-diag.js';
 import {
   inferIzuiRole,
@@ -553,8 +589,8 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     trackingSourceId: 'last-closed',
   };
 
-  // Maximize is not restored: an entry from an older build that was maximized
-  // reopens at its pre-maximize rect.
+  // A maximized entry opens at its pre-maximize rect (`bounds`, or the legacy
+  // `preMaximizeBounds` of an older entry) and is maximized once registered.
   const reopenBounds = entry.maximized && entry.preMaximizeBounds ? entry.preMaximizeBounds : entry.bounds;
   if (reopenBounds) {
     options.x = reopenBounds.x;
@@ -562,6 +598,7 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.width = reopenBounds.width;
     options.height = reopenBounds.height;
   }
+  if (entry.maximized) options.maximized = true;
 
   if (entry.spaceMode) {
     options.spaceMode = entry.spaceMode;
@@ -1139,7 +1176,10 @@ function assembleHybridPageHost(
   // border resizes included — they reach no other publisher.
   publishHostBoundsOnChange(baseWin, (bounds) => {
     try {
-      publish(getSystemAddress(), 'page-overlay:bounds', { windowId: baseWin.id, bounds });
+      publish(getSystemAddress(), 'page-overlay:bounds', {
+        windowId: baseWin.id, bounds, revealDelayMs: revealDelayForHostBounds(bounds),
+        contentInset: contentInsetForHostBounds(bounds),
+      });
     } catch { /* gone */ }
   });
 
@@ -1372,6 +1412,22 @@ function assembleHybridPageHost(
       ? { desktopMembership: options.nonActivating === true ? 'anchor' as const : desktopMembershipForRole(role) }
       : {}),
   });
+  // A restored or reopened maximized window is created at its pre-maximize rect
+  // (never mapped at work-area size, which the window manager may refit), then
+  // maximized through the kernel's own Maximize: it stashes that rect for the
+  // later unmaximize and snaps the window to the work area. The `maximized`
+  // option left in the registry params is rewritten from the kernel record at
+  // every session save, so it never goes stale.
+  if (options.maximized === true) {
+    try {
+      const cur = baseWin.getBounds();
+      const wa = screen.getDisplayNearestPoint({
+        x: cur.x + Math.floor(cur.width / 2),
+        y: cur.y + Math.floor(cur.height / 2),
+      }).workArea;
+      kernelMaximize(hostMachineId, { x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+    } catch { /* window gone */ }
+  }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
   // registration uses the machine-minted id from just above.
@@ -2008,6 +2064,11 @@ export function wireHybridContentEvents(
   //   EXIT (reveal-out): stays revealed until the cursor leaves the full 44px band (past the
   //     revealed navbar). This prevents a hide-flicker while the cursor hovers the visible navbar.
   const REVEAL_ENTER_PX = TRIGGER_ZONE_PX; // 4 — must hit the border strip
+  // A host with a reveal dwell takes the whole depth the top resize cursor can
+  // show at (RESIZE_EDGE_PX + RESIZE_EXIT_SLACK): that cursor is what tells the
+  // user they are at the top edge, and the dwell already keeps a drift from
+  // popping the bar. A press in the band still resizes. Mirrored in overlay.js.
+  const DWELL_REVEAL_BAND_PX = 14;
   // ── Round-2 main-driven edge/corner RESIZE (cursor + drag) ──────────────────
   // The shared overlay can CAPTURE a press but never PAINTS a cursor — it is never
   // the macOS first responder, and cursor rendering belongs to the topmost
@@ -2196,6 +2257,10 @@ export function wireHybridContentEvents(
   // workArea → no clear; UNMAXIMIZE_REQUESTED clears the flag before its
   // SET_BOUNDS(preMaxBounds) → early-return; and the band drag (`applyResize`)
   // already ran `exitMaximizeForResize()` at press → early-return.
+  // The work area of the display the host sits on, or null when the screen is
+  // unavailable (some test envs). Read by the reveal band to decide how much room
+  // the host has above it — `overlay-frame.ts revealDelayMs` owns that rule, and
+  // the lookup is guarded because it runs inside the raw input stream.
   const fillsWorkArea = (b: { x: number; y: number; width: number; height: number }): boolean => {
     const wa = screen.getDisplayNearestPoint({
       x: b.x + Math.floor(b.width / 2),
@@ -2340,15 +2405,27 @@ export function wireHybridContentEvents(
         // Top-border reveal (peek 363e7cff) — offset below the host top edge.
         const dy = input.globalY - bounds.y;
         if (!inRevealBand) {
-          if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
+          const enterPx = revealDelayForHostBounds(bounds) > 0 ? DWELL_REVEAL_BAND_PX : REVEAL_ENTER_PX;
+          if (dy >= 0 && dy <= enterPx) {
             inRevealBand = true;
-            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal' });
+            // How long the overlay waits before the navbar covers the page (peek
+            // bf879b8c). A host with no room above it has the page's own account
+            // menu / home link / site nav exactly where the navbar lands, so the
+            // reveal has to be a deliberate dwell rather than a crossing. Main
+            // owns the geometry, so it owns the decision; the overlay just honors
+            // the delay it is handed.
+            const delayMs = revealDelayForHostBounds(bounds);
+            wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal', delayMs });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {
-              windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
+              windowId: hostWindowId, phase: 'reveal',
+              screenX: input.globalX, screenY: input.globalY,
             });
           }
         } else {
-          if (dy < 0 || dy > REVEAL_EXIT_PX) {
+          // Above the host top is not an exit: on a host flush with the screen
+          // top that is the menu bar / screen edge, where the pointer rests
+          // during the reveal dwell. Only moving down into the page leaves.
+          if (dy > REVEAL_EXIT_PX) {
             inRevealBand = false;
             wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal-out' });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {

@@ -139,9 +139,13 @@ function contentRectInOverlay() {
   if (maximized) {
     return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
   }
+  // Main clamps the overlay frame onto the work area, so a host flush with the
+  // screen's top or left edge sits closer to the frame edge than the gutters;
+  // main sends the real inset (contentInset) and the plain gutters are only the
+  // fallback for a payload without it.
   return {
-    left: gutters.left,
-    top: gutters.top,
+    left: contentInset ? contentInset.left : gutters.left,
+    top: contentInset ? contentInset.top : gutters.top,
     width: activeBounds.width,
     height: activeBounds.height,
   };
@@ -162,7 +166,7 @@ function updateOverlayPositions() {
   const top = r.top;
   const w = r.width;
   const h = r.height;
-  const navOffset = gutters.top; // navbar band + trigger zone above content
+  const navOffset = top; // navbar band + trigger zone above content (0 when flush with the screen top)
 
   // Navbar: spans the content width, pinned to the top of the window (page.js
   // navbar.top = 0). Trigger zone: the strip between the window top and content.
@@ -306,6 +310,9 @@ let activeUrl = null;
 // overlay's own bounds — the renderer tracks them locally (exactly as page.js
 // tracks `screenBounds`) and publishes new bounds for main to apply.
 let activeBounds = null;
+// Where the content rect sits inside the overlay frame ({left, top}), from main.
+// null = use the plain gutters.
+let contentInset = null;
 // Whether the active window is currently maximized (toggled by the maximize
 // affordance). preMaxBounds holds the bounds to restore to on unmaximize.
 let maximized = false;
@@ -355,8 +362,10 @@ api.subscribe('page-overlay:active', (msg) => {
     activeWindowId = null;
     activeUrl = null;
     activeBounds = null;
+    contentInset = null;
     maximized = false;
     preMaxBounds = null;
+    setRevealDelay(0);
     clearChrome();
     // Re-evaluate the permission queue: no active window → no visible prompt.
     // Queued requests are NOT dropped (never auto-deny) — they surface again
@@ -376,6 +385,8 @@ api.subscribe('page-overlay:active', (msg) => {
   activeBounds = msg.bounds ? { ...msg.bounds } : null;
   // Gutter geometry from main (defaults already set; keep them in sync if sent).
   if (msg.gutters) gutters = { ...msg.gutters };
+  contentInset = msg.contentInset ? { ...msg.contentInset } : null;
+  setRevealDelay(msg.revealDelayMs);
   // Reconcile maximize state to the newly-active window (each window owns its
   // own). Main ships the registry's maximized/preMaxBounds — the single source
   // of truth — on every handoff, so re-activating a maximized window (window
@@ -505,6 +516,58 @@ function cancelHide() {
   // hybrid-overlay test bridge's moveOffChromeSchedulesHide). No-op in prod.
   window.__overlayHidePending = false;
 }
+// ── The one route for hover-driven show/hide of the navbar ────────────────────
+// Every pointer-driven reveal or hide (trigger zone, the mousemove chrome loop,
+// the content-pointer band from main, panel hover, navbar leave) goes through
+// requestReveal()/requestHide(); nothing else decides when the bar appears.
+// `revealDelay` is the dwell main computed for the active host (peek bf879b8c):
+// a page flush with the top of the screen draws its own account menu / home link /
+// site nav exactly where the navbar lands, so a cursor merely crossing the top
+// edge must not drop the bar on them. 0 = reveal at once. Main sends it with the
+// active-window handoff and with every bounds change; the overlay never measures.
+//
+// The timer measures HUMAN dwell ("the pointer stayed 2 s"), the same shape as
+// the 400ms `hideTimer`; there is no state transition to wait on instead. One
+// handle, cleared on fire and on any hide request, so nothing races it.
+let revealDelay = 0;
+let pendingReveal = null;
+function cancelPendingReveal() {
+  if (pendingReveal) { clearTimeout(pendingReveal); pendingReveal = null; }
+}
+/** Explicit intent (Cmd+L) passes `immediate` and skips the dwell. A bar already
+ *  up stays up at once; an armed dwell keeps running rather than restarting, so a
+ *  pointer jittering inside the zone still reveals. */
+function requestReveal({ immediate = false } = {}) {
+  if (activeWindowId == null) return;
+  if (immediate || revealDelay <= 0 || navbar.classList.contains('visible')) {
+    cancelPendingReveal();
+    showNavbar();
+    return;
+  }
+  if (pendingReveal) return;
+  pendingReveal = setTimeout(() => {
+    pendingReveal = null;
+    showNavbar();
+  }, revealDelay);
+}
+/** `e` is the pointer event behind the request, when there is one. Leaving
+ *  through the top edge of the overlay (clientY <= 0) is not leaving the band: on
+ *  a host flush with the screen top the pointer is now resting against the menu
+ *  bar / screen edge, which is exactly the dwell gesture, so a pending reveal
+ *  keeps running. */
+function requestHide(e) {
+  if (pendingReveal && e && typeof e.clientY === 'number' && e.clientY <= 0) return;
+  cancelPendingReveal();
+  scheduleHide();
+}
+/** Take the active host's dwell from main (absent or invalid = reveal at once).
+ *  A pending dwell armed for another window or geometry is dropped. */
+function setRevealDelay(ms) {
+  const next = Number(ms) > 0 ? Number(ms) : 0;
+  if (next !== revealDelay) cancelPendingReveal();
+  revealDelay = next;
+}
+
 /** A user reveal (hover, Cmd+L, panel hover): the bar stays until they leave. */
 function showNavbar() {
   if (activeWindowId == null) return;
@@ -580,15 +643,15 @@ function scheduleHide() {
 // while the overlay holds keyboard focus, so typing + Enter works end-to-end.
 function openNavbarFocused() {
   if (activeWindowId == null) return;
-  showNavbar();
+  requestReveal({ immediate: true });
   setCapture(true);
   navbar.focusUrl();
 }
 
-triggerZone.addEventListener('mouseenter', showNavbar);
-triggerZone.addEventListener('mouseleave', scheduleHide);
+triggerZone.addEventListener('mouseenter', () => requestReveal());
+triggerZone.addEventListener('mouseleave', requestHide);
 navbar.addEventListener('mouseenter', cancelHide);
-navbar.addEventListener('mouseleave', scheduleHide);
+navbar.addEventListener('mouseleave', requestHide);
 
 // P1.4b-5: keep the chrome (navbar + panels) visible while the pointer is over a
 // side panel — mirrors page.js, which cancels the hide timer on panel hover so a
@@ -601,9 +664,9 @@ for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#exten
   if (!p) continue;
   // Hidden panels (opacity 0) are still hit-testable; only visible ones reveal.
   p.addEventListener('mouseenter', () => {
-    if (document.body.classList.contains('panels-visible')) showNavbar();
+    if (document.body.classList.contains('panels-visible')) requestReveal();
   });
-  p.addEventListener('mouseleave', scheduleHide);
+  p.addEventListener('mouseleave', requestHide);
 }
 
 // ── Click-capture: overlay is window-level click-through by default. Capture
@@ -665,8 +728,18 @@ for (const el of document.querySelectorAll('.interactive')) {
 function pointInRect(x, y, r) {
   return r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
+// With a reveal dwell in effect the top band is as deep as the top resize band
+// (ipc.ts DWELL_REVEAL_BAND_PX): the resize cursor showing is what tells the
+// user they are at the top edge, so resting anywhere it shows must count. The
+// overlay stays click-through while the dwell runs, so a press there still
+// resizes.
+const DWELL_REVEAL_BAND_PX = 14;
 function pointerOverChrome(x, y) {
   if (pointInRect(x, y, triggerZone.getBoundingClientRect())) return true;
+  if (revealDelay > 0) {
+    const c = contentRectInOverlay();
+    if (c && x >= c.left && x <= c.left + c.width && y <= c.top + DWELL_REVEAL_BAND_PX) return true;
+  }
   if (navbar.classList.contains('visible') &&
       pointInRect(x, y, navbar.getBoundingClientRect())) return true;
   // Visible side panels keep the chrome open on hover (mirrors the panel
@@ -694,8 +767,12 @@ document.addEventListener('mousemove', (e) => {
   if (resizeActive) return;
   const x = e.clientX, y = e.clientY;
   if (pointerOverChrome(x, y)) {
-    showNavbar();
-    setCapture(true);
+    requestReveal();
+    // While the dwell is pending the overlay stays click-through: capturing now
+    // would make the top strip opaque and the page's own top elements unclickable,
+    // which is what the dwell exists to prevent. The next move after the bar
+    // appears captures it.
+    if (!pendingReveal) setCapture(true);
   } else if (pointerOverPermissionPrompt(x, y)) {
     // Over the permission prompt: capture so its buttons/checkbox are clickable,
     // but don't reveal the navbar — the prompt is its own transient surface
@@ -707,7 +784,7 @@ document.addEventListener('mousemove', (e) => {
     // content window (and so the edges stay click-through → content topmost →
     // main's injected resize cursor shows), and schedule the navbar hide.
     setCapture(false);
-    scheduleHide();
+    requestHide(e);
   }
 });
 
@@ -775,6 +852,8 @@ api.subscribe('page-overlay:bounds', (msg) => {
   // those moves lags the pointer and would rewind it mid-drag.
   if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
   activeBounds = { ...msg.bounds };
+  contentInset = msg.contentInset ? { ...msg.contentInset } : null;
+  setRevealDelay(msg.revealDelayMs);
   updateOverlayPositions();
 });
 // Assign directly rather than calling toggleMaximize() — the toggle would publish
@@ -1041,17 +1120,18 @@ document.addEventListener('mouseup', () => holdDrag.onUp());
 // the content WC captures the idle moves the reveal loop needs. So main also
 // forwards IDLE top-band moves as `phase:'reveal'` / `phase:'reveal-out'` (it owns
 // the host geometry, so this works edge-to-edge incl. maximized). We drive the
-// SAME showNavbar()/scheduleHide() the trigger-zone hover uses. The local
+// SAME requestReveal()/requestHide() route the trigger-zone hover uses; the dwell
+// for a host flush with the screen top lives there, in one place. The local
 // reveal loop still owns the gutter case (where the overlay sees moves natively);
-// both feeding showNavbar/scheduleHide is idempotent (cancelHide/scheduleHide
+// both feeding requestReveal/requestHide is idempotent (cancelHide/scheduleHide
 // guard each other), so the two paths never fight.
 api.subscribe('page-overlay:content-pointer', (msg) => {
   if (!isActive(msg)) return;
   if (msg.phase === 'down') holdDrag.onDown(msg.screenX, msg.screenY);
   else if (msg.phase === 'move') holdDrag.onMove(msg.screenX, msg.screenY);
   else if (msg.phase === 'up') holdDrag.onUp();
-  else if (msg.phase === 'reveal') showNavbar();
-  else if (msg.phase === 'reveal-out') scheduleHide();
+  else if (msg.phase === 'reveal') requestReveal();
+  else if (msg.phase === 'reveal-out') requestHide();
   // No 'edge' phase: edge/corner RESIZE is owned entirely by main (cursor +
   // drag against the content WC); the overlay only learns a resize is active via
   // page-overlay:resize-active (above) so it stays click-through during the drag.
@@ -2229,9 +2309,9 @@ pageNotesPane.init();
 // Bind the chrome-hover keep-open behavior now that the element is mounted (the
 // earlier querySelectorAll loop ran before this replace).
 notesPanel.addEventListener('mouseenter', () => {
-  if (document.body.classList.contains('panels-visible')) showNavbar();
+  if (document.body.classList.contains('panels-visible')) requestReveal();
 });
-notesPanel.addEventListener('mouseleave', scheduleHide);
+notesPanel.addEventListener('mouseleave', requestHide);
 
 function loadNotesForUrl(token, url) {
   if (token !== panelToken || !isHttp(url)) return;

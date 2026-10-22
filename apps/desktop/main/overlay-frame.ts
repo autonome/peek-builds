@@ -52,6 +52,37 @@ export const OVERLAY_GUTTERS = {
 } as const;
 
 /**
+ * How long the top-border hover gesture waits before the navbar covers the page,
+ * for a window with no room above it. A page flush with the top of the screen
+ * draws its own account menu, home link and site nav exactly where the navbar
+ * lands, so an instant reveal steals those targets from a cursor merely crossing
+ * the top edge. The dwell is long enough that only a deliberate hover reveals.
+ * Not a setting — the gesture's own timing, like the 400ms hide dwell.
+ */
+export const REVEAL_DELAY_MS = 2000;
+
+/**
+ * The delay before the top-border hover gesture reveals the navbar, in ms:
+ * `REVEAL_DELAY_MS` when the host has less than a top gutter's worth of room
+ * above it (maximized, or flush or nearly flush with the top of the work area),
+ * so the navbar would land on the page's own top elements; `0` when the host sits
+ * far enough down that the navbar reveals into the gutter above the page instead.
+ *
+ * The comparison is signed, not absolute: a host whose top edge is ABOVE the work
+ * area's top (fullscreen, or a display whose work area excludes a menu bar the
+ * window covers anyway) has no room above it either, and delays.
+ *
+ * `workArea` is the display work area nearest the host, or `null` when
+ * unavailable (some test envs) — with no work area there is nothing to measure
+ * room against, so the gesture keeps its immediate reveal.
+ */
+export function revealDelayMs(host: Rectangle, workArea: Rectangle | null): number {
+  if (!workArea) return 0;
+  const roomAbove = host.y - workArea.y;
+  return roomAbove <= GUTTER_TOP ? REVEAL_DELAY_MS : 0;
+}
+
+/**
  * Expand an inner content rect (the content `BaseWindow`'s outer bounds) into
  * the overlay's frame: the content rect grown by the canvas gutters so the
  * chrome has margin to render in AROUND the content. The inner content rect is
@@ -97,4 +128,20 @@ export function expandToOverlayFrame(content: Rectangle, workArea: Rectangle | n
     frame.y = Math.min(Math.max(frame.y, workArea.y), Math.max(workArea.y, maxY));
   }
   return frame;
+}
+
+/**
+ * Where the content rect actually sits inside its overlay frame, as left/top
+ * insets in overlay-local pixels. Normally the gutters, but `expandToOverlayFrame`
+ * clamps the frame onto the work area, so a host flush with the top (or left) of
+ * the screen has a smaller inset on that side — down to 0. The renderer lays the
+ * chrome out from these, so its hover strip and navbar land on the host's real
+ * top edge instead of a gutter's height below it.
+ */
+export function contentInsetInFrame(
+  content: Rectangle,
+  workArea: Rectangle | null,
+): { left: number; top: number } {
+  const frame = expandToOverlayFrame(content, workArea);
+  return { left: Math.round(content.x - frame.x), top: Math.round(content.y - frame.y) };
 }

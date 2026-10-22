@@ -2032,6 +2032,15 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
  *
  * Focus-free: real `input-event` emit on the content WC, DOM read via the
  * bridge, synthetic active-change. No real OS focus/pointer.
+ *
+ * A host flush with the top of the work area reveals on a DWELL, not on the
+ * crossing (peek `bf879b8c`): the navbar would otherwise land on the page's own
+ * account menu / home link / site nav the moment the cursor touched the top edge.
+ * Main measures the room above the host (`overlay-frame.ts revealDelayMs`) and
+ * carries the wait on the message as `delayMs`; a host with a gutter above it
+ * still reveals at once. So the maximized cases below reveal ~2s after the move,
+ * well inside the 10s `expect` timeout, and the guttered case asserts its reveal
+ * lands inside a window shorter than the dwell.
  */
 test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @desktop', () => {
   let app: DesktopApp;
@@ -2148,7 +2157,10 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
       const b = (globalThis as any).__peekHybridOverlayTest;
       return b.emitContentTopEdgeHover((arg as any).id, 4);
     }, { id });
-    await expect.poll(navbarVisible).toBe(true);
+    // This host has 160px of room above it, so there is nothing of the page under
+    // the navbar: it reveals at once. The timeout is deliberately shorter than the
+    // flush-host dwell, so a delay leaking onto this path fails here.
+    await expect.poll(navbarVisible, { timeout: 1500 }).toBe(true);
   });
 
   test('idle move within the navbar band but past the 4px trigger strip does NOT reveal', async () => {
@@ -2207,6 +2219,84 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
       b.emitContentTopEdgeHover((arg as any).id, 60);
     }, { id });
     await expect.poll(navbarVisible).toBe(false);
+  });
+
+  // ── The dwell for a host flush with the top of the screen (peek bf879b8c) ──
+  //
+  // FAILING-FIRST: before the change main carried no `delayMs` and the overlay
+  // revealed on the message itself, so the navbar was already visible at the
+  // first check below and the `toBe(false)` assertions failed.
+
+  test('a host flush with the top of the work area reveals only after the ~2s dwell', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const id = await makeActiveMaximized();
+    await resetHidden();
+
+    // Squarely inside the 4px enter strip, exactly as the immediate-reveal test
+    // above — the only difference is that this host has no room above it.
+    const emitted = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.emitContentTopEdgeHover((arg as any).id, 4);
+    }, { id });
+    expect(emitted).toBe(true);
+
+    // Shortly after the move the page's own top elements are still clickable.
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 400)));
+    expect(await navbarVisible()).toBe(false);
+    // Still hidden most of the way through the dwell.
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 1100)));
+    expect(await navbarVisible()).toBe(false);
+
+    // And the dwell does finish: a cursor that stays in the band gets the navbar.
+    await expect.poll(navbarVisible).toBe(true);
+  });
+
+  test('leaving the band before the dwell runs out leaves the navbar hidden', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const id = await makeActiveMaximized();
+    await resetHidden();
+
+    // Enter the strip, then leave the whole band well before the dwell is up —
+    // a cursor passing through the top edge, which must reveal nothing.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.emitContentTopEdgeHover((arg as any).id, 4);
+    }, { id });
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 300)));
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.emitContentTopEdgeHover((arg as any).id, 60);
+    }, { id });
+
+    // Wait past the point the cancelled reveal would have fired, plus slack.
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 2500)));
+    expect(await navbarVisible()).toBe(false);
+  });
+
+  test('a second reveal while one is pending does not restart the dwell', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const id = await makeActiveMaximized();
+    await resetHidden();
+
+    // Enter the strip, then wait out most of the dwell.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.emitContentTopEdgeHover((arg as any).id, 4);
+    }, { id });
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 1500)));
+
+    // A repeat `reveal` for the same window, published directly: main only emits
+    // on band crossings, so this is the case where the overlay itself has to hold
+    // the dwell it already armed rather than push the reveal out by another 2s.
+    await publishOverlayTopic(app, 'page-overlay:content-pointer', {
+      windowId: id, phase: 'reveal', delayMs: 2000, screenX: 100, screenY: 1,
+    });
+
+    // The original dwell still expires on its own schedule.
+    await expect.poll(navbarVisible, { timeout: 1500 }).toBe(true);
   });
 });
 
