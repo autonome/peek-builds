@@ -48,7 +48,9 @@ Value is inferred, never asked for. Candidate signals per visit, each cheap to r
 - **Scroll volume**: how far and how much the page was scrolled.
 - **Clipboard**: text copied from the page (an address, a price, a code) is a strong sign of
   value. Recording that a copy happened, and its length, needs no copy of the text itself.
-- **Input**: typing into the page's forms (dates, filters, a booking form).
+- **Input**: typing into the page's forms (dates, filters, a booking form), measured as typing
+  volume (keystrokes), typing speed, and the number of distinct fields typed into. Counts only,
+  never the text typed.
 - **Returns**: opening the same page again in the same research, or across researches.
 - **Closing**: closed within seconds of loading reads as rejected; left open to the end reads as
   still relevant.
@@ -146,7 +148,8 @@ feeds both designs.
 1. **Time on page.** Fill `item_visits.duration` for web pages from focused, visible time,
    in main, with no page-side code. Useful everywhere and feeds background grouping at once.
 2. **Seen-before line in the overlay**, from visits and duration.
-3. **Scroll, copy and input** on every page, on the mechanism the slice measures cheapest.
+3. **Scroll, copy and input** on every page, on the mechanism the slice measures cheapest. Input
+   records typing volume, typing speed and the number of fields typed into.
 4. **The research view** on the app-wide maximized treatment once one of the filed issues
    lands.
 5. **Rounds**: `search-round` items for searches run from a space.
