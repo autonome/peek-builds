@@ -2243,6 +2243,7 @@ export function wireHybridContentEvents(
       // authority — the maximize decision stays on the machine flag above.
       const b = hostBounds();
       if (!b || fillsWorkArea(b)) return;
+      wmLog('diag-maximize-cleared-by-resize', { host: hostWindowId, b: JSON.stringify(b) });
       exitMaximizeForResize();
     } catch { /* gone */ }
   };
@@ -2992,6 +2993,7 @@ export function installHybridNavbarActionRouting(): void {
       // window manager. The kernel's `Maximize` command carries the work
       // area as data (`459ed219` shape — see `kernelMaximize`'s doc).
       kernelMaximize(machineId, workAreaRect);
+      wmLog('diag-maximize', { host: r.windowId, recMax: getMachineWindowRecord(machineId)?.maximized === true, wa: JSON.stringify(workAreaRect) });
     } catch { /* window gone */ }
   });
 
@@ -3006,6 +3008,7 @@ export function installHybridNavbarActionRouting(): void {
     // Feed the kernel (window-kernel-dispatch.ts) — this is what drives the
     // window manager.
     kernelUnmaximize(machineId);
+    wmLog('diag-unmaximize', { host: r.windowId });
   });
 
   // ── P1.4b-4: find-in-page routing (overlay find bar → content WC) ───────────

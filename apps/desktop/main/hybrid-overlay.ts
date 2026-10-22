@@ -435,6 +435,7 @@ function sendActiveHandoff(id: number | null): void {
   // entry is Electron-id-keyed, so convert through the sanctioned mapping.
   const activeMachineId = getWindowIdFor(id);
   const activeMachineRec = activeMachineId != null ? getMachineWindowRecord(activeMachineId) : undefined;
+  wmLog('diag-handoff', { host: id, recMax: activeMachineRec?.maximized === true });
   publish(getSystemAddress(), 'page-overlay:active', {
     windowId: id,
     url: entry.url(),
