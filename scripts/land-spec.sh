@@ -243,6 +243,7 @@ const read = (f) => {
   try { return JSON.parse(readFileSync(f, "utf-8")); } catch (e) { die(`cannot read ${f}: ${e.message}`); }
 };
 const glob = (g) => {
+  if (g.endsWith("/")) g += "**";   // a directory entry covers everything under it, as the tick's scope check reads it
   let re = "";
   for (let i = 0; i < g.length; i++) {
     const c = g[i];
