@@ -14,6 +14,7 @@
  */
 
 import { id, labels, schemas, storageKeys, defaults, builtinEngines } from './config.js';
+import { recordSearchRound, tagResultPageInSpace } from './search-rounds.js';
 
 const api = window.app;
 
@@ -165,22 +166,40 @@ const buildSearchUrl = (urlTemplate, query) => {
 };
 
 /**
- * Execute a search: open the search results URL in a new window
+ * Execute a search: record the round, then open the search results URL in a
+ * new window.
+ *
+ * Every search path lands here, so recording happens once. When the window the
+ * search was started from is in a space, the result window opens in that space
+ * and its page is tagged into that space once the open has resolved. A
+ * recording failure is logged where it happens and never stops the window from
+ * opening.
  */
-const executeSearch = async (engine, query) => {
+const executeSearch = async (engine, query, extraOpenOptions = {}) => {
   if (!query || !query.trim()) return;
 
   const url = buildSearchUrl(engine.searchUrl, query.trim());
 
-  api.window.open(url, {
-    role: 'content',
-    width: 1024,
-    height: 768,
-    trackingSource: 'websearch',
-    trackingSourceId: engine.id
-  }).catch(err => {
-    console.error('[ext:websearch] Failed to open search window:', err);
+  const spaceMode = await recordSearchRound(api, {
+    query,
+    engineId: engine.id,
+    url
   });
+
+  try {
+    await api.window.open(url, {
+      role: 'content',
+      width: 1024,
+      height: 768,
+      trackingSource: 'websearch',
+      trackingSourceId: engine.id,
+      ...extraOpenOptions,
+      ...(spaceMode ? { spaceMode } : {})
+    });
+    await tagResultPageInSpace(api, { url, spaceMode });
+  } catch (err) {
+    console.error('[ext:websearch] Failed to open search window:', err);
+  }
 };
 
 // ===== Search Suggestions =====
@@ -714,7 +733,11 @@ const requestSuggestions = debounce(async (query) => {
 // ===== UI: Search from UI =====
 
 /**
- * Execute search from the search window UI
+ * Execute search from the search window UI.
+ *
+ * Goes through executeSearch() so the box, the suggestions and Enter record a
+ * round the same way the commands do; the only difference is the `key`, which
+ * collapses a repeat of the same result URL onto one window.
  */
 const executeSearchFromUi = (query) => {
   if (!query || !query.trim()) return;
@@ -724,15 +747,10 @@ const executeSearchFromUi = (query) => {
     || uiState.engines[0];
   if (!engine) return;
 
-  const url = engine.searchUrl.replace('{searchTerms}', encodeURIComponent(query.trim()));
+  const url = buildSearchUrl(engine.searchUrl, query.trim());
 
-  api.window.open(url, {
-    role: 'content',
-    key: url,
-    width: 1024,
-    height: 768,
-    trackingSource: 'websearch',
-    trackingSourceId: engine.id
+  executeSearch(engine, query, { key: url }).catch(err => {
+    console.error('[ext:websearch] Failed to run search from the search window:', err);
   });
 };
 
