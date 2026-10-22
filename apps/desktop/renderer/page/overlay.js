@@ -531,14 +531,6 @@ function cancelHide() {
 // handle, cleared on fire and on any hide request, so nothing races it.
 let revealDelay = 0;
 let pendingReveal = null;
-// DIAG (temporary): trace of the reveal route, read via debug-eval.
-const __revealDiag = [];
-function diagReveal(step, extra) {
-  __revealDiag.push([Date.now(), step, activeWindowId, revealDelay, !!pendingReveal,
-    navbar && navbar.className, document.visibilityState, extra ?? null]);
-  if (__revealDiag.length > 200) __revealDiag.shift();
-}
-globalThis.__peekRevealDiag = __revealDiag;
 function cancelPendingReveal() {
   if (pendingReveal) { clearTimeout(pendingReveal); pendingReveal = null; }
 }
@@ -546,7 +538,6 @@ function cancelPendingReveal() {
  *  up stays up at once; an armed dwell keeps running rather than restarting, so a
  *  pointer jittering inside the zone still reveals. */
 function requestReveal({ immediate = false } = {}) {
-  diagReveal('requestReveal', immediate);
   if (activeWindowId == null) return;
   if (immediate || revealDelay <= 0 || navbar.classList.contains('visible')) {
     cancelPendingReveal();
@@ -556,7 +547,6 @@ function requestReveal({ immediate = false } = {}) {
   if (pendingReveal) return;
   pendingReveal = setTimeout(() => {
     pendingReveal = null;
-    diagReveal('dwell-fired');
     showNavbar();
   }, revealDelay);
 }
@@ -566,7 +556,6 @@ function requestReveal({ immediate = false } = {}) {
  *  bar / screen edge, which is exactly the dwell gesture, so a pending reveal
  *  keeps running. */
 function requestHide(e) {
-  diagReveal('requestHide', e ? [e.type, e.clientX, e.clientY] : null);
   if (pendingReveal && e && typeof e.clientY === 'number' && e.clientY <= 0) return;
   cancelPendingReveal();
   scheduleHide();
@@ -575,7 +564,6 @@ function requestHide(e) {
  *  A pending dwell armed for another window or geometry is dropped. */
 function setRevealDelay(ms) {
   const next = Number(ms) > 0 ? Number(ms) : 0;
-  diagReveal('setRevealDelay', next);
   if (next !== revealDelay) cancelPendingReveal();
   revealDelay = next;
 }
@@ -622,7 +610,6 @@ function revealNavbar() {
   updateOverlayPositions();
 }
 function hideNavbar() {
-  diagReveal('hideNavbar');
   navbarShownBy = null;
   navbarShownAt = null;
   cancelLoadHide();
@@ -1139,7 +1126,6 @@ document.addEventListener('mouseup', () => holdDrag.onUp());
 // both feeding requestReveal/requestHide is idempotent (cancelHide/scheduleHide
 // guard each other), so the two paths never fight.
 api.subscribe('page-overlay:content-pointer', (msg) => {
-  if (msg.phase === 'reveal' || msg.phase === 'reveal-out') diagReveal('content-pointer', [msg.phase, msg.windowId, isActive(msg)]);
   if (!isActive(msg)) return;
   if (msg.phase === 'down') holdDrag.onDown(msg.screenX, msg.screenY);
   else if (msg.phase === 'move') holdDrag.onMove(msg.screenX, msg.screenY);
