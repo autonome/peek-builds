@@ -19,7 +19,9 @@
       "key": "search-home",
       "width": 700,
       "height": 768,
-      "title": "Search"
+      "title": "Search",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -37,7 +39,8 @@
         "tag:item-removed",
         "editor:open",
         "affordance:click",
-        "rules:changed"
+        "rules:changed",
+        "window:see-through"
       ]
     },
     "datastore": {
