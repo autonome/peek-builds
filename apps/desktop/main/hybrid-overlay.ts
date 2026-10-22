@@ -645,7 +645,9 @@ function wireOverlayReady(): void {
  * — NOT loosening `applyRaiseRequest`'s eligibility gate.
  */
 function wireShowNavbarFocus(): void {
-  subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
+  // Cmd+F (`page:find`) opens the find bar, whose input must be typeable too, so
+  // it takes the same focus path as Cmd+L.
+  for (const topic of ['page:show-navbar', 'page:find']) subscribe(getSystemAddress(), topic, (raw) => {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
     // Never steal focus while backgrounded (R1) — except into the non-activating
