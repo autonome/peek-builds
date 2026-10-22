@@ -112,6 +112,24 @@ The research view should be built on whichever of those lands, not as its own wi
   is watched rather than avoided: each capture slice measures page load and input latency with
   and without it, and records the numbers in its handoff.
 
+## Built
+
+- **Time on page** (`main/visit-dwell.ts`, `main/visit-dwell-owner.ts`, spec
+  `specs/research-time-on-page.md`). `item_visits.duration` holds the milliseconds a page was in
+  front: its window key, the app active, the window visible. Written once when the visit ends (next
+  tracked navigation, window close, quit); a visit open when the process dies keeps 0.
+  `PEEK_VISIT_DWELL=off` disables it. Unverified on macOS, where key-window behaviour differs.
+- **Measured cost of time on page** (Linux, 20 loads of a local page per run, load start to
+  `did-finish-load`): median 112/137 ms on versus 123/130 ms off, 90th percentile 139/162 ms on
+  versus 156/147 ms off. No measurable difference; the spread between runs of one setting is
+  larger. Input latency is unaffected because no code runs in the page.
+- **Rebuilding the cost harness.** Copy the shape of `tests/desktop/visit-dwell.spec.ts`
+  (per-describe app plus a local `http` server). Through `DesktopApp.evaluateMain`, install an
+  `app.on('web-contents-created')` hook that records `Date.now()` on `did-start-loading` and the
+  difference on `did-finish-load` for the test page, open and close the page 20 times through
+  `window.app.window.open` / `close`, and read the samples back with a second `evaluateMain`.
+  Guard the install against repeat calls: `evaluateMain` can retry, and each retry adds a hook.
+
 ## Open questions
 
 - **Capture mechanism.** A page-side script in hybrid content views versus observation through
