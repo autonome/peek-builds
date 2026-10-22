@@ -14,10 +14,63 @@ html {
   line-height: 1.5;
 }
 
+/*
+ * The window is created transparent, so this background is the opaque normal
+ * look rather than the window's own. It stays on the body alone and the root
+ * element paints nothing, which is the arrangement see-through.css relies on:
+ * a body background reaches the viewport canvas only while the root has none,
+ * and the frosted look replaces this one on the same element.
+ */
 body {
   background: var(--base00);
   color: var(--base05);
   min-height: 100vh;
+}
+
+/*
+ * The see-through look. The shared sheet turns the background ramp
+ * (--base00 to --base03) translucent, which carries the frost through the
+ * search row, the toolbar, the cards and the group header, since every
+ * surface in this file is drawn from those variables. What it cannot know is
+ * which of the remaining theme colours this view reads as INK, and over a
+ * dark frosted background a light theme's ink is unreadable:
+ *
+ * - --base05 and --base04 are the primary and secondary text throughout, so
+ *   they are redefined light here. --base05 is also the colour see-through.css
+ *   asks for by name for the body text.
+ * - --base0D is the accent the create button, the active view-mode button,
+ *   the rename field's focus ring and the promote button are drawn in, lifted
+ *   to a light blue that reads on the frost.
+ * - --base00 is the ink of every control that fills itself with an accent or
+ *   a warning colour and then draws its glyph in the page colour, which the
+ *   shared sheet turns fully transparent — an invisible glyph. Those places
+ *   ask for "whatever contrasts with the coloured fill behind me", so they
+ *   get a dark ink of their own rather than a redefinition of the page
+ *   colour.
+ * - --base03 is secondary ink in the card meta line, the tag remove affordance,
+ *   the empty state and the all-tags label. The shared sheet gives it 0.28
+ *   alpha, which is a panel edge rather than readable text, so those places
+ *   are brightened by name.
+ */
+body.see-through {
+  --base05: rgba(255, 255, 255, 0.95);
+  --base04: rgba(255, 255, 255, 0.72);
+  --base0D: #aab6ff;
+}
+
+body.see-through .create-group-btn,
+body.see-through .card-delete-btn:hover,
+body.see-through .card-remove-group-btn:hover,
+body.see-through .group-header-view-modes .ghvm-btn.active,
+body.see-through .promote-btn:hover {
+  color: rgba(0, 0, 0, 0.82);
+}
+
+body.see-through .card-tag-remove,
+body.see-through .card-meta,
+body.see-through .empty-state,
+body.see-through .all-tags-label {
+  color: rgba(255, 255, 255, 0.6);
 }
 
 /* Search */

@@ -14,7 +14,9 @@
       "height": 600,
       "title": "Groups",
       "role": "workspace",
-      "key": "peek://groups/home.html"
+      "key": "peek://groups/home.html",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -27,6 +29,7 @@
         "groups:*",
         "cmd:*",
         "window:*",
+        "window:see-through",
         "sync:pull-completed",
         "ext:ready",
         "ext:groups:shutdown",
@@ -66,7 +69,12 @@
       "action": {
         "type": "window",
         "url": "peek://groups/home.html",
-        "options": { "role": "workspace", "width": 1024, "height": 768 }
+        "options": {
+          "role": "workspace",
+          "width": 1024,
+          "height": 768,
+          "transparent": true
+        }
       }
     },
     {
