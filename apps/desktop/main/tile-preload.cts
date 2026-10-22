@@ -929,6 +929,19 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Toggle maximize-all mode. On, every eligible window on the screen
+     * and desktop the user is on is maximized; off, each window the mode
+     * maximized returns to the exact size and position it had before.
+     * Resolves `{ success, entered }`, `entered` saying which way the
+     * toggle went. Requires `window.manage` (or trustedBuiltin).
+     */
+    maximizeAll: () => {
+      return ipcRenderer.invoke('tile:window:maximize-all', {
+        token: tileToken,
+      });
+    },
+
+    /**
      * Subscribe to maximize requests targeted at this window. The
      * `tile:window:maximize` IPC fires this on the target window's
      * webContents after the OS-side bounds change. Renderers that

@@ -16,6 +16,7 @@ export type WindowOp =
   | 'center'
   | 'center-all'
   | 'maximize'
+  | 'maximize-all'
   | 'fullscreen'
   | 'get-focused-visible-id'
   | 'get-see-through'
@@ -99,6 +100,7 @@ export function checkWindowAllowed(
     case 'center':
     case 'center-all':
     case 'maximize':
+    case 'maximize-all':
     case 'fullscreen':
     case 'set-see-through':
     case 'set-overlay-focus-target':

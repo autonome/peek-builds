@@ -46,6 +46,32 @@ export interface DesktopState {
   readonly screen: ScreenId | null;
 }
 
+// What maximize-all mode has decided about one window. See `WindowRecord.maximizeAllMark`.
+export type MaximizeAllMark = 'marked' | 'released';
+
+/**
+ * Maximize-all mode: while it is on, every eligible window inside its scope is
+ * maximized, and leaving returns each window the mode maximized to the rect it
+ * had before. The scope is fixed when the mode is entered; `null` for either
+ * half means that half is unknown and constrains nothing, which is the case on
+ * a backend that reports no screens or desktops at all.
+ *
+ * `workArea` is the rect an eligible window is maximized to. The kernel has no
+ * display geometry of its own, so the caller supplies it when entering, and it
+ * is kept for the windows that open while the mode is on.
+ */
+export interface MaximizeAllMode {
+  readonly screen: ScreenId | null;
+  readonly desktop: DesktopId | null;
+  readonly workArea: Rectangle | null;
+}
+
+/** One window's saved maximize-all mark, as carried through a session snapshot. */
+export interface MaximizeAllMarkEntry {
+  readonly id: WindowId;
+  readonly mark: MaximizeAllMark;
+}
+
 export interface WindowRecord {
   id: WindowId;
   kind: WindowKind;
@@ -77,6 +103,12 @@ export interface WindowRecord {
   bounds?: Rectangle;
   maximized: boolean;
   preMaxBounds: Rectangle | null;
+  // What maximize-all mode has decided about this window, absent while the
+  // mode has never considered it. `marked` = the mode maximized it and owes it
+  // its old rect back; `released` = the mode will not touch it, either because
+  // it was already maximized when the mode reached it or because the user has
+  // since taken it out of maximize. See `MaximizeAllMode`.
+  maximizeAllMark?: MaximizeAllMark;
   desktopMembership?: DesktopMembership;
   // The screen this window was last reported on; absent until a placement report.
   screen?: ScreenId;
@@ -181,6 +213,8 @@ export interface State {
   // user left, so no window counts as on a current desktop (`desktopUnread`).
   readonly desktopSwitchCount: number;
   readonly desktopSwitchesRead: number;
+  // Maximize-all mode, or `null` while it is off. See `MaximizeAllMode`.
+  readonly maximizeAll: MaximizeAllMode | null;
   // Focus the platform is expected to hand out by itself after an effect this
   // kernel emitted; a world-caused report matching it is the platform's
   // choice, not the user's (`platformChoseFocus`).
@@ -339,6 +373,16 @@ export type Event =
   | { type: 'Maximized'; id: WindowId; preMaxBounds: Rectangle | null }
   // `decide`'s translation of an accepted `Unmaximize` command — clears `maximized` + `preMaxBounds`.
   | { type: 'Unmaximized'; id: WindowId }
+  // Maximize-all mode turns on over this scope. The per-window work follows
+  // from the mode being on, in `admitToMaximizeAll`, so that a window opened
+  // later in the same scope is treated exactly like one that was already there.
+  | { type: 'MaximizeAllEntered'; screen: ScreenId | null; desktop: DesktopId | null; workArea: Rectangle | null }
+  // Maximize-all mode turns off; every mark is dropped. The windows the mode
+  // still owed their old rect to are returned by the `Unmaximized` events
+  // `decide` puts in front of this one.
+  | { type: 'MaximizeAllLeft' }
+  // Session restore re-establishing the mode and the marks it saved.
+  | { type: 'MaximizeAllRestored'; mode: MaximizeAllMode | null; marks: readonly MaximizeAllMarkEntry[] }
   | { type: 'PendingProjectionDiscarded'; id: WindowId }
   // `decide`'s translation of an accepted `SetDesktopMembership` command.
   | { type: 'DesktopMembershipSet'; id: WindowId; membership: DesktopMembership }
@@ -400,6 +444,15 @@ export type Command =
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle; expectedVersion: number }
   | { type: 'Maximize'; id: WindowId; workArea?: Rectangle; expectedVersion: number }
   | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
+  // Turn maximize-all mode on over the scope the user is in. `workArea` is the
+  // rect eligible windows are maximized to; the kernel has no display geometry
+  // of its own. Targets no single window, so it is answered before the
+  // existence guard in `decide`.
+  | { type: 'EnterMaximizeAll'; workArea?: Rectangle; expectedVersion: number }
+  // Turn maximize-all mode off, returning every window it still owes.
+  | { type: 'LeaveMaximizeAll'; expectedVersion: number }
+  // Session restore handing back the mode and the marks it saved.
+  | { type: 'RestoreMaximizeAll'; mode: MaximizeAllMode | null; marks: readonly MaximizeAllMarkEntry[]; expectedVersion: number }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean; expectedVersion: number }
   // Moves an already-open window between the pinned band (`layer > BASE_LAYER`)
@@ -487,6 +540,7 @@ export function initialState(): State {
     desktops: [],
     desktopSwitchCount: 0,
     desktopSwitchesRead: 0,
+    maximizeAll: null,
     expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
     overlayTransitionSinceResign: false,
     raiseAwaitingPlacement: null,
@@ -588,9 +642,11 @@ function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActiv
 }
 
 export function evolve(state: State, ev: Event): State {
-  return markFocusElsewhereCloses(
-    state,
-    followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, placementSettlesRaise(evolveEvent(state, ev)))),
+  return admitToMaximizeAll(
+    markFocusElsewhereCloses(
+      state,
+      followHeldHostOverlay(state, markEndedKeyTakenFromAnotherApp(state, placementSettlesRaise(evolveEvent(state, ev)))),
+    ),
   );
 }
 
@@ -1649,7 +1705,9 @@ function evolveEvent(state: State, ev: Event): State {
       // ("not maximized -> nothing to restore") is unnecessary here.
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, maximized: false, preMaxBounds: null } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.id ? releaseMaximizeAllMark({ ...w, maximized: false, preMaxBounds: null }) : w,
+        ),
         version: state.version + 1,
       };
     }
@@ -1665,7 +1723,53 @@ function evolveEvent(state: State, ev: Event): State {
     case 'Unmaximized': {
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, maximized: false, preMaxBounds: null } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.id ? releaseMaximizeAllMark({ ...w, maximized: false, preMaxBounds: null }) : w,
+        ),
+        version: state.version + 1,
+      };
+    }
+
+    case 'MaximizeAllEntered': {
+      // Only the mode itself is written here. The per-window work is
+      // `admitToMaximizeAll`, which runs for this event like any other.
+      return {
+        ...state,
+        maximizeAll: { screen: ev.screen, desktop: ev.desktop, workArea: ev.workArea },
+        version: state.version + 1,
+      };
+    }
+
+    case 'MaximizeAllLeft': {
+      // Every window the mode still owed its old rect to was returned by the
+      // `Unmaximized` events `decide` put in front of this one, so all that is
+      // left is to drop the mode and every mark with it.
+      return {
+        ...state,
+        maximizeAll: null,
+        order: state.order.map((w) => {
+          if (w.maximizeAllMark === undefined) return w;
+          const { maximizeAllMark: _dropped, ...cleared } = w;
+          return cleared;
+        }),
+        version: state.version + 1,
+      };
+    }
+
+    case 'MaximizeAllRestored': {
+      // The restored data is the whole truth about the mode: a window it does
+      // not name comes back unmarked, whatever it carried before, and the mode
+      // treats it as one it has not yet considered.
+      return {
+        ...state,
+        maximizeAll: ev.mode,
+        order: state.order.map((w) => {
+          const entry = ev.marks.find((m) => m.id === w.id);
+          if (entry !== undefined) return { ...w, maximizeAllMark: entry.mark };
+          if (w.maximizeAllMark === undefined) return w;
+          const { maximizeAllMark: _dropped, ...cleared } = w;
+          return cleared;
+        }),
         version: state.version + 1,
       };
     }
@@ -2508,6 +2612,53 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     return { events: [{ type: 'GuestTeardownRequested' }] };
   }
 
+  // The three maximize-all commands name no single window — handled here,
+  // before the generic `cmd.id` guard below.
+
+  // Entering is one event: the mode turning on. Which windows that reaches,
+  // and what it does to each, is `admitToMaximizeAll`, so a window opened a
+  // minute later in the same scope is treated the same way as one that was
+  // already there. Entering while the mode is on is a no-op rather than a
+  // re-entry, so the scope the user entered over is the one that lasts.
+  if (cmd.type === 'EnterMaximizeAll') {
+    if (state.maximizeAll !== null) return { events: [] };
+    const scope = maximizeAllScope(state);
+    return {
+      events: [
+        {
+          type: 'MaximizeAllEntered',
+          screen: scope.screen,
+          desktop: scope.desktop,
+          workArea: cmd.workArea ?? null,
+        },
+      ],
+    };
+  }
+
+  // Leaving returns each window the mode still owes through the kernel's own
+  // `Unmaximized`, which is also what a user's unmaximize goes through — so
+  // the window lands on the rect stashed when the mode maximized it, by the
+  // same path, and the mode's own mark is dropped as it goes.
+  if (cmd.type === 'LeaveMaximizeAll') {
+    if (state.maximizeAll === null) return { events: [] };
+    const events: Event[] = [];
+    for (const rec of state.order) {
+      if (rec.maximizeAllMark !== 'marked' || !rec.maximized) continue;
+      events.push({ type: 'PendingProjectionDiscarded', id: rec.id });
+      events.push({ type: 'Unmaximized', id: rec.id });
+      if (rec.preMaxBounds !== null) events.push({ type: 'BoundsChanged', id: rec.id, bounds: rec.preMaxBounds });
+    }
+    events.push({ type: 'MaximizeAllLeft' });
+    return { events };
+  }
+
+  // Restore hands back what was saved. Unknown ids are not rejected, for the
+  // same reason `ImportStackOrder` does not: a window named by the snapshot
+  // may have failed to come back, and that is expected traffic.
+  if (cmd.type === 'RestoreMaximizeAll') {
+    return { events: [{ type: 'MaximizeAllRestored', mode: cmd.mode, marks: cmd.marks }] };
+  }
+
   if (!state.order.some((w) => w.id === cmd.id)) {
     return { rejected: 'no-such-window' };
   }
@@ -2889,6 +3040,116 @@ function isBaseLayerFrontEligible(r: WindowRecord): boolean {
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
   const front = topmost(state, (r) => isBaseLayerFrontEligible(r) && onCurrentDesktop(state, r));
   return front !== null && isBaseLayerPageHost(front) ? front : null;
+}
+
+// ── Maximize-all mode ────────────────────────────────────────────────────────
+
+// Roles the mode never touches: a window that is on screen for as long as a
+// gesture lasts, or that decorates another window rather than holding content.
+const MAXIMIZE_ALL_EXCLUDED_ROLES: ReadonlySet<string> = new Set([
+  'overlay',
+  'palette',
+  'switcher',
+  'quick-view',
+  'signal',
+]);
+
+/**
+ * A window maximize-all mode may act on: an ordinary page or tile window the
+ * user can work in. Everything that comes and goes with a gesture is out
+ * (`transient`, the launcher and overlay roles), as is everything that decorates
+ * another window (an overlay, anything that tracks the top of the base layer),
+ * anything the user cannot focus, anything pinned above the ordinary band, and
+ * anything mid-fullscreen, whose own bounds machinery owns the window.
+ */
+export function isMaximizeAllEligible(record: WindowRecord): boolean {
+  if (!record.visible) return false;
+  if (record.pendingHidden === true) return false;
+  if (record.transient === true) return false;
+  if (!record.orderable) return false;
+  if (!record.canBecomeKey) return false;
+  if (record.layer !== BASE_LAYER) return false;
+  if (record.overlayFor !== undefined) return false;
+  if (record.tracksBaseLayerTop === true) return false;
+  if (record.fsMode.name !== 'normal') return false;
+  return !roleIn(MAXIMIZE_ALL_EXCLUDED_ROLES, record.role);
+}
+
+/**
+ * Whether a window falls inside the scope the mode was entered over. A half of
+ * the scope that is `null` — the backend reported no screens, so there is one
+ * place and the question does not arise — constrains nothing. Neither does a
+ * window whose own screen or desktop the backend has not reported: only a
+ * window known to be somewhere else is excluded, so a backend that names
+ * screens but not where each window sits still maximizes what the user sees,
+ * and a window too new to have been placed is not skipped for being new.
+ */
+export function inMaximizeAllScope(mode: MaximizeAllMode, record: WindowRecord): boolean {
+  if (mode.screen !== null && record.screen !== undefined && record.screen !== mode.screen) return false;
+  if (mode.desktop !== null && record.desktop !== undefined && record.desktop !== mode.desktop) return false;
+  return true;
+}
+
+/**
+ * The screen and desktop the user is on, read off the window they are working
+ * in: the key window, else the frontmost window the mode could act on, else the
+ * first screen the backend reported. `null` for either half means the backend
+ * said nothing about it, and the mode then covers everywhere.
+ */
+export function maximizeAllScope(state: State): { screen: ScreenId | null; desktop: DesktopId | null } {
+  const anchor = keyWindow(state) ?? topmost(state, isMaximizeAllEligible);
+  const screen = anchor?.screen ?? state.screens[0]?.id ?? null;
+  const desktop =
+    anchor?.desktop ?? state.screens.find((s) => s.id === screen)?.current ?? state.screens[0]?.current ?? null;
+  return { screen, desktop };
+}
+
+/**
+ * The one place the mode acts on a window. It runs after every event while the
+ * mode is on, so a window that opens, is shown, or is reported into the scope
+ * later is treated exactly like one that was there when the mode was entered —
+ * there is no separate "entering" pass to keep in step with this one.
+ *
+ * It only ever considers a window the mode has not yet decided about, which is
+ * what keeps a user's own change final: taking a window out of maximize marks
+ * it `released`, and a released window is never reconsidered while the mode
+ * lasts. A window already maximized when the mode reaches it is released too,
+ * so leaving the mode leaves it maximized.
+ */
+function admitToMaximizeAll(state: State): State {
+  const mode = state.maximizeAll;
+  if (mode === null) return state;
+  let changed = false;
+  const order = state.order.map((w) => {
+    if (w.maximizeAllMark !== undefined) return w;
+    if (!isMaximizeAllEligible(w) || !inMaximizeAllScope(mode, w)) return w;
+    if (w.maximized) {
+      changed = true;
+      return { ...w, maximizeAllMark: 'released' as const };
+    }
+    // A window whose rect has not been reported yet is left alone for now:
+    // maximizing it would leave the mode with nothing to put back. This runs
+    // again after the next event, so the window joins as soon as its rect
+    // arrives rather than being skipped for the rest of the mode.
+    if (w.bounds === undefined) return w;
+    changed = true;
+    return {
+      ...w,
+      maximizeAllMark: 'marked' as const,
+      maximized: true,
+      preMaxBounds: w.bounds,
+      pendingProjectedBounds: null,
+      ...(mode.workArea !== null ? { bounds: mode.workArea } : {}),
+    };
+  });
+  return changed ? { ...state, order } : state;
+}
+
+// A window the user takes out of maximize is the user's from then on: the mode
+// drops its claim, and never re-maximizes it, however the window gets back to
+// maximized afterwards.
+function releaseMaximizeAllMark(record: WindowRecord): WindowRecord {
+  return record.maximizeAllMark === 'marked' ? { ...record, maximizeAllMark: 'released' } : record;
 }
 
 // Roles whose windows launch or overlay other windows rather than own them: a

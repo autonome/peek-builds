@@ -15,7 +15,7 @@ import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getWindowIdFor, getAppActive, getKernelExecutorForApp } from './window-machine.js';
 import { planRestoreActivation } from './window-kernel-executor.js';
-import type { State, WindowId } from './window-kernel.js';
+import type { MaximizeAllMark, MaximizeAllMarkEntry, State, WindowId } from './window-kernel.js';
 import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
@@ -24,14 +24,14 @@ import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import { getWindowNavHistory, readNavHistory } from './nav-history.js';
-import { serializeSession, addDescriptorsToSnapshot, mergeSnapshotIntoWorkspace, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, maximizeRestoreDescriptor, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
+import { serializeSession, addDescriptorsToSnapshot, mergeSnapshotIntoWorkspace, readStackIndex, orderRestoredWindowsBottomToTop, planDesktopRestore, maximizeRestoreDescriptor, readMaximizeAllMark, DEFAULT_WORKSPACE_KEY } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
-import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
+import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, kernelRestoreMaximizeAll, getKernelExecutor } from './window-kernel-dispatch.js';
 import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
@@ -1824,6 +1824,9 @@ export async function restoreSessionSnapshot(
   const restoredWindows: RestoredStackEntry[] = [];
   // The same windows with the desktop each recorded, for `applyDesktopRestore`.
   const restoredDesktops: Array<{ id: number; desktop?: string; focused: boolean }> = [];
+  // Each restored window that carried a maximize-all mark, for the single
+  // `kernelRestoreMaximizeAll` call after the loop.
+  const restoredMaximizeAllMarks: Array<{ id: number; mark: MaximizeAllMark }> = [];
   // Subset of restoredWindows that are hybrid page-hosts (BaseWindow +
   // WebContentsView). Only these hit the compositing race (see the
   // `hybrid:first-frame` producer at the top of this file): their saved-order
@@ -2026,6 +2029,8 @@ export async function restoreSessionSnapshot(
             ...(descriptor.desktop !== undefined ? { desktop: descriptor.desktop } : {}),
             focused: descriptor.focused === true,
           });
+          const mark = readMaximizeAllMark(descriptor.params);
+          if (mark !== null) restoredMaximizeAllMarks.push({ id: openResult.id, mark });
         }
 
         // Attach did-finish-load / did-fail-load listeners to measure the
@@ -2193,6 +2198,22 @@ export async function restoreSessionSnapshot(
     await applyDesktopRestore(restoredDesktops);
   } catch (err) {
     console.warn('[session] desktop restore failed:', err);
+  }
+
+  // Maximize-all mode comes back with its scope and its marks, so leaving it
+  // after a relaunch still puts back exactly the windows it maximized
+  // (`docs/design/window-rules.md` G16). Windows the mode never touched carry
+  // no mark and are restored without one. Held groups are on other desktops,
+  // outside any scope the mode can have, so they contribute nothing here.
+  try {
+    const marks: MaximizeAllMarkEntry[] = [];
+    for (const entry of restoredMaximizeAllMarks) {
+      const machineId = getWindowIdFor(entry.id);
+      if (machineId != null) marks.push({ id: machineId, mark: entry.mark });
+    }
+    kernelRestoreMaximizeAll(snapshot.maximizeAll ?? null, marks);
+  } catch (err) {
+    console.warn('[session] maximize-all restore failed:', err);
   }
 
   // Focus the window that was focused at save time — but only if Peek is

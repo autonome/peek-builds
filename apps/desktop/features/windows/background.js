@@ -144,6 +144,13 @@ const commandDefinitions = [
     }
   },
   {
+    name: 'maximize all windows',
+    description: 'Maximize every window here; run again to put them all back',
+    execute: async (ctx) => {
+      return api.window.maximizeAll();
+    }
+  },
+  {
     name: 'fullscreen',
     description: 'Toggle fullscreen for the active window',
     execute: async (ctx) => {

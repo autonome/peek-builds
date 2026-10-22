@@ -5,7 +5,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { type Command, type DesktopId, type DesktopMembership, type DesktopState, type Event, type MaximizeAllMarkEntry, type MaximizeAllMode, type ScreenId, type ScreenState, type FocusCause, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './izui-roles.js';
 
@@ -384,6 +384,35 @@ export function kernelMaximize(id: WindowId, workArea?: Rectangle): void {
 
 export function kernelUnmaximize(id: WindowId): void {
   kernelExecute({ type: 'Unmaximize', id, expectedVersion: getKernelExecutor().getState().version });
+}
+
+// Maximize-all mode. `workArea` is the rect eligible windows are maximized to —
+// the kernel has no display geometry of its own, so the caller reads it off the
+// screen the user is on and hands it over.
+export function kernelEnterMaximizeAll(workArea?: Rectangle): void {
+  kernelExecute({
+    type: 'EnterMaximizeAll',
+    ...(workArea !== undefined ? { workArea } : {}),
+    expectedVersion: getKernelExecutor().getState().version,
+  });
+}
+
+export function kernelLeaveMaximizeAll(): void {
+  kernelExecute({ type: 'LeaveMaximizeAll', expectedVersion: getKernelExecutor().getState().version });
+}
+
+export function kernelRestoreMaximizeAll(mode: MaximizeAllMode | null, marks: readonly MaximizeAllMarkEntry[]): void {
+  kernelExecute({
+    type: 'RestoreMaximizeAll',
+    mode,
+    marks,
+    expectedVersion: getKernelExecutor().getState().version,
+  });
+}
+
+/** The mode and its scope, or `null` while the mode is off. */
+export function kernelMaximizeAllMode(): MaximizeAllMode | null {
+  return getKernelExecutor().getState().maximizeAll;
 }
 
 export function kernelSetDesktopMembership(id: WindowId, membership: DesktopMembership): void {

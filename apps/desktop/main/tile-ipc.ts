@@ -149,6 +149,9 @@ import {
   kernelSetBounds,
   kernelMaximize,
   kernelUnmaximize,
+  kernelEnterMaximizeAll,
+  kernelLeaveMaximizeAll,
+  kernelMaximizeAllMode,
   kernelSetDesktopMembership,
   kernelShowRequested,
   kernelHideRequested,
@@ -4208,6 +4211,45 @@ export function registerTileIpcHandlers(): void {
         { windowId: win.id, seeThrough: on },
       );
       return { success: true, data: { seeThrough: on } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:maximize-all ──────────────────────────────────────
+  //
+  // Toggle maximize-all mode: on, every eligible window on the screen
+  // and desktop the user is on is maximized; off, each window the mode
+  // maximized goes back to the exact rect it had before. The mode, its
+  // scope and each window's mark are kernel state
+  // (`window-kernel.ts MaximizeAllMode`) — nothing about them is tracked
+  // here. The handler's one job is the work area, which the kernel has
+  // no way to know: it reads it off the window the user is working in,
+  // the same explicit-rect approach `tile:window:maximize` takes and for
+  // the same reason (frameless windows ignore a native maximize on
+  // macOS). Gated by `window.manage`.
+  registerTileIpc('tile:window:maximize-all', { mode: 'handle' }, async (_event, args: {
+    token: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'maximize-all');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:maximize-all', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (kernelMaximizeAllMode() !== null) {
+        kernelLeaveMaximizeAll();
+        return { success: true, entered: false };
+      }
+      const front = getTopmostContentWindowId();
+      const frontWin = front != null ? getNativeWindowFor(front) : null;
+      const display = frontWin ? screen.getDisplayMatching(frontWin.getBounds()) : screen.getPrimaryDisplay();
+      const { x, y, width, height } = display.workArea;
+      kernelEnterMaximizeAll({ x, y, width, height });
+      return { success: true, entered: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

@@ -84,6 +84,7 @@ import {
   mergeSnapshotIntoWorkspace,
   restorableBoundsFromRecord,
   readPreMaxBounds,
+  readMaximizeAllMark,
   maximizeRestoreDescriptor,
   readStackIndex,
   orderRestoredWindowsBottomToTop,
@@ -1759,5 +1760,85 @@ describe('session-projection — the back/forward trail', () => {
     assert.strictEqual('navHistory' in first, false);
     assert.deepStrictEqual(second.navHistory, TRAIL.navHistory);
     assert.strictEqual(second.navHistoryIndex, 2);
+  });
+});
+
+// ============================================================================
+// Maximize-all mode through save and restore
+//
+// specs/maximize-all.md → "Survives a restart". Two facts ride the snapshot:
+// the mode with its scope, written at the top level only while it is on, and
+// one mark per window, written into a descriptor's params only when that
+// window carries one — so a snapshot taken with the mode off is byte-identical
+// to one from before the mode existed, which is what keeps the on-disk-shape
+// sweep above passing unmodified.
+// ============================================================================
+
+describe('session-projection — maximize-all mode', () => {
+  const MODE = { screen: 'A', desktop: 'a1', workArea: { x: 0, y: 0, width: 1600, height: 900 } };
+
+  const worldWith = (marks: Array<'marked' | 'released' | undefined>): World => ({
+    fixtures: marks.map((_, i) => contentFixture(i + 1, `w${i + 1}`)),
+    records: marks.map((mark, i) =>
+      makeRecord(`w${i + 1}`, {
+        bounds: { x: i, y: i, width: 800, height: 600 },
+        ...(mark !== undefined ? { maximizeAllMark: mark } : {}),
+      }),
+    ),
+    front: 'w1',
+    frontNativeId: 1,
+  });
+
+  const saveWith = (world: World, mode: typeof MODE | null) => {
+    const input = inputFor(world);
+    return serializeSession({ ...input, snapshot: { ...input.snapshot, maximizeAll: mode } });
+  };
+
+  it('the mode, its scope and each window’s mark round-trip through save', () => {
+    const { snapshot } = saveWith(worldWith(['marked', 'released']), MODE);
+
+    assert.deepStrictEqual(snapshot.maximizeAll, MODE);
+    assert.strictEqual(readMaximizeAllMark(snapshot.windows[0].params), 'marked');
+    assert.strictEqual(readMaximizeAllMark(snapshot.windows[1].params), 'released');
+  });
+
+  it('a mark survives the restore-side descriptor rewrite that un-maximizes bounds', () => {
+    const { snapshot } = saveWith(worldWith(['marked']), MODE);
+    const restored = maximizeRestoreDescriptor(snapshot.windows[0]);
+    assert.strictEqual(readMaximizeAllMark(restored.params), 'marked');
+  });
+
+  it('with the mode off the snapshot names no mode and no window carries a mark', () => {
+    const { snapshot } = saveWith(worldWith([undefined, undefined]), null);
+
+    assert.strictEqual('maximizeAll' in snapshot, false, 'no top-level field while the mode is off');
+    for (const descriptor of snapshot.windows) {
+      assert.strictEqual('maximizeAllMark' in descriptor.params, false);
+      assert.strictEqual(readMaximizeAllMark(descriptor.params), null);
+    }
+  });
+
+  it('restored data without marks yields no marked windows', () => {
+    // A snapshot written before the mode existed: the mode is on from some
+    // other window, and these descriptors simply say nothing.
+    const { snapshot } = saveWith(worldWith([undefined, undefined]), MODE);
+    const marks = snapshot.windows
+      .map((d) => readMaximizeAllMark(d.params))
+      .filter((m) => m !== null);
+    assert.deepStrictEqual(marks, []);
+  });
+
+  it('a mark the kernel no longer holds is dropped rather than carried over from stale params', () => {
+    const world = worldWith([undefined]);
+    world.fixtures[0].params = { ...CONTENT_PARAMS, maximizeAllMark: 'marked' };
+    const { snapshot } = saveWith(world, MODE);
+    assert.strictEqual('maximizeAllMark' in snapshot.windows[0].params, false);
+  });
+
+  it('readMaximizeAllMark refuses anything that is not one of the two marks', () => {
+    assert.strictEqual(readMaximizeAllMark({}), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: true }), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: 'maximized' }), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: null }), null);
   });
 });

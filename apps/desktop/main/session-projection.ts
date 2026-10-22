@@ -60,7 +60,7 @@ import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { savedWindowUrl } from './page-load-error.js';
 import type { NavHistorySnapshot } from './nav-history.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import type { State, WindowId, WindowRecord } from './window-kernel.js';
+import type { MaximizeAllMark, MaximizeAllMode, State, WindowId, WindowRecord } from './window-kernel.js';
 
 /**
  * The key of the default workspace — the one workspace boot restores and the
@@ -89,6 +89,14 @@ export interface SessionSnapshot {
    */
   workspaceKey: string;
   windows: WindowDescriptor[];
+  /**
+   * Maximize-all mode and the scope it was entered over, present only while
+   * the mode is on — an absent key is the mode off, which is what every
+   * snapshot written before the mode existed says. Each window's own mark
+   * rides in its descriptor's `params.maximizeAllMark`; a snapshot that names
+   * the mode but no marks restores the mode with nothing owed to anyone.
+   */
+  maximizeAll?: MaximizeAllMode;
 }
 
 /**
@@ -270,6 +278,16 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
     return { x, y, width, height };
   }
   return null;
+}
+
+/**
+ * One restored window's maximize-all mark, read back out of its descriptor
+ * params. Returns null for a descriptor saved before the mode existed, or saved
+ * while the mode was off — both mean "this window was not maximized by the mode".
+ */
+export function readMaximizeAllMark(params: Record<string, unknown>): MaximizeAllMark | null {
+  const mark = params.maximizeAllMark;
+  return mark === 'marked' || mark === 'released' ? mark : null;
 }
 
 /**
@@ -720,6 +738,13 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     delete sanitized.preMaxY;
     delete sanitized.preMaxWidth;
     delete sanitized.preMaxHeight;
+    // What maximize-all mode has decided about this window, rewritten from the
+    // machine record the same way `maximized` is, so a mark carried forward by
+    // the pass-through can never outlive the kernel's own answer. The key stays
+    // absent when the mode has no opinion, leaving the saved bytes of every
+    // window the mode never touched unchanged.
+    delete sanitized.maximizeAllMark;
+    if (rec?.maximizeAllMark !== undefined) sanitized.maximizeAllMark = rec.maximizeAllMark;
 
     windowDescriptors.push({
       url: realUrl,
@@ -793,6 +818,7 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       reason: input.reason,
       workspaceKey: input.workspaceKey,
       windows: filteredDescriptors,
+      ...(input.snapshot.maximizeAll !== null ? { maximizeAll: input.snapshot.maximizeAll } : {}),
     },
     windowCount: preFilterCount,
     notices,

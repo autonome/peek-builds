@@ -70,6 +70,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "maximize all windows",
+      "description": "Maximize every window here; run again to put them all back",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "fullscreen",
       "description": "Toggle fullscreen for the active window",
       "action": { "type": "execute" }
