@@ -1,5 +1,5 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/main/overlay-frame.ts, apps/desktop/main/overlay-frame.test.ts, apps/desktop/main/ipc.ts, apps/desktop/renderer/page/overlay.js, apps/desktop/tests/desktop/hybrid-overlay.spec.ts]
 depends-on: []
 ---

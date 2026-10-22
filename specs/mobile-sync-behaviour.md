@@ -1,5 +1,5 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/mobile/src/App.tsx, apps/mobile/src/App.css, apps/mobile/src/sync-gate.js, apps/mobile/src/sync-gate.d.ts, apps/mobile/tests/sync-gate.test.js, apps/mobile/src-tauri/src/lib.rs]
 depends-on: []
 ---
