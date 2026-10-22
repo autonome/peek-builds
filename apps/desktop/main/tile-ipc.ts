@@ -130,7 +130,7 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow, findHybridWindowsShowingUrl } from './hybrid-page-host-registry.js';
+import { getAllHybridWindows, getHybridWindow, findHybridWindowsShowingUrl, getHybridContentWC } from './hybrid-page-host-registry.js';
 import {
   pickReusableHere,
   getTopmostContentWindowId,
@@ -4167,12 +4167,14 @@ export function registerTileIpcHandlers(): void {
       if (!targetId) {
         return { success: false, error: 'No focused window available' };
       }
-      const win = getLiveWindow(targetId);
-      if (!win) {
+      // A page host is a BaseWindow, which getLiveWindow never returns; its
+      // page lives in the hybrid content WebContents.
+      const contents = getHybridContentWC(targetId) ?? getLiveWindow(targetId)?.webContents ?? null;
+      if (!contents || contents.isDestroyed()) {
         return { success: false, error: 'Window not found or destroyed' };
       }
-      win.webContents.openDevTools({ mode: 'detach' });
-      return { success: true, id: targetId, url: win.webContents.getURL() };
+      contents.openDevTools({ mode: 'detach' });
+      return { success: true, id: targetId, url: contents.getURL() };
     } catch (error) {
       console.error('Failed to open devtools:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
