@@ -181,6 +181,19 @@ export function platformShortcut(shortcut: string, platform: string = process.pl
 }
 
 /**
+ * True when re-registering an accelerator is an expected replacement rather
+ * than a conflict: the same owner registering again, or a tile's live page
+ * taking over the wake hotkey the main process grabbed for it at boot
+ * (`peek://<tile>/lazy-shortcut` -> `peek://<tile>/...`).
+ */
+export function isExpectedGlobalReplace(existingSource: string | undefined, newSource: string): boolean {
+  if (existingSource === undefined) return false;
+  if (existingSource === newSource) return true;
+  const m = /^(peek:\/\/[^/]+)\/lazy-shortcut$/.exec(existingSource);
+  return !!m && newSource.startsWith(`${m[1]}/`);
+}
+
+/**
  * Register a global shortcut (works even when app doesn't have focus)
  */
 export function registerGlobalShortcut(
@@ -199,7 +212,9 @@ export function registerGlobalShortcut(
   }
 
   if (globalShortcut.isRegistered(accelerator)) {
-    console.error('Shortcut already registered, unregistering first:', shortcut);
+    if (!isExpectedGlobalReplace(globalShortcuts.get(shortcut), source)) {
+      console.error('Shortcut already registered, unregistering first:', shortcut);
+    }
     globalShortcut.unregister(accelerator);
   }
 

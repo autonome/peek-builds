@@ -18,6 +18,25 @@ describe('Shortcuts Module Tests', () => {
     datastore = await import('./datastore.js');
   });
 
+  describe('isExpectedGlobalReplace', () => {
+    it('is quiet when the same owner registers again', () => {
+      assert.strictEqual(shortcuts.isExpectedGlobalReplace('peek://feeds/background', 'peek://feeds/background'), true);
+    });
+
+    it('is quiet when a tile page takes over its own boot wake hotkey', () => {
+      assert.strictEqual(shortcuts.isExpectedGlobalReplace('peek://feeds/lazy-shortcut', 'peek://feeds/background'), true);
+    });
+
+    it('stays loud when a different owner claims the key', () => {
+      assert.strictEqual(shortcuts.isExpectedGlobalReplace('peek://feeds/lazy-shortcut', 'peek://lists/background'), false);
+      assert.strictEqual(shortcuts.isExpectedGlobalReplace('peek://feeds/background', 'peek://lists/background'), false);
+    });
+
+    it('stays loud when the key is held by something we did not track', () => {
+      assert.strictEqual(shortcuts.isExpectedGlobalReplace(undefined, 'peek://feeds/background'), false);
+    });
+  });
+
   describe('parseShortcut', () => {
     it('should parse single key', () => {
       const parsed = shortcuts.parseShortcut('a');
