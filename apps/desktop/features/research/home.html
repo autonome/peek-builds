@@ -29,6 +29,7 @@
 
     <script type="module">
       import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-input.js';
     </script>
   </head>
   <body>
@@ -37,11 +38,36 @@
       <div id="research-count" class="research-count"></div>
     </header>
 
-    <!-- `.cards` is the container renderer/lib/grid-nav.js navigates. One row
-         per line, so its column count comes out as 1 and j/k move by one row. -->
-    <div id="rows" class="cards"></div>
+    <!-- One scrolling area holding the three groups in order. Each group's rows
+         sit in their own `.cards` container, which is what
+         renderer/lib/grid-nav.js navigates: its selector spans every container,
+         so the three groups read as one list in document order and j/k step
+         from the last page straight to the first search. One row per line, so
+         the column count comes out as 1. -->
+    <div class="research-groups">
+      <section class="research-group" id="group-pages">
+        <h2 class="group-heading">Pages</h2>
+        <div id="rows" class="cards"></div>
+        <div id="empty-state" class="empty-state">No pages in this research yet.</div>
+      </section>
 
-    <div id="empty-state" class="empty-state">No pages in this research yet.</div>
+      <section class="research-group" id="group-searches">
+        <h2 class="group-heading">Searches</h2>
+        <div id="search-rows" class="cards"></div>
+      </section>
+
+      <section class="research-group" id="group-notes">
+        <h2 class="group-heading">Notes</h2>
+        <!-- The one place this view takes typed text. Deliberately not a
+             `peek-card`: grid-nav navigates `.cards peek-card`, and a row that
+             holds a text field is not a row the list should land on while
+             moving between groups. Tab or `n` reaches it. -->
+        <div class="note-compose">
+          <peek-input id="note-input" placeholder="Write a note — Enter saves, Escape leaves"></peek-input>
+        </div>
+        <div id="note-rows" class="cards"></div>
+      </section>
+    </div>
 
     <script type="module">
       await window.app.initialize();

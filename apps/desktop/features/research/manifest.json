@@ -47,7 +47,7 @@
       ]
     },
     "datastore": {
-      "tables": ["items", "tags", "item_tags", "item_visits"]
+      "tables": ["items", "tags", "item_tags", "item_visits", "item_events"]
     },
     "window": {
       "create": true,

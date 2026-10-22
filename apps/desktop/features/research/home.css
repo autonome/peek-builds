@@ -42,15 +42,35 @@ body {
   flex-shrink: 0;
 }
 
+/* The three groups scroll together, so moving from the last page to the first
+   search is one continuous list rather than three boxes with their own bars. */
+.research-groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 18px;
+}
+
+.research-group.empty {
+  display: none;
+}
+
+.group-heading {
+  margin: 0;
+  padding: 14px 18px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.5;
+}
+
 /* One row per line: a list, not a grid. */
 .cards {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 0 18px 18px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
+  padding: 0 18px;
 }
 
 peek-card {
@@ -106,9 +126,27 @@ peek-card[selected] {
   letter-spacing: 0.04em;
 }
 
+/* How many times a search ran, on the search row. */
+.card-run-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The add-a-note row. Sized and inset to match a card so the group reads as a
+   list with a row you can type in, not a document pinned above a list. */
+.note-compose {
+  padding: 0 18px 6px;
+}
+
+.note-compose peek-input {
+  --peek-input-height: 32px;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: transparent;
+}
+
 .empty-state {
   display: none;
-  padding: 18px;
+  padding: 4px 18px 0;
   opacity: 0.6;
 }
 
