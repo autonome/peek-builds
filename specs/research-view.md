@@ -1,8 +1,11 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/features/research/, apps/desktop/tests/desktop/research-view.spec.ts, docs/design/search-rounds.md]
-depends-on: [card-view-see-through-everywhere]
+depends-on: [card-view-see-through]
 ---
+
+Started by hand on top of the built `track/spec-card-view-see-through` branch, before that branch
+lands, so `enabled: false` keeps the scheduler from starting it from `main`.
 
 # The research view: one research's pages, searches and notes as a ranked list
 

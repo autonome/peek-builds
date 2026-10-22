@@ -1,8 +1,11 @@
 ---
-enabled: true
+enabled: false
 touches: [apps/desktop/features/groups/, apps/desktop/features/spaces/, apps/desktop/features/search/, apps/desktop/features/entities/, apps/desktop/features/sheets/, apps/desktop/features/bake-off-labeling/, apps/desktop/features/windows/background.js, apps/desktop/features/windows/manifest.json, apps/desktop/renderer/lib/see-through.css, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/main/ipc.ts, apps/desktop/tests/desktop/card-view-see-through-everywhere.spec.ts, docs/tile-api.md, docs/design/window-rules.md]
 depends-on: [card-view-see-through]
 ---
+
+Built inside the `card-view-see-through` track, not as a track of its own; `enabled: false` keeps
+the scheduler from starting it separately.
 
 # See-through card views everywhere: every card-grid view, plus an app-wide switch
 
