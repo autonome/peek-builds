@@ -47,9 +47,10 @@
  * `feature_settings` row), not just a deep-equal.
  *
  * This module owns BOTH directions of two pieces of that shape:
- *   - the maximize state older descriptors carry — `serializeSession` no longer
- *     writes it; `readPreMaxBounds` / `unmaximizedRestoreDescriptor` read it
- *     back so such a descriptor restores unmaximized at its pre-maximize rect;
+ *   - the maximize state — `serializeSession` writes `maximized: true` with the
+ *     pre-maximize rect as the bounds; `readPreMaxBounds` /
+ *     `maximizeRestoreDescriptor` read it back (older descriptors carrying
+ *     `preMaxBounds` included) so the window opens at that rect and is maximized;
  *   - the saved stacking position — `serializeSession` writes `stackIndex`,
  *     `readStackIndex` + `orderRestoredWindowsBottomToTop` read it back for the
  *     restore path's `STACK_ORDER_IMPORTED`.
@@ -272,8 +273,9 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
 }
 
 /**
- * The rect a closed window is saved at for reopen. Maximize is not restored, so
- * a maximized window is saved at its pre-maximize rect when one was stashed;
+ * The rect a closed window is saved at for reopen. A maximized window reopens at
+ * its pre-maximize rect and is then maximized, so it is saved at that rect when
+ * one was stashed;
  * otherwise the presentation's bounds, else the raw bounds captured at close.
  */
 export function closedWindowSaveBounds(
@@ -285,18 +287,20 @@ export function closedWindowSaveBounds(
 }
 
 /**
- * A saved descriptor's bounds and params, converted so the window opens
- * unmaximized.
+ * A saved descriptor's bounds and params, converted so the window opens at its
+ * pre-maximize rect and is then maximized through the kernel's own Maximize.
  *
- * Maximize is not restored: a window mapped at full work-area size may be
- * refitted by the window manager, and restoring at the normal size avoids a
- * stale maximized flag. A descriptor from an older build with `maximized: true`
- * therefore opens at its pre-maximize rect (`readPreMaxBounds`) when it has
- * one, else at its saved bounds. The maximize keys (`maximized`, `preMaxBounds`,
- * the flat `preMaxX/Y/Width/Height`) are always dropped so they never reach the
- * window registry. Returns a new object; the input is not mutated.
+ * A window is never created at full work-area size (the window manager may
+ * refit it, and the kernel could not stash a pre-maximize rect). A descriptor
+ * saved with `maximized: true` keeps that flag in params; its bounds are the
+ * pre-maximize rect. A descriptor from an older build that carries
+ * `preMaxBounds` (or the flat `preMaxX/Y/Width/Height`) has its bounds replaced
+ * by that rect (`readPreMaxBounds`) when present. `maximized` is dropped when it
+ * was not true; `preMaxBounds` and the flat keys are always dropped so they
+ * never reach the window registry. Returns a new object; the input is not
+ * mutated.
  */
-export function unmaximizedRestoreDescriptor<D extends { bounds: Electron.Rectangle; params: Record<string, unknown> }>(
+export function maximizeRestoreDescriptor<D extends { bounds: Electron.Rectangle; params: Record<string, unknown> }>(
   descriptor: D,
 ): D {
   const params = { ...descriptor.params };
@@ -304,8 +308,9 @@ export function unmaximizedRestoreDescriptor<D extends { bounds: Electron.Rectan
   if (params.maximized === true) {
     const preMax = readPreMaxBounds(params);
     if (preMax) bounds = preMax;
+  } else {
+    delete params.maximized;
   }
-  delete params.maximized;
   delete params.preMaxBounds;
   delete params.preMaxX;
   delete params.preMaxY;
@@ -644,9 +649,9 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     // — which is exactly the fallback the presenter itself applies, so this is
     // the same value either way.
     //
-    // Maximize is not restored: a maximized window is saved at the rect it
-    // unmaximizes back to (`WindowRecord.preMaxBounds`), falling back to its
-    // current bounds when nothing was stashed.
+    // A maximized window is saved at the rect it unmaximizes back to
+    // (`WindowRecord.preMaxBounds`), falling back to its current bounds when
+    // nothing was stashed; restore reopens it there and maximizes it.
     const currentBounds = restorableBoundsFromRecord(rec) ?? presentation.bounds;
     const windowBounds = rec?.maximized === true ? (rec.preMaxBounds ?? currentBounds) : currentBounds;
 
@@ -701,11 +706,12 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     }
 
     const sanitized = sanitizeParams(mirrorPlacementIntent(w.params));
-    // The pass-through above can carry `maximized` / `preMaxBounds` from a
-    // snapshot written by an older build; maximize is not restored, so neither
-    // is ever written.
+    // The pass-through above can carry `maximized` / `preMaxBounds` from an
+    // earlier snapshot. `maximized` is rewritten from the machine record; the
+    // saved bounds ARE the pre-maximize rect, so `preMaxBounds` is never written.
     delete sanitized.maximized;
     delete sanitized.preMaxBounds;
+    if (rec?.maximized === true) sanitized.maximized = true;
     // A restored window carries its snapshot's params forward, so the flat bag
     // from a pre-collapse snapshot can ride back in through the pass-through.
     // Drop it unconditionally: a newly written snapshot only ever carries the

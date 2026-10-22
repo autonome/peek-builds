@@ -589,8 +589,8 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     trackingSourceId: 'last-closed',
   };
 
-  // Maximize is not restored: an entry from an older build that was maximized
-  // reopens at its pre-maximize rect.
+  // A maximized entry opens at its pre-maximize rect (`bounds`, or the legacy
+  // `preMaximizeBounds` of an older entry) and is maximized once registered.
   const reopenBounds = entry.maximized && entry.preMaximizeBounds ? entry.preMaximizeBounds : entry.bounds;
   if (reopenBounds) {
     options.x = reopenBounds.x;
@@ -598,6 +598,7 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.width = reopenBounds.width;
     options.height = reopenBounds.height;
   }
+  if (entry.maximized) options.maximized = true;
 
   if (entry.spaceMode) {
     options.spaceMode = entry.spaceMode;
@@ -1411,6 +1412,22 @@ function assembleHybridPageHost(
       ? { desktopMembership: options.nonActivating === true ? 'anchor' as const : desktopMembershipForRole(role) }
       : {}),
   });
+  // A restored or reopened maximized window is created at its pre-maximize rect
+  // (never mapped at work-area size, which the window manager may refit), then
+  // maximized through the kernel's own Maximize: it stashes that rect for the
+  // later unmaximize and snaps the window to the work area. The `maximized`
+  // option left in the registry params is rewritten from the kernel record at
+  // every session save, so it never goes stale.
+  if (options.maximized === true) {
+    try {
+      const cur = baseWin.getBounds();
+      const wa = screen.getDisplayNearestPoint({
+        x: cur.x + Math.floor(cur.width / 2),
+        y: cur.y + Math.floor(cur.height / 2),
+      }).workArea;
+      kernelMaximize(hostMachineId, { x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+    } catch { /* window gone */ }
+  }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
   // registration uses the machine-minted id from just above.

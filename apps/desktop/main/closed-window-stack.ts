@@ -22,8 +22,10 @@ export interface ClosedWindowEntry {
   role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
   scrollX?: number;      // Scroll position at time of close
   scrollY?: number;
-  // Legacy: only entries persisted by older builds carry these; reopen reads them
-  // to come back unmaximized at `preMaximizeBounds`. New entries never set them.
+  // `maximized` is set when the window was maximized at close; `bounds` is then the
+  // pre-maximize rect and reopen maximizes from there. `preMaximizeBounds` is a
+  // legacy field only entries persisted by older builds carry; reopen reads it as
+  // the rect to open at. New entries never set it.
   maximized?: boolean;
   preMaximizeBounds?: Rect;
   // Back/forward trail the window had at close, so undo-close brings the whole
@@ -115,8 +117,8 @@ export function replaceClosedWindowStack(entries: readonly ClosedWindowEntry[]):
  * from the nav-history cache. Bounds come from the presentation when one resolved: the
  * presenter reads the window-state machine via the ONE restorable-geometry rule
  * (window-presenter.ts getRestorableBounds, §5 step 7D) for every window kind, so a
- * fullscreen window reopens at a sane rect. Maximize is not restored: a maximized window is
- * saved at its pre-maximize rect. Canvas pages used to get a bounds adjustment here
+ * fullscreen window reopens at a sane rect. A maximized window is saved at its pre-maximize
+ * rect and flagged `maximized`, so reopen maximizes it again. Canvas pages used to get a bounds adjustment here
  * (subtracting the fixed canvas chrome margin from window bounds) — that fallback was gated
  * on the canvas shell URL and was deleted along with the canvas page-host, so bounds are now
  * a straight passthrough and this function does no geometry math of its own.
@@ -168,6 +170,8 @@ export function createClosedWindowEntry(
     role: role || undefined,
     scrollX: scrollX || undefined,
     scrollY: scrollY || undefined,
+    // `bounds` is the pre-maximize rect; reopen maximizes the window from there.
+    ...(captured.presentation?.maximized ? { maximized: true } : {}),
     // Spread only when a trail exists, so an entry without one carries no
     // explicit `undefined` keys into the persisted JSON.
     ...(trail
