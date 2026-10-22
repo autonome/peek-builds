@@ -144,7 +144,7 @@ import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
-import { planBeforeQuit, runDeferredQuitCleanup, deriveWindowSurface, isSatelliteRegistration, type QuitCleanupPhase } from './izui-roles.js';
+import { devToolsOwnsCloseShortcut, planBeforeQuit,runDeferredQuitCleanup, deriveWindowSurface, isSatelliteRegistration, type QuitCleanupPhase } from './izui-roles.js';
 import { enforceSandboxOnWebContents } from './sandbox-enforcement.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -1376,7 +1376,21 @@ const onReady = async () => {
               // content window has neither failure mode.
               const frontId = getTopmostContentWindowId();
               const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
-              if (frontWin instanceof BrowserWindow && !frontWin.isDestroyed()) {
+              // Page windows are hybrid BaseWindows, not BrowserWindows: their devtools
+              // inspects the content WebContentsView, so look it up through the registry.
+              const frontContentWC = frontWin && !(frontWin instanceof BrowserWindow) && !frontWin.isDestroyed()
+                ? getHybridContentWC(frontWin.id)
+                : null;
+              if (frontContentWC) {
+                if (devToolsOwnsCloseShortcut({
+                  devToolsOpened: frontContentWC.isDevToolsOpened(),
+                  devToolsFocused: frontContentWC.isDevToolsFocused(),
+                  pageFocused: frontContentWC.isFocused(),
+                })) {
+                  frontContentWC.closeDevTools();
+                  return;
+                }
+              } else if (frontWin instanceof BrowserWindow && !frontWin.isDestroyed()) {
                 // Devtools (detached) isn't a BrowserWindow — it's a child of
                 // the parent's webContents. When the user focuses devtools and
                 // hits Cmd+W, the parent stays the machine front (a detached
@@ -1385,10 +1399,12 @@ const onReady = async () => {
                 // `isDevToolsFocused()` alone has been observed to return
                 // false in Electron 40 when devtools is the OS-focused
                 // window. Route to closeDevTools so the parent survives.
-                // A hybrid BaseWindow front skips this guard, same as the old
-                // getFocusedWindow()===null path did.
                 const wc = frontWin.webContents;
-                if (wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused())) {
+                if (devToolsOwnsCloseShortcut({
+                  devToolsOpened: wc.isDevToolsOpened(),
+                  devToolsFocused: wc.isDevToolsFocused(),
+                  pageFocused: wc.isFocused(),
+                })) {
                   wc.closeDevTools();
                   return;
                 }

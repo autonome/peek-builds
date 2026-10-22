@@ -387,6 +387,19 @@ export interface WindowRegistrationDecision {
   pumpShownEvent: boolean;
 }
 
+/**
+ * Whether Cmd+W belongs to a detached devtools window rather than the Peek window it inspects.
+ * `isDevToolsFocused()` alone has been seen returning false while devtools is the OS-focused
+ * window, so "open and the page is not focused" also counts.
+ */
+export function devToolsOwnsCloseShortcut(input: {
+  devToolsOpened: boolean;
+  devToolsFocused: boolean;
+  pageFocused: boolean;
+}): boolean {
+  return input.devToolsOpened && (input.devToolsFocused || !input.pageFocused);
+}
+
 export function decideWindowRegistration(input: {
   alreadyRegistered: boolean;
   kind: WindowKind;

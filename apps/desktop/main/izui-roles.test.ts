@@ -16,6 +16,7 @@ import {
   spacesPolicyForRole,
   desktopMembershipForRole,
   shouldCloseContentWCOnFinalize,
+  devToolsOwnsCloseShortcut,
   planBeforeQuit,
   runDeferredQuitCleanup,
   type QuitCleanupPhase,
@@ -103,6 +104,21 @@ describe('inferIzuiRole', () => {
       inferIzuiRole({ role: 'content' }, { isWebPage: true, parentWindowId: null }),
       'content',
     );
+  });
+});
+
+describe('devToolsOwnsCloseShortcut (Cmd+W with detached devtools focused)', () => {
+  it('is false when devtools is not open', () => {
+    assert.strictEqual(devToolsOwnsCloseShortcut({ devToolsOpened: false, devToolsFocused: true, pageFocused: false }), false);
+  });
+  it('is true when detached devtools reports focus', () => {
+    assert.strictEqual(devToolsOwnsCloseShortcut({ devToolsOpened: true, devToolsFocused: true, pageFocused: true }), true);
+  });
+  it('is true when devtools is open and the page is not focused, even if devtools reports no focus', () => {
+    assert.strictEqual(devToolsOwnsCloseShortcut({ devToolsOpened: true, devToolsFocused: false, pageFocused: false }), true);
+  });
+  it('is false when devtools is open but the page itself is focused', () => {
+    assert.strictEqual(devToolsOwnsCloseShortcut({ devToolsOpened: true, devToolsFocused: false, pageFocused: true }), false);
   });
 });
 
