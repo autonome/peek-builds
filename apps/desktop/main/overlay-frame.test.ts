@@ -17,6 +17,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
 import {
+  contentInsetInFrame,
   expandToOverlayFrame,
   OVERLAY_GUTTERS,
   REVEAL_DELAY_MS,
@@ -149,5 +150,37 @@ describe('revealDelayMs — top-border reveal dwell (peek bf879b8c)', () => {
 
   it('the dwell is the documented 2 seconds', () => {
     assert.strictEqual(REVEAL_DELAY_MS, 2000);
+  });
+});
+
+describe('contentInsetInFrame — where the content sits inside the clamped frame', () => {
+  const workArea: Rectangle = { x: 0, y: 33, width: 1470, height: 923 };
+
+  it('is the plain gutters when the frame is not clamped', () => {
+    const content: Rectangle = { x: 400, y: 300, width: 600, height: 400 };
+    assert.deepStrictEqual(contentInsetInFrame(content, workArea), {
+      left: OVERLAY_GUTTERS.left,
+      top: OVERLAY_GUTTERS.top,
+    });
+  });
+
+  it('is 0 on the sides where a host flush with the work-area edge clamps the frame', () => {
+    // The live case: a host at the menu bar's bottom edge and the screen's left
+    // edge. Laying the chrome out at the gutters put the hover strip 40px into
+    // the page and the bar 218px to the right of it.
+    const content: Rectangle = { x: 0, y: 33, width: 1123, height: 818 };
+    assert.deepStrictEqual(contentInsetInFrame(content, workArea), { left: 0, top: 0 });
+  });
+
+  it('is the partial gutter for a host just below the work-area top', () => {
+    const content: Rectangle = { x: 400, y: 33 + 10, width: 600, height: 400 };
+    assert.deepStrictEqual(contentInsetInFrame(content, workArea), {
+      left: OVERLAY_GUTTERS.left,
+      top: 10,
+    });
+  });
+
+  it('is 0/0 when maximized (the frame is the work area)', () => {
+    assert.deepStrictEqual(contentInsetInFrame({ ...workArea }, workArea), { left: 0, top: 0 });
   });
 });

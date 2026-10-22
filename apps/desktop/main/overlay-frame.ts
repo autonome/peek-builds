@@ -129,3 +129,19 @@ export function expandToOverlayFrame(content: Rectangle, workArea: Rectangle | n
   }
   return frame;
 }
+
+/**
+ * Where the content rect actually sits inside its overlay frame, as left/top
+ * insets in overlay-local pixels. Normally the gutters, but `expandToOverlayFrame`
+ * clamps the frame onto the work area, so a host flush with the top (or left) of
+ * the screen has a smaller inset on that side — down to 0. The renderer lays the
+ * chrome out from these, so its hover strip and navbar land on the host's real
+ * top edge instead of a gutter's height below it.
+ */
+export function contentInsetInFrame(
+  content: Rectangle,
+  workArea: Rectangle | null,
+): { left: number; top: number } {
+  const frame = expandToOverlayFrame(content, workArea);
+  return { left: Math.round(content.x - frame.x), top: Math.round(content.y - frame.y) };
+}

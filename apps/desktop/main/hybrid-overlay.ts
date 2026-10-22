@@ -120,7 +120,7 @@ import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, attachWindowOpenPayload } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
-import { expandToOverlayFrame, OVERLAY_GUTTERS, revealDelayMs } from './overlay-frame.js';
+import { contentInsetInFrame, expandToOverlayFrame, OVERLAY_GUTTERS, revealDelayMs } from './overlay-frame.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
@@ -461,6 +461,8 @@ function sendActiveHandoff(id: number | null): void {
     // content window and the chrome lives in the surrounding margin.
     bounds,
     gutters: OVERLAY_GUTTERS,
+    // Where the content really sits inside the (work-area-clamped) overlay frame.
+    contentInset: bounds ? contentInsetInFrame(bounds, workAreaNearest(bounds)) : null,
     // The hover-reveal dwell for this host (0 = reveal at once). Main owns the
     // geometry; the overlay's single reveal route reads this and never measures.
     // Kept current by the `page-overlay:bounds` publish on every move/resize.

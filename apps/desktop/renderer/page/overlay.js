@@ -139,9 +139,13 @@ function contentRectInOverlay() {
   if (maximized) {
     return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
   }
+  // Main clamps the overlay frame onto the work area, so a host flush with the
+  // screen's top or left edge sits closer to the frame edge than the gutters;
+  // main sends the real inset (contentInset) and the plain gutters are only the
+  // fallback for a payload without it.
   return {
-    left: gutters.left,
-    top: gutters.top,
+    left: contentInset ? contentInset.left : gutters.left,
+    top: contentInset ? contentInset.top : gutters.top,
     width: activeBounds.width,
     height: activeBounds.height,
   };
@@ -162,7 +166,7 @@ function updateOverlayPositions() {
   const top = r.top;
   const w = r.width;
   const h = r.height;
-  const navOffset = gutters.top; // navbar band + trigger zone above content
+  const navOffset = top; // navbar band + trigger zone above content (0 when flush with the screen top)
 
   // Navbar: spans the content width, pinned to the top of the window (page.js
   // navbar.top = 0). Trigger zone: the strip between the window top and content.
@@ -306,6 +310,9 @@ let activeUrl = null;
 // overlay's own bounds — the renderer tracks them locally (exactly as page.js
 // tracks `screenBounds`) and publishes new bounds for main to apply.
 let activeBounds = null;
+// Where the content rect sits inside the overlay frame ({left, top}), from main.
+// null = use the plain gutters.
+let contentInset = null;
 // Whether the active window is currently maximized (toggled by the maximize
 // affordance). preMaxBounds holds the bounds to restore to on unmaximize.
 let maximized = false;
@@ -355,6 +362,7 @@ api.subscribe('page-overlay:active', (msg) => {
     activeWindowId = null;
     activeUrl = null;
     activeBounds = null;
+    contentInset = null;
     maximized = false;
     preMaxBounds = null;
     setRevealDelay(0);
@@ -377,6 +385,7 @@ api.subscribe('page-overlay:active', (msg) => {
   activeBounds = msg.bounds ? { ...msg.bounds } : null;
   // Gutter geometry from main (defaults already set; keep them in sync if sent).
   if (msg.gutters) gutters = { ...msg.gutters };
+  contentInset = msg.contentInset ? { ...msg.contentInset } : null;
   setRevealDelay(msg.revealDelayMs);
   // Reconcile maximize state to the newly-active window (each window owns its
   // own). Main ships the registry's maximized/preMaxBounds — the single source
@@ -833,6 +842,7 @@ api.subscribe('page-overlay:bounds', (msg) => {
   // those moves lags the pointer and would rewind it mid-drag.
   if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
   activeBounds = { ...msg.bounds };
+  contentInset = msg.contentInset ? { ...msg.contentInset } : null;
   setRevealDelay(msg.revealDelayMs);
   updateOverlayPositions();
 });

@@ -122,7 +122,7 @@ import {
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
-import { revealDelayMs } from './overlay-frame.js';
+import { contentInsetInFrame, revealDelayMs } from './overlay-frame.js';
 
 /**
  * The hover-reveal dwell for a host at `b` (see `overlay-frame.ts revealDelayMs`),
@@ -139,6 +139,23 @@ function revealDelayForHostBounds(b: { x: number; y: number; width: number; heig
     return revealDelayMs(b, workArea);
   } catch {
     return 0;
+  }
+}
+
+/** Where a host at `b` sits inside its work-area-clamped overlay frame (see
+ *  `overlay-frame.ts contentInsetInFrame`); null when `screen` is unavailable,
+ *  which leaves the renderer on the plain gutters. */
+function contentInsetForHostBounds(
+  b: { x: number; y: number; width: number; height: number },
+): { left: number; top: number } | null {
+  try {
+    const workArea = screen.getDisplayNearestPoint({
+      x: b.x + Math.floor(b.width / 2),
+      y: b.y + Math.floor(b.height / 2),
+    }).workArea;
+    return contentInsetInFrame(b, workArea);
+  } catch {
+    return null;
   }
 }
 import { wmLog } from './window-diag.js';
@@ -1160,6 +1177,7 @@ function assembleHybridPageHost(
     try {
       publish(getSystemAddress(), 'page-overlay:bounds', {
         windowId: baseWin.id, bounds, revealDelayMs: revealDelayForHostBounds(bounds),
+        contentInset: contentInsetForHostBounds(bounds),
       });
     } catch { /* gone */ }
   });
