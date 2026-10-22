@@ -1,12 +1,12 @@
 ---
 enabled: true
-touches: [apps/desktop/features/tags/, apps/desktop/features/groups/, apps/desktop/features/spaces/, apps/desktop/features/search/, apps/desktop/features/entities/, apps/desktop/features/sheets/, apps/desktop/features/bake-off-labeling/, apps/desktop/renderer/lib/see-through.css, apps/desktop/features/windows/background.js, apps/desktop/features/windows/manifest.json, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/main/ipc.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, apps/desktop/tests/desktop/card-view-see-through.spec.ts, apps/desktop/tests/desktop/card-view-see-through-everywhere.spec.ts, docs/tile-api.md, docs/design/window-rules.md]
+touches: [apps/desktop/features/tags/, apps/desktop/renderer/lib/see-through.css, apps/desktop/features/windows/background.js, apps/desktop/features/windows/manifest.json, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/main/tile-api.d.ts, apps/desktop/main/tile-window-enforcement.ts, apps/desktop/main/see-through-support.ts, apps/desktop/main/see-through-support.test.ts, apps/desktop/main/ipc.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, packages/capabilities/index.d.ts, apps/desktop/tests/desktop/card-view-see-through.spec.ts, docs/tile-api.md, docs/design/window-rules.md]
 depends-on: []
 ---
 
-This track builds two specs in order: this one (the per-window switch, Tags), then
-`specs/card-view-see-through-everywhere.md` (every card-grid view and the app-wide switch) on top
-of it, in the same branch. Commit each separately; the track is done when both are verified.
+**Scope: Tags only.** This track builds this spec and nothing else; every other card-grid view
+and the app-wide switch are separate later specs. The worktree may hold uncommitted Tags work
+from an earlier, stopped build: review it, keep what fits this spec, and commit.
 `specs/maximize-all.md` builds in parallel and touches some of the same files
 (`main/tile-ipc.ts`, `main/tile-preload.cts`, `features/windows/`, `docs/design/window-rules.md`);
 keep additions there self-contained so the two branches merge cleanly.
