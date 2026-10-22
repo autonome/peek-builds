@@ -103,10 +103,18 @@ The research view should be built on whichever of those lands, not as its own wi
   everything recorded. Whether "finished" is ever marked, or inferred (no activity for a while,
   windows closed), is open.
 
+## Decided
+
+- **Capture runs on every page** (2026-10-22), not only inside a research space, so history
+  outside research is just as rich and a research can start from pages already visited. Its cost
+  is watched rather than avoided: each capture slice measures page load and input latency with
+  and without it, and records the numbers in its handoff.
+
 ## Open questions
 
-- **Capture mechanism and consent.** Page-side script versus debugger protocol for scroll, copy
-  and input; whether capture is on for every page or only inside a research space.
+- **Capture mechanism.** A page-side script in hybrid content views versus observation through
+  the debugger protocol, for scroll, copy and input. Chosen by the slice that builds it, on
+  measured cost.
 - **URL identity.** `findUrlItem()` matches the URL after `normalizeUrl()`, which keeps tracking
   parameters and fragments. Listing sites put session and tracking parameters in result links, so
   the same listing can arrive as several URL items and read as unseen. Needs per-site or common
@@ -138,7 +146,7 @@ feeds both designs.
 1. **Time on page.** Fill `item_visits.duration` for web pages from focused, visible time,
    in main, with no page-side code. Useful everywhere and feeds background grouping at once.
 2. **Seen-before line in the overlay**, from visits and duration.
-3. **Capture decision**, then scroll, copy and input on the chosen mechanism.
+3. **Scroll, copy and input** on every page, on the mechanism the slice measures cheapest.
 4. **The research view** on the app-wide maximized treatment once one of the filed issues
    lands.
 5. **Rounds**: `search-round` items for searches run from a space.
