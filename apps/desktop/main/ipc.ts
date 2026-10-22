@@ -2047,6 +2047,11 @@ export function wireHybridContentEvents(
   //   EXIT (reveal-out): stays revealed until the cursor leaves the full 44px band (past the
   //     revealed navbar). This prevents a hide-flicker while the cursor hovers the visible navbar.
   const REVEAL_ENTER_PX = TRIGGER_ZONE_PX; // 4 — must hit the border strip
+  // A host with a reveal dwell takes the whole depth the top resize cursor can
+  // show at (RESIZE_EDGE_PX + RESIZE_EXIT_SLACK): that cursor is what tells the
+  // user they are at the top edge, and the dwell already keeps a drift from
+  // popping the bar. A press in the band still resizes. Mirrored in overlay.js.
+  const DWELL_REVEAL_BAND_PX = 14;
   // ── Round-2 main-driven edge/corner RESIZE (cursor + drag) ──────────────────
   // The shared overlay can CAPTURE a press but never PAINTS a cursor — it is never
   // the macOS first responder, and cursor rendering belongs to the topmost
@@ -2384,7 +2389,8 @@ export function wireHybridContentEvents(
         // Top-border reveal (peek 363e7cff) — offset below the host top edge.
         const dy = input.globalY - bounds.y;
         if (!inRevealBand) {
-          if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
+          const enterPx = revealDelayForHostBounds(bounds) > 0 ? DWELL_REVEAL_BAND_PX : REVEAL_ENTER_PX;
+          if (dy >= 0 && dy <= enterPx) {
             inRevealBand = true;
             // How long the overlay waits before the navbar covers the page (peek
             // bf879b8c). A host with no room above it has the page's own account
