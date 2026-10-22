@@ -1,6 +1,6 @@
 ---
 enabled: true
-touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, apps/desktop/main/session.ts, apps/desktop/main/ipc.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/features/windows/background.js, apps/desktop/features/windows/manifest.json, apps/desktop/tests/desktop/maximize-all.spec.ts, docs/design/window-rules.md, docs/tile-api.md]
+touches: [apps/desktop/main/window-kernel.ts, apps/desktop/main/window-kernel.test.ts, apps/desktop/main/window-kernel-properties.test.ts, apps/desktop/main/window-kernel-executor.ts, apps/desktop/main/window-kernel-dispatch.ts, apps/desktop/main/tile-window-enforcement.ts, apps/desktop/main/session-projection.ts, apps/desktop/main/session-projection.test.ts, apps/desktop/main/session.ts, apps/desktop/main/ipc.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/main/tile-preload.cts, apps/desktop/features/windows/background.js, apps/desktop/features/windows/manifest.json, apps/desktop/tests/desktop/maximize-all.spec.ts, docs/design/window-rules.md, docs/tile-api.md]
 depends-on: []
 ---
 
