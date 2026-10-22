@@ -507,7 +507,40 @@ function installTestHook() {
   };
 }
 
+/**
+ * Read this window's see-through state from main and draw it.
+ *
+ * The look is entirely see-through.css plus the `body.see-through` block in
+ * home.css, both gated on a class on `<body>`; the state itself lives in main
+ * as a window param, which is why it survives a restart. Reading it here is
+ * also what applies a switch that was already on when the session was saved,
+ * before any announcement arrives.
+ */
+async function applySeeThrough() {
+  try {
+    const result = await api?.window?.getSeeThrough?.();
+    const on = result?.success === true && result.data?.seeThrough === true;
+    document.body.classList.toggle('see-through', on);
+  } catch (error) {
+    console.log('[bake-off-labeling] see-through state unavailable:', error);
+  }
+}
+
+/**
+ * Follow the see-through switch. `window:see-through` is a broadcast, so
+ * rather than matching the window id in the message the view simply re-reads
+ * its own state — one answer, and no second idea of which window this is.
+ */
+function setupSeeThrough() {
+  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
+  applySeeThrough();
+}
+
 async function init() {
+  // Before the first await, so a switch flipped while the view is still
+  // loading is not missed.
+  setupSeeThrough();
+
   await api.initialize();
   setDefaultRange();
   createPicker($('#taskPicker'), 'tasks');
