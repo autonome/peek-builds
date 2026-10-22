@@ -15,7 +15,9 @@
     {
       "id": "sheet",
       "url": "sheet.html",
-      "title": "Sheet"
+      "title": "Sheet",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -24,7 +26,8 @@
       "topics": [
         "ext:ready",
         "ext:sheets:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "window:see-through"
       ]
     },
     "window": {
