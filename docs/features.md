@@ -243,10 +243,61 @@ against this list:
 | `izui` | `true` | `tile-izui-enforcement.ts` |
 | `theme` | `true` | `tile-ipc.ts` |
 | `rules` | `true` | `tile-ipc-gate.ts` |
+| `automation` | `{ origins: string[], downloads?: boolean }` | `page-automation.ts checkAutomationAllowed()` |
+| `secrets` | `true` | `feature-secrets.ts SecretStore` |
 | `filesystem` | `{ read?, write? }` — builtin only | `tile-ipc.ts` |
 | `sync` | `true` — builtin only | `tile-sync-enforcement.ts` |
 
 `api.escape` is deliberately ungated.
+
+### Personal-automation features
+
+An ordinary (non-builtin) feature can drive pages and keep files without any feature-specific
+main-process code. A quarterly VAT bundle builder (bank CSV and statement PDFs plus matched
+invoices from mail, zipped on the machine, no cloud model) was built this way, and the
+capabilities below are what it needed. All are manifest-gated and general.
+
+- **Page automation** (`automation`): `page-automation.ts` drives a page by window id (`url`,
+  `navigate`, `waitFor`, `eval`, `click`, `printToPDF`). Every operation except `url` requires the
+  page's current origin to be in `automation.origins`. `automation.downloads` lets the tile
+  capture a download as bytes (`download-capture.ts DownloadCapture.claim()`) instead of
+  showing a save dialog.
+- **Secrets** (`secrets`): `feature-secrets.ts SecretStore` keeps a feature's own tokens and
+  passwords, encrypted by the platform.
+- **Binary network responses**: `tile:network:fetch` with `responseType: 'bytes'`.
+- **Install from a folder**: `feature-installer.ts previewLocalDirectory()` /
+  `registerLocalDirectory()` install a feature from a local folder with approval. The flag for
+  builtin comes from the registry (`feature-trust.ts isBuiltinFeature()`), and approval is
+  evaluated at enable and at launch (`feature-approval.ts evaluateFeatureApproval()`). Removing
+  such a feature leaves its folder on disk.
+- **Hot reload of folder-installed features**: `local-feature-watch.ts` watches the folder and
+  `local-feature-reload.ts reloadLocalFeature()` reloads it, re-showing the windows that were
+  showing without activating the app. A reload ends a run in progress. Approving or enabling a
+  feature clears a stale load error (`tile-ipc.ts clearFeatureLoadError`).
+- **Saving a file from a tile**: a window showing its own page is not closed when it starts a
+  download (`izui-roles.ts downloadCloseTarget()`).
+
+Gaps that remain for such features:
+
+- No click-by-visible-label operation; the feature tags an element through `eval` and clicks
+  the selector. A `clickText` operation is worth adding when a second feature needs it.
+- A non-builtin tile cannot load the `<peek-*>` components (`tile-csp.ts`); its UI is plain
+  HTML and CSS.
+- `tile-api.d.ts` types `window.open` as returning `windowId` while callers read `.id`, and the
+  payload a pubsub subscriber receives is undocumented.
+- A page window cannot be opened hidden: `show: false` opens visible but not activated.
+- Restoring a window of a feature that is not loaded (refused for re-approval) requests its page
+  from the app's own folder and shows file-not-found.
+- `printToPDF` has not been exercised against a real page.
+- No zip-building API; a feature carries its own writer.
+- Each app run leaves an empty `peek-download-capture-<pid>` folder in the OS temp dir.
+
+Site-specific lessons from that build: a bank dashboard signed out within about 1 h 40 min idle,
+so a periodic page reload kept the session alive, and a reload after sign-out meets a bot check
+that needs the user; after a security check a page can look logged-in before a sign-in redirect,
+so wait for two consecutive logged-in polls. Mail providers answer from regional hosts, so the
+`network` domains need a wildcard. Rule-based matching of invoices to payments needed no local
+model.
 
 ### `capabilities.pubsub.topics`
 
