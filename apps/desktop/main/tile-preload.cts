@@ -957,6 +957,40 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Read whether a window's view supports the see-through switch and,
+     * if so, whether it is currently on. Resolves to
+     * `{ success, data: { supported, seeThrough } }`.
+     *
+     * Omit `id` to ask about the calling window, which needs no `window`
+     * capability — a card view reads its own state at startup to apply a
+     * session-restored switch. Asking about another window requires
+     * `window.query`.
+     */
+    getSeeThrough: (id?: number) => {
+      return ipcRenderer.invoke('tile:window:get-see-through', {
+        token: tileToken,
+        id,
+      });
+    },
+
+    /**
+     * Turn the see-through look on or off for a window: the frosted,
+     * maximized look the windows switcher uses. `on` is explicit, not a
+     * toggle — read the current state with `getSeeThrough` first.
+     *
+     * A window whose view does not declare the switch (`seeThrough: true`
+     * on its manifest tile entry) resolves to `{ success: false, error }`
+     * and nothing changes. Requires `window.manage` (or trustedBuiltin).
+     */
+    setSeeThrough: (id: number | undefined, on: boolean) => {
+      return ipcRenderer.invoke('tile:window:set-see-through', {
+        token: tileToken,
+        id,
+        on,
+      });
+    },
+
+    /**
      * Toggle fullscreen on a window. Requires `window.manage` (or
      * trustedBuiltin).
      */

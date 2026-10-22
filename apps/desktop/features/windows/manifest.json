@@ -73,6 +73,11 @@
       "name": "fullscreen",
       "description": "Toggle fullscreen for the active window",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "see-through view",
+      "description": "Flip the active card view between its normal look and the see-through one",
+      "action": { "type": "execute" }
     }
   ],
   "shortcuts": [

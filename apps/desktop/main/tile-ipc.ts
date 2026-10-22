@@ -30,6 +30,8 @@ import {
   unloadTile,
   getTileManifest,
 } from './tile-launcher.js';
+import { urlSupportsSeeThrough } from './see-through-support.js';
+import { getLazyTileManifest } from './tile-lazy.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { EncryptedFileSecretStore, type SecretStore } from './feature-secrets.js';
 import { electronSecretCipher } from './electron-secret-cipher.js';
@@ -4015,6 +4017,197 @@ export function registerTileIpcHandlers(): void {
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // Resolve a manifest for the see-through decision whether or not the
+  // feature's background tile has booted. `getTileManifest` only answers
+  // for a LOADED tile, and a card view's feature is usually lazy — the
+  // window can be on screen (opened from a session restore, or straight
+  // through `window.open`) while its background has never run, which left
+  // the switch reporting "this view does not support it" for a view that
+  // declares it. Same loaded-then-lazy pair `protocol.ts` uses to resolve a
+  // tile's CSP, and for the same reason.
+  const manifestForSeeThrough = (tileId: string) =>
+    getTileManifest(tileId) ?? getLazyTileManifest(tileId);
+
+  /**
+   * Resolve a window id for the see-through handlers.
+   *
+   * `getLiveWindow` is blind to a hybrid page host (a `BaseWindow`, absent
+   * from `BrowserWindow.getAllWindows()`), so on its own it reports a
+   * perfectly real page window as missing. A page is never a `peek://`
+   * card view, so a hybrid host is an answerable "does not support" rather
+   * than a lookup failure — tell the two apart here so the caller can say
+   * which it was.
+   */
+  const resolveSeeThroughTarget = (
+    event: Electron.IpcMainInvokeEvent,
+    id: number | undefined,
+  ): { win: BrowserWindow } | { win: null; exists: boolean } => {
+    const win = typeof id === 'number'
+      ? getLiveWindow(id)
+      : windowFromWebContents(event.sender);
+    if (win) return { win };
+    const exists = typeof id === 'number' && getHybridWindow(id) !== null;
+    return { win: null, exists };
+  };
+
+  const UNSUPPORTED_VIEW = 'This view does not support the see-through switch';
+
+  // ── tile:window:get-see-through ───────────────────────────────────
+  //
+  // Report whether a window's view supports the see-through switch and,
+  // if so, whether the switch is currently on. Two callers:
+  //
+  //  - a card view at startup, reading its OWN state (no id) so a
+  //    session-restored `params.seeThrough` is applied before first paint;
+  //  - the `see-through view` command, reading the focused window's state
+  //    so it knows which way to flip it.
+  //
+  // Gated by `window.query`, except a window asking about itself.
+  registerTileIpc('tile:window:get-see-through', { mode: 'handle' }, (event, args: {
+    token: string;
+    id?: number;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'get-see-through', { ownWindow: args.id === undefined });
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:get-see-through', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
+      const target = resolveSeeThroughTarget(event, args.id);
+      if (!target.win) {
+        // A hybrid page host is a real window that simply has no card
+        // view, so answer the question rather than reporting it missing.
+        if (target.exists) return { success: true, data: { supported: false, seeThrough: false } };
+        return { success: false, error: 'Window not found' };
+      }
+      const win = target.win;
+      const supported = urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough);
+      const seeThrough = getWindowInfo(win.id)?.params.seeThrough === true;
+      return { success: true, data: { supported, seeThrough } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-see-through ───────────────────────────────────
+  //
+  // Turn the see-through look on or off for one window. Gated by
+  // `window.manage`.
+  //
+  // Support is the view's own declaration (`seeThrough: true` on its tile
+  // entry, read by see-through-support.ts) — a window whose entry does not
+  // declare it answers `{ success: false, error }` and nothing changes, so
+  // the switch never half-applies to a page or a background tile.
+  //
+  // Maximize is part of the switch, and the restore is conditional: ON
+  // maximizes through the kernel's own `Maximize` only when the window is
+  // not maximized already, and records that the switch is what did it.
+  // OFF unmaximizes only on that record, so a window the user (or
+  // maximize-all) had already maximized stays maximized when the switch
+  // goes off. The switch never raises a window or puts it on top — being
+  // the frontmost thing on screen is the windows switcher's own behaviour,
+  // not this one's (docs/design/window-rules.md G15).
+  //
+  // Both flags live in the open registry's params bag (the `placement`
+  // precedent in tile:window:set-bounds), which is what session save
+  // projects, so the switch survives a restart.
+  registerTileIpc('tile:window:set-see-through', { mode: 'handle' }, async (event, args: {
+    token: string;
+    id?: number;
+    on?: boolean;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'set-see-through');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:set-see-through', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
+      // `on` is explicit rather than a toggle: the caller already had to
+      // read the state to decide, and a hidden toggle would make two
+      // callers racing each other land on whichever order won.
+      if (typeof args.on !== 'boolean') {
+        return { success: false, error: `Invalid see-through state: ${typeof args.on}` };
+      }
+      const target = resolveSeeThroughTarget(event, args.id);
+      if (!target.win) {
+        // A hybrid page host exists but hosts a page, never a card view —
+        // report that, not a missing window, so the command's message
+        // names the real reason nothing happened.
+        return { success: false, error: target.exists ? UNSUPPORTED_VIEW : 'Window not found' };
+      }
+      const win = target.win;
+      if (!urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough)) {
+        return { success: false, error: UNSUPPORTED_VIEW };
+      }
+      const info = getWindowInfo(win.id);
+      if (!info) {
+        return { success: false, error: 'Window not found in the open registry' };
+      }
+      const machineId = getWindowIdFor(win);
+      if (machineId == null) {
+        return { success: false, error: 'Window not registered with window-state machine' };
+      }
+
+      const on = args.on;
+      if (on) {
+        const recBefore = getMachineWindowRecord(machineId);
+        if (recBefore?.maximized === true) {
+          // Already maximized by something else — leave it that way on the
+          // way out.
+          info.params.seeThroughMaximized = false;
+        } else {
+          const currentBounds = win.getBounds();
+          const workArea = screen.getDisplayMatching(currentBounds).workArea;
+          kernelMaximize(machineId, {
+            x: workArea.x,
+            y: workArea.y,
+            width: workArea.width,
+            height: workArea.height,
+          });
+          info.params.seeThroughMaximized = true;
+        }
+        info.params.seeThrough = true;
+      } else {
+        info.params.seeThrough = false;
+        if (info.params.seeThroughMaximized === true) {
+          // Only unmaximize a window that still IS maximized. The switch
+          // can be on across a hand-unmaximize, and the kernel's
+          // `Unmaximize` restores its own pre-maximize stash — so asking
+          // for it on an already-restored window would snap it back to the
+          // rect the user had just dragged it out of.
+          if (getMachineWindowRecord(machineId)?.maximized === true) {
+            kernelUnmaximize(machineId);
+          }
+          info.params.seeThroughMaximized = false;
+        }
+      }
+
+      // The renderer draws the look. Pubsub rather than a directed send so
+      // the view declares the topic in its own manifest and any future
+      // observer (the app-wide switch) sees the same message.
+      publish(
+        `peek://${grant.tileId}/background`,
+        'window:see-through',
+        { windowId: win.id, seeThrough: on },
+      );
+      return { success: true, data: { seeThrough: on } };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

@@ -407,6 +407,15 @@ export interface TileEntry {
   focusable?: boolean;
   frame?: boolean;
   resizable?: boolean;
+  /**
+   * If true, this window is a card-grid view that supports the see-through
+   * switch: `see-through view` may flip it between its normal look and the
+   * frosted, maximized one. This declaration is how main knows which
+   * windows the switch applies to — there is no list of URLs anywhere else.
+   * A window that declares it must also be created transparent, since
+   * transparency can only be set when a window is created.
+   */
+  seeThrough?: boolean;
   /** Window role for the IZUI system */
   role?: string;
   /** Unique key for window deduplication */

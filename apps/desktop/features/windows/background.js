@@ -126,6 +126,24 @@ const commandDefinitions = [
     }
   },
   {
+    name: 'see-through view',
+    description: 'Flip the active card view between its normal look and the see-through one',
+    execute: async (ctx) => {
+      const windowId = await api.window.getFocusedVisibleWindowId();
+      if (!windowId) return { success: false, error: 'No active window' };
+      // Read before writing: the switch is set explicitly rather than
+      // toggled in main, so the flip is decided here.
+      const state = await api.window.getSeeThrough(windowId);
+      if (!state || state.success !== true) {
+        return { success: false, error: state?.error || 'Cannot read the see-through state of this window' };
+      }
+      if (state.data?.supported !== true) {
+        return { success: false, error: 'This view does not support the see-through switch' };
+      }
+      return api.window.setSeeThrough(windowId, state.data.seeThrough !== true);
+    }
+  },
+  {
     name: 'fullscreen',
     description: 'Toggle fullscreen for the active window',
     execute: async (ctx) => {

@@ -1,0 +1,46 @@
+/*
+ * see-through.css — the shared frosted look for card-grid views.
+ *
+ * Loaded by every view that supports the per-window see-through switch:
+ *
+ *   <link rel="stylesheet" href="peek://app/lib/see-through.css">
+ *
+ * Nothing here applies until main adds `see-through` to <body>, so a view
+ * that links the sheet still draws its normal opaque look by default. The
+ * window itself is created transparent (transparency can only be set at
+ * creation), and the normal look is the opaque body background the view's
+ * own CSS paints — so this sheet only has to take that background away.
+ *
+ * The frosted background is the one the windows switcher uses
+ * (features/windows/windows.css `body`). The switcher keeps its own copy:
+ * it is always frosted and has no switch, so it does not load this sheet.
+ */
+
+body.see-through {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  color: var(--base05);
+
+  /*
+   * Panels inside the view are drawn from the theme's background ramp
+   * (--base00 the page, --base01/--base02 the raised surfaces). Making the
+   * ramp translucent here carries the frost through sidebars, headers and
+   * cards without each view restating it. A view that paints a surface
+   * with a literal colour instead of these variables needs its own
+   * `body.see-through` rule in its own stylesheet.
+   */
+  --base00: rgba(0, 0, 0, 0);
+  --base01: rgba(255, 255, 255, 0.06);
+  --base02: rgba(255, 255, 255, 0.14);
+  --base03: rgba(255, 255, 255, 0.28);
+}
+
+/*
+ * A background set on <body> propagates to the viewport canvas only while
+ * the root element has none of its own. A theme that paints the root would
+ * otherwise sit opaque in front of the desktop and defeat the whole switch.
+ */
+html:has(> body.see-through) {
+  background: transparent;
+}

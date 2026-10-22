@@ -25,7 +25,13 @@ function openTags() {
       key: 'tags-home',
       width: 900,
       height: 700,
-      title: 'Tags'
+      title: 'Tags',
+      // Always created transparent, because transparency can only be set
+      // when a window is created and the see-through switch may be flipped
+      // on at any time afterwards. The normal, opaque look is the body
+      // background home.css paints; see-through.css takes it away when the
+      // switch is on.
+      transparent: true
     });
   } else {
     window.open('./home.html', '_blank');

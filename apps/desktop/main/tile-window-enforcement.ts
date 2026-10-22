@@ -18,6 +18,8 @@ export type WindowOp =
   | 'maximize'
   | 'fullscreen'
   | 'get-focused-visible-id'
+  | 'get-see-through'
+  | 'set-see-through'
   | 'set-overlay-focus-target'
   | 'set-visible-on-all-workspaces'
   | 'set-pinned';
@@ -98,6 +100,7 @@ export function checkWindowAllowed(
     case 'center-all':
     case 'maximize':
     case 'fullscreen':
+    case 'set-see-through':
     case 'set-overlay-focus-target':
     case 'set-visible-on-all-workspaces':
     case 'set-pinned': {
@@ -108,6 +111,17 @@ export function checkWindowAllowed(
     }
 
     case 'get-focused-visible-id': {
+      if (cap.query !== true) {
+        return { ok: false, error: 'window.query capability not granted' };
+      }
+      return { ok: true };
+    }
+
+    case 'get-see-through': {
+      // Reading a window's see-through state is a query. A tile reading its
+      // OWN state (ownWindow: true) is always allowed, so a card view can
+      // apply a session-restored switch without asking for `query`.
+      if (args?.ownWindow === true) return { ok: true };
       if (cap.query !== true) {
         return { ok: false, error: 'window.query capability not granted' };
       }

@@ -72,6 +72,8 @@ removed name throws `Error('[tile-preload] ... removed in Phase 4; use ...')`.
 | `api.window.center(id?)` | `manage` | Center window on display |
 | `api.window.centerAll()` | `manage` | Center all visible windows |
 | `api.window.maximize(id?)` | `manage` | Toggle maximize |
+| `api.window.getSeeThrough(id?)` | `query`, or none for the calling window | Whether this view supports the see-through switch and whether it is on: `{ success, data: { supported, seeThrough } }` |
+| `api.window.setSeeThrough(id, on)` | `manage` | Turn the see-through look on or off for one window. `on` is explicit, not a toggle. On maximizes the window and applies the frosted look; off removes it and restores the earlier bounds, but only when the switch was what maximized it. A view that does not declare `seeThrough: true` on its manifest tile entry answers `{ success: false, error }` and nothing changes |
 | `api.window.fullscreen(id?)` | `manage` | Toggle fullscreen |
 | `api.window.setIgnoreMouseEvents(id, ignore, opts?)` | `manage` | Click-through toggle |
 | `api.window.setVisibleOnAllWorkspaces(id, visible, opts?)` | `manage` | Pin across Spaces |
