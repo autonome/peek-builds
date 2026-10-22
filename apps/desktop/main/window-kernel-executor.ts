@@ -781,6 +781,12 @@ export class WindowKernelExecutor {
         this.backend.hideApp();
         return;
       }
+      case 'ActivateApp': {
+        // Headless-gated: an agent or CI run must never take the user's focus.
+        if (this.headless) return;
+        this.backend.activateApp(effect.id);
+        return;
+      }
       case 'HoldAboveOtherApps': {
         // Headless-gated: a headless window is fully transparent but still takes clicks, so
         // holding one above other applications would put an invisible click target over them.

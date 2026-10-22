@@ -176,6 +176,14 @@ cutoff where they appear, that same signal also produces groups of unrelated pag
    `item_visits.interacted`) rather than by presence alone.
 4. Name groups from title words only, never URL fragments.
 
+**Entity quality changes made since.** Person names from free text now need a known first name
+plus a known surname (`data/names.json`) or a personal title right before them; feed pages
+(more than `FEED_PERSON_THRESHOLD` = 10 distinct pattern-matched names) keep only entities named
+in the page title; structured data wins over a pattern match naming the same thing; a street
+address place is named by the address alone; and `og:site_name` yields an organization (confidence
+0.75, `attributes.role: 'site'`). The threshold of 10 is not measured on real pages, and the
+effect on the entity signal is not remeasured. Entities stored earlier are not migrated.
+
 The one signal that could tie a listing page to a spreadsheet about the same purchase is title
 meaning across different sites. That is the case for an embedding signal, and it is the first
 thing the bake-off should add to this baseline.

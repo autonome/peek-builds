@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
+import { FeatureRegistry, migrateLegacyRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -256,5 +256,106 @@ describe('FeatureRegistry duplicate IDs', () => {
     assert.ok(got);
     assert.strictEqual(got.name, 'Second');
     assert.strictEqual(got.path, '/second');
+  });
+});
+
+// ─── Per-profile registry ───────────────────────────────────────────
+
+describe('FeatureRegistry per profile', () => {
+  it('keeps registry.json and features/ inside the profile directory', () => {
+    const profileDir = path.join(tmpDir, 'dev');
+    const reg = new FeatureRegistry(profileDir);
+    reg.registerFeature(makeEntry('a'));
+    reg.saveRegistry();
+    assert.ok(fs.existsSync(path.join(profileDir, 'registry.json')));
+    assert.ok(!fs.existsSync(path.join(tmpDir, 'registry.json')));
+    assert.strictEqual(reg.getFeaturesDir(), path.join(profileDir, 'features'));
+  });
+
+  it('two profiles do not see each other\'s entries', () => {
+    const a = new FeatureRegistry(path.join(tmpDir, 'default'));
+    a.registerFeature(makeEntry('only-default', { source: { type: 'local' } }));
+    a.saveRegistry();
+    const b = new FeatureRegistry(path.join(tmpDir, 'dev'));
+    b.loadRegistry();
+    assert.strictEqual(b.size, 0);
+    b.registerFeature(makeEntry('only-dev', { source: { type: 'local' } }));
+    b.saveRegistry();
+    const a2 = new FeatureRegistry(path.join(tmpDir, 'default'));
+    a2.loadRegistry();
+    assert.deepStrictEqual(a2.listFeatures().map(e => e.id), ['only-default']);
+  });
+});
+
+describe('migrateLegacyRegistry', () => {
+  function writeLegacy(entries: FeatureRegistryEntry[]): string {
+    const data: Record<string, FeatureRegistryEntry> = {};
+    for (const e of entries) data[e.id] = e;
+    const file = path.join(tmpDir, 'registry.json');
+    fs.writeFileSync(file, JSON.stringify({ version: 1, features: data }), 'utf-8');
+    return file;
+  }
+
+  it('seeds the default profile with non-builtin entries, skipping builtins', () => {
+    const external = path.join(tmpDir, 'elsewhere', 'ext');
+    fs.mkdirSync(external, { recursive: true });
+    writeLegacy([
+      makeEntry('core', { source: { type: 'builtin' } }),
+      makeEntry('ext', { source: { type: 'dev' }, path: external }),
+    ]);
+    const profileDir = path.join(tmpDir, 'default');
+    const n = migrateLegacyRegistry({ profile: 'default', legacyDir: tmpDir, profileDir });
+    assert.strictEqual(n, 1);
+    const reg = new FeatureRegistry(profileDir);
+    reg.loadRegistry();
+    assert.deepStrictEqual(reg.listFeatures().map(e => e.id), ['ext']);
+    assert.strictEqual(reg.getFeature('ext')?.path, external);
+  });
+
+  it('copies a legacy-installed feature dir into the profile and repoints the entry', () => {
+    const installed = path.join(tmpDir, 'features', 'inst');
+    fs.mkdirSync(installed, { recursive: true });
+    fs.writeFileSync(path.join(installed, 'manifest.json'), '{"id":"inst"}', 'utf-8');
+    writeLegacy([makeEntry('inst', { source: { type: 'atproto' }, path: installed })]);
+    const profileDir = path.join(tmpDir, 'default');
+    migrateLegacyRegistry({ profile: 'default', legacyDir: tmpDir, profileDir });
+    const reg = new FeatureRegistry(profileDir);
+    reg.loadRegistry();
+    const copied = path.join(profileDir, 'features', 'inst');
+    assert.strictEqual(reg.getFeature('inst')?.path, copied);
+    assert.strictEqual(fs.readFileSync(path.join(copied, 'manifest.json'), 'utf-8'), '{"id":"inst"}');
+    assert.ok(fs.existsSync(path.join(installed, 'manifest.json')), 'legacy copy is left in place');
+  });
+
+  it('leaves the legacy file untouched', () => {
+    const file = writeLegacy([makeEntry('ext', { source: { type: 'local' } })]);
+    const before = fs.readFileSync(file, 'utf-8');
+    migrateLegacyRegistry({ profile: 'default', legacyDir: tmpDir, profileDir: path.join(tmpDir, 'default') });
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+  });
+
+  it('does nothing when the profile already has a registry', () => {
+    writeLegacy([makeEntry('ext', { source: { type: 'local' } })]);
+    const profileDir = path.join(tmpDir, 'default');
+    fs.mkdirSync(profileDir, { recursive: true });
+    const existing = JSON.stringify({ version: 1, features: {} });
+    fs.writeFileSync(path.join(profileDir, 'registry.json'), existing, 'utf-8');
+    const n = migrateLegacyRegistry({ profile: 'default', legacyDir: tmpDir, profileDir });
+    assert.strictEqual(n, 0);
+    assert.strictEqual(fs.readFileSync(path.join(profileDir, 'registry.json'), 'utf-8'), existing);
+  });
+
+  it('does not migrate for a non-default profile', () => {
+    writeLegacy([makeEntry('ext', { source: { type: 'local' } })]);
+    const profileDir = path.join(tmpDir, 'dev');
+    const n = migrateLegacyRegistry({ profile: 'dev', legacyDir: tmpDir, profileDir });
+    assert.strictEqual(n, 0);
+    assert.ok(!fs.existsSync(path.join(profileDir, 'registry.json')));
+  });
+
+  it('does nothing when there is no legacy registry', () => {
+    const profileDir = path.join(tmpDir, 'default');
+    assert.strictEqual(migrateLegacyRegistry({ profile: 'default', legacyDir: tmpDir, profileDir }), 0);
+    assert.ok(!fs.existsSync(path.join(profileDir, 'registry.json')));
   });
 });

@@ -104,6 +104,9 @@ class FakeBackend implements WindowBackend {
   hideApp(): void {
     this.record('hideApp');
   }
+  activateApp(id: WindowId): void {
+    this.record('activateApp', id);
+  }
   destroyAllContentGuests(): Promise<void> {
     this.record('destroyAllContentGuests');
     return Promise.resolve();

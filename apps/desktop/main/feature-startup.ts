@@ -12,13 +12,14 @@
 
 import path from 'node:path';
 
-import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
+import { FeatureRegistry, migrateLegacyRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
 import { collectLoadErrors } from './feature-list-entries.js';
 import { resetFeatureLoadErrors, setFeatureLoadError } from './feature-load-errors.js';
 import { AtprotoSource } from './atproto-source.js';
 import * as manifestCache from './manifest-cache.js';
+import { setFeatureEntryLookup } from './feature-trust.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 import { isEphemeralProfile } from './config.js';
 import { getDb } from './datastore.js';
@@ -28,8 +29,12 @@ import type { TileRule } from './tile-manifest.js';
 // ─── Types ──────────────────────────────────────────────────────────
 
 export interface FeatureStartupConfig {
-  /** App data directory (e.g., app.getPath('userData')) */
+  /** Per-profile data directory; holds registry.json and installed features/ */
   appDataDir: string;
+  /** Profile name, decides whether the legacy shared registry is migrated */
+  profile?: string;
+  /** Top-level data directory that held the registry shared by all profiles */
+  legacyAppDataDir?: string;
   /** Path to the repo/app features/ directory for builtins */
   builtinFeaturesDir: string;
   /** Path to the tile preload script */
@@ -90,10 +95,10 @@ export function getAtprotoSource(): AtprotoSource | null {
  * errors with a warning — a feature with an unreadable manifest
  * shouldn't bring down startup or every subsequent registry mutation.
  */
-function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
+export function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
   try {
     const manifestPath = path.join(entry.path, 'manifest.json');
-    manifestCache.upsertFromManifest(entry.id, manifestPath);
+    manifestCache.upsertFromManifest(entry.id, manifestPath, entry.source.type === 'builtin');
   } catch (err) {
     console.warn(`[feature-startup] manifest-cache upsert failed for ${entry.id}:`, err);
   }
@@ -176,12 +181,20 @@ function fireFsmTriggerForFeature(entry: FeatureRegistryEntry, trigger: string):
  * 3. Load all features via tile loader
  */
 export function initializeFeatures(config: FeatureStartupConfig): FeatureStartupResult {
-  // 1. Load registry
+  // 1. Load registry (seeding the default profile from the old shared one)
+  if (config.profile && config.legacyAppDataDir) {
+    migrateLegacyRegistry({
+      profile: config.profile,
+      legacyDir: config.legacyAppDataDir,
+      profileDir: config.appDataDir,
+    });
+  }
   const registry = new FeatureRegistry(config.appDataDir);
   registry.loadRegistry();
 
   // Store singleton references for IPC handlers
   _registry = registry;
+  setFeatureEntryLookup((id) => registry.getFeature(id));
   _atprotoSource = new AtprotoSource({ peekVersion: config.peekVersion });
 
   // Wire manifest-cache to registry mutations. Every subsequent

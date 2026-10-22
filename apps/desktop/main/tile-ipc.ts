@@ -31,6 +31,8 @@ import {
   getTileManifest,
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
+import { EncryptedFileSecretStore, type SecretStore } from './feature-secrets.js';
+import { electronSecretCipher } from './electron-secret-cipher.js';
 import { registerTileProtocol } from './tile-protocols.js';
 import { performAtprotoRequest, isAtprotoHostAllowed, type AtprotoRequest } from './atproto-proxy.js';
 import { readAtprotoSession, writeAtprotoSession } from './atproto-session-store.js';
@@ -115,7 +117,10 @@ import {
   type RulesDb,
 } from './rules.js';
 import type { TableName } from '../types/index.js';
-import { installFromBundle, isPublishableFeatureFile } from './feature-installer.js';
+import { installFromBundle, isPublishableFeatureFile, previewLocalDirectory, registerLocalDirectory } from './feature-installer.js';
+import { evaluateFeatureApproval } from './feature-approval.js';
+import { syncLocalFeatureWatches } from './local-feature-reload.js';
+import { clearFeatureLoadError } from './feature-load-errors.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
@@ -274,6 +279,8 @@ export { checkEscapeAllowed, type EscapeCheckResult } from './tile-escape-enforc
 export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './tile-session-enforcement.js';
 export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
 import { isNetworkDomainAllowed } from './tile-network-enforcement.js';
+import { checkAutomationAllowed, parseAutomationOp, runAutomationOp, tileWindowSource } from './page-automation.js';
+import { downloadCapture } from './download-capture.js';
 export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -1569,6 +1576,14 @@ export function registerTileIpcHandlers(): void {
       return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
     }
 
+    // An enable must not arm a feature the loader would skip: unapproved, or a
+    // local folder whose manifest now asks for more than was approved.
+    const enableManifest = parseManifestFile(path.join(entry.path, 'manifest.json'));
+    if (enableManifest?.version === 'tile' && enableManifest.manifest) {
+      const approval = evaluateFeatureApproval(entry, enableManifest.manifest);
+      if (!approval.allow) return { error: approval.error };
+    }
+
     const result = registry.enableFeature(args.id);
     if (result) {
       registry.saveRegistry();
@@ -1592,6 +1607,8 @@ export function registerTileIpcHandlers(): void {
         console.error(`[tile-ipc] Failed to re-arm ${args.id} on enable:`, err);
       }
 
+      clearFeatureLoadError(args.id);
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:enabled', { id: args.id });
     }
     return { success: result };
@@ -1649,6 +1666,7 @@ export function registerTileIpcHandlers(): void {
       // Safe/idempotent for resident-only or never-armed tiles.
       disarmLazyTile(args.id);
 
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:disabled', { id: args.id });
     }
     return { success: result };
@@ -1695,7 +1713,9 @@ export function registerTileIpcHandlers(): void {
 
     const result = registry.unregisterFeature(args.id);
     if (result) {
-      if (entry.source.type !== 'dev') {
+      // dev and local features are registered in place: the folder is the
+      // author's own, so removing the feature leaves it on disk.
+      if (entry.source.type !== 'dev' && entry.source.type !== 'local') {
         try {
           if (fs.existsSync(entry.path)) {
             fs.rmSync(entry.path, { recursive: true });
@@ -1716,6 +1736,7 @@ export function registerTileIpcHandlers(): void {
         entry.grantedCapabilities as unknown as Record<string, unknown>
       );
 
+      syncLocalFeatureWatches();
       publish('feature-registry', 'feature:removed', { id: args.id });
     }
     return { success: result };
@@ -1829,6 +1850,97 @@ export function registerTileIpcHandlers(): void {
       });
 
       return { success: true, entry: result.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Installation failed: ${message}` };
+    }
+  });
+
+  registerTileIpc('tile:features:install-local-preview', { mode: 'handle' }, async (event, args: {
+    token: string;
+    directoryPath: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkFeaturesAllowed(grant, 'install', 'local');
+    if (!check.ok) {
+      handleViolation(grant, 'features', 'features:install-local-preview', check.error, args.token);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const preview = previewLocalDirectory(args.directoryPath, registry);
+    if (!preview.success) return { error: preview.error };
+    return {
+      manifest: preview.manifest,
+      granted: preview.granted,
+      denied: preview.denied,
+      alreadyInstalled: preview.alreadyInstalled,
+    };
+  });
+
+  registerTileIpc('tile:features:install-local', { mode: 'handle' }, async (event, args: {
+    token: string;
+    directoryPath: string;
+    userApproved: boolean;
+    tilePreloadPath?: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkFeaturesAllowed(grant, 'install', 'local');
+    if (!check.ok) {
+      handleViolation(grant, 'features', 'features:install-local', check.error, args.token);
+      return { error: check.error };
+    }
+
+    if (!args.userApproved) {
+      return { error: 'User approval required before installation' };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    try {
+      const result = registerLocalDirectory(args.directoryPath, registry, { userApproved: true });
+      if (!result.success) {
+        return { error: result.error };
+      }
+      const entry = result.entry!;
+
+      registry.saveRegistry();
+
+      writeFeatureHistory(
+        entry.id,
+        'install',
+        entry.source.version,
+        'local',
+        args.directoryPath,
+        undefined,
+        entry.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      publish('feature-registry', 'feature:installed', {
+        id: entry.id,
+        name: entry.name,
+        source: entry.source,
+      });
+
+      // Arm the feature live (same path as tile:features:enable) so it loads
+      // without a restart.
+      try {
+        const parsed = parseManifestFile(path.join(entry.path, 'manifest.json'));
+        if (parsed?.version === 'tile' && parsed.manifest) {
+          const annotated: AnnotatedTile = { id: entry.id, path: entry.path, manifest: parsed.manifest };
+          loadOrArmFeatureTile(annotated, { tilePreloadPath: args.tilePreloadPath || getTilePreloadPath() });
+        }
+      } catch (err) {
+        console.error(`[tile-ipc] Failed to arm ${entry.id} after local install:`, err);
+      }
+      // An approval answers a "needs re-approval" error left by boot or a reload.
+      clearFeatureLoadError(entry.id);
+      syncLocalFeatureWatches();
+
+      return { success: true, entry };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Installation failed: ${message}` };
@@ -2958,7 +3070,8 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Window handler not initialized' };
     }
 
-    const source = `peek://${activeGrant.tileId}/background`;
+    // The automation opener check (page-automation.ts) matches this source.
+    const source = tileWindowSource(activeGrant.tileId);
     DEBUG && console.log(`[tile:window:open] ${activeGrant.tileId} opening ${args.url}`);
     try {
       return await invokeWindowOpen(event, {
@@ -4726,21 +4839,70 @@ export function registerTileIpcHandlers(): void {
         body: args.options?.body as string,
       });
 
-      const body = await response.text();
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => {
         headers[key] = value;
       });
 
+      // `responseType: 'bytes'` returns the body untouched as `bytes`
+      // (a Uint8Array), for binary content a text decode would corrupt.
+      if (args.options?.responseType === 'bytes') {
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+          bytes: new Uint8Array(await response.arrayBuffer()),
+        };
+      }
+
       return {
         status: response.status,
         statusText: response.statusText,
         headers,
-        body,
+        body: await response.text(),
       };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ── Page automation ──
+  //
+  // Drives a page host the calling tile opened through `tile:window:open`,
+  // on the origins its manifest lists under `capabilities.automation`. The
+  // gate and the operations live in page-automation.ts; this handler only
+  // resolves the window to its content webContents.
+
+  registerTileIpc('tile:automation:run', { mode: 'handle' }, async (event, args: {
+    token: string;
+    windowId: number;
+    op: unknown;
+  }, _grant) => {
+    const grant = _grant;
+    const op = parseAutomationOp(args?.op);
+    if (!op) return { ok: false, error: 'Malformed automation op' };
+    const hybrid = typeof args.windowId === 'number' ? getHybridWindow(args.windowId) : null;
+    const contentWC = hybrid && !hybrid.contentWC.isDestroyed() ? hybrid.contentWC : null;
+    if (!hybrid || !contentWC) return { ok: false, error: `No page window with id ${args.windowId}` };
+
+    const check = checkAutomationAllowed(grant, op, {
+      windowSource: hybrid.source,
+      currentUrl: contentWC.getURL(),
+    });
+    if (!check.ok) {
+      handleViolation(grant, 'automation', `automation:${op.op}`, check.error, args.token);
+      return { ok: false, error: check.error };
+    }
+    const wcId = contentWC.id;
+    return runAutomationOp(contentWC, op, {
+      setEnabled: (enabled) => {
+        if (!enabled) { downloadCapture.disarm(wcId); return; }
+        if (downloadCapture.isArmed(wcId)) return;
+        downloadCapture.arm(wcId);
+        contentWC.once('destroyed', () => downloadCapture.disarm(wcId));
+      },
+      next: (timeoutMs) => downloadCapture.next(wcId, timeoutMs),
+    });
   });
 
   // ── AT Protocol DPoP proxy ──
@@ -5564,6 +5726,39 @@ export function registerTileIpcHandlers(): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
+    }
+  });
+
+  // ── Secrets ──
+  //
+  // Values a feature keeps for itself, scoped like settings to the tile's
+  // feature id and encrypted at rest (feature-secrets.ts). Values never go
+  // to logs or violation reports.
+
+  let secretStore: SecretStore | null = null;
+  // userData is the profile's own directory by the time a tile can call.
+  const getFeatureSecretStore = (): SecretStore =>
+    (secretStore ??= new EncryptedFileSecretStore(path.join(app.getPath('userData'), 'feature-secrets.json'), electronSecretCipher));
+
+  registerTileIpc('tile:secrets:run', { mode: 'handle' }, async (event, args: {
+    token: string;
+    op: 'get' | 'set' | 'delete' | 'list' | 'available';
+    name?: string;
+    value?: string;
+  }, _grant) => {
+    const grant = _grant;
+    if (!grant || !hasCapability(grant, 'secrets')) {
+      handleViolation(grant, 'secrets', `secrets:${args?.op}`, 'secrets capability not granted', args?.token);
+      return { ok: false, error: 'Secrets capability not granted' };
+    }
+    const store = getFeatureSecretStore();
+    switch (args?.op) {
+      case 'available': return { ok: true, value: store.available() };
+      case 'get': return store.get(grant.tileId, args.name as string);
+      case 'set': return store.set(grant.tileId, args.name as string, args.value as string);
+      case 'delete': return store.delete(grant.tileId, args.name as string);
+      case 'list': return store.list(grant.tileId);
+      default: return { ok: false, error: 'Unknown secrets operation' };
     }
   });
 

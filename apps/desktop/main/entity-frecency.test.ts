@@ -714,7 +714,8 @@ describe('Entity Regex Extraction Filters', () => {
       assert.ok(places.length >= 1, 'Should detect the address');
       assert.ok(places[0].attributes.label, 'Should have a label');
       assert.ok(places[0].attributes.label.includes('Madison Square Garden'));
-      assert.ok(places[0].name.includes('Madison Square Garden'));
+      // The place is the address alone; the label stays an attribute.
+      assert.strictEqual(places[0].name, '4 Pennsylvania Ave');
     });
 
     it('should extract label from "at" pattern', () => {

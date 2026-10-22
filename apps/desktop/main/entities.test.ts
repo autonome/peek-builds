@@ -263,6 +263,167 @@ describe('Entity Recognition Extension', () => {
         // Date and price regex extraction is disabled (too noisy)
       });
     });
+
+    describe('person name extraction', () => {
+      before(async () => {
+        const validator = await import(resolve(extensionsDir, 'name-validator.js'));
+        await validator.ensureNameDatabase();
+      });
+
+      const persons = (text: string) =>
+        extractRegexEntities(text, 'https://example.com')
+          .filter(e => e.entityType === 'person')
+          .map(e => e.name);
+
+      it('finds a plain first name + surname', () => {
+        assert.deepStrictEqual(persons('The talk was given by Maria Garcia last week.'), ['Maria Garcia']);
+      });
+
+      it('does not report a calendar weekday header as a person', () => {
+        assert.deepStrictEqual(persons('October 2026\nSu Mo Tu We Th Fr Sa\n1 2 3 4 5 6 7'), []);
+      });
+
+      it('does not report ordinary capitalized words as a person', () => {
+        assert.deepStrictEqual(persons('Download for Mac Os today.'), []);
+        assert.deepStrictEqual(persons('Requires Mac Pro hardware.'), []);
+      });
+
+      it('does not accept a known first name followed by a non-surname', () => {
+        assert.deepStrictEqual(persons('Ask Mary Xyzzyplugh about it.'), []);
+      });
+
+      it('accepts an unknown surname when an honorific precedes it', () => {
+        assert.deepStrictEqual(persons('Office hours with Dr. Mary Xyzzyplugh on Fridays.'), ['Mary Xyzzyplugh']);
+      });
+
+      it('trims a job title glued onto a name', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Principal\nAcme Widgets'), ['Maria Garcia']);
+      });
+
+      it('keeps the name when an unrelated capitalized word follows it', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Acme joined the board.'), ['Maria Garcia']);
+      });
+
+      it('finds a name preceded by a capitalized non-name word', () => {
+        assert.deepStrictEqual(persons('Speaker Maria Garcia will open.'), ['Maria Garcia']);
+      });
+
+      it('reports a name once when it appears with and without a title', () => {
+        assert.deepStrictEqual(persons('Maria Garcia Principal. Later, Maria Garcia said hello.'), ['Maria Garcia']);
+      });
+    });
+
+    describe('feed pages', () => {
+      let filterFeedPageEntities: (entities: any[], page: { title?: string; text?: string }) => any[];
+
+      before(async () => {
+        const validator = await import(resolve(extensionsDir, 'name-validator.js'));
+        await validator.ensureNameDatabase();
+        const feedMod = await import(resolve(extensionsDir, 'feed-filter.js'));
+        filterFeedPageEntities = feedMod.filterFeedPageEntities;
+      });
+
+      const FEED_AUTHORS = [
+        'John Smith', 'James Johnson', 'Robert Williams', 'Michael Brown', 'David Jones',
+        'William Miller', 'Richard Davis', 'Joseph Wilson', 'Thomas Moore', 'Charles Taylor',
+        'Daniel Anderson', 'Paul Thomas', 'Mark Jackson', 'George White', 'Steven Harris',
+      ];
+      // A timeline: navigation, then one post per author.
+      const feedText = 'Home Explore Notifications Messages\n' +
+        FEED_AUTHORS.map(name => `${name} posted 2h ago\nThis is a post about the weather today.`).join('\n');
+
+      const run = (text: string, title: string) =>
+        filterFeedPageEntities(extractRegexEntities(text, 'https://example.com'), { title, text });
+
+      it('the feed fixture names one person per author', () => {
+        const persons = extractRegexEntities(feedText, 'https://example.com')
+          .filter(e => e.entityType === 'person').map(e => e.name);
+        assert.deepStrictEqual(persons.sort(), [...FEED_AUTHORS].sort());
+      });
+
+      it('drops the names a feed lists', () => {
+        const persons = run(feedText, 'Home / Social').filter(e => e.entityType === 'person');
+        assert.deepStrictEqual(persons, []);
+      });
+
+      it('keeps a name that is in the title of a feed page', () => {
+        const persons = run(feedText, 'Michael Brown (@mbrown) / Social')
+          .filter(e => e.entityType === 'person').map(e => e.name);
+        assert.deepStrictEqual(persons, ['Michael Brown']);
+      });
+
+      it('drops other pattern matches on a feed page, such as email addresses', () => {
+        const text = feedText + '\nReply to someone@example.org';
+        const emails = run(text, 'Inbox').filter(e => e.entityType === 'email');
+        assert.deepStrictEqual(emails, []);
+      });
+
+      it('keeps every entity of an ordinary article', () => {
+        const text = 'Maria Garcia and John Smith met with Robert Williams to discuss the plan. ' +
+          'Write to press@example.org for details.';
+        const raw = extractRegexEntities(text, 'https://example.com');
+        assert.deepStrictEqual(filterFeedPageEntities(raw, { title: 'Budget talks', text }), raw);
+      });
+
+      it('leaves structured-data entities on a feed page alone', () => {
+        const brand = { name: 'Social', entityType: 'organization', confidence: 0.9, extractor: 'json-ld', attributes: {} };
+        const raw = [brand, ...extractRegexEntities(feedText, 'https://example.com')];
+        assert.deepStrictEqual(filterFeedPageEntities(raw, { title: 'Home', text: feedText }), [brand]);
+      });
+    });
+
+    describe('structured data above pattern matches', () => {
+      let preferStructuredData: (entities: any[]) => any[];
+
+      before(async () => {
+        const mod = await import(resolve(extensionsDir, 'source-precedence.js'));
+        preferStructuredData = mod.preferStructuredData;
+      });
+
+      const entity = (name: string, entityType: string, extractor: string, confidence = 0.8) =>
+        ({ name, entityType, extractor, confidence, attributes: {} });
+
+      it('keeps the structured-data entity when a pattern match names the same thing', () => {
+        const ld = entity('Acme Widgets', 'organization', 'json-ld', 0.85);
+        const out = preferStructuredData([entity('acme widgets', 'organization', 'regex-ner', 0.9), ld]);
+        assert.deepStrictEqual(out, [ld]);
+      });
+
+      it('drops a pattern match whose type disagrees with structured data for the same name', () => {
+        const og = entity('Maria Garcia', 'organization', 'opengraph');
+        const out = preferStructuredData([entity('Maria Garcia', 'person', 'regex-ner', 0.71), og]);
+        assert.deepStrictEqual(out, [og]);
+      });
+
+      it('compares names ignoring case, accents and spacing', () => {
+        const mf = entity('José  Núñez', 'person', 'microformats', 0.95);
+        const out = preferStructuredData([mf, entity('jose nunez', 'person', 'regex-ner', 0.71)]);
+        assert.deepStrictEqual(out, [mf]);
+      });
+
+      it('treats a map-URL place as structured data', () => {
+        const map = entity('10 Downing Street', 'place', 'map-url', 0.9);
+        const out = preferStructuredData([entity('10 Downing Street', 'place', 'regex', 0.75), map]);
+        assert.deepStrictEqual(out, [map]);
+      });
+
+      it('keeps pattern matches that structured data does not name', () => {
+        const raw = [
+          entity('Acme Widgets', 'organization', 'json-ld'),
+          entity('Maria Garcia', 'person', 'regex-ner', 0.71),
+          entity('press@example.org', 'email', 'regex', 0.9),
+        ];
+        assert.deepStrictEqual(preferStructuredData(raw), raw);
+      });
+
+      it('keeps every structured-data entity, even two that share a name', () => {
+        const raw = [
+          entity('Acme', 'organization', 'json-ld'),
+          entity('Acme', 'product', 'opengraph'),
+        ];
+        assert.deepStrictEqual(preferStructuredData(raw), raw);
+      });
+    });
   });
 
   // ─── Microformats Extractor ─────────────────────────────────────────
@@ -1262,6 +1423,57 @@ describe('Entity Recognition Extension', () => {
         const result = extractRegexEntities(text, 'https://example.com');
         const phones = result.filter(e => e.entityType === 'phone');
         assert.ok(phones.length >= 1);
+      });
+    });
+
+    // ── Street addresses: the place is the address itself ───────────
+    //
+    // Page text reaches the extractor with tags and line breaks collapsed to single
+    // spaces, so the text before an address is usually unrelated page content.
+
+    describe('street addresses', () => {
+      const places = (text: string) =>
+        extractRegexEntities(text, 'https://example.com').filter(e => e.entityType === 'place');
+
+      it('does not run a weekday, date and time into the place name', () => {
+        const result = places('Tue, Oct 21, 2026 7:30 PM 455 Market Street, San Francisco, CA 94105');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '455 Market Street, San Francisco, CA 94105');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('does not run an order-confirmation sentence into the place name', () => {
+        const result = places('Thanks for your order! Your package will be delivered to 12 Oak Lane, Springfield');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '12 Oak Lane, Springfield');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('does not run a copyright line into the place name', () => {
+        const result = places('© 2026 Acme Widgets Inc. All rights reserved. 100 Pine Street, Seattle, WA 98101');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '100 Pine Street, Seattle, WA 98101');
+        assert.strictEqual(result[0].attributes.label, undefined);
+      });
+
+      it('keeps a venue name just before the address as a label, not in the name', () => {
+        const result = places('Madison Square Garden, 4 Pennsylvania Plaza Way, New York');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '4 Pennsylvania Plaza Way, New York');
+        assert.strictEqual(result[0].attributes.label, 'Madison Square Garden');
+      });
+
+      it('keeps the recipient after a "Ship to:" prompt as the label', () => {
+        const result = places('Ship to: John Doe 456 Oak Ave');
+        assert.strictEqual(result.length, 1);
+        assert.strictEqual(result[0].name, '456 Oak Ave');
+        assert.strictEqual(result[0].attributes.label, 'John Doe');
+      });
+
+      it('gives the same address on two pages the same name', () => {
+        const a = places('Visit our flagship store at 9 Elm Street, Boston');
+        const b = places('Joe Bloggs 9 Elm Street, Boston');
+        assert.strictEqual(a[0].name, b[0].name);
       });
     });
 
@@ -2599,6 +2811,55 @@ describe('Entity Recognition Extension', () => {
         const og = result.filter(e => e.extractor === 'opengraph');
         // Should get profile person AND article author person
         assert.ok(og.length >= 2);
+      });
+    });
+
+    // ── Open Graph: the site's own name ───────────────────────────────
+    //
+    // Most pages carry no structured entity, but many name the site they
+    // belong to in og:site_name. That name is the site's brand.
+
+    describe('Open Graph - site name', () => {
+      it('names the site as an organization on a page with nothing else', () => {
+        const html = `<html><head>
+          <meta property="og:type" content="website">
+          <meta property="og:title" content="someuser/somerepo: a tool">
+          <meta property="og:site_name" content="GitHub">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://github.com/someuser/somerepo');
+        const org = result.find(e => e.extractor === 'opengraph' && e.entityType === 'organization');
+        assert.ok(org, 'og:site_name should yield an organization');
+        assert.strictEqual(org!.name, 'GitHub');
+        assert.strictEqual(org!.attributes.role, 'site');
+        assert.ok(org!.confidence >= 0.7, 'must clear the storage threshold');
+      });
+
+      it('names the site even when an og:type=profile page yields no person', () => {
+        const html = `<html><head>
+          <meta property="og:type" content="profile">
+          <meta property="og:title" content="IndieWeb">
+          <meta property="og:site_name" content="IndieWeb Wiki">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://indieweb.org/');
+        const org = result.find(e => e.extractor === 'opengraph' && e.entityType === 'organization');
+        assert.ok(org);
+        assert.strictEqual(org!.name, 'IndieWeb Wiki');
+      });
+
+      it('skips a site name that reads as a sentence, not a name', () => {
+        const html = `<html><head>
+          <meta property="og:site_name" content="The Ultimate Directory of tools and applications for Bluesky">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://example.com');
+        assert.strictEqual(result.filter(e => e.extractor === 'opengraph').length, 0);
+      });
+
+      it('skips a site name that is a URL or host', () => {
+        const html = `<html><head>
+          <meta property="og:site_name" content="https://example.com">
+        </head><body></body></html>`;
+        const result = extractStructuredDataEntities(html, 'https://example.com');
+        assert.strictEqual(result.filter(e => e.extractor === 'opengraph').length, 0);
       });
     });
 

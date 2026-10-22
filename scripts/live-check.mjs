@@ -67,6 +67,9 @@ const NOISE_PATTERNS = [
   /exception_ports/,
   // The chrome-extension bridge reports routine startup at error level.
   /\[peek:bridge:(preload|page)\] (loaded for |on\w+ listener registered|bridge initialized|\[relay\] peek-relay initialized|chrome\.runtime\.connect\(\) opened port)/,
+  // It also traces every message it relays, and each clean port reconnect,
+  // at error level.
+  /\[peek:bridge:(preload|page)\] (forward received reqId=|onForward reqId=|port\.postMessage dispatched reqId=|port\.onMessage reqId=|port\.onMessage: no pending reqId= undefined|port disconnected \(clean, will reconnect\)|scheduling reconnect attempt \d+|reconnect attempt \d+(?![^\n]*(fail|error|gave up)))/i,
   /\[DEP0040\] DeprecationWarning: The `punycode` module/,
   // Proton Pass's manifest asks for permissions Electron doesn't know.
   /^[^\n]*ExtensionLoadWarning: Warnings loading extension at [^\n]*(\n\s+Permission '[^']+' is unknown\.)+\s*$/,

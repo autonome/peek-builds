@@ -9139,3 +9139,68 @@ describe('window-kernel: a raise for a window with no desktop yet waits for its 
     assert.strictEqual(asked.next.raiseAwaitingPlacement, null);
   });
 });
+
+describe('window-kernel: a press in a peek that never activates the app activates it', () => {
+  const peek = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'quick-view',
+    role: 'quick-view',
+    transient: true,
+    nonActivating: true,
+    ...extra,
+  });
+  const activations = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'ActivateApp');
+  const shownOverOtherApp = (): State =>
+    fold([peek(wid(1)), { type: 'AppResigned' }, { type: 'WindowShown', id: wid(1) }, { type: 'OsFocusGained', id: wid(1) }]);
+  const closes = (effects: Effect[]): boolean =>
+    effects.some((e) => e.type === 'DismissWindow' || e.type === 'HideWindow' || e.type === 'CloseWindow');
+
+  it('asks to activate the app while it is inactive, and the peek stays open', () => {
+    const after = foldWithEffects([{ type: 'PressedInNonActivatingWindow', id: wid(1) }], shownOverOtherApp());
+    assert.deepStrictEqual(activations(after.effects), [{ type: 'ActivateApp', id: wid(1) }]);
+    const record = after.state.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(record.visible, true);
+    assert.notStrictEqual(record.pendingHidden, true);
+    assert.ok(!closes(after.effects));
+  });
+
+  it('keeps the peek open through the activation and the focus the platform hands to another window', () => {
+    const state = fold([
+      peek(wid(1)),
+      { type: 'WindowRegistered', id: wid(2), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'AppResigned' },
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'OsFocusGained', id: wid(1) },
+      { type: 'PressedInNonActivatingWindow', id: wid(1) },
+      { type: 'AppActivated' },
+    ]);
+    const after = foldWithEffects([{ type: 'OsFocusGained', id: wid(2) }], state);
+    const record = after.state.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(record.visible, true);
+    assert.notStrictEqual(record.pendingHidden, true);
+    assert.ok(!closes(after.effects));
+  });
+
+  it('does nothing while the app is already active', () => {
+    const state = fold([peek(wid(1)), { type: 'WindowShown', id: wid(1) }, { type: 'OsFocusGained', id: wid(1) }]);
+    const after = foldWithEffects([{ type: 'PressedInNonActivatingWindow', id: wid(1) }], state);
+    assert.deepStrictEqual(activations(after.effects), []);
+  });
+
+  it('does nothing for a window that activates the app by itself', () => {
+    const state = fold([peek(wid(1), { nonActivating: false }), { type: 'AppResigned' }, { type: 'WindowShown', id: wid(1) }]);
+    const after = foldWithEffects([{ type: 'PressedInNonActivatingWindow', id: wid(1) }], state);
+    assert.deepStrictEqual(activations(after.effects), []);
+  });
+
+  it('ignores a press in a window the app is closing', () => {
+    const closing = fold([{ type: 'AppActivated' }, { type: 'AppResigned' }], shownOverOtherApp());
+    const after = foldWithEffects([{ type: 'PressedInNonActivatingWindow', id: wid(1) }], closing);
+    assert.deepStrictEqual(activations(after.effects), []);
+  });
+});

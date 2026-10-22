@@ -7,7 +7,12 @@
  * content using regular expressions.
  */
 
-import { ensureNameDatabase, isKnownFirstName, isLikelyPersonName } from '../name-validator.js';
+import {
+  isKnownFirstName,
+  isKnownSurname,
+  isLikelyPersonName,
+  trimTrailingTitleWords,
+} from '../name-validator.js';
 
 // Email pattern
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
@@ -175,13 +180,35 @@ function extractPriceContext(text, matchIndex) {
   return name || null;
 }
 
+// Lower-case words a venue or person name may contain ("Bank of America",
+// "Musée de la Ville"). Any other lower-case word marks the text as prose.
+const NAME_JOINERS = new Set(['of', 'the', 'and', 'at', 'on', 'de', 'la', 'le', 'du', 'des', 'del', 'van', 'von', 'da', 'di']);
+
+/**
+ * Whether the text before an address reads as the name of what is there (a venue,
+ * business or person) rather than unrelated page text. Page text arrives with line
+ * breaks collapsed, so the words before an address are usually a date, a sentence
+ * or a footer; only a short, capitalised run of words without digits passes.
+ * @param {string} label
+ * @returns {boolean}
+ */
+function isNameShapedLabel(label) {
+  if (/\d/.test(label)) return false;
+  const words = label.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 5) return false;
+  return words.every(w => /^[\p{Lu}&]/u.test(w) || NAME_JOINERS.has(w));
+}
+
 /**
  * Extract the name/label associated with a street address.
  * Looks at the text before the address (up to 100 chars) for a business name,
- * person name, or venue title. Common patterns:
+ * person name, or venue title, taking only what follows the last line break or
+ * sentence boundary. Common patterns:
  *   - "Joe's Pizza\n123 Main St" (newline-separated)
  *   - "Madison Square Garden, 4 Pennsylvania Plaza"
  *   - "Ship to: John Doe 456 Oak Ave"
+ * The label is never part of the place's name: the place is the address itself,
+ * so the same address seen on two pages is one entity.
  * @param {string} text - Full text
  * @param {number} matchIndex - Index of the address match in text
  * @returns {string|null} Name/label or null
@@ -190,8 +217,9 @@ function extractAddressContext(text, matchIndex) {
   const beforeStart = Math.max(0, matchIndex - 100);
   const before = text.slice(beforeStart, matchIndex).trim();
 
-  // Split by newlines, bullets, pipes — the label is typically on the line above or same line
-  const segments = before.split(/[\n\r|•·–—]/).filter(s => s.trim().length > 0);
+  // Split by line breaks, bullets, pipes and sentence or field boundaries: the label is
+  // what sits between the last of them and the address.
+  const segments = before.split(/[\n\r|•·–—.!?:;©]/).filter(s => s.trim().length > 0);
   const lastSegment = (segments.length > 0 ? segments[segments.length - 1] : '').trim();
 
   if (!lastSegment || lastSegment.length < 2) return null;
@@ -208,21 +236,41 @@ function extractAddressContext(text, matchIndex) {
   // Reject generic noise
   const noiseWords = /^(?:the|a|an|and|or|for|to|in|on|at|is|it|our|your|home|menu|contact|address|location|directions|map|visit|find)\s*$/i;
   if (noiseWords.test(cleaned)) return null;
+  if (!isNameShapedLabel(cleaned)) return null;
 
-  // Take up to ~60 chars, trim to word boundary
-  let label = cleaned.slice(-60).trim();
-  if (cleaned.length > 60) {
-    const spaceIdx = label.indexOf(' ');
-    if (spaceIdx > 0) label = label.slice(spaceIdx + 1);
-  }
+  return cleaned;
+}
 
-  return label || null;
+// A personal honorific directly before a capitalized sequence ("Dr. ", "Ms ").
+// Kept to personal forms of address: rank and office words (General, President,
+// Justice) are too often ordinary capitalized words in page text.
+const PRECEDING_HONORIFIC_RE = /\b(?:Mr|Mrs|Ms|Mx|Miss|Dr|Prof|Professor|Sir|Dame|Rev)\.?\s+$/;
+
+/**
+ * Decide whether a capitalized word sequence is a person name.
+ * Requires a known first name AND either a known surname as the last word or a
+ * personal honorific directly before the sequence: a known first name alone
+ * also matches ordinary words ("Mac Os", "Su Mo Tu").
+ * @param {string} name - Candidate sequence, already trimmed of title words
+ * @param {boolean} hasHonorific - Whether a personal honorific precedes it
+ * @returns {boolean}
+ */
+function isPersonCandidate(name, hasHonorific) {
+  const words = name.split(/\s+/);
+  if (words.length < 2) return false;
+  if (NER_FALSE_POSITIVES.has(name.toLowerCase())) return false;
+  if (!isKnownFirstName(words[0])) return false;
+  if (!isLikelyPersonName(name).likely) return false;
+  return hasHonorific || isKnownSurname(words[words.length - 1]);
 }
 
 /**
  * Extract person names from text using lightweight NER.
- * Scans for capitalized word sequences (2-3 words) where the first word
- * matches a known first name from the name database.
+ * Scans for capitalized word sequences (2-3 words). Each sequence is tried as
+ * matched, then with trailing job-title words removed ("Maria Garcia Principal"),
+ * then without its last word ("Maria Garcia Acme"). When none passes, scanning
+ * resumes after the sequence's first word, so a name preceded by another
+ * capitalized word ("Speaker Maria Garcia") is still found.
  * Confidence is set just above the minimum threshold (0.71).
  * @param {string} text - Text content to scan
  * @param {string} url - Source URL for context
@@ -235,23 +283,25 @@ function extractPersonNames(text, url) {
   PERSON_NAME_RE.lastIndex = 0;
   let match;
   while ((match = PERSON_NAME_RE.exec(text)) !== null) {
-    const name = match[0].trim();
+    const matched = match[0].trim();
+    const words = matched.split(/\s+/);
+    const before = text.slice(Math.max(0, match.index - 12), match.index);
+    const hasHonorific = PRECEDING_HONORIFIC_RE.test(before);
 
-    // Deduplicate
+    const candidates = [matched, trimTrailingTitleWords(matched)];
+    if (words.length >= 3) candidates.push(words.slice(0, -1).join(' '));
+
+    const name = candidates.find(c => isPersonCandidate(c, hasHonorific));
+    if (!name) {
+      // Retry from the second word of this sequence
+      PERSON_NAME_RE.lastIndex = match.index + words[0].length;
+      continue;
+    }
+    // Rescan whatever was dropped from the end of the sequence
+    PERSON_NAME_RE.lastIndex = match.index + name.length;
+
     const nameKey = name.toLowerCase();
     if (seen.has(nameKey)) continue;
-
-    // Filter common false positives
-    if (NER_FALSE_POSITIVES.has(nameKey)) continue;
-
-    // First word must be a known first name
-    const firstWord = name.split(/\s+/)[0];
-    if (!isKnownFirstName(firstWord)) continue;
-
-    // Double-check with isLikelyPersonName for extra validation
-    const check = isLikelyPersonName(name);
-    if (!check.likely) continue;
-
     seen.add(nameKey);
     entities.push({
       name,
@@ -347,7 +397,7 @@ export function extractRegexEntities(text, url) {
     if (label) attrs.label = label;
 
     entities.push({
-      name: label ? `${label}, ${normalized}` : normalized,
+      name: normalized,
       entityType: 'place',
       confidence: 0.75,
       extractor: 'regex',

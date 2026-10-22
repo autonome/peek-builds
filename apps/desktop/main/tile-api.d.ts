@@ -475,6 +475,70 @@ interface TileFilesystem {
   write(path: string, content: string): Promise<{ success: boolean; error?: string }>;
 }
 
+// ─── Secrets ─────────────────────────────────────────────────────────
+
+type TileSecretResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * The feature's own secrets (an API token, a password), encrypted at rest
+ * by the platform. Requires the `secrets` capability. Names are 1–128 of
+ * letters, digits, `.`, `_`, `:` and `-`; values are strings up to 16 KB.
+ * Every write and read is refused when the platform cannot protect them.
+ */
+interface TileSecrets {
+  /** Whether secrets can be protected on this machine right now. */
+  available(): Promise<TileSecretResult<boolean>>;
+  /** The value, or `null` when nothing is stored under `name`. */
+  get(name: string): Promise<TileSecretResult<string | null>>;
+  set(name: string, value: string): Promise<TileSecretResult<true>>;
+  /** `true` when something was removed. */
+  delete(name: string): Promise<TileSecretResult<boolean>>;
+  /** Stored names, without values. */
+  list(): Promise<TileSecretResult<string[]>>;
+}
+
+// ─── Page automation ─────────────────────────────────────────────────
+
+type TileAutomationResult =
+  | {
+    ok: true; url: string; title: string; value?: unknown; pdf?: Uint8Array;
+    download?: { name: string; mimeType: string; url: string; size: number; bytes: Uint8Array };
+  }
+  | { ok: false; error: string; url?: string };
+
+/**
+ * Drive a page window the tile opened with `window.open`. Requires the
+ * `automation` capability; every operation except `url` also requires the
+ * page's current origin to be in `automation.origins`, and `navigate`
+ * requires the destination's origin to be. Timeouts default to 10 s and
+ * are capped at 120 s.
+ */
+interface TileAutomation {
+  /** Current URL and title, allowed on any origin (to notice a login redirect). */
+  url(windowId: number): Promise<TileAutomationResult>;
+  /** Load `url`; resolves when the load finishes. */
+  navigate(windowId: number, url: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Resolve once `selector` matches an element in the page. */
+  waitFor(windowId: number, selector: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Run `script` in the page; its (structured-clonable) result is `value`. */
+  eval(windowId: number, script: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Click the first element matching `selector`, as a user gesture. */
+  click(windowId: number, selector: string, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /** Print the page to PDF (Electron `printToPDF` options); bytes in `pdf`. */
+  printToPDF(windowId: number, options?: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+  /**
+   * Turn download capture on or off for the window. Requires
+   * `automation.downloads: true`; not origin-gated. While on, downloads the
+   * window starts are not saved to the Downloads folder.
+   */
+  captureDownloads(windowId: number, enabled: boolean): Promise<TileAutomationResult>;
+  /**
+   * The next completed download from the window (queued or awaited), as
+   * bytes in `download`. Downloads over 100 MB are refused.
+   */
+  nextDownload(windowId: number, opts?: { timeoutMs?: number }): Promise<TileAutomationResult>;
+}
+
 // ─── Dialogs ─────────────────────────────────────────────────────────
 
 interface TileDialogs {
@@ -497,8 +561,16 @@ interface TileNetwork {
   /**
    * Domain-gated HTTP fetch.
    * Requires `network.domains` allowlist to include the request domain.
+   * The body comes back as text in `body`, or, with
+   * `responseType: 'bytes'`, untouched in `bytes`.
    */
-  fetch(url: string, options?: Record<string, unknown>): Promise<{ data?: unknown; error?: string }>;
+  fetch(
+    url: string,
+    options?: { method?: string; headers?: Record<string, string>; body?: string; responseType?: 'text' | 'bytes' },
+  ): Promise<
+    | { status: number; statusText: string; headers: Record<string, string>; body?: string; bytes?: Uint8Array; error?: undefined }
+    | { error: string }
+  >;
 }
 
 // ─── Features ────────────────────────────────────────────────────────
@@ -531,6 +603,16 @@ interface TileFeatures {
   previewCapabilities(featureId: string, manifestCapabilities: unknown): Promise<{ granted?: unknown; denied?: string[]; error?: string }>;
   /** Install a feature from atproto. Requires `features.install` + atproto source. */
   install(atUri: string, userApproved: boolean): Promise<{ success?: boolean; featureId?: string; error?: string }>;
+  /** Preview what registering a feature folder in place would grant. Requires `features.install` + local source. */
+  installLocalPreview(directoryPath: string): Promise<{
+    manifest?: { id: string; name: string; version?: string; description?: string };
+    granted?: unknown;
+    denied?: string[];
+    alreadyInstalled?: string;
+    error?: string;
+  }>;
+  /** Register a feature folder in place and load it. Requires `features.install` + local source, and `userApproved: true`. */
+  installLocal(directoryPath: string, userApproved: boolean): Promise<{ success?: boolean; entry?: unknown; error?: string }>;
   /** Resolve publisher handle/DID. Requires `features.install` + atproto source. */
   resolvePublisher(query: string): Promise<{ did?: string; handle?: string; error?: string }>;
   /** Check all features for updates. Requires `features.update`. */
@@ -849,6 +931,8 @@ interface TileAPI {
   filesystem: TileFilesystem;
   dialogs: TileDialogs;
   network: TileNetwork;
+  automation: TileAutomation;
+  secrets: TileSecrets;
   features: TileFeatures;
   oauth: TileOAuth;
   sync: TileSync;

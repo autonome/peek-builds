@@ -653,49 +653,59 @@ describe('downloadCloseTarget', () => {
     // download. A BrowserWindow-first cascade therefore closed the window the
     // user was reading. Hybrid must win, and painted means KEEP IT OPEN.
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: true }),
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: true, browserWindowShowsPage: false }),
       'none',
     );
   });
 
   it('hybrid + painted, no BrowserWindow → none (the Fastmail attachment case)', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: false }),
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: false, browserWindowShowsPage: false }),
       'none',
     );
   });
 
   it('hybrid + never painted → hybrid-host (a fresh popup minted just for the download)', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: false }),
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: false, browserWindowShowsPage: false }),
       'hybrid-host',
     );
   });
 
   it('hybrid + never painted still beats a truthy BrowserWindow signal', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: true }),
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: true, browserWindowShowsPage: false }),
       'hybrid-host',
     );
   });
 
   it('not hybrid + a real BrowserWindow → browser-window (top-level window opened for the download)', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: true }),
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: true, browserWindowShowsPage: false }),
       'browser-window',
+    );
+  });
+
+  it('not hybrid + a BrowserWindow showing its own page → none (a tile saving a file it built)', () => {
+    // A tile window (peek://<feature>/…) clicking <a download href="blob:…">
+    // is the download source but is a page the user is using, not a window
+    // opened for the download.
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: true, browserWindowShowsPage: true }),
+      'none',
     );
   });
 
   it('not hybrid, nothing owns the WC → none', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: false }),
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: false, browserWindowShowsPage: false }),
       'none',
     );
   });
 
   it('hybridPainted is ignored when the WC is not hybrid content', () => {
     assert.strictEqual(
-      downloadCloseTarget({ isHybridContent: false, hybridPainted: true, hasBrowserWindow: true }),
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: true, hasBrowserWindow: true, browserWindowShowsPage: false }),
       'browser-window',
     );
   });

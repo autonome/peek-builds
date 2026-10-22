@@ -117,6 +117,7 @@ import {
   kernelSetDesktopMembership,
   kernelShowRequested,
   kernelOverlayTransitionObserved,
+  kernelPressedInNonActivatingWindow,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
@@ -2284,6 +2285,12 @@ export function wireHybridContentEvents(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   contentWC.on('input-event', (_event: unknown, input: any) => {
     const t = input && input.type;
+    if (t === 'mouseDown') {
+      // Any press tells the window machine; a peek that never activates the
+      // app asks for the activation, so the trackpad pinch can reach it.
+      const pressedId = getWindowIdFor(hostWindowId);
+      if (pressedId) kernelPressedInNonActivatingWindow(pressedId);
+    }
     if (t === 'mouseDown' && input.button === 'left') {
       // A left press is unambiguously the START of a gesture, so nothing we
       // believe is live can still be live — end it here rather than trusting a

@@ -66,6 +66,46 @@ const ORG_SUFFIX_ANYWHERE = /\b(Inc|LLC|Ltd|Corp|Corporation|Foundation|Associat
 // --- Honorifics/titles that indicate persons ---
 const HONORIFIC_PATTERN = /^(Mr|Mrs|Ms|Miss|Dr|Prof|Professor|Sir|Dame|Lady|Lord|Rev|Reverend|Fr|Father|Sr|Sister|Sgt|Sargent|Lt|Cpt|Capt|Captain|Maj|Major|Col|Colonel|Gen|General|Adm|Admiral|Sen|Senator|Rep|Representative|Gov|Governor|Pres|President|Hon|Judge|Justice)\b\.?\s/i;
 
+// --- Job-title words: never part of a name, often glued after one in page text ---
+// ("Maria Garcia Principal", "Maria Garcia Senior Engineer"). Words that also work
+// as honorifics (Professor, President, General, ...) are handled by HONORIFIC_PATTERN
+// when they lead a name, so only the trailing use is listed here.
+const TITLE_WORDS = new Set([
+  'principal', 'engineer', 'director', 'manager', 'senior', 'junior', 'staff', 'lead',
+  'chief', 'head', 'founder', 'cofounder', 'editor', 'author', 'designer', 'developer',
+  'partner', 'associate', 'analyst', 'consultant', 'officer', 'intern', 'writer',
+  'producer', 'reporter', 'correspondent', 'contributor', 'architect', 'scientist',
+  'researcher', 'specialist', 'coordinator', 'administrator', 'assistant', 'executive',
+  'vp', 'ceo', 'cto', 'cfo', 'coo',
+]);
+
+// --- Other words that never belong to a person name ---
+// Weekday abbreviations (calendar headers like "Su Mo Tu We Th Fr Sa") and capitalized
+// UI/product words ("Mac Os", "Mac Pro"). "Su", "Sun" and "Best" are left out because
+// the name database lists them as real first names or surnames.
+const NON_NAME_WORDS = new Set([
+  'mo', 'tu', 'we', 'th', 'fr', 'sa',
+  'mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'sat',
+  'os', 'app', 'apps', 'pro', 'mini', 'plus', 'home', 'menu', 'search', 'login',
+  'news', 'blog', 'about', 'contact', 'help', 'more', 'free', 'new', 'top', 'all',
+  'store', 'support', 'team',
+]);
+
+/**
+ * Drop job-title words from the end of a capitalized name sequence.
+ * "Maria Garcia Senior Engineer" → "Maria Garcia". Never trims below one word.
+ * @param {string} name
+ * @returns {string}
+ */
+export function trimTrailingTitleWords(name) {
+  if (!name || typeof name !== 'string') return name;
+  const words = name.trim().split(/\s+/);
+  while (words.length > 1 && TITLE_WORDS.has(words[words.length - 1].toLowerCase())) {
+    words.pop();
+  }
+  return words.join(' ');
+}
+
 // --- CamelCase detection (internal caps in a single word) ---
 // Matches: IndieWeb, YouTube, GitHub, WordPress, TikTok, LinkedIn
 // Does NOT match: John, JOHN, john
@@ -186,6 +226,11 @@ export function isLikelyPersonName(name) {
       // Honorific alone is a strong signal
       return { likely: true, confidence: 0.75, reason: 'has honorific prefix' };
     }
+  }
+
+  // Any calendar, UI or job-title word rules the sequence out
+  if (words.some(w => NON_NAME_WORDS.has(w.toLowerCase()) || TITLE_WORDS.has(w.toLowerCase()))) {
+    return { likely: false, confidence: 0.1, reason: 'contains a word that is never part of a name' };
   }
 
   // Single word — check if it is a known first name (e.g., "Madonna", "Jesus")
@@ -316,6 +361,17 @@ export function validateEntityType(name, claimedType) {
 export function isKnownFirstName(word) {
   if (!_firstNames || !word) return false;
   return _firstNames.has(word.toLowerCase());
+}
+
+/**
+ * Check if a word is a known surname in the database.
+ * Returns false if the database hasn't been loaded yet.
+ * @param {string} word - Single word to check (case-insensitive)
+ * @returns {boolean}
+ */
+export function isKnownSurname(word) {
+  if (!_surnames || !word) return false;
+  return _surnames.has(word.toLowerCase());
 }
 
 /**

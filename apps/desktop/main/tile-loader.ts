@@ -23,6 +23,7 @@ import {
 } from './tile-manifest.js';
 import { type AnnotatedTile, loadTile, ensureTileIpcHandlers, type TileCompatConfig } from './tile-compat.js';
 import { unsatisfiedRequiredProtocols } from './tile-protocols.js';
+import { evaluateFeatureApproval } from './feature-approval.js';
 import * as manifestCache from './manifest-cache.js';
 import { DEBUG } from './config.js';
 
@@ -166,13 +167,15 @@ function loadTileFromEntry(
   manifest: TileManifest,
   config: TileLoaderConfig
 ): FeatureLoadResult {
-  // Skip features that haven't been user-approved (non-builtin)
-  if (!entry.userApproved && entry.source.type !== 'builtin') {
+  // Skip features that haven't been user-approved (non-builtin), and local
+  // features whose manifest now asks for more than was approved
+  const approval = evaluateFeatureApproval(entry, manifest);
+  if (!approval.allow) {
     return {
       id: entry.id,
       loaded: false,
       skipped: true,
-      error: 'Feature not yet approved by user',
+      error: approval.error,
     };
   }
 

@@ -77,6 +77,73 @@ export interface FeatureRegistryListener {
   onDisableChange?: (id: string, disabled: boolean) => void;
 }
 
+// ─── Legacy shared-registry migration ───────────────────────────────
+
+/** The profile whose registry is seeded from the old shared file. */
+export const LEGACY_REGISTRY_PROFILE = 'default';
+
+/**
+ * The registry used to live once in the top-level app data directory,
+ * shared by every profile. Seed the production profile's own registry
+ * from that file the first time it starts without one, so its installs
+ * survive the move. Other profiles start empty.
+ *
+ * Only non-builtin entries are carried over (builtins are re-registered
+ * by syncBuiltinFeatures). An entry installed under the legacy
+ * `<legacyDir>/features/` is copied into `<profileDir>/features/` and
+ * repointed. The legacy file and directory are never modified.
+ *
+ * Returns the number of entries seeded; 0 when nothing was migrated.
+ */
+export function migrateLegacyRegistry(opts: {
+  profile: string;
+  legacyDir: string;
+  profileDir: string;
+}): number {
+  const { profile, legacyDir, profileDir } = opts;
+  if (profile !== LEGACY_REGISTRY_PROFILE) return 0;
+  if (path.resolve(legacyDir) === path.resolve(profileDir)) return 0;
+
+  const profileRegistryPath = path.join(profileDir, 'registry.json');
+  const legacyRegistryPath = path.join(legacyDir, 'registry.json');
+  if (fs.existsSync(profileRegistryPath) || !fs.existsSync(legacyRegistryPath)) return 0;
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(legacyRegistryPath, 'utf-8')) as RegistryData;
+    if (raw.version !== 1 || typeof raw.features !== 'object' || raw.features === null) return 0;
+
+    const legacyFeaturesDir = path.join(legacyDir, 'features');
+    const profileFeaturesDir = path.join(profileDir, 'features');
+    const seeded: Record<string, FeatureRegistryEntry> = {};
+
+    for (const [id, entry] of Object.entries(raw.features)) {
+      if (entry.source?.type === 'builtin') continue;
+      const copy: FeatureRegistryEntry = { ...entry };
+      const rel = path.relative(legacyFeaturesDir, entry.path);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        const dest = path.join(profileFeaturesDir, rel);
+        if (fs.existsSync(entry.path)) {
+          fs.cpSync(entry.path, dest, { recursive: true });
+        }
+        copy.path = dest;
+      }
+      seeded[id] = copy;
+    }
+
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(
+      profileRegistryPath,
+      JSON.stringify({ version: 1, features: seeded }, null, 2),
+      'utf-8',
+    );
+    return Object.keys(seeded).length;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[feature-registry] Legacy registry migration failed:', message);
+    return 0;
+  }
+}
+
 // ─── Registry Class ─────────────────────────────────────────────────
 
 /**

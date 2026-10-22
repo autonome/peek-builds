@@ -51,6 +51,7 @@ import { DEBUG, getTilePreloadPath, isHeadless } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getTilePath } from './protocol.js';
 import * as tileLifecycle from './tile-lifecycle.js';
+import { isBuiltinFeature, checkLaunchApproval } from './feature-trust.js';
 
 // Config hooks for values sourced from electron-heavy modules
 // (session-partition, windows) that we can't safely import at top
@@ -648,11 +649,19 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     throw new Error(`[tile-launcher] Tile entry not found: ${entryId || '(first)'} in ${manifest.id}`);
   }
 
-  // Resolve capabilities
+  // A registered non-builtin feature launches only while approved (and, for
+  // a local folder, while its manifest hasn't expanded the approved grant).
+  const approval = checkLaunchApproval(manifest);
+  if (!approval.allow) {
+    throw new Error(`[tile-launcher] ${approval.error}`);
+  }
+
+  // Resolve capabilities. Builtin comes from the registry, never from the
+  // manifest's own `builtin` field.
   const grant = resolveCapabilities(
     manifest.id,
     manifest.capabilities,
-    manifest.builtin === true
+    isBuiltinFeature(manifest.id)
   );
 
   if (grant.denied.length > 0) {
@@ -891,11 +900,12 @@ export function getTileWebPreferencesForUrl(
   // Find the entry whose url matches the path.
   const entry = manifest.tiles.find(t => t.url === pathPart);
   if (!entry) return null;
+  if (!checkLaunchApproval(manifest).allow) return null;
 
   const grant = resolveCapabilities(
     manifest.id,
     manifest.capabilities,
-    manifest.builtin === true,
+    isBuiltinFeature(manifest.id),
   );
   const token = generateToken(manifest.id, entry.id, grant);
 
@@ -966,11 +976,12 @@ export function getTileWebPreferencesForWebviewUrl(
   // Prefer an exact entry match, fall back to the first entry for
   // webview children that aren't declared as standalone tile entries.
   const entry = manifest.tiles.find(t => t.url === pathPart) || manifest.tiles[0];
+  if (!checkLaunchApproval(manifest).allow) return null;
 
   const grant = resolveCapabilities(
     manifest.id,
     manifest.capabilities,
-    manifest.builtin === true,
+    isBuiltinFeature(manifest.id),
   );
   const token = generateToken(manifest.id, entry.id, grant);
 

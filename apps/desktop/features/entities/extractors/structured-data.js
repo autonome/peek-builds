@@ -486,6 +486,11 @@ function extractOpenGraph(doc, url) {
   const ogImage = getMetaContent(doc, 'og:image');
   const ogSiteName = getMetaContent(doc, 'og:site_name');
 
+  // The site's own name. Most pages carry no other structured entity, so without this
+  // a page that declares its brand still yields nothing.
+  const siteEntity = siteNameEntity(ogSiteName, url);
+  if (siteEntity) entities.push(siteEntity);
+
   // Extract profile info (og:type = profile)
   // Only create person entity if we have real name parts OR the title contains a space
   // (single-word titles like "IndieWeb" are site names, not person names)
@@ -586,6 +591,28 @@ function extractOpenGraph(doc, url) {
   }
 
   return entities;
+}
+
+// A site name longer than this reads as a tagline or a page title, not a name.
+const SITE_NAME_MAX_WORDS = 5;
+
+/**
+ * An organization for the site a page belongs to, from its og:site_name, or null when
+ * the value is missing, a URL, or too long to be a name.
+ */
+function siteNameEntity(siteName, url) {
+  const name = (siteName || '').trim();
+  if (!name) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(name) || /^www\./i.test(name)) return null;
+  if (name.split(/\s+/).length > SITE_NAME_MAX_WORDS) return null;
+  return {
+    name,
+    entityType: 'organization',
+    confidence: 0.75,
+    extractor: 'opengraph',
+    attributes: { role: 'site', url },
+    sourceUrl: url,
+  };
 }
 
 /**

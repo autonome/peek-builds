@@ -21,6 +21,7 @@ import { getAllLiveWindows, windowFromWebContents } from './window-registry.js';
 import { getHybridWindowByContentWC, hasHybridPainted } from './hybrid-page-host-registry.js';
 import { downloadCloseTarget } from './izui-roles.js';
 import { resolveUniqueDownloadPath, sanitizeDownloadFilename } from './download-filename.js';
+import { downloadCapture } from './download-capture.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -313,6 +314,13 @@ function closeWindowViaMachine(win: { id: number }): void {
 
 function _registerDownloadHandlerImpl(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
+    // A feature driving this page asked for its downloads as bytes
+    // (download-capture.ts). The window stays open and nothing reaches the
+    // Downloads folder.
+    if (downloadCapture.claim(webContents.id, item)) {
+      console.log('[download] Captured for a feature:', sanitizeDownloadFilename(item.getFilename()));
+      return;
+    }
     const rawFilename = item.getFilename();
     const filename = sanitizeDownloadFilename(rawFilename);
     const desiredPath = path.join(getDownloadsDir(), filename);
@@ -336,10 +344,12 @@ function _registerDownloadHandlerImpl(ses: Session): void {
       // unit-tested truth table; this call site only gathers the signals and acts.
       const hybrid = getHybridWindowByContentWC(webContents);
       const win = windowFromWebContents(webContents);
+      const pageUrl = webContents.getURL();
       const target = downloadCloseTarget({
         isHybridContent: hybrid !== null,
         hybridPainted: hybrid !== null && hasHybridPainted(hybrid.windowId),
         hasBrowserWindow: win !== null,
+        browserWindowShowsPage: !!pageUrl && pageUrl !== 'about:blank' && pageUrl !== item.getURL(),
       });
       if (target === 'hybrid-host' && hybrid) {
         DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);

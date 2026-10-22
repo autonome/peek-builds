@@ -267,12 +267,16 @@ export function downloadCloseTarget(o: {
   isHybridContent: boolean;
   hybridPainted: boolean;
   hasBrowserWindow: boolean;
+  /** The BrowserWindow has a page of its own: a URL other than blank or the download's. */
+  browserWindowShowsPage: boolean;
 }): DownloadCloseTarget {
   if (o.isHybridContent) {
     // Painted → a real page the user is browsing. Never close it.
     return o.hybridPainted ? 'none' : 'hybrid-host';
   }
-  return o.hasBrowserWindow ? 'browser-window' : 'none';
+  // Only a window opened for the download closes; one showing its own page
+  // (a tile saving a file it built) stays.
+  return o.hasBrowserWindow && !o.browserWindowShowsPage ? 'browser-window' : 'none';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

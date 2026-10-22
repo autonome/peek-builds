@@ -72,6 +72,7 @@ const PRESENCE_CAPS: Array<keyof TileCapabilities> = [
   'oauth',
   'session',
   'rules',
+  'secrets',
 ];
 
 /**
@@ -102,6 +103,13 @@ export function compareCapabilities(
 
   // ── Network domains ──
   diffSet(cur.network?.domains, nxt.network?.domains, 'network', result);
+
+  // ── Page-automation origins ──
+  diffSet(cur.automation?.origins, nxt.automation?.origins, 'automation', result);
+  const hadDownloads = cur.automation?.downloads === true;
+  const hasDownloads = nxt.automation?.downloads === true;
+  if (!hadDownloads && hasDownloads) { result.changed = true; result.expanded = true; result.added.push('automation.downloads'); }
+  else if (hadDownloads && !hasDownloads) { result.changed = true; result.removed.push('automation.downloads'); }
 
   // ── Datastore tables ──
   diffSet(cur.datastore?.tables, nxt.datastore?.tables, 'datastore', result);

@@ -283,6 +283,130 @@ export function installFromLocalDirectory(
   return { success: true, entry, pendingApproval };
 }
 
+// ─── Local Directory, In Place ──────────────────────────────────────
+
+type LocalManifestRead =
+  | { ok: true; manifest: TileManifest; manifestJson: string }
+  | { ok: false; error: string };
+
+/**
+ * Read and validate the v3 tile manifest of a feature folder without
+ * touching the folder.
+ */
+function readLocalManifest(dir: string): LocalManifestRead {
+  const manifestPath = path.join(dir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    return { ok: false, error: 'No manifest.json found in source directory' };
+  }
+  let manifestJson: string;
+  let raw: Record<string, unknown>;
+  try {
+    manifestJson = fs.readFileSync(manifestPath, 'utf-8');
+    raw = JSON.parse(manifestJson) as Record<string, unknown>;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `Failed to read manifest: ${message}` };
+  }
+  if (detectManifestVersion(raw) !== 'tile') {
+    return { ok: false, error: 'Only tile manifests (manifestVersion: 3) are supported for local installation' };
+  }
+  const errors = validateTileManifest(raw);
+  if (errors.length > 0) {
+    const msgs = errors.map(e => `${e.path}: ${e.message}`).join('; ');
+    return { ok: false, error: `Invalid manifest: ${msgs}` };
+  }
+  // The manifest's own `builtin` field is ignored: callers resolve
+  // capabilities as non-builtin, and loading derives builtin from the registry.
+  return { ok: true, manifest: raw as unknown as TileManifest, manifestJson };
+}
+
+export interface LocalDirectoryPreview {
+  success: boolean;
+  error?: string;
+  manifest?: { id: string; name: string; version?: string; description?: string };
+  /** Capabilities a non-builtin install would be granted */
+  granted?: TileCapabilities;
+  /** Requested capabilities a non-builtin install would be denied */
+  denied?: string[];
+  /** Source type of the entry already registered under this id, if any */
+  alreadyInstalled?: string;
+}
+
+/**
+ * Describe what registering a feature folder would grant, for the approval
+ * dialog. Reads only; the registry and the folder are untouched.
+ */
+export function previewLocalDirectory(dir: string, registry: FeatureRegistry): LocalDirectoryPreview {
+  const read = readLocalManifest(dir);
+  if (!read.ok) return { success: false, error: read.error };
+  const { manifest } = read;
+  const grant = resolveCapabilities(manifest.id, manifest.capabilities, false);
+  return {
+    success: true,
+    manifest: {
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      description: (manifest as { description?: string }).description,
+    },
+    granted: grant.capabilities,
+    denied: grant.denied,
+    alreadyInstalled: registry.getFeature(manifest.id)?.source.type,
+  };
+}
+
+/**
+ * Register a feature folder where it is: no copy, and the folder (including
+ * manifest.json) is never written. The entry points at the folder, so later
+ * edits are seen at the next load; the loader re-checks the manifest's
+ * capabilities against the grant stored here (feature-approval.ts).
+ *
+ * Refuses without `userApproved`, and refuses an id held by any source other
+ * than 'local' (a local folder must not displace a builtin or an installed
+ * release). Re-registering an existing local entry refreshes its stored
+ * grant. Does not save the registry.
+ */
+export function registerLocalDirectory(
+  dir: string,
+  registry: FeatureRegistry,
+  options: { userApproved: boolean }
+): InstallResult {
+  if (options.userApproved !== true) {
+    return { success: false, error: 'User approval required before installation' };
+  }
+
+  const read = readLocalManifest(dir);
+  if (!read.ok) return { success: false, error: read.error };
+  const { manifest, manifestJson } = read;
+
+  const existing = registry.getFeature(manifest.id);
+  if (existing && existing.source.type !== 'local') {
+    return {
+      success: false,
+      error: `Feature "${manifest.id}" is already registered (source: ${existing.source.type})`,
+    };
+  }
+
+  const grant = resolveCapabilities(manifest.id, manifest.capabilities, false);
+  const entry: FeatureRegistryEntry = {
+    id: manifest.id,
+    name: manifest.name,
+    manifestCid: computeManifestHash(manifestJson),
+    path: dir,
+    source: { type: 'local', version: manifest.version },
+    grantedCapabilities: grant.capabilities,
+    userApproved: true,
+    installedAt: new Date().toISOString(),
+  };
+  registry.registerFeature(entry);
+
+  return {
+    success: true,
+    entry,
+    pendingApproval: grant.denied.length > 0 ? grant.denied : undefined,
+  };
+}
+
 // ─── Bundle Installation ────────────────────────────────────────────
 
 /**

@@ -1322,6 +1322,56 @@ function buildAPI(): Record<string, unknown> {
     });
   };
 
+  // ── Secrets (if `secrets` granted) ──
+  //
+  // The feature's own secrets, encrypted at rest. Every method resolves to
+  // `{ ok: true, value }` or `{ ok: false, error }`.
+
+  const runSecrets = async (op: Record<string, unknown>) => {
+    const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+    return ipcRenderer.invoke('tile:secrets:run', { token: tileToken, ...op });
+  };
+
+  api.secrets = {
+    available: () => runSecrets({ op: 'available' }),
+    get: (name: string) => runSecrets({ op: 'get', name }),
+    set: (name: string, value: string) => runSecrets({ op: 'set', name, value }),
+    delete: (name: string) => runSecrets({ op: 'delete', name }),
+    list: () => runSecrets({ op: 'list' }),
+  };
+
+  // ── Page automation (if `automation` granted) ──
+  //
+  // Drives a page window this tile opened with `api.window.open`, on the
+  // origins listed in the manifest's `capabilities.automation.origins`.
+  // Every method resolves to `{ ok: true, url, title, ... }` or
+  // `{ ok: false, error }`; none throws on a refused or failed operation.
+
+  const runAutomation = async (windowId: number, op: Record<string, unknown>) => {
+    const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+    return ipcRenderer.invoke('tile:automation:run', { token: tileToken, windowId, op });
+  };
+
+  api.automation = {
+    url: (windowId: number) => runAutomation(windowId, { op: 'url' }),
+    navigate: (windowId: number, url: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'navigate', url, ...opts }),
+    waitFor: (windowId: number, selector: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'waitFor', selector, ...opts }),
+    eval: (windowId: number, script: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'eval', script, ...opts }),
+    click: (windowId: number, selector: string, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'click', selector, ...opts }),
+    printToPDF: (windowId: number, options?: Record<string, unknown>, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'printToPDF', options, ...opts }),
+    // Needs `automation.downloads: true`. While on, downloads the window
+    // starts are not saved to disk; each completes into `nextDownload`.
+    captureDownloads: (windowId: number, enabled: boolean) =>
+      runAutomation(windowId, { op: 'captureDownloads', enabled }),
+    nextDownload: (windowId: number, opts: { timeoutMs?: number } = {}) =>
+      runAutomation(windowId, { op: 'nextDownload', ...opts }),
+  };
+
   // ── AT Protocol DPoP proxy (if `network` granted) ──
   //
   // Also reachable as the `atproto` protocol module; this `window.app` copy
@@ -1937,6 +1987,10 @@ function buildAPI(): Record<string, unknown> {
       }),
     install: (atUri: string, userApproved: boolean) =>
       ipcRenderer.invoke('tile:features:install', { token: tileToken, atUri, userApproved }),
+    installLocalPreview: (directoryPath: string) =>
+      ipcRenderer.invoke('tile:features:install-local-preview', { token: tileToken, directoryPath }),
+    installLocal: (directoryPath: string, userApproved: boolean) =>
+      ipcRenderer.invoke('tile:features:install-local', { token: tileToken, directoryPath, userApproved }),
     resolvePublisher: (query: string) =>
       ipcRenderer.invoke('tile:features:browse-resolve-publisher', { token: tileToken, query }),
     settingsSchema: (id: string) =>
@@ -1962,6 +2016,10 @@ function buildAPI(): Record<string, unknown> {
       featuresStrict.previewCapabilities(mc, id as string),
     install: (atUri: unknown, userApproved: unknown) =>
       featuresStrict.install(atUri as string, userApproved as boolean),
+    installLocalPreview: (directoryPath: unknown) =>
+      featuresStrict.installLocalPreview(directoryPath as string),
+    installLocal: (directoryPath: unknown, userApproved: unknown) =>
+      featuresStrict.installLocal(directoryPath as string, userApproved as boolean),
     resolvePublisher: (query: unknown) =>
       featuresStrict.resolvePublisher(query as string),
     settingsSchema: (id: unknown) =>
