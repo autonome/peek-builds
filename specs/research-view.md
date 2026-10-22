@@ -1,11 +1,8 @@
 ---
-enabled: false
+enabled: true
 touches: [apps/desktop/features/research/, apps/desktop/tests/desktop/research-view.spec.ts, apps/desktop/tests/unit/research-view-rank.test.js]
 depends-on: [card-view-see-through]
 ---
-
-Started by hand on top of the built `track/spec-card-view-see-through` branch, before that branch
-lands, so `enabled: false` keeps the scheduler from starting it from `main`.
 
 # The research view, first slice: the space's pages, ranked, view only
 
