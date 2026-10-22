@@ -123,6 +123,24 @@ import {
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
 import { revealDelayMs } from './overlay-frame.js';
+
+/**
+ * The hover-reveal dwell for a host at `b` (see `overlay-frame.ts revealDelayMs`),
+ * read against the work area of the display it sits on. Guarded: it runs inside
+ * the raw input stream and bounds events, and `screen` is missing in some test
+ * envs, where the reveal stays immediate.
+ */
+function revealDelayForHostBounds(b: { x: number; y: number; width: number; height: number }): number {
+  try {
+    const workArea = screen.getDisplayNearestPoint({
+      x: b.x + Math.floor(b.width / 2),
+      y: b.y + Math.floor(b.height / 2),
+    }).workArea;
+    return revealDelayMs(b, workArea);
+  } catch {
+    return 0;
+  }
+}
 import { wmLog } from './window-diag.js';
 import {
   inferIzuiRole,
@@ -1140,7 +1158,9 @@ function assembleHybridPageHost(
   // border resizes included — they reach no other publisher.
   publishHostBoundsOnChange(baseWin, (bounds) => {
     try {
-      publish(getSystemAddress(), 'page-overlay:bounds', { windowId: baseWin.id, bounds });
+      publish(getSystemAddress(), 'page-overlay:bounds', {
+        windowId: baseWin.id, bounds, revealDelayMs: revealDelayForHostBounds(bounds),
+      });
     } catch { /* gone */ }
   });
 
@@ -2201,16 +2221,6 @@ export function wireHybridContentEvents(
   // unavailable (some test envs). Read by the reveal band to decide how much room
   // the host has above it — `overlay-frame.ts revealDelayMs` owns that rule, and
   // the lookup is guarded because it runs inside the raw input stream.
-  const hostWorkArea = (
-    b: { x: number; y: number; width: number; height: number },
-  ): { x: number; y: number; width: number; height: number } | null => {
-    try {
-      return screen.getDisplayNearestPoint({
-        x: b.x + Math.floor(b.width / 2),
-        y: b.y + Math.floor(b.height / 2),
-      }).workArea;
-    } catch { return null; }
-  };
   const fillsWorkArea = (b: { x: number; y: number; width: number; height: number }): boolean => {
     const wa = screen.getDisplayNearestPoint({
       x: b.x + Math.floor(b.width / 2),
@@ -2363,10 +2373,10 @@ export function wireHybridContentEvents(
             // reveal has to be a deliberate dwell rather than a crossing. Main
             // owns the geometry, so it owns the decision; the overlay just honors
             // the delay it is handed.
-            const delayMs = revealDelayMs(bounds, hostWorkArea(bounds));
+            const delayMs = revealDelayForHostBounds(bounds);
             wmLog('overlay-reveal-band', { host: hostWindowId, phase: 'reveal', delayMs });
             publish(getSystemAddress(), 'page-overlay:content-pointer', {
-              windowId: hostWindowId, phase: 'reveal', delayMs,
+              windowId: hostWindowId, phase: 'reveal',
               screenX: input.globalX, screenY: input.globalY,
             });
           }
