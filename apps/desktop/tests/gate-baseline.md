@@ -896,3 +896,28 @@ schedule, spaces or entities code changed here:
 | `hybrid-resize-exits-maximize.spec.ts` | resizing out of maximize leaves the overlay mirror in sync, so the next toggle maximizes | maximize state mismatch |
 | `hybrid-resize-exits-maximize.spec.ts` | a native OS resize out of maximize clears the stale maximize state | maximize state mismatch |
 | `todo-commands.spec.ts` | todo with only tags, or nothing, creates no item | `Expected: true, Received: false` |
+
+### Linux gate on `7006ee17` (2026-10-22)
+
+`main` after `connectory-event-feeds`, `to-tag-lookups`, `research-keep-drop` and 22 laptop
+commits. No new deterministic failure.
+
+| runner | pass / fail / skipped |
+|---|---|
+| main-process unit | 4244 / 0 / 1 |
+| node unit | 1662 / 0 / — |
+| desktop | 602 / 6 / 26 |
+| desktop-serial | 53 / 2 / 1 |
+| components | 90 / 0 / — |
+| editor | 91 / 0 / — |
+
+Six of the eight failures are already recorded: `hybrid-escape-editable-guard`,
+`page-translate-front-window`, `windows-hidden-surface`, `desktop-serial/modal-self-close-on-blur`,
+`desktop-serial/cmd-switch-to-page` (open track `linux-focus-hidden-and-resign`) and
+`hybrid-resize-exits-maximize` "a native OS resize out of maximize clears the stale maximize
+state" (intermittent at `dcacfea8`). Two are new to this file; each passes alone:
+
+| Spec | Test | Error | Verdict |
+|---|---|---|---|
+| `peeks.spec.ts` | peek opens centered on the cursor display | `ERR_FAILED (-2) loading 'about:blank'` | same signature as the `peeks.spec.ts` failure at `b445b3af`, attributed to `specs/linux-focus-hidden-and-resign.md` (a resign dismissing the never-focused peek while it loads); a different test in the same file |
+| `page-translate-stub.spec.ts` | offers a translation, translates, then restores from the widget button and from the command | `overlay renderer never became usable` (`activeHandoffApplied` false) | intermittent; the `waitOverlayReady` Linux timeout described in `apps/desktop/CLAUDE.md` "Running the suite on Linux" |
