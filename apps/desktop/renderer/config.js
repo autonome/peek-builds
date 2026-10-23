@@ -12,6 +12,8 @@ const labels = {
     hideTitleBar: 'Hide title bars',
     restoreSession: 'Restore session on startup',
     sessionAutosaveInterval: 'Autosave interval (minutes)',
+    tileSuspensionEnabled: 'Unload idle features',
+    tileSuspensionIdleMinutes: 'Idle time before unloading (minutes)',
     dragHoldDelay: 'Window drag hold delay',
     defaultWindowWidth: 'Default window width',
     defaultWindowHeight: 'Default window height',
@@ -81,6 +83,16 @@ const prefsSchema = {
       "description": "Periodically save session state (interval in minutes, 0 = disabled)",
       "type": "integer",
       "default": 5
+    },
+    "tileSuspensionEnabled": {
+      "description": "Unload a feature that has been idle for a while and load it again the next time it is used. Features with an open window kept alive, a running task or a schedule stay loaded.",
+      "type": "boolean",
+      "default": true
+    },
+    "tileSuspensionIdleMinutes": {
+      "description": "How long a feature must be idle before it is unloaded (minutes, at least 1)",
+      "type": "integer",
+      "default": 10
     },
     "dragHoldDelay": {
       "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Takes effect on new windows.",
@@ -180,6 +192,8 @@ const defaults = {
     hideTitleBar: true,
     restoreSession: true,
     sessionAutosaveInterval: 5,
+    tileSuspensionEnabled: true,
+    tileSuspensionIdleMinutes: 10,
     dragHoldDelay: 1,
     defaultWindowWidth: 1024,
     defaultWindowHeight: 768,

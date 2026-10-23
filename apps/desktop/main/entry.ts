@@ -107,6 +107,7 @@ import {
   markRuntimeExternalQuitting,
 } from './chrome-extensions.js';
 import { refreshAutoSync, stopAutoSync } from './sync.js';
+import { applySuspensionPrefs } from './tile-suspension-wiring.js';
 import {
   initProfilesDb,
   migrateExistingProfiles,
@@ -1605,6 +1606,7 @@ const onReady = async () => {
 
     // cache all prefs
     _prefs = prefsMsg.prefs;
+    applySuspensionPrefs(prefsMsg.prefs);
 
     // Apply dock preference
     applyDockPreference();

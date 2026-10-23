@@ -397,6 +397,29 @@ const renderCoreSettings = async () => {
 
   container.appendChild(dataGroup);
 
+  // --- Group: Memory (idle feature unloading) ---
+  const memoryGroup = createSettingsGroup('Memory');
+
+  memoryGroup.appendChild(createCheckbox(getLabel('tileSuspensionEnabled'), getVal('tileSuspensionEnabled'), (newVal) => {
+    prefs.tileSuspensionEnabled = newVal;
+    save();
+  }, {
+    helpText: pProps.tileSuspensionEnabled.description
+  }));
+
+  memoryGroup.appendChild(createInput(getLabel('tileSuspensionIdleMinutes'), getVal('tileSuspensionIdleMinutes'), (newVal) => {
+    prefs.tileSuspensionIdleMinutes = newVal;
+    save();
+  }, {
+    type: 'number',
+    step: 1,
+    min: 1,
+    default: pProps.tileSuspensionIdleMinutes.default,
+    helpText: pProps.tileSuspensionIdleMinutes.description
+  }));
+
+  container.appendChild(memoryGroup);
+
   // --- Group 3: Windows ---
   const windowsGroup = createSettingsGroup('Windows');
 

@@ -28,6 +28,22 @@ export const DEFAULT_SUSPENSION_CONFIG: SuspensionConfig = {
   scheduleIntervalMs: null,
 };
 
+/**
+ * Read the Settings prefs `tileSuspensionEnabled` (boolean, default on) and
+ * `tileSuspensionIdleMinutes` (number of at least 1, default 10). Anything else falls back to the
+ * default, so a hand-edited or missing value never disables the policy by accident.
+ */
+export function suspensionConfigFromPrefs(prefs: Record<string, unknown> | null | undefined): Pick<SuspensionConfig, 'enabled' | 'idleMs'> {
+  const enabled = prefs?.tileSuspensionEnabled;
+  const minutes = prefs?.tileSuspensionIdleMinutes;
+  return {
+    enabled: typeof enabled === 'boolean' ? enabled : DEFAULT_SUSPENSION_CONFIG.enabled,
+    idleMs: typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 1
+      ? Math.round(minutes) * 60 * 1000
+      : DEFAULT_SUSPENSION_CONFIG.idleMs,
+  };
+}
+
 export interface SuspensionState {
   policy: SuspensionPolicy;
   config: SuspensionConfig;

@@ -96,6 +96,38 @@ describe('tile suspension shell', () => {
     assert.equal(h.changes.filter(c => c.wouldSuspend).length, 2);
   });
 
+  it('a setting change to a shorter idle time applies to an already-loaded tile', async () => {
+    const h = harness();
+    await wake(h);
+    h.changes.length = 0;
+    h.shell.settingChanged({ idleMs: 2 * MIN });
+    h.advance(2 * MIN + 1);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
+    assert.equal(h.changes[0].idleMs, 2 * MIN);
+  });
+
+  it('turning suspension off stops decisions and turning it on resumes them', async () => {
+    const h = harness();
+    await wake(h);
+    h.changes.length = 0;
+    h.shell.settingChanged({ enabled: false });
+    h.advance(30 * MIN);
+    assert.equal(h.changes.length, 0);
+    // Already idle for 30 minutes, so it is due as soon as the switch is back on.
+    h.shell.settingChanged({ enabled: true });
+    h.advance(1);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
+  });
+
+  it('a setting changed before a tile is first seen applies to it', async () => {
+    const h = harness();
+    h.shell.settingChanged({ idleMs: 3 * MIN });
+    await wake(h);
+    h.changes.length = 0;
+    h.advance(3 * MIN + 1);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
+  });
+
   it('activity pushes the deadline out', async () => {
     const h = harness();
     await wake(h);

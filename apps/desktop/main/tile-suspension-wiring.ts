@@ -6,7 +6,7 @@ import { getBackgroundEntry, getLazyTileManifest, isLazyTileRegistered } from '.
 import { isTileLoaded, unloadTile } from './tile-launcher.js';
 import { tileIdFromSource } from './window-open-registry.js';
 import { configureSuspensionShell, suspension, SUSPENSION_CHANGED_TOPIC } from './tile-suspension-shell.js';
-import type { SuspensionConfig } from './tile-suspension.js';
+import { suspensionConfigFromPrefs, type SuspensionConfig } from './tile-suspension.js';
 
 const MS_PER_MINUTE = 60 * 1000;
 
@@ -22,6 +22,15 @@ function shortestScheduleMs(tileId: string): number | null {
   }
   return shortest;
 }
+
+/** Apply the Settings prefs (on/off, idle minutes) to the running policy. Safe to call on every prefs message. */
+export function applySuspensionPrefs(prefs: Record<string, unknown> | null | undefined): void {
+  lastPrefs = prefs;
+  suspension.settingChanged(suspensionConfigFromPrefs(prefs));
+}
+
+// Prefs can arrive before the shell is configured; install applies the latest ones.
+let lastPrefs: Record<string, unknown> | null | undefined;
 
 export function installTileSuspension(): void {
   configureSuspensionShell({
@@ -48,6 +57,7 @@ export function installTileSuspension(): void {
     onceOnTopic: (topic, fn) => subscribe(getSystemAddress(), topic, () => fn()),
     observeOnly: true,
   });
+  if (lastPrefs) suspension.settingChanged(suspensionConfigFromPrefs(lastPrefs));
   setActivityObserver((address) => {
     const tileId = tileIdFromSource(address);
     if (tileId !== null) suspension.activity(tileId);

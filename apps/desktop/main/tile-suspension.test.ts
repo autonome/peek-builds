@@ -9,6 +9,7 @@ import {
   initialSuspensionState,
   isInUse,
   nextCheckAt,
+  suspensionConfigFromPrefs,
   type SuspensionConfig,
   type SuspensionEffect,
   type SuspensionEvent,
@@ -388,5 +389,26 @@ describe('tile-suspension property: no unload while the tile is in use', () => {
         state = d.state;
       }
     }
+  });
+});
+
+describe('suspensionConfigFromPrefs', () => {
+  it('defaults to on with 10 minutes when prefs are missing', () => {
+    assert.deepEqual(suspensionConfigFromPrefs(undefined), { enabled: true, idleMs: 10 * MIN });
+    assert.deepEqual(suspensionConfigFromPrefs({}), { enabled: true, idleMs: 10 * MIN });
+  });
+
+  it('reads the on/off switch and the idle minutes', () => {
+    assert.deepEqual(
+      suspensionConfigFromPrefs({ tileSuspensionEnabled: false, tileSuspensionIdleMinutes: 3 }),
+      { enabled: false, idleMs: 3 * MIN },
+    );
+  });
+
+  it('falls back to the default for values that are not usable', () => {
+    for (const bad of [0, -5, 0.4, NaN, '7', null]) {
+      assert.equal(suspensionConfigFromPrefs({ tileSuspensionIdleMinutes: bad }).idleMs, 10 * MIN);
+    }
+    assert.equal(suspensionConfigFromPrefs({ tileSuspensionEnabled: 'no' }).enabled, true);
   });
 });

@@ -97,6 +97,8 @@ export interface SuspensionShell {
   ownedWindowClosed(tileId: string, windowId: string): void;
   crashed(tileId: string): void;
   disabled(tileId: string): void;
+  /** The user changed the suspension setting: applies to every tracked tile now and to tiles first seen later. */
+  settingChanged(config: Partial<SuspensionConfig>): void;
   getPolicy(tileId: string): SuspensionPolicy | null;
   getState(tileId: string): SuspensionState | null;
   dispose(): void;
@@ -105,13 +107,14 @@ export interface SuspensionShell {
 export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShell {
   const observeOnly = deps.observeOnly !== false;
   const records = new Map<string, TileRecord>();
+  let userConfig: Partial<SuspensionConfig> = {};
 
   function record(tileId: string): TileRecord | null {
     let rec = records.get(tileId);
     if (rec) return rec;
     if (!deps.isTracked(tileId)) return null;
     rec = {
-      state: initialSuspensionState(deps.configFor(tileId), deps.now()),
+      state: initialSuspensionState({ ...userConfig, ...deps.configFor(tileId) }, deps.now()),
       timer: null,
       waiters: [],
       resultHolds: new Set(),
@@ -275,6 +278,10 @@ export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShel
       records.delete(tileId);
       for (const resolve of rec?.waiters.splice(0) ?? []) resolve();
     },
+    settingChanged(config) {
+      userConfig = { ...userConfig, ...config };
+      for (const tileId of [...records.keys()]) send(tileId, { type: 'setting-changed', config });
+    },
     getPolicy: (id) => records.get(id)?.state.policy ?? null,
     getState: (id) => records.get(id)?.state ?? null,
     dispose() {
@@ -314,5 +321,6 @@ export const suspension = {
   ownedWindowClosed: (tileId: string, windowId: string): void => shell?.ownedWindowClosed(tileId, windowId),
   crashed: (tileId: string): void => shell?.crashed(tileId),
   disabled: (tileId: string): void => shell?.disabled(tileId),
+  settingChanged: (config: Partial<SuspensionConfig>): void => shell?.settingChanged(config),
   getPolicy: (tileId: string): SuspensionPolicy | null => shell?.getPolicy(tileId) ?? null,
 };
