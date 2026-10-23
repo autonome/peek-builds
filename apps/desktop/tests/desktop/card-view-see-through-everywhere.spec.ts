@@ -81,7 +81,7 @@ const boundsOf = async (
 };
 
 /**
- * The machine's own maximize flag — the fact the switch acts on. Read it
+ * The machine's own maximize flag — the fact the switch must leave alone. Read it
  * rather than comparing geometry: a window manager may refit a maximized
  * window, so geometry does not answer "is this maximized".
  */
@@ -171,39 +171,42 @@ test.describe('card-view-see-through-everywhere @desktop', () => {
 
     await runCommand(app, 'see-through views everywhere');
 
-    // Both windows are see-through and maximized, and the setting is on.
+    // Both windows are see-through and the setting is on, with neither
+    // moved, resized or maximized.
     await expect.poll(() => everywhereOn(bgWindow), { timeout: 15000 }).toBe(true);
     await expect.poll(() => seeThroughOf(bgWindow, idA), { timeout: 10000 }).toBe(true);
     await expect.poll(() => seeThroughOf(bgWindow, idB), { timeout: 10000 }).toBe(true);
-    await expect.poll(() => isMaximized(app, idA), { timeout: 10000 }).toBe(true);
-    await expect.poll(() => isMaximized(app, idB), { timeout: 10000 }).toBe(true);
     await expect.poll(() => bodyIsSeeThrough(viewA), { timeout: 10000 }).toBe(true);
     await expect.poll(() => bodyIsSeeThrough(viewB), { timeout: 10000 }).toBe(true);
+    expect(await isMaximized(app, idA)).toBe(false);
+    expect(await isMaximized(app, idB)).toBe(false);
+    expect(await boundsOf(app, idA)).toEqual(beforeA);
+    expect(await boundsOf(app, idB)).toEqual(beforeB);
 
     // The per-window switch still works under the app-wide one: A goes back
-    // to its normal look and its exact earlier bounds, B is untouched.
+    // to its normal look at its same bounds, B is untouched.
     await focusWindow(bgWindow, idA);
     await runCommand(app, 'see-through view');
 
     await expect.poll(() => seeThroughOf(bgWindow, idA), { timeout: 10000 }).toBe(false);
     await expect.poll(() => bodyIsSeeThrough(viewA), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => isMaximized(app, idA), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => boundsOf(app, idA), { timeout: 10000 }).toEqual(beforeA);
+    expect(await isMaximized(app, idA)).toBe(false);
+    expect(await boundsOf(app, idA)).toEqual(beforeA);
 
     expect(await seeThroughOf(bgWindow, idB)).toBe(true);
     expect(await bodyIsSeeThrough(viewB)).toBe(true);
-    expect(await isMaximized(app, idB)).toBe(true);
+    expect(await isMaximized(app, idB)).toBe(false);
     // The override did not touch the app-wide setting.
     expect(await everywhereOn(bgWindow)).toBe(true);
 
     await runCommand(app, 'see-through views everywhere');
 
-    // Both are back to the normal look at the bounds they started at.
+    // Both are back to the normal look, still at the bounds they started at.
     await expect.poll(() => everywhereOn(bgWindow), { timeout: 15000 }).toBe(false);
     await expect.poll(() => seeThroughOf(bgWindow, idB), { timeout: 10000 }).toBe(false);
     await expect.poll(() => bodyIsSeeThrough(viewB), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => isMaximized(app, idB), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => boundsOf(app, idB), { timeout: 10000 }).toEqual(beforeB);
+    expect(await isMaximized(app, idB)).toBe(false);
+    expect(await boundsOf(app, idB)).toEqual(beforeB);
 
     expect(await seeThroughOf(bgWindow, idA)).toBe(false);
     expect(await bodyIsSeeThrough(viewA)).toBe(false);
@@ -246,11 +249,11 @@ test.describe('card-view-see-through-everywhere across a restart @desktop', () =
     await view.waitForLoadState('domcontentloaded');
     await view.waitForSelector('peek-grid.cards', { timeout: 15000 });
 
-    // Opened see-through without anyone running a command, and maximized by
-    // the same rule the per-window switch follows.
+    // Opened see-through without anyone running a command, and not
+    // maximized: the look never changes the window's size.
     await expect.poll(() => seeThroughOf(bgWindow, id), { timeout: 10000 }).toBe(true);
-    await expect.poll(() => isMaximized(app, id), { timeout: 10000 }).toBe(true);
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(true);
+    expect(await isMaximized(app, id)).toBe(false);
 
     await closeWindow(app, bgWindow, id);
     await app.close();

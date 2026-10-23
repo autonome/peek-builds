@@ -30,7 +30,7 @@ import {
   unloadTile,
   getTileManifest,
 } from './tile-launcher.js';
-import { urlSupportsSeeThrough } from './see-through-support.js';
+import { recordSeeThrough, urlSupportsSeeThrough } from './see-through-support.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { EncryptedFileSecretStore, type SecretStore } from './feature-secrets.js';
@@ -4067,24 +4067,20 @@ export function registerTileIpcHandlers(): void {
   const UNSUPPORTED_VIEW = 'This view does not support the see-through switch';
 
   /**
-   * Apply the see-through look to one window: the two params the session
-   * saves, the conditional maximize and restore, and the announcement its
-   * renderer draws from.
+   * Apply the see-through look to one window: the param the session
+   * saves and the announcement its renderer draws from.
    *
    * Both switches go through here — the per-window one and the app-wide
    * one — so what the look does to a window is described once and the
    * app-wide switch cannot drift from the per-window rules.
    *
-   * Maximize is part of the switch, and the restore is conditional: ON
-   * maximizes through the kernel's own `Maximize` only when the window is
-   * not maximized already, and records that the switch is what did it.
-   * OFF unmaximizes only on that record, so a window the user (or
-   * maximize-all) had already maximized stays maximized when the switch
-   * goes off. The switch never raises a window or puts it on top — being
-   * the frontmost thing on screen is the windows switcher's own behaviour,
-   * not this one's (docs/design/window-rules.md G15).
+   * The switch only changes the look: it never moves, resizes, maximizes
+   * or unmaximizes a window, so it combines with maximize-all without
+   * either undoing the other. It never raises a window or puts it on top
+   * — being the frontmost thing on screen is the windows switcher's own
+   * behaviour, not this one's (docs/design/window-rules.md G15).
    *
-   * Both flags live in the open registry's params bag (the `placement`
+   * The flag lives in the open registry's params bag (the `placement`
    * precedent in tile:window:set-bounds), which is what session save
    * projects, so the switch survives a restart.
    */
@@ -4100,43 +4096,7 @@ export function registerTileIpcHandlers(): void {
     if (!info) {
       return { success: false, error: 'Window not found in the open registry' };
     }
-    const machineId = getWindowIdFor(win);
-    if (machineId == null) {
-      return { success: false, error: 'Window not registered with window-state machine' };
-    }
-
-    if (on) {
-      const recBefore = getMachineWindowRecord(machineId);
-      if (recBefore?.maximized === true) {
-        // Already maximized by something else — leave it that way on the
-        // way out.
-        info.params.seeThroughMaximized = false;
-      } else {
-        const currentBounds = win.getBounds();
-        const workArea = screen.getDisplayMatching(currentBounds).workArea;
-        kernelMaximize(machineId, {
-          x: workArea.x,
-          y: workArea.y,
-          width: workArea.width,
-          height: workArea.height,
-        });
-        info.params.seeThroughMaximized = true;
-      }
-      info.params.seeThrough = true;
-    } else {
-      info.params.seeThrough = false;
-      if (info.params.seeThroughMaximized === true) {
-        // Only unmaximize a window that still IS maximized. The switch
-        // can be on across a hand-unmaximize, and the kernel's
-        // `Unmaximize` restores its own pre-maximize stash — so asking
-        // for it on an already-restored window would snap it back to the
-        // rect the user had just dragged it out of.
-        if (getMachineWindowRecord(machineId)?.maximized === true) {
-          kernelUnmaximize(machineId);
-        }
-        info.params.seeThroughMaximized = false;
-      }
-    }
+    recordSeeThrough(info.params, on);
 
     // The renderer draws the look. Pubsub rather than a directed send so
     // the view declares the topic in its own manifest and both switches

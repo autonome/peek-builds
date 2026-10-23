@@ -7,6 +7,7 @@ import {
   urlSupportsSeeThrough,
   seeThroughForNewWindow,
   transparentForNewWindow,
+  recordSeeThrough,
   type SeeThroughManifestLike,
 } from './see-through-support.js';
 
@@ -127,13 +128,39 @@ describe('see-through-support — transparentForNewWindow', () => {
   });
 });
 
+describe('see-through-support — recordSeeThrough', () => {
+  const placement = {
+    x: 10,
+    y: 20,
+    width: 640,
+    height: 480,
+    maximized: false,
+  };
+
+  it('changes only the look flag, so bounds and maximize state stay as they were', () => {
+    const params: Record<string, unknown> = { ...placement };
+    recordSeeThrough(params, true);
+    assert.deepStrictEqual(params, { ...placement, seeThrough: true });
+    recordSeeThrough(params, false);
+    assert.deepStrictEqual(params, { ...placement, seeThrough: false });
+  });
+
+  it('leaves a window maximized by something else maximized, either way', () => {
+    const params: Record<string, unknown> = { ...placement, maximized: true };
+    recordSeeThrough(params, true);
+    recordSeeThrough(params, false);
+    assert.strictEqual(params.maximized, true);
+    assert.strictEqual('seeThroughMaximized' in params, false);
+  });
+});
+
 describe('see-through-support — seeThroughForNewWindow', () => {
   const lookupManifest = (tileId: string) => (tileId === 'tags' ? tagsManifest : null);
 
-  it('opens a declared card view see-through and maximized while the app-wide switch is on', () => {
+  it('opens a declared card view see-through, and only that, while the app-wide switch is on', () => {
     assert.deepStrictEqual(
       seeThroughForNewWindow({ url: 'peek://tags/home.html', appWideOn: true, lookupManifest }),
-      { seeThrough: true, seeThroughMaximized: true },
+      { seeThrough: true },
     );
   });
 
@@ -188,7 +215,7 @@ describe('see-through-support — seeThroughForNewWindow', () => {
         requestedSeeThrough: 'yes',
         lookupManifest,
       }),
-      { seeThrough: true, seeThroughMaximized: true },
+      { seeThrough: true },
     );
   });
 });

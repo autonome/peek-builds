@@ -175,9 +175,9 @@ interface TileWindow {
   getSeeThrough(id?: number): Promise<{ success: boolean; data?: { supported: boolean; seeThrough: boolean }; error?: string }>;
 
   /**
-   * Turn the see-through look (frosted and maximized, as the windows
-   * switcher looks) on or off for a window. `on` is explicit rather than a
-   * toggle. A window whose view does not declare `seeThrough: true` on its
+   * Turn the see-through look (frosted, as the windows switcher looks) on
+   * or off for a window. `on` is explicit rather than a toggle. The window
+   * is never moved, resized or maximized by this. A window whose view does not declare `seeThrough: true` on its
    * manifest tile entry answers `{ success: false, error }` and nothing
    * changes. Requires `window.manage` capability.
    */

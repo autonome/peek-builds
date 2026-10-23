@@ -99,11 +99,19 @@ export function transparentForNewWindow(input: {
   return true;
 }
 
+/**
+ * Record the see-through look in a window's params bag. This is the whole
+ * of what the switch does to window state: bounds, the maximized flag and
+ * the pre-maximize stash are never touched, because maximizing belongs to
+ * maximize-all (docs/design/window-rules.md G15, G16).
+ */
+export function recordSeeThrough(params: Record<string, unknown>, on: boolean): void {
+  params.seeThrough = on;
+}
+
 /** The window params the app-wide switch writes on a window being created. */
 export interface NewWindowSeeThrough {
   seeThrough: boolean;
-  /** Whether the switch is what maximized it, so turning it off restores. */
-  seeThroughMaximized: boolean;
 }
 
 /**
@@ -119,9 +127,8 @@ export interface NewWindowSeeThrough {
  * state reaches the same windows the per-window command does and no list
  * of views exists anywhere.
  *
- * `seeThroughMaximized` comes back true because the switch is what asks
- * for the maximize here, so turning it off later puts the window back at
- * the size its opener asked for (docs/design/window-rules.md G15).
+ * Only the look is decided here; the window keeps the bounds its opener
+ * asked for (docs/design/window-rules.md G15).
  */
 export function seeThroughForNewWindow(input: {
   url: string;
@@ -132,5 +139,5 @@ export function seeThroughForNewWindow(input: {
   if (typeof input.requestedSeeThrough === 'boolean') return null;
   if (input.appWideOn !== true) return null;
   if (!urlSupportsSeeThrough(input.url, input.lookupManifest)) return null;
-  return { seeThrough: true, seeThroughMaximized: true };
+  return { seeThrough: true };
 }

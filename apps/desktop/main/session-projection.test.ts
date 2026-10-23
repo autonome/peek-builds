@@ -954,13 +954,12 @@ describe('session-projection — machine-derived descriptor fields', () => {
 
   it('the see-through switch survives save and restore as a window param', () => {
     // `params.seeThrough` is what makes a card view come back see-through
-    // after a restart, and `params.seeThroughMaximized` is what decides
-    // whether turning the switch off then unmaximizes the window. Both are
-    // plain booleans so sanitizeParams keeps them; this pins that they are
-    // projected rather than dropped with the machine-derived fields.
+    // after a restart. It is a plain boolean so sanitizeParams keeps it;
+    // this pins that it is projected rather than dropped with the
+    // machine-derived fields.
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
-        params: { ...CONTENT_PARAMS, seeThrough: true, seeThroughMaximized: true, transparent: true },
+        params: { ...CONTENT_PARAMS, seeThrough: true, transparent: true },
       })],
       records: [makeRecord('w1', {
         bounds: { x: 0, y: 0, width: 1512, height: 900 },
@@ -970,11 +969,10 @@ describe('session-projection — machine-derived descriptor fields', () => {
     };
     const [d] = serializeSession(inputFor(world)).snapshot.windows;
     assert.strictEqual(d.params.seeThrough, true);
-    assert.strictEqual(d.params.seeThroughMaximized, true);
     // Created transparent, so the restored window can be flipped again.
     assert.strictEqual(d.params.transparent, true);
-    // And it comes back maximized at its pre-maximize rect, per G12 — the
-    // switch's own restore reads seeThroughMaximized, not the bounds.
+    // And a window maximized by something else comes back maximized at its
+    // pre-maximize rect, per G12.
     assert.strictEqual(d.params.maximized, true);
     assert.deepStrictEqual(d.bounds, { x: 100, y: 110, width: 640, height: 480 });
   });
@@ -982,13 +980,12 @@ describe('session-projection — machine-derived descriptor fields', () => {
   it('a window left in its normal look saves the switch as off', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
-        params: { ...CONTENT_PARAMS, seeThrough: false, seeThroughMaximized: false, transparent: true },
+        params: { ...CONTENT_PARAMS, seeThrough: false, transparent: true },
       })],
       records: [makeRecord('w1', { bounds: { x: 10, y: 20, width: 900, height: 700 } })],
     };
     const [d] = serializeSession(inputFor(world)).snapshot.windows;
     assert.strictEqual(d.params.seeThrough, false);
-    assert.strictEqual(d.params.seeThroughMaximized, false);
     assert.strictEqual('maximized' in d.params, false);
   });
 

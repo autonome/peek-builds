@@ -3215,7 +3215,7 @@ export function registerWindowHandlers(): void {
     const { url, options } = msg;
 
     // The app-wide see-through switch decides a declaring card view's look
-    // as the window is created, by writing the same two window params the
+    // as the window is created, by writing the same window param the
     // per-window switch writes — there is no second mechanism and no list
     // of views, only the manifest declaration. A null answer leaves the
     // opener's own request alone, which is what keeps a session restore
@@ -3240,7 +3240,6 @@ export function registerWindowHandlers(): void {
       : null;
     if (appWideSeeThrough) {
       options.seeThrough = appWideSeeThrough.seeThrough;
-      options.seeThroughMaximized = appWideSeeThrough.seeThroughMaximized;
     }
 
     // Default-deny unsafe webPreferences from the caller, before any window is

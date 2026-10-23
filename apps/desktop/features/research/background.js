@@ -170,14 +170,12 @@ const researchOfFrontWindow = async () => {
  * command again in the same research raises the view that is already open
  * instead of opening a second one.
  *
- * The see-through look is asked for twice over, and both halves are needed. The
- * open passes `seeThrough: true`, so the window's own param says the switch is
- * on before the view paints and the frosted look is never applied late. The
- * `setSeeThrough` call afterwards is what maximizes the window and records that
- * the switch is what maximized it, so a later `see-through view` puts the window
- * back where it was (docs/design/window-rules.md G15). It is skipped on a reuse:
- * the window is already maximized, and asking again would tell main the switch
- * had not maximized it.
+ * The open passes `seeThrough: true`, so the window's own param says the switch
+ * is on before the view paints and the frosted look is never applied late. The
+ * see-through switch only changes the look and never maximizes
+ * (docs/design/window-rules.md G15), so a fresh view is maximized here, by this
+ * command. It is skipped on a reuse: the window is already open at whatever
+ * size the user left it.
  *
  * The view window is itself in the research's space. That is what lets a row in
  * it act in the research: a search run again from the view is recorded and
@@ -214,10 +212,11 @@ const openResearchView = async () => {
   if (!reused && typeof opened.id === 'number') {
     const applied = await api.window.setSeeThrough(opened.id, true);
     if (!applied || applied.success !== true) {
-      // The view is open and readable; only the maximize and the frosted
-      // look are missing, so this is reported rather than undone.
+      // The view is open and readable; only the frosted look is missing,
+      // so this is reported rather than undone.
       console.error('[research] the research view could not be made see-through:', applied?.error);
     }
+    await api.window.maximize(opened.id);
   }
 
   return {

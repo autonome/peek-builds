@@ -156,7 +156,7 @@ test.describe('see-through-spaces @desktop', () => {
     return { tookFocus, afterTab };
   };
 
-  test('the switch maximizes, frosts, and puts the window back exactly where it was', async () => {
+  test('the switch frosts the view and never moves, resizes or maximizes the window', async () => {
     const id = await openSpaces({ width: 860, height: 640 });
     const view = await app.getWindow('spaces/home.html', 15000);
     await view.waitForLoadState('domcontentloaded');
@@ -175,10 +175,11 @@ test.describe('see-through-spaces @desktop', () => {
     await focusWindow(id);
     await runSeeThroughCommand();
 
-    // On: maximized, and the body carries the class with a non-opaque
-    // background.
-    await expect.poll(() => isMaximized(id), { timeout: 10000 }).toBe(true);
+    // On: the body carries the class with a non-opaque background, and
+    // the window is exactly where it was, not maximized.
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(true);
+    expect(await isMaximized(id)).toBe(false);
+    expect(await boundsOf(id)).toEqual(before);
     const frosted = await bodyBackground(view);
     expect(frosted).toMatch(/^rgba\(/);
     const alpha = Number(frosted.replace(/^rgba\(|\)$/g, '').split(',')[3]);
@@ -192,7 +193,7 @@ test.describe('see-through-spaces @desktop', () => {
 
     await runSeeThroughCommand();
 
-    // Off: the class is gone and the window is back at its exact bounds.
+    // Off: the class is gone and the window is still at its exact bounds.
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(false);
     await expect.poll(() => isMaximized(id), { timeout: 10000 }).toBe(false);
     await expect.poll(() => boundsOf(id), { timeout: 10000 }).toEqual(before);

@@ -987,9 +987,10 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Turn the see-through look on or off for a window: the frosted,
-     * maximized look the windows switcher uses. `on` is explicit, not a
-     * toggle — read the current state with `getSeeThrough` first.
+     * Turn the see-through look on or off for a window: the frosted look
+     * the windows switcher uses. `on` is explicit, not a toggle — read the
+     * current state with `getSeeThrough` first. The window is never moved,
+     * resized, maximized or unmaximized by this.
      *
      * A window whose view does not declare the switch (`seeThrough: true`
      * on its manifest tile entry) resolves to `{ success: false, error }`
@@ -1021,8 +1022,8 @@ function buildAPI(): Record<string, unknown> {
      * opened later opens that way too. `on` is explicit, not a toggle.
      *
      * Each window is flipped through the same per-window path
-     * `setSeeThrough` uses, so the maximize and the exact restore behave
-     * identically. Flipping this resets every declaring window, which ends
+     * `setSeeThrough` uses, so none of them is moved, resized or maximized.
+     * Flipping this resets every declaring window, which ends
      * any per-window override. Requires `window.manage`.
      */
     setSeeThroughEverywhere: (on: boolean) => {

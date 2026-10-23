@@ -10,9 +10,9 @@ import http from 'http';
  * `see-through view` (features/windows/background.js) reads the focused
  * window's state through `api.window.getSeeThrough` and flips it with
  * `api.window.setSeeThrough`, which lands in `tile-ipc.ts
- * tile:window:set-see-through`. Main maximizes through the kernel's own
- * `Maximize`, records in the window's params whether the switch is what
- * maximized it, and announces the change on `window:see-through`; the Tags
+ * tile:window:set-see-through`. Main records the look in the window's
+ * params without touching its bounds or maximize state, and announces the
+ * change on `window:see-through`; the Tags
  * renderer answers by re-reading its own state and putting (or taking) the
  * `see-through` class on `<body>`, which is what `renderer/lib/see-through.css`
  * is gated on. Rule: docs/design/window-rules.md G15.
@@ -140,7 +140,7 @@ test.describe('card-view-see-through @desktop', () => {
     return await view.evaluate(() => getComputedStyle(document.body).backgroundColor);
   };
 
-  test('the switch maximizes, frosts, and puts the window back exactly where it was', async () => {
+  test('the switch frosts the view and never moves, resizes or maximizes the window', async () => {
     const id = await openTags({ width: 820, height: 620 });
     const view = await app.getWindow('tags/home.html', 15000);
     await view.waitForLoadState('domcontentloaded');
@@ -155,10 +155,11 @@ test.describe('card-view-see-through @desktop', () => {
     await focusWindow(id);
     await runSeeThroughCommand();
 
-    // On: maximized, and the body carries the class with a non-opaque
-    // background.
-    await expect.poll(() => isMaximized(id), { timeout: 10000 }).toBe(true);
+    // On: the body carries the class with a non-opaque background, and
+    // the window is exactly where it was, not maximized.
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(true);
+    expect(await isMaximized(id)).toBe(false);
+    expect(await boundsOf(id)).toEqual(before);
     const frosted = await bodyBackground(view);
     expect(frosted).toMatch(/^rgba\(/);
     const alpha = Number(frosted.replace(/^rgba\(|\)$/g, '').split(',')[3]);
@@ -177,15 +178,15 @@ test.describe('card-view-see-through @desktop', () => {
 
     await runSeeThroughCommand();
 
-    // Off: the class is gone and the window is back at its exact bounds.
+    // Off: the class is gone and the window is still at its exact bounds.
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => isMaximized(id), { timeout: 10000 }).toBe(false);
-    await expect.poll(() => boundsOf(id), { timeout: 10000 }).toEqual(before);
+    expect(await isMaximized(id)).toBe(false);
+    expect(await boundsOf(id)).toEqual(before);
 
     await closeWindow(id);
   });
 
-  test('a window maximized by hand first is still maximized after the switch goes off', async () => {
+  test('a window maximized by hand stays maximized, at the same rect, through the switch on and off', async () => {
     const id = await openTags({ width: 780, height: 580 });
     const view = await app.getWindow('tags/home.html', 15000);
     await view.waitForLoadState('domcontentloaded');
@@ -203,12 +204,13 @@ test.describe('card-view-see-through @desktop', () => {
     await runSeeThroughCommand();
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(true);
     expect(await isMaximized(id)).toBe(true);
+    expect(await boundsOf(id)).toEqual(maximizedBounds);
 
     await runSeeThroughCommand();
     await expect.poll(() => bodyIsSeeThrough(view), { timeout: 10000 }).toBe(false);
 
-    // Nothing asked for it to shrink, so it did not: still maximized, and
-    // still at the rect it was maximized to.
+    // The switch never touches maximize state: still maximized, and still
+    // at the rect it was maximized to.
     expect(await isMaximized(id)).toBe(true);
     expect(await boundsOf(id)).toEqual(maximizedBounds);
 

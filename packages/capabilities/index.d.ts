@@ -418,7 +418,7 @@ export interface TileEntry {
   /**
    * If true, this window is a card-grid view that supports the see-through
    * switch: `see-through view` may flip it between its normal look and the
-   * frosted, maximized one. This declaration is how main knows which
+   * frosted one. This declaration is how main knows which
    * windows the switch applies to — there is no list of URLs anywhere else.
    * A window that declares it must also be created transparent, since
    * transparency can only be set when a window is created.
