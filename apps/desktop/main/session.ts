@@ -34,6 +34,7 @@ import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, getKernelExecutor } from './window-kernel-dispatch.js';
 import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
+import { applyPinnedRestoreOptions } from './session-restore-pin.js';
 import { countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 
 // Longest a launch restore waits for its one desktop read. The provider bounds
@@ -301,10 +302,7 @@ async function openHeldGroup(descriptors: WindowDescriptor[], desktop: string): 
           options.title = descriptor.title;
         }
         if (descriptor.key) options.key = descriptor.key;
-        if (descriptor.context?.pinScope) {
-          options.alwaysOnTop = true;
-          options.pinScope = descriptor.context.pinScope;
-        }
+        applyPinnedRestoreOptions(options, descriptor.context?.pinScope);
         // Same open-time trail directive as the boot loop — a group held for a
         // desktop the user had not arrived on yet opens from the same
         // descriptors and must come back with the same history.
@@ -1971,10 +1969,7 @@ export async function restoreSessionSnapshot(
       // right after this one. The context row itself is re-applied below
       // alongside `mode`, so the badge/closeSpace()/save-side projections
       // read the SAME pin scope right after restore as before it.
-      if (descriptor.context?.pinScope) {
-        options.alwaysOnTop = true;
-        options.pinScope = descriptor.context.pinScope;
-      }
+      applyPinnedRestoreOptions(options, descriptor.context?.pinScope);
 
       // The back/forward trail, handed to the open as an open-time directive so
       // the page-host replays it instead of landing on the leaf URL with a dead
