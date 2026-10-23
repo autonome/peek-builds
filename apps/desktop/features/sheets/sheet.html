@@ -61,6 +61,16 @@
         <input type="file" class="opt-image-file" accept="image/*" style="display:none;">
         <span class="options-hint opt-image-status"></span>
       </div>
+      <div class="options-row">
+        <div class="options-label">Key</div>
+        <input type="text" class="opt-key" readonly placeholder="Click, then press a key combination">
+        <peek-button class="opt-key-clear" size="sm" variant="outline">Clear</peek-button>
+        <peek-button-group class="opt-key-scope" selection="single" size="sm">
+          <peek-button-group-item value="global">Global</peek-button-group-item>
+          <peek-button-group-item value="app">In-app</peek-button-group-item>
+        </peek-button-group>
+      </div>
+      <div class="options-hint opt-key-note"></div>
       <div class="options-hint opt-note"></div>
     </div>
 

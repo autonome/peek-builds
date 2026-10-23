@@ -5,7 +5,11 @@
  * Uses peek-grid in freeform mode with drag/resize in edit mode.
  */
 
-import { loadSheet, saveSheet } from './sheet-store.js';
+import { loadSheet, saveSheet, loadSheetsMap } from './sheet-store.js';
+import {
+  acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
+  SHEETS_CHANGED_TOPIC
+} from './sheet-hotkeys.js';
 import {
   sheetBackgroundStyle, resolveSheetOptions, withSheetOptions, backgroundNeedsReopen,
   fitWithin, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
@@ -348,6 +352,64 @@ const setupOptionsPanel = () => {
     applyBackground();
     refresh();
   };
+
+  // ----- Key to open this sheet -----
+  const keyInput = panel.querySelector('.opt-key');
+  const keyClear = panel.querySelector('.opt-key-clear');
+  const keyScope = panel.querySelector('.opt-key-scope');
+  const keyNote = panel.querySelector('.opt-key-note');
+
+  const refreshKey = (message) => {
+    const hk = resolveSheetHotkey(sheetConfig);
+    keyInput.value = hk ? hk.keys : '';
+    keyScope.value = hk ? hk.scope : 'global';
+    keyNote.textContent = message || (hk && hk.scope === 'app'
+      ? 'In-app keys work only while a Peek window has focus and the Sheets feature is running.'
+      : 'Global keys work from any app and start the Sheets feature when pressed.');
+  };
+
+  // Save the key, then tell the feature to redeclare its keys.
+  const updateKey = async (hotkey) => {
+    sheetConfig = withSheetHotkey(sheetConfig, hotkey);
+    await saveSheetConfig();
+    api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+    refreshKey();
+  };
+
+  keyInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Tab') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      keyInput.blur();
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      await updateKey(null);
+      return;
+    }
+    const keys = acceleratorFromKeyEvent(e);
+    if (!keys) return;
+    const sheetsMap = await loadSheetsMap(api);
+    const conflict = findHotkeyConflict(sheetsMap, sheetId, keys);
+    if (conflict) {
+      refreshKey(`${keys} is already the key for "${conflict.name}".`);
+      return;
+    }
+    const scope = resolveSheetHotkey(sheetConfig)?.scope || keyScope.value || 'global';
+    await updateKey({ keys, scope });
+  });
+
+  keyClear.addEventListener('click', () => updateKey(null));
+
+  keyScope.addEventListener('change', (e) => {
+    const hk = resolveSheetHotkey(sheetConfig);
+    const scope = e.detail?.value === 'app' ? 'app' : 'global';
+    if (hk) updateKey({ keys: hk.keys, scope });
+    else refreshKey();
+  });
+
+  refreshKey();
 
   document.querySelector('.btn-options').addEventListener('click', () => {
     panel.style.display = panel.style.display === 'none' ? '' : 'none';

@@ -10,7 +10,11 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "lazy": true,
+      "lazyEvents": [
+        "sheets:open",
+        "sheets:settings-changed"
+      ]
     },
     {
       "id": "sheet",
@@ -20,34 +24,47 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["system"],
+      "scopes": [
+        "global",
+        "system"
+      ],
       "topics": [
         "ext:ready",
         "ext:sheets:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "sheets:open",
+        "sheets:settings-changed"
       ]
     },
     "window": {
       "create": true
     },
     "commands": true,
-    "settings": true
+    "settings": true,
+    "shortcuts": true
   },
   "commands": [
     {
       "name": "sheets",
       "description": "List all widget sheets",
-      "action": { "type": "execute" }
+      "action": {
+        "type": "execute"
+      }
     },
     {
       "name": "new sheet",
       "description": "Create a new widget sheet",
-      "action": { "type": "execute" }
+      "action": {
+        "type": "execute"
+      }
     },
     {
       "name": "open sheet",
       "description": "Open an existing widget sheet by name",
-      "action": { "type": "execute" }
+      "action": {
+        "type": "execute"
+      }
     }
-  ]
+  ],
+  "wakeShortcutsFromSettings": true
 }

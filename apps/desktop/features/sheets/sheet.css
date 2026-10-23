@@ -230,6 +230,23 @@ body.editing .card-webview {
   color: var(--base03);
 }
 
+.opt-key {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--base05);
+  background: var(--base00);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+}
+
+.opt-key:focus {
+  outline: none;
+  border-color: var(--base0D);
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;
