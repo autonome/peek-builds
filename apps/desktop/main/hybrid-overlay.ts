@@ -649,10 +649,6 @@ function wireShowNavbarFocus(): void {
   // it takes the same focus path as Cmd+L.
   for (const topic of ['page:show-navbar', 'page:find']) subscribe(getSystemAddress(), topic, (raw) => {
     const msg = raw as { windowId?: number } | null;
-    wmLog('diag-navbar-focus-request', {
-      topic, windowId: msg?.windowId ?? null, host: overlayHostOsId(),
-      overlayLive: !!overlayWin && !overlayWin.isDestroyed(), overlayWmId, appActive: getAppActive(),
-    });
     if (!msg || msg.windowId == null) return;
     // Never steal focus while backgrounded (R1) — except into the non-activating
     // chrome over a held page, which takes key without activating.

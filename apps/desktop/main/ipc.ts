@@ -120,6 +120,7 @@ import {
   kernelShowRequested,
   kernelOverlayTransitionObserved,
   kernelPressedInNonActivatingWindow,
+  kernelAssertFocus,
   getKernelExecutor,
 } from './window-kernel-dispatch.js';
 import { topmost, frontWindowHere, isContentWindow, isNonParentRole, CONTENT_ROLES } from './window-kernel.js';
@@ -3024,6 +3025,10 @@ export function installHybridNavbarActionRouting(): void {
     if (!r) return;
     lastFindText.delete(r.windowId);
     try { r.wc.stopFindInPage('clearSelection'); } catch { /* wc gone */ }
+    // Closing the bar leaves the overlay key; hand key focus back to the page so
+    // the next Cmd+F (and any typing) reaches the content WC again.
+    const hostWm = getWindowIdFor(r.windowId);
+    if (hostWm != null) kernelAssertFocus(hostWm);
   });
 
   // ── P1.4b-5: page-info extraction routing (overlay panel → content WC) ──────
