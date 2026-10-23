@@ -216,21 +216,20 @@ Risks: lost wake messages (section 5 item 1, the main one); user-visible cold-wa
 tiles whose in-memory state was never persisted; a leaked hold pinning memory (mitigated by
 the cap and the HUD); thrash on short schedules (interval floor).
 
-## Open questions needing a decision
+## Settled questions
 
-A. **Who owns a content window?** Use condition 2 needs the window record to carry the opener
-   tile. `main.ts getWindowInfo(id)` returns `{ source, params }`, so a `source` address
-   probably names the opener, but whether it is the opening tile for hybrid hosts is
-   unverified. If not, adding it is a small change outside this design; without it,
-   a slide's music window cannot pin its tile and the safe fallback is to pin any tile that
-   ever opened a keepLive window. Needs decision on whether to add the attribution.
-B. **Default idle time and whether it is user-visible.** 10 minutes and a global on/off plus a
-   per-feature override are proposed; whether to expose the minutes at all is a product call.
-C. **Dynamic palette entries across a suspend.** Needs a read of the command registry and the
-   tiles that register commands at run time; may require suspending to unregister them, or the
-   tile to declare them in its manifest.
-D. **Memory threshold.** One number against total renderer working set, or a share of system
-   memory. Needs real HUD data from the observe-only stage.
-E. **Suspend deadline of 2 s and the `onSuspend` API.** Is a new preload API acceptable, or
-   should tiles be required to be fully crash-safe with the existing `onShutdown`?
-F. **Should peeks and slides ever suspend** while the cold-wake delay (`9e6e91de`) stands?
+These override anything above that disagrees.
+
+A. **Window ownership.** Every window record names the tile that opened it; where it does not
+   today (hybrid hosts included), adding that attribution is part of the work. A tile that owns
+   a live keepLive window never suspends, so a slide playing music keeps its feature loaded.
+B. **Idle time.** 10 minutes by default, set in Settings (minutes, plus on/off).
+C. **Palette commands a tile registered at run time survive a suspend.** They stay listed while
+   the tile is suspended, and running one wakes the tile and then executes it, the same way a
+   manifest command does.
+D. **No memory-pressure trigger.** Suspension is by idle time only; the memory-pressure
+   shortening and its threshold are dropped.
+E. **No `onSuspend` API.** Tiles are closed through the existing unload path and its
+   `onShutdown` grace; there is no new suspend lifecycle event or deadline.
+F. **Peeks and slides** follow the keepLive rule in A: a tile with a live keepLive window
+   stays loaded, otherwise it suspends like any other tile.
