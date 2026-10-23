@@ -26,8 +26,7 @@ import { isContentWindow, windowById, reusableHere, frontWindowHere } from './wi
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
-import { setWindowOpenPayload, setWindowOpenerTile, getWindowOpenerTile, tileOwnsLiveKeepLiveWindow } from './window-open-registry.js';
-import { suspension } from './tile-suspension-shell.js';
+import { setWindowOpenPayload, setWindowOpenerTile, reportOwnedWindowOpened, tileOwnsLiveKeepLiveWindow } from './window-open-registry.js';
 
 // Register-spec that accepts real Electron window handles (both kinds satisfy the backend's
 // structural NativeWindow).
@@ -154,12 +153,9 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   if (spec.source !== undefined && spec.params !== undefined) {
     setWindowOpenPayload(id, spec.source, spec.params);
   }
-  // A keepLive content window a tile opened (not the tile's own window, which the launcher
-  // reports) keeps that tile loaded.
-  if (spec.keepLive === true && spec.openerTile === undefined) {
-    const opener = getWindowOpenerTile(id);
-    if (opener !== null) suspension.ownedWindowOpened(opener, String(id));
-  }
+  // Any window a tile opened (not the tile's own window, which the launcher reports) keeps that
+  // tile loaded while it is open.
+  reportOwnedWindowOpened(id, spec.openerTile !== undefined);
   if (decision.attachEscHandler) {
     getWindowBackend().attachEscHandler(id);
   }

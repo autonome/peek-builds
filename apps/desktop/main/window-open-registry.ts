@@ -48,6 +48,20 @@ export function tileOwnsLiveKeepLiveWindow(
   return listWindowsOpenedByTile(tileId).some(isLiveKeepLive);
 }
 
+// Tell the suspension shell that a window opened by a tile is now live, so the tile stays loaded
+// for as long as it is. Any window counts, keepLive or not, visible or hidden. The tile's own
+// window (`declaredOpener`: the opener was named explicitly at registration) is reported by the
+// launcher instead.
+export function reportOwnedWindowOpened(
+  id: WindowId,
+  declaredOpener: boolean,
+  report: (tileId: string, windowId: string) => void = suspension.ownedWindowOpened,
+): void {
+  if (declaredOpener) return;
+  const opener = getWindowOpenerTile(id);
+  if (opener !== null) report(opener, String(id));
+}
+
 // params is stored by reference — legacy consumers mutate it in place (params.currentUrl, params.x, ...).
 export function setWindowOpenPayload(id: WindowId, source: string, params: Record<string, unknown>): void {
   registry.set(id, { source, params });

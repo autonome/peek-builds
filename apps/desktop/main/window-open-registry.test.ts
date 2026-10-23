@@ -8,6 +8,7 @@ import {
   getWindowOpenerTile,
   listWindowsOpenedByTile,
   tileOwnsLiveKeepLiveWindow,
+  reportOwnedWindowOpened,
   removeWindowOpenPayload,
 } from './window-open-registry.js';
 
@@ -55,4 +56,20 @@ test('tileOwnsLiveKeepLiveWindow is true only for that tile with a live keepLive
   assert.equal(tileOwnsLiveKeepLiveWindow('peeks', check), true);
   for (const id of ['a', 'b', 'c']) removeWindowOpenPayload(wid(id));
   assert.equal(tileOwnsLiveKeepLiveWindow('peeks', () => true), false);
+});
+
+test('any window a tile opened is reported as owned, keepLive or not', () => {
+  const seen: string[] = [];
+  const report = (tile: string, id: string) => { seen.push(`${tile}:${id}`); };
+  // A plain, non-keepLive window opened from a tile's address.
+  setWindowOpenPayload(wid('p1'), 'peek://peeks/background.html', { keepLive: false });
+  reportOwnedWindowOpened(wid('p1'), false, report);
+  // The tile's own window (declared opener) is reported by the launcher instead.
+  setWindowOpenerTile(wid('p2'), 'peeks');
+  reportOwnedWindowOpened(wid('p2'), true, report);
+  // A window with no opener tile.
+  reportOwnedWindowOpened(wid('p3'), false, report);
+  assert.deepEqual(seen, ['peeks:p1']);
+  removeWindowOpenPayload(wid('p1'));
+  removeWindowOpenPayload(wid('p2'));
 });
