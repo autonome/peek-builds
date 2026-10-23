@@ -921,3 +921,38 @@ state" (intermittent at `dcacfea8`). Two are new to this file; each passes alone
 |---|---|---|---|
 | `peeks.spec.ts` | peek opens centered on the cursor display | `ERR_FAILED (-2) loading 'about:blank'` | same signature as the `peeks.spec.ts` failure at `b445b3af`, attributed to `specs/linux-focus-hidden-and-resign.md` (a resign dismissing the never-focused peek while it loads); a different test in the same file |
 | `page-translate-stub.spec.ts` | offers a translation, translates, then restores from the widget button and from the command | `overlay renderer never became usable` (`activeHandoffApplied` false) | intermittent; the `waitOverlayReady` Linux timeout described in `apps/desktop/CLAUDE.md` "Running the suite on Linux" |
+
+### Linux gate on `c81ca276` (2026-10-23)
+
+`main` after the window-mode and research-view specs (`maximize-all`, the see-through card
+views, `research-view`, `research-view-searches-notes`, `research-view-actions`) and the laptop
+commits merged in `13a8c0e5`.
+
+| runner | pass / fail / skipped |
+|---|---|
+| main-process unit | 4312 / 0 / 1 |
+| node unit | 1743 / 0 / — |
+| desktop | 624 / 12 / 26 |
+| desktop-serial | 53 / 2 / 1 |
+| components | 90 / 0 / — |
+| editor | 91 / 0 / — |
+
+Already recorded: `hybrid-escape-editable-guard`, `page-translate-front-window`, both
+`windows-hidden-surface` tests, `desktop-serial/modal-self-close-on-blur`,
+`desktop-serial/cmd-switch-to-page`, `hybrid-resize-exits-maximize` "a native OS resize out of
+maximize clears the stale maximize state".
+
+New, and failing when their files run alone with `--workers=1`:
+
+| Spec | Test | Error | Verdict |
+|---|---|---|---|
+| `reopen-closed-window.spec.ts` | reopen a maximized hybrid page-host restores it unmaximized at its pre-maximize bounds | reopened window must come back at the pre-maximize bounds | stale expectation: `bfe2a0f8` and G12 restore maximize; `specs/restore-specs-follow-g12.md` |
+| `session-restore-page-host.spec.ts` | a window maximized at save time restores unmaximized at its pre-maximize bounds | `params.maximized` is `true` in the snapshot | stale expectation, same spec |
+| `hybrid-overlay.spec.ts` | a host flush with the top of the work area reveals only after the ~2s dwell | navbar visible 400 ms after the move | from the laptop's address bar dwell commits (`11388d80`, `2acfa084`, `38ac2209`, `83892fee`, `66ea2e16`); *unverified* on macOS, where they were written |
+
+New, passing when their files run alone (order or load in the full run): `cmd-hashtag-search`
+"typing #todo #today + Enter opens search/home with q param", `hybrid-overlay` "maximize snaps
+to work area; restore returns to prior bounds", `hybrid-resize-exits-maximize` "resizing out of
+maximize leaves the overlay mirror in sync, so the next toggle maximizes",
+`session-restore-coldstart` "cold-start restore fires the ordered z-order re-assert for every
+page-host".
