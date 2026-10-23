@@ -23,6 +23,11 @@ function shortestScheduleMs(tileId: string): number | null {
   return shortest;
 }
 
+/** Does any entry of the tile's manifest declare `suspend: "never"`? */
+function neverSuspends(tileId: string): boolean {
+  return getLazyTileManifest(tileId)?.tiles?.some(entry => entry.suspend === 'never') === true;
+}
+
 /** Apply the Settings prefs (on/off, idle minutes) to the running policy. Safe to call on every prefs message. */
 export function applySuspensionPrefs(prefs: Record<string, unknown> | null | undefined): void {
   lastPrefs = prefs;
@@ -49,7 +54,10 @@ export function installTileSuspension(): void {
       return entry !== null && isTileLoaded(tileId, entry);
     },
     isBackgroundEntry: (tileId, entryId) => getBackgroundEntry(tileId) === entryId,
-    configFor: (tileId): Partial<SuspensionConfig> => ({ scheduleIntervalMs: shortestScheduleMs(tileId) }),
+    configFor: (tileId): Partial<SuspensionConfig> => ({
+      scheduleIntervalMs: shortestScheduleMs(tileId),
+      ...(neverSuspends(tileId) ? { enabled: false } : {}),
+    }),
     unload: async (tileId) => {
       const entry = getBackgroundEntry(tileId);
       if (entry !== null) await unloadTile(tileId, entry);

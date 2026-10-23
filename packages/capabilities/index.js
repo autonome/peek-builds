@@ -144,6 +144,11 @@ export function validateTileManifest(json) {
         }
       }
 
+      // Validate suspend (optional; "never" keeps a lazy tile loaded once woken)
+      if (tile.suspend !== undefined && tile.suspend !== 'never') {
+        errors.push({ path: `${prefix}.suspend`, message: 'suspend must be "never" when present' });
+      }
+
       // Validate schedule (optional array of { topic, everyMinutes })
       if (tile.schedule !== undefined) {
         if (!Array.isArray(tile.schedule)) {

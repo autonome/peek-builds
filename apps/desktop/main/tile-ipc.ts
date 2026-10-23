@@ -43,6 +43,7 @@ import { loadOrArmFeatureTile, disarmLazyTile, type AnnotatedTile } from './tile
 import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
 import { noteRuntimeCommand, forgetRuntimeCommand } from './tile-lazy.js';
+import { suspension } from './tile-suspension-shell.js';
 import { DEBUG, TILE_STRICT, isHeadless, getTilePreloadPath } from './config.js';
 import {
   setDebug,
@@ -4851,6 +4852,28 @@ export function registerTileIpcHandlers(): void {
     // No per-tile state needed here — this handler exists as the
     // explicit opt-in signal / strict-enforcement touchpoint.
     DEBUG && console.log(`[tile-ipc] escape:on-escape registered for ${grant?.tileId} (win=${event.sender.id})`);
+  });
+
+  // ── tile:hold:acquire / tile:hold:release ─────────────────────────
+  //
+  // `api.tile.hold()`: the calling tile asks to stay loaded while it does work main cannot see
+  // (a countdown, a fetch job, an open server). Needs no capability; the hold is scoped to the
+  // tile the token belongs to. A hold on a tile that is not lazy is ignored, and the suspension
+  // core releases a hold older than its cap.
+  registerTileIpc('tile:hold:acquire', { mode: 'on' }, (_event, args: {
+    token: string;
+    holdId: string;
+    reason?: string;
+  }, grant) => {
+    if (!grant || typeof args?.holdId !== 'string' || args.holdId.length === 0) return;
+    suspension.acquireHold(grant.tileId, args.holdId);
+  });
+  registerTileIpc('tile:hold:release', { mode: 'on' }, (_event, args: {
+    token: string;
+    holdId: string;
+  }, grant) => {
+    if (!grant || typeof args?.holdId !== 'string' || args.holdId.length === 0) return;
+    suspension.releaseHold(grant.tileId, args.holdId);
   });
 
   // ── tile:commands:unregister ──────────────────────────────────────

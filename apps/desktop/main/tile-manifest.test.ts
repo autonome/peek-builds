@@ -149,6 +149,16 @@ describe('validateTileManifest', () => {
     assert.ok(errors.some(e => e.message.includes('duplicate')));
   });
 
+  it('accepts suspend: "never" and rejects any other suspend value', () => {
+    const withSuspend = (suspend: unknown) => ({
+      ...VALID_TILE_MANIFEST,
+      tiles: [{ id: 'background', url: 'background.html', lazy: true, suspend }],
+    });
+    assert.deepStrictEqual(validateTileManifest(withSuspend('never') as Record<string, unknown>), []);
+    const errors = validateTileManifest(withSuspend('always') as Record<string, unknown>);
+    assert.ok(errors.some(e => e.path === 'tiles[0].suspend'));
+  });
+
   it('should reject removed tile.type field (compat dropped in manifestVersion 3)', () => {
     const tiles = [{ id: 'bad', type: 'background', url: 'index.html' }];
     const manifest = { ...VALID_TILE_MANIFEST, tiles };

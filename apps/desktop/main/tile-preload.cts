@@ -2499,6 +2499,31 @@ function buildAPI(): Record<string, unknown> {
   // Implementation: windows.ts dispatches `escape-pressed` per-window.
   // We listen to it here and invoke the tile's callback, replying on
   // the provided responseChannel.
+  // ── api.tile.hold ─────────────────────────────────────────────────────
+  //
+  // Keeps this tile loaded (exempt from idle suspension) until the returned function is called.
+  // For work main cannot see: a countdown, a fetch job, an open server. Needs no capability.
+  // Main releases a hold older than 30 minutes, so a forgotten release cannot pin the tile.
+  let holdSeq = 0;
+  api.tile = {
+    hold: (reason?: unknown) => {
+      const holdId = `${Date.now().toString(36)}-${++holdSeq}`;
+      let released = false;
+      if (tokenValid) {
+        ipcRenderer.send('tile:hold:acquire', {
+          token: tileToken,
+          holdId,
+          reason: typeof reason === 'string' ? reason : undefined,
+        });
+      }
+      return () => {
+        if (released) return;
+        released = true;
+        if (tokenValid) ipcRenderer.send('tile:hold:release', { token: tileToken, holdId });
+      };
+    },
+  };
+
   let tileEscapeCallback: (() => unknown) | null = null;
   let tileEscapeInstalled = false;
   api.escape = {

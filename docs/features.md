@@ -208,6 +208,7 @@ arming and lazy-wake code instead, as noted per row:
 | `resident: true` | Launch this tile eagerly at startup. Read in `tile-arm.ts`, not the launcher. |
 | `lazy: true` | Marks which entry a wake should launch — `tile-lazy.ts` takes `tiles.find(t => t.lazy === true)` and falls back to `tiles[0]`. Does **not** by itself make the feature lazy. |
 | `lazyEvents: [...]` | Topics that wake this tile. Read in `tile-arm.ts`, `tile-lazy.ts` and `manifest-cache.ts`. |
+| `suspend: "never"` | A woken lazy tile is never unloaded for being idle (Settings -> Memory sets the idle time for the rest). Read in `tile-suspension-wiring.ts`. For a bounded stretch use `api.tile.hold()` instead. |
 | `keepLive: true` | Hide rather than destroy the window when it is dismissed. The launcher hands it to the window machine, which owns the hide-versus-close decision (`window-kernel.ts`, `windows.ts closeOrHideWindow`). |
 | `width`, `height` | Defaults 800 × 600. |
 | `minWidth`, `minHeight` | Minimum size. |

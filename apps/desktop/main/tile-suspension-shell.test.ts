@@ -128,6 +128,36 @@ describe('tile suspension shell', () => {
     assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
   });
 
+  it('a tile hold blocks suspension until released', async () => {
+    const h = harness();
+    await wake(h);
+    h.shell.acquireHold('notes', 'a');
+    h.shell.acquireHold('notes', 'b');
+    h.advance(12 * MIN);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 0);
+    h.shell.releaseHold('notes', 'a');
+    h.advance(12 * MIN);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 0);
+    h.shell.releaseHold('notes', 'b');
+    h.advance(10 * MIN + 1);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
+  });
+
+  it('a hold on a tile that is not lazy is ignored', () => {
+    const h = harness();
+    h.shell.acquireHold('other', 'a');
+    assert.equal(h.shell.getPolicy('other'), null);
+  });
+
+  it('a tile override outranks the user setting when it changes', async () => {
+    const h = harness({ configFor: () => ({ enabled: false }) });
+    await wake(h);
+    h.shell.settingChanged({ enabled: true, idleMs: 1 * MIN });
+    h.advance(30 * MIN);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 0);
+    assert.equal(h.shell.getState('notes')?.config.idleMs, 1 * MIN);
+  });
+
   it('activity pushes the deadline out', async () => {
     const h = harness();
     await wake(h);

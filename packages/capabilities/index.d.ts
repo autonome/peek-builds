@@ -444,6 +444,12 @@ export interface TileEntry {
    */
   lazyEvents?: string[];
   /**
+   * `"never"` keeps this tile loaded once it has been woken, however long it is idle. For a tile
+   * whose job is to be running (or whose renderer holds state that cannot be rebuilt). Only
+   * meaningful when `lazy: true`; use `api.tile.hold()` for a bounded stretch instead.
+   */
+  suspend?: 'never';
+  /**
    * Schedules that make this tile run unattended. Each entry names a pubsub
    * topic and how often it comes due; when it does, main publishes the topic,
    * which loads the tile if it is asleep and reaches its handler if it is

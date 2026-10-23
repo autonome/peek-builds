@@ -156,6 +156,11 @@ function validateTileManifest(json) {
         }
       }
 
+      // Validate suspend (optional; "never" keeps a lazy tile loaded once woken)
+      if (tile.suspend !== undefined && tile.suspend !== 'never') {
+        errors.push({ path: `${prefix}.suspend`, message: 'suspend must be "never" when present' });
+      }
+
       // Validate schedule (optional array of { topic, everyMinutes })
       if (tile.schedule !== undefined) {
         if (!Array.isArray(tile.schedule)) {
@@ -441,6 +446,10 @@ function validateTileManifest(json) {
     // Validate session capability shape — boolean only for now.
     if (caps.secrets !== undefined && typeof caps.secrets !== 'boolean') {
       errors.push({ path: 'capabilities.secrets', message: 'secrets must be a boolean' });
+    }
+
+    if (caps.diagnostics !== undefined && typeof caps.diagnostics !== 'boolean') {
+      errors.push({ path: 'capabilities.diagnostics', message: 'diagnostics must be a boolean' });
     }
 
     if (caps.session !== undefined && typeof caps.session !== 'boolean') {
@@ -783,6 +792,22 @@ function resolveCapabilities(tileId, requested, isBuiltin) {
   // (`apps/desktop/main/feature-secrets.ts`).
   if (requested.secrets) {
     granted.secrets = true;
+  }
+
+  // Webview: lets the tile's own window embed <webview> elements (sheets
+  // host their cards that way). Builtin features only.
+  if (requested.webview) {
+    if (isBuiltin) {
+      granted.webview = true;
+    } else {
+      denied.push('webview');
+    }
+  }
+
+  // Diagnostics: boolean grant for the read-only app metrics and pubsub
+  // stats calls (the HUD).
+  if (requested.diagnostics) {
+    granted.diagnostics = true;
   }
 
   // IZUI: boolean grant. Passes through 1:1.

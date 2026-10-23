@@ -829,6 +829,17 @@ interface TileEscape {
   onEscape(callback: () => TileEscapeResult | void | Promise<TileEscapeResult | void>): void;
 }
 
+// ─── Tile (own lifetime) ──────────────────────────────────────────────
+
+interface TileSelf {
+  /**
+   * Keep this tile loaded until the returned function is called. A lazy tile that stays idle is
+   * unloaded; hold it while a countdown runs, a fetch job is in flight or a server is open.
+   * Always available (no capability required). A hold older than 30 minutes is released by main.
+   */
+  hold(reason?: string): () => void;
+}
+
 // ─── Profiles ─────────────────────────────────────────────────────────
 
 interface TileProfileResult<T = unknown> {
@@ -936,6 +947,7 @@ interface TileAPI {
 
   screen: TileScreen;
   escape: TileEscape;
+  tile: TileSelf;
   profiles: TileProfiles;
   adblocker: TileAdblocker;
   darkMode: TileDarkMode;
