@@ -367,7 +367,10 @@ export type Event =
   | { type: 'OsFullscreenLeft'; id: WindowId }
   // The OS never reported a settle for this transition — force it out of `entering`/`leaving`.
   | { type: 'FullscreenSettleTimeout'; id: WindowId }
-  | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle; overlayFrame?: Rectangle }
+  // `reported: true` marks the window system's own report of where the window
+  // already is, as opposed to `decide`'s reuse of this event to move it. A
+  // report is never written back as a `SetBounds`: see `react`'s geometry diff.
+  | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle; overlayFrame?: Rectangle; reported?: true }
   | { type: 'DisplayChanged'; projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }> }
   | { type: 'MaximizeExitedByResize'; id: WindowId }
   | { type: 'Maximized'; id: WindowId; preMaxBounds: Rectangle | null }
@@ -2213,9 +2216,22 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // Geometry: `bounds` — a pure structural diff of the mirror, same pattern as
   // visibility/fullscreen above. Re-requesting the current bounds emits no effect.
+  //
+  // A window system's report of where a window already is is never written
+  // back: reports are queued behind the moves that caused them, so one can
+  // arrive after a later move of the same window has landed. Echoing it would
+  // move the window back to the older rect, whose own report then moves it
+  // forward again, without end — the chrome overlay, framed once off its host's
+  // opening rect and again off its maximized rect, bounced that way forever.
+  // A record left somewhere other than the report (e.g. admitted to
+  // maximize-all on this event) still moves.
+  const echoedReport = ev.type === 'BoundsChanged' && ev.reported === true ? ev : null;
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) {
+      continue;
+    }
+    if (echoedReport !== null && echoedReport.id === nextRecord.id && boundsEqual(echoedReport.bounds, nextRecord.bounds)) {
       continue;
     }
     if (nextRecord.bounds !== undefined && !boundsEqual(prevRecord.bounds, nextRecord.bounds)) {

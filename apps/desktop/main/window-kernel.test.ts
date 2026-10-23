@@ -50,6 +50,9 @@ import {
 import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 // isWebPageRole supplies the http/https fact this kernel does not store, same reason as above.
 import { isWebPageRole } from './izui-roles.js';
+// The frame the backend hands the kernel for a page host, so the simulated
+// window system below frames the overlay the same way the real one does.
+import { expandToOverlayFrame } from './overlay-frame.js';
 
 const wid = (n: number): WindowId => `wk-${n}` as WindowId;
 
@@ -9583,5 +9586,95 @@ describe('window-kernel: maximize-all mode', () => {
     assert.strictEqual(isMaximizeAllEligible(recordFor(state, 1)), true);
     assert.strictEqual(isMaximizeAllEligible(recordFor(state, 3)), true, 'eligible, but elsewhere');
     assert.strictEqual(inMaximizeAllScope(state.maximizeAll!, recordFor(state, 3)), false);
+  });
+
+  // A window system stand-in with the executor's ordering: events queue FIFO,
+  // and a bounds report is captured when the move happens, so it can reach the
+  // kernel after a later move of the same window has already landed. Returns
+  // how many events it took to go quiet, or `null` if it never did.
+  const settle = (start: State, events: Event[], os: Map<WindowId, Rectangle>, workArea: Rectangle, cap = 500) => {
+    const queue = [...events];
+    let state = start;
+    let steps = 0;
+    const overlayReports: Event[] = [];
+    while (queue.length > 0) {
+      if (steps++ >= cap) return { state, steps: null, overlayReports };
+      const ev = queue.shift()!;
+      const next = evolve(state, ev);
+      const effects = react(state, ev, next);
+      state = next;
+      for (const effect of effects) {
+        if (effect.type === 'SetBounds') {
+          const current = os.get(effect.id);
+          if (current !== undefined && current.x === effect.bounds.x && current.y === effect.bounds.y
+            && current.width === effect.bounds.width && current.height === effect.bounds.height) continue;
+          os.set(effect.id, effect.bounds);
+          const isPageHost = windowById(state, effect.id)?.kind === 'page-host';
+          const report: Event = {
+            type: 'BoundsChanged',
+            id: effect.id,
+            bounds: effect.bounds,
+            reported: true,
+            ...(isPageHost ? { overlayFrame: expandToOverlayFrame(effect.bounds, workArea) } : {}),
+          };
+          if (!isPageHost) overlayReports.push(report);
+          queue.push(report);
+        } else if (effect.type === 'AttachOverlayTo') {
+          const hostRect = effect.hostId !== null ? os.get(effect.hostId) : undefined;
+          queue.push(
+            hostRect !== undefined
+              ? { type: 'OverlayAttached', overlayId: effect.overlayId, hostId: effect.hostId, frame: expandToOverlayFrame(hostRect, workArea) }
+              : { type: 'OverlayAttached', overlayId: effect.overlayId, hostId: null },
+          );
+        }
+      }
+    }
+    return { state, steps, overlayReports };
+  };
+
+  it('a page opened while the mode is on is maximized, and its chrome overlay settles instead of bouncing between two frames', () => {
+    const workArea: Rectangle = { x: 0, y: 25, width: 1512, height: 944 };
+    const opened: Rectangle = { x: 223, y: 111, width: 1024, height: 768 };
+    const overlay = wid(20);
+    const page = wid(21);
+    const os = new Map<WindowId, Rectangle>();
+
+    const before = fold([
+      { type: 'AppActivated' },
+      {
+        type: 'WindowRegistered',
+        id: overlay,
+        kind: 'browser',
+        layer: 0,
+        canBecomeKey: true,
+        acceptsInput: false,
+        class: 'overlay',
+        role: 'overlay',
+        tracksBaseLayerTop: true,
+      },
+    ]);
+    const { state: on } = settle(before, [{ type: 'MaximizeAllEntered', screen: null, desktop: null, workArea }], os, workArea);
+    assert.ok(on.maximizeAll !== null, 'precondition: the mode is on');
+
+    os.set(page, opened);
+    const { state, steps, overlayReports } = settle(
+      on,
+      [
+        { type: 'WindowRegistered', id: page, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content', bounds: opened },
+        { type: 'WindowContentOrderable', id: page },
+        { type: 'WindowShown', id: page },
+        { type: 'OsFocusGained', id: page },
+      ],
+      os,
+      workArea,
+    );
+
+    assert.notStrictEqual(steps, null, `never went quiet: the overlay was reported ${overlayReports.length} times`);
+    assert.ok(overlayReports.length <= 4, `the overlay is moved a bounded number of times, got ${overlayReports.length}`);
+    assert.strictEqual(recordFor(state, 21).maximized, true, 'the new page is maximized');
+    assert.strictEqual(recordFor(state, 21).maximizeAllMark, 'marked');
+    assert.deepStrictEqual(os.get(page), workArea, 'and the window system put it at the work area');
+    assert.deepStrictEqual(os.get(overlay), workArea, 'the overlay ends framed on the maximized page');
+    assert.deepStrictEqual(recordFor(state, 20).overlayFrame, workArea);
   });
 });

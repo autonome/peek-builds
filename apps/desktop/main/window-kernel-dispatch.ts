@@ -356,8 +356,10 @@ export function kernelSetFullscreen(id: WindowId, desired: boolean): void {
   });
 }
 
+// The backend's feed of native resize/move reports: each one says where the
+// window already is, so it is marked `reported` and never echoed back as a move.
 export function kernelBoundsChanged(id: WindowId, bounds: Rectangle, overlayFrame?: Rectangle): void {
-  kernelDispatch({ type: 'BoundsChanged', id, bounds, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
+  kernelDispatch({ type: 'BoundsChanged', id, bounds, reported: true, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
 }
 
 export function kernelDisplayChanged(
