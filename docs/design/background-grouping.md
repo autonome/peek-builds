@@ -168,7 +168,8 @@ correct but adds nothing a person couldn't do with a domain filter. The groups t
 actually help, tasks spanning several sites, come only from session co-occurrence. At the
 cutoff where they appear, that same signal also produces groups of unrelated pages.
 
-**Before rerunning:**
+**Before rerunning** (all four are now in `tools/background-grouper/`, which is the committed
+offline tool; the rerun on a fresh production copy has not been done):
 
 1. Drop sign-in, OAuth and redirect pages before grouping. They formed groups of their own.
 2. Treat a title that is just a URL as having no title.
