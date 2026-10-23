@@ -787,6 +787,12 @@ export function resolveCapabilities(tileId, requested, isBuiltin) {
     }
   }
 
+  // Diagnostics: boolean grant for the read-only app metrics and pubsub
+  // stats calls (the HUD).
+  if (requested.diagnostics) {
+    granted.diagnostics = true;
+  }
+
   // IZUI: boolean grant. Passes through 1:1.
   if (requested.izui) {
     granted.izui = true;

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
 import { isCardMode } from '../../features/hud/hud-card.js';
-import { validateTileManifest } from '../../../../packages/capabilities/index.js';
+import { validateTileManifest, resolveCapabilities } from '../../../../packages/capabilities/index.js';
 
 describe('isCardMode', () => {
   it('is false when the page fills its own window', () => {
@@ -35,5 +35,9 @@ describe('diagnostics capability in the manifest schema', () => {
   });
   it('rejects a non-boolean', () => {
     assert.strictEqual(diagErrors(base('yes')).length, 1);
+  });
+  it('is carried into the resolved grant', () => {
+    assert.strictEqual(resolveCapabilities('hud', { diagnostics: true }, true).capabilities.diagnostics, true);
+    assert.strictEqual(resolveCapabilities('x', {}, true).capabilities.diagnostics, undefined);
   });
 });
