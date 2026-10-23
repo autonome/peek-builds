@@ -408,6 +408,109 @@
         { "name": "idx_item_events_item_time", "columns": ["itemId", "occurredAt"], "order": "DESC", "sync": true },
         { "name": "idx_item_events_occurred", "columns": ["occurredAt"], "order": "DESC", "sync": true }
       ]
+    },
+
+    "item_visits": {
+      "description": "One row per page visit: when it happened, how long the page was in front of the user, where it came from, and the visit before and after it. A visit changes after it is written (duration, prevId, nextId), so the server upserts on id",
+      "columns": {
+        "id": {
+          "type": "text",
+          "primary_key": true,
+          "not_null": true,
+          "sync": true,
+          "description": "Unique identifier (UUID)"
+        },
+        "itemId": {
+          "type": "text",
+          "not_null": true,
+          "sync": true,
+          "description": "Reference to the visited item"
+        },
+        "timestamp": {
+          "type": "integer",
+          "not_null": true,
+          "sync": true,
+          "description": "When the visit began (Unix ms)"
+        },
+        "duration": {
+          "type": "integer",
+          "default": "0",
+          "sync": true,
+          "description": "Milliseconds the page was in front of the user; written once, when the visit ends"
+        },
+        "source": {
+          "type": "text",
+          "default": "'direct'",
+          "sync": true,
+          "description": "Where the visit came from"
+        },
+        "sourceId": {
+          "type": "text",
+          "default": "''",
+          "sync": true,
+          "description": "Identifier of the source"
+        },
+        "windowType": {
+          "type": "text",
+          "default": "'main'",
+          "sync": true,
+          "description": "Kind of window the page was shown in"
+        },
+        "metadata": {
+          "type": "text",
+          "default": "'{}'",
+          "sync": true,
+          "description": "JSON metadata object"
+        },
+        "scrollDepth": {
+          "type": "integer",
+          "default": "0",
+          "sync": true,
+          "description": "How far the page was scrolled"
+        },
+        "interacted": {
+          "type": "integer",
+          "default": "0",
+          "sync": true,
+          "description": "1 if the user interacted with the page"
+        },
+        "prevId": {
+          "type": "text",
+          "nullable": true,
+          "sync": true,
+          "description": "The visit before this one"
+        },
+        "nextId": {
+          "type": "text",
+          "nullable": true,
+          "sync": true,
+          "description": "The visit after this one"
+        },
+        "createdAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": true,
+          "description": "Creation timestamp on the server (Unix ms)"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": true,
+          "description": "Server-stamped time of the last save (Unix ms); pulls page by it"
+        },
+        "pushedAt": {
+          "type": "integer",
+          "not_null": true,
+          "default": "0",
+          "sync": false,
+          "description": "Client-local: when this visit was last accepted by the sync server (0 = never pushed, or changed since). Never sent on the wire and never stored server-side"
+        }
+      },
+      "indexes": [
+        { "name": "idx_item_visits_itemId", "columns": ["itemId"], "sync": true },
+        { "name": "idx_item_visits_timestamp", "columns": ["timestamp"], "sync": true },
+        { "name": "idx_item_visits_updatedAt", "columns": ["updatedAt"], "sync": true }
+      ]
     }
   },
 

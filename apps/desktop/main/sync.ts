@@ -50,13 +50,13 @@ import { createAutoSyncScheduler } from './auto-sync.js';
 // status line and a per-run log without touching what syncAll() actually
 // does — every call below is additive logging around the existing stages.
 
-/** The six sync stages plus the overall run, matching syncAll()'s own
- * ordering (tag pull, item pull, event pull, tag push, item push, event
- * push). */
+/** The sync stages plus the overall run, matching syncAll()'s own ordering
+ * (tag pull, item pull, event pull, visit pull, tag push, item push, event
+ * push, visit push). */
 export type SyncStage =
   | 'run'
-  | 'pull-tags' | 'pull-items' | 'pull-events'
-  | 'push-tags' | 'push-items' | 'push-events';
+  | 'pull-tags' | 'pull-items' | 'pull-events' | 'pull-visits'
+  | 'push-tags' | 'push-items' | 'push-events' | 'push-visits';
 
 export type SyncProgressPhase = 'start' | 'progress' | 'finish' | 'error' | 'dropped';
 
@@ -395,6 +395,7 @@ const BATCH_PUSH_TIMEOUT_MS = 60000;
 const ITEMS_PAGE_SIZE = 500;
 const EVENTS_PAGE_SIZE = 1000;
 const TAGS_PAGE_SIZE = 1000;
+const VISITS_PAGE_SIZE = 1000;
 
 // A stop against a server that answers every page with the same cursor. Nothing
 // observed does this, but a pull loop that trusts a remote cursor unconditionally
@@ -419,7 +420,7 @@ async function* pullPages<T>(
   serverUrl: string,
   apiKey: string,
   basePath: string,
-  key: 'items' | 'events' | 'tags',
+  key: 'items' | 'events' | 'tags' | 'visits',
   pageSize: number
 ): AsyncGenerator<T[]> {
   let cursor: string | undefined;
@@ -1646,6 +1647,371 @@ function mergeServerEvent(serverEvent: ServerEvent): boolean {
   return result.changes > 0;
 }
 
+// ==================== Visit Sync (item_visits: page visit history) ====================
+//
+// Modelled on the event sync above, with one difference: a visit changes after
+// it is written. setItemVisitDuration() fills `duration` when the visit ends, and
+// linking the next visit sets `prevId`/`nextId` on the previous one. So the local
+// `pushedAt` column (item_visits.pushedAt, migrateVisitPushedAtColumn()) means
+// "the server holds this exact row": every UPDATE of item_visits in datastore.ts
+// sets it back to 0, which makes the changed visit eligible for push again.
+//
+// The server upserts on the visit's own id (db.js saveVisits()), stamping its own
+// `updatedAt` on every save, and the pull pages by that `updatedAt` so a visit
+// changed on one device reaches the others. `itemId` on the wire is the SERVER's
+// item id, translated through items.syncId in both directions, so visit push/pull
+// run after item push/pull in syncAll().
+//
+// Pulling never touches items.visitCount / lastVisitAt: those totals already sync
+// on the item itself. A pulled row is written with pushedAt = now so it is not
+// pushed straight back, and a pulled row never overwrites a local visit that has
+// an unpushed change (pushedAt = 0): the push carries that change instead.
+//
+// A server that predates the visit routes answers 404; both stages treat that as
+// "nothing to do" and never fail syncAll() for it.
+
+const MAX_VISITS_PER_PUSH = 500;
+
+/** A visit as it travels on the wire. */
+interface ServerVisit {
+  id: string;
+  itemId: string;
+  timestamp: number;
+  duration?: number | null;
+  source?: string | null;
+  sourceId?: string | null;
+  windowType?: string | null;
+  metadata?: Record<string, unknown> | string | null;
+  scrollDepth?: number | null;
+  interacted?: number | null;
+  prevId?: string | null;
+  nextId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+interface VisitPushResult {
+  pushed: number;
+  failed: number;
+}
+
+interface VisitPullResult {
+  pulled: number;
+  // Rows skipped because their item is not present locally.
+  skipped: number;
+}
+
+/** True when the server answered 404, i.e. it predates the visit routes. */
+function isRouteMissing(error: unknown): boolean {
+  return error instanceof Error && /^Server error 404\b/.test(error.message);
+}
+
+/**
+ * Stamp `pushedAt` on the visits the server has just accepted. Called once per
+ * delivered chunk so a later chunk failing cannot un-record an earlier one.
+ *
+ * Only a row still holding the exact values that were sent is stamped: a visit
+ * that changed while its chunk was in flight (and was reset to 0 by the change)
+ * must stay eligible, not be marked delivered with its old values.
+ */
+function markVisitsPushed(
+  sent: Array<{ id: string; duration: number | null; prevId: string | null; nextId: string | null }>
+): void {
+  if (sent.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE item_visits SET pushedAt = ?
+    WHERE id = ? AND duration IS ? AND prevId IS ? AND nextId IS ?
+  `);
+  const now = Date.now();
+  for (const row of sent) {
+    stmt.run(now, row.id, row.duration, row.prevId, row.nextId);
+  }
+}
+
+/**
+ * Push local item_visits whose item has a syncId and whose current state has not
+ * been delivered (`pushedAt = 0`). Re-sending an unchanged visit is harmless (the
+ * server upserts on id), so erring toward sending more is safe.
+ */
+export async function pushVisitsToServer(
+  serverUrl: string,
+  apiKey: string
+): Promise<VisitPushResult> {
+  const db = getDb();
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const rows = db.prepare(`
+    SELECT v.id as id, v.timestamp as timestamp, v.duration as duration, v.source as source,
+      v.sourceId as sourceId, v.windowType as windowType, v.metadata as metadata,
+      v.scrollDepth as scrollDepth, v.interacted as interacted, v.prevId as prevId,
+      v.nextId as nextId, i.syncId as itemSyncId
+    FROM item_visits v
+    JOIN items i ON v.itemId = i.id
+    WHERE i.syncId != '' AND v.pushedAt = 0
+    ORDER BY v.timestamp ASC, v.id ASC
+  `).all() as Array<{
+    id: string;
+    timestamp: number;
+    duration: number | null;
+    source: string | null;
+    sourceId: string | null;
+    windowType: string | null;
+    metadata: string | null;
+    scrollDepth: number | null;
+    interacted: number | null;
+    prevId: string | null;
+    nextId: string | null;
+    itemSyncId: string;
+  }>;
+
+  DEBUG && console.log(`[sync] Found ${rows.length} visits to push`);
+
+  // Drop a malformed row before it can get the whole request 400'd by the server's
+  // validation and poison every later run. It is never stamped, so it is back in
+  // the next batch until whatever made it malformed is fixed.
+  const validRows: typeof rows = [];
+  const droppedByReason = new Map<string, string[]>();
+  let droppedCount = 0;
+  for (const row of rows) {
+    const badFields: string[] = [];
+    if (!row.id) badFields.push('missing id');
+    if (!row.itemSyncId) badFields.push('missing itemId');
+    if (typeof row.timestamp !== 'number' || !Number.isFinite(row.timestamp)) badFields.push('non-numeric timestamp');
+    if (badFields.length > 0) {
+      droppedCount++;
+      const reason = badFields.join(', ');
+      const id = row.id || '(no id)';
+      const ids = droppedByReason.get(reason);
+      if (ids) {
+        ids.push(id);
+      } else {
+        droppedByReason.set(reason, [id]);
+      }
+    } else {
+      validRows.push(row);
+    }
+  }
+  if (droppedCount > 0) {
+    console.log(`[sync] Dropped ${droppedCount} malformed visit(s) from push`);
+    for (const line of groupFailuresByReason(droppedByReason, 'visit')) {
+      logSyncProgress('push-visits', 'dropped', `Dropped malformed visit(s) — ${line}`);
+    }
+  }
+
+  let pushed = 0;
+  let failed = 0;
+  const chunkFailuresByReason = new Map<string, string[]>();
+  const chunkCount = Math.ceil(validRows.length / MAX_VISITS_PER_PUSH);
+  if (validRows.length > 0) {
+    logSyncProgress(
+      'push-visits',
+      'progress',
+      `Pushing ${validRows.length} visit(s) in ${chunkCount} batch(es) of up to ${MAX_VISITS_PER_PUSH}`
+    );
+  }
+  let lastProgressAt = Date.now();
+  for (let i = 0; i < validRows.length; i += MAX_VISITS_PER_PUSH) {
+    const batch = validRows.slice(i, i + MAX_VISITS_PER_PUSH);
+    const visits = batch.map((row) => {
+      let metadata: Record<string, unknown> | undefined;
+      if (row.metadata && row.metadata !== '{}') {
+        try {
+          metadata = JSON.parse(row.metadata);
+        } catch {
+          // Invalid JSON, omit metadata
+        }
+      }
+      return {
+        id: row.id,
+        itemId: row.itemSyncId,
+        timestamp: row.timestamp,
+        duration: row.duration ?? 0,
+        source: row.source ?? 'direct',
+        sourceId: row.sourceId ?? '',
+        windowType: row.windowType ?? 'main',
+        scrollDepth: row.scrollDepth ?? 0,
+        interacted: row.interacted ?? 0,
+        prevId: row.prevId,
+        nextId: row.nextId,
+        ...(metadata ? { metadata } : {}),
+      };
+    });
+
+    const path = `/visits?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+    try {
+      const response = await serverFetch<{ received: number; saved: number }>(
+        serverUrl,
+        apiKey,
+        path,
+        { method: 'POST', body: { visits } }
+      );
+      pushed += response.saved;
+      markVisitsPushed(batch);
+    } catch (error) {
+      if (isRouteMissing(error)) {
+        // The server predates the visit routes: nothing will ever be accepted
+        // this run, so stop without counting a failure.
+        console.log('[sync] Server has no /visits route (404); skipping visit push');
+        logSyncProgress('push-visits', 'progress', 'Server does not support visit sync (404); skipped');
+        return { pushed: 0, failed: 0 };
+      }
+      const message = (error as Error).message;
+      DEBUG && console.log(
+        `[sync] Visit push chunk failed (${batch.length} visits), will retry next run:`,
+        message
+      );
+      failed += batch.length;
+      const ids = chunkFailuresByReason.get(message);
+      const batchIds = batch.map((row) => row.id);
+      if (ids) {
+        ids.push(...batchIds);
+      } else {
+        chunkFailuresByReason.set(message, batchIds);
+      }
+    }
+
+    const doneRows = Math.min(i + MAX_VISITS_PER_PUSH, validRows.length);
+    const now = Date.now();
+    if (doneRows === validRows.length || now - lastProgressAt >= ITEM_PUSH_PROGRESS_INTERVAL_MS) {
+      logSyncProgress('push-visits', 'progress', `Pushing visits — ${doneRows} / ${validRows.length}`);
+      lastProgressAt = now;
+    }
+  }
+
+  if (chunkFailuresByReason.size > 0) {
+    const { permanent, transient } = partitionByPermanence(chunkFailuresByReason);
+    for (const line of groupFailuresByReason(permanent, 'visit')) {
+      logSyncProgress('push-visits', 'error', `Visit chunk(s) rejected, will not succeed until the visits change — ${line}`);
+    }
+    for (const line of groupFailuresByReason(transient, 'visit')) {
+      logSyncProgress('push-visits', 'error', `Visit chunk(s) rejected, will retry next run — ${line}`);
+    }
+  }
+
+  DEBUG && console.log(`[sync] Visit push complete: ${pushed} saved, ${failed} failed`);
+
+  return { pushed, failed };
+}
+
+/**
+ * Pull visits the server has saved or changed since `since`, merging each into
+ * the local item_visits table. See the section comment above.
+ */
+export async function pullVisitsFromServer(
+  serverUrl: string,
+  apiKey: string,
+  since?: number
+): Promise<VisitPullResult> {
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const timestamp = since && since > 0 ? since : 0;
+  let path = `/visits/since/${timestamp}`;
+  path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+
+  let pulled = 0;
+  let skipped = 0;
+
+  try {
+    for await (const serverVisits of pullPages<ServerVisit>(serverUrl, apiKey, path, 'visits', VISITS_PAGE_SIZE)) {
+      for (const serverVisit of serverVisits) {
+        const result = mergeServerVisit(serverVisit);
+        if (result === 'merged') pulled++;
+        else if (result === 'no-item') skipped++;
+      }
+    }
+  } catch (error) {
+    if (isRouteMissing(error)) {
+      console.log('[sync] Server has no /visits/since route (404); skipping visit pull');
+      logSyncProgress('pull-visits', 'progress', 'Server does not support visit sync (404); skipped');
+      return { pulled: 0, skipped: 0 };
+    }
+    throw error;
+  }
+
+  if (skipped > 0) {
+    logSyncProgress('pull-visits', 'progress', `Skipped ${skipped} visit(s) whose item is not present locally`);
+  }
+  DEBUG && console.log(`[sync] Visit pull complete: ${pulled} pulled, ${skipped} skipped`);
+
+  return { pulled, skipped };
+}
+
+/**
+ * Merge one server visit into the local item_visits table, upserting by id.
+ * 'no-item' means its item is not present locally (counted by the caller);
+ * 'kept-local' means a local change not yet pushed was left alone.
+ */
+function mergeServerVisit(serverVisit: ServerVisit): 'merged' | 'no-item' | 'kept-local' | 'invalid' {
+  const db = getDb();
+
+  if (!serverVisit.id || !serverVisit.itemId || !Number.isFinite(serverVisit.timestamp)) {
+    return 'invalid';
+  }
+
+  const localItem = db.prepare('SELECT id FROM items WHERE syncId = ?').get(serverVisit.itemId) as
+    | { id: string }
+    | undefined;
+  if (!localItem) {
+    DEBUG && console.log(`[sync] Skipping visit ${serverVisit.id}: item ${serverVisit.itemId} not found locally`);
+    return 'no-item';
+  }
+
+  const existing = db.prepare('SELECT pushedAt FROM item_visits WHERE id = ?').get(serverVisit.id) as
+    | { pushedAt: number }
+    | undefined;
+  if (existing && existing.pushedAt === 0) {
+    return 'kept-local';
+  }
+
+  const metadataJson = serverVisit.metadata
+    ? (typeof serverVisit.metadata === 'string' ? serverVisit.metadata : JSON.stringify(serverVisit.metadata))
+    : '{}';
+  db.prepare(`
+    INSERT INTO item_visits (id, itemId, timestamp, duration, source, sourceId, windowType, metadata, scrollDepth, interacted, prevId, nextId, pushedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      itemId = excluded.itemId,
+      timestamp = excluded.timestamp,
+      duration = excluded.duration,
+      source = excluded.source,
+      sourceId = excluded.sourceId,
+      windowType = excluded.windowType,
+      metadata = excluded.metadata,
+      scrollDepth = excluded.scrollDepth,
+      interacted = excluded.interacted,
+      prevId = excluded.prevId,
+      nextId = excluded.nextId,
+      pushedAt = excluded.pushedAt
+  `).run(
+    serverVisit.id,
+    localItem.id,
+    serverVisit.timestamp,
+    serverVisit.duration ?? 0,
+    serverVisit.source ?? 'direct',
+    serverVisit.sourceId ?? '',
+    serverVisit.windowType ?? 'main',
+    metadataJson,
+    serverVisit.scrollDepth ?? 0,
+    serverVisit.interacted ?? 0,
+    serverVisit.prevId ?? null,
+    serverVisit.nextId ?? null,
+    Date.now()
+  );
+
+  return 'merged';
+}
+
 // ==================== Tag Sync (tag metadata: slug/color/parentId/description/metadata) ====================
 //
 // Tag ROWS themselves are not what this section syncs — a tag row is created
@@ -2097,6 +2463,8 @@ function resetPerItemSyncState(profileId: string, clearSyncId: boolean): void {
   // blocked-scan interaction with a syncId wipe; per-row stamps have no such
   // coupling, since clearing syncId doesn't change what was already delivered.)
   db.prepare(`UPDATE item_events SET pushedAt = 0`).run();
+  // Visits likewise: the visit-push query only sends rows with pushedAt = 0.
+  db.prepare(`UPDATE item_visits SET pushedAt = 0`).run();
 
   // Tags have no "blocked" window — a tag isn't gated on any other entity's sync state
   // the way an event is gated on its parent item's syncId — but the same "start over"
@@ -2496,6 +2864,14 @@ async function runSyncAll(serverUrl: string, apiKey: string): Promise<SyncResult
     pulled += eventPullResult.pulled;
     logSyncProgress('pull-events', 'finish', `Pulled ${eventPullResult.pulled} event(s)`);
 
+    // Visit pull runs after the event pull for the same reason: each visit is
+    // addressed to a local item through its syncId. A server without the visit
+    // routes (404) yields zero counts inside pullVisitsFromServer().
+    logSyncProgress('pull-visits', 'start', 'Pulling visits…');
+    const visitPullResult = await pullVisitsFromServer(serverUrl, apiKey, config.lastSyncTime);
+    pulled += visitPullResult.pulled;
+    logSyncProgress('pull-visits', 'finish', `Pulled ${visitPullResult.pulled} visit(s), ${visitPullResult.skipped} skipped`);
+
     // Tag push runs BEFORE item push for the same reason pull runs it first:
     // pushSingleItem() sends tag NAMES only, so ordering doesn't create a
     // dependency the way events depend on their parent item's syncId — this
@@ -2545,6 +2921,23 @@ async function runSyncAll(serverUrl: string, apiKey: string): Promise<SyncResult
       logSyncProgress('push-events', 'error', `Event push stage failed: ${eventPushError}`);
     }
 
+    // Visit push follows the event push, isolated the same way: it is the last
+    // stage, so a throw must not skip the watermark updates below.
+    let visitPushError: string | null = null;
+    logSyncProgress('push-visits', 'start', 'Pushing visits…');
+    try {
+      const visitPushResult = await pushVisitsToServer(serverUrl, apiKey);
+      pushed += visitPushResult.pushed;
+      if (visitPushResult.failed > 0) {
+        visitPushError = `${visitPushResult.failed} visit(s) failed to push`;
+      }
+      logSyncProgress('push-visits', 'finish', `Pushed ${visitPushResult.pushed} visit(s), ${visitPushResult.failed} failed`);
+    } catch (error) {
+      visitPushError = error instanceof Error ? error.message : String(error);
+      DEBUG && console.error('[sync] Visit push stage failed, rest of sync still recorded:', error);
+      logSyncProgress('push-visits', 'error', `Visit push stage failed: ${visitPushError}`);
+    }
+
     // Update last sync time AFTER push completes — using Date.now() ensures
     // the high-water mark is after any server-side timestamps set during push,
     // preventing the next pull from echoing back items we just pushed. Runs
@@ -2557,8 +2950,8 @@ async function runSyncAll(serverUrl: string, apiKey: string): Promise<SyncResult
 
     DEBUG && console.log(`[sync] Sync complete: ${pulled} pulled, ${pushed} pushed, ${conflicts} conflicts`);
 
-    if (eventPushError) {
-      lastSyncError = eventPushError;
+    if (eventPushError || visitPushError) {
+      lastSyncError = eventPushError || visitPushError;
       lastSyncErrorAt = Date.now();
     } else {
       // Clear any stale error from a previous failed run.

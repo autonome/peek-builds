@@ -1007,6 +1007,62 @@ app.get("/events/since/:timestamp", (c) => {
   return c.json({ events, since: rawTimestamp, nextCursor: nextCursorFor(events, page.options, "createdAt") });
 });
 
+// === Visit sync endpoints ===
+//
+// item_visits change after they are written (duration, prevId, nextId), so push is
+// an upsert on the visit's own id (db.js saveVisits()) and the server stamps
+// updatedAt on every save; pull pages by updatedAt so a changed visit reaches other
+// devices. `itemId` in both directions is the SERVER's item id, as for events.
+
+app.post("/visits", async (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const visits = Array.isArray(body.visits) ? body.visits : [];
+
+  if (visits.length === 0) {
+    return c.json({ error: "visits array is required" }, 400);
+  }
+  if (visits.length > MAX_EVENTS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_EVENTS_PER_PUSH} visits per push` }, 400);
+  }
+  const bad = visits.find(
+    (v) => !v || !v.id || !v.itemId || typeof v.timestamp !== "number" || !Number.isFinite(v.timestamp)
+  );
+  if (bad !== undefined) {
+    return c.json({ error: "each visit requires id, itemId, and a finite timestamp" }, 400);
+  }
+
+  const { saved, total } = db.saveVisits(userId, profileId, visits);
+  return c.json({ received: total, saved });
+});
+
+// Get visits saved or changed since a timestamp (for incremental sync)
+app.get("/visits/since/:timestamp", (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const rawTimestamp = c.req.param("timestamp");
+
+  let unixMs;
+  if (/^\d+$/.test(rawTimestamp)) {
+    unixMs = parseInt(rawTimestamp, 10);
+  } else {
+    const date = new Date(rawTimestamp);
+    if (isNaN(date.getTime())) {
+      return c.json({ error: "Invalid timestamp format. Use ISO 8601 or Unix ms." }, 400);
+    }
+    unixMs = date.getTime();
+  }
+
+  const page = resolvePageOptions(c);
+  if (page.error) {
+    return c.json({ error: page.error }, 400);
+  }
+
+  const visits = db.getVisitsSince(userId, profileId, unixMs, page.options);
+  return c.json({ visits, since: rawTimestamp, nextCursor: nextCursorFor(visits, page.options, "updatedAt") });
+});
+
 // === Tag metadata sync endpoints ===
 //
 // Tag ROWS themselves are still created implicitly by item pushes (saveItem() ->

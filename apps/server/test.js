@@ -2895,6 +2895,139 @@ describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () =>
   });
 });
 
+describe("Visit Sync Routes (POST /visits, GET /visits/since/:timestamp)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "visitsyncuser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    users.createUser(TEST_USER);
+    apiKey = users.createDevice(TEST_USER, "test-device").apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  function pushVisits(visits) {
+    return app.request("/visits", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ visits }),
+    });
+  }
+
+  async function visitsSince(timestamp, query = "") {
+    const res = await app.request(`/visits/since/${timestamp}${query}`, { headers: authHeaders() });
+    return res.json();
+  }
+
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("saves pushed visits and returns every column on a full pull", async () => {
+    const res = await pushVisits([
+      { id: "v1", itemId: "item-a", timestamp: 1000, duration: 5, source: "link", sourceId: "src", windowType: "main", metadata: { k: 1 }, scrollDepth: 40, interacted: 1, prevId: null, nextId: "v2" },
+      { id: "v2", itemId: "item-a", timestamp: 2000, prevId: "v1" },
+    ]);
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.received, 2);
+    assert.strictEqual(json.saved, 2);
+
+    const { visits } = await visitsSince(0);
+    assert.strictEqual(visits.length, 2);
+    const v1 = visits.find((v) => v.id === "v1");
+    assert.strictEqual(v1.itemId, "item-a");
+    assert.strictEqual(v1.timestamp, 1000);
+    assert.strictEqual(v1.duration, 5);
+    assert.strictEqual(v1.source, "link");
+    assert.strictEqual(v1.sourceId, "src");
+    assert.deepStrictEqual(v1.metadata, { k: 1 });
+    assert.strictEqual(v1.scrollDepth, 40);
+    assert.strictEqual(v1.interacted, 1);
+    assert.strictEqual(v1.nextId, "v2");
+    assert.ok(v1.updatedAt > 0);
+    const v2 = visits.find((v) => v.id === "v2");
+    assert.strictEqual(v2.source, "direct", "defaults apply to omitted columns");
+    assert.strictEqual(v2.prevId, "v1");
+  });
+
+  it("re-posting a changed visit updates it in place and advances updatedAt", async () => {
+    await pushVisits([{ id: "v1", itemId: "item-a", timestamp: 1000, duration: 0 }]);
+    const first = (await visitsSince(0)).visits[0];
+
+    await wait(5);
+    await pushVisits([{ id: "v1", itemId: "item-a", timestamp: 1000, duration: 9000, nextId: "v2" }]);
+
+    const { visits } = await visitsSince(0);
+    assert.strictEqual(visits.length, 1, "an upsert keeps one row per id");
+    assert.strictEqual(visits[0].duration, 9000);
+    assert.strictEqual(visits[0].nextId, "v2");
+    assert.ok(visits[0].updatedAt > first.updatedAt, "updatedAt must advance");
+    assert.strictEqual(visits[0].createdAt, first.createdAt, "createdAt keeps the first save");
+
+    const changed = await visitsSince(first.updatedAt);
+    assert.deepStrictEqual(changed.visits.map((v) => v.id), ["v1"], "the changed row is what an incremental pull returns");
+  });
+
+  it("an unchanged visit is not returned past its own updatedAt", async () => {
+    await pushVisits([{ id: "v1", itemId: "item-a", timestamp: 1000 }]);
+    const { visits } = await visitsSince(0);
+    const after = await visitsSince(visits[0].updatedAt);
+    assert.strictEqual(after.visits.length, 0);
+  });
+
+  it("pages with nextCursor and returns every row exactly once", async () => {
+    const rows = [];
+    for (let i = 0; i < 7; i++) rows.push({ id: `pv-${i}`, itemId: "item-a", timestamp: 1000 + i });
+    await pushVisits(rows);
+
+    const seen = [];
+    let cursor;
+    let pages = 0;
+    do {
+      const query = `?limit=3${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const body = await visitsSince(0, query);
+      seen.push(...body.visits.map((v) => v.id));
+      cursor = body.nextCursor;
+      pages++;
+    } while (cursor && pages < 10);
+
+    assert.strictEqual(pages > 1, true, "more than one page was needed");
+    assert.deepStrictEqual([...seen].sort(), rows.map((r) => r.id).sort());
+    assert.strictEqual(new Set(seen).size, 7, "no row repeats across pages");
+  });
+
+  it("rejects an empty visits array", async () => {
+    assert.strictEqual((await pushVisits([])).status, 400);
+  });
+
+  it("rejects a malformed row with 400", async () => {
+    assert.strictEqual((await pushVisits([{ id: "x" }])).status, 400);
+    assert.strictEqual((await pushVisits([{ id: "x", itemId: "i" }])).status, 400, "no timestamp");
+    assert.strictEqual((await pushVisits([{ id: "x", itemId: "i", timestamp: "1000" }])).status, 400, "non-numeric timestamp");
+    assert.strictEqual((await pushVisits([{ itemId: "i", timestamp: 1 }])).status, 400, "no id");
+    assert.strictEqual((await pushVisits([{ id: "x", timestamp: 1 }])).status, 400, "no itemId");
+    assert.strictEqual((await visitsSince(0)).visits.length, 0, "nothing from a rejected push is stored");
+  });
+
+  it("rejects more than the per-push cap", async () => {
+    const rows = [];
+    for (let i = 0; i < 1001; i++) rows.push({ id: `cap-${i}`, itemId: "item-a", timestamp: i });
+    assert.strictEqual((await pushVisits(rows)).status, 400);
+  });
+});
+
 describe("Tag Sync Routes (POST /tags, GET /tags/since/:timestamp)", () => {
   let app;
   let users;

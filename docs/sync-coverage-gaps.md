@@ -77,6 +77,39 @@ for `item_events` in any backend's schema.
 **Settled by:** a tombstone column for `item_events`, plus push/pull handling for
 it — unscheduled work, and the one piece of §2 still open.
 
+## 2a. `item_visits` now syncs (desktop and server); the phone's does not
+
+The desktop `item_visits` table (one row per page visit: `timestamp`, `duration`,
+`source`, `sourceId`, `windowType`, `metadata`, `scrollDepth`, `interacted`, and the
+`prevId`/`nextId` links) reaches the server and comes back. `sync.ts
+pushVisitsToServer()` / `pullVisitsFromServer()` / `mergeServerVisit()` carry it
+through `POST /visits` and `GET /visits/since/:timestamp`; `apps/server/db.js
+saveVisits()` / `getVisitsSince()` store it. Before this, only the per-page totals on
+`items` (`visitCount`, `lastVisitAt`) synced.
+
+Unlike an event, a visit changes after it is written: `setItemVisitDuration()` fills
+`duration` when the visit ends, and recording the next visit sets `nextId` on the
+previous one. So `item_visits.pushedAt` (local only, `"sync": false`, added by
+`datastore.ts migrateVisitPushedAtColumn()`) means "the server holds this exact row",
+and every `UPDATE item_visits` sets it back to 0. The server upserts on the visit id
+and stamps its own `updatedAt`; pull pages by `updatedAt`, not `createdAt`, so a
+changed visit reaches the other devices. A pulled visit is written with `pushedAt`
+set and never changes `items.visitCount` or `lastVisitAt`.
+
+Still open:
+
+- **The phone's `item_visits` table does not sync.** The mobile client has no visit
+  push or pull.
+- **Visit deletion does not propagate**, for the same reason as events: no tombstone.
+
+## Desktop tables that still do not sync
+
+`settings`, `feature_settings`, `themes`, `scripts_data`, `feeds`, `item_groups`,
+`item_group_members`, `blobs`, `features_history`, `content`, `rules`.
+
+Machine-local by design, never meant to sync: `manifest_cache`, `lazy_wake_shortcuts`,
+`lazy_wake_declared`, `tile_schedule_runs`, `migrations`.
+
 ## 3. Tag metadata now syncs; tag identity and deletion are the remaining gaps
 
 `slug`, `color`, `parentId`, `description`, and `metadata` on `tags` are `"sync":

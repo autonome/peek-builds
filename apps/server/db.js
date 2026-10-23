@@ -603,6 +603,31 @@ function initializeSchema(adapter) {
     CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
   `);
 
+  // item_visits: one row per page visit. Unlike an event, a visit changes after it
+  // is written (duration when it ends, prevId/nextId when its neighbours arrive),
+  // so saves are upserts and updatedAt is stamped by the server on every save.
+  adapter.exec(`
+    CREATE TABLE IF NOT EXISTS item_visits (
+      id TEXT PRIMARY KEY,
+      itemId TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      duration INTEGER DEFAULT 0,
+      source TEXT DEFAULT 'direct',
+      sourceId TEXT DEFAULT '',
+      windowType TEXT DEFAULT 'main',
+      metadata TEXT DEFAULT '{}',
+      scrollDepth INTEGER DEFAULT 0,
+      interacted INTEGER DEFAULT 0,
+      prevId TEXT DEFAULT NULL,
+      nextId TEXT DEFAULT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_item_visits_itemId ON item_visits(itemId);
+    CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_item_visits_updatedAt ON item_visits(updatedAt);
+  `);
+
   adapter.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -1397,6 +1422,97 @@ function getEventsSince(userId, profileId, timestamp, options = {}) {
 }
 
 /**
+ * Bulk-save visits pushed from a client (sync push).
+ *
+ * A visit changes after it is written (duration, prevId, nextId), so a push is an
+ * upsert on the visit's own id: every column is set from the pushed row and
+ * updatedAt is stamped to now, which is what lets other devices find the change
+ * (getVisitsSince() pages by updatedAt). createdAt keeps the time of the first
+ * save. Re-sending an unchanged visit rewrites the same values and is harmless.
+ * `itemId` must already be the SERVER's item id, as for events.
+ *
+ * @param {string} userId
+ * @param {string} profileId
+ * @param {Array<{id: string, itemId: string, timestamp: number, duration?: number, source?: string, sourceId?: string, windowType?: string, metadata?: object|string|null, scrollDepth?: number, interacted?: number, prevId?: string|null, nextId?: string|null}>} visits
+ * @returns {{saved: number, total: number}}
+ */
+function saveVisits(userId, profileId, visits) {
+  const conn = getConnection(userId, profileId);
+  let saved = 0;
+  const now = Date.now();
+  conn.transaction(() => {
+    for (const v of visits) {
+      const metadataJson = v.metadata
+        ? (typeof v.metadata === "string" ? v.metadata : JSON.stringify(v.metadata))
+        : "{}";
+      const result = conn.run(
+        `INSERT INTO item_visits (id, itemId, timestamp, duration, source, sourceId, windowType, metadata, scrollDepth, interacted, prevId, nextId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           itemId = excluded.itemId,
+           timestamp = excluded.timestamp,
+           duration = excluded.duration,
+           source = excluded.source,
+           sourceId = excluded.sourceId,
+           windowType = excluded.windowType,
+           metadata = excluded.metadata,
+           scrollDepth = excluded.scrollDepth,
+           interacted = excluded.interacted,
+           prevId = excluded.prevId,
+           nextId = excluded.nextId,
+           updatedAt = MAX(excluded.updatedAt, item_visits.updatedAt + 1)`,
+        [
+          v.id, v.itemId, v.timestamp,
+          v.duration ?? 0, v.source ?? "direct", v.sourceId ?? "", v.windowType ?? "main",
+          metadataJson, v.scrollDepth ?? 0, v.interacted ?? 0,
+          v.prevId ?? null, v.nextId ?? null, now, now,
+        ]
+      );
+      if (result.changes > 0) saved++;
+    }
+  });
+  return { saved, total: visits.length };
+}
+
+/**
+ * Visits saved or changed since a given timestamp (for incremental sync pull).
+ * Ordered by updatedAt, not createdAt, so a visit that changed after its first
+ * push reaches other devices. `itemId` on every row is the SERVER's item id.
+ */
+function getVisitsSince(userId, profileId, timestamp, options = {}) {
+  const conn = getConnection(userId, profileId);
+  let query = `SELECT id, itemId, timestamp, duration, source, sourceId, windowType, metadata,
+       scrollDepth, interacted, prevId, nextId, createdAt, updatedAt
+     FROM item_visits WHERE CAST(updatedAt AS INTEGER) > ?`;
+  const params = [timestamp];
+  if (options.cursor) {
+    query += appendCursorClause("updatedAt", options.cursor, params);
+  }
+  query += " ORDER BY CAST(updatedAt AS INTEGER) ASC, id ASC";
+  if (options.limit) {
+    query += " LIMIT ?";
+    params.push(options.limit);
+  }
+  const rows = conn.all(query, params);
+  return rows.map((row) => ({
+    id: row.id,
+    itemId: row.itemId,
+    timestamp: toTimestamp(row.timestamp),
+    duration: row.duration,
+    source: row.source,
+    sourceId: row.sourceId,
+    windowType: row.windowType,
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    scrollDepth: row.scrollDepth,
+    interacted: row.interacted,
+    prevId: row.prevId,
+    nextId: row.nextId,
+    createdAt: toTimestamp(row.createdAt),
+    updatedAt: toTimestamp(row.updatedAt),
+  }));
+}
+
+/**
  * Bulk-upsert tag metadata pushed from a client (sync push).
  *
  * Tag identity on the wire is the tag's NAME, not a syncId — the same identity
@@ -1629,6 +1745,8 @@ module.exports = {
   saveItems,
   saveEvents,
   getEventsSince,
+  saveVisits,
+  getVisitsSince,
   // Tag metadata sync
   saveTags,
   getTagsSince,

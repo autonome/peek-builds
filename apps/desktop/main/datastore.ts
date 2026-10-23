@@ -244,6 +244,7 @@ const createTableStatements = `
     interacted INTEGER DEFAULT 0,
     prevId TEXT DEFAULT NULL,
     nextId TEXT DEFAULT NULL,
+    pushedAt INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(itemId) REFERENCES items(id)
   );
   CREATE INDEX IF NOT EXISTS idx_item_visits_itemId ON item_visits(itemId);
@@ -510,6 +511,7 @@ export function initDatabase(dbPath: string): Db {
   migrateItemThumbnailColumn();
   migrateItemSyncErrorColumns();
   migrateEventPushedAtColumn();
+  migrateVisitPushedAtColumn();
   migrateTagsUniqueIndex();
   migrateHud();
   dropLegacyAddressTables();
@@ -1560,7 +1562,7 @@ function migrateVisitsToItemVisits(): void {
     const newNextId = visit.nextId ? visitIdMap[visit.nextId] : null;
 
     if (newPrevId || newNextId) {
-      db.prepare('UPDATE item_visits SET prevId = ?, nextId = ? WHERE id = ?').run(
+      db.prepare('UPDATE item_visits SET prevId = ?, nextId = ?, pushedAt = 0 WHERE id = ?').run(
         newPrevId || null,
         newNextId || null,
         newVisitId
@@ -2643,6 +2645,37 @@ export function migrateEventPushedAtColumn(database: Db | null = db): void {
 }
 
 /**
+ * Add item_visits.pushedAt — when the sync server last accepted that visit
+ * (0 = never pushed, or changed since).
+ *
+ * Unlike an event, a visit changes after it is written (duration when it ends,
+ * prevId/nextId when its neighbours arrive), so every UPDATE of item_visits also
+ * sets pushedAt = 0, which makes the changed visit eligible for push again.
+ *
+ * Every existing visit starts at 0, so the first sync after the upgrade sends the
+ * whole history in chunks. The server upserts on id, so re-sending is harmless.
+ *
+ * No datastore version bump: pushedAt is never sent on the wire and the server
+ * has no such column.
+ *
+ * Takes an optional database so a node test can drive it against an in-memory one.
+ */
+export function migrateVisitPushedAtColumn(database: Db | null = db): void {
+  if (!database) return;
+
+  const columns = database.prepare(`PRAGMA table_info(item_visits)`).all() as { name: string }[];
+  const hasPushedAt = columns.some((col) => col.name === 'pushedAt');
+  if (hasPushedAt) return;
+
+  DEBUG && console.log('main', 'Adding pushedAt column to item_visits table');
+  try {
+    database.exec(`ALTER TABLE item_visits ADD COLUMN pushedAt INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    DEBUG && console.log('main', `item_visits pushedAt column migration:`, (error as Error).message);
+  }
+}
+
+/**
  * Ensure tags.name has a UNIQUE index (idx_tags_name_unique) and drop the
  * superseded plain idx_tags_name.
  *
@@ -3340,7 +3373,7 @@ export function trackWindowLoad(uri: string, options: {
  * when the visit ends; a visit whose process died while it was open keeps 0.
  */
 export function setItemVisitDuration(visitId: string, durationMs: number): void {
-  getDb().prepare('UPDATE item_visits SET duration = ? WHERE id = ?').run(Math.max(0, Math.round(durationMs)), visitId);
+  getDb().prepare('UPDATE item_visits SET duration = ?, pushedAt = 0 WHERE id = ?').run(Math.max(0, Math.round(durationMs)), visitId);
 }
 
 // ==================== Content Operations ====================
@@ -4341,7 +4374,7 @@ export function recordItemVisit(itemId: string, options: ItemVisitOptions = {}):
 
   // Update nextId on the previous visit
   if (prevId) {
-    d.prepare('UPDATE item_visits SET nextId = ? WHERE id = ?').run(visitId, prevId);
+    d.prepare('UPDATE item_visits SET nextId = ?, pushedAt = 0 WHERE id = ?').run(visitId, prevId);
   }
 
   // Update item visit stats and recalculate frecency

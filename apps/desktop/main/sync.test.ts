@@ -599,9 +599,11 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       'pull-tags:start', 'pull-tags:finish',
       'pull-items:start', 'pull-items:finish',
       'pull-events:start', 'pull-events:finish',
+      'pull-visits:start', 'pull-visits:finish',
       'push-tags:start', 'push-tags:finish',
       'push-items:start', 'push-items:finish',
       'push-events:start', 'push-events:finish',
+      'push-visits:start', 'push-visits:finish',
       'run:finish',
     ]);
   });
