@@ -1996,12 +1996,15 @@ export function wireHybridContentEvents(
       publish(getSystemAddress(), 'page:reload', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === 'f') {
+      findBarState.markOpen(hostWindowId);
       publish(getSystemAddress(), 'page:find', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === 'g' && input.shift) {
+      findBarState.markOpen(hostWindowId);
       publish(getSystemAddress(), 'page:find-prev', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === 'g') {
+      findBarState.markOpen(hostWindowId);
       publish(getSystemAddress(), 'page:find-next', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
@@ -2976,20 +2979,13 @@ export function installHybridNavbarActionRouting(): void {
   // for that windowId is gone, so wcFor returns null first).
   const lastFindText = new Map<number, string>();
 
-  // Which windows show the find bar (open on page:find and the Cmd+G forms,
-  // closed on page:find-stop) so Escape on the page closes the bar first.
-  for (const topic of ['page:find', 'page:find-next', 'page:find-prev']) {
-    subscribe(getSystemAddress(), topic, (raw) => {
-      const id = (raw as { windowId?: number } | null)?.windowId;
-      if (id != null) findBarState.markOpen(id);
-    });
-  }
-  subscribe(getSystemAddress(), 'page:find-stop', (raw) => {
-    const id = (raw as { windowId?: number } | null)?.windowId;
-    if (id != null) findBarState.markClosed(id);
-  });
-
+  // findBarState is updated inside the handlers below and at the Cmd+F/Cmd+G
+  // publish in wireHybridContentEvents, never by a subscription of its own:
+  // main's pubsub keeps one callback per (source, topic), so a second
+  // subscribe here would silently replace an existing handler for that topic.
   subscribe(getSystemAddress(), 'page:find-exec', (raw) => {
+    const id = (raw as { windowId?: number } | null)?.windowId;
+    if (id != null) findBarState.markOpen(id);
     const r = wcFor(raw);
     if (!r) return;
     const text = (raw as { text?: string }).text;
@@ -3022,6 +3018,8 @@ export function installHybridNavbarActionRouting(): void {
   });
 
   subscribe(getSystemAddress(), 'page:find-stop', (raw) => {
+    const id = (raw as { windowId?: number } | null)?.windowId;
+    if (id != null) findBarState.markClosed(id);
     const r = wcFor(raw);
     if (!r) return;
     lastFindText.delete(r.windowId);
