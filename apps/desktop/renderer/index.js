@@ -5,6 +5,7 @@ import api from './api.js';
 import fc from './features.js';
 import migrations from './migrations/index.js';
 import { log } from './log.js';
+import { HUD_BOUNDS_KEY, chooseHudBounds } from './lib/hud-geometry.js';
 import { initCmd } from './cmd/background.js';
 import { initPage } from './page/background.js';
 
@@ -278,11 +279,15 @@ const registerCoreCommands = () => {
         api.window.close(existing.id, { force: true });
         return { success: true, closed: true };
       }
+      // Saved size and position (written by hud/hud.js), else the defaults.
+      let savedBounds = null;
+      try { savedBounds = localStorage.getItem(HUD_BOUNDS_KEY); } catch { /* storage unavailable */ }
+      const bounds = chooseHudBounds(savedBounds);
       const opened = await api.window.open('peek://app/hud/hud.html', {
-        width: 240,
-        height: 260,
-        x: 16,
-        y: 48,
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
         key: 'hud-stats',
         title: 'Peek HUD',
       });

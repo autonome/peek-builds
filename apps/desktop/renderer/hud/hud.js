@@ -6,6 +6,10 @@
  * grant this page gets from main/pseudo-tiles.ts PSEUDO_TILES.
  */
 
+import {
+  HUD_BOUNDS_KEY, parseSavedBounds, visibleHudBounds, boundsChanged,
+} from '../lib/hud-geometry.js';
+
 const api = window.app;
 
 const POLL_MS = 3000;
@@ -87,14 +91,42 @@ const refresh = async () => {
   }
 };
 
+// Size and position, kept so the next open (the `hud` command in
+// renderer/index.js) starts where the user left it. There is no move event, so
+// the bounds are polled and written only when they change.
+const BOUNDS_POLL_MS = 500;
+let lastSaved = null;
+
+const saveBounds = async () => {
+  const result = await api.window.getBounds();
+  const b = parseSavedBounds(result?.bounds || result?.data || result);
+  if (!b || !boundsChanged(b, lastSaved)) return;
+  lastSaved = b;
+  try { localStorage.setItem(HUD_BOUNDS_KEY, JSON.stringify(b)); } catch { /* storage unavailable */ }
+};
+
+// If the OS put the HUD where no display shows it, move it back to the default spot.
+const ensureVisible = async () => {
+  const result = await api.window.getBounds();
+  const current = parseSavedBounds(result?.bounds || result?.data || result);
+  const display = await api.window.getDisplayInfo();
+  const displayBounds = display?.bounds || display?.data?.bounds;
+  if (!current || !displayBounds) return;
+  const fixed = visibleHudBounds(current, displayBounds);
+  if (boundsChanged(fixed, current)) await api.window.setBounds(fixed);
+};
+
 // Close this window. Force, so it is gone for good and does not come back at
 // the next launch.
-document.getElementById('close-hud').addEventListener('click', () => {
+document.getElementById('close-hud').addEventListener('click', async () => {
+  try { await saveBounds(); } catch { /* close anyway */ }
   api.window.close(undefined, { force: true });
 });
 
 const init = async () => {
   if (api.initialize) await api.initialize();
+  try { await ensureVisible(); } catch (error) { console.error('[hud] visibility check failed:', error); }
+  setInterval(() => saveBounds().catch(() => {}), BOUNDS_POLL_MS);
   await refresh();
   setInterval(refresh, POLL_MS);
 };

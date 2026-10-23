@@ -121,6 +121,36 @@ test.describe('memory hud @desktop', () => {
       .toBe(0);
   });
 
+  test('the HUD reopens at the size and position it was closed with', async () => {
+    const opened = await runCommand('hud');
+    expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
+    const page = await getWindowById(opened.windowId as number);
+
+    const target = { x: 120, y: 140, width: 300, height: 330 };
+    await page.evaluate(
+      async (b) => (window as unknown as { app: any }).app.window.setBounds(b),
+      target,
+    );
+
+    // The page saves changed bounds on a short poll; the close button saves once more.
+    await page.locator('#close-hud').click();
+    await expect
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+        timeout: 15000,
+      })
+      .toBe(0);
+
+    const reopened = await runCommand('hud');
+    expect(reopened?.success, `hud failed: ${reopened?.error}`).toBe(true);
+    const page2 = await getWindowById(reopened.windowId as number);
+    await expect.poll(
+      () => page2.evaluate(async () => (window as unknown as { app: any }).app.window.getBounds()),
+      { timeout: 10000, message: 'the HUD did not reopen at its saved bounds' },
+    ).toMatchObject(target);
+
+    await page2.locator('#close-hud').click();
+  });
+
   test('the HUD takes its colours from the theme and follows a theme switch while open', async () => {
     const opened = await runCommand('hud');
     expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
