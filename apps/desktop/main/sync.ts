@@ -30,7 +30,7 @@ import {
   generateId,
 } from './datastore.js';
 import { tagItemAndPublish } from './tag-events.js';
-import { DEBUG } from './config.js';
+import { DEBUG, isHeadless } from './config.js';
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from '../version.js';
 import {
   getActiveProfile,
@@ -2426,6 +2426,7 @@ const autoSyncScheduler = createAutoSyncScheduler({
     const config = getSyncConfig();
     return syncAll(config.serverUrl, config.apiKey);
   },
+  suppressed: () => isHeadless(),
   onError: (error) => {
     console.error('[sync] Automatic sync failed:', error);
   },

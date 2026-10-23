@@ -29,6 +29,8 @@ export interface AutoSyncDeps {
   runSync: () => Promise<unknown>;
   intervalMs?: number;
   onError?: (error: unknown) => void;
+  /** When true, auto-sync never runs (headless launches), whatever the setting says. */
+  suppressed?: () => boolean;
 }
 
 export interface AutoSyncScheduler {
@@ -65,6 +67,10 @@ export function createAutoSyncScheduler(deps: AutoSyncDeps): AutoSyncScheduler {
 
   const refresh = (): void => {
     let enabled = false;
+    if (deps.suppressed?.()) {
+      stop();
+      return;
+    }
     try {
       enabled = deps.getState().enabled;
     } catch (error) {

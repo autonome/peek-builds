@@ -59,6 +59,33 @@ describe('createAutoSyncScheduler', () => {
     assert.strictEqual(t.runs(), 0);
   });
 
+  it('does not start when suppressed (headless), even if enabled', async () => {
+    let runs = 0;
+    const scheduler = createAutoSyncScheduler({
+      getState: () => on,
+      runSync: async () => { runs++; },
+      intervalMs: 20,
+      suppressed: () => true,
+    });
+    scheduler.refresh();
+    assert.strictEqual(scheduler.isRunning(), false);
+    await wait(50);
+    assert.strictEqual(runs, 0);
+  });
+
+  it('refresh re-reads the setting, so another profile\'s value takes over', async () => {
+    const t = setup({ enabled: false });
+    t.scheduler.refresh();
+    assert.strictEqual(t.scheduler.isRunning(), false);
+    t.state.enabled = true; // as after loading a profile with it on
+    t.scheduler.refresh();
+    assert.strictEqual(t.scheduler.isRunning(), true);
+    assert.strictEqual(t.runs(), 1);
+    t.state.enabled = false; // and a profile with it off
+    t.scheduler.refresh();
+    assert.strictEqual(t.scheduler.isRunning(), false);
+  });
+
   it('turning off clears the timer', async () => {
     const t = setup();
     t.scheduler.refresh();
