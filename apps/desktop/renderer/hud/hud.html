@@ -28,6 +28,8 @@
     }
     .caption { color: var(--theme-text-secondary, GrayText); margin-bottom: 6px; }
     .caption.section { margin: 8px 0 2px; }
+    /* Floated rather than a flex row: a display value on the caption would override its hidden attribute. */
+    .caption .column-heads { float: right; }
     .stats {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -63,7 +65,7 @@
   </div>
   <div id="by-type" class="stats"></div>
   <div id="other-stats" class="stats"></div>
-  <div id="windows-title" class="caption section" hidden>Windows</div>
+  <div id="windows-title" class="caption section" hidden>Windows<span class="column-heads">shown / hidden</span></div>
   <div id="window-kinds" class="stats"></div>
   <script type="module" src="hud.js"></script>
 </body>
