@@ -50,6 +50,7 @@ import { publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath, isHeadless } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getTilePath } from './protocol.js';
+import { webviewTagForGrant } from './web-contents-policy.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 import { isBuiltinFeature, checkLaunchApproval } from './feature-trust.js';
 
@@ -877,7 +878,7 @@ export function getTileWebPreferencesForUrl(
   url: string,
   tilePreloadPath: string,
   lookupLazyManifest: (tileId: string) => TileManifest | null,
-): { preload: string; additionalArguments: string[]; tileId: string; entryId: string; token?: string } | null {
+): { preload: string; additionalArguments: string[]; tileId: string; entryId: string; token?: string; webviewTag?: boolean } | null {
   let host: string;
   let pathPart: string;
   try {
@@ -923,6 +924,7 @@ export function getTileWebPreferencesForUrl(
     tileId: manifest.id,
     entryId: entry.id,
     token,
+    webviewTag: webviewTagForGrant(grant.capabilities as Record<string, unknown>),
   };
 }
 

@@ -41,7 +41,8 @@
     },
     "commands": true,
     "settings": true,
-    "shortcuts": true
+    "shortcuts": true,
+    "webview": true
   },
   "commands": [
     {

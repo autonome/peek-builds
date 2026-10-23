@@ -773,6 +773,16 @@ export function resolveCapabilities(tileId, requested, isBuiltin) {
     granted.secrets = true;
   }
 
+  // Webview: lets the tile's own window embed <webview> elements (sheets
+  // host their cards that way). Builtin features only.
+  if (requested.webview) {
+    if (isBuiltin) {
+      granted.webview = true;
+    } else {
+      denied.push('webview');
+    }
+  }
+
   // IZUI: boolean grant. Passes through 1:1.
   if (requested.izui) {
     granted.izui = true;

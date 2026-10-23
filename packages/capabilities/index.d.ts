@@ -368,6 +368,8 @@ export interface TileCapabilities {
   automation?: AutomationCapability;
   /** Can keep its own secrets (tokens, passwords), encrypted at rest */
   secrets?: boolean;
+  /** Its own windows may embed <webview> elements (builtin features only) */
+  webview?: boolean;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────

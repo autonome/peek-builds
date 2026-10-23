@@ -22,6 +22,7 @@ import {
   decideWebContentsIsolation,
   isolationRefusalMessage,
   unsafeWebPreferenceOverrides,
+  webviewTagForGrant,
 } from './web-contents-policy.js';
 
 describe('isolation check — which webContents types are checked', () => {
@@ -215,5 +216,24 @@ describe('window-open input — which webPreferences overrides are refused', () 
     assert.deepEqual(unsafeWebPreferenceOverrides(null), []);
     assert.deepEqual(unsafeWebPreferenceOverrides(undefined), []);
     assert.deepEqual(unsafeWebPreferenceOverrides('nodeIntegration' as unknown as null), []);
+  });
+});
+
+describe('window-open — webview embedding is granted by the manifest, never asked for', () => {
+  it('is off when the opened tile has no webview capability', () => {
+    assert.equal(webviewTagForGrant(undefined), false);
+    assert.equal(webviewTagForGrant({}), false);
+    assert.equal(webviewTagForGrant({ webview: false }), false);
+    assert.equal(webviewTagForGrant({ window: { create: true } }), false);
+  });
+
+  it('is on only for a boolean true webview capability', () => {
+    assert.equal(webviewTagForGrant({ webview: true }), true);
+    assert.equal(webviewTagForGrant({ webview: 'yes' }), false);
+    assert.equal(webviewTagForGrant({ webview: {} }), false);
+  });
+
+  it('takes no input from the caller\'s own webPreferences', () => {
+    assert.equal(webviewTagForGrant.length, 1);
   });
 });

@@ -132,6 +132,19 @@ export function unsafeWebPreferenceOverrides(
 }
 
 /**
+ * Whether a tile's window may embed `<webview>` elements. Decided only by the
+ * `webview` capability the opened tile's manifest was granted (builtin features
+ * only, see `resolveCapabilities`); a caller's own `webPreferences.webviewTag`
+ * is never consulted, so no tile can switch embedding on for a window by
+ * asking.
+ */
+export function webviewTagForGrant(
+  capabilities: Record<string, unknown> | null | undefined,
+): boolean {
+  return !!capabilities && capabilities.webview === true;
+}
+
+/**
  * Whether a webContents of this type gets the deny-all `window.open` fallback
  * at creation. Only top-level windows and webview guests: per-window code
  * installs its own handler afterwards and replaces this one, so anything that

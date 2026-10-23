@@ -29,7 +29,8 @@
     "settings": true,
     "window": {
       "create": true
-    }
+    },
+    "webview": true
   },
   "commands": [
     {

@@ -3552,7 +3552,9 @@ export function registerWindowHandlers(): void {
         preload: tileWebPrefs ? tileWebPrefs.preload : undefined,
         additionalArguments: tileWebPrefs ? tileWebPrefs.additionalArguments : options.webPreferences?.additionalArguments,
         session: profileSession,
-        webviewTag: options.webPreferences?.webviewTag || false,
+        // Granted by the opened tile's manifest (`webview` capability), never
+        // by the caller's own webPreferences.
+        webviewTag: tileWebPrefs?.webviewTag === true,
         // Always grant the devTools capability — see tile-launcher.ts for
         // the full reasoning. Opening is gated by the runtime debug toggle
         // at the keyboard-shortcut handler in entry.ts.
