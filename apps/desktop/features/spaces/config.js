@@ -357,6 +357,9 @@ const emptySpaceWindowOptions = (tag, spaceName, color) => ({
   regular: true,
   width: 1024,
   height: 768,
+  // Transparency can only be set at creation, so this window carries it
+  // whether or not the see-through switch is on yet.
+  transparent: true,
   spaceMode: { spaceId: tag.id, spaceName, color },
 });
 

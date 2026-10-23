@@ -789,6 +789,9 @@ async function deleteSpaceNow(spaceName, confirmed) {
       role: 'workspace',
       width: 800,
       height: 600,
+      // Transparency can only be set at creation, so this window carries it
+      // whether or not the see-through switch is on yet.
+      transparent: true,
     });
     if (opened?.success === false) return { success: false, error: opened.error || 'Failed to open the spaces page' };
     return { success: true, spaceId: plan.targetId, spaceName: plan.targetName, prompted: true };

@@ -19,7 +19,9 @@
       "role": "workspace",
       "width": 800,
       "height": 600,
-      "title": "Spaces"
+      "title": "Spaces",
+      "transparent": true,
+      "seeThrough": true
     },
     {
       "id": "border",
@@ -54,6 +56,7 @@
         "window:focused",
         "window:closed",
         "window:opened",
+        "window:see-through",
         "app:focus-changed",
         "context:changed",
         "spaces:*"
@@ -112,7 +115,8 @@
         "options": {
           "width": 800,
           "height": 600,
-          "role": "workspace"
+          "role": "workspace",
+          "transparent": true
         }
       }
     },
