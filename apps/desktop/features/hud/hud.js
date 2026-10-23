@@ -10,6 +10,7 @@ import {
   HUD_BOUNDS_KEY, parseSavedBounds, visibleHudBounds, boundsChanged,
 } from './hud-geometry.js';
 import { summarizeWindows } from './hud-windows.js';
+import { isCardMode } from './hud-card.js';
 
 const api = window.app;
 
@@ -139,8 +140,26 @@ document.getElementById('close-hud').addEventListener('click', async () => {
   api.window.close(undefined, { force: true });
 });
 
+// On a sheet the HUD is a card: the sheet owns its place, so there is no ×,
+// no bounds saving and no on-screen check.
+const detectCardMode = async () => {
+  try {
+    const result = await api.window.getBounds();
+    const b = result?.success === false ? null : (result?.bounds || result?.data || result);
+    return isCardMode(b, { width: window.innerWidth, height: window.innerHeight });
+  } catch {
+    return true;
+  }
+};
+
 const init = async () => {
   if (api.initialize) await api.initialize();
+  if (await detectCardMode()) {
+    document.getElementById('close-hud').hidden = true;
+    await refresh();
+    setInterval(refresh, POLL_MS);
+    return;
+  }
   try { await ensureVisible(); } catch (error) { console.error('[hud] visibility check failed:', error); }
   setInterval(() => saveBounds().catch(() => {}), BOUNDS_POLL_MS);
   await refresh();
