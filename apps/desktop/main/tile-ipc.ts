@@ -42,6 +42,7 @@ import { parseManifestFile } from './tile-manifest.js';
 import { loadOrArmFeatureTile, disarmLazyTile, type AnnotatedTile } from './tile-arm.js';
 import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
+import { noteRuntimeCommand, forgetRuntimeCommand } from './tile-lazy.js';
 import { DEBUG, TILE_STRICT, isHeadless, getTilePreloadPath } from './config.js';
 import {
   setDebug,
@@ -700,6 +701,9 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'commands', 'command:register', 'commands not granted', args.token);
       return;
     }
+
+    // A lazy tile's run-time command must still wake it after the tile is suspended.
+    noteRuntimeCommand(args.tileId, args.name);
 
     // Publish a minimal cmd:register-batch so downstream subscribers know
     // the tile claims ownership of this command name (used by the cmd
@@ -4867,6 +4871,7 @@ export function registerTileIpcHandlers(): void {
       DEBUG && console.log('[tile-ipc] commands:unregister rejected: name required');
       return;
     }
+    forgetRuntimeCommand(grant.tileId, args.name);
     publish(
       `peek://${grant.tileId}/background`,
       'cmd:unregister',

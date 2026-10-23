@@ -81,7 +81,29 @@ export function __setTileLazyLauncherForTest(override: Partial<TileLazyLauncher>
   };
 }
 
+/**
+ * Commands a lazy tile registered at run time (through `api.commands.register`) that its manifest
+ * does not declare, name -> tile id. They stay listed in the palette while the tile is unloaded
+ * (the palette registry only drops an entry on `cmd:unregister`), so running one must wake the
+ * tile the same way a manifest command does. The tile registers it again during its own init.
+ */
+const runtimeCommandOwners = new Map<string, string>();
+
+/** A lazy tile registered `name` at run time. Manifest-declared commands and other tiles are ignored. */
+export function noteRuntimeCommand(tileId: string, name: string): void {
+  const config = lazyTileRegistry.get(tileId);
+  if (!config) return;
+  if (config.manifest.commands?.some(c => c.name === name)) return;
+  runtimeCommandOwners.set(name, tileId);
+}
+
+/** The tile unregistered `name` on purpose: it no longer wakes the tile. */
+export function forgetRuntimeCommand(tileId: string, name: string): void {
+  if (runtimeCommandOwners.get(name) === tileId) runtimeCommandOwners.delete(name);
+}
+
 export function __resetTileLazyStateForTest(): void {
+  runtimeCommandOwners.clear();
   lazyTileRegistry.clear();
   loadingTiles.clear();
   declaredLazyEventTopics.clear();
@@ -423,6 +445,12 @@ export function unregisterLazyTile(tileId: string): void {
     publish(`peek://${tileId}/lazy-stub`, 'noun:unregister', { name: noun.name });
   }
 
+  for (const [name, owner] of [...runtimeCommandOwners]) {
+    if (owner !== tileId) continue;
+    runtimeCommandOwners.delete(name);
+    publish(`peek://${tileId}/lazy-stub`, 'cmd:unregister', { name });
+  }
+
   lazyTileRegistry.delete(tileId);
   suspension.disabled(tileId);
   // Drop any in-flight load bookkeeping so a later re-enable starts clean.
@@ -514,9 +542,13 @@ async function handleCommandDispatch(
 ): Promise<PrePublishHookResult> {
   const match = findTileByCommand(name);
   if (!match) {
-    // Unknown command (wasn't declared in any registered lazy tile).
-    // It may be a dynamically registered handler — let delivery proceed
-    // and any real subscriber handles it.
+    // Not declared in any registered lazy tile's manifest. A lazy tile may have registered it at
+    // run time; wake that tile (it re-registers the handler in init) before delivering.
+    const owner = runtimeCommandOwners.get(name);
+    if (owner && lazyTileRegistry.has(owner)) {
+      return wakeForDispatch(owner, name, msg);
+    }
+    // Otherwise a dynamically registered handler of a live tile: let delivery proceed.
     return 'continue';
   }
 
