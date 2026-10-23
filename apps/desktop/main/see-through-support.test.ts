@@ -6,6 +6,7 @@ import {
   entryDeclaresSeeThrough,
   urlSupportsSeeThrough,
   seeThroughForNewWindow,
+  transparentForNewWindow,
   type SeeThroughManifestLike,
 } from './see-through-support.js';
 
@@ -90,6 +91,39 @@ describe('see-through-support — urlSupportsSeeThrough', () => {
 
   it('is false for a page, which is what the command reports as a failure', () => {
     assert.strictEqual(urlSupportsSeeThrough('https://example.com/', lookup), false);
+  });
+});
+
+describe('see-through-support — transparentForNewWindow', () => {
+  const lookupManifest = (tileId: string) => (tileId === 'tags' ? tagsManifest : null);
+
+  it('makes a declaring view transparent when its opener did not say (a session restore)', () => {
+    assert.strictEqual(
+      transparentForNewWindow({ url: 'peek://tags/home.html', lookupManifest }),
+      true,
+    );
+  });
+
+  it('leaves an explicit transparent request alone', () => {
+    assert.strictEqual(
+      transparentForNewWindow({ url: 'peek://tags/home.html', requestedTransparent: false, lookupManifest }),
+      null,
+    );
+    assert.strictEqual(
+      transparentForNewWindow({ url: 'peek://tags/home.html', requestedTransparent: true, lookupManifest }),
+      null,
+    );
+  });
+
+  it('decides nothing for a view that does not declare the switch', () => {
+    assert.strictEqual(
+      transparentForNewWindow({ url: 'peek://tags/background.html', lookupManifest }),
+      null,
+    );
+    assert.strictEqual(
+      transparentForNewWindow({ url: 'https://example.com/', lookupManifest }),
+      null,
+    );
   });
 });
 

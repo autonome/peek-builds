@@ -81,7 +81,7 @@ import {
 import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow, getTileManifest } from './tile-launcher.js';
 import { lookupPseudoTile } from './pseudo-tiles.js';
 import { getLazyTileManifest } from './tile-lazy.js';
-import { seeThroughForNewWindow } from './see-through-support.js';
+import { seeThroughForNewWindow, transparentForNewWindow } from './see-through-support.js';
 
 import {
   captureThumbnail,
@@ -3220,6 +3220,16 @@ export function registerWindowHandlers(): void {
     // of views, only the manifest declaration. A null answer leaves the
     // opener's own request alone, which is what keeps a session restore
     // replaying a saved `false` (a per-window override) intact.
+    // A declaring view must also be created transparent, which a session
+    // restore does not replay: a window made opaque cannot be flipped
+    // see-through later, by either switch.
+    if (options && transparentForNewWindow({
+      url,
+      requestedTransparent: options.transparent,
+      lookupManifest: (tileId: string) => getTileManifest(tileId) ?? getLazyTileManifest(tileId),
+    })) {
+      options.transparent = true;
+    }
     const appWideSeeThrough = options
       ? seeThroughForNewWindow({
         url,

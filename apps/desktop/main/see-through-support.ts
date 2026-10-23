@@ -78,6 +78,27 @@ export function urlSupportsSeeThrough(
   return entryDeclaresSeeThrough(lookupManifest(parsed.tileId), parsed.path);
 }
 
+/**
+ * Whether a window being created must be transparent for its view's
+ * see-through look to show: true for a declaring view whose opener did not
+ * say, null to leave the opener's own request alone.
+ *
+ * Transparency is fixed when the native window is created, so a window made
+ * without it can never become see-through afterwards. Openers that pass
+ * `transparent: true` cover fresh opens, but a session restore replays only
+ * the saved params, which do not include it — without this the restored
+ * window ignores the switch, whichever way it is flipped.
+ */
+export function transparentForNewWindow(input: {
+  url: string;
+  requestedTransparent?: unknown;
+  lookupManifest: (tileId: string) => SeeThroughManifestLike | null;
+}): true | null {
+  if (typeof input.requestedTransparent === 'boolean') return null;
+  if (!urlSupportsSeeThrough(input.url, input.lookupManifest)) return null;
+  return true;
+}
+
 /** The window params the app-wide switch writes on a window being created. */
 export interface NewWindowSeeThrough {
   seeThrough: boolean;
