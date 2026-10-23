@@ -32,7 +32,7 @@ unresolved tag.
 - The existing `editor:add` flow for the single-document editor.
 - Autosave behavior of the inline editor. An item added here and closed with no text is deleted again
   (the item is persisted at once so it reaches the view through live updates, so a blank item would
-  otherwise be left behind); any other item left empty stays a normal item.
+  otherwise be left behind); any other text item left empty is deleted too, and undo restores it (`specs/editor-empty-item-deletes.md`).
 
 ## Tests to change
 
