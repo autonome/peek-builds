@@ -50,3 +50,22 @@ export const windowParamsForSheet = (config) => {
   if (background.kind === 'transparent') params.transparent = true;
   return params;
 };
+
+/**
+ * CSS `background` value that paints a sheet's background on the page root and
+ * body. Opaque returns no override, so the stylesheet's theme background
+ * stays. Transparent clears it so the transparent window shows the desktop.
+ * Image fills the sheet behind the cards.
+ *
+ * @param {object|null|undefined} background raw or resolved background option
+ * @returns {{background?: string}}
+ */
+export const sheetBackgroundStyle = (background) => {
+  const { background: bg } = resolveSheetOptions({ background });
+  if (bg.kind === 'transparent') return { background: 'transparent' };
+  if (bg.kind === 'image') {
+    const quoted = bg.image.replace(/[\\"\n\r]/g, (c) => (c === '\\' || c === '"' ? '\\' + c : ' '));
+    return { background: `url("${quoted}") center / cover no-repeat fixed` };
+  }
+  return {};
+};

@@ -10,7 +10,31 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'features', 'sheets', 'sheet-options.js');
-const { resolveSheetOptions, windowParamsForSheet } = await import(modulePath);
+const { resolveSheetOptions, windowParamsForSheet, sheetBackgroundStyle } = await import(modulePath);
+
+describe('sheetBackgroundStyle', () => {
+  it('leaves the theme background for opaque, missing or unusable options', () => {
+    assert.deepEqual(sheetBackgroundStyle(undefined), {});
+    assert.deepEqual(sheetBackgroundStyle({ kind: 'opaque' }), {});
+    assert.deepEqual(sheetBackgroundStyle({ kind: 'image' }), {});
+  });
+
+  it('clears the background for transparent', () => {
+    assert.deepEqual(sheetBackgroundStyle({ kind: 'transparent' }), { background: 'transparent' });
+  });
+
+  it('fills the sheet with the image', () => {
+    assert.equal(
+      sheetBackgroundStyle({ kind: 'image', image: 'file:///a/b.png' }).background,
+      'url("file:///a/b.png") center / cover no-repeat fixed',
+    );
+  });
+
+  it('escapes quotes and backslashes in the image path', () => {
+    const { background } = sheetBackgroundStyle({ kind: 'image', image: 'a"b\\c' });
+    assert.equal(background, 'url("a\\"b\\\\c") center / cover no-repeat fixed');
+  });
+});
 
 describe('resolveSheetOptions', () => {
   it('reads a config without the new fields as today\'s behaviour', () => {

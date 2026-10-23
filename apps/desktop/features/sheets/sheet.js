@@ -6,6 +6,7 @@
  */
 
 import { loadSheet, saveSheet } from './sheet-store.js';
+import { sheetBackgroundStyle } from './sheet-options.js';
 
 const api = window.app;
 
@@ -289,6 +290,15 @@ const init = async () => {
       createdAt: Date.now(),
       items: []
     };
+  }
+
+  // Paint the configured background. Opaque leaves the stylesheet's theme
+  // background; transparent clears it (the window itself is created transparent
+  // by the opener); image fills the sheet behind the cards.
+  const bgStyle = sheetBackgroundStyle(sheetConfig.background);
+  if (bgStyle.background) {
+    document.documentElement.style.background = bgStyle.background;
+    document.body.style.background = bgStyle.background;
   }
 
   // Set page title
