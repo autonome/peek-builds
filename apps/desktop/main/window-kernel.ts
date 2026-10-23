@@ -1208,6 +1208,21 @@ function evolveEvent(state: State, ev: Event): State {
         };
       }
       const record = state.order[idx];
+      // A focus the platform hands a page's chrome overlay while the overlay refuses input is
+      // not the user's: the chrome takes key only when asked for (Cmd+L opens it to input
+      // first). Key stays where it was and the host is asked to take it back, or the page's
+      // contents never see Escape until the user clicks.
+      if (record.overlayFor !== undefined && !record.acceptsInput && (ev.cause ?? WORLD_CAUSE).kind !== 'machine') {
+        const host = state.order.find((w) => w.id === record.overlayFor);
+        if (host !== undefined && host.canBecomeKey && admitsFocus(state, host, MACHINE_REQUEST)) {
+          return {
+            ...state,
+            expectedPlatformFocus,
+            lastFocusAssert: { id: host.id, seq: nextFocusAssertSeq(state) },
+            version: state.version + 1,
+          };
+        }
+      }
       // A raise echo for the window already holding key re-confirms the standing attention:
       // fresh `seq`, same cause, so the echo never arms a machine floor over a world report.
       const reconfirmsStanding =

@@ -4488,6 +4488,40 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(selectTransientAutoclose(state, host, { kind: 'world' }), [], 'the attached overlay is spared from every sweep');
   });
 
+  it('a focus the platform hands the chrome overlay while it refuses input goes back to its host', () => {
+    // After a hide, the platform may hand key to the click-through chrome that frames the page.
+    // Nobody asked for the chrome (no Cmd+L), so key stays on the host, whose contents then
+    // see Escape.
+    const host = wid(1);
+    const overlay = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+        { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+        { type: 'WindowContentOrderable', id: host },
+        { type: 'WindowShown', id: host },
+        { type: 'WindowShown', id: overlay },
+        { type: 'OverlayAttached', overlayId: overlay, hostId: host },
+        { type: 'AppActivated' },
+        { type: 'OsFocusGained', id: host, cause: { kind: 'world' } },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(state.key, host, 'precondition: the host holds key');
+    const ev: Event = { type: 'OsFocusGained', id: overlay, cause: { kind: 'world' } };
+    const next = evolve(state, ev);
+    assert.strictEqual(next.key, host, 'the overlay is not adopted as key');
+    const effects = react(state, ev, next);
+    assert.ok(
+      effects.some((e) => e.type === 'RaiseWindow' && e.id === host),
+      'the host is raised to take key back',
+    );
+    assert.ok(
+      effects.some((e) => e.type === 'FocusContent' && e.id === host),
+      "the host's contents take first responder",
+    );
+  });
+
   it('detached devtools sweeps its own host when focused', () => {
     // main.ts's devtools-opened handler registers parentId: hostId.
     const host = wid(1);
@@ -6031,6 +6065,8 @@ describe('window-kernel: what the key/main split overturns', () => {
       [
         { type: 'OsFocusGained', id: otherHost },
         { type: 'OverlayAttached', overlayId: chromeOverlay, hostId: otherHost },
+        // Clicking the URL field needs the chrome to take input first.
+        { type: 'WindowAcceptsInputChanged', id: chromeOverlay, acceptsInput: true },
         { type: 'OsFocusGained', id: chromeOverlay },
       ],
       scene(),
