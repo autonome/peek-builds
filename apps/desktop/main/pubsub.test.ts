@@ -196,3 +196,66 @@ describe('PubSub Module Tests', () => {
     });
   });
 });
+
+describe('PubSub system-address stacking', () => {
+  it('runs every system-address subscriber in registration order', async () => {
+    const ps = await import('./pubsub.js');
+    const sys = ps.getSystemAddress();
+    const calls: string[] = [];
+    ps.subscribe(sys, 'test:stack', () => { calls.push('a'); });
+    ps.subscribe(sys, 'test:stack', () => { calls.push('b'); });
+    ps.publish('peek://test/x', 'test:stack', {});
+    assert.deepStrictEqual(calls, ['a', 'b']);
+    ps.unsubscribe(sys, 'test:stack');
+  });
+
+  it('keeps one callback per renderer source', async () => {
+    const ps = await import('./pubsub.js');
+    const calls: string[] = [];
+    ps.subscribe('peek://tile/r', 'test:renderer', () => { calls.push('old'); });
+    ps.subscribe('peek://tile/r', 'test:renderer', () => { calls.push('new'); });
+    ps.publish('peek://test/x', 'test:renderer', {});
+    assert.deepStrictEqual(calls, ['new']);
+    ps.unsubscribe('peek://tile/r', 'test:renderer');
+  });
+
+  it('disposer removes only its own callback', async () => {
+    const ps = await import('./pubsub.js');
+    const sys = ps.getSystemAddress();
+    const calls: string[] = [];
+    const off = ps.subscribe(sys, 'test:dispose', () => { calls.push('a'); });
+    ps.subscribe(sys, 'test:dispose', () => { calls.push('b'); });
+    off();
+    off();
+    ps.publish('peek://test/x', 'test:dispose', {});
+    assert.deepStrictEqual(calls, ['b']);
+    assert.strictEqual(ps.hasSubscriber('test:dispose', sys), true);
+    ps.unsubscribe(sys, 'test:dispose');
+  });
+
+  it('unsubscribe, unsubscribeAll and hasSubscriber cover stacked callbacks', async () => {
+    const ps = await import('./pubsub.js');
+    const sys = ps.getSystemAddress();
+    let n = 0;
+    ps.subscribe(sys, 'test:u1', () => { n++; });
+    ps.subscribe(sys, 'test:u1', () => { n++; });
+    ps.subscribe(sys, 'test:u2', () => { n++; });
+    assert.strictEqual(ps.unsubscribe(sys, 'test:u1'), true);
+    assert.strictEqual(ps.hasSubscriber('test:u1'), false);
+    ps.unsubscribeAll(sys);
+    ps.publish('peek://test/x', 'test:u1', {});
+    ps.publish('peek://test/x', 'test:u2', {});
+    assert.strictEqual(n, 0);
+  });
+
+  it('a subscriber removing itself during delivery does not skip the next one', async () => {
+    const ps = await import('./pubsub.js');
+    const sys = ps.getSystemAddress();
+    const calls: string[] = [];
+    const off = ps.subscribe(sys, 'test:selfoff', () => { calls.push('a'); off(); });
+    ps.subscribe(sys, 'test:selfoff', () => { calls.push('b'); });
+    ps.publish('peek://test/x', 'test:selfoff', {});
+    assert.deepStrictEqual(calls, ['a', 'b']);
+    ps.unsubscribe(sys, 'test:selfoff');
+  });
+});

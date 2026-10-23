@@ -16,7 +16,8 @@
 const SYSTEM_ADDRESS = 'peek://system/';
 
 // Topic subscribers: topic -> Map<source, callback>
-const topics = new Map<string, Map<string, (msg: unknown) => void>>();
+// (a list per source: only the system address ever holds more than one)
+const topics = new Map<string, Map<string, Array<(msg: unknown) => void>>>();
 
 // Callback for broadcasting to renderer windows (bgWindow, tile windows, webview guests)
 let pubsubBroadcaster: ((topic: string, msg: unknown, source: string) => void) | null = null;
@@ -128,9 +129,13 @@ function deliver(source: string, topic: string, msg: unknown): void {
   // Phase 6; privilege is enforced by capability grants and topic naming.
   if (topics.has(topic)) {
     const t = topics.get(topic)!;
-    for (const [, cb] of t) {
-      sessionStats.messagesDelivered++;
-      cb(msg);
+    // Snapshot so a callback that unsubscribes (itself or another) mid-delivery
+    // does not skip the next one.
+    for (const cbs of [...t.values()]) {
+      for (const cb of [...cbs]) {
+        sessionStats.messagesDelivered++;
+        cb(msg);
+      }
     }
   }
 
@@ -167,19 +172,40 @@ export function __clearPrePublishHooksForTest(): void {
 }
 
 /**
- * Subscribe to a topic
+ * Subscribe to a topic.
+ *
+ * Callbacks from the system address stack: every one runs, in registration
+ * order, because several main-process modules can each watch the same topic.
+ * Any other source keeps a single callback per topic, so a renderer that
+ * reloads and subscribes again replaces its old callback instead of doubling it.
+ *
+ * Returns a disposer that removes only this callback (a no-op if it was already
+ * removed or replaced).
  */
 export function subscribe(
   source: string,
   topic: string,
   cb: (msg: unknown) => void
-): void {
-  if (!topics.has(topic)) {
-    topics.set(topic, new Map([[source, cb]]));
-  } else {
-    const subscribers = topics.get(topic)!;
-    subscribers.set(source, cb);
+): () => void {
+  let subscribers = topics.get(topic);
+  if (!subscribers) {
+    subscribers = new Map();
+    topics.set(topic, subscribers);
   }
+  const existing = subscribers.get(source);
+  if (existing && source === SYSTEM_ADDRESS) {
+    existing.push(cb);
+  } else {
+    subscribers.set(source, [cb]);
+  }
+  return () => {
+    const current = topics.get(topic)?.get(source);
+    if (!current) return;
+    const idx = current.indexOf(cb);
+    if (idx < 0) return;
+    current.splice(idx, 1);
+    if (current.length === 0) topics.get(topic)!.delete(source);
+  };
 }
 
 /**
