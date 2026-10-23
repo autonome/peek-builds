@@ -791,6 +791,11 @@ document.addEventListener('mousemove', (e) => {
     // which is what the dwell exists to prevent. The next move after the bar
     // appears captures it.
     if (!pendingReveal) setCapture(true);
+  } else if (findBarVisible && pointInRect(x, y, findBar.getBoundingClientRect())) {
+    // Over the open find bar: capture so its arrows and close button take clicks.
+    // Without this branch the "outside all chrome" case below releases capture
+    // on every move and the click falls through to the page. No navbar reveal.
+    setCapture(true);
   } else if (pointerOverPermissionPrompt(x, y)) {
     // Over the permission prompt: capture so its buttons/checkbox are clickable,
     // but don't reveal the navbar — the prompt is its own transient surface
@@ -1014,6 +1019,19 @@ findInput.addEventListener('keydown', (e) => {
     e.preventDefault();
     hideFindBar();
   }
+});
+// Escape closes the bar wherever focus sits inside the overlay (input, a button,
+// or the body after a button click), and main sends page:find-close when the
+// page held the keystroke instead.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !findBarVisible) return;
+  e.preventDefault();
+  e.stopPropagation();
+  hideFindBar();
+}, true);
+api.subscribe('page:find-close', (msg) => {
+  if (!isActive(msg) || !findBarVisible) return;
+  hideFindBar();
 });
 findNextBtn.addEventListener('click', () => findNext());
 findPrevBtn.addEventListener('click', () => findPrev());

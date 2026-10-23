@@ -10,6 +10,7 @@ import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './windo
 import { noteVisitStarted } from './visit-dwell-owner.js';
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
+import { findBarState } from './find-bar-state.js';
 import path from 'node:path';
 
 import {
@@ -1939,6 +1940,13 @@ export function wireHybridContentEvents(
     // source of truth). The early `!modifier` return below would otherwise drop
     // ESC entirely, so this MUST sit above it.
     if (input.type === 'keyDown' && input.key === 'Escape') {
+      // An open find bar owns Escape: close the bar (the overlay stops the find
+      // and clears highlights) and leave the page and window alone.
+      if (findBarState.isOpen(hostWindowId)) {
+        event.preventDefault();
+        publish(getSystemAddress(), 'page:find-close', { windowId: hostWindowId });
+        return;
+      }
       // Editable-target guard (peek 51798bae): while a text field / textarea /
       // contenteditable inside the page is focused, ESC belongs to the editing
       // context (blur/dismiss the field), NOT the global switcher. The universal
@@ -2967,6 +2975,19 @@ export function installHybridNavbarActionRouting(): void {
   // repeats the active term. Cleaned lazily — a stale entry is harmless (the WC
   // for that windowId is gone, so wcFor returns null first).
   const lastFindText = new Map<number, string>();
+
+  // Which windows show the find bar (open on page:find and the Cmd+G forms,
+  // closed on page:find-stop) so Escape on the page closes the bar first.
+  for (const topic of ['page:find', 'page:find-next', 'page:find-prev']) {
+    subscribe(getSystemAddress(), topic, (raw) => {
+      const id = (raw as { windowId?: number } | null)?.windowId;
+      if (id != null) findBarState.markOpen(id);
+    });
+  }
+  subscribe(getSystemAddress(), 'page:find-stop', (raw) => {
+    const id = (raw as { windowId?: number } | null)?.windowId;
+    if (id != null) findBarState.markClosed(id);
+  });
 
   subscribe(getSystemAddress(), 'page:find-exec', (raw) => {
     const r = wcFor(raw);
