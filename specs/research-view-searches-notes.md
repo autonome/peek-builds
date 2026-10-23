@@ -1,6 +1,6 @@
 ---
 enabled: true
-touches: [apps/desktop/features/research/, apps/desktop/tests/desktop/research-view-searches-notes.spec.ts]
+touches: [apps/desktop/features/research/, apps/desktop/tests/desktop/research-view-searches-notes.spec.ts, apps/desktop/tests/unit/research-view-groups.test.js, docs/design/search-rounds.md]
 depends-on: [research-view]
 ---
 
