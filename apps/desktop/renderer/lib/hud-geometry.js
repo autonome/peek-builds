@@ -11,7 +11,7 @@
 
 export const HUD_BOUNDS_KEY = 'hud:bounds';
 
-export const HUD_DEFAULT_BOUNDS = Object.freeze({ width: 240, height: 260, x: 16, y: 48 });
+export const HUD_DEFAULT_BOUNDS = Object.freeze({ width: 240, height: 420, x: 16, y: 48 });
 
 const MIN_SIZE = 100;
 

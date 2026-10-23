@@ -8,7 +8,7 @@ import {
 const display = { x: 0, y: 0, width: 1440, height: 900 };
 
 test('fresh profile opens with the default bounds', () => {
-  assert.deepEqual(chooseHudBounds(null), { width: 240, height: 260, x: 16, y: 48 });
+  assert.deepEqual(chooseHudBounds(null), { width: 240, height: 420, x: 16, y: 48 });
   assert.deepEqual(chooseHudBounds(undefined), HUD_DEFAULT_BOUNDS);
 });
 

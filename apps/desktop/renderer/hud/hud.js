@@ -9,6 +9,7 @@
 import {
   HUD_BOUNDS_KEY, parseSavedBounds, visibleHudBounds, boundsChanged,
 } from '../lib/hud-geometry.js';
+import { summarizeWindows } from '../lib/hud-windows.js';
 
 const api = window.app;
 
@@ -18,6 +19,9 @@ const totalEl = document.getElementById('memory-total');
 const countEl = document.getElementById('process-count');
 const byTypeEl = document.getElementById('by-type');
 const otherEl = document.getElementById('other-stats');
+const windowsEl = document.getElementById('window-kinds');
+const windowsTitleEl = document.getElementById('windows-title');
+const loggedUnmatched = new Set();
 
 /** Kilobytes as "123 MB" or "1.2 GB". */
 const formatKb = (kb) => {
@@ -72,6 +76,16 @@ const refreshOther = async () => {
     const visible = windows.windows.filter(w => w.visible).length;
     pairs.push(['Windows', String(total)]);
     pairs.push(['Windows Visible/Hidden', `${visible}/${total - visible}`]);
+  }
+  if (windows?.success && windows.windows) {
+    const kinds = summarizeWindows(windows.windows, (w) => {
+      if (!loggedUnmatched.has(w?.url)) {
+        loggedUnmatched.add(w?.url);
+        console.warn('[hud] window matched no kind:', w?.url);
+      }
+    });
+    windowsEl.replaceChildren(...rows(kinds.map(k => [k.kind, `${k.visible}/${k.hidden}`])));
+    windowsTitleEl.hidden = kinds.length === 0;
   }
   const pubsub = await api.pubsub.stats();
   if (pubsub?.success && pubsub.data) {
