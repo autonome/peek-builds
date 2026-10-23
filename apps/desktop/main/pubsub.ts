@@ -53,6 +53,14 @@ const sessionStats = {
   topicsUsed: new Set<string>(),  // topics that had at least one publish this session
 };
 
+// Told the address of every publisher and of every non-system subscriber a delivery reaches
+// (tile suspension's idle clock). Runs on the publish path: keep it cheap.
+let activityObserver: ((address: string) => void) | null = null;
+
+export function setActivityObserver(observer: ((address: string) => void) | null): void {
+  activityObserver = observer;
+}
+
 /**
  * Set the callback for broadcasting to renderer windows
  * This is called from the main process to inject the window broadcasting logic
@@ -124,6 +132,7 @@ function findPrePublishHook(topic: string): PrePublishHook | null {
 }
 
 function deliver(source: string, topic: string, msg: unknown): void {
+  if (activityObserver) activityObserver(source);
   // Route to traditional subscribers (via IPC callbacks) — every subscriber
   // on this topic receives the message. Scope filtering was removed in
   // Phase 6; privilege is enforced by capability grants and topic naming.
@@ -131,7 +140,8 @@ function deliver(source: string, topic: string, msg: unknown): void {
     const t = topics.get(topic)!;
     // Snapshot so a callback that unsubscribes (itself or another) mid-delivery
     // does not skip the next one.
-    for (const cbs of [...t.values()]) {
+    for (const [subscriber, cbs] of [...t.entries()]) {
+      if (activityObserver && subscriber !== SYSTEM_ADDRESS) activityObserver(subscriber);
       for (const cb of [...cbs]) {
         sessionStats.messagesDelivered++;
         cb(msg);

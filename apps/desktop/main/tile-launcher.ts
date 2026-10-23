@@ -52,6 +52,7 @@ import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getTilePath } from './protocol.js';
 import { webviewTagForGrant } from './web-contents-policy.js';
 import * as tileLifecycle from './tile-lifecycle.js';
+import { suspension } from './tile-suspension-shell.js';
 import { isBuiltinFeature, checkLaunchApproval } from './feature-trust.js';
 
 // Config hooks for values sourced from electron-heavy modules
@@ -395,6 +396,7 @@ export function releaseTileWindow(
   // Drop the tile-window info entry added on launch, so stale entries don't
   // accumulate and getTileWindowInfo can't resolve a dead id.
   tileWindowInfo.delete(win.id);
+  suspension.tileWindowClosed(tileId, entryId, String(win.id));
 
   if (!isLast) return false;
 
@@ -533,6 +535,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   const key = `${tileId}:${entryId}`;
   addTileWindow(key, win);
   tileWindowsAll.add(win);
+  suspension.tileWindowOpened(tileId, entryId, String(win.id));
   if (manifest) loadedManifests.set(tileId, manifest);
 
   // Record the tile window's role/address for the IZUI ESC handler. The

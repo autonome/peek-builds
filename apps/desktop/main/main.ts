@@ -28,6 +28,7 @@ import {
 } from './tile-lifecycle.js';
 import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
+import { installTileSuspension } from './tile-suspension-wiring.js';
 import { startTileSchedules, SCHEDULE_BOOT_HOLD_MS } from './tile-schedule.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
@@ -654,6 +655,7 @@ export async function initialize(): Promise<void> {
   // publish reach subscribers. Must run before any command can fire
   // (i.e. before loadFeatures / initializeFeatures).
   installLoadOnDispatchHook();
+  installTileSuspension();
 
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');

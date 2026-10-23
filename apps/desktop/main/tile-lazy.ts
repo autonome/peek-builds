@@ -44,6 +44,7 @@ import {
 import { type TileManifest, type TileCommand, type TileNoun } from './tile-manifest.js';
 import { DEBUG, isDevProfile } from './config.js';
 import * as tileLifecycle from './tile-lifecycle.js';
+import { suspension } from './tile-suspension-shell.js';
 import { clearFeatureLoadError, setFeatureLoadError, resetFeatureLoadErrors } from './feature-load-errors.js';
 
 // ─── Launcher Injection (for testability) ───────────────────────────
@@ -149,12 +150,13 @@ function registerPendingDispatch(tileId: string, entry: PendingDispatch): void {
     pendingDispatchesByTile.set(tileId, set);
   }
   set.add(entry);
+  suspension.dispatchPending(tileId);
 }
 
 function clearPendingDispatch(tileId: string, entry: PendingDispatch): void {
   const set = pendingDispatchesByTile.get(tileId);
   if (!set) return;
-  set.delete(entry);
+  if (set.delete(entry)) suspension.dispatchSettled(tileId);
   if (set.size === 0) pendingDispatchesByTile.delete(tileId);
 }
 
@@ -163,6 +165,7 @@ function drainPendingDispatches(tileId: string): PendingDispatch[] {
   if (!set) return [];
   const entries = Array.from(set);
   pendingDispatchesByTile.delete(tileId);
+  for (let i = 0; i < entries.length; i++) suspension.dispatchSettled(tileId);
   return entries;
 }
 
@@ -421,6 +424,7 @@ export function unregisterLazyTile(tileId: string): void {
   }
 
   lazyTileRegistry.delete(tileId);
+  suspension.disabled(tileId);
   // Drop any in-flight load bookkeeping so a later re-enable starts clean.
   loadingTiles.delete(tileId);
   pendingDispatchesByTile.delete(tileId);
@@ -460,6 +464,9 @@ function installCrashObserver(): void {
   subscribe('peek://tile-lazy/crash-observer', 'tile:state-changed', (msg: unknown) => {
     const t = msg as { tileId?: string; from?: string; to?: string } | null;
     if (!t || typeof t.tileId !== 'string') return;
+    if (t.to === 'crashed' && lazyTileRegistry.has(t.tileId) && (t as { entryId?: string }).entryId === getBackgroundEntry(t.tileId)) {
+      suspension.crashed(t.tileId);
+    }
     // Only the `loading → crashed` edge matters here. A crash from
     // ready/visible is not a load failure — those are regular runtime
     // crashes and aren't the concern of this path.
@@ -691,14 +698,19 @@ function assertDispatchFsmState(tileId: string, entryId: string, label: string):
  */
 async function ensureTileLoaded(tileId: string): Promise<void> {
   const bgEntry = getBackgroundEntry(tileId) || 'background';
+  // Wake gate: a wake that arrives while the tile is being suspended waits for the unload to
+  // finish, so it is delivered to a fresh load instead of a renderer that is shutting down.
+  await suspension.beginWake(tileId);
   try {
     await loadLazyTile(tileId);
     await launcher.waitForTileReady(tileId, bgEntry);
   } catch (err) {
+    suspension.wakeFailed(tileId);
     const message = err instanceof Error ? err.message : String(err);
     setFeatureLoadError(tileId, message);
     throw err;
   }
+  suspension.wakeReady(tileId);
   clearFeatureLoadError(tileId);
 }
 
@@ -756,7 +768,7 @@ async function loadLazyTile(tileId: string): Promise<void> {
   }
 }
 
-function getBackgroundEntry(tileId: string): string | null {
+export function getBackgroundEntry(tileId: string): string | null {
   const config = lazyTileRegistry.get(tileId);
   if (!config) return null;
   const bgTile = config.manifest.tiles.find(t => t.lazy === true) ?? config.manifest.tiles[0];

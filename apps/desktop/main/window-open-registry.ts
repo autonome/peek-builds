@@ -3,6 +3,7 @@
 // and dedup lookups in main.ts — kept out of the kernel's WindowRecord, which models behavior.
 import type { WindowId } from './window-kernel.js';
 import { wmLog } from './window-diag.js';
+import { suspension } from './tile-suspension-shell.js';
 
 export interface WindowOpenPayload {
   source: string;
@@ -72,6 +73,8 @@ export function listWindowOpenPayloads(): Array<{ id: WindowId } & WindowOpenPay
 }
 
 export function removeWindowOpenPayload(id: WindowId): void {
+  const opener = openerTiles.get(id);
+  if (opener !== undefined) suspension.ownedWindowClosed(opener, String(id));
   openerTiles.delete(id);
   const entry = registry.get(id);
   if (!entry) return;
