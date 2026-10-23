@@ -11,6 +11,7 @@ import {
 } from './hud-geometry.js';
 import { summarizeWindows } from './hud-windows.js';
 import { isCardMode } from './hud-card.js';
+import { SUSPENSION_TOPIC, applySuspensionChange, suspensionRows } from './hud-suspension.js';
 
 const api = window.app;
 
@@ -99,6 +100,20 @@ const refreshOther = async () => {
   otherEl.replaceChildren(...rows(pairs));
 };
 
+// Features unloaded for being idle, as reported while the HUD is open.
+const suspensionState = new Map();
+const suspensionEl = document.getElementById('suspension-rows');
+const suspensionTitleEl = document.getElementById('suspension-title');
+const renderSuspension = () => {
+  const list = suspensionRows(suspensionState);
+  suspensionEl.replaceChildren(...rows(list));
+  suspensionTitleEl.hidden = list.length === 0;
+};
+const watchSuspension = () => api.pubsub.subscribe(SUSPENSION_TOPIC, (msg) => {
+  applySuspensionChange(suspensionState, msg);
+  renderSuspension();
+});
+
 const refresh = async () => {
   try {
     await refreshMemory();
@@ -154,6 +169,7 @@ const detectCardMode = async () => {
 
 const init = async () => {
   if (api.initialize) await api.initialize();
+  watchSuspension();
   if (await detectCardMode()) {
     document.getElementById('close-hud').hidden = true;
     await refresh();

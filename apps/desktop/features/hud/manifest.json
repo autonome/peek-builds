@@ -25,7 +25,8 @@
       "topics": [
         "ext:ready",
         "ext:hud:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "tile:suspension-changed"
       ]
     },
     "window": {
