@@ -28,6 +28,9 @@
       import 'peek://app/components/peek-card.js';
       import 'peek://app/components/peek-grid.js';
       import 'peek://app/components/peek-grid-toolbar.js';
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-switch.js';
+      import 'peek://app/components/peek-button-group.js';
     </script>
   </head>
   <body>
@@ -36,7 +39,29 @@
       <div class="sheet-actions">
         <button class="btn btn-add" style="display:none;">+ Add Card</button>
         <button class="btn btn-edit">Edit</button>
+        <peek-button class="btn-options" size="sm" variant="outline">Options</peek-button>
       </div>
+    </div>
+
+    <div class="options-panel" style="display:none;">
+      <h2>Sheet options</h2>
+      <div class="options-row">
+        <peek-switch class="opt-maximized">Open maximized</peek-switch>
+      </div>
+      <div class="options-row">
+        <div class="options-label">Background</div>
+        <peek-button-group class="opt-background" selection="single" size="sm">
+          <peek-button-group-item value="opaque">Opaque</peek-button-group-item>
+          <peek-button-group-item value="transparent">Transparent</peek-button-group-item>
+          <peek-button-group-item value="image">Image</peek-button-group-item>
+        </peek-button-group>
+      </div>
+      <div class="options-row opt-image-row" style="display:none;">
+        <peek-button class="opt-pick-image" size="sm" variant="outline">Choose image...</peek-button>
+        <input type="file" class="opt-image-file" accept="image/*" style="display:none;">
+        <span class="options-hint opt-image-status"></span>
+      </div>
+      <div class="options-hint opt-note"></div>
     </div>
 
     <peek-grid class="cards" view-mode="freeform" freeform-snap="20" gap="12"></peek-grid>

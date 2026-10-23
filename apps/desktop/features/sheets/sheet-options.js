@@ -61,6 +61,66 @@ export const windowParamsForSheet = (config) => {
  * @returns {{background?: string}}
  */
 export const sheetBackgroundStyle = (background) => {
+  return backgroundStyleOf(background);
+};
+
+/**
+ * Size to scale an image to so it fits within a box, keeping its aspect
+ * ratio and never enlarging it.
+ *
+ * @returns {{width: number, height: number}} whole pixels, at least 1
+ */
+export const fitWithin = (width, height, maxWidth, maxHeight) => {
+  const w = Math.max(1, Math.floor(width) || 1);
+  const h = Math.max(1, Math.floor(height) || 1);
+  const scale = Math.min(1, maxWidth / w, maxHeight / h);
+  if (!(scale > 0)) return { width: 1, height: 1 };
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale))
+  };
+};
+
+/** Encoded formats tried in order; the first the browser really produces wins. */
+export const IMAGE_ENCODINGS = ['image/webp', 'image/jpeg'];
+export const IMAGE_QUALITY = 0.85;
+
+/** True when a data URL was encoded as one of IMAGE_ENCODINGS. */
+export const isStoredImageDataUrl = (value) =>
+  typeof value === 'string' && /^data:image\/(webp|jpeg);base64,/.test(value);
+
+/**
+ * Return a new config with display options changed. Only the given fields
+ * change. Choosing a non-image background drops the stored image data so the
+ * config does not carry a large unused blob.
+ *
+ * @param {object} config saved sheet config
+ * @param {{maximized?: boolean, background?: {kind: string, image?: string}}} patch
+ */
+export const withSheetOptions = (config, patch) => {
+  const next = { ...(config || {}) };
+  if (typeof patch?.maximized === 'boolean') next.maximized = patch.maximized;
+  if (patch?.background) {
+    const kind = BACKGROUND_KINDS.includes(patch.background.kind) ? patch.background.kind : 'opaque';
+    if (kind === 'image') {
+      const image = patch.background.image ?? next.background?.image;
+      next.background = typeof image === 'string' && image ? { kind, image } : { kind: 'opaque' };
+    } else {
+      next.background = { kind };
+    }
+  }
+  return next;
+};
+
+/**
+ * Whether switching the background between two kinds needs the window
+ * reopened. A window's transparency is fixed when it is created, so any
+ * change to or from transparent only takes effect on the next open.
+ */
+export const backgroundNeedsReopen = (fromKind, toKind) =>
+  fromKind !== toKind && (fromKind === 'transparent' || toKind === 'transparent');
+
+const backgroundStyleOf = (background) => {
   const { background: bg } = resolveSheetOptions({ background });
   if (bg.kind === 'transparent') return { background: 'transparent' };
   if (bg.kind === 'image') {

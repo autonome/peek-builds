@@ -191,6 +191,45 @@ body.editing .card-webview {
   gap: 8px;
 }
 
+/* Options panel */
+.options-panel {
+  position: fixed;
+  top: 56px;
+  right: 24px;
+  z-index: 900;
+  width: 320px;
+  padding: 16px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.options-panel h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--base05);
+}
+
+.options-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.options-label {
+  font-size: 12px;
+  color: var(--base04);
+}
+
+.options-hint {
+  font-size: 11px;
+  color: var(--base03);
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

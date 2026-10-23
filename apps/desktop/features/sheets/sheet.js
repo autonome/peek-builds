@@ -6,7 +6,10 @@
  */
 
 import { loadSheet, saveSheet } from './sheet-store.js';
-import { sheetBackgroundStyle } from './sheet-options.js';
+import {
+  sheetBackgroundStyle, resolveSheetOptions, withSheetOptions, backgroundNeedsReopen,
+  fitWithin, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
+} from './sheet-options.js';
 
 const api = window.app;
 
@@ -272,6 +275,119 @@ const setupEvents = () => {
 };
 
 /**
+ * Paint the configured background. Opaque leaves the stylesheet's theme
+ * background; transparent clears it (the window itself is created transparent
+ * by the opener); image fills the sheet behind the cards.
+ */
+const applyBackground = () => {
+  const bgStyle = sheetBackgroundStyle(sheetConfig.background);
+  const value = bgStyle.background || '';
+  document.documentElement.style.background = value;
+  document.body.style.background = value;
+};
+
+/** Background kind the window was opened with; transparency cannot change after that. */
+let openedBackgroundKind = 'opaque';
+
+/**
+ * Downscale a picked image to at most the screen size and encode it as WebP
+ * (JPEG where WebP is not produced), returning a data URL.
+ */
+const encodeBackgroundImage = async (file) => {
+  const bitmap = await createImageBitmap(file);
+  const ratio = window.devicePixelRatio || 1;
+  const { width, height } = fitWithin(
+    bitmap.width, bitmap.height,
+    Math.round(window.screen.width * ratio), Math.round(window.screen.height * ratio)
+  );
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+  for (const type of IMAGE_ENCODINGS) {
+    const url = canvas.toDataURL(type, IMAGE_QUALITY);
+    if (isStoredImageDataUrl(url)) return url;
+  }
+  throw new Error('image could not be encoded');
+};
+
+/**
+ * Wire the options panel: open maximized, background kind, background image.
+ */
+const setupOptionsPanel = () => {
+  const panel = document.querySelector('.options-panel');
+  const maximized = panel.querySelector('.opt-maximized');
+  const group = panel.querySelector('.opt-background');
+  const imageRow = panel.querySelector('.opt-image-row');
+  const fileInput = panel.querySelector('.opt-image-file');
+  const status = panel.querySelector('.opt-image-status');
+  const note = panel.querySelector('.opt-note');
+
+  const openedMaximized = resolveSheetOptions(sheetConfig).maximized;
+  // "Image" picked but no file chosen yet: nothing to save, only the picker to show.
+  let choosingImage = false;
+
+  const refresh = () => {
+    const opts = resolveSheetOptions(sheetConfig);
+    maximized.checked = opts.maximized;
+    group.value = choosingImage ? 'image' : opts.background.kind;
+    imageRow.style.display = group.value === 'image' ? '' : 'none';
+    status.textContent = opts.background.image ? 'Image set' : 'No image chosen';
+    const notes = [];
+    if (backgroundNeedsReopen(openedBackgroundKind, opts.background.kind)) {
+      notes.push('Transparency is set when the window is created: applies next time the sheet opens.');
+    }
+    if (opts.maximized !== openedMaximized) notes.push('Open maximized applies next time the sheet opens.');
+    note.textContent = notes.join(' ');
+  };
+
+  const update = async (patch) => {
+    sheetConfig = withSheetOptions(sheetConfig, patch);
+    await saveSheetConfig();
+    applyBackground();
+    refresh();
+  };
+
+  document.querySelector('.btn-options').addEventListener('click', () => {
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
+
+  maximized.addEventListener('change', (e) => {
+    update({ maximized: e.detail?.checked === true });
+  });
+
+  group.addEventListener('change', (e) => {
+    const kind = e.detail?.value;
+    choosingImage = kind === 'image';
+    if (kind === 'image' && !resolveSheetOptions(sheetConfig).background.image) {
+      refresh();
+      return;
+    }
+    update({ background: { kind } });
+  });
+
+  panel.querySelector('.opt-pick-image').addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    try {
+      status.textContent = 'Processing...';
+      const image = await encodeBackgroundImage(file);
+      choosingImage = false;
+      await update({ background: { kind: 'image', image } });
+    } catch (err) {
+      console.error('[sheets] Failed to set background image:', err);
+      status.textContent = 'That file could not be used as an image';
+    }
+  });
+
+  refresh();
+};
+
+/**
  * Initialize sheet
  */
 const init = async () => {
@@ -292,14 +408,9 @@ const init = async () => {
     };
   }
 
-  // Paint the configured background. Opaque leaves the stylesheet's theme
-  // background; transparent clears it (the window itself is created transparent
-  // by the opener); image fills the sheet behind the cards.
-  const bgStyle = sheetBackgroundStyle(sheetConfig.background);
-  if (bgStyle.background) {
-    document.documentElement.style.background = bgStyle.background;
-    document.body.style.background = bgStyle.background;
-  }
+  applyBackground();
+  openedBackgroundKind = resolveSheetOptions(sheetConfig).background.kind;
+  setupOptionsPanel();
 
   // Set page title
   const titleEl = document.querySelector('.sheet-title');
