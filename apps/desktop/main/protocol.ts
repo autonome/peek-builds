@@ -786,14 +786,18 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
 }
 
 /**
- * Initialize the protocol handler on the default session
- * Must be called after app.ready
+ * Whether a saved `peek://app/...` window URL still points at an existing
+ * page. True before `initProtocol()` sets the root, so nothing is dropped early.
  */
 export function savedAppPageExists(url: string): boolean {
   if (!rootDir) return true;
   return appPageExists(rootDir, url, fs.existsSync);
 }
 
+/**
+ * Initialize the protocol handler on the default session
+ * Must be called after app.ready
+ */
 export function initProtocol(appRootDir: string): void {
   rootDir = appRootDir;
   // node_modules is at the repo root (../../ from apps/desktop)
