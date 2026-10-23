@@ -40,6 +40,7 @@ import {
   disableSync,
 } from './profiles.js';
 import { publish, getSystemAddress } from './pubsub.js';
+import { createAutoSyncScheduler } from './auto-sync.js';
 
 // ==================== Sync Progress Log ====================
 //
@@ -313,6 +314,12 @@ export function setSyncConfig(config: Partial<SyncConfig>): void {
     if (config.autoSync !== undefined) {
       setAutoSync(config.autoSync);
       DEBUG && console.log(`[sync] Updated autoSync: ${config.autoSync}`);
+    }
+
+    // The timer follows the saved setting; turning it on syncs right away.
+    // Runs after serverUrl/apiKey are saved above so that first sync sees them.
+    if (config.autoSync !== undefined) {
+      refreshAutoSync();
     }
   } catch (error) {
     DEBUG && console.error('[sync] Failed to set sync config:', error);
@@ -2386,6 +2393,55 @@ let lastSyncErrorAt = 0;
  * 3. Update lastSyncTime in profile
  */
 export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncResult> {
+  syncRunsInFlight++;
+  try {
+    return await runSyncAll(serverUrl, apiKey);
+  } finally {
+    syncRunsInFlight--;
+  }
+}
+
+// Counts runs of syncAll() from any caller (manual button, tile IPC, timer), so
+// the automatic timer skips a tick while one is running. A counter rather than
+// a flag so overlapping manual runs cannot clear each other's mark.
+let syncRunsInFlight = 0;
+
+/** True while any syncAll() run is in progress. */
+export function isSyncInFlight(): boolean {
+  return syncRunsInFlight > 0;
+}
+
+// ==================== Automatic Sync ====================
+
+const autoSyncScheduler = createAutoSyncScheduler({
+  getState: () => {
+    const config = getSyncConfig();
+    return {
+      enabled: config.autoSync,
+      configured: !!(config.serverUrl && config.apiKey),
+      inFlight: isSyncInFlight(),
+    };
+  },
+  runSync: () => {
+    const config = getSyncConfig();
+    return syncAll(config.serverUrl, config.apiKey);
+  },
+  onError: (error) => {
+    console.error('[sync] Automatic sync failed:', error);
+  },
+});
+
+/** Start or stop the automatic sync timer to match the saved Auto-sync setting. */
+export function refreshAutoSync(): void {
+  autoSyncScheduler.refresh();
+}
+
+/** Clear the automatic sync timer (app quit). */
+export function stopAutoSync(): void {
+  autoSyncScheduler.stop();
+}
+
+async function runSyncAll(serverUrl: string, apiKey: string): Promise<SyncResult> {
   if (!serverUrl) {
     DEBUG && console.log('[sync] No server URL configured, sync disabled');
     return { pulled: 0, pushed: 0, conflicts: 0, lastSyncTime: 0 };

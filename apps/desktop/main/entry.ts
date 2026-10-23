@@ -106,6 +106,7 @@ import {
   getChromeExtensionOptionsCommands,
   markRuntimeExternalQuitting,
 } from './chrome-extensions.js';
+import { refreshAutoSync, stopAutoSync } from './sync.js';
 import {
   initProfilesDb,
   migrateExistingProfiles,
@@ -1179,6 +1180,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   // destroyChromeExtensionWindowsForShutdown() (and Electron's own quit) are
   // about to free — that deref faults the main process (peek 048997b2).
   try { markRuntimeExternalQuitting(); } catch (e) { DEBUG && console.error('[lifecycle] markRuntimeExternalQuitting error:', e); }
+  try { stopAutoSync(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutoSync error:', e); }
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
   try { stopDesktopMarkerManager(); } catch (e) { DEBUG && console.error('[lifecycle] stopDesktopMarkerManager error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
@@ -1653,6 +1655,10 @@ const onReady = async () => {
       // tile/window in main.log so a hot prod Peek is self-diagnosing. Skip
       // headless/test runs (no real windows to attribute, and noise in CI).
       if (!isHeadless()) startCpuWatch();
+
+      // Automatic sync: if the Auto-sync setting is on, sync now and then on a timer.
+      // The datastore and profile sync config are ready by this point.
+      refreshAutoSync();
 
       const featStart = Date.now();
       await loadFeatures();
