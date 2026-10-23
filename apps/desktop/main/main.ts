@@ -615,7 +615,8 @@ export async function initialize(): Promise<void> {
     // from `win.isAlwaysOnTop()` / `win.isFocusable()` — R2: the machine owns
     // those facts, and a live read at registration would re-derive (and later
     // drift from) what the reducer already tracks.
-    registerWindow: ({ win, role, keepLive, alwaysOnTop, focusable }) => registerWindowWithMachine({
+    registerWindow: ({ win, tileId, role, keepLive, alwaysOnTop, focusable }) => registerWindowWithMachine({
+      openerTile: tileId,
       kind: 'browser',
       role: role ?? 'workspace',
       class: classifyWindowRegistration(role ?? 'workspace', { alwaysOnTop, focusable }),

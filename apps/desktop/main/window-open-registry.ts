@@ -11,9 +11,47 @@ export interface WindowOpenPayload {
 
 const registry = new Map<WindowId, WindowOpenPayload>();
 
+// The tile that opened each window (hybrid page hosts included), kept beside the payload. Set from
+// an explicit declaration (a tile's own window) or derived from the opening source address.
+const openerTiles = new Map<WindowId, string>();
+
+// `peek://editor/home.html?x=1` -> `editor`; null for anything that is not a peek:// address.
+export function tileIdFromSource(source: unknown): string | null {
+  if (typeof source !== 'string') return null;
+  const m = /^peek:\/\/([^/?#]+)/i.exec(source);
+  return m ? m[1] : null;
+}
+
+export function setWindowOpenerTile(id: WindowId, tileId: string): void {
+  openerTiles.set(id, tileId);
+}
+
+export function getWindowOpenerTile(id: WindowId): string | null {
+  return openerTiles.get(id) ?? null;
+}
+
+// Ids of every window attributed to `tileId`. Includes windows that may have closed since; the
+// caller decides liveness.
+export function listWindowsOpenedByTile(tileId: string): WindowId[] {
+  const out: WindowId[] = [];
+  for (const [id, opener] of openerTiles) if (opener === tileId) out.push(id);
+  return out;
+}
+
+// Read-only: does `tileId` own at least one live keepLive window? Liveness and the keepLive flag
+// belong to the window kernel's record, so the caller supplies that check.
+export function tileOwnsLiveKeepLiveWindow(
+  tileId: string,
+  isLiveKeepLive: (id: WindowId) => boolean,
+): boolean {
+  return listWindowsOpenedByTile(tileId).some(isLiveKeepLive);
+}
+
 // params is stored by reference — legacy consumers mutate it in place (params.currentUrl, params.x, ...).
 export function setWindowOpenPayload(id: WindowId, source: string, params: Record<string, unknown>): void {
   registry.set(id, { source, params });
+  const opener = tileIdFromSource(source);
+  if (opener !== null && !openerTiles.has(id)) openerTiles.set(id, opener);
   wmLog('open-registry-set', {
     id,
     source,
@@ -34,6 +72,7 @@ export function listWindowOpenPayloads(): Array<{ id: WindowId } & WindowOpenPay
 }
 
 export function removeWindowOpenPayload(id: WindowId): void {
+  openerTiles.delete(id);
   const entry = registry.get(id);
   if (!entry) return;
   registry.delete(id);

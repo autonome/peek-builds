@@ -26,7 +26,7 @@ import { isContentWindow, windowById, reusableHere, frontWindowHere } from './wi
 import { handleEscapePress, type EscapeRuntimeDeps } from './window-escape-runtime.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { wmLog } from './window-diag.js';
-import { setWindowOpenPayload } from './window-open-registry.js';
+import { setWindowOpenPayload, setWindowOpenerTile, tileOwnsLiveKeepLiveWindow } from './window-open-registry.js';
 
 // Register-spec that accepts real Electron window handles (both kinds satisfy the backend's
 // structural NativeWindow).
@@ -42,6 +42,8 @@ export interface MachineWindowSpec {
   // Opening source + open params, opaque and held by reference on the reducer record.
   source?: string;
   params?: Record<string, unknown>;
+  // The tile that opened this window, when it is not derivable from `source` (a tile's own window).
+  openerTile?: string;
   alwaysOnTop?: boolean;
   keepLive?: boolean;
   tracksBaseLayerTop?: boolean;
@@ -147,6 +149,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   const { id, decision, initialBounds, onEveryDesktop } = getWindowBackend().registerWindow(spec as unknown as RegisterWindowSpec);
   // The registry payload rides the registration spec when the caller has it (ipc.ts's window-open
   // handler) — see window-open-registry.ts for why this lives outside the machine record.
+  if (spec.openerTile !== undefined) setWindowOpenerTile(id, spec.openerTile);
   if (spec.source !== undefined && spec.params !== undefined) {
     setWindowOpenPayload(id, spec.source, spec.params);
   }
@@ -312,6 +315,12 @@ export function getMachineWindowRecord(id: WindowId): KernelWindowRecord | undef
 // would otherwise ask getMachineWindowRecord for a record already removed in the same transition.
 export function getRetiredWindowPresentation(id: WindowId): { maximized: boolean; preMaxBounds: Rectangle | null } | undefined {
   return getKernelExecutor().getRetiredPresentation(id);
+}
+
+// Read-only: does `tileId` own a live keepLive window (a hidden keepLive window counts; a closed
+// one has no kernel record)? Used by tile suspension to keep such a tile loaded.
+export function tileHasLiveKeepLiveWindow(tileId: string): boolean {
+  return tileOwnsLiveKeepLiveWindow(tileId, (id) => getMachineWindowRecord(id)?.keepLive === true);
 }
 
 // State.order itself (bottom -> top), not copied — read-only by contract.

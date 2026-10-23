@@ -86,6 +86,8 @@ let _registerWindow: ((spec: TileWindowRegistration) => void) | null = null;
  */
 export interface TileWindowRegistration {
   win: BrowserWindow;
+  /** The tile this window belongs to; the window record names it as its opener. */
+  tileId: string;
   /** Manifest entry role; undefined means the caller declared none (defaults to 'workspace'). */
   role: string | undefined;
   /** Entry's keepLive flag — the reducer record carries it (hide-vs-close). */
@@ -563,6 +565,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     // instead would skip the headless gate on alwaysOnTop.
     _registerWindow({
       win,
+      tileId,
       role: entry?.role,
       keepLive: entry?.keepLive === true,
       alwaysOnTop: windowOptions.alwaysOnTop === true,
