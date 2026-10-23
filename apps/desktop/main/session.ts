@@ -20,7 +20,7 @@ import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
-import { getRegisteredTileIds } from './protocol.js';
+import { getRegisteredTileIds, savedAppPageExists } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import { getWindowNavHistory, readNavHistory } from './nav-history.js';
@@ -1360,6 +1360,14 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
       DEBUG && console.log(`[session] Filtering stale tile window: ${extIdFromUrl}`);
       return false;
     }
+  }
+
+  // A peek://app/ page that has since been moved or removed (e.g. the HUD,
+  // now peek://hud/) would restore as a 404 page, and a pinned one would
+  // return on every launch.
+  if (!savedAppPageExists(descriptor.url)) {
+    console.log(`[session] Dropping window whose app page no longer exists: ${descriptor.url.substring(0, 120)} pinScope=${descriptor.context?.pinScope ?? '(none)'}`);
+    return false;
   }
 
   return true;

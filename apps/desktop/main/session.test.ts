@@ -22,6 +22,7 @@ import { DatabaseSync } from 'node:sqlite';
 // `saveSessionSnapshot`'s loop.
 import { shouldSkipWindowForSaveEarly, countDescriptorsExcludingPrefixes } from './session-save-filter.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
+import { appPageExists, resolveRendererPath } from './renderer-path.js';
 
 // ============================================================================
 // Types (mirrored from session.ts to avoid import issues with Electron deps)
@@ -2455,5 +2456,32 @@ describe('countDescriptorsExcludingPrefixes (saved and held window counts)', () 
       countDescriptorsExcludingPrefixes(descriptors, ['peek://spaces/', 'peek://ext/spaces/']),
       2,
     );
+  });
+});
+
+describe('appPageExists (restore drops windows whose peek://app page is gone)', () => {
+  const root = '/app-root';
+  const present = new Set([resolveRendererPath(root, 'settings/settings.html')]);
+  const exists = (p: string) => present.has(p);
+
+  it('keeps a peek://app page that still exists', () => {
+    assert.strictEqual(appPageExists(root, 'peek://app/settings/settings.html', exists), true);
+  });
+
+  it('ignores a query string and hash when looking the file up', () => {
+    assert.strictEqual(appPageExists(root, 'peek://app/settings/settings.html?x=1#y', exists), true);
+  });
+
+  it('drops a peek://app page that was moved away (the old HUD address)', () => {
+    assert.strictEqual(appPageExists(root, 'peek://app/hud/hud.html', exists), false);
+  });
+
+  it('refuses a path that escapes the renderer directory', () => {
+    assert.strictEqual(resolveRendererPath(root, '../main/entry.js'), null);
+  });
+
+  it('does not judge other hosts or schemes', () => {
+    assert.strictEqual(appPageExists(root, 'peek://hud/hud.html', exists), true);
+    assert.strictEqual(appPageExists(root, 'https://example.com/hud/hud.html', exists), true);
   });
 });

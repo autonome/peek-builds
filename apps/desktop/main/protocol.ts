@@ -21,6 +21,7 @@ import { DEBUG } from './config.js';
 import { getTileManifest } from './tile-launcher.js';
 import { isLazyTileRegistered, getLazyTileManifest } from './tile-lazy.js';
 import { resolveTileOriginCSP, injectCSPHeader } from './tile-csp.js';
+import { resolveRendererPath, appPageExists } from './renderer-path.js';
 import { protocolModuleForRequest } from './tile-protocols.js';
 
 export const APP_SCHEME = 'peek';
@@ -673,10 +674,9 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
     // Feature renderers and other callers use `peek://app/lib/...` URLs — preserve that contract.
     if (host === 'app') {
       const appPath = pathname;
-      const absolutePath = path.resolve(rootDir, 'renderer', appPath);
-      const rendererBase = path.resolve(rootDir, 'renderer');
-      if (!absolutePath.startsWith(rendererBase)) {
-        console.error('Path traversal attempt blocked:', absolutePath);
+      const absolutePath = resolveRendererPath(rootDir, appPath);
+      if (absolutePath === null) {
+        console.error('Path traversal attempt blocked:', appPath);
         return new Response('Forbidden', { status: 403 });
       }
       DEBUG && console.log(`[protocol] app/${appPath} -> ${absolutePath}`);
@@ -789,6 +789,11 @@ async function routeProtocolRequest(req: Request): Promise<Response> {
  * Initialize the protocol handler on the default session
  * Must be called after app.ready
  */
+export function savedAppPageExists(url: string): boolean {
+  if (!rootDir) return true;
+  return appPageExists(rootDir, url, fs.existsSync);
+}
+
 export function initProtocol(appRootDir: string): void {
   rootDir = appRootDir;
   // node_modules is at the repo root (../../ from apps/desktop)
