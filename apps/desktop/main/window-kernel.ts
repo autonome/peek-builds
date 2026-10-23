@@ -3010,8 +3010,7 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
     record.layer > BASE_LAYER &&
     record.acceptsInput &&
     record.transient !== true &&
-    record.heldAboveOtherApps !== true &&
-    !isContentWindow(record)
+    record.heldAboveOtherApps !== true
   );
 }
 

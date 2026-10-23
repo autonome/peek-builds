@@ -4033,6 +4033,26 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(isAppResignSweepEligible(rec(alreadyHiddenHud)), false, 'already hidden, for a reason of its own');
   });
 
+  it('a content-role window moved into the pinned band (the global HUD) hides on resign and re-shows on activate; unpinned it does not', () => {
+    const pinned = wid(20);
+    const base = fold([
+      { type: 'WindowRegistered', id: pinned, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: pinned },
+      { type: 'OsFocusGained', id: pinned },
+    ]);
+    const rec = (s: State) => s.order.find((w) => w.id === pinned)!;
+
+    const unpinned = evolve(base, { type: 'AppResigned' });
+    assert.strictEqual(rec(unpinned).visible, true, 'an unpinned content window stays');
+
+    const moved = evolve(base, { type: 'WindowLayerChanged', id: pinned, layer: FLOATING });
+    assert.strictEqual(isAppResignSweepEligible(rec(moved)), true);
+    const resigned = evolve(moved, { type: 'AppResigned' });
+    assert.strictEqual(rec(resigned).visible, false, 'pinned content window hides on app resign (G8)');
+    const activated = evolve(resigned, { type: 'AppActivated' });
+    assert.strictEqual(rec(activated).visible, true, 'and re-shows on activate (G9)');
+  });
+
   it('the following activation re-shows exactly the window the sweep hid — the HUD; the switcher was never hidden by it and carries no mark to clear', () => {
     const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
     const activated = evolve(settled, { type: 'AppActivated' });

@@ -483,9 +483,9 @@ function checkInvariants(state: State, prev?: State): string[] {
       }
     }
 
-    // A content window is never app-resign-sweep eligible.
-    if (isContentWindow(record) && isAppResignSweepEligible(record)) {
-      violations.push(`a window is both content and app-resign-sweep eligible: ${record.id}`);
+    // A content window is app-resign-sweep eligible only when pinned (above the base layer).
+    if (isContentWindow(record) && isAppResignSweepEligible(record) && record.layer <= BASE_LAYER) {
+      violations.push(`a base-layer content window is app-resign-sweep eligible: ${record.id}`);
     }
 
     // hostForOverlay and overlayFor are the same fact read two ways.
