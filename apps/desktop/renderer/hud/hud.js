@@ -28,6 +28,15 @@ const formatNum = (n) => {
   return String(n);
 };
 
+// Chromium's process-type names (ProcessMetric.type) in plain words. Chromium
+// calls every renderer a "Tab", but here those are pages, tiles and app chrome.
+const TYPE_LABELS = {
+  Browser: 'Main process',
+  Tab: 'Web content',
+  GPU: 'Graphics',
+  Utility: 'Utility',
+};
+
 const rows = (pairs) => pairs.map(([label, value]) => {
   const l = document.createElement('span');
   l.className = 'label';
@@ -46,7 +55,7 @@ const refreshMemory = async () => {
   countEl.textContent = String(processCount);
   const types = Object.entries(byType || {})
     .sort((a, b) => b[1] - a[1])
-    .map(([type, kb]) => [type, formatKb(kb)]);
+    .map(([type, kb]) => [TYPE_LABELS[type] || type, formatKb(kb)]);
   byTypeEl.replaceChildren(...rows(types));
 };
 
