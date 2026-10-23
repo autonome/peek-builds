@@ -93,10 +93,32 @@ test.describe('memory hud @desktop', () => {
     await expect(page.locator('#memory-total')).toHaveText(/^[1-9][\d.]* (MB|GB)$/, { timeout: 15000 });
     await expect(page.locator('#process-count')).toHaveText(/^[1-9]\d*$/);
 
-    // Running the command again focuses the open HUD rather than opening another.
+    // Running the command again closes the open HUD (toggle), and a third run opens it.
     const again = await runCommand('hud');
     expect(again?.success).toBe(true);
-    expect(again.windowId, 'a second hud opened a new window').toBe(hudId);
+    expect(again.closed, 'a second hud did not close the open HUD').toBe(true);
+    await expect
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+        timeout: 15000,
+      })
+      .toBe(0);
+    const third = await runCommand('hud');
+    expect(third?.success).toBe(true);
+    expect(third.closed).toBeUndefined();
+    await getWindowById(third.windowId as number);
+  });
+
+  test('the close button at the top right of the HUD closes its window', async () => {
+    const opened = await runCommand('hud');
+    expect(opened?.success, `hud failed: ${opened?.error}`).toBe(true);
+    const page = await getWindowById(opened.windowId as number);
+    await page.locator('#close-hud').click();
+    await expect
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+        timeout: 15000,
+        message: 'the close button did not close the HUD',
+      })
+      .toBe(0);
   });
 
   test('the HUD takes its colours from the theme and follows a theme switch while open', async () => {
@@ -177,9 +199,10 @@ test.describe('memory hud @desktop', () => {
     expect(pinEntry?.value, 'the restored HUD is not recorded as pinned across workspaces').toBe('global');
     await expect(page.locator('#memory-total')).toHaveText(/^[1-9][\d.]* (MB|GB)$/, { timeout: 15000 });
 
-    // The restored window keeps its key, so hud focuses it instead of opening a second.
+    // The restored window is the one hud finds: running it closes that window
+    // instead of opening a second.
     const again = await runCommand('hud');
     expect(again?.success).toBe(true);
-    expect(again.windowId, 'hud opened a second window beside the restored HUD').toBe(restoredId);
+    expect(again.closed, 'hud did not find the restored HUD').toBe(true);
   });
 });

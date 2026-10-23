@@ -87,6 +87,12 @@ const refresh = async () => {
   }
 };
 
+// Close this window. Force, so it is gone for good and does not come back at
+// the next launch.
+document.getElementById('close-hud').addEventListener('click', () => {
+  api.window.close(undefined, { force: true });
+});
+
 const init = async () => {
   if (api.initialize) await api.initialize();
   await refresh();

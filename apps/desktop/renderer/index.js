@@ -270,8 +270,14 @@ const registerCoreCommands = () => {
   // and closeSpace() read. No Cmd+H shortcut: macOS reserves it for Hide.
   api.commands.register({
     name: 'hud',
-    description: 'Show Peek memory and stats, pinned across workspaces',
+    description: 'Show or hide Peek memory and stats, pinned across workspaces',
     execute: async () => {
+      // Toggle: running the command while the HUD is on screen closes it.
+      const existing = await api.window.findByUrl('peek://app/hud/hud.html');
+      if (existing?.success && existing.id != null) {
+        api.window.close(existing.id, { force: true });
+        return { success: true, closed: true };
+      }
       const opened = await api.window.open('peek://app/hud/hud.html', {
         width: 240,
         height: 260,
