@@ -948,7 +948,7 @@ New, and failing when their files run alone with `--workers=1`:
 |---|---|---|---|
 | `reopen-closed-window.spec.ts` | reopen a maximized hybrid page-host restores it unmaximized at its pre-maximize bounds | reopened window must come back at the pre-maximize bounds | stale expectation: `bfe2a0f8` and G12 restore maximize; `specs/restore-specs-follow-g12.md` |
 | `session-restore-page-host.spec.ts` | a window maximized at save time restores unmaximized at its pre-maximize bounds | `params.maximized` is `true` in the snapshot | stale expectation, same spec |
-| `hybrid-overlay.spec.ts` | a host flush with the top of the work area reveals only after the ~2s dwell | navbar visible 400 ms after the move | from the laptop's address bar dwell commits (`11388d80`, `2acfa084`, `38ac2209`, `83892fee`, `66ea2e16`); *unverified* on macOS, where they were written |
+| `hybrid-overlay.spec.ts` | a host flush with the top of the work area reveals only after the ~2s dwell | navbar visible 400 ms after the move | known failure, left open until the address bar dwell is checked on macOS: it began with the dwell commits (`11388d80`, `2acfa084`, `38ac2209`, `83892fee`, `66ea2e16`), written there |
 
 New, passing when their files run alone (order or load in the full run): `cmd-hashtag-search`
 "typing #todo #today + Enter opens search/home with q param", `hybrid-overlay` "maximize snaps
