@@ -5,12 +5,13 @@
  *   through the live-updates path (query-live.js) like any other item, and the
  *   caller waits for its block instead of inserting one.
  * - An item left empty when its inline editor closes is deleted again
- *   (shouldDiscard): the new item exists only so the live path can show it, so a
- *   close without typing must not leave a blank item in the datastore.
+ *   (closeEmptyAction): the new item exists only so the live path can show it, so a
+ *   close without typing must not leave a blank item in the datastore. An existing
+ *   item emptied and closed is deleted too, through the view's undoable delete.
  * - Tags are never created here. A query naming a tag that does not exist has no
  *   valid tag set to apply, so the add is refused (newItemPlan reports it).
  *
- * newItemPlan(), buildTagIndex() and shouldDiscard() are pure; createTaggedItem()
+ * newItemPlan(), buildTagIndex(), shouldDiscard() and closeEmptyAction() are pure; createTaggedItem()
  * and discardItem() call the datastore.
  */
 
@@ -71,6 +72,15 @@ export function newItemPlan(tagNames, tagsByName) {
 export function shouldDiscard(item) {
   if (!item || item.type !== 'text') return false;
   return typeof item.content !== 'string' || item.content.trim() === '';
+}
+
+/**
+ * What to do with an item whose inline editor closed: 'discard' an empty item
+ * added in this view, 'delete' (undoable) an empty existing one, else null.
+ */
+export function closeEmptyAction(item, wasAdded) {
+  if (!shouldDiscard(item)) return null;
+  return wasAdded ? 'discard' : 'delete';
 }
 
 /**

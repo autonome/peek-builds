@@ -19,7 +19,7 @@ import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
 import { createUndoStack, inverseAffordance } from './undo-stack.js';
-import { createTaggedItem, discardItem, shouldDiscard } from './query-add-item.js';
+import { createTaggedItem, discardItem, closeEmptyAction } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache, findAffordanceByKey, triggerAffordance } from 'peek://app/lib/tag-action-affordances.js';
 
@@ -360,8 +360,12 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         return true;
       },
       onClosed: (item) => {
-        // A new item closed without any text is removed again.
-        if (addedIds.delete(item.id) && shouldDiscard(item)) discardItem(api, item.id);
+        // A new item closed without any text is removed again; an existing one
+        // emptied and closed is deleted through the undoable delete.
+        const wasAdded = addedIds.delete(item.id);
+        const action = closeEmptyAction(item, wasAdded);
+        if (action === 'discard') discardItem(api, item.id);
+        else if (action === 'delete') deleteBlock(item);
         if (rebuilding) return;
         // After the current event finishes: the close may sit inside a selection change.
         setTimeout(() => {
