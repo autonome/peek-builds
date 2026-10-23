@@ -30,6 +30,9 @@ export const SUSPENSION_CHANGED_TOPIC = 'tile:suspension-changed';
 
 const ACTIVITY_MIN_GAP_MS = 1000;
 
+/** An implicit result hold ends here even if the result topic is never published. */
+export const RESULT_HOLD_TIMEOUT_MS = 30_000;
+
 export interface SuspensionChange {
   tileId: string;
   from: SuspensionPolicy;
@@ -62,6 +65,8 @@ export interface SuspensionShellDeps {
   configFor(tileId: string): Partial<SuspensionConfig>;
   /** Run the existing unloadTile for the tile's background entry; only used when not observe-only. */
   unload(tileId: string): Promise<void>;
+  /** Call `fn` on the next publish of `topic`; returns a disposer. */
+  onceOnTopic(topic: string, fn: () => void): () => void;
   /** Default true. */
   observeOnly?: boolean;
 }
@@ -70,6 +75,8 @@ interface TileRecord {
   state: SuspensionState;
   timer: { at: number; handle: unknown } | null;
   waiters: Array<() => void>;
+  /** Releases of the implicit result holds still open. */
+  resultHolds: Set<() => void>;
 }
 
 export interface SuspensionShell {
@@ -79,6 +86,8 @@ export interface SuspensionShell {
   wakeFailed(tileId: string): void;
   dispatchPending(tileId: string): void;
   dispatchSettled(tileId: string): void;
+  /** The tile was sent a command carrying a result topic: hold it until that topic publishes or 30 s pass. */
+  holdForResult(tileId: string, resultTopic: string): void;
   activity(tileId: string): void;
   /** A tile window (any entry) opened; the background entry is ignored. */
   tileWindowOpened(tileId: string, entryId: string, windowId: string): void;
@@ -105,6 +114,7 @@ export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShel
       state: initialSuspensionState(deps.configFor(tileId), deps.now()),
       timer: null,
       waiters: [],
+      resultHolds: new Set(),
     };
     records.set(tileId, rec);
     // First seen while already awake (loaded by some path other than the dispatch hook).
@@ -201,7 +211,33 @@ export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShel
     armTimer(tileId, rec);
   }
 
+  let holdSeq = 0;
+
+  function dropResultHolds(rec: TileRecord): void {
+    for (const release of [...rec.resultHolds]) release();
+  }
+
   return {
+    holdForResult(tileId, resultTopic) {
+      const rec = record(tileId);
+      if (!rec) return;
+      const id = `result:${++holdSeq}:${resultTopic}`;
+      send(tileId, { type: 'hold-acquired', id });
+      let done = false;
+      let stopListening: () => void = () => {};
+      let timer: unknown = null;
+      const release = (): void => {
+        if (done) return;
+        done = true;
+        rec.resultHolds.delete(release);
+        stopListening();
+        if (timer !== null) deps.clearTimer(timer);
+        if (records.get(tileId) === rec) send(tileId, { type: 'hold-released', id });
+      };
+      rec.resultHolds.add(release);
+      stopListening = deps.onceOnTopic(resultTopic, release);
+      timer = deps.setTimer(release, RESULT_HOLD_TIMEOUT_MS);
+    },
     beginWake(tileId) {
       const rec = record(tileId);
       if (!rec) return Promise.resolve();
@@ -232,8 +268,9 @@ export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShel
     ownedWindowClosed: (id, windowId) => send(id, { type: 'window-closed', id: windowId, owned: true }),
     crashed: (id) => send(id, { type: 'crashed' }),
     disabled(tileId) {
-      send(tileId, { type: 'disabled' });
       const rec = records.get(tileId);
+      if (rec) dropResultHolds(rec);
+      send(tileId, { type: 'disabled' });
       if (rec?.timer) deps.clearTimer(rec.timer.handle);
       records.delete(tileId);
       for (const resolve of rec?.waiters.splice(0) ?? []) resolve();
@@ -242,6 +279,7 @@ export function createSuspensionShell(deps: SuspensionShellDeps): SuspensionShel
     getState: (id) => records.get(id)?.state ?? null,
     dispose() {
       for (const rec of records.values()) {
+        dropResultHolds(rec);
         if (rec.timer) deps.clearTimer(rec.timer.handle);
         for (const resolve of rec.waiters.splice(0)) resolve();
       }
@@ -266,6 +304,7 @@ export const suspension = {
   wakeFailed: (tileId: string): void => shell?.wakeFailed(tileId),
   dispatchPending: (tileId: string): void => shell?.dispatchPending(tileId),
   dispatchSettled: (tileId: string): void => shell?.dispatchSettled(tileId),
+  holdForResult: (tileId: string, resultTopic: string): void => shell?.holdForResult(tileId, resultTopic),
   activity: (tileId: string): void => shell?.activity(tileId),
   tileWindowOpened: (tileId: string, entryId: string, windowId: string): void =>
     shell?.tileWindowOpened(tileId, entryId, windowId),

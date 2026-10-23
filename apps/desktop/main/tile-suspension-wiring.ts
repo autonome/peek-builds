@@ -1,7 +1,7 @@
 // Connects the tile suspension shell to the running app: real clock and timers, the system
 // pubsub address for `tile:suspension-changed`, the lazy-tile registry, and the tile launcher.
 // Observe-only: decisions are logged and published, no tile is unloaded.
-import { publish, getSystemAddress, setActivityObserver } from './pubsub.js';
+import { publish, subscribe, getSystemAddress, setActivityObserver } from './pubsub.js';
 import { getBackgroundEntry, getLazyTileManifest, isLazyTileRegistered } from './tile-lazy.js';
 import { isTileLoaded, unloadTile } from './tile-launcher.js';
 import { tileIdFromSource } from './window-open-registry.js';
@@ -45,6 +45,7 @@ export function installTileSuspension(): void {
       const entry = getBackgroundEntry(tileId);
       if (entry !== null) await unloadTile(tileId, entry);
     },
+    onceOnTopic: (topic, fn) => subscribe(getSystemAddress(), topic, () => fn()),
     observeOnly: true,
   });
   setActivityObserver((address) => {

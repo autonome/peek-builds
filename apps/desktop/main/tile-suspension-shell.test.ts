@@ -33,7 +33,16 @@ function harness(over: Partial<SuspensionShellDeps> = {}) {
     isBackgroundEntry: (_t, entry) => entry === 'background',
     configFor: () => ({}),
     unload: async (id) => { unloads.push(id); },
+    onceOnTopic: (topic, fn) => {
+      const entry = { topic, fn };
+      listeners.push(entry);
+      return () => { const i = listeners.indexOf(entry); if (i >= 0) listeners.splice(i, 1); };
+    },
     ...over,
+  };
+  const listeners: Array<{ topic: string; fn: () => void }> = [];
+  const publishTopic = (topic: string) => {
+    for (const l of listeners.filter(x => x.topic === topic)) l.fn();
   };
   const shell = createSuspensionShell(deps);
   // Advance the clock, firing due timers in order.
@@ -48,7 +57,7 @@ function harness(over: Partial<SuspensionShellDeps> = {}) {
     }
     now = end;
   };
-  return { shell, advance, changes, logs, unloads, loaded, timers };
+  return { shell, advance, changes, logs, unloads, loaded, timers, listeners, publishTopic };
 }
 
 async function wake(h: ReturnType<typeof harness>, id = 'notes'): Promise<void> {
@@ -167,6 +176,63 @@ describe('tile suspension shell', () => {
     assert.equal(h.shell.getPolicy('notes'), 'waking');
     h.shell.wakeReady('notes');
     assert.equal(h.shell.getPolicy('notes'), 'idle');
+  });
+
+  it('a result-topic command holds the tile until the result is published', async () => {
+    const h = harness();
+    await wake(h);
+    h.shell.holdForResult('notes', 'cmd:execute:go:result');
+    assert.equal(h.shell.getPolicy('notes'), 'active');
+    h.advance(20_000);
+    assert.equal(h.shell.getPolicy('notes'), 'active');
+    h.publishTopic('cmd:execute:go:result');
+    assert.equal(h.shell.getPolicy('notes'), 'idle');
+    assert.equal(h.listeners.length, 0);
+    // The timeout timer is cancelled and idle time counts from the release.
+    h.advance(9 * MIN);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 0);
+    h.advance(2 * MIN);
+    assert.equal(h.changes.filter(c => c.wouldSuspend).length, 1);
+  });
+
+  it('a result hold ends after 30 s when no result is published', async () => {
+    const h = harness();
+    await wake(h);
+    h.shell.holdForResult('notes', 'r');
+    h.advance(29_000);
+    assert.equal(h.shell.getPolicy('notes'), 'active');
+    h.advance(1_500);
+    assert.equal(h.shell.getPolicy('notes'), 'idle');
+    assert.equal(h.listeners.length, 0, 'listener removed on timeout');
+  });
+
+  it('two commands hold independently, and a late result after the timeout changes nothing', async () => {
+    const h = harness();
+    await wake(h);
+    h.shell.holdForResult('notes', 'a');
+    h.advance(10_000);
+    h.shell.holdForResult('notes', 'b');
+    h.publishTopic('a');
+    assert.equal(h.shell.getPolicy('notes'), 'active');
+    h.publishTopic('b');
+    assert.equal(h.shell.getPolicy('notes'), 'idle');
+    h.publishTopic('b');
+    assert.equal(h.shell.getPolicy('notes'), 'idle');
+  });
+
+  it('disabling a tile drops its result holds and listeners', async () => {
+    const h = harness();
+    await wake(h);
+    h.shell.holdForResult('notes', 'r');
+    h.shell.disabled('notes');
+    assert.equal(h.listeners.length, 0);
+    assert.equal(h.shell.getPolicy('notes'), null);
+  });
+
+  it('a result hold for a tile that is not lazy is ignored', () => {
+    const h = harness();
+    h.shell.holdForResult('other', 'r');
+    assert.equal(h.listeners.length, 0);
   });
 
   it('a wake while not suspending does not wait', async () => {

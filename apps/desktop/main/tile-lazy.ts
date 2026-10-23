@@ -617,6 +617,9 @@ async function wakeForDispatch(
   registerPendingDispatch(tileId, pending);
   try {
     await ensureTileLoaded(tileId);
+    // A request/response command keeps the tile loaded until its answer is published. Taken
+    // before the pending entry is dropped so there is no unprotected gap.
+    if (pending.resultTopic) suspension.holdForResult(tileId, pending.resultTopic);
     // Load succeeded — drop the pending entry so a later crash or
     // timeout on a sibling dispatch doesn't fire a stale notification
     // for this one.
