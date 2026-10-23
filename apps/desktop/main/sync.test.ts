@@ -2417,3 +2417,221 @@ describe('Paged pulls — the client follows the server cursor', () => {
     assert.strictEqual(result.pulled, 2);
   });
 });
+
+describe('Visit sync — push/pull/merge', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  /**
+   * Fresh desktop datastore + profile + server user, with a fetch stub routed
+   * through the real server app. `missingRoute` answers one of the visit routes
+   * with a 404, as a server that predates visit sync would.
+   */
+  function setup(name: string, opts: { missingRoute?: 'push' | 'pull' } = {}) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-visits-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `visits-${name}-${crypto.randomUUID()}`;
+    users.createUser(userId);
+    const { apiKey } = users.createDevice(userId, 'sync-test');
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+
+      const isPull = reqPath.startsWith('/visits/since/');
+      const isPush = method === 'POST' && reqPath.startsWith('/visits');
+      if ((opts.missingRoute === 'pull' && isPull) || (opts.missingRoute === 'push' && isPush)) {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+      }
+
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  /** Inserts a local url item with no syncId (never pushed). */
+  function insertItem(id: string): string {
+    const now = Date.now();
+    datastore.getDb().prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'url', ?, '{}', '', 0, ?, ?, 0)
+    `).run(id, `https://example.com/${id}`, now, now);
+    return id;
+  }
+
+  function itemSyncId(itemId: string): string {
+    const row = datastore.getDb().prepare('SELECT syncId FROM items WHERE id = ?').get(itemId) as { syncId: string };
+    return row.syncId;
+  }
+
+  function visitPushedAt(visitId: string): number {
+    const row = datastore.getDb().prepare('SELECT pushedAt FROM item_visits WHERE id = ?').get(visitId) as
+      | { pushedAt: number }
+      | undefined;
+    return row ? row.pushedAt : -1;
+  }
+
+  async function fetchServerVisits(apiKey: string): Promise<Array<{ id: string; duration: number; nextId: string | null; itemId: string }>> {
+    const res = await serverApp.request('/visits/since/0', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { visits: Array<{ id: string; duration: number; nextId: string | null; itemId: string }> };
+    return json.visits;
+  }
+
+  async function postServerVisit(apiKey: string, visit: Record<string, unknown>): Promise<void> {
+    const res = await serverApp.request('/visits?profile=default', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ visits: [visit] }),
+    });
+    assert.strictEqual(res.status, 200, 'seeding a visit on the server must succeed');
+  }
+
+  it('a visit is not pushed until its item has a syncId, and is pushed once it does', async () => {
+    const { apiKey } = setup('gated');
+    const itemId = insertItem('gated-item');
+    const { id: visitId } = datastore.recordItemVisit(itemId, { timestamp: 1000 });
+
+    const before = await sync.pushVisitsToServer(FAKE_SERVER_URL, apiKey);
+    assert.strictEqual(before.pushed, 0, 'no syncId yet, nothing to send');
+    assert.strictEqual(visitPushedAt(visitId), 0);
+    assert.deepStrictEqual(await fetchServerVisits(apiKey), []);
+
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+
+    assert.notStrictEqual(itemSyncId(itemId), '', 'the item must have synced');
+    assert.deepStrictEqual((await fetchServerVisits(apiKey)).map((v) => v.id), [visitId]);
+    assert.ok(visitPushedAt(visitId) > 0, 'a delivered visit is stamped');
+  });
+
+  it('a duration set after a push makes the visit push again with the new duration', async () => {
+    const { apiKey } = setup('duration');
+    const itemId = insertItem('duration-item');
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const { id: visitId } = datastore.recordItemVisit(itemId, { timestamp: 1000 });
+
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    assert.ok(visitPushedAt(visitId) > 0);
+    assert.strictEqual((await fetchServerVisits(apiKey))[0].duration, 0);
+
+    datastore.setItemVisitDuration(visitId, 4321);
+    assert.strictEqual(visitPushedAt(visitId), 0, 'a changed visit is eligible again');
+
+    const result = await sync.pushVisitsToServer(FAKE_SERVER_URL, apiKey);
+    assert.strictEqual(result.pushed, 1);
+    const onServer = (await fetchServerVisits(apiKey)).find((v) => v.id === visitId);
+    assert.strictEqual(onServer?.duration, 4321, 'the second push carries the new duration');
+    assert.ok(visitPushedAt(visitId) > 0);
+  });
+
+  it('linking the next visit makes the earlier visit push again with its nextId', async () => {
+    const { apiKey } = setup('linking');
+    const itemId = insertItem('linking-item');
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const { id: firstId } = datastore.recordItemVisit(itemId, { timestamp: 1000 });
+
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    assert.ok(visitPushedAt(firstId) > 0);
+    assert.strictEqual((await fetchServerVisits(apiKey)).find((v) => v.id === firstId)?.nextId ?? null, null);
+
+    const { id: secondId } = datastore.recordItemVisit(itemId, { timestamp: 2000 });
+    assert.strictEqual(visitPushedAt(firstId), 0, 'linking the next visit changes the first');
+
+    await sync.pushVisitsToServer(FAKE_SERVER_URL, apiKey);
+    const onServer = (await fetchServerVisits(apiKey)).find((v) => v.id === firstId);
+    assert.strictEqual(onServer?.nextId, secondId);
+    assert.ok(visitPushedAt(firstId) > 0);
+  });
+
+  it('a pulled visit lands with pushedAt set and is not pushed back', async () => {
+    const { apiKey } = setup('pulled');
+    const itemId = insertItem('pulled-item');
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const syncId = itemSyncId(itemId);
+
+    await postServerVisit(apiKey, { id: 'remote-visit-1', itemId: syncId, timestamp: 5000, duration: 77 });
+
+    const result = await sync.pullVisitsFromServer(FAKE_SERVER_URL, apiKey, 0);
+    assert.strictEqual(result.pulled, 1);
+
+    const row = datastore.getDb().prepare('SELECT itemId, duration, pushedAt FROM item_visits WHERE id = ?')
+      .get('remote-visit-1') as { itemId: string; duration: number; pushedAt: number };
+    assert.strictEqual(row.itemId, itemId, 'the server item id is translated to the local item id');
+    assert.strictEqual(row.duration, 77);
+    assert.ok(row.pushedAt > 0, 'a pulled row is already on the server');
+
+    const push = await sync.pushVisitsToServer(FAKE_SERVER_URL, apiKey);
+    assert.strictEqual(push.pushed, 0, 'a pulled visit is not re-pushed');
+  });
+
+  it('a pulled visit for an item that is not present locally is skipped', async () => {
+    const { apiKey } = setup('unknown-item');
+    await postServerVisit(apiKey, { id: 'orphan-visit', itemId: 'no-such-item-on-this-device', timestamp: 5000 });
+
+    const result = await sync.pullVisitsFromServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.strictEqual(result.pulled, 0);
+    assert.strictEqual(result.skipped, 1);
+    assert.strictEqual(visitPushedAt('orphan-visit'), -1, 'no row is created');
+  });
+
+  it('pulling visits leaves items.visitCount unchanged', async () => {
+    const { apiKey } = setup('visit-count');
+    const itemId = insertItem('visit-count-item');
+    datastore.recordItemVisit(itemId, { timestamp: 1000 });
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const syncId = itemSyncId(itemId);
+
+    const countOf = () => (datastore.getDb().prepare('SELECT visitCount, lastVisitAt FROM items WHERE id = ?')
+      .get(itemId) as { visitCount: number; lastVisitAt: number });
+    const beforePull = countOf();
+
+    await postServerVisit(apiKey, { id: 'remote-count-1', itemId: syncId, timestamp: 9000 });
+    await postServerVisit(apiKey, { id: 'remote-count-2', itemId: syncId, timestamp: 9100 });
+    const result = await sync.pullVisitsFromServer(FAKE_SERVER_URL, apiKey, 0);
+
+    assert.ok(result.pulled >= 2);
+    assert.deepStrictEqual(countOf(), beforePull);
+  });
+
+  it('a 404 from the visit push route leaves syncAll() succeeding', async () => {
+    const { apiKey } = setup('push-404', { missingRoute: 'push' });
+    const itemId = insertItem('push-404-item');
+    await sync.syncAll(FAKE_SERVER_URL, apiKey);
+    const { id: visitId } = datastore.recordItemVisit(itemId, { timestamp: 1000 });
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+    assert.strictEqual(visitPushedAt(visitId), 0, 'nothing was delivered, so the visit stays pending');
+    assert.strictEqual(sync.getSyncStatus().lastError, null, 'a missing route is not a sync error');
+  });
+
+  it('a 404 from the visit pull route leaves syncAll() succeeding', async () => {
+    const { apiKey } = setup('pull-404', { missingRoute: 'pull' });
+    const itemId = insertItem('pull-404-item');
+    const { id: visitId } = datastore.recordItemVisit(itemId, { timestamp: 1000 });
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+    assert.ok(visitPushedAt(visitId) > 0, 'the push half still ran');
+    assert.strictEqual(sync.getSyncStatus().lastError, null, 'a missing route is not a sync error');
+  });
+});
