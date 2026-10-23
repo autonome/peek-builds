@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   HUD_DEFAULT_BOUNDS, parseSavedBounds, chooseHudBounds, isCenterOnDisplay,
   visibleHudBounds, boundsChanged,
-} from '../../renderer/lib/hud-geometry.js';
+} from '../../features/hud/hud-geometry.js';
 
 const display = { x: 0, y: 0, width: 1440, height: 900 };
 

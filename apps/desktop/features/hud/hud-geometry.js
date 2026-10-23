@@ -1,9 +1,9 @@
 /**
  * Memory HUD size and position: what to open it with, and what to keep.
  *
- * Pure helpers shared by the `hud` command (renderer/index.js) and the HUD
- * page (renderer/hud/hud.js). The page saves its bounds under
- * HUD_BOUNDS_KEY in localStorage; both run on the peek://app origin, so they
+ * Pure helpers shared by the `hud` command (features/hud/background.js) and the
+ * HUD page (features/hud/hud.js). The page saves its bounds under
+ * HUD_BOUNDS_KEY in localStorage; both run on the peek://hud origin, so they
  * share one per-profile value. A session restore carries its own bounds for a
  * HUD that was open at quit; the page keeps saving the same value, so the two
  * agree.

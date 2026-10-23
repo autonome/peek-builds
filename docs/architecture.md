@@ -563,10 +563,11 @@ timing out.
 ### HUD
 
 The HUD is one pinned window, not a set of widget tiles. The `hud` command in
-`apps/desktop/renderer/index.js` opens `peek://app/hud/hud.html` under the
+`apps/desktop/features/hud/background.js` opens `peek://hud/hud.html` under the
 window key `hud-stats` and pins it globally;
-`apps/desktop/renderer/hud/hud.js` polls `api.app.metrics()` and shows memory,
-process, window and pubsub counts.
+`apps/desktop/features/hud/hud.js` polls `api.app.metrics()` and shows memory,
+process, window and pubsub counts. The HUD is a built-in feature whose manifest
+asks for the `diagnostics` capability (memory totals and pubsub counts).
 
 The earlier per-widget HUD at `peek://ext/hud/widgets/*` is gone.
 `apps/desktop/main/migrate-hud.ts` rewrites saved sessions that still name

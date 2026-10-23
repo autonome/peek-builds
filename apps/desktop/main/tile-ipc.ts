@@ -676,9 +676,9 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
     const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'pubsub', 'tile:pubsub:stats', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:pubsub:stats' };
+    if (!hasCapability(grant, 'diagnostics')) {
+      handleViolation(grant, 'pubsub', 'tile:pubsub:stats', 'diagnostics capability required', args.token);
+      return { success: false, error: 'trustedBuiltin or diagnostics capability required for tile:pubsub:stats' };
     }
     return { success: true, data: getPubSubStats() };
   });
@@ -7940,9 +7940,9 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
     const grant = _grant;
-    if (!grant.trustedBuiltin) {
-      handleViolation(grant, 'app', 'tile:app:metrics', 'trustedBuiltin required', args.token);
-      return { success: false, error: 'trustedBuiltin required for tile:app:metrics' };
+    if (!hasCapability(grant, 'diagnostics')) {
+      handleViolation(grant, 'app', 'tile:app:metrics', 'diagnostics capability required', args.token);
+      return { success: false, error: 'trustedBuiltin or diagnostics capability required for tile:app:metrics' };
     }
     return { success: true, data: summarizeMemory(gatherProcessMetrics()) };
   });

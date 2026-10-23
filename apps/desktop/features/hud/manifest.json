@@ -1,0 +1,50 @@
+{
+  "manifestVersion": 3,
+  "id": "hud",
+  "shortname": "hud",
+  "name": "HUD",
+  "description": "Peek memory and window statistics, as a floating window or a sheet card",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "hud",
+      "url": "hud.html",
+      "key": "peek://hud/hud.html",
+      "title": "Peek HUD"
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["system"],
+      "topics": [
+        "ext:ready",
+        "ext:hud:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true,
+      "urls": ["peek://hud/"]
+    },
+    "context": {
+      "write": ["pin"]
+    },
+    "commands": true,
+    "diagnostics": true
+  },
+  "commands": [
+    {
+      "name": "hud",
+      "description": "Show or hide Peek memory and stats, pinned across workspaces",
+      "action": { "type": "execute" }
+    }
+  ]
+}

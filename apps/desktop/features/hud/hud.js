@@ -1,15 +1,15 @@
 /**
  * Memory HUD page — Peek's total memory across every process, plus window
  * and pubsub counts. Opened pinned across workspaces by the `hud` command
- * (renderer/index.js registerCoreCommands()). Reads `api.app.metrics()`
- * (main/process-metrics.ts summarizeMemory()), which needs the trustedBuiltin
- * grant this page gets from main/pseudo-tiles.ts PSEUDO_TILES.
+ * (features/hud/background.js). Reads `api.app.metrics()`
+ * (main/process-metrics.ts summarizeMemory()) and `api.pubsub.stats()`, which
+ * the manifest's `diagnostics` capability allows.
  */
 
 import {
   HUD_BOUNDS_KEY, parseSavedBounds, visibleHudBounds, boundsChanged,
-} from '../lib/hud-geometry.js';
-import { summarizeWindows } from '../lib/hud-windows.js';
+} from './hud-geometry.js';
+import { summarizeWindows } from './hud-windows.js';
 
 const api = window.app;
 

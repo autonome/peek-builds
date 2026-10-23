@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyWindow, summarizeWindows } from '../../renderer/lib/hud-windows.js';
+import { classifyWindow, summarizeWindows } from '../../features/hud/hud-windows.js';
 
 const w = (url, params = {}, visible = false) => ({ url, params, visible });
 

@@ -370,6 +370,12 @@ export interface TileCapabilities {
   secrets?: boolean;
   /** Its own windows may embed <webview> elements (builtin features only) */
   webview?: boolean;
+  /**
+   * Can read app-wide telemetry: memory totals across every Peek process
+   * (`api.app.metrics()`) and pubsub message counts (`api.pubsub.stats()`).
+   * Read-only counters; nothing about their contents.
+   */
+  diagnostics?: boolean;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────

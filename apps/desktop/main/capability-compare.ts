@@ -73,6 +73,7 @@ const PRESENCE_CAPS: Array<keyof TileCapabilities> = [
   'session',
   'rules',
   'secrets',
+  'diagnostics',
 ];
 
 /**

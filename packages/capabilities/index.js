@@ -431,6 +431,10 @@ export function validateTileManifest(json) {
       errors.push({ path: 'capabilities.secrets', message: 'secrets must be a boolean' });
     }
 
+    if (caps.diagnostics !== undefined && typeof caps.diagnostics !== 'boolean') {
+      errors.push({ path: 'capabilities.diagnostics', message: 'diagnostics must be a boolean' });
+    }
+
     if (caps.session !== undefined && typeof caps.session !== 'boolean') {
       errors.push({ path: 'capabilities.session', message: 'session must be a boolean' });
     }

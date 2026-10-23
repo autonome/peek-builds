@@ -3,8 +3,8 @@
  *
  * The HUD is an ordinary, interactive Peek window pinned across workspaces
  * (`docs/design/window-rules.md` "Persistent windows: workspace-pinned and
- * global HUD"). The `hud` command (`renderer/index.js registerCoreCommands()`)
- * opens `peek://app/hud/hud.html`, pins it across workspaces the same way the
+ * global HUD"). The `hud` command (`features/hud/background.js`)
+ * opens `peek://hud/hud.html`, pins it across workspaces the same way the
  * "pin across workspaces" command does (`api.window.setPinned` + the 'pin'
  * context key), and focuses the existing window instead of opening a second
  * one when it is already open. The page reads the aggregate memory total from
@@ -84,7 +84,7 @@ test.describe('memory hud @desktop', () => {
     expect(typeof hudId).toBe('number');
 
     const page = await getWindowById(hudId);
-    expect(page.url()).toContain('app/hud/hud.html');
+    expect(page.url()).toContain('peek://hud/hud.html');
 
     const pinEntry = await getPinContext(hudId);
     expect(pinEntry?.value, 'the HUD window is not recorded as pinned across workspaces').toBe('global');
@@ -98,7 +98,7 @@ test.describe('memory hud @desktop', () => {
     expect(again?.success).toBe(true);
     expect(again.closed, 'a second hud did not close the open HUD').toBe(true);
     await expect
-      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('peek://hud/hud.html')).length, {
         timeout: 15000,
       })
       .toBe(0);
@@ -114,7 +114,7 @@ test.describe('memory hud @desktop', () => {
     const page = await getWindowById(opened.windowId as number);
     await page.locator('#close-hud').click();
     await expect
-      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('peek://hud/hud.html')).length, {
         timeout: 15000,
         message: 'the close button did not close the HUD',
       })
@@ -135,7 +135,7 @@ test.describe('memory hud @desktop', () => {
     // The page saves changed bounds on a short poll; the close button saves once more.
     await page.locator('#close-hud').click();
     await expect
-      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('peek://hud/hud.html')).length, {
         timeout: 15000,
       })
       .toBe(0);
@@ -210,7 +210,7 @@ test.describe('memory hud @desktop', () => {
       hudId,
     );
     await expect
-      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('app/hud/hud.html')).length, {
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('peek://hud/hud.html')).length, {
         timeout: 15000,
         message: 'the HUD never closed — restore would be unfalsifiable',
       })
@@ -220,7 +220,7 @@ test.describe('memory hud @desktop', () => {
     // in-session restore skips windows pinned across workspaces on purpose.
     await app.evaluateMain!((() => (globalThis as any).__peek_test.forceColdStartRestoreSession()) as any);
 
-    const page = await app.getWindow('app/hud/hud.html', 15000);
+    const page = await app.getWindow('peek://hud/hud.html', 15000);
     const info = await page.evaluate(() => (window as unknown as { app: any }).app.window.getInfo());
     expect(info?.error).toBeUndefined();
     const restoredId = info.id as number;

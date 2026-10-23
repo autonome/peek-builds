@@ -5,7 +5,6 @@ import api from './api.js';
 import fc from './features.js';
 import migrations from './migrations/index.js';
 import { log } from './log.js';
-import { HUD_BOUNDS_KEY, chooseHudBounds } from './lib/hud-geometry.js';
 import { initCmd } from './cmd/background.js';
 import { initPage } from './page/background.js';
 
@@ -259,48 +258,6 @@ const registerCoreCommands = () => {
         height: 700,
         key: 'diagnostic-tool'
       });
-    }
-  });
-
-  // Memory HUD: an ordinary window pinned across workspaces
-  // (docs/design/window-rules.md "Persistent windows"). The `key` makes a
-  // second run focus the open HUD instead of opening another. Pinning uses
-  // the same two steps as the "pin across workspaces" command
-  // (features/spaces/background.js setPinState()): move the window to the
-  // pinned band, then record scope in the 'pin' context key, which the badge
-  // and closeSpace() read. No Cmd+H shortcut: macOS reserves it for Hide.
-  api.commands.register({
-    name: 'hud',
-    description: 'Show or hide Peek memory and stats, pinned across workspaces',
-    execute: async () => {
-      // Toggle: running the command while the HUD is on screen closes it.
-      const existing = await api.window.findByUrl('peek://app/hud/hud.html');
-      if (existing?.success && existing.id != null) {
-        api.window.close(existing.id, { force: true });
-        return { success: true, closed: true };
-      }
-      // Saved size and position (written by hud/hud.js), else the defaults.
-      let savedBounds = null;
-      try { savedBounds = localStorage.getItem(HUD_BOUNDS_KEY); } catch { /* storage unavailable */ }
-      const bounds = chooseHudBounds(savedBounds);
-      const opened = await api.window.open('peek://app/hud/hud.html', {
-        width: bounds.width,
-        height: bounds.height,
-        x: bounds.x,
-        y: bounds.y,
-        key: 'hud-stats',
-        title: 'Peek HUD',
-      });
-      const windowId = opened?.id;
-      if (!opened?.success || windowId == null) {
-        return { success: false, error: opened?.error || 'Failed to open the HUD window' };
-      }
-      const pinned = await api.window.setPinned(windowId, true);
-      if (!pinned?.success) {
-        return { success: false, error: pinned?.error || 'Failed to pin the HUD window', windowId };
-      }
-      await api.context.set('pin', 'global', {}, windowId);
-      return { success: true, windowId, scope: 'global' };
     }
   });
 

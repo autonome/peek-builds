@@ -2742,8 +2742,8 @@ function buildAPI(): Record<string, unknown> {
      * `{ totalKb, processCount, byType: { [processType]: kb } }`.
      */
     metrics: () => {
-      if (!trustedBuiltin) {
-        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      if (!trustedBuiltin && grantedCapabilities?.diagnostics !== true) {
+        return Promise.resolve({ success: false, error: 'api.app.metrics requires trustedBuiltin or the diagnostics capability' });
       }
       return ipcRenderer.invoke('tile:app:metrics', { token: tileToken });
     },

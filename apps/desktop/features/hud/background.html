@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>HUD Extension</title>
+</head>
+<body>
+<script type="module">
+  import extension from './background.js';
+
+  const api = window.app;
+  await api.initialize();
+
+  // Register handlers before signaling ready (lazy loading waits for ext:ready).
+  if (extension.init) {
+    await extension.init();
+  }
+
+  api.onShutdown(() => {
+    if (extension.uninit) {
+      extension.uninit();
+    }
+  });
+</script>
+</body>
+</html>
