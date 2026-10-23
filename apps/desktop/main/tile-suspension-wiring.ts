@@ -63,7 +63,7 @@ export function installTileSuspension(): void {
       if (entry !== null) await unloadTile(tileId, entry);
     },
     onceOnTopic: (topic, fn) => subscribe(getSystemAddress(), topic, () => fn()),
-    observeOnly: true,
+    observeOnly: false,
   });
   if (lastPrefs) suspension.settingChanged(suspensionConfigFromPrefs(lastPrefs));
   setActivityObserver((address) => {
