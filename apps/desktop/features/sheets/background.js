@@ -8,6 +8,7 @@
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { windowParamsForSheet } from './sheet-options.js';
+import { loadSheetsMap, loadSheet, sheetKey, SHEETS_KEY } from './sheet-store.js';
 
 const api = window.app;
 
@@ -15,13 +16,10 @@ const api = window.app;
 const sheetPageUrl = 'peek://sheets/sheet.html';
 
 /**
- * Get all sheet configs from feature_settings
+ * Get all sheet configs (migrating legacy per-sheet configs on first read)
  */
 const listSheets = async () => {
-  const result = await api.settings.get('sheets');
-  if (!result.success || !result.data) return [];
-
-  const sheetsMap = result.data;
+  const sheetsMap = await loadSheetsMap(api);
   return Object.entries(sheetsMap).map(([key, value]) => ({ key, ...value }));
 };
 
@@ -30,7 +28,7 @@ const listSheets = async () => {
  */
 const createSheet = async (name) => {
   const sheetId = crypto.randomUUID().slice(0, 8);
-  const key = `sheet:${sheetId}`;
+  const key = sheetKey(sheetId);
   const config = {
     version: 1,
     name: name || 'Untitled Sheet',
@@ -39,10 +37,9 @@ const createSheet = async (name) => {
   };
 
   // Load existing sheets, add new one, save back
-  const existing = await api.settings.get('sheets');
-  const sheetsMap = (existing.success && existing.data) || {};
-  sheetsMap[key] = config;
-  const result = await api.settings.set('sheets', sheetsMap);
+  const sheetsMap = await loadSheetsMap(api);
+  sheetsMap[key] = { ...config, legacyMerged: true };
+  const result = await api.settings.set(SHEETS_KEY, sheetsMap);
   if (result && result.error) {
     console.error('[ext:sheets] Failed to save sheet:', result.error);
   }
@@ -54,8 +51,7 @@ const createSheet = async (name) => {
  */
 const openSheet = async (sheetId, name) => {
   const url = `${sheetPageUrl}?sheetId=${sheetId}`;
-  const stored = await api.settings.get('sheets');
-  const config = stored?.success ? stored.data?.[`sheet:${sheetId}`] : null;
+  const config = await loadSheet(api, sheetId);
   const params = {
     key: url,
     trackingSource: 'sheets',

@@ -5,6 +5,8 @@
  * Uses peek-grid in freeform mode with drag/resize in edit mode.
  */
 
+import { loadSheet, saveSheet } from './sheet-store.js';
+
 const api = window.app;
 
 let sheetId = null;
@@ -22,22 +24,14 @@ const getSheetIdFromUrl = () => {
 /**
  * Load sheet config from feature_settings
  */
-const loadSheetConfig = async () => {
-  const key = `sheet:${sheetId}`;
-  const result = await api.settings.get(key);
-  if (result && !result.error && result.value) {
-    return result.value;
-  }
-  return null;
-};
+const loadSheetConfig = () => loadSheet(api, sheetId);
 
 /**
  * Save sheet config to feature_settings
  */
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;
-  const key = `sheet:${sheetId}`;
-  const result = await api.settings.set(key, sheetConfig);
+  const result = await saveSheet(api, sheetId, sheetConfig);
   if (result && result.error) {
     console.error('[sheets] Failed to save config:', result.error);
     return;
