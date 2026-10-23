@@ -7,6 +7,7 @@
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
+import { windowParamsForSheet } from './sheet-options.js';
 
 const api = window.app;
 
@@ -51,12 +52,15 @@ const createSheet = async (name) => {
 /**
  * Open a sheet window
  */
-const openSheet = (sheetId, name) => {
+const openSheet = async (sheetId, name) => {
   const url = `${sheetPageUrl}?sheetId=${sheetId}`;
+  const stored = await api.settings.get('sheets');
+  const config = stored?.success ? stored.data?.[`sheet:${sheetId}`] : null;
   const params = {
     key: url,
     trackingSource: 'sheets',
-    trackingSourceId: sheetId
+    trackingSourceId: sheetId,
+    ...windowParamsForSheet(config)
   };
 
   api.window.open(url, params)
