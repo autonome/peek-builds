@@ -68,16 +68,18 @@ const refreshOther = async () => {
   // Hidden windows too: the HUD reports how many of all live windows are visible.
   const windows = await api.window.list({ includeInternal: true, includeHidden: true });
   if (windows?.success && windows.windows) {
+    const total = windows.windows.length;
     const visible = windows.windows.filter(w => w.visible).length;
-    pairs.push(['Windows visible', String(visible)]);
-    pairs.push(['Windows total', String(windows.windows.length)]);
+    pairs.push(['Windows', String(total)]);
+    pairs.push(['Windows Visible/Hidden', `${visible}/${total - visible}`]);
   }
   const pubsub = await api.pubsub.stats();
   if (pubsub?.success && pubsub.data) {
     const ps = pubsub.data;
-    pairs.push(['Topics', `${ps.topicsUsedThisSession}/${ps.topicsRegistered}`]);
-    pairs.push(['Published', formatNum(ps.messagesPublished)]);
-    pairs.push(['Delivered', formatNum(ps.messagesDelivered)]);
+    // Topics used this session / topics registered.
+    pairs.push(['Msg Topics', `${ps.topicsUsedThisSession}/${ps.topicsRegistered}`]);
+    pairs.push(['Msg Published', formatNum(ps.messagesPublished)]);
+    pairs.push(['Msg Delivered', formatNum(ps.messagesDelivered)]);
   }
   otherEl.replaceChildren(...rows(pairs));
 };
