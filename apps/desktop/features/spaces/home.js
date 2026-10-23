@@ -1101,6 +1101,35 @@ const createItemCard = (item) => {
   return card;
 };
 
+/**
+ * Read this window's see-through state from main and draw it.
+ *
+ * The look is entirely see-through.css plus the `body.see-through` block in
+ * home.css, both gated on a class on `<body>`; the state itself lives in main
+ * as a window param, which is why it survives a restart. Reading it here is
+ * also what applies a switch that was already on when the session was saved,
+ * before any announcement arrives.
+ */
+const applySeeThrough = async () => {
+  try {
+    const result = await api?.window?.getSeeThrough?.();
+    const on = result?.success === true && result.data?.seeThrough === true;
+    document.body.classList.toggle('see-through', on);
+  } catch (error) {
+    console.log('[ext:spaces] see-through state unavailable:', error);
+  }
+};
+
+/**
+ * Follow the see-through switch. `window:see-through` is a broadcast, so
+ * rather than matching the window id in the message the view simply re-reads
+ * its own state — one answer, and no second idea of which window this is.
+ */
+const setupSeeThrough = () => {
+  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
+  applySeeThrough();
+};
+
 const init = async () => {
 
   if (api.escape) api.escape.onEscape(handleEscape);
@@ -1190,7 +1219,11 @@ const init = async () => {
   // as `tag:created`, which re-renders the list through that query.
   api.pubsub.publish('spaces:ensure-default', {});
 
-  showSpaces();
+  await showSpaces();
+
+  // The view is drawn; a spec can wait for this rather than for a card count.
+  document.body.dataset.ready = 'true';
+
   askDeleteFromAddress();
 };
 
@@ -1200,6 +1233,11 @@ const init = async () => {
 // level runs. A plain `addEventListener('DOMContentLoaded', init)` then
 // never calls `init` at all: the event already happened, and this listener
 // missed it (silently — no error, just a home page that never populates).
+// On module evaluation, ahead of `init()` and of its first await, so a switch
+// flipped while the view is still loading is not missed. `<body>` already
+// exists: this module is imported from a script at the end of the body.
+setupSeeThrough();
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {

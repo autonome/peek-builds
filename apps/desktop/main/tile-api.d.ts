@@ -168,6 +168,38 @@ interface TileWindow {
   maximize(id?: number): Promise<{ success: boolean; error?: string }>;
 
   /**
+   * Read whether a window's view supports the see-through switch, and
+   * whether it is currently on. Omit id for the calling window, which
+   * needs no `window` capability; another window requires `window.query`.
+   */
+  getSeeThrough(id?: number): Promise<{ success: boolean; data?: { supported: boolean; seeThrough: boolean }; error?: string }>;
+
+  /**
+   * Turn the see-through look (frosted and maximized, as the windows
+   * switcher looks) on or off for a window. `on` is explicit rather than a
+   * toggle. A window whose view does not declare `seeThrough: true` on its
+   * manifest tile entry answers `{ success: false, error }` and nothing
+   * changes. Requires `window.manage` capability.
+   */
+  setSeeThrough(id: number | undefined, on: boolean): Promise<{ success: boolean; data?: { seeThrough: boolean }; error?: string }>;
+
+  /**
+   * Read the app-wide see-through switch. Stored with the app's other
+   * settings, so it survives a restart. Requires `window.query`.
+   */
+  getSeeThroughEverywhere(): Promise<{ success: boolean; data?: { on: boolean }; error?: string }>;
+
+  /**
+   * Turn the see-through look on or off for every open window whose view
+   * declares `seeThrough: true`, and remember the choice so a declaring
+   * window opened later opens that way too. `on` is explicit rather than a
+   * toggle. `data.applied` counts the windows that were set. Flipping this
+   * resets every declaring window, which ends any per-window override.
+   * Requires `window.manage` capability.
+   */
+  setSeeThroughEverywhere(on: boolean): Promise<{ success: boolean; data?: { on: boolean; applied: number }; error?: string }>;
+
+  /**
    * Toggle fullscreen on a window. Omit id for calling window.
    * Requires `window.manage` capability.
    */

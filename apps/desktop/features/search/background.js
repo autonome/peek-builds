@@ -25,6 +25,9 @@ const openSearchWindow = async (query) => {
       role: 'workspace',
       height: 768,
       width: 700,
+      // Transparency can only be set at creation, so this window carries it
+      // whether or not the see-through switch is on yet.
+      transparent: true,
       trackingSource: 'cmd',
       trackingSourceId: 'search'
     });

@@ -26,7 +26,9 @@
       "title": "Entities",
       "role": "workspace",
       "key": "entities-browser",
-      "lazy": true
+      "lazy": true,
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -49,7 +51,8 @@
         "entities:search",
         "entities:search:response",
         "entities:get-for-url",
-        "entities:get-for-url:response"
+        "entities:get-for-url:response",
+        "window:see-through"
       ]
     },
     "datastore": {
@@ -81,7 +84,13 @@
       "action": {
         "type": "window",
         "url": "peek://entities/home.html",
-        "options": { "role": "workspace", "key": "entities-browser", "width": 900, "height": 700 }
+        "options": {
+          "role": "workspace",
+          "key": "entities-browser",
+          "width": 900,
+          "height": 700,
+          "transparent": true
+        }
       }
     }
   ],

@@ -3,14 +3,25 @@
   "id": "research",
   "shortname": "research",
   "name": "Research",
-  "description": "Keep or drop a page, with a one-line note",
-  "version": "1.0.0",
+  "description": "Keep or drop a page, and the research's own view of its pages",
+  "version": "1.1.0",
   "builtin": true,
   "tiles": [
     {
       "id": "background",
       "url": "background.html",
       "lazy": true
+    },
+    {
+      "id": "home",
+      "url": "home.html",
+      "role": "workspace",
+      "key": "research-view",
+      "width": 900,
+      "height": 700,
+      "title": "Research",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -20,14 +31,31 @@
         "cmd:execute:*",
         "ext:ready",
         "ext:research:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "tag:item-added",
+        "tag:item-removed",
+        "tag:created",
+        "tag:deleted",
+        "tag:renamed",
+        "item:created",
+        "item:updated",
+        "item:deleted",
+        "item:restored",
+        "sync:pull-completed",
+        "rules:changed",
+        "window:see-through"
       ]
     },
     "datastore": {
-      "tables": ["items", "tags", "item_tags"]
+      "tables": ["items", "tags", "item_tags", "item_visits", "item_events"]
     },
     "window": {
-      "query": true
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "context": {
+      "read": ["mode"]
     },
     "commands": true
   },
@@ -45,6 +73,11 @@
     {
       "name": "unjudge",
       "description": "Clear the active page's kept or dropped state, keeping its note",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "research view",
+      "description": "Show this research's pages, the ones that held attention longest first",
       "action": { "type": "execute" }
     }
   ]

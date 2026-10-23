@@ -59,9 +59,25 @@ Each term is followed by the name the code uses for it.
 - **G9 app-activate.** The app activating shows again what deactivation hid, an attached overlay in front of its host, and never a window that was dismissed.
 - **G10 fullscreen-escape.** Escape on a fullscreen window exits fullscreen first; the Escape fallback window never opens over a fullscreen window.
 - **G11 focus-background.** A world-caused focus on a background window brings it forward without flicker; a transient in front does not reassert itself; key lands on that window.
-- **G12 restore.** A restored or reopened window comes back unmaximized at its saved bounds; a window that was maximized when saved or closed comes back at its pre-maximize bounds. Maximize is not restored: a window manager may refit a window mapped at full work-area size, and restoring at the normal size avoids a stale maximized flag. Saved data from older builds that records a maximized window is converted the same way on restore.
+- **G12 restore.** A restored or reopened window comes back at its saved bounds, and a window that was maximized when saved or closed comes back maximized. Saved data keeps the pre-maximize bounds plus a `maximized` flag; the window opens at those bounds and is then maximized through the kernel's own `Maximize` (`ipc.ts assembleHybridPageHost()`), so it is never mapped at full work-area size — a window manager may refit such a window — and the kernel stashes the pre-maximize bounds itself, so unmaximizing returns to them. Saved data from older builds that carries `preMaxBounds` is converted on restore (`session-projection.ts maximizeRestoreDescriptor()`).
 - **G13 transient-page-ends.** A transient page-host window ends the moment it stops being key while the app is still inactive, the user switches desktop, or the app becomes active while it is key. The same holds for every transient window that took key from another app, directly or through a chain of transient windows; nothing about it depends on which feature opened the window. Every one of those closes it outright; nothing replaces it, and the page stays in history. Losing key with the app inactive is the user clicking another app or switching desktop; the app becoming active while the page is key ends it the same way, rather than bringing the page forward as an ordinary window. Escape on a transient page-host window closes it too. Reason for closing: the page was asked for while Peek was not focused, so the task ends the moment that focus state ends, whichever way it ends — including the user bringing Peek itself forward.
 - **G14 switcher-reach.** The switcher lists the app's windows from every desktop, and picking one takes the user to that window's desktop. It is the one way to reach another desktop's window: a pick names a window the user knows is open there, while every other request makes something happen, and new things happen where the user is (`specs/kernel-desktops.md` rule 5).
+- **G15 see-through.** A card-grid view can be flipped, one window at a time, between its normal look and the switcher's frosted, see-through one (`see-through view`, `tile-ipc.ts tile:window:set-see-through`). Turning it on maximizes the window through the kernel's own `Maximize`; turning it off restores the window to the exact bounds it had before, but only when the switch was what maximized it — a window already maximized by hand when the switch went on stays maximized when it goes off, since nothing else asked for it to shrink. The switch never raises a window, never puts one on top and never hides another: being the frontmost thing on screen is the switcher's own behaviour and not part of this look. A window whose view does not declare the switch (`seeThrough: true` on its manifest tile entry) refuses the request and nothing about it changes, rather than half-applying it. The state is a window param, so a view that was see-through when the session was saved comes back see-through and, by G12, maximized.
+- **G16 maximize-all.** Entering maximize-all maximizes every ordinary window on the screen and desktop the user is on, and leaving it returns each window the mode maximized to the exact size and position it had before. Eligible is an ordinary page or tile window that is visible and in scope; every transient, every hidden keep-alive window, the page chrome, and any window that cannot take key are left alone. The scope is the screen and desktop current when the mode begins and does not follow the user afterwards. A window already maximized at that moment is not the mode's to restore and stays maximized when the mode ends; a window opened or shown in scope while the mode is on is maximized too. The user outranks the mode: a window the user unmaximizes or drags out of maximize is theirs from then on, and maximizing it again by hand does not hand it back. The mode, its scope and which windows it maximized are kernel state (`window-kernel.ts admitToMaximizeAll()`), recorded in the saved session and re-established on restore, so leaving the mode after a relaunch still puts those windows back (`specs/maximize-all.md`).
+
+  One app-wide switch sits over the per-window one (`see-through views everywhere`,
+  `tile-ipc.ts tile:window:set-see-through-everywhere`). Turning it on puts every open window whose
+  view declares the switch into the see-through look and makes every declaring window opened
+  afterwards open that way; turning it off puts them all back. Each window is set through the same
+  path the per-window switch uses, so every rule above holds for each of them individually — the
+  maximize, the exact restore, and a window already maximized staying maximized. The per-window
+  switch keeps working under it: `see-through view` on one window overrides the app-wide state for
+  that window alone, and that override lasts until the app-wide switch is next flipped, which sets
+  every declaring window again. The app-wide setting is stored with the app's other settings rather
+  than in a renderer, so it survives a restart; each window's own state still comes from its session
+  params, which is how a per-window override outlives a restart. A window opened while the switch is
+  on is maximized by the same kernel `Maximize`, so turning the switch off puts it at the size its
+  opener asked for.
 
 ### Opening a page from another app: which app holds OS focus at each step
 
@@ -397,8 +413,11 @@ restored the saved copy beside the one that never left (`specs/spaces-window-loc
 | Raise's confirmation counted as a new raise; several tokens churn | F3, S3 |
 | Hidden window re-appears on a late `show` echo with chrome re-attached | V2 |
 | Session restore leaves focus nowhere or on the wrong window | F7 |
-| Restored or reopened window comes back maximized, or at the maximized rect instead of its pre-maximize bounds | G12 |
+| Restored or reopened window that was maximized comes back unmaximized, or unmaximizing it lands on the maximized rect instead of its pre-maximize bounds | G12 |
+| Leaving maximize-all leaves a window maximized, puts back one the user had already maximized, or overrides a window the user resized while the mode was on | G16 |
 | Switcher's focus sweeps the palette twice for one window | S3, D6 |
+| Turning the see-through look off shrinks a window the user had maximized by hand, lands it somewhere other than its exact earlier bounds, raises it above other windows, or the switch half-applies to a view that does not support it | G15 |
+| The app-wide see-through switch misses an open window whose view declares it, reaches a window whose view does not, forgets its state across a restart, or a window opened while it is on opens in the normal look | G15 |
 
 Open against these rules: nothing. G1/F6 closed at `7e2eab6c` and G3/F7 at `a86b030c`, both
 verified by hand on the packaged build on 2026-09-12: with another app frontmost, the global

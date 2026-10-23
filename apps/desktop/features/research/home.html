@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Research</title>
+    <link rel="stylesheet" type="text/css" href="home.css">
+    <!-- The see-through look, inert until main puts `see-through` on <body>. -->
+    <link rel="stylesheet" type="text/css" href="peek://app/lib/see-through.css">
+
+    <!-- Import map for resolving bare module specifiers. Without it every
+         `peek-*` component import fails silently and the elements stay
+         un-upgraded (apps/desktop/CLAUDE.md). -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <script type="module">
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-input.js';
+    </script>
+  </head>
+  <body>
+    <header class="research-header">
+      <h1 id="research-title" class="research-title">Research</h1>
+      <div id="research-count" class="research-count"></div>
+    </header>
+
+    <!-- One scrolling area holding the three groups in order. Each group's rows
+         sit in their own `.cards` container, which is what
+         renderer/lib/grid-nav.js navigates: its selector spans every container,
+         so the three groups read as one list in document order and j/k step
+         from the last page straight to the first search. One row per line, so
+         the column count comes out as 1. -->
+    <div class="research-groups">
+      <section class="research-group" id="group-pages">
+        <h2 class="group-heading">Pages</h2>
+        <div id="rows" class="cards"></div>
+        <div id="empty-state" class="empty-state">No pages in this research yet.</div>
+      </section>
+
+      <section class="research-group" id="group-searches">
+        <h2 class="group-heading">Searches</h2>
+        <div id="search-rows" class="cards"></div>
+      </section>
+
+      <section class="research-group" id="group-notes">
+        <h2 class="group-heading">Notes</h2>
+        <!-- The one place this view takes typed text. Deliberately not a
+             `peek-card`: grid-nav navigates `.cards peek-card`, and a row that
+             holds a text field is not a row the list should land on while
+             moving between groups. Tab or `n` reaches it. -->
+        <div class="note-compose">
+          <peek-input id="note-input" placeholder="Write a note — Enter saves, Escape leaves"></peek-input>
+        </div>
+        <div id="note-rows" class="cards"></div>
+      </section>
+    </div>
+
+    <script type="module">
+      await window.app.initialize();
+      await import('./home.js');
+    </script>
+  </body>
+</html>

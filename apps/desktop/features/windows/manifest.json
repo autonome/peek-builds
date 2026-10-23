@@ -70,8 +70,23 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "maximize all windows",
+      "description": "Maximize every window here; run again to put them all back",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "fullscreen",
       "description": "Toggle fullscreen for the active window",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "see-through view",
+      "description": "Flip the active card view between its normal look and the see-through one",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "see-through views everywhere",
+      "description": "Turn the see-through look on or off for every card view that supports it",
       "action": { "type": "execute" }
     }
   ],

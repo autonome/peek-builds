@@ -74,6 +74,10 @@ that is a hybrid of a list and the block editor: the research's pages (open ones
 searches tried, and any notes written into it, in one place. It starts as that panel and may
 move into the surface itself.
 
+This is now the `research view` command — see **The research view** under "Built" for what it
+draws and what is still ahead of it. What remains open here is the move from a list to
+something nearer the block editor, and whether the panel becomes the surface itself.
+
 It is the research-specific case of app-wide work already filed:
 
 - Peek `bb73035e`: a Peek-wide fullscreen mode versus fullscreen per window.
@@ -99,7 +103,9 @@ The research view should be built on whichever of those lands, not as its own wi
 - **Starting.** A research is a space. A `research` command that creates a space and runs the
   first search in it is the only new step; the person may also just work in an existing space.
 - **Rounds.** Each search run from a window in the space is recorded as an item tagged with the
-  space tag and `search-round`, so the searches tried are listed in order. Linking each result
+  space tag and `search-round`, so the searches tried are listed in order. A query run a second
+  time adds a run to the round it already has, whether it was typed again or run again from the
+  research view, so a round is the query and the list of times it was tried. Linking each result
   page to its round needs the opener's round carried on `item:created`; deferred.
 - **Finishing.** Leaving a research puts its windows away through the session snapshot and keeps
   everything recorded. Whether "finished" is ever marked, or inferred (no activity for a while,
@@ -123,6 +129,44 @@ The research view should be built on whichever of those lands, not as its own wi
   `did-finish-load`): median 112/137 ms on versus 123/130 ms off, 90th percentile 139/162 ms on
   versus 156/147 ms off. No measurable difference; the spread between runs of one setting is
   larger. Input latency is unaffected because no code runs in the page.
+- **Search rounds** (`features/websearch/search-rounds.js`, spec
+  `specs/research-search-rounds.md`). Every web search is a `text` item, content the trimmed
+  query, tagged `search-round`; each run adds an item event whose metadata has kind `search-run`,
+  the engine id and the result URL. The space is the mode of the front content window
+  (`api.window.getFocusedVisibleWindowId()`, which skips the palette). The tile tags both the
+  search item and the result page into that space itself, because `main/ipc.ts
+  createHybridPageHost()` publishes `item:created` before it writes the window's space mode, and
+  a repeat visit publishes no `item:created` at all, so `features/spaces/background.js
+  handleItemCreated()` cannot be relied on for it. Known cost: `findRoundItem()` does one
+  `getItemTags` call per text item whose content contains the query.
+- **The research view** (`features/research/home.js`, `home.html`, `home.css`, with the orders in
+  `rank.js` and `groups.js`; specs `specs/research-view.md` and
+  `specs/research-view-searches-notes.md`). A `research view` command opens one maximized,
+  see-through window per research — the research being the space of the front content window —
+  holding three groups in order: the pages, the ones that held attention longest first and the
+  ones open in a window right now marked; the searches, in the order they were first run, each
+  with how many times it ran; and the notes, newest first, with an add-a-note row at the top of
+  that group. All three groups read one live tag query, so anything tagged into the research
+  appears without reopening the view. The add-a-note row is the only editable text in the view:
+  Enter writes a `text` item tagged with the space tag, Escape leaves the row, and `n` reaches it
+  from the list. One selection crosses all three groups through
+  `renderer/lib/grid-nav.js`.
+- **Acting on a research view row** (`features/research/actions.js` with `home.js`, spec
+  `specs/research-view-actions.md`). Every row acts on Enter or click, through one handler for
+  both, because `grid-nav.js activateSelected()` turns Enter into a click on the selected card.
+  A page row brings forward the window the page is already open in — matched on a URL compared
+  without its fragment, trailing slash or case — and otherwise opens the page in the research. A
+  search row runs its query again in the research, which adds a run to the round it already has
+  rather than starting a new one. A note row opens for editing where it is read: a field the size
+  of the add-a-note row takes the row's place, Enter or leaving the row saves, and Escape closes
+  the field leaving the note as it was. Every one of those decisions is in `actions.js`, which
+  touches no API, so the view keeps only the call each decision turns into. The view window
+  itself is opened with the research's space mode, which is what makes "in the research" true of
+  both the rerun and the opened page: `features/websearch/search-rounds.js` and
+  `features/spaces/background.js handleItemCreated()` each read the space off the front window.
+  Searches are placed by their `search-run` item events, which publish on no live topic, so a
+  search run again from the view does not update its count until the query re-resolves for
+  another reason.
 - **Rebuilding the cost harness.** Copy the shape of `tests/desktop/visit-dwell.spec.ts`
   (per-describe app plus a local `http` server). Through `DesktopApp.evaluateMain`, install an
   `app.on('web-contents-created')` hook that records `Date.now()` on `did-start-loading` and the
@@ -170,7 +214,7 @@ feeds both designs.
    records typing volume, typing speed and the number of fields typed into.
 4. **The research view** on the app-wide maximized treatment once one of the filed issues
    lands.
-5. **Rounds**: `search-round` items for searches run from a space.
+5. **Rounds**: `search-round` items for searches run from a space. Built; see "Built".
 
 ## Set aside
 

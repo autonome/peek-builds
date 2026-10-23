@@ -27,6 +27,7 @@ import {
   type WindowKind,
   type Rectangle,
   type FocusCause,
+  type MaximizeAllMark,
 } from './window-kernel.js';
 import { windowIsTransient, windowNonActivating } from './izui-roles.js';
 
@@ -170,7 +171,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
   if (rng() < SHOWN_BIAS) {
     return { type: 'WindowShown', id };
   }
-  const variant = randomInt(rng, 36);
+  const variant = randomInt(rng, 38);
   switch (variant) {
     case 0:
       return { type: 'WindowRegistered', id, ...randomRegistrationFields(rng) };
@@ -310,6 +311,38 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       if (rng() < 0.5) return { type: 'ColdStartFocusArmed', id: latch };
       const stale = rng() < 0.2;
       return { type: 'ArmColdStartFocus', id: latch, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 36: {
+      // Maximize-all: the command, so `decide`'s scope pick runs, and the raw
+      // event, so a mode whose scope names a screen the log never reported is
+      // generated too.
+      if (rng() < 0.5) {
+        const workArea = rng() < 0.8 ? randomRectangle(rng) : undefined;
+        return workArea === undefined
+          ? { type: 'EnterMaximizeAll', expectedVersion: state.version }
+          : { type: 'EnterMaximizeAll', workArea, expectedVersion: state.version };
+      }
+      const stale = rng() < 0.2;
+      return { type: 'LeaveMaximizeAll', expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 37: {
+      // Restore: a mode and a mark list, both of which a saved session can
+      // hand the kernel for windows that are not here any more.
+      const mode =
+        rng() < 0.25
+          ? null
+          : {
+            screen: rng() < 0.2 ? null : pick(rng, ['A', 'B', 'C']),
+            desktop: rng() < 0.2 ? null : pick(rng, ['a1', 'a2', 'b1']),
+            workArea: rng() < 0.2 ? null : randomRectangle(rng),
+          };
+      const marks = Array.from({ length: randomInt(rng, 3) }, () => ({
+        id: wid(randomInt(rng, POOL_SIZE)),
+        mark: (rng() < 0.5 ? 'marked' : 'released') as MaximizeAllMark,
+      }));
+      if (rng() < 0.5) return { type: 'MaximizeAllRestored', mode, marks };
+      const stale = rng() < 0.2;
+      return { type: 'RestoreMaximizeAll', mode, marks, expectedVersion: stale ? state.version + 1 : state.version };
     }
     // Command and raw event both generated — decide gates AssertFocus on isContentWindow, so the
     // command alone would leave evolve's/react's handling of a non-content target ungenerated.
@@ -1004,8 +1037,9 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 });
 
 describe('window-kernel: the op-token invariants are not vacuous', () => {
-  // Measured at POOL_SIZE=6, LOG_LENGTH=30, 200 seeds: 190 seeds issue a focus-family op, 524
-  // ops total. Trajectory-sensitive, not proportional to variant count — one extra generator
+  // Measured at POOL_SIZE=6, LOG_LENGTH=30, 200 seeds: 186 seeds issue a focus-family op, 397
+  // ops total (was 190/524 before the maximize-all variants joined the roll).
+  // Trajectory-sensitive, not proportional to variant count — one extra generator
   // variant re-rolls every seed's log, so re-measure and re-record after any generator change.
   it('the generated logs issue focus-family ops at the measured rate', () => {
     let issued = 0;
@@ -1029,7 +1063,7 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
       assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
     }
     assert.ok(seedsWithAnOp >= 150, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
-    assert.ok(issued >= 400, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
+    assert.ok(issued >= 350, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
   });
 
   it('the checker names the violation when the counter goes inert', () => {

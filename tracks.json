@@ -11,7 +11,8 @@
   },
   "specWatch": {
     "specs": "specs",
-    "maxLive": 1,
-    "maxRounds": 1
+    "maxLive": 2,
+    "maxRounds": 1,
+    "landScript": "scripts/land-spec.sh"
   }
 }

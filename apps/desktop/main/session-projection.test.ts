@@ -84,6 +84,7 @@ import {
   mergeSnapshotIntoWorkspace,
   restorableBoundsFromRecord,
   readPreMaxBounds,
+  readMaximizeAllMark,
   maximizeRestoreDescriptor,
   readStackIndex,
   orderRestoredWindowsBottomToTop,
@@ -951,6 +952,46 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.strictEqual('preMaxX' in d.params, false);
   });
 
+  it('the see-through switch survives save and restore as a window param', () => {
+    // `params.seeThrough` is what makes a card view come back see-through
+    // after a restart, and `params.seeThroughMaximized` is what decides
+    // whether turning the switch off then unmaximizes the window. Both are
+    // plain booleans so sanitizeParams keeps them; this pins that they are
+    // projected rather than dropped with the machine-derived fields.
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', {
+        params: { ...CONTENT_PARAMS, seeThrough: true, seeThroughMaximized: true, transparent: true },
+      })],
+      records: [makeRecord('w1', {
+        bounds: { x: 0, y: 0, width: 1512, height: 900 },
+        maximized: true,
+        preMaxBounds: { x: 100, y: 110, width: 640, height: 480 },
+      })],
+    };
+    const [d] = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(d.params.seeThrough, true);
+    assert.strictEqual(d.params.seeThroughMaximized, true);
+    // Created transparent, so the restored window can be flipped again.
+    assert.strictEqual(d.params.transparent, true);
+    // And it comes back maximized at its pre-maximize rect, per G12 — the
+    // switch's own restore reads seeThroughMaximized, not the bounds.
+    assert.strictEqual(d.params.maximized, true);
+    assert.deepStrictEqual(d.bounds, { x: 100, y: 110, width: 640, height: 480 });
+  });
+
+  it('a window left in its normal look saves the switch as off', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', {
+        params: { ...CONTENT_PARAMS, seeThrough: false, seeThroughMaximized: false, transparent: true },
+      })],
+      records: [makeRecord('w1', { bounds: { x: 10, y: 20, width: 900, height: 700 } })],
+    };
+    const [d] = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(d.params.seeThrough, false);
+    assert.strictEqual(d.params.seeThroughMaximized, false);
+    assert.strictEqual('maximized' in d.params, false);
+  });
+
   it('a maximized record is saved at its pre-maximize rect with maximized: true and no preMax keys', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
@@ -1719,5 +1760,85 @@ describe('session-projection — the back/forward trail', () => {
     assert.strictEqual('navHistory' in first, false);
     assert.deepStrictEqual(second.navHistory, TRAIL.navHistory);
     assert.strictEqual(second.navHistoryIndex, 2);
+  });
+});
+
+// ============================================================================
+// Maximize-all mode through save and restore
+//
+// specs/maximize-all.md → "Survives a restart". Two facts ride the snapshot:
+// the mode with its scope, written at the top level only while it is on, and
+// one mark per window, written into a descriptor's params only when that
+// window carries one — so a snapshot taken with the mode off is byte-identical
+// to one from before the mode existed, which is what keeps the on-disk-shape
+// sweep above passing unmodified.
+// ============================================================================
+
+describe('session-projection — maximize-all mode', () => {
+  const MODE = { screen: 'A', desktop: 'a1', workArea: { x: 0, y: 0, width: 1600, height: 900 } };
+
+  const worldWith = (marks: Array<'marked' | 'released' | undefined>): World => ({
+    fixtures: marks.map((_, i) => contentFixture(i + 1, `w${i + 1}`)),
+    records: marks.map((mark, i) =>
+      makeRecord(`w${i + 1}`, {
+        bounds: { x: i, y: i, width: 800, height: 600 },
+        ...(mark !== undefined ? { maximizeAllMark: mark } : {}),
+      }),
+    ),
+    front: 'w1',
+    frontNativeId: 1,
+  });
+
+  const saveWith = (world: World, mode: typeof MODE | null) => {
+    const input = inputFor(world);
+    return serializeSession({ ...input, snapshot: { ...input.snapshot, maximizeAll: mode } });
+  };
+
+  it('the mode, its scope and each window’s mark round-trip through save', () => {
+    const { snapshot } = saveWith(worldWith(['marked', 'released']), MODE);
+
+    assert.deepStrictEqual(snapshot.maximizeAll, MODE);
+    assert.strictEqual(readMaximizeAllMark(snapshot.windows[0].params), 'marked');
+    assert.strictEqual(readMaximizeAllMark(snapshot.windows[1].params), 'released');
+  });
+
+  it('a mark survives the restore-side descriptor rewrite that un-maximizes bounds', () => {
+    const { snapshot } = saveWith(worldWith(['marked']), MODE);
+    const restored = maximizeRestoreDescriptor(snapshot.windows[0]);
+    assert.strictEqual(readMaximizeAllMark(restored.params), 'marked');
+  });
+
+  it('with the mode off the snapshot names no mode and no window carries a mark', () => {
+    const { snapshot } = saveWith(worldWith([undefined, undefined]), null);
+
+    assert.strictEqual('maximizeAll' in snapshot, false, 'no top-level field while the mode is off');
+    for (const descriptor of snapshot.windows) {
+      assert.strictEqual('maximizeAllMark' in descriptor.params, false);
+      assert.strictEqual(readMaximizeAllMark(descriptor.params), null);
+    }
+  });
+
+  it('restored data without marks yields no marked windows', () => {
+    // A snapshot written before the mode existed: the mode is on from some
+    // other window, and these descriptors simply say nothing.
+    const { snapshot } = saveWith(worldWith([undefined, undefined]), MODE);
+    const marks = snapshot.windows
+      .map((d) => readMaximizeAllMark(d.params))
+      .filter((m) => m !== null);
+    assert.deepStrictEqual(marks, []);
+  });
+
+  it('a mark the kernel no longer holds is dropped rather than carried over from stale params', () => {
+    const world = worldWith([undefined]);
+    world.fixtures[0].params = { ...CONTENT_PARAMS, maximizeAllMark: 'marked' };
+    const { snapshot } = saveWith(world, MODE);
+    assert.strictEqual('maximizeAllMark' in snapshot.windows[0].params, false);
+  });
+
+  it('readMaximizeAllMark refuses anything that is not one of the two marks', () => {
+    assert.strictEqual(readMaximizeAllMark({}), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: true }), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: 'maximized' }), null);
+    assert.strictEqual(readMaximizeAllMark({ maximizeAllMark: null }), null);
   });
 });

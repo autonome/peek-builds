@@ -929,6 +929,19 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Toggle maximize-all mode. On, every eligible window on the screen
+     * and desktop the user is on is maximized; off, each window the mode
+     * maximized returns to the exact size and position it had before.
+     * Resolves `{ success, entered }`, `entered` saying which way the
+     * toggle went. Requires `window.manage` (or trustedBuiltin).
+     */
+    maximizeAll: () => {
+      return ipcRenderer.invoke('tile:window:maximize-all', {
+        token: tileToken,
+      });
+    },
+
+    /**
      * Subscribe to maximize requests targeted at this window. The
      * `tile:window:maximize` IPC fires this on the target window's
      * webContents after the OS-side bounds change. Renderers that
@@ -954,6 +967,69 @@ function buildAPI(): Record<string, unknown> {
       const handler = () => { try { cb(); } catch (err) { console.error('[onUnmaximizeRequest]', err); } };
       ipcRenderer.on('tile:window:unmaximize-request', handler);
       return () => ipcRenderer.off('tile:window:unmaximize-request', handler);
+    },
+
+    /**
+     * Read whether a window's view supports the see-through switch and,
+     * if so, whether it is currently on. Resolves to
+     * `{ success, data: { supported, seeThrough } }`.
+     *
+     * Omit `id` to ask about the calling window, which needs no `window`
+     * capability — a card view reads its own state at startup to apply a
+     * session-restored switch. Asking about another window requires
+     * `window.query`.
+     */
+    getSeeThrough: (id?: number) => {
+      return ipcRenderer.invoke('tile:window:get-see-through', {
+        token: tileToken,
+        id,
+      });
+    },
+
+    /**
+     * Turn the see-through look on or off for a window: the frosted,
+     * maximized look the windows switcher uses. `on` is explicit, not a
+     * toggle — read the current state with `getSeeThrough` first.
+     *
+     * A window whose view does not declare the switch (`seeThrough: true`
+     * on its manifest tile entry) resolves to `{ success: false, error }`
+     * and nothing changes. Requires `window.manage` (or trustedBuiltin).
+     */
+    setSeeThrough: (id: number | undefined, on: boolean) => {
+      return ipcRenderer.invoke('tile:window:set-see-through', {
+        token: tileToken,
+        id,
+        on,
+      });
+    },
+
+    /**
+     * Read the app-wide see-through switch: `{ success, data: { on } }`.
+     *
+     * One setting for the whole app, stored beside the app's other
+     * settings, so it survives a restart. Requires `window.query`.
+     */
+    getSeeThroughEverywhere: () => {
+      return ipcRenderer.invoke('tile:window:get-see-through-everywhere', {
+        token: tileToken,
+      });
+    },
+
+    /**
+     * Turn the see-through look on or off for every open window whose view
+     * declares the switch, and remember the choice so a declaring window
+     * opened later opens that way too. `on` is explicit, not a toggle.
+     *
+     * Each window is flipped through the same per-window path
+     * `setSeeThrough` uses, so the maximize and the exact restore behave
+     * identically. Flipping this resets every declaring window, which ends
+     * any per-window override. Requires `window.manage`.
+     */
+    setSeeThroughEverywhere: (on: boolean) => {
+      return ipcRenderer.invoke('tile:window:set-see-through-everywhere', {
+        token: tileToken,
+        on,
+      });
     },
 
     /**

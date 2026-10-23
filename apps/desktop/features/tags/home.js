@@ -155,11 +155,44 @@ let detailView;
 let gridToolbar;
 
 /**
+ * Read this window's see-through state from main and draw it.
+ *
+ * The look is entirely see-through.css, gated on a class on `<body>`; the
+ * state itself lives in main as a window param, which is why it survives a
+ * restart. Reading it here is also what applies a switch that was already
+ * on when the session was saved, before any announcement arrives.
+ */
+const applySeeThrough = async () => {
+  try {
+    const result = await api?.window?.getSeeThrough?.();
+    const on = result?.success === true && result.data?.seeThrough === true;
+    document.body.classList.toggle('see-through', on);
+  } catch (err) {
+    debug && console.log('[tags] see-through state unavailable:', err);
+  }
+};
+
+/**
+ * Follow the see-through switch. `window:see-through` is a broadcast, so
+ * rather than matching the window id in the message the view simply
+ * re-reads its own state — one answer, and no second idea of which window
+ * this is.
+ */
+const setupSeeThrough = () => {
+  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
+  applySeeThrough();
+};
+
+/**
  * Initialize the UI
  */
 const init = async () => {
   __bootMark('init-start');
   debug && console.log('[tags] Home init');
+
+  // Before the first await, so a switch flipped while the view is still
+  // loading is not missed.
+  setupSeeThrough();
 
   // Initialize tag action rules cache for card affordances
   actionRulesCache = createActionRulesCache(api);

@@ -15,10 +15,19 @@
       "title": "Bake-off Labelling",
       "role": "workspace",
       "key": "bake-off-labeling",
-      "lazy": true
+      "lazy": true,
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": ["window:see-through"]
+    },
+    "window": {
+      "query": true
+    },
     "datastore": {
       "tables": ["items", "item_visits"]
     },
@@ -37,7 +46,8 @@
           "role": "workspace",
           "key": "bake-off-labeling",
           "width": 1100,
-          "height": 800
+          "height": 800,
+          "transparent": true
         }
       }
     }

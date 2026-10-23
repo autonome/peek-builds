@@ -165,3 +165,26 @@ export function decideExtensionPopupOpen(url: string): 'route' | 'deny' {
   if (url.startsWith('http://') || url.startsWith('https://')) return 'route';
   return 'deny';
 }
+
+/**
+ * Runs the teardown of a refused window without letting a throw escape (the
+ * window may already be destroyed, or closing it may fail). Returns what
+ * `attempt` returns; if it throws, logs once with `label` and the error message
+ * and returns `true`. `true` after a throw is deliberate: the caller records
+ * the result as "torn down" so the teardown is not retried on every later
+ * navigation. The refusal still blocks navigation and `window.open`, so the
+ * webContents stays inert whether or not the window closed.
+ */
+export function runRefusedTeardown(
+  attempt: () => boolean,
+  label: string,
+  log: (message: string) => void,
+): boolean {
+  try {
+    return attempt();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log(`[isolation] teardown of refused ${label} failed: ${reason}`);
+    return true;
+  }
+}

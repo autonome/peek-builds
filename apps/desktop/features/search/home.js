@@ -410,6 +410,37 @@ const setupToolbar = () => {
   });
 };
 
+// ── See-through ────────────────────────────────────────────────────────
+
+/**
+ * Read this window's see-through state from main and draw it.
+ *
+ * The look is entirely see-through.css plus the `body.see-through` block in
+ * home.css, both gated on a class on `<body>`; the state itself lives in main
+ * as a window param, which is why it survives a restart. Reading it here is
+ * also what applies a switch that was already on when the session was saved,
+ * before any announcement arrives.
+ */
+const applySeeThrough = async () => {
+  try {
+    const result = await api?.window?.getSeeThrough?.();
+    const on = result?.success === true && result.data?.seeThrough === true;
+    document.body.classList.toggle('see-through', on);
+  } catch (error) {
+    console.log('[ext:search] see-through state unavailable:', error);
+  }
+};
+
+/**
+ * Follow the see-through switch. `window:see-through` is a broadcast, so
+ * rather than matching the window id in the message the view simply re-reads
+ * its own state — one answer, and no second idea of which window this is.
+ */
+const setupSeeThrough = () => {
+  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
+  applySeeThrough();
+};
+
 // ── Init ───────────────────────────────────────────────────────────────
 
 const init = async () => {
@@ -446,6 +477,9 @@ const init = async () => {
   // Run search and render
   await runSearch();
   render();
+
+  // The view is drawn; a spec can wait for this rather than for a card count.
+  document.body.dataset.ready = 'true';
 };
 
 // ── Debounce helper ─────────────────────────────────────────────────
@@ -489,6 +523,11 @@ api.pubsub.subscribe('tag:item-added', () => {
 api.pubsub.subscribe('tag:item-removed', () => {
   debouncedRefresh();
 });
+
+// Here with the other module-level subscriptions, so a switch flipped while
+// the view is still loading is not missed: this runs on module evaluation,
+// ahead of `init()` and of the first await in it.
+setupSeeThrough();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

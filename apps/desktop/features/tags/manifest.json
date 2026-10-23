@@ -19,7 +19,9 @@
       "key": "tags-home",
       "width": 900,
       "height": 700,
-      "title": "Tags"
+      "title": "Tags",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -36,7 +38,8 @@
         "ext:tags:shutdown",
         "app:shutdown",
         "affordance:click",
-        "rules:changed"
+        "rules:changed",
+        "window:see-through"
       ]
     },
     "datastore": {
@@ -78,7 +81,7 @@
       "action": {
         "type": "window",
         "url": "peek://tags/home.html",
-        "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags" }
+        "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags", "transparent": true }
       }
     }
   ],

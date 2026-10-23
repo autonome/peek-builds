@@ -19,7 +19,9 @@
     {
       "id": "sheet",
       "url": "sheet.html",
-      "title": "Sheet"
+      "title": "Sheet",
+      "transparent": true,
+      "seeThrough": true
     }
   ],
   "capabilities": {
@@ -33,7 +35,8 @@
         "ext:sheets:shutdown",
         "app:shutdown",
         "sheets:open",
-        "sheets:settings-changed"
+        "sheets:settings-changed",
+        "window:see-through"
       ]
     },
     "window": {

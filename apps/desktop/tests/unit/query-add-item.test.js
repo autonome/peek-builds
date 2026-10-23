@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newItemPlan, buildTagIndex, shouldDiscard } from '../../features/editor/query-add-item.js';
+import { newItemPlan, buildTagIndex, shouldDiscard, closeEmptyAction } from '../../features/editor/query-add-item.js';
 
 const tags = buildTagIndex([
   { id: 't1', name: 'todo' },
@@ -68,4 +68,27 @@ test('shouldDiscard: an item with text, or of another type, is kept', () => {
   assert.equal(shouldDiscard({ type: 'text', content: 'x' }), false);
   assert.equal(shouldDiscard({ type: 'url', content: '' }), false);
   assert.equal(shouldDiscard(null), false);
+});
+
+test('closeEmptyAction: an empty added text item is discarded', () => {
+  assert.equal(closeEmptyAction({ type: 'text', content: '' }, true), 'discard');
+});
+
+test('closeEmptyAction: an empty existing text item is deleted', () => {
+  assert.equal(closeEmptyAction({ type: 'text', content: '' }, false), 'delete');
+});
+
+test('closeEmptyAction: whitespace-only content counts as empty', () => {
+  assert.equal(closeEmptyAction({ type: 'text', content: '  \n ' }, true), 'discard');
+  assert.equal(closeEmptyAction({ type: 'text', content: '  \n ' }, false), 'delete');
+});
+
+test('closeEmptyAction: a text item with content is left alone', () => {
+  assert.equal(closeEmptyAction({ type: 'text', content: 'x' }, true), null);
+  assert.equal(closeEmptyAction({ type: 'text', content: 'x' }, false), null);
+});
+
+test('closeEmptyAction: a non-text item is left alone', () => {
+  assert.equal(closeEmptyAction({ type: 'url', content: '' }, true), null);
+  assert.equal(closeEmptyAction({ type: 'url', content: '' }, false), null);
 });

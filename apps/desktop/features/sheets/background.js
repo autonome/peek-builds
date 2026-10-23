@@ -55,6 +55,9 @@ const openSheet = async (sheetId, name) => {
   const config = await loadSheet(api, sheetId);
   const params = {
     key: url,
+    // Transparency can only be set at creation, so this window carries it
+    // whether or not the see-through switch is on yet.
+    transparent: true,
     trackingSource: 'sheets',
     trackingSourceId: sheetId,
     ...windowParamsForSheet(config)

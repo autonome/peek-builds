@@ -327,6 +327,9 @@ const openGroupsWindow = async () => {
       key: bgAddress,
       height: 600,
       width: 800,
+      // Transparency can only be set at creation, so this window carries it
+      // whether or not the see-through switch is on yet.
+      transparent: true,
       trackingSource: 'cmd',
       trackingSourceId: 'groups'
     };
@@ -729,6 +732,39 @@ const uninitBackground = () => {
 };
 
 // ============================================================================
+// See-through
+// ============================================================================
+
+/**
+ * Read this window's see-through state from main and draw it.
+ *
+ * The look is entirely see-through.css plus the `body.see-through` block in
+ * home.css, both gated on a class on `<body>`; the state itself lives in main
+ * as a window param, which is why it survives a restart. Reading it here is
+ * also what applies a switch that was already on when the session was saved,
+ * before any announcement arrives.
+ */
+async function applySeeThrough() {
+  try {
+    const result = await api?.window?.getSeeThrough?.();
+    const on = result?.success === true && result.data?.seeThrough === true;
+    document.body.classList.toggle('see-through', on);
+  } catch (error) {
+    console.log('[ext:groups] see-through state unavailable:', error);
+  }
+}
+
+/**
+ * Follow the see-through switch. `window:see-through` is a broadcast, so
+ * rather than matching the window id in the message the view simply re-reads
+ * its own state — one answer, and no second idea of which window this is.
+ */
+function setupSeeThrough() {
+  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
+  applySeeThrough();
+}
+
+// ============================================================================
 // Bootstrap (module top-level)
 // ============================================================================
 // Runs bg init once at module load. Does NOT block DOMContentLoaded — uses
@@ -737,6 +773,10 @@ const uninitBackground = () => {
 // Errors here are logged but do not prevent UI init from running.
 
 (async () => {
+  // Before the first await, so a switch flipped while the view is still
+  // loading is not missed.
+  setupSeeThrough();
+
   try {
     await api.initialize();
     await initBackground();
@@ -816,7 +856,10 @@ const init = async () => {
   setupCreateGroup();
 
   // Show groups view
-  showGroups();
+  await showGroups();
+
+  // The view is drawn; a spec can wait for this rather than for a card count.
+  document.body.dataset.ready = 'true';
 };
 
 /**

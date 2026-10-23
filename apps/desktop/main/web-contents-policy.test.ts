@@ -23,6 +23,7 @@ import {
   isolationRefusalMessage,
   unsafeWebPreferenceOverrides,
   webviewTagForGrant,
+  runRefusedTeardown,
 } from './web-contents-policy.js';
 
 describe('isolation check — which webContents types are checked', () => {
@@ -235,5 +236,29 @@ describe('window-open — webview embedding is granted by the manifest, never as
 
   it('takes no input from the caller\'s own webPreferences', () => {
     assert.equal(webviewTagForGrant.length, 1);
+  });
+});
+
+describe('runRefusedTeardown', () => {
+  it('passes the attempt result through without logging', () => {
+    for (const result of [true, false]) {
+      const logged: string[] = [];
+      assert.equal(runRefusedTeardown(() => result, 'webContents 7', (m) => logged.push(m)), result);
+      assert.equal(logged.length, 0);
+    }
+  });
+
+  it('logs a throw once and reports the teardown as done', () => {
+    // true after a throw stops the caller retrying on every later navigation.
+    const logged: string[] = [];
+    const result = runRefusedTeardown(
+      () => { throw new Error('Object has been destroyed'); },
+      'webContents 7',
+      (m) => logged.push(m),
+    );
+    assert.equal(result, true);
+    assert.equal(logged.length, 1);
+    assert.ok(logged[0].includes('webContents 7'), logged[0]);
+    assert.ok(logged[0].includes('Object has been destroyed'), logged[0]);
   });
 });

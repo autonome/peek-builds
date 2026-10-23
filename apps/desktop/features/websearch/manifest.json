@@ -37,6 +37,12 @@
     "network": {
       "domains": ["*"]
     },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags", "item_events"]
+    },
+    "context": {
+      "read": ["mode"]
+    },
     "window": {
       "create": true,
       "query": true

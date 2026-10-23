@@ -5,7 +5,32 @@
   color: var(--theme-text, #202124);
   background: var(--theme-bg, #f6f7f9);
 }
-body { margin: 0; min-height: 100vh; }
+/*
+ * The window is created transparent, so the opaque normal look is this
+ * background rather than the window's own. It is painted on both the root and
+ * the body because see-through.css takes the root's away and replaces the
+ * body's with the frost; either one alone leaves a gap in one of the two looks.
+ */
+body { margin: 0; min-height: 100vh; background: var(--theme-bg, #f6f7f9); }
+
+/*
+ * The see-through look. Everything below reads its surfaces and text through
+ * `--theme-*` with a light-mode literal as the fallback, so redefining those
+ * variables here is what carries the frost through the panels and makes the
+ * text legible on the dark frosted background. `--base05` is the text colour
+ * see-through.css itself asks for; the theme ramp it makes translucent is not
+ * used by this view.
+ */
+body.see-through {
+  --base05: rgba(255, 255, 255, 0.95);
+  --theme-text: rgba(255, 255, 255, 0.95);
+  --theme-text-secondary: rgba(255, 255, 255, 0.72);
+  --theme-border: rgba(255, 255, 255, 0.26);
+  --theme-bg-secondary: rgba(255, 255, 255, 0.10);
+  --theme-bg-tertiary: rgba(255, 255, 255, 0.06);
+  --theme-accent: #aab6ff;
+  --theme-danger: #ff9d94;
+}
 header {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 22px 28px 14px;

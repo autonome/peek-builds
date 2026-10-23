@@ -29,6 +29,9 @@ import {
   desktopUnread,
   isOnEveryDesktop,
   windowById,
+  isMaximizeAllEligible,
+  inMaximizeAllScope,
+  maximizeAllScope,
   platformChoseFocus,
   LAUNCHER_ROLES,
   roleIn,
@@ -9222,5 +9225,363 @@ describe('window-kernel: a press in a peek that never activates the app activate
     const closing = fold([{ type: 'AppActivated' }, { type: 'AppResigned' }], shownOverOtherApp());
     const after = foldWithEffects([{ type: 'PressedInNonActivatingWindow', id: wid(1) }], closing);
     assert.deepStrictEqual(activations(after.effects), []);
+  });
+});
+
+// specs/maximize-all.md → "Tests to change"; the rule is `docs/design/window-rules.md` G16.
+describe('window-kernel: maximize-all mode', () => {
+  const WORK_AREA: Rectangle = { x: 0, y: 0, width: 1600, height: 900 };
+  // Two screens, `A` showing desktop `a1` and `B` showing `b1`; `a2` is on `A` and not shown.
+  const layout: Event = {
+    type: 'DesktopLayoutReported',
+    screens: [{ id: 'A', current: 'a1' }, { id: 'B', current: 'b1' }],
+    desktops: [{ id: 'a1', screen: 'A' }, { id: 'a2', screen: 'A' }, { id: 'b1', screen: 'B' }],
+  };
+
+  // A painted, placed, visible page window — the eligible shape.
+  const open = (
+    n: number,
+    bounds: Rectangle,
+    where: { screen: string; desktop: string } = { screen: 'A', desktop: 'a1' },
+    extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {},
+  ): Event[] => [
+    {
+      type: 'WindowRegistered',
+      id: wid(n),
+      kind: 'page-host',
+      layer: 0,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      role: 'content',
+      ...extra,
+    },
+    { type: 'WindowContentOrderable', id: wid(n) },
+    { type: 'WindowShown', id: wid(n) },
+    { type: 'BoundsChanged', id: wid(n), bounds },
+    { type: 'WindowPlacementReported', id: wid(n), screen: where.screen, desktop: where.desktop, onEveryDesktop: false },
+  ];
+
+  const rect = (n: number): Rectangle => ({ x: n * 100, y: n * 10, width: 800, height: 600 });
+  const recordFor = (state: State, n: number): WindowRecord => windowById(state, wid(n))!;
+
+  // Entering and leaving go through `decide`, never a hand-written event, so
+  // every case below exercises the command the tile API reaches.
+  const run = (state: State, cmd: Command): { state: State; effects: Effect[] } => {
+    const decision = decide(state, cmd);
+    assert.ok('events' in decision, `expected ${cmd.type} to be accepted`);
+    return foldWithEffects(decision.events, state);
+  };
+  // Bounds writes come out in stacking order, which these cases do not pin.
+  const boundsWrites = (effects: Effect[]) =>
+    effects
+      .filter((e): e is Extract<Effect, { type: 'SetBounds' }> => e.type === 'SetBounds')
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const enter = (state: State) =>
+    run(state, { type: 'EnterMaximizeAll', workArea: WORK_AREA, expectedVersion: state.version });
+  const leave = (state: State) => run(state, { type: 'LeaveMaximizeAll', expectedVersion: state.version });
+
+  // Two ordinary windows on the current screen and desktop, one of them key.
+  const twoWindowsHere = (): State =>
+    fold([
+      layout,
+      ...open(1, rect(1)),
+      ...open(2, rect(2)),
+      { type: 'AppActivated' },
+      { type: 'OsFocusGained', id: wid(1) },
+    ]);
+
+  it('entering maximizes and marks every eligible unmaximized window in scope', () => {
+    const before = twoWindowsHere();
+    const { state, effects } = enter(before);
+
+    assert.deepStrictEqual(state.maximizeAll, { screen: 'A', desktop: 'a1', workArea: WORK_AREA });
+    for (const n of [1, 2]) {
+      const rec = recordFor(state, n);
+      assert.strictEqual(rec.maximized, true, `window ${n} is maximized`);
+      assert.strictEqual(rec.maximizeAllMark, 'marked', `window ${n} is the mode's to restore`);
+      assert.deepStrictEqual(rec.preMaxBounds, rect(n), `window ${n} stashed where it was`);
+      assert.deepStrictEqual(rec.bounds, WORK_AREA, `window ${n} is at the work area`);
+    }
+    assert.deepStrictEqual(
+      boundsWrites(effects),
+      [
+        { type: 'SetBounds', id: wid(1), bounds: WORK_AREA },
+        { type: 'SetBounds', id: wid(2), bounds: WORK_AREA },
+      ],
+      'each window is driven to the work area exactly once',
+    );
+  });
+
+  it('an already maximized window is not the mode’s, and leaving leaves it maximized', () => {
+    const before = fold(
+      [
+        { type: 'PendingProjectionDiscarded', id: wid(2) },
+        { type: 'Maximized', id: wid(2), preMaxBounds: rect(2) },
+        { type: 'BoundsChanged', id: wid(2), bounds: WORK_AREA },
+      ],
+      twoWindowsHere(),
+    );
+    const { state: on } = enter(before);
+    assert.strictEqual(recordFor(on, 2).maximizeAllMark, 'released', 'it was maximized before entry');
+
+    const { state: off } = leave(on);
+    assert.strictEqual(recordFor(off, 2).maximized, true, 'and it stays maximized');
+    assert.deepStrictEqual(recordFor(off, 2).bounds, WORK_AREA);
+    assert.strictEqual(recordFor(off, 1).maximized, false, 'while the one the mode maximized comes back');
+    assert.deepStrictEqual(recordFor(off, 1).bounds, rect(1));
+  });
+
+  it('a window on another screen or another desktop is untouched', () => {
+    const before = fold(
+      [...open(3, rect(3), { screen: 'B', desktop: 'b1' }), ...open(4, rect(4), { screen: 'A', desktop: 'a2' })],
+      twoWindowsHere(),
+    );
+    const { state } = enter(before);
+
+    for (const n of [3, 4]) {
+      const rec = recordFor(state, n);
+      assert.strictEqual(rec.maximized, false, `window ${n} is out of scope`);
+      assert.strictEqual(rec.maximizeAllMark, undefined);
+      assert.deepStrictEqual(rec.bounds, rect(n));
+    }
+  });
+
+  it('a window the backend has not placed yet is still the mode’s', () => {
+    const unplaced: Event[] = [
+      {
+        type: 'WindowRegistered',
+        id: wid(12),
+        kind: 'page-host',
+        layer: 0,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      { type: 'WindowContentOrderable', id: wid(12) },
+      { type: 'WindowShown', id: wid(12) },
+      { type: 'BoundsChanged', id: wid(12), bounds: rect(12) },
+    ];
+    const { state } = enter(fold(unplaced, twoWindowsHere()));
+    assert.strictEqual(recordFor(state, 12).maximized, true, 'unknown placement is not elsewhere');
+    assert.strictEqual(recordFor(state, 12).maximizeAllMark, 'marked');
+  });
+
+  it('the scope is fixed at entry and does not follow the user to another desktop', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const moved = fold(
+      [{ type: 'CurrentDesktopChanged', screen: 'A', desktop: 'a2' }, ...open(5, rect(5), { screen: 'A', desktop: 'a2' })],
+      on,
+    );
+
+    assert.deepStrictEqual(moved.maximizeAll, { screen: 'A', desktop: 'a1', workArea: WORK_AREA });
+    assert.strictEqual(recordFor(moved, 5).maximized, false, 'a window on the new desktop is out of scope');
+    assert.strictEqual(recordFor(moved, 5).maximizeAllMark, undefined);
+  });
+
+  it('a window opened in scope while the mode is on is maximized and marked', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const later = fold(open(6, rect(6)), on);
+
+    const rec = recordFor(later, 6);
+    assert.strictEqual(rec.maximized, true);
+    assert.strictEqual(rec.maximizeAllMark, 'marked');
+    assert.deepStrictEqual(rec.preMaxBounds, rect(6));
+    assert.deepStrictEqual(rec.bounds, WORK_AREA);
+  });
+
+  it('a window shown in scope while the mode is on is maximized and marked', () => {
+    const hidden = fold([...open(7, rect(7)), { type: 'WindowHidden', id: wid(7) }], twoWindowsHere());
+    const { state: on } = enter(hidden);
+    assert.strictEqual(recordFor(on, 7).maximizeAllMark, undefined, 'a hidden window is not eligible');
+
+    const shown = evolve(on, { type: 'WindowShown', id: wid(7) });
+    assert.strictEqual(recordFor(shown, 7).maximized, true);
+    assert.strictEqual(recordFor(shown, 7).maximizeAllMark, 'marked');
+  });
+
+  it('a transient window is never the mode’s, whatever its role', () => {
+    const before = fold(
+      [
+        ...open(8, rect(8), { screen: 'A', desktop: 'a1' }, { role: 'quick-view', transient: true }),
+        ...open(9, rect(9), { screen: 'A', desktop: 'a1' }, { role: 'palette', transient: true }),
+        ...open(10, rect(10), { screen: 'A', desktop: 'a1' }, { role: 'overlay', transient: true }),
+      ],
+      twoWindowsHere(),
+    );
+    const { state } = enter(before);
+
+    for (const n of [8, 9, 10]) {
+      assert.strictEqual(recordFor(state, n).maximized, false, `window ${n} is transient`);
+      assert.strictEqual(recordFor(state, n).maximizeAllMark, undefined);
+    }
+  });
+
+  it('a window that cannot take key is never the mode’s', () => {
+    const before = fold(
+      open(11, rect(11), { screen: 'A', desktop: 'a1' }, { canBecomeKey: false, acceptsInput: false, class: 'hud' }),
+      twoWindowsHere(),
+    );
+    const { state } = enter(before);
+    assert.strictEqual(recordFor(state, 11).maximized, false);
+    assert.strictEqual(recordFor(state, 11).maximizeAllMark, undefined);
+  });
+
+  it('the user resizing a marked window out of maximize takes it back', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const resized = fold(
+      [{ type: 'MaximizeExitedByResize', id: wid(1) }, { type: 'BoundsChanged', id: wid(1), bounds: rect(9) }],
+      on,
+    );
+    assert.strictEqual(recordFor(resized, 1).maximizeAllMark, 'released');
+
+    const { state: off, effects } = leave(resized);
+    assert.deepStrictEqual(recordFor(off, 1).bounds, rect(9), 'leaving does not move it');
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'SetBounds'),
+      [{ type: 'SetBounds', id: wid(2), bounds: rect(2) }],
+      'only the window still marked is driven anywhere',
+    );
+  });
+
+  it('the unmaximize command takes a marked window back, and re-maximizing by hand does not return it', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const { state: unmaximized } = run(on, { type: 'Unmaximize', id: wid(1), expectedVersion: on.version });
+    assert.strictEqual(recordFor(unmaximized, 1).maximizeAllMark, 'released');
+    assert.deepStrictEqual(recordFor(unmaximized, 1).bounds, rect(1));
+
+    const { state: again } = run(unmaximized, {
+      type: 'Maximize',
+      id: wid(1),
+      workArea: WORK_AREA,
+      expectedVersion: unmaximized.version,
+    });
+    assert.strictEqual(recordFor(again, 1).maximizeAllMark, 'released', 'maximizing by hand does not re-mark');
+
+    const { state: off } = leave(again);
+    assert.strictEqual(recordFor(off, 1).maximized, true, 'so leaving leaves it where the user put it');
+  });
+
+  it('leaving returns each marked window to its pre-maximize bounds and drops the mode', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const { state: off, effects } = leave(on);
+
+    assert.strictEqual(off.maximizeAll, null);
+    for (const n of [1, 2]) {
+      const rec = recordFor(off, n);
+      assert.strictEqual(rec.maximized, false);
+      assert.strictEqual(rec.maximizeAllMark, undefined, 'no mark outlives the mode');
+      assert.deepStrictEqual(rec.bounds, rect(n));
+    }
+    assert.deepStrictEqual(boundsWrites(effects), [
+      { type: 'SetBounds', id: wid(1), bounds: rect(1) },
+      { type: 'SetBounds', id: wid(2), bounds: rect(2) },
+    ]);
+  });
+
+  it('a window closed while the mode is on simply drops out of leaving', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const closed = evolve(on, { type: 'WindowClosed', id: wid(1) });
+    const { state: off, effects } = leave(closed);
+
+    assert.strictEqual(off.maximizeAll, null);
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'SetBounds'),
+      [{ type: 'SetBounds', id: wid(2), bounds: rect(2) }],
+    );
+  });
+
+  it('entering twice changes nothing, and leaving when it is off changes nothing', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const second = decide(on, { type: 'EnterMaximizeAll', workArea: WORK_AREA, expectedVersion: on.version });
+    assert.ok('events' in second);
+    assert.deepStrictEqual(second.events, []);
+
+    const { state: off } = leave(on);
+    const third = decide(off, { type: 'LeaveMaximizeAll', expectedVersion: off.version });
+    assert.ok('events' in third);
+    assert.deepStrictEqual(third.events, []);
+  });
+
+  it('a stale version is rejected before the mode is read', () => {
+    const state = twoWindowsHere();
+    const decision = decide(state, { type: 'EnterMaximizeAll', expectedVersion: state.version + 1 });
+    assert.ok('rejected' in decision);
+    assert.strictEqual(decision.rejected, 'stale-version');
+  });
+
+  it('restore re-establishes the mode and the marks, and leaving then puts those windows back', () => {
+    // What a relaunch produces: the windows are back maximized at their saved
+    // pre-maximize bounds (G12), and the mode is off until restore says otherwise.
+    const relaunched = fold(
+      [
+        { type: 'PendingProjectionDiscarded', id: wid(1) },
+        { type: 'Maximized', id: wid(1), preMaxBounds: rect(1) },
+        { type: 'BoundsChanged', id: wid(1), bounds: WORK_AREA },
+        { type: 'PendingProjectionDiscarded', id: wid(2) },
+        { type: 'Maximized', id: wid(2), preMaxBounds: rect(2) },
+        { type: 'BoundsChanged', id: wid(2), bounds: WORK_AREA },
+      ],
+      twoWindowsHere(),
+    );
+    const { state: restored } = run(relaunched, {
+      type: 'RestoreMaximizeAll',
+      mode: { screen: 'A', desktop: 'a1', workArea: WORK_AREA },
+      marks: [{ id: wid(1), mark: 'marked' }, { id: wid(2), mark: 'released' }],
+      expectedVersion: relaunched.version,
+    });
+
+    assert.deepStrictEqual(restored.maximizeAll, { screen: 'A', desktop: 'a1', workArea: WORK_AREA });
+    assert.strictEqual(recordFor(restored, 1).maximizeAllMark, 'marked');
+    assert.strictEqual(recordFor(restored, 2).maximizeAllMark, 'released');
+
+    const { state: off } = leave(restored);
+    assert.deepStrictEqual(recordFor(off, 1).bounds, rect(1), 'the marked window comes back');
+    assert.deepStrictEqual(recordFor(off, 2).bounds, WORK_AREA, 'the one maximized before entry stays');
+  });
+
+  it('a window restored without a mark is treated as maximized before entry', () => {
+    const relaunched = fold(
+      [
+        { type: 'PendingProjectionDiscarded', id: wid(1) },
+        { type: 'Maximized', id: wid(1), preMaxBounds: rect(1) },
+        { type: 'BoundsChanged', id: wid(1), bounds: WORK_AREA },
+      ],
+      twoWindowsHere(),
+    );
+    const { state: restored } = run(relaunched, {
+      type: 'RestoreMaximizeAll',
+      mode: { screen: 'A', desktop: 'a1', workArea: WORK_AREA },
+      marks: [],
+      expectedVersion: relaunched.version,
+    });
+
+    assert.strictEqual(recordFor(restored, 1).maximizeAllMark, 'released', 'older data leaves it the user’s');
+    const { state: off } = leave(restored);
+    assert.deepStrictEqual(recordFor(off, 1).bounds, WORK_AREA);
+  });
+
+  it('restoring a null mode leaves the mode off and every mark dropped', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const { state: cleared } = run(on, {
+      type: 'RestoreMaximizeAll',
+      mode: null,
+      marks: [],
+      expectedVersion: on.version,
+    });
+
+    assert.strictEqual(cleared.maximizeAll, null);
+    assert.strictEqual(recordFor(cleared, 1).maximizeAllMark, undefined);
+  });
+
+  it('the eligibility and scope selectors are the one answer the mode uses', () => {
+    const { state } = enter(
+      fold(open(3, rect(3), { screen: 'B', desktop: 'b1' }), twoWindowsHere()),
+    );
+    assert.deepStrictEqual(maximizeAllScope(state), { screen: 'A', desktop: 'a1' });
+    assert.strictEqual(isMaximizeAllEligible(recordFor(state, 1)), true);
+    assert.strictEqual(isMaximizeAllEligible(recordFor(state, 3)), true, 'eligible, but elsewhere');
+    assert.strictEqual(inMaximizeAllScope(state.maximizeAll!, recordFor(state, 3)), false);
   });
 });
