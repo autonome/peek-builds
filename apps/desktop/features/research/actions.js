@@ -1,0 +1,111 @@
+/**
+ * What a research view row does when it is activated, as decisions rather than
+ * effects: which window a page row raises or whether it opens one, what query a
+ * search row runs again, and what an edited note is worth writing.
+ *
+ * Pure — no datastore, no DOM, no tile API — so every one of these is decided
+ * in `tests/unit/research-view-actions.test.js`. `home.js` holds the one call
+ * each decision turns into.
+ */
+
+/**
+ * A URL in the form two URLs for the same page share. The datastore stores the
+ * normalized URL while a window reports the one it loaded, so an exact match
+ * misses a page that only differs by its trailing slash, its fragment or the
+ * case of its host.
+ *
+ * @param {unknown} url
+ * @returns {string} the comparison form, or `''` when there is no URL
+ */
+export const urlKey = (url) => {
+  if (typeof url !== 'string' || url === '') return '';
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    const text = parsed.toString();
+    return text.endsWith('/') ? text.slice(0, -1).toLowerCase() : text.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+};
+
+/** A window id from a `Map` or a plain object keyed by the URL's comparison form. */
+const windowIdFor = (openWindows, key) => {
+  if (!openWindows || key === '') return null;
+  const found = typeof openWindows.get === 'function' ? openWindows.get(key) : openWindows[key];
+  return typeof found === 'number' ? found : null;
+};
+
+/**
+ * What activating a page row should do: raise the window the page is already
+ * open in, or open it.
+ *
+ * @param {unknown} url the page's URL, as the item carries it
+ * @param {Map<string, number>|Record<string, number>} [openWindows] window ids
+ *   keyed by `urlKey`, as the view read them off the open windows
+ * @returns {{kind: 'raise', windowId: number, url: string}
+ *   | {kind: 'open', url: string}
+ *   | {kind: 'none'}} `none` for a row carrying no URL, which is nothing to do
+ *   rather than a page to open at the empty string
+ */
+export const planPageActivation = (url, openWindows) => {
+  const key = urlKey(url);
+  if (key === '') return { kind: 'none' };
+
+  const windowId = windowIdFor(openWindows, key);
+  if (windowId !== null) return { kind: 'raise', windowId, url };
+  return { kind: 'open', url };
+};
+
+/**
+ * The query a search row runs again. A `search-round` item's content is the
+ * trimmed query (`features/websearch/search-rounds.js`), and a round with no
+ * query left is nothing to run.
+ *
+ * @param {unknown} item
+ * @returns {string|null}
+ */
+export const searchQueryOf = (item) => {
+  const content = item && typeof item.content === 'string' ? item.content.trim() : '';
+  return content === '' ? null : content;
+};
+
+/**
+ * The title a note's text reads as: its first line, with the leading `#`s of a
+ * heading dropped. The same shape `features/editor` saves a text item with, so
+ * a note edited here and one edited there end up titled the same way.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export const noteTitleOf = (text) => {
+  if (typeof text !== 'string') return '';
+  const firstLine = text.split('\n')[0] || '';
+  return firstLine.replace(/^#+\s*/, '').trim();
+};
+
+/**
+ * What to write when a note's editor closes, or `null` when there is nothing
+ * to write.
+ *
+ * Two closings write nothing. Text that did not change would publish an update
+ * the whole view redraws for and nothing came of. Text emptied altogether
+ * leaves the note as it was, because a note is removed by deleting it and that
+ * is not something this view offers — an empty row would otherwise be the only
+ * way to lose a note, by accident.
+ *
+ * @param {unknown} item the note being edited
+ * @param {unknown} typed what the field holds
+ * @returns {{itemId: string, fields: {content: string, title: string}}|null}
+ */
+export const planNoteSave = (item, typed) => {
+  if (!item || !item.id) return null;
+
+  const text = typeof typed === 'string' ? typed.trim() : '';
+  if (text === '') return null;
+
+  const before = typeof item.content === 'string' ? item.content.trim() : '';
+  if (text === before) return null;
+
+  return { itemId: item.id, fields: { content: text, title: noteTitleOf(text) } };
+};

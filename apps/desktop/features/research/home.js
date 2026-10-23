@@ -11,11 +11,22 @@
  * It is a list, not an editor: compact rows from
  * `renderer/lib/search-result-card.js`, moved through with the arrow keys and
  * hjkl (`renderer/lib/grid-nav.js`), which spans the three groups as one list
- * because every group's rows sit in a `.cards` container. A row does nothing
- * when it is activated — Enter and click on a row, and running a search again,
- * are a later slice (`specs/research-view-actions.md`).
+ * because every group's rows sit in a `.cards` container.
  *
- * The one place the view takes typed text is the add-a-note row at the top of
+ * Every row does something when it is activated, by Enter or by a click — one
+ * handler for both, because `grid-nav.js activateSelected()` turns Enter into a
+ * `.click()` on the selected card the way `features/spaces/home.js` relies on:
+ *
+ * - A page raises the window it is already open in, or opens in the research.
+ * - A search runs again through `web search`, adding a run to the round it
+ *   already is and opening its results in the research.
+ * - A note opens for editing where it is read; Enter or leaving the row saves,
+ *   Escape closes the editor and a second Escape closes the view.
+ *
+ * The decisions behind those are pure and unit-tested in `actions.js`; what is
+ * left here is the one call each turns into.
+ *
+ * The other place the view takes typed text is the add-a-note row at the top of
  * the Notes group: Enter writes a `text` item tagged into the research and the
  * live query brings it into the group, Escape leaves the row for the list.
  *
@@ -31,6 +42,9 @@ import { rankPagesByTimeOnPage, formatTimeOnPage } from './rank.js';
 import {
   groupSpaceItems, orderSearchRounds, orderNotesNewestFirst, formatRunCount,
 } from './groups.js';
+import {
+  urlKey, planPageActivation, searchQueryOf, planNoteSave,
+} from './actions.js';
 
 const api = window.app;
 const debug = false;
@@ -46,6 +60,18 @@ let renderGeneration = 0;
 
 /** True while a note is being written, so one Enter writes one note. */
 let savingNote = false;
+
+/**
+ * The window each page in the research is open in, keyed by `urlKey`, as the
+ * last draw read them. A page row raises the window it names.
+ */
+let openWindows = new Map();
+
+/** The note being edited in place, or `null`. */
+let noteEditor = null;
+
+/** A query result that arrived while a note was being edited. */
+let deferredResult = null;
 
 let rowsContainer;
 let searchRowsContainer;
@@ -86,31 +112,19 @@ const setupSeeThrough = () => {
 // ── Reading the research ──────────────────────────────────────────────
 
 /**
- * A URL in the form two URLs for the same page share. The datastore stores the
- * normalized URL while a window reports the one it loaded, so an exact match
- * misses a page that only differs by its trailing slash or the case of its host.
+ * The window each page open right now is open in, keyed by the URL's comparison
+ * form. Which pages are open is what a row marks; which window each is open in
+ * is what activating the row raises, and both come off one listing so they
+ * cannot disagree.
  */
-const forComparison = (url) => {
-  if (typeof url !== 'string' || url === '') return '';
-  try {
-    const parsed = new URL(url);
-    parsed.hash = '';
-    const text = parsed.toString();
-    return text.endsWith('/') ? text.slice(0, -1).toLowerCase() : text.toLowerCase();
-  } catch {
-    return url.toLowerCase();
-  }
-};
-
-/** The URLs of the pages open in a window right now. */
-const openPageUrls = async () => {
-  const open = new Set();
+const openPageWindows = async () => {
+  const open = new Map();
   try {
     const result = await api.window.list({ includeInternal: false });
     if (!result?.success || !Array.isArray(result.windows)) return open;
     for (const win of result.windows) {
-      const key = forComparison(win?.url);
-      if (key) open.add(key);
+      const key = urlKey(win?.url);
+      if (key && typeof win?.id === 'number' && !open.has(key)) open.set(key, win.id);
     }
   } catch (err) {
     console.error('[research] Failed to list the open windows:', err);
@@ -157,6 +171,186 @@ const searchRunEvents = async (rounds) => {
   }
 };
 
+// ── Activating a row ──────────────────────────────────────────────────
+
+/**
+ * The research as a space mode, which is what makes a page opened from this
+ * view land in the research rather than beside it.
+ *
+ * Read once — a research's space does not change while its view is open. The
+ * view's own window carries the space it was opened for, and that is where the
+ * research's colour comes from; the space tag answers for a window that was
+ * opened before this view asked for a space mode.
+ */
+let spaceModePromise = null;
+
+const spaceModeForOpen = () => {
+  if (spaceModePromise) return spaceModePromise;
+  spaceModePromise = (async () => {
+    try {
+      const result = await api.context?.getMode?.();
+      const mode = result?.success ? result.data : null;
+      if (mode?.value === 'space' && mode.metadata?.spaceId) {
+        const { spaceId, color } = mode.metadata;
+        return {
+          spaceId,
+          spaceName: mode.metadata.spaceName || spaceName,
+          ...(color ? { color } : {}),
+        };
+      }
+    } catch (err) {
+      debug && console.log('[research] this window reports no mode:', err);
+    }
+
+    try {
+      const tag = await api.datastore.getOrCreateTag(spaceTag);
+      const spaceId = tag?.success ? tag.data?.tag?.id : null;
+      if (spaceId) return { spaceId, spaceName };
+    } catch (err) {
+      console.error('[research] Failed to resolve the research tag:', err);
+    }
+    return null;
+  })();
+  return spaceModePromise;
+};
+
+/**
+ * Bring a page's window forward, or open the page in the research. The window
+ * ids are as new as the last draw, so a window closed since then is checked
+ * for rather than raised blind — a vanished id would otherwise swallow the
+ * activation and the row would do nothing.
+ */
+const activatePage = async (item) => {
+  const plan = planPageActivation(item?.content, openWindows);
+  if (plan.kind === 'none') return;
+
+  try {
+    if (plan.kind === 'raise') {
+      const there = await api.window.exists(plan.windowId);
+      if (there?.exists === true) {
+        await api.window.focus(plan.windowId);
+        return;
+      }
+    }
+
+    const mode = await spaceModeForOpen();
+    await api.window.open(plan.url, {
+      role: 'content',
+      key: plan.url,
+      width: 1024,
+      height: 768,
+      ...(mode ? { spaceMode: mode } : {}),
+    });
+  } catch (err) {
+    console.error('[research] Failed to activate the page', plan.url, err);
+  }
+};
+
+/**
+ * Run a search again. `web search` is the command the palette runs, so this is
+ * the same run as any other: the round this row already is gains another run
+ * event and its results open, both in the research, because
+ * `features/websearch/search-rounds.js` reads the space off the front window
+ * and this view carries the research's space mode.
+ *
+ * The row's run count does not move until the query re-resolves for another
+ * reason — run events publish on no live topic.
+ */
+const activateSearch = (item) => {
+  const query = searchQueryOf(item);
+  if (query === null) return;
+  api.pubsub.publish('cmd:execute:web search', { search: query, params: [query] });
+};
+
+// ── Editing a note in place ───────────────────────────────────────────
+//
+// A note row becomes a text field the size of the row, so a note is edited
+// where it is read. `features/editor/query-inline-editor.js` was the other
+// candidate and does not fit this window: it measures a block surface
+// (`blockElement()`, `rerender()`), drives the editor window's status line, and
+// styles itself from the editor's own stylesheet, none of which exist here.
+
+/**
+ * Write the editor's text to the note, close the editor, and put the row back.
+ *
+ * Nothing is drawn here. `updateItem` publishes `item:updated`, which the live
+ * query follows, so the row redraws the way it would for a note edited
+ * anywhere else.
+ */
+const closeNoteEditor = ({ save }) => {
+  const editor = noteEditor;
+  if (!editor || editor.closing) return;
+  editor.closing = true;
+
+  const typed = editor.input.value;
+  editor.input.remove();
+  editor.card.classList.remove('editing');
+  noteEditor = null;
+
+  // The selection never left the row, so the focus goes back to it.
+  if (document.querySelectorAll('.cards peek-card').length > 0) updateSelection(state);
+
+  const plan = save ? planNoteSave(editor.item, typed) : null;
+  if (plan) {
+    api.datastore.updateItem(plan.itemId, plan.fields)
+      .then((result) => {
+        if (!result?.success) console.error('[research] Failed to save the note:', result?.error);
+      })
+      .catch((err) => { console.error('[research] Failed to save the note:', err); });
+  }
+
+  // A redraw held back while the editor was open.
+  if (deferredResult) {
+    const result = deferredResult;
+    deferredResult = null;
+    applyResult(result);
+  }
+};
+
+const openNoteEditor = async (card, item) => {
+  if (noteEditor || !card) return;
+
+  const input = document.createElement('peek-input');
+  input.className = 'note-editor';
+  input.value = typeof item?.content === 'string' ? item.content : '';
+
+  const editor = { item, card, input, closing: false };
+  noteEditor = editor;
+
+  card.classList.add('editing');
+  card.insertAdjacentElement('afterend', input);
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      // Marking the press handled is what keeps `grid-nav.js` from activating
+      // the row again on the same Enter.
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteEditor({ save: true });
+    } else if (e.key === 'Escape') {
+      // Main claims Escape first (`setupEscape`); this is the same decision
+      // for a press it did not.
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteEditor({ save: false });
+    }
+  });
+
+  // Leaving the row saves, which is the other half of what Enter does.
+  // `focusout` is the event that crosses the shadow boundary — a `blur` on the
+  // field inside would never reach a listener out here.
+  input.addEventListener('focusout', () => {
+    if (!editor.closing) closeNoteEditor({ save: true });
+  });
+
+  // The field lives in a shadow root, so there is nothing to focus until the
+  // component has drawn once. The text comes up selected, so typing replaces
+  // the note rather than appending to it.
+  if (input.updateComplete) await input.updateComplete;
+  input.focus();
+  input.select?.();
+};
+
 // ── Drawing the rows ──────────────────────────────────────────────────
 
 /**
@@ -167,6 +361,7 @@ const createRow = (ranked, isOpen) => {
   const card = createSearchResultCard(ranked.item, {
     className: 'research-row',
     visitCount: ranked.visitCount,
+    onClick: () => activatePage(ranked.item),
   });
 
   const meta = document.createElement('div');
@@ -194,11 +389,13 @@ const createRow = (ranked, isOpen) => {
 
 /**
  * One search row: the query the card reads off the item's content, plus how
- * many times it ran. View only in this slice — running it again is
- * `specs/research-view-actions.md`.
+ * many times it ran. Activating it runs the search again.
  */
 const createSearchRow = (ordered) => {
-  const card = createSearchResultCard(ordered.item, { className: 'research-row research-search-row' });
+  const card = createSearchResultCard(ordered.item, {
+    className: 'research-row research-search-row',
+    onClick: () => activateSearch(ordered.item),
+  });
 
   const meta = document.createElement('div');
   meta.className = 'card-research-meta';
@@ -214,14 +411,19 @@ const createSearchRow = (ordered) => {
   return card;
 };
 
-/** One note row. View only in this slice; the add-a-note row is the editable one. */
-const createNoteRow = (item) =>
-  createSearchResultCard(item, { className: 'research-row research-note-row' });
+/** One note row. Activating it opens the note for editing where it is read. */
+const createNoteRow = (item) => {
+  const card = createSearchResultCard(item, {
+    className: 'research-row research-note-row',
+    onClick: () => openNoteEditor(card, item),
+  });
+  return card;
+};
 
-const draw = ({ pages, searches, notes, openUrls }) => {
+const draw = ({ pages, searches, notes }) => {
   rowsContainer.replaceChildren();
   for (const ranked of pages) {
-    rowsContainer.appendChild(createRow(ranked, openUrls.has(forComparison(ranked.item.content))));
+    rowsContainer.appendChild(createRow(ranked, openWindows.has(urlKey(ranked.item.content))));
   }
 
   searchRowsContainer.replaceChildren();
@@ -261,21 +463,29 @@ const draw = ({ pages, searches, notes, openUrls }) => {
  * (`groups.js`).
  */
 const applyResult = async (result) => {
+  // Redrawing replaces the note rows, and the open editor sits among them.
+  // The result is held and drawn when the editor closes, so a note joining the
+  // research cannot take the one being written out from under the caret.
+  if (noteEditor) {
+    deferredResult = result;
+    return;
+  }
+
   const generation = ++renderGeneration;
   const { pages, searches, notes } = groupSpaceItems(result?.items || [], result?.itemTags);
 
-  const [visits, openUrls, runEvents] = await Promise.all([
+  const [visits, windows, runEvents] = await Promise.all([
     visitsForItems(pages),
-    openPageUrls(),
+    openPageWindows(),
     searchRunEvents(searches),
   ]);
   if (generation !== renderGeneration) return;
 
+  openWindows = windows;
   draw({
     pages: rankPagesByTimeOnPage(pages, visits),
     searches: orderSearchRounds(searches, runEvents),
     notes: orderNotesNewestFirst(notes),
-    openUrls,
   });
 };
 
@@ -349,17 +559,23 @@ const setupNoteRow = () => {
 // ── Keyboard ──────────────────────────────────────────────────────────
 
 /**
- * Escape leaves the add-a-note row when the caret is in it, and otherwise
- * closes the view.
+ * Escape closes the note being edited, or leaves the add-a-note row when the
+ * caret is in it, and otherwise closes the view. A note open for editing is
+ * the first thing a press closes; the second press finds no editor and closes
+ * the view.
  *
  * A `workspace` window is never closed by Escape on its own
  * (`main/window-escape.ts escapeClosePolicy`), so the view closes itself and
  * reports the press handled. Main sees the key before the renderer does, so
- * this is the decision that counts — the row's own handler only runs when the
+ * this is the decision that counts — a row's own handler only runs when the
  * press was not claimed here.
  */
 const setupEscape = () => {
   api?.escape?.onEscape?.(() => {
+    if (noteEditor) {
+      closeNoteEditor({ save: false });
+      return { handled: true };
+    }
     if (noteRowFocused()) {
       leaveNoteRow();
       return { handled: true };
@@ -371,6 +587,10 @@ const setupEscape = () => {
 
 const setupKeyboard = () => {
   document.addEventListener('keydown', createKeydownHandler(state, {
+    // While a note is being edited the keys belong to the field: its own
+    // handler takes Enter and Escape, and everything else is typing. Moving
+    // the selection would redraw the list out from under the editor.
+    shouldIgnore: () => noteEditor !== null,
     isInputFocused: noteRowFocused,
   }));
 
@@ -378,7 +598,7 @@ const setupKeyboard = () => {
   // the row is not a card, so the arrow keys and hjkl never land on it.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'n' || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (noteRowFocused()) return;
+    if (noteEditor || noteRowFocused()) return;
     e.preventDefault();
     enterNoteRow();
   });

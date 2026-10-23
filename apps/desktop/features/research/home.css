@@ -144,6 +144,20 @@ peek-card[selected] {
   --peek-input-border: transparent;
 }
 
+/* A note open for editing: the row steps aside and a field the size of the row
+   takes its place, so a note is edited in the list rather than in another
+   window. Sized like the add-a-note row above it, with the selected row's
+   background so it reads as the row it replaced. */
+.research-note-row.editing {
+  display: none;
+}
+
+.note-editor {
+  --peek-input-height: 32px;
+  --peek-input-bg: var(--base02);
+  --peek-input-border: transparent;
+}
+
 .empty-state {
   display: none;
   padding: 4px 18px 0;

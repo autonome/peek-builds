@@ -143,7 +143,7 @@ const applyAction = async (action, note) => {
  * and the mode's metadata carries the space. Answering null rather than guessing
  * matters here too: the view of the wrong research is worse than no view.
  *
- * @returns {Promise<{spaceId: string, spaceName: string}|null>}
+ * @returns {Promise<{spaceId: string, spaceName: string, color?: string}|null>}
  */
 const researchOfFrontWindow = async () => {
   const windowId = await api.window.getFocusedVisibleWindowId();
@@ -156,7 +156,11 @@ const researchOfFrontWindow = async () => {
   const metadata = mode.metadata;
   if (!metadata || !metadata.spaceId || !metadata.spaceName) return null;
 
-  return { spaceId: metadata.spaceId, spaceName: metadata.spaceName };
+  return {
+    spaceId: metadata.spaceId,
+    spaceName: metadata.spaceName,
+    ...(metadata.color ? { color: metadata.color } : {}),
+  };
 };
 
 /**
@@ -174,6 +178,12 @@ const researchOfFrontWindow = async () => {
  * back where it was (docs/design/window-rules.md G15). It is skipped on a reuse:
  * the window is already maximized, and asking again would tell main the switch
  * had not maximized it.
+ *
+ * The view window is itself in the research's space. That is what lets a row in
+ * it act in the research: a search run again from the view is recorded and
+ * opened in the space because `features/websearch/search-rounds.js` reads the
+ * space off the front window, and a page opened from the view is tagged into it
+ * for the same reason (`features/spaces/background.js handleItemCreated()`).
  */
 const openResearchView = async () => {
   const research = await researchOfFrontWindow();
@@ -190,6 +200,11 @@ const openResearchView = async () => {
     title: `Research: ${research.spaceName}`,
     transparent: true,
     seeThrough: true,
+    spaceMode: {
+      spaceId: research.spaceId,
+      spaceName: research.spaceName,
+      ...(research.color ? { color: research.color } : {}),
+    },
   });
   if (!opened || opened.success !== true) {
     return { success: false, error: opened?.error || 'Failed to open the research view' };

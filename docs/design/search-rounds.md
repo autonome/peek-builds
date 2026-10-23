@@ -103,7 +103,9 @@ The research view should be built on whichever of those lands, not as its own wi
 - **Starting.** A research is a space. A `research` command that creates a space and runs the
   first search in it is the only new step; the person may also just work in an existing space.
 - **Rounds.** Each search run from a window in the space is recorded as an item tagged with the
-  space tag and `search-round`, so the searches tried are listed in order. Linking each result
+  space tag and `search-round`, so the searches tried are listed in order. A query run a second
+  time adds a run to the round it already has, whether it was typed again or run again from the
+  research view, so a round is the query and the list of times it was tried. Linking each result
   page to its round needs the opener's round carried on `item:created`; deferred.
 - **Finishing.** Leaving a research puts its windows away through the session snapshot and keeps
   everything recorded. Whether "finished" is ever marked, or inferred (no activity for a while,
@@ -148,10 +150,23 @@ The research view should be built on whichever of those lands, not as its own wi
   appears without reopening the view. The add-a-note row is the only editable text in the view:
   Enter writes a `text` item tagged with the space tag, Escape leaves the row, and `n` reaches it
   from the list. One selection crosses all three groups through
-  `renderer/lib/grid-nav.js`. Still ahead: Enter and click on a row, and running a search again
-  (`specs/research-view-actions.md`). Searches are placed by their `search-run` item events,
-  which publish on no live topic, so a search run again while the view is open does not update
-  its count until the query re-resolves for another reason.
+  `renderer/lib/grid-nav.js`.
+- **Acting on a research view row** (`features/research/actions.js` with `home.js`, spec
+  `specs/research-view-actions.md`). Every row acts on Enter or click, through one handler for
+  both, because `grid-nav.js activateSelected()` turns Enter into a click on the selected card.
+  A page row brings forward the window the page is already open in — matched on a URL compared
+  without its fragment, trailing slash or case — and otherwise opens the page in the research. A
+  search row runs its query again in the research, which adds a run to the round it already has
+  rather than starting a new one. A note row opens for editing where it is read: a field the size
+  of the add-a-note row takes the row's place, Enter or leaving the row saves, and Escape closes
+  the field leaving the note as it was. Every one of those decisions is in `actions.js`, which
+  touches no API, so the view keeps only the call each decision turns into. The view window
+  itself is opened with the research's space mode, which is what makes "in the research" true of
+  both the rerun and the opened page: `features/websearch/search-rounds.js` and
+  `features/spaces/background.js handleItemCreated()` each read the space off the front window.
+  Searches are placed by their `search-run` item events, which publish on no live topic, so a
+  search run again from the view does not update its count until the query re-resolves for
+  another reason.
 - **Rebuilding the cost harness.** Copy the shape of `tests/desktop/visit-dwell.spec.ts`
   (per-describe app plus a local `http` server). Through `DesktopApp.evaluateMain`, install an
   `app.on('web-contents-created')` hook that records `Date.now()` on `did-start-loading` and the
