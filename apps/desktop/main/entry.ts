@@ -128,6 +128,7 @@ import {
   decideWebContentsIsolation,
   isolationRefusalMessage,
   hasDefaultDenyWindowOpen,
+  runRefusedTeardown,
   type IsolationPrefs,
 } from './web-contents-policy.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -750,7 +751,11 @@ function installIsolationRefusal(contents: Electron.WebContents): void {
   let ownerTornDown = false;
 
   const tearDown = (): void => {
-    if (!ownerTornDown) ownerTornDown = tearDownRefusedWindow(contents);
+    if (!ownerTornDown) ownerTornDown = runRefusedTeardown(
+      () => tearDownRefusedWindow(contents),
+      `webContents ${contents.id}`,
+      console.error,
+    );
   };
 
   const stopLoading = (): void => {
