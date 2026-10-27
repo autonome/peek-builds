@@ -134,6 +134,13 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
+import {
+  enterMaximizeAllHere,
+  getWindowMode,
+  getWindowModePackage,
+  getWindowModePackages,
+  setWindowMode,
+} from './window-modes.js';
 import { getAllHybridWindows, getHybridWindow, findHybridWindowsShowingUrl, getHybridContentWC } from './hybrid-page-host-registry.js';
 import {
   pickReusableHere,
@@ -4216,6 +4223,19 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // What a window mode needs from the see-through code: whether the app-wide
+  // look is on, and a way to turn it off across every open declaring window.
+  const windowModeDeps = (tileId: string) => ({
+    seeThroughEverywhereOn: () => getSeeThroughEverywhere(),
+    turnSeeThroughOff: () => {
+      setSeeThroughEverywhere(false);
+      for (const win of getAllLiveWindows()) {
+        if (!urlSupportsSeeThrough(win.webContents.getURL(), manifestForSeeThrough)) continue;
+        applySeeThroughToWindow(win, false, tileId);
+      }
+    },
+  });
+
   // ── tile:window:get-see-through-everywhere ────────────────────────
   //
   // Report the app-wide see-through switch: `{ success, data: { on } }`.
@@ -4280,6 +4300,13 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: `Invalid see-through state: ${typeof args.on}` };
       }
       const on = args.on;
+      // One mode at a time: translucent cards and a mode that wants opaque
+      // ones cannot both hold, so turning the look on ends such a mode.
+      if (on) {
+        const activeId = getWindowMode();
+        const active = activeId === null ? null : getWindowModePackage(activeId);
+        if (active && !active.asks.transparency) setWindowMode(null, windowModeDeps(grant.tileId));
+      }
       setSeeThroughEverywhere(on);
 
       let applied = 0;
@@ -4288,6 +4315,54 @@ export function registerTileIpcHandlers(): void {
         if (applySeeThroughToWindow(win, on, grant.tileId).success) applied += 1;
       }
       return { success: true, data: { on, applied } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:get-window-mode / set-window-mode ─────────────────
+  //
+  // The active window mode (a builtin `window-mode` package) and the modes
+  // available. Reading is gated like the see-through reads; setting like
+  // the see-through writes. `mode: null` leaves the active mode.
+  registerTileIpc('tile:window:get-window-mode', { mode: 'handle' }, (_event, args: {
+    token: string;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'get-see-through', { ownWindow: false });
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:get-window-mode', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    const id = getWindowMode();
+    const pkg = id === null ? null : getWindowModePackage(id);
+    return {
+      success: true,
+      data: {
+        mode: id,
+        bodyClass: pkg?.bodyClass ?? null,
+        available: getWindowModePackages().map((p) => ({ id: p.id, name: p.name, command: p.command })),
+      },
+    };
+  });
+
+  registerTileIpc('tile:window:set-window-mode', { mode: 'handle' }, async (_event, args: {
+    token: string;
+    mode?: string | null;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'set-see-through');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:set-window-mode', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      if (args.mode !== null && typeof args.mode !== 'string') {
+        return { success: false, error: `Invalid window mode: ${typeof args.mode}` };
+      }
+      const result = setWindowMode(args.mode, windowModeDeps(grant.tileId));
+      return result.success ? { success: true, data: { mode: result.mode } } : result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -4321,11 +4396,7 @@ export function registerTileIpcHandlers(): void {
         kernelLeaveMaximizeAll();
         return { success: true, entered: false };
       }
-      const front = getTopmostContentWindowId();
-      const frontWin = front != null ? getNativeWindowFor(front) : null;
-      const display = frontWin ? screen.getDisplayMatching(frontWin.getBounds()) : screen.getPrimaryDisplay();
-      const { x, y, width, height } = display.workArea;
-      kernelEnterMaximizeAll({ x, y, width, height });
+      enterMaximizeAllHere();
       return { success: true, entered: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -716,6 +716,11 @@ export class WindowKernelExecutor {
         this.backend.setAcceptsInput(effect.id, effect.acceptsInput);
         return;
       }
+      case 'SetChrome': {
+        // No headless gate - a frame change neither activates, takes key, nor shows a window.
+        this.backend.setChrome(effect.id, effect.chrome);
+        return;
+      }
       case 'SetPinned': {
         // Headless-gated, same as HoldAboveOtherApps/ReleaseFromAboveOtherApps below — a headless
         // window's always-on-top flag was never applied at open time either (ipc.ts's

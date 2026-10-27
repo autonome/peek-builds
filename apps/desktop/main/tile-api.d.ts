@@ -200,6 +200,19 @@ interface TileWindow {
   setSeeThroughEverywhere(on: boolean): Promise<{ success: boolean; data?: { on: boolean; applied: number }; error?: string }>;
 
   /**
+   * Read the active window mode. `mode` is null when none is active;
+   * `available` lists the builtin window-mode packages. Requires
+   * `window.query` capability.
+   */
+  getWindowMode(): Promise<{ success: boolean; data?: { mode: string | null; bodyClass: string | null; available: Array<{ id: string; name: string; command: string }> }; error?: string }>;
+
+  /**
+   * Make a window mode active (null leaves the current one). Requires
+   * `window.manage` capability.
+   */
+  setWindowMode(mode: string | null): Promise<{ success: boolean; data?: { mode: string | null }; error?: string }>;
+
+  /**
    * Toggle fullscreen on a window. Omit id for calling window.
    * Requires `window.manage` capability.
    */

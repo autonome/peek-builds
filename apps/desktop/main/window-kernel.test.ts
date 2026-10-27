@@ -9665,6 +9665,42 @@ describe('window-kernel: maximize-all mode', () => {
     });
   });
 
+  describe('frame of eligible windows (SetEligibleChrome)', () => {
+    const chromeEffects = (effects: Effect[]) =>
+      effects
+        .filter((e): e is Extract<Effect, { type: 'SetChrome' }> => e.type === 'SetChrome')
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
+
+    it('drops the frame of every eligible window, and a later one, and restores it', () => {
+      const before = twoWindowsHere();
+      const { state, effects } = run(before, { type: 'SetEligibleChrome', chrome: 'none', expectedVersion: before.version });
+      assert.deepStrictEqual(chromeEffects(effects).map((e) => [e.id, e.chrome]), [[wid(1), 'none'], [wid(2), 'none']]);
+
+      // A window opened while the mode is on arrives without a frame.
+      const { effects: lateEffects } = foldWithEffects(
+        open(3, rect(3)).filter((e) => e.type !== 'WindowPlacementReported'),
+        state,
+      );
+      assert.ok(chromeEffects(lateEffects).some((e) => e.id === wid(3) && e.chrome === 'none'));
+
+      const { effects: back } = run(state, { type: 'SetEligibleChrome', chrome: 'normal', expectedVersion: state.version });
+      assert.deepStrictEqual(chromeEffects(back).map((e) => e.chrome), ['normal', 'normal']);
+    });
+
+    it('leaves windows maximize-all does not act on with their frame', () => {
+      const before = fold([layout, ...open(1, rect(1), undefined, { role: 'palette' })]);
+      const { effects } = run(before, { type: 'SetEligibleChrome', chrome: 'none', expectedVersion: before.version });
+      assert.deepStrictEqual(chromeEffects(effects), []);
+    });
+
+    it('setting the frame it already has changes nothing', () => {
+      const before = twoWindowsHere();
+      const decision = decide(before, { type: 'SetEligibleChrome', chrome: 'normal', expectedVersion: before.version });
+      assert.ok('events' in decision);
+      assert.deepStrictEqual(decision.events, []);
+    });
+  });
+
   it('restoring a null mode leaves the mode off and every mark dropped', () => {
     const { state: on } = enter(twoWindowsHere());
     const { state: cleared } = run(on, {

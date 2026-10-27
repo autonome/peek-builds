@@ -80,6 +80,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "immersive windows",
+      "description": "Fill the screen with every window and drop their border and shadow; run again to leave",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "see-through view",
       "description": "Flip the active card view between its normal look and the see-through one",
       "action": { "type": "execute" }

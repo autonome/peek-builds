@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import unhandled from 'electron-unhandled';
+import { discoverBuiltinWindowModes } from './window-modes.js';
 
 // Import from local backend modules
 import {
@@ -1569,6 +1570,8 @@ const onReady = async () => {
 
   // Discover and register built-in themes from features/ (type: "theme") with legacy themes/ fallback
   discoverBuiltinThemes(path.join(DESKTOP_DIR, 'features'), path.join(DESKTOP_DIR, 'themes'));
+  // Window modes (type: "window-mode") live beside the themes.
+  discoverBuiltinWindowModes(path.join(DESKTOP_DIR, 'features'));
 
   // Initialize bundled web extensions infrastructure.
   // electron-builder.yml lists chrome-extensions/** in asarUnpack so the

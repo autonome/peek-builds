@@ -1,0 +1,16 @@
+{
+  "id": "immersive",
+  "type": "window-mode",
+  "name": "Immersive",
+  "version": "1.0.0",
+  "description": "Every window fills the screen with no border, shadow or rounded corners; cards keep their opaque theme colors",
+  "author": "Peek",
+  "builtin": true,
+  "command": "immersive windows",
+  "asks": {
+    "maximize": true,
+    "chrome": "none",
+    "transparency": false
+  },
+  "bodyClass": "mode-immersive"
+}

@@ -93,6 +93,21 @@ const setupSeeThrough = (api, tag) => {
 };
 
 /**
+ * Add the active window mode's body class, read once when the view opens.
+ * Immersive changes no card colors, so it needs no class; a mode that does
+ * names one in its manifest `bodyClass`.
+ */
+const setupWindowMode = async (api, tag) => {
+  try {
+    const result = await api?.window?.getWindowMode?.();
+    const bodyClass = result?.success === true ? result.data?.bodyClass : null;
+    if (bodyClass) document.body.classList.add(bodyClass);
+  } catch (error) {
+    console.log(`[${tag}] window mode unavailable:`, error);
+  }
+};
+
+/**
  * Build the shell into document.body and return its controller.
  * @param {object} opts
  * @param {object} opts.api the tile's window.app
@@ -136,6 +151,7 @@ export const mountCardView = ({ api, searchPlaceholder = 'Search...', logTag = '
   });
 
   setupSeeThrough(api, logTag);
+  setupWindowMode(api, logTag);
 
   return { grid, input, render, markReady: () => { document.body.dataset.ready = 'true'; } };
 };

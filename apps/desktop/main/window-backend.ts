@@ -124,6 +124,11 @@ export interface WindowBackend {
   // the realization is entirely the backend's business.
   setAcceptsInput(id: WindowId, acceptsInput: boolean): void;
 
+  // Draw or drop the window's own frame (border, shadow, rounded corners).
+  // Which of those a platform can change on a live window is its own business;
+  // one that can change none of them answers with a no-op.
+  setChrome(id: WindowId, chrome: 'normal' | 'none'): void;
+
   // A REQUEST, not an assertion — the kernel does not enforce that
   // attachment agrees with stacking order, so a backend may decline it.
   // `hostId: null` means detach.

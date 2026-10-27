@@ -120,6 +120,9 @@ class FakeBackend implements WindowBackend {
   setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
     this.record('setDesktopMembership', id, membership);
   }
+  setChrome(id: BackendWindowId, chrome: 'normal' | 'none'): void {
+    this.record('setChrome', id, chrome);
+  }
   setAcceptsInput(id: BackendWindowId, acceptsInput: boolean): void {
     this.record('setAcceptsInput', id, acceptsInput);
   }

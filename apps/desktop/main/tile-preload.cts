@@ -1045,6 +1045,30 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Read the active window mode: `{ success, data: { mode, bodyClass,
+     * available } }`, `mode` null when none is active. Requires
+     * `window.query`.
+     */
+    getWindowMode: () => {
+      return ipcRenderer.invoke('tile:window:get-window-mode', {
+        token: tileToken,
+      });
+    },
+
+    /**
+     * Make `mode` (an id from `getWindowMode().data.available`) the active
+     * window mode, or pass null to leave the current one. Turning a mode on
+     * ends a conflicting one and, if it wants opaque cards, the app-wide
+     * see-through look. Requires `window.manage`.
+     */
+    setWindowMode: (mode: string | null) => {
+      return ipcRenderer.invoke('tile:window:set-window-mode', {
+        token: tileToken,
+        mode,
+      });
+    },
+
+    /**
      * Toggle fullscreen on a window. Requires `window.manage` (or
      * trustedBuiltin).
      */

@@ -31,6 +31,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
+import { restoreWindowMode } from './window-modes.js';
 import { kernelImportStackOrder, kernelWindowContentOrderable, kernelArmColdStartFocus, kernelRestoreMaximizeAll, getKernelExecutor } from './window-kernel-dispatch.js';
 import { planLazyRestore, mergeHeldIntoSave, planReleaseFocus, shouldReadDesktopBeforeRestore, boundedRead } from './restore-hold.js';
 import { buildRestoreBoundsOptions } from './session-restore-bounds.js';
@@ -2217,6 +2218,14 @@ export async function restoreSessionSnapshot(
     kernelRestoreMaximizeAll(snapshot.maximizeAll ?? null, marks);
   } catch (err) {
     console.warn('[session] maximize-all restore failed:', err);
+  }
+
+  // The active window mode re-applies its frame, and re-enters maximize-all if
+  // the session did not bring it back.
+  try {
+    restoreWindowMode();
+  } catch (err) {
+    console.warn('[session] window mode restore failed:', err);
   }
 
   // Focus the window that was focused at save time — but only if Peek is

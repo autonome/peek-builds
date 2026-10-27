@@ -102,6 +102,9 @@ class NoopKernelBackend implements WindowBackend {
   setAcceptsInput(id: WindowId, acceptsInput: boolean): void {
     recordEffect('setAcceptsInput', id, acceptsInput);
   }
+  setChrome(id: WindowId, chrome: 'normal' | 'none'): void {
+    recordEffect('setChrome', id, chrome);
+  }
   attachOverlayTo(overlayId: WindowId, hostId: WindowId | null): void {
     recordEffect('attachOverlayTo', overlayId, hostId);
   }
@@ -431,6 +434,16 @@ export function kernelSetAcceptsInput(id: WindowId, acceptsInput: boolean): void
     type: 'SetAcceptsInput',
     id,
     acceptsInput,
+    expectedVersion: getKernelExecutor().getState().version,
+  });
+}
+
+// The frame every maximize-all-eligible window draws - window-kernel.ts
+// `SetEligibleChrome`.
+export function kernelSetEligibleChrome(chrome: 'normal' | 'none'): void {
+  kernelExecute({
+    type: 'SetEligibleChrome',
+    chrome,
     expectedVersion: getKernelExecutor().getState().version,
   });
 }

@@ -31,7 +31,8 @@ export interface DiscoveredFeature {
  * Discover features in a directory.
  * Scans for subdirectories containing manifest.json. Theme manifests
  * (`type: "theme"`) are skipped here — themes are discovered separately
- * by `discoverBuiltinThemes` in `main.ts`.
+ * by `discoverBuiltinThemes` in `main.ts` — and so are window-mode manifests
+ * (`type: "window-mode"`, found by `discoverBuiltinWindowModes`).
  */
 export function discoverFeatures(basePath: string): DiscoveredFeature[] {
   const features: DiscoveredFeature[] = [];
@@ -52,7 +53,7 @@ export function discoverFeatures(basePath: string): DiscoveredFeature[] {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
 
       // Skip theme features — handled by discoverBuiltinThemes
-      if (manifest.type === 'theme') continue;
+      if (manifest.type === 'theme' || manifest.type === 'window-mode') continue;
 
       const id = (manifest.id as string | undefined)
         || (manifest.shortname as string | undefined)

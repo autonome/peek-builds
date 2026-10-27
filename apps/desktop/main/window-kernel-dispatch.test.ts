@@ -88,6 +88,7 @@ class InertBackend implements WindowBackend {
   setWindowBounds(_id: WindowId, _rect: Rect): void {}
   setDesktopMembership(): void {}
   setAcceptsInput(): void {}
+  setChrome(): void {}
   attachOverlayTo(): void {}
 }
 

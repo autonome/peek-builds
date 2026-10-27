@@ -72,6 +72,11 @@ export interface MaximizeAllMarkEntry {
   readonly mark: MaximizeAllMark;
 }
 
+// How much of a window's own frame is drawn: border, shadow, rounded corners.
+// A window mode that wants content to meet the screen edge asks for 'none'; how
+// a platform draws that is the backend's business.
+export type WindowChrome = 'normal' | 'none';
+
 export interface WindowRecord {
   id: WindowId;
   kind: WindowKind;
@@ -215,6 +220,9 @@ export interface State {
   readonly desktopSwitchesRead: number;
   // Maximize-all mode, or `null` while it is off. See `MaximizeAllMode`.
   readonly maximizeAll: MaximizeAllMode | null;
+  // The frame every window maximize-all may act on draws (`isMaximizeAllEligible`);
+  // every other window always draws its normal one.
+  readonly eligibleChrome: WindowChrome;
   // Focus the platform is expected to hand out by itself after an effect this
   // kernel emitted; a world-caused report matching it is the platform's
   // choice, not the user's (`platformChoseFocus`).
@@ -358,6 +366,7 @@ export type Event =
   | { type: 'WindowContentOrderable'; id: WindowId }
   | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
   | { type: 'WindowAcceptsInputChanged'; id: WindowId; acceptsInput: boolean }
+  | { type: 'EligibleChromeChanged'; chrome: WindowChrome }
   | { type: 'WindowLayerChanged'; id: WindowId; layer: number }
   | { type: 'FullscreenTransitionStarted'; id: WindowId; entering: boolean; preBounds: Rectangle | null }
   | { type: 'FullscreenDesireRecorded'; id: WindowId; desired: boolean }
@@ -454,6 +463,8 @@ export type Command =
   | { type: 'EnterMaximizeAll'; workArea?: Rectangle; expectedVersion: number }
   // Turn maximize-all mode off, returning every window it still owes.
   | { type: 'LeaveMaximizeAll'; expectedVersion: number }
+  // Set the frame every maximize-all-eligible window draws. Targets no single window.
+  | { type: 'SetEligibleChrome'; chrome: WindowChrome; expectedVersion: number }
   // Session restore handing back the mode and the marks it saved.
   | { type: 'RestoreMaximizeAll'; mode: MaximizeAllMode | null; marks: readonly MaximizeAllMarkEntry[]; expectedVersion: number }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
@@ -496,6 +507,8 @@ export type Effect =
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership }
   | { type: 'SetAcceptsInput'; id: WindowId; acceptsInput: boolean }
+  // Draw or drop the window's own frame - emitted as a diff of `windowChrome`.
+  | { type: 'SetChrome'; id: WindowId; chrome: WindowChrome }
   // Emitted by `react` as a structural diff of the pinned-band membership
   // `layer` implies — independent of `SetStacking`'s z-order replay below, so
   // an unpin reliably clears the native always-on-top flag rather than
@@ -544,6 +557,7 @@ export function initialState(): State {
     desktopSwitchCount: 0,
     desktopSwitchesRead: 0,
     maximizeAll: null,
+    eligibleChrome: 'normal',
     expectedPlatformFocus: NO_PLATFORM_FOCUS_EXPECTED,
     overlayTransitionSinceResign: false,
     raiseAwaitingPlacement: null,
@@ -1748,6 +1762,10 @@ function evolveEvent(state: State, ev: Event): State {
       };
     }
 
+    case 'EligibleChromeChanged': {
+      return { ...state, eligibleChrome: ev.chrome, version: state.version + 1 };
+    }
+
     case 'MaximizeAllEntered': {
       // Only the mode itself is written here. The per-window work is
       // `admitToMaximizeAll`, which runs for this event like any other.
@@ -2277,6 +2295,19 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Frame - same diff pattern, over the chrome each state implies for the window.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    const was = windowChrome(prev, prevRecord);
+    const now = windowChrome(next, nextRecord);
+    if (was !== now) {
+      effects.push({ type: 'SetChrome', id: nextRecord.id, chrome: now });
+    }
+  }
+
   // Pinned band — a structural diff of `layer > BASE_LAYER`, same pattern as
   // click-through above. Deliberately separate from the `SetStacking` replay
   // below: that replay's `stacked` branch only reorders (`moveTop()`), so it
@@ -2641,6 +2672,10 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   }
   if (cmd.type === 'DestroyAllGuests') {
     return { events: [{ type: 'GuestTeardownRequested' }] };
+  }
+
+  if (cmd.type === 'SetEligibleChrome') {
+    return { events: state.eligibleChrome === cmd.chrome ? [] : [{ type: 'EligibleChromeChanged', chrome: cmd.chrome }] };
   }
 
   // The three maximize-all commands name no single window — handled here,
@@ -3108,6 +3143,10 @@ const MAXIMIZE_ALL_EXCLUDED_ROLES: ReadonlySet<string> = new Set([
  * anything the user cannot focus, anything pinned above the ordinary band, and
  * anything mid-fullscreen, whose own bounds machinery owns the window.
  */
+export function windowChrome(state: State, record: WindowRecord): WindowChrome {
+  return state.eligibleChrome === 'none' && isMaximizeAllEligible(record) ? 'none' : 'normal';
+}
+
 export function isMaximizeAllEligible(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (record.pendingHidden === true) return false;

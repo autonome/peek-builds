@@ -161,6 +161,19 @@ const commandDefinitions = [
     }
   },
   {
+    name: 'immersive windows',
+    description: 'Fill the screen with every window and drop their border and shadow; run again to leave',
+    execute: async (ctx) => {
+      // Window modes are builtin packages; this command belongs to the
+      // immersive one. Read before writing so main is told which way to go.
+      const state = await api.window.getWindowMode();
+      if (!state || state.success !== true) {
+        return { success: false, error: state?.error || 'Cannot read the window mode' };
+      }
+      return api.window.setWindowMode(state.data?.mode === 'immersive' ? null : 'immersive');
+    }
+  },
+  {
     name: 'maximize all windows',
     description: 'Maximize every window here; run again to put them all back',
     execute: async (ctx) => {

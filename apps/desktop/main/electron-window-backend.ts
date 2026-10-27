@@ -140,6 +140,8 @@ export interface NativeWindow {
     options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
   ): void;
   setIgnoreMouseEvents(ignore: boolean, options?: { forward?: boolean }): void;
+  // Optional so test doubles need not supply it.
+  setHasShadow?(hasShadow: boolean): void;
   getBounds(): Rectangle;
   // Optional so test doubles need not supply them; the platform window id is read from these.
   getMediaSourceId?(): string;
@@ -1450,6 +1452,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       win.setIgnoreMouseEvents(!acceptsInput, { forward: true });
     } catch {
       /* torn-down window mid-command — the machine already recorded intent */
+    }
+  }
+
+  // The frame a window draws for itself. Electron can change a live window's
+  // shadow; its corner rounding is fixed when the window is created, so a
+  // window keeps its corners and loses only the shadow.
+  setChrome(id: WindowId, chrome: 'normal' | 'none'): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (win.isDestroyed()) return;
+      win.setHasShadow?.(chrome === 'normal' && !isHeadless());
+    } catch {
+      /* torn-down window mid-command - the machine already recorded intent */
     }
   }
 
