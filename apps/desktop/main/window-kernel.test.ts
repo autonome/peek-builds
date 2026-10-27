@@ -9601,6 +9601,43 @@ describe('window-kernel: maximize-all mode', () => {
     assert.deepStrictEqual(recordFor(off, 1).bounds, WORK_AREA);
   });
 
+  describe('restored with a scope that matches nothing live', () => {
+    const STALE = { screen: 'old-screen', desktop: 'old-desktop', workArea: WORK_AREA };
+    const restoreStale = (state: State) =>
+      run(state, { type: 'RestoreMaximizeAll', mode: STALE, marks: [], expectedVersion: state.version });
+
+    it('takes the current launch’s scope, not the saved ids', () => {
+      const { state } = restoreStale(twoWindowsHere());
+      assert.deepStrictEqual(state.maximizeAll, { screen: 'A', desktop: 'a1', workArea: WORK_AREA });
+    });
+
+    it('maximizes every in-scope window, late ones included, and gives each back on leave', () => {
+      const { state: restored } = restoreStale(twoWindowsHere());
+      // A window opened after the restore: its placement arrives after its first rect.
+      const lateEvents: Event[] = open(3, rect(3)).filter((e) => e.type !== 'WindowPlacementReported');
+      const placed: Event = {
+        type: 'WindowPlacementReported', id: wid(3), screen: 'A', desktop: 'a1', onEveryDesktop: false,
+      };
+      const late = fold([...lateEvents, placed], restored);
+
+      const { state: off } = leave(late);
+      for (const n of [1, 2, 3]) {
+        assert.strictEqual(recordFor(off, n).maximized, false, `window ${n} is unmaximized after leave`);
+        assert.deepStrictEqual(recordFor(off, n).bounds, rect(n), `window ${n} is back at its own rect`);
+      }
+
+      const { state: on } = enter(off);
+      for (const n of [1, 2, 3]) {
+        assert.strictEqual(recordFor(on, n).maximized, true, `window ${n} is maximized after enter`);
+        assert.deepStrictEqual(recordFor(on, n).bounds, WORK_AREA);
+      }
+      const { state: off2 } = leave(on);
+      for (const n of [1, 2, 3]) {
+        assert.deepStrictEqual(recordFor(off2, n).bounds, rect(n), `window ${n} restored again`);
+      }
+    });
+  });
+
   it('restoring a null mode leaves the mode off and every mark dropped', () => {
     const { state: on } = enter(twoWindowsHere());
     const { state: cleared } = run(on, {

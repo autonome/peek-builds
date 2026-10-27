@@ -2687,7 +2687,22 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   // same reason `ImportStackOrder` does not: a window named by the snapshot
   // may have failed to come back, and that is expected traffic.
   if (cmd.type === 'RestoreMaximizeAll') {
-    return { events: [{ type: 'MaximizeAllRestored', mode: cmd.mode, marks: cmd.marks }] };
+    // A saved screen or desktop id the live layout does not know (ids from the
+    // previous launch) would match no window, leaving the mode on with nothing in
+    // scope: windows already placed are skipped while ones too new to be placed
+    // are admitted. Such an id is replaced by where the user is now.
+    let mode = cmd.mode;
+    if (mode !== null) {
+      const here = maximizeAllScope(state);
+      mode = {
+        ...mode,
+        screen:
+          mode.screen !== null && !state.screens.some((s) => s.id === mode!.screen) ? here.screen : mode.screen,
+        desktop:
+          mode.desktop !== null && !state.desktops.some((d) => d.id === mode!.desktop) ? here.desktop : mode.desktop,
+      };
+    }
+    return { events: [{ type: 'MaximizeAllRestored', mode, marks: cmd.marks }] };
   }
 
   if (!state.order.some((w) => w.id === cmd.id)) {
