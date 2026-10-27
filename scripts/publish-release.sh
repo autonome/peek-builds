@@ -171,10 +171,16 @@ r2_put "$work/$sums" "$tag/$sums" text/plain
 
 # --- tangled ------------------------------------------------------------------
 
+# Tangled/PLC occasionally returns a transient 500 (the first v0.1.0 publish hit
+# one). Retry, and use file-backed request bodies so curl can replay them.
+curl_tangled() {
+  curl -fsS --retry 5 --retry-delay 2 --retry-all-errors "$@"
+}
+
 # The owner's PDS holds the artifact record; find it from the DID document.
 case "$TANGLED_REPO_DID" in
-did:plc:*) did_doc=$(curl -fsS "https://plc.directory/$TANGLED_REPO_DID") ;;
-did:web:*) did_doc=$(curl -fsS "https://${TANGLED_REPO_DID#did:web:}/.well-known/did.json") ;;
+did:plc:*) did_doc=$(curl_tangled "https://plc.directory/$TANGLED_REPO_DID") ;;
+did:web:*) did_doc=$(curl_tangled "https://${TANGLED_REPO_DID#did:web:}/.well-known/did.json") ;;
 *)
   echo "publish-release: unsupported DID method in $TANGLED_REPO_DID" >&2
   exit 1
@@ -182,23 +188,27 @@ did:web:*) did_doc=$(curl -fsS "https://${TANGLED_REPO_DID#did:web:}/.well-known
 esac
 pds=$(jq -r '.service[] | select(.id == "#atproto_pds") | .serviceEndpoint' <<<"$did_doc")
 
-session=$(jq -n --arg id "$TANGLED_REPO_DID" --arg pw "$ATP_APP_PASSWORD" \
-  '{identifier: $id, password: $pw}' |
-  curl -fsS -X POST -H "Content-Type: application/json" --data @- \
-    "$pds/xrpc/com.atproto.server.createSession")
+jq -n --arg id "$TANGLED_REPO_DID" --arg pw "$ATP_APP_PASSWORD" \
+  '{identifier: $id, password: $pw}' >"$work/session.json"
+session=$(curl_tangled -X POST -H "Content-Type: application/json" \
+  --data-binary @"$work/session.json" \
+  "$pds/xrpc/com.atproto.server.createSession")
+rm -f "$work/session.json"
 jwt=$(jq -r .accessJwt <<<"$session")
 did=$(jq -r .did <<<"$session")
 
 xrpc_post() { # <method> ; JSON body on stdin
-  curl -fsS -X POST -H "Authorization: Bearer $jwt" \
-    -H "Content-Type: application/json" --data @- "$pds/xrpc/$1"
+  cat >"$work/xrpc-body.json"
+  curl_tangled -X POST -H "Authorization: Bearer $jwt" \
+    -H "Content-Type: application/json" --data-binary @"$work/xrpc-body.json" \
+    "$pds/xrpc/$1"
 }
 
 # Tangled keeps one artifact per tag and name and ignores later duplicates, so
 # a re-run for the same tag deletes the earlier record before writing its own.
 cursor=""
 while :; do
-  page=$(curl -fsS -G -H "Authorization: Bearer $jwt" \
+  page=$(curl_tangled -G -H "Authorization: Bearer $jwt" \
     --data-urlencode "repo=$did" --data-urlencode "collection=$collection" \
     --data-urlencode "limit=100" ${cursor:+--data-urlencode "cursor=$cursor"} \
     "$pds/xrpc/com.atproto.repo.listRecords")
@@ -217,7 +227,7 @@ while :; do
   [ -n "$cursor" ] || break
 done
 
-blob=$(curl -fsS -X POST -H "Authorization: Bearer $jwt" \
+blob=$(curl_tangled -X POST -H "Authorization: Bearer $jwt" \
   -H "Content-Type: text/plain" --data-binary @"$work/$pointer" \
   "$pds/xrpc/com.atproto.repo.uploadBlob" | jq -c .blob)
 
