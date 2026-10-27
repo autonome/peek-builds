@@ -1,10 +1,16 @@
 # macOS Developer ID signing readiness
 
-Status: **research only; signing remains disabled**. This is not authorization to
-enroll, spend money, change accounts/secrets, or run a signed release. Distribution
+Status: **manual candidate-only implementation approved; signing remains disabled**.
+The user approved a candidate-only path and requested the local gh provisioning
+script. The executable [setup script and usage guide](../docs/macos-signing-secrets.md)
+are implemented with offline fake-gh tests. Candidate workflow/signing integration
+is still unimplemented. The spec stays `enabled: false` to prevent a duplicate
+writer. No account/environment prerequisites have been verified. This is not
+authorization for the agent to enroll, spend money, change accounts/secrets, sign
+a live build or publish a release. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
-unchanged. Optional implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
+unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
 
 ## Recommendation and account-holder checklist
 
@@ -44,7 +50,8 @@ Human actions, in order (none performed by this research):
 - [ ] Approve a protected signing environment in `autonome/peek-builds`, trusted
   tag/ref policy, reviewers, renewal owner and incident contact. Confirm the
   actual team ID/certificate identity out of band; no account state is known here.
-- [ ] Authorize a separate implementation task and a manual signed candidate
+- [x] Authorize manual candidate-only implementation and the local gh setup script.
+- [ ] Provision protected environment and separately authorize execution of a manual signed candidate
   **without public release**, then a clean-machine Gatekeeper/offline smoke test.
   Only after that approve signed tag publication. Do not retrofit existing releases.
 
@@ -186,7 +193,7 @@ contract. If importing explicitly, use `CSC_KEYCHAIN` to select that keychain an
 verify the selected identity; do not also ask builder to import the P12. Neither
 the API key nor an app-specific password can sign code without the P12 identity.
 
-## Disabled implementation design and publication order
+## Manual-approved design and publication order (not yet integrated)
 
 1. Keep normal unsigned/manual builds unchanged. Add a separately authorized
    signed-candidate path with a protected environment and explicit signed mode.
@@ -338,7 +345,9 @@ clock/HTTP date). Account state, enrollment status, certificate inventory, remot
 secrets and remote releases were **not** inspected. No Apple account was accessed,
 no credentials generated/exported/imported, and no signing, notarization, macOS
 packaging or Gatekeeper runtime test was performed. Documentation/reference and
-whitespace checks are the only executed verification for this change.
+whitespace checks were the only executed verification for the research commit.
+Subsequent provisioning implementation is tested locally using fake gh and dummy
+files only; see the setup guide. No real gh secret/account operations were run.
 
 - **A1:** [Apple Developer Program enrollment](https://developer.apple.com/programs/enroll/)
   — requirements, entity choices and annual price.

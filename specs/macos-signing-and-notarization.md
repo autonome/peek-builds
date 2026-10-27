@@ -1,21 +1,29 @@
 ---
 enabled: false
-touches: [.github/workflows/macos.yml, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, notes/macos-signing-readiness.md]
+touches: [.github/workflows/macos.yml, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, scripts/setup-macos-signing-secrets.sh, scripts/setup-macos-signing-secrets.test.cjs, docs/macos-signing-secrets.md, notes/macos-signing-readiness.md]
 depends-on: []
 ---
 
 # DISABLED: Developer ID signing and notarization for macOS arm64 CI
 
-**Do not implement or enable without separate human approval.** This specification
-is a planning artifact, not permission to enroll, purchase, generate/export keys,
-read secrets, alter accounts/remote settings, sign a build or publish a release.
+**Manual implementation approved: candidate-only path and local gh secrets setup.**
+The user explicitly approved this implementation and requested a local setup script.
+Keep `enabled: false`: this manual track owns implementation; no duplicate automated
+writer is authorized. This approval is not permission for the agent to enroll,
+purchase, generate/export keys, read real secrets, alter accounts/remote settings,
+sign a live build or publish a release. Signed public publication remains unapproved.
+
+Delivered provisioning component: `scripts/setup-macos-signing-secrets.sh`, fake-gh
+tests in `scripts/setup-macos-signing-secrets.test.cjs`, and
+[usage instructions](../docs/macos-signing-secrets.md). Candidate workflow/signing
+integration below remains unimplemented; unsigned behavior is unchanged.
 Research and exact proposed secret names: [readiness notes](../notes/macos-signing-readiness.md).
 Do not touch the startup-risk acknowledgment implementation or delay unsigned
 builds. No dependency on that track is required.
 
 ## Human prerequisites / decisions
 
-Before enabling this spec, record owner approval for:
+Before operating a signed candidate, record owner approval for:
 
 1. Legal publisher, existing/new Apple Developer Program team, annual enrollment
    cost if needed, expected team ID/Developer ID Application identity and bundle ID.
@@ -114,7 +122,9 @@ A test fixture's Accepted result is not evidence of live Apple acceptance.
 
 ## Verification / rollout gates
 
-1. `node --test scripts/macos-signing.test.cjs`, relevant existing build-info
+1. `bash -n scripts/setup-macos-signing-secrets.sh` and
+   `node --test scripts/setup-macos-signing-secrets.test.cjs` for provisioning;
+   once signing orchestration exists, `node --test scripts/macos-signing.test.cjs`, relevant existing build-info
    tests if changed, workflow/config syntax checks, `git diff --check`.
 2. Candidate-only authorized macOS arm64 job: toolchain/native preflight; signature
    inventory, `codesign --verify --deep --strict`, identity/team/runtime/timestamp
