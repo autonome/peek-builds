@@ -9580,6 +9580,33 @@ describe('window-kernel: maximize-all mode', () => {
     assert.deepStrictEqual(recordFor(off, 2).bounds, WORK_AREA, 'the one maximized before entry stays');
   });
 
+  it('restore through the real open sequence: windows come back maximized before they are shown, then leaving puts them back', () => {
+    // A restored window is registered and maximized (at its saved rect) before it
+    // is shown, painted or placed; the mode is restored after the whole loop.
+    const openMaximized = (n: number): Event[] => [
+      { type: 'WindowRegistered', id: wid(n), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'BoundsChanged', id: wid(n), bounds: rect(n) },
+      { type: 'PendingProjectionDiscarded', id: wid(n) },
+      { type: 'Maximized', id: wid(n), preMaxBounds: rect(n) },
+      { type: 'BoundsChanged', id: wid(n), bounds: WORK_AREA },
+      { type: 'WindowShown', id: wid(n) },
+      { type: 'WindowContentOrderable', id: wid(n) },
+      { type: 'WindowPlacementReported', id: wid(n), screen: 'A', desktop: 'a1', onEveryDesktop: false },
+    ];
+    const relaunched = fold([layout, ...openMaximized(1), ...openMaximized(2)]);
+    const { state: restored } = run(relaunched, {
+      type: 'RestoreMaximizeAll',
+      mode: { screen: 'A', desktop: 'a1', workArea: WORK_AREA },
+      marks: [{ id: wid(1), mark: 'marked' }, { id: wid(2), mark: 'marked' }],
+      expectedVersion: relaunched.version,
+    });
+    const { state: off } = leave(restored);
+    for (const n of [1, 2]) {
+      assert.strictEqual(recordFor(off, n).maximized, false, `window ${n} unmaximized`);
+      assert.deepStrictEqual(recordFor(off, n).bounds, rect(n), `window ${n} back at its rect`);
+    }
+  });
+
   it('a window restored without a mark is treated as maximized before entry', () => {
     const relaunched = fold(
       [
