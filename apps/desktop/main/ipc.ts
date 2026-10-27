@@ -4647,7 +4647,10 @@ export function registerWindowHandlers(): void {
       // for (docs/design/window-rules.md G15). `options.maximize` below
       // only repositions bounds and leaves the window unmaximized, so it
       // is not the same thing.
-      if (appWideSeeThrough) {
+      // A restored or reopened maximized window arrives with `options.maximized`
+      // (created at its pre-maximize rect) and is maximized here the same way,
+      // as the page-host path does for its own windows.
+      if (appWideSeeThrough || options.maximized === true) {
         const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
         kernelMaximize(machineWindowId, {
           x: workArea.x,
