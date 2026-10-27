@@ -16,11 +16,14 @@ import {
   createStartupConsentGate,
   persistAcceptanceRecord,
   readAcceptanceRecordSync,
+  revokeAcceptanceRecord,
 } from './startup-consent.js';
 
 // The installation user-data root, captured before the runtime selects a profile.
 const consentRoot = app.getPath('userData');
 const alreadyAccepted = readAcceptanceRecordSync(consentRoot) !== null;
+const presenter = alreadyAccepted ? null : await import('./startup-consent-electron.js');
+presenter?.prepareNotice();
 
 function buildIdentity(): string {
   const info = readBuildInfo(process.resourcesPath);
@@ -32,6 +35,8 @@ const gate = createStartupConsentGate({
   readRecord: async () => readAcceptanceRecordSync(consentRoot),
   present: async context => (await import('./startup-consent-electron.js')).presentNotice(context),
   persist: record => persistAcceptanceRecord(consentRoot, record),
+  revoke: () => revokeAcceptanceRecord(consentRoot),
+  signal: presenter?.consentSignal,
   loadRuntime: async () => {
     if (alreadyAccepted) {
       // Runs before Electron is ready, as the runtime requires.

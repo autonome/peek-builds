@@ -28,7 +28,8 @@ entry.ts (gate)
   |-- valid record --> await import('./runtime-entry.js') before Electron is ready
   |                    (identical to the previous startup; nothing is shown)
   |
-  `-- no valid record --> wait for ready, show the notice, capture pending work
+  `-- no valid record --> install inert capture and take bootstrap lock before ready,
+        wait for ready, show the notice
         |-- Quit, Escape, window close  --> discard pending work, exit 0
         |-- presentation / bootstrap error, no display, headless
         |                               --> diagnostic on stderr, exit 1
@@ -48,7 +49,11 @@ runtime, a profile module or the datastore fails the build.
 presenter, persistence and runtime loader are parameters. It runs once per
 process, never persists or loads the runtime after decline, close, a bad message
 or a failed presentation, persists before loading, and treats a persistence
-failure as "show the notice again with the error".
+failure as "show the notice again with the error", unless the person has declined.
+Cancellation stays live through persistence: Quit, Escape, close and app quit
+abort startup. The gate waits for the write to settle and removes a successfully
+committed record after cancellation before exiting. It never recreates the notice
+on a cancelled write failure.
 
 ### Why the first acceptance restarts the app
 
@@ -57,7 +62,8 @@ command-line switches before Electron is ready. The notice window needs a ready
 app. Registering scheme privileges after ready throws, so the runtime cannot be
 started in the same process that showed the notice without changing
 `main.ts`/`protocol.ts` (outside this feature). After the first acceptance the
-app therefore relaunches itself with its original arguments and exits; every
+app therefore relaunches itself with bootstrap options (and the source application
+path for source launches), not original navigation operands, and exits; every
 later launch has a record and starts the runtime directly, with no restart.
 
 Consequence: the very first launch starts the application twice. A possible
@@ -82,7 +88,8 @@ wraps and scrolls on small screens.
 
 Files in `renderer/` ship in the package without extra configuration
 (`electron-builder.yml` packages `**/*`); the desktop spec asserts the notice
-assets exist in the build under test.
+actually load from the application under test, including `app.asar` in packaged
+runs, with a working sandboxed preload bridge and stylesheet.
 
 ## Pending work while blocked
 
@@ -96,7 +103,7 @@ raised by them.
 
 ## Concurrency
 
-Showing the notice takes a single-instance lock on the installation user-data
+Before readiness or showing the notice, bootstrap takes a single-instance lock on the installation user-data
 root. A second unaccepted launch in that root exits and forwards its arguments to
 the first. The runtime's own lock is per profile (it lives in the profile's
 `userData`), so accepted launches under different profiles are unaffected. The

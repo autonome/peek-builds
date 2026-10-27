@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   NOTICE,
-  allAcknowledged,
+  safeRelaunchArgs,
   createPendingWork,
   interactiveDisplayAvailable,
   validatePendingUrl,
@@ -36,6 +36,14 @@ let noticeWindow: BrowserWindow | null = null;
 let activeDecision: ((decision: ConsentDecision) => void) | null = null;
 let lockHeld = false;
 let handlersInstalled = false;
+const cancellation = new AbortController();
+export const consentSignal = cancellation.signal;
+
+function decline(action: 'decline' | 'close' = 'decline'): void {
+  cancellation.abort();
+  pending.discard();
+  activeDecision?.({ action });
+}
 
 function captureArgv(argv: unknown): void {
   if (!Array.isArray(argv)) return;
@@ -113,12 +121,12 @@ async function ensureWindow(): Promise<BrowserWindow> {
   wc.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') {
       event.preventDefault();
-      activeDecision?.({ action: 'decline' });
+      decline();
     }
   });
   win.on('closed', () => {
     noticeWindow = null;
-    activeDecision?.({ action: 'close' });
+    decline('close');
   });
 
   const loaded = new Promise<void>((resolve, reject) => {
@@ -140,7 +148,7 @@ function installIpc(): void {
   ipcMain.on('startup-consent:decision', (event, payload: unknown) => {
     if (!noticeWindow || event.senderFrame !== noticeWindow.webContents.mainFrame) return;
     const data = (payload ?? {}) as { action?: unknown; acknowledgments?: unknown };
-    if (data.action === 'decline') activeDecision?.({ action: 'decline' });
+    if (data.action === 'decline') decline();
     else if (data.action === 'accept') {
       activeDecision?.({ action: 'accept', acknowledgments: data.acknowledgments });
     }
@@ -160,6 +168,21 @@ function installMenu(): void {
 
 let prepared = false;
 
+/** Called by entry before yielding to readiness. Accepted launches never call it. */
+export function prepareNotice(): void {
+  installCaptureHandlers();
+  captureArgv(process.argv.slice(1));
+  if (!app.requestSingleInstanceLock({ url: process.argv.find(arg => validatePendingUrl(arg)) ?? null })) {
+    app.exit(0);
+    return;
+  }
+  lockHeld = true;
+  // Keep the process alive until an in-flight write has settled and, if needed,
+  // been revoked. terminateAfter uses exit, not quit, after that cleanup.
+  app.on('window-all-closed', () => decline('close'));
+  app.on('before-quit', event => { event.preventDefault(); decline(); });
+}
+
 /**
  * Presenter for createStartupConsentGate. Rejects (so the gate fails closed)
  * when no interactive display exists, when launched headless, or when the notice
@@ -175,26 +198,19 @@ export async function presentNotice(context: { persistenceError?: unknown }): Pr
       throw failure('no display is available and no startup risk acknowledgment is recorded; start Peek in a graphical session to accept the notice');
     }
     await app.whenReady();
-    if (!app.requestSingleInstanceLock({ url: process.argv.find(arg => validatePendingUrl(arg)) ?? null })) {
-      // Another launch in this installation already shows the notice and has
-      // received this launch's arguments through its second-instance event.
-      app.exit(0);
-      return new Promise<ConsentDecision>(() => undefined);
-    }
-    lockHeld = true;
-    captureArgv(process.argv.slice(1));
-    installCaptureHandlers();
     installIpc();
     installMenu();
   }
+  if (consentSignal.aborted) return { action: 'decline' };
   const win = await ensureWindow();
+  if (consentSignal.aborted) return { action: 'decline' };
   if (context.persistenceError !== undefined) {
     const detail = context.persistenceError instanceof Error ? context.persistenceError.message : String(context.persistenceError);
     win.webContents.send('startup-consent:error', `Your acknowledgment could not be saved (${detail}). Try again or quit.`);
   }
   return new Promise<ConsentDecision>(resolve => {
     activeDecision = decision => {
-      activeDecision = null;
+      // The decline handlers and abort signal stay live through persistence.
       resolve(decision);
     };
   });
@@ -214,9 +230,9 @@ function releaseBootstrapLock(): void {
  * command line carries none, rides along as an argument.
  */
 export function restartIntoRuntime(): void {
-  const args = process.argv.slice(1);
-  const url = pending.release();
-  if (url && !args.some(arg => validatePendingUrl(arg))) args.push(url);
+  if (consentSignal.aborted) throw failure('startup was cancelled');
+  const args = safeRelaunchArgs(process.argv.slice(process.defaultApp ? 2 : 1),
+    process.defaultApp ? process.argv[1] : null, pending.release());
   releaseBootstrapLock();
   app.relaunch({ args });
   app.exit(0);

@@ -11,7 +11,7 @@ import {
   isValidAcceptanceRecord, allAcknowledged, readAcceptanceRecord,
   persistAcceptanceRecord, createStartupConsentGate, readAcceptanceRecordSync,
   validatePendingUrl, createPendingWork, interactiveDisplayAvailable,
-  type ConsentDependencies,
+  safeRelaunchArgs, revokeAcceptanceRecord, type ConsentDependencies,
 } from './startup-consent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +29,7 @@ describe('startup risk acknowledgment: neutral rules', () => {
     for (let bits = 0; bits < 8; bits++) {
       assert.equal(allAcknowledged([!!(bits & 1), !!(bits & 2), !!(bits & 4)]), bits === 7);
     }
-    for (const invalid of [null, true, [], [true, true], [true, true, true, true], [1, 1, 1], ['true', true, true], {}]) {
+    for (const invalid of [null, true, [], Array(3), [true,,true], [true, true], [true, true, true, true], [1, 1, 1], ['true', true, true], {}]) {
       assert.equal(allAcknowledged(invalid), false);
     }
   });
@@ -102,6 +102,7 @@ describe('startup risk acknowledgment: bootstrap orchestration', () => {
       readRecord: async () => null,
       present: async () => ({ action: 'accept', acknowledgments }),
       persist: async () => { effects.push('persist'); },
+      revoke: async () => { effects.push('revoke'); },
       loadRuntime: async () => { effects.push('runtime'); },
       ...overrides,
     };
@@ -134,6 +135,36 @@ describe('startup risk acknowledgment: bootstrap orchestration', () => {
     assert.equal((await start()).status, 'failed');
     assert.deepEqual(effects, []);
   });
+  for (const malformed of [Array(3), [true,,true], [true, true], [1, true, true], { 0: true, 1: true, 2: true, length: 3 }]) {
+    it(`rejects malformed acknowledgments through the decision path: ${JSON.stringify(malformed)}`, async () => {
+      const { start, effects } = setup({ present: async () => ({ action: 'accept', acknowledgments: malformed }) });
+      assert.equal((await start()).status, 'failed');
+      assert.deepEqual(effects, []);
+    });
+  }
+  for (const gesture of ['close', 'Quit', 'Escape']) {
+    for (const succeeds of [true, false]) {
+      it(`${gesture} during a ${succeeds ? 'successful' : 'failed'} deferred write declines without re-presenting`, async () => {
+        const controller = new AbortController();
+        let settle!: () => void;
+        let presentations = 0;
+        const { start, effects } = setup({
+          signal: controller.signal,
+          present: async () => { presentations++; return { action: 'accept', acknowledgments }; },
+          persist: () => new Promise<void>((resolve, reject) => {
+            settle = () => succeeds ? resolve() : reject(new Error('write failed'));
+          }),
+        });
+        const result = start();
+        await new Promise(resolve => setImmediate(resolve));
+        controller.abort(gesture);
+        settle();
+        assert.equal((await result).status, 'declined');
+        assert.equal(presentations, 1);
+        assert.deepEqual(effects, succeeds ? ['revoke'] : []);
+      });
+    }
+  }
   it('persists before import and starts exactly once, including concurrent calls', async () => {
     const { start, effects } = setup();
     const first = start();
@@ -234,6 +265,21 @@ describe('startup risk acknowledgment: pending work and environment', () => {
     assert.equal(pending.size, 0);
     assert.equal(pending.release(), null);
   });
+  it('constructs relaunch arguments without original file, scheme or overlength operands', () => {
+    const args = ['--no-sandbox', '--user-data-dir=/isolated/root', '/tmp/private.html', 'file:///tmp/secret',
+      'peek://command', 'https://' + 'a'.repeat(9000), 'https://original.example/'];
+    assert.deepEqual(safeRelaunchArgs(args, '/checkout', 'https://queued.example/'),
+      ['/checkout', '--no-sandbox', '--user-data-dir=/isolated/root', 'https://queued.example/']);
+    assert.deepEqual(safeRelaunchArgs(args, null, null), ['--no-sandbox', '--user-data-dir=/isolated/root']);
+  });
+  it('removes a record committed after cancellation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'peek-consent-revoke-'));
+    try {
+      await persistAcceptanceRecord(root, record());
+      await revokeAcceptanceRecord(root);
+      assert.equal(await readAcceptanceRecord(root), null);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('requires a display session on Linux only', () => {
     assert.equal(interactiveDisplayAvailable('linux', {}), false);
     assert.equal(interactiveDisplayAvailable('linux', { DISPLAY: ':0' }), true);
@@ -276,6 +322,17 @@ describe('startup risk acknowledgment: bootstrap source guard', () => {
       const source = read(file);
       assert.doesNotMatch(source, /--accept|ACCEPT_|SKIP_CONSENT|NO_CONSENT|setTimeout/i, file);
     }
+  });
+  it('installs capture and requests the bootstrap lock before readiness or presentation', () => {
+    const entry = read('entry.ts');
+    assert.ok(entry.indexOf('presenter?.prepareNotice()') < entry.indexOf('const gate ='));
+    const adapter = read('startup-consent-electron.ts');
+    const preparation = adapter.slice(adapter.indexOf('export function prepareNotice'), adapter.indexOf('export async function presentNotice'));
+    assert.match(preparation, /installCaptureHandlers\(\)/);
+    assert.match(preparation, /requestSingleInstanceLock/);
+    assert.doesNotMatch(preparation, /whenReady\(\)/);
+    assert.match(adapter, /open-url/);
+    assert.match(adapter, /open-file/);
   });
   it('the notice window is sandboxed and isolated', () => {
     const source = read('startup-consent-electron.ts');

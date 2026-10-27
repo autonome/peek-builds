@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('startupConsent', Object.freeze({
   decide: (action: 'accept' | 'decline', acknowledgments?: boolean[]): void => {
     ipcRenderer.send('startup-consent:decision', {
       action,
-      acknowledgments: Array.isArray(acknowledgments) ? acknowledgments.map(v => v === true) : [],
+      acknowledgments: Array.isArray(acknowledgments) ? Array.from(acknowledgments, v => v === true) : [],
     });
   },
   onError: (callback: (message: string) => void): void => {

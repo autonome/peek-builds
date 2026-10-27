@@ -36,7 +36,7 @@ export interface AcceptanceRecord {
 }
 
 export function allAcknowledged(value: unknown): value is [true, true, true] {
-  return Array.isArray(value) && value.length === 3 && value.every(item => item === true);
+  return Array.isArray(value) && value.length === 3 && value[0] === true && value[1] === true && value[2] === true;
 }
 
 export function isValidAcceptanceRecord(value: unknown): value is AcceptanceRecord {
@@ -158,6 +158,25 @@ export async function persistAcceptanceRecord(userDataRoot: string, record: Acce
   }
 }
 
+export async function revokeAcceptanceRecord(userDataRoot: string): Promise<void> {
+  await unlink(consentRecordPath(userDataRoot)).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  });
+}
+
+/** Retain bootstrap switches, never original navigation operands. */
+export function safeRelaunchArgs(argv: string[], sourceApp: string | null, pendingUrl: string | null): string[] {
+  const args = sourceApp === null ? [] : [sourceApp];
+  for (const arg of argv) {
+    // Options are single arguments (Electron's --option=value form). Positional
+    // values cannot safely be distinguished from file/navigation operands.
+    if (/^--[a-zA-Z][a-zA-Z0-9-]*(?:=.*)?$/.test(arg)) args.push(arg);
+  }
+  const url = validatePendingUrl(pendingUrl);
+  if (url) args.push(url);
+  return args;
+}
+
 export type ConsentDecision =
   | { action: 'decline' | 'close' }
   | { action: 'accept'; acknowledgments: unknown };
@@ -167,6 +186,10 @@ export interface ConsentDependencies {
   /** A persistence failure must be explained locally, with retry or Quit. */
   present(context: { persistenceError?: unknown }): Promise<ConsentDecision>;
   persist(record: AcceptanceRecord): Promise<void>;
+  /** Cancellation remains live while persistence is in flight. */
+  signal?: AbortSignal;
+  /** Remove a record that finished committing after cancellation. */
+  revoke(): Promise<void>;
   /** The only normal-runtime entry point: use a dynamic import here. */
   loadRuntime(): Promise<unknown>;
   buildIdentity?: string;
@@ -191,6 +214,7 @@ export function createStartupConsentGate(dependencies: ConsentDependencies): () 
       if (!isValidAcceptanceRecord(existing)) {
         let context: { persistenceError?: unknown } = {};
         for (;;) {
+          if (dependencies.signal?.aborted) return { status: 'declined' };
           const decision = await dependencies.present(context);
           if (decision.action === 'decline' || decision.action === 'close') return { status: 'declined' };
           if (decision.action !== 'accept' || !allAcknowledged(decision.acknowledgments)) {
@@ -198,12 +222,19 @@ export function createStartupConsentGate(dependencies: ConsentDependencies): () 
           }
           try {
             await dependencies.persist(createAcceptanceRecord(dependencies.buildIdentity));
-            break;
           } catch (error) {
+            if (dependencies.signal?.aborted) return { status: 'declined' };
             context = { persistenceError: error };
+            continue;
           }
+          if (dependencies.signal?.aborted) {
+            await dependencies.revoke();
+            return { status: 'declined' };
+          }
+          break;
         }
       }
+      if (dependencies.signal?.aborted) return { status: 'declined' };
       await dependencies.loadRuntime();
       return { status: 'accepted' };
     } catch (error) {
