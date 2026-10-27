@@ -4639,17 +4639,14 @@ export function registerWindowHandlers(): void {
       // oversize hint so the workArea-clamp produces a fill-the-screen
       // rectangle on whichever display the just-opened window actually sits
       // on — keeps every position decision flowing through the pure module.
-      // A window the app-wide switch opened see-through is maximized the
-      // same way the per-window switch maximizes one: through the kernel's
-      // own Maximize, which records the rect to come back to, so turning
-      // the switch off later puts the window at the size its opener asked
-      // for (docs/design/window-rules.md G15). `options.maximize` below
-      // only repositions bounds and leaves the window unmaximized, so it
-      // is not the same thing.
       // A restored or reopened maximized window arrives with `options.maximized`
-      // (created at its pre-maximize rect) and is maximized here the same way,
-      // as the page-host path does for its own windows.
-      if (appWideSeeThrough || options.maximized === true) {
+      // (created at its pre-maximize rect) and is maximized through the kernel's
+      // own Maximize, which records the rect to come back to, as the page-host
+      // path does for its own windows. See-through changes only the look and
+      // never maximizes (docs/design/window-rules.md G15). `options.maximize`
+      // below only repositions bounds and leaves the window unmaximized, so it
+      // is not the same thing.
+      if (options.maximized === true) {
         const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
         kernelMaximize(machineWindowId, {
           x: workArea.x,
