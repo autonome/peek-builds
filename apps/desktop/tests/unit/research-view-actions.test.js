@@ -26,6 +26,22 @@ describe('urlKey', () => {
     assert.notEqual(urlKey('https://example.com/s?q=setts'), urlKey('https://example.com/s?q=diet'));
   });
 
+  test('treats + and %20 in the query as the same space', () => {
+    assert.equal(
+      urlKey('https://kagi.com/search?q=cat+pictures'),
+      urlKey('https://kagi.com/search?q=cat%20pictures'),
+    );
+  });
+
+  test('ignores query parameter order', () => {
+    assert.equal(urlKey('https://example.com/s?a=1&b=2'), urlKey('https://example.com/s?b=2&a=1'));
+  });
+
+  test('raises the window open on the %20 spelling from the + spelling', () => {
+    const open = new Map([[urlKey('https://kagi.com/search?q=cat%20pictures'), 9]]);
+    assert.equal(planPageActivation('https://kagi.com/search?q=cat+pictures', open).kind, 'raise');
+  });
+
   test('answers the empty string for anything that is not a URL', () => {
     assert.equal(urlKey(''), '');
     assert.equal(urlKey(null), '');

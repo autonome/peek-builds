@@ -22,6 +22,14 @@ export const urlKey = (url) => {
   try {
     const parsed = new URL(url);
     parsed.hash = '';
+    if (parsed.search) {
+      // Re-serialize the query the way the datastore's `normalizeUrl` and
+      // `renderer/page/url-compare.js` do: `+` and `%20` both mean a space, and
+      // parameter order is not part of the page. (A tile cannot import those
+      // files under node, where this module is tested.)
+      const params = new URLSearchParams(parsed.search);
+      parsed.search = new URLSearchParams([...params.entries()].sort()).toString();
+    }
     const text = parsed.toString();
     return text.endsWith('/') ? text.slice(0, -1).toLowerCase() : text.toLowerCase();
   } catch {
