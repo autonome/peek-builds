@@ -1,6 +1,6 @@
 ---
 enabled: true
-touches: [apps/desktop/main/entry.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/startup-consent.ts, apps/desktop/main/startup-consent.test.ts, apps/desktop/main/startup-consent-electron.ts, apps/desktop/main/startup-consent-preload.cts, apps/desktop/renderer/startup-consent/, apps/desktop/tests/desktop/startup-risk-acknowledgment.spec.ts, apps/desktop/tests/fixtures/, scripts/live-check.mjs, docs/design/startup-risk-acknowledgment.md]
+touches: [apps/desktop/main/window-construction-gate.test.ts, apps/desktop/tests/unit/no-auto-default-browser.test.js, scripts/check-r2-window-ops.mjs, apps/desktop/main/entry.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/startup-consent.ts, apps/desktop/main/startup-consent.test.ts, apps/desktop/main/startup-consent-electron.ts, apps/desktop/main/startup-consent-preload.cts, apps/desktop/renderer/startup-consent/, apps/desktop/tests/desktop/startup-risk-acknowledgment.spec.ts, apps/desktop/tests/fixtures/, scripts/live-check.mjs, docs/design/startup-risk-acknowledgment.md]
 depends-on: []
 ---
 
@@ -31,7 +31,12 @@ A download, installation, launch, or dismissing a notice is not acceptance.
   Keep `entry.ts` as the minimal gate and dynamically import a new `runtime-entry.ts`
   containing the existing runtime only after the gate succeeds. Audit bootstrap imports
   for side effects; preserve the early headless-policy ordering and existing profile /
-  single-instance semantics. If another file must change, request a `touches` amendment
+  single-instance semantics. First acceptance may relaunch after atomic persistence so
+  privileged scheme registration still occurs before Electron readiness; only validated
+  pending work may survive the relaunch, and cancellation must remain effective through
+  persistence. The three guard-file amendments in `touches` may inventory the new notice
+  window and preserve coverage of moved runtime code, never loosen an invariant.
+  If another file must change, request a `touches` amendment
   rather than silently expanding scope or weakening this boundary.
 - Mobile, the Chrome extension, server processes, website download notices, and legal
   review are outside this implementation. Do not claim they are protected by this gate.
