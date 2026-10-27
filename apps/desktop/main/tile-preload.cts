@@ -39,6 +39,17 @@ if (!tileId || !tileEntry || !tileToken) {
 
 const sourceAddress = `peek://${tileId}/${tileEntry}`;
 
+// Dead-space double-click → maximize toggle. Detection is shared with the hybrid
+// page-host content preload (dead-space-gesture.cjs, inlined at build time because
+// a sandboxed preload cannot require siblings). Reports on the same channel; main
+// (hybrid-window-gesture.ts) routes by sender and honours the window opt-out.
+// `peek-card` is a click target, so a double-click on a card never toggles.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const deadSpaceGesture = require('./dead-space-gesture.cjs'); // PEEK_INLINE_DEAD_SPACE_GESTURE
+deadSpaceGesture.installDeadSpaceGesture((globalThis as any).document, globalThis, (payload: unknown) => {
+  ipcRenderer.send('page:content-window-gesture', payload);
+}, ['peek-card']);
+
 // ─── Preload boot timing ─────────────────────────────────────────────
 //
 // Times preload execution itself (renderer V8 has already started by the

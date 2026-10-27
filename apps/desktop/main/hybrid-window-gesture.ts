@@ -1,6 +1,9 @@
 // Maps the content preload's `page:content-window-gesture` report (a double-click over "dead"
-// page content, detent = Chromium's native multi-click count) to a window action on the host
-// BaseWindow. Fullscreen is a separate, command-driven path (tile:window:fullscreen) and is not
+// page content, detent = Chromium's native multi-click count) to a window action. Two senders
+// share the report and the dead-space detection (chrome-api-polyfills/dead-space-gesture.cjs):
+// hybrid page-host content (toggled through the overlay, on the host BaseWindow) and plain
+// peek:// feature windows loaded with the tile preload (toggled through the kernel, like
+// tile:window:maximize). Fullscreen is a separate, command-driven path (tile:window:fullscreen) and is not
 // a content gesture.
 import { createRequire } from 'node:module';
 import type { WebContents } from 'electron';
@@ -44,6 +47,30 @@ export function initHybridWindowGestureHandling(): void {
   });
 }
 
+// What a plain (non-hybrid) window does with a dead-space double-click. Pure: the caller
+// supplies the facts. `optOut` is the window's `maximizeOnDoubleClick: false` open option.
+export type PlainToggle = 'maximize' | 'unmaximize' | null;
+export function plainWindowToggle(facts: {
+  maximized: boolean;
+  fullscreen: boolean;
+  optOut: boolean;
+}): PlainToggle {
+  if (facts.optOut || facts.fullscreen) return null;
+  return facts.maximized ? 'unmaximize' : 'maximize';
+}
+
+// Facts and the kernel feed for a plain window, injected by ipc.ts (this module cannot import
+// the kernel/registry value modules and stay loadable under the unit runner).
+export interface PlainWindowGestureHost {
+  // null when the sender is not a registered plain window
+  describe(sender: WebContents): { maximized: boolean; fullscreen: boolean; optOut: boolean } | null;
+  apply(sender: WebContents, toggle: 'maximize' | 'unmaximize'): void;
+}
+let plainHost: PlainWindowGestureHost | null = null;
+export function setPlainWindowGestureHost(host: PlainWindowGestureHost | null): void {
+  plainHost = host;
+}
+
 export function handleContentWindowGesture(
   sender: WebContents,
   detent: unknown,
@@ -53,7 +80,15 @@ export function handleContentWindowGesture(
   const action = windowGestureAction(detent, dragDx, dragDy);
   if (!action) return;
   const entry = getHybridWindowByContentWC(sender);
-  if (!entry || entry.baseWin.isDestroyed()) return;
+  if (!entry) {
+    // Not a hybrid page host: a plain peek:// feature window.
+    const facts = plainHost?.describe(sender);
+    if (!facts) return;
+    const toggle = plainWindowToggle(facts);
+    if (toggle) plainHost?.apply(sender, toggle);
+    return;
+  }
+  if (entry.baseWin.isDestroyed()) return;
   // A dead-space double-click can land while the host is fullscreen (fullscreen is a separate,
   // command-driven path); maximizing there would desync the overlay's bounds bookkeeping.
   if (entry.baseWin.isFullScreen()) return;

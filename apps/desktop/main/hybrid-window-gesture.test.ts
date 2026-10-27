@@ -19,7 +19,12 @@
  */
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { windowGestureAction } from './hybrid-window-gesture.js';
+import {
+  windowGestureAction,
+  plainWindowToggle,
+  handleContentWindowGesture,
+  setPlainWindowGestureHost,
+} from './hybrid-window-gesture.js';
 
 describe('windowGestureAction (native click detent → window action)', () => {
   it('detent 2 (double-click) → toggle-maximize', () => {
@@ -104,5 +109,49 @@ describe('windowGestureAction drag suppression (press-to-release travel vs GESTU
 
   it('non-number travel (string/null) treated as stationary → toggle-maximize', () => {
     assert.strictEqual(windowGestureAction(2, 'x', null), 'toggle-maximize');
+  });
+});
+
+describe('plainWindowToggle (plain peek:// window, dead-space double-click)', () => {
+  it('maximizes a restored window', () => {
+    assert.strictEqual(plainWindowToggle({ maximized: false, fullscreen: false, optOut: false }), 'maximize');
+  });
+  it('restores a maximized window', () => {
+    assert.strictEqual(plainWindowToggle({ maximized: true, fullscreen: false, optOut: false }), 'unmaximize');
+  });
+  it('does nothing while fullscreen', () => {
+    assert.strictEqual(plainWindowToggle({ maximized: false, fullscreen: true, optOut: false }), null);
+  });
+  it('does nothing for a window that opted out', () => {
+    assert.strictEqual(plainWindowToggle({ maximized: false, fullscreen: false, optOut: true }), null);
+  });
+});
+
+describe('handleContentWindowGesture routing for a sender that is not a hybrid page host', () => {
+  const sender = { id: -1 } as unknown as import('electron').WebContents;
+  const calls: string[] = [];
+  const host = (facts: { maximized: boolean; fullscreen: boolean; optOut: boolean } | null) => ({
+    describe: () => facts,
+    apply: (_s: unknown, t: string) => { calls.push(t); },
+  });
+
+  it('toggles a plain window through the host on a stationary double-click', () => {
+    calls.length = 0;
+    setPlainWindowGestureHost(host({ maximized: false, fullscreen: false, optOut: false }));
+    handleContentWindowGesture(sender, 2, 0, 0);
+    assert.deepStrictEqual(calls, ['maximize']);
+    setPlainWindowGestureHost(null);
+  });
+  it('ignores a drag, a non-double click, an unknown window, and an opt-out', () => {
+    calls.length = 0;
+    setPlainWindowGestureHost(host({ maximized: false, fullscreen: false, optOut: false }));
+    handleContentWindowGesture(sender, 2, 30, 0);
+    handleContentWindowGesture(sender, 1, 0, 0);
+    setPlainWindowGestureHost(host(null));
+    handleContentWindowGesture(sender, 2, 0, 0);
+    setPlainWindowGestureHost(host({ maximized: false, fullscreen: false, optOut: true }));
+    handleContentWindowGesture(sender, 2, 0, 0);
+    assert.deepStrictEqual(calls, []);
+    setPlainWindowGestureHost(null);
   });
 });

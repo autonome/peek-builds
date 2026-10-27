@@ -255,7 +255,7 @@ import {
   shouldDeferEscapeToPageForWc,
   clearEditableFocusForWc,
 } from './hybrid-editable-focus.js';
-import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
+import { initHybridWindowGestureHandling, setPlainWindowGestureHost } from './hybrid-window-gesture.js';
 import { setWebContentsCursor } from './webcontents-cursor.js';
 import { claimWindowPress } from './window-drag-runtime.js';
 import {
@@ -1779,10 +1779,8 @@ export function wireHybridContentEvents(
   initRendererHandledEscapeTracking(ipcMain);
   onContentDestroyed(() => clearRendererHandledEscapeForWc(contentWC.id));
 
-  // Content-area double/triple-click window gesture (peek d8ce0ddf): register the
-  // `page:content-window-gesture` receiver once (idempotent). detent 2 → toggle
-  // maximize (via the overlay), detent 3 → toggle fullscreen. See hybrid-window-gesture.ts.
-  initHybridWindowGestureHandling();
+  // The `page:content-window-gesture` receiver is registered at app start by
+  // registerContentWindowGestureHandling (below); see hybrid-window-gesture.ts.
 
   // Assigned with the load-failure wiring below; a no-op until then.
   let advanceLoadOnStop: () => void = () => {};
@@ -4806,10 +4804,54 @@ export function persistAdBlockerPref(enabled: boolean): void {
 }
 
 /**
+ * Content-area double-click window gesture (peek d8ce0ddf): registers the
+ * `page:content-window-gesture` receiver once, at app start, so plain peek://
+ * feature windows (tile preload) work without any hybrid page host ever opening.
+ * Hybrid senders toggle through the overlay; plain windows through the kernel,
+ * the same commands tile:window:maximize / unmaximize feed. A window opts out
+ * with the `maximizeOnDoubleClick: false` open option.
+ */
+export function registerContentWindowGestureHandling(): void {
+  initHybridWindowGestureHandling();
+  setPlainWindowGestureHost({
+    describe(sender) {
+      const win = windowFromWebContents(sender);
+      if (!win || win.isDestroyed()) return null;
+      const id = getWindowIdFor(win);
+      if (id == null) return null;
+      const rec = getMachineWindowRecord(id);
+      // The shared chrome overlay carries the tile preload but owns its own navbar double-click.
+      if (!rec || rec.role === 'overlay') return null;
+      return {
+        maximized: rec.maximized === true,
+        fullscreen: win.isFullScreen(),
+        optOut: getWindowInfo(win.id)?.params?.maximizeOnDoubleClick === false,
+      };
+    },
+    apply(sender, toggle) {
+      const win = windowFromWebContents(sender);
+      if (!win || win.isDestroyed()) return;
+      const id = getWindowIdFor(win);
+      if (id == null) return;
+      if (toggle === 'unmaximize') {
+        kernelUnmaximize(id);
+        try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer gone */ }
+        return;
+      }
+      const prev = getMachineWindowRecord(id)?.bounds ?? win.getBounds();
+      const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+      kernelMaximize(id, { x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+      try { win.webContents.send('tile:window:maximize-request', { prevWindowBounds: { ...prev } }); } catch { /* renderer gone */ }
+    },
+  });
+}
+
+/**
  * Register all IPC handlers
  */
 export function registerAllHandlers(_onQuit: () => void): void {
   registerDarkModeHandlers();
   registerWindowHandlers();
   registerSyncHandlers();
+  registerContentWindowGestureHandling();
 }

@@ -50,20 +50,9 @@ function _peekDeepActiveElement() {
   return el;
 }
 
-function _peekIsEditableElement(el) {
-  if (!el || el.nodeType !== 1) return false;
-  if (el.isContentEditable) return true;
-  const tag = (el.tagName || '').toLowerCase();
-  if (tag === 'textarea' || tag === 'select') return true;
-  if (tag === 'input') {
-    // Non-text input types (button/checkbox/radio/etc.) don't own ESC.
-    const type = (el.getAttribute('type') || 'text').toLowerCase();
-    const nonEditable = ['button', 'checkbox', 'radio', 'submit', 'reset', 'image', 'file', 'range', 'color', 'hidden'];
-    return !nonEditable.includes(type);
-  }
-  if ((el.getAttribute('role') || '').toLowerCase() === 'textbox') return true;
-  return false;
-}
+// Shared with tile-preload.cts; the build inlines it (see dead-space-gesture.cjs).
+const deadSpaceGesture = require('./dead-space-gesture.cjs'); // PEEK_INLINE_DEAD_SPACE_GESTURE
+const _peekIsEditableElement = deadSpaceGesture.isEditableElement;
 
 // Whether the focused editable holds no text. ESC on an empty field has nothing
 // to clear, so main treats it like no field focused (opens the switcher). A
@@ -114,94 +103,10 @@ document.addEventListener('input', _peekReportEditableFocus, true);
 // setHybridHostFullScreen owner, see hybrid-window-gesture.ts).
 const IPC_CONTENT_WINDOW_GESTURE = 'page:content-window-gesture';
 
-// Broader than _peekIsEditableElement: the gesture must also skip discrete
-// interactive controls a click is meant to activate (buttons, links, media,
-// widget roles), not just editable fields.
-function _peekIsInteractiveTarget(el) {
-  if (_peekIsEditableElement(el)) return true;
-  const tag = (el.tagName || '').toLowerCase();
-  if (tag === 'button' || tag === 'a' || tag === 'summary' || tag === 'option'
-    || tag === 'label' || tag === 'video' || tag === 'audio') return true;
-  const role = (el.getAttribute ? (el.getAttribute('role') || '') : '').toLowerCase();
-  const interactiveRoles = ['button', 'link', 'checkbox', 'radio', 'menuitem',
-    'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'slider', 'option', 'textbox'];
-  return interactiveRoles.includes(role);
-}
-
-function _peekGestureSuppressed(e) {
-  // 1) Interactive/editable target anywhere along the (shadow-aware) event path.
-  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-  for (const node of path) {
-    if (!node || node.nodeType !== 1) continue;
-    if (_peekIsInteractiveTarget(node)) return true;
-  }
-  // 2) The multi-click landed ON text and selected it (double-click a word /
-  //    triple-click a line). A bare "some selection exists" test is too coarse:
-  //    Chromium snaps a double-click in DEAD SPACE to the nearest word and
-  //    selects THAT, so nearly every dead-space double-click leaves a
-  //    non-collapsed selection — which used to suppress the gesture almost
-  //    always. The precise signal is whether the click point actually falls
-  //    within the selected text's own rects. A genuine dead-space click selects
-  //    a word elsewhere whose rects don't cover the cursor → gesture fires; a
-  //    word/line click sits inside its selection → suppressed.
-  try {
-    const sel = window.getSelection && window.getSelection();
-    if (sel && !sel.isCollapsed && sel.rangeCount > 0 && String(sel).length > 0) {
-      const rects = sel.getRangeAt(0).getClientRects();
-      for (let i = 0; i < rects.length; i++) {
-        const r = rects[i];
-        if (e.clientX >= r.left && e.clientX <= r.right
-          && e.clientY >= r.top && e.clientY <= r.bottom) return true;
-      }
-    }
-  } catch (_) { /* getSelection unavailable */ }
-  return false;
-}
-
-// Track the press point of the most recent mousedown so the terminating click can
-// measure how far the pointer travelled. `detail===2/3` alone can't tell a
-// stationary double/triple-click from a click-drag: a click-drag's terminating
-// click still inherits detail===2 if its press landed within Chromium's native
-// double-click interval of a prior click, even though the pointer moved between
-// press and release. Travel is the deterministic discriminator (main-side
-// windowGestureAction, hybrid-window-gesture.ts). Captured on EVERY mousedown so
-// the click's own press is always the last value recorded, and consumed by the
-// click that follows it (see below).
-let _peekDownX = null;
-let _peekDownY = null;
-document.addEventListener('mousedown', function (e) {
-  _peekDownX = e.clientX;
-  _peekDownY = e.clientY;
-}, true);
-
-document.addEventListener('click', function (e) {
-  // Read AND clear: a press point belongs to exactly one click. A click that
-  // arrives without a mousedown of its own — a page calling .click(), any
-  // synthesized MouseEvent — must not inherit the PREVIOUS click's press and get
-  // misread as a drag. With no press to compare against it counts as stationary,
-  // which is what this handler did before travel was measured at all. Consumed
-  // before the detent/suppression returns below so every click clears it, not
-  // just the ones that reach the send.
-  const downX = _peekDownX;
-  const downY = _peekDownY;
-  _peekDownX = null;
-  _peekDownY = null;
-
-  const detent = e.detail; // native multi-click count: 2 = double-click
-  if (detent !== 2) return;
-  if (_peekGestureSuppressed(e)) return;
-  // Press-to-release travel; no press seen means treat as no movement.
-  const dragDx = downX === null ? 0 : e.clientX - downX;
-  const dragDy = downY === null ? 0 : e.clientY - downY;
-  // A dead-space multi-click that reaches here may still have left Chromium's
-  // incidental nearest-word selection behind; clear it so the maximize gesture
-  // doesn't leave a stray highlight on the page.
-  try {
-    const sel = window.getSelection && window.getSelection();
-    if (sel && !sel.isCollapsed) sel.removeAllRanges();
-  } catch (_) { /* getSelection unavailable */ }
-  try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent, dragDx, dragDy }); } catch (_) { /* no main */ }
-}, true);
+// Detection lives in dead-space-gesture.cjs (shared with plain peek:// tiles).
+deadSpaceGesture.installDeadSpaceGesture(document, window, function (payload) {
+  ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, payload);
+});
 
 // === First composited-frame signal (session-restore z-order fidelity) =========
 // Cold-start session restore re-asserts the saved window z-order, but a page-host
