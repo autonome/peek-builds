@@ -101,6 +101,11 @@ Still open:
 - **The phone's `item_visits` table does not sync.** The mobile client has no visit
   push or pull.
 - **Visit deletion does not propagate**, for the same reason as events: no tombstone.
+- **The server's boot-time schema validation does not cover `item_visits`.**
+  `apps/server/schema.json` is generated from `packages/schema/codegen.js`'s
+  `SERVER_TABLES`, which still lists only `items`, `tags`, `item_tags` and
+  `item_events`. The server creates and uses the visit table, but `validateSchema()`
+  does not check it. Widening `SERVER_TABLES` is outside this spec's `touches`.
 
 ## Desktop tables that still do not sync
 
