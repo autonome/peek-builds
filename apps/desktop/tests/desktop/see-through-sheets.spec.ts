@@ -23,7 +23,7 @@ import { waitForExtensionsReady } from '../helpers/window-utils';
  * The view is opened the way the feature opens it — `background.js
  * openSheet()` passes a `key` and no role, so this does too — with a
  * `sheetId` that has no stored config. A sheet whose config is missing draws
- * its own default: the header with the Edit button, and the empty state. That
+ * its own default: the header with the Options button, and the empty state. That
  * is the whole of the view's own light DOM, which is what makes both the look
  * and the keyboard reachable without seeding settings for another feature.
  *
@@ -134,12 +134,11 @@ test.describe('see-through-sheets @desktop', () => {
     return await view.evaluate(() => getComputedStyle(document.body).backgroundColor);
   };
 
-  /** The Edit button's label and whether the view is in edit mode. */
+  /** Whether the options panel is open. */
   const editState = async (view: Page): Promise<string> => {
     return await view.evaluate(() => {
-      const btn = document.querySelector('.btn-edit') as HTMLElement | null;
-      const label = (btn?.textContent || '').trim();
-      return `${label}|${document.body.classList.contains('editing')}`;
+      const panel = document.querySelector('.options-panel') as HTMLElement | null;
+      return `Options|${!!panel && panel.style.display !== 'none'}`;
     });
   };
 
@@ -155,17 +154,17 @@ test.describe('see-through-sheets @desktop', () => {
    */
   const keyboardWalk = async (view: Page): Promise<{ tookFocus: boolean; on: string; off: string }> => {
     const tookFocus = await view.evaluate(() => {
-      const btn = document.querySelector('.btn-edit') as HTMLElement | null;
+      const btn = document.querySelector('.btn-options') as HTMLElement | null;
       btn?.focus();
       return document.activeElement === btn;
     });
 
     await view.keyboard.press('Enter');
-    await expect.poll(() => editState(view), { timeout: 5000 }).toBe('Done|true');
+    await expect.poll(() => editState(view), { timeout: 5000 }).toBe('Options|true');
     const on = await editState(view);
 
     await view.keyboard.press('Enter');
-    await expect.poll(() => editState(view), { timeout: 5000 }).toBe('Edit|false');
+    await expect.poll(() => editState(view), { timeout: 5000 }).toBe('Options|false');
     const off = await editState(view);
 
     return { tookFocus, on, off };
@@ -178,7 +177,7 @@ test.describe('see-through-sheets @desktop', () => {
     await view.waitForSelector('body[data-ready="true"]', { timeout: 15000 });
 
     // The view draws its own default for a sheet with no stored config.
-    expect(await editState(view)).toBe('Edit|false');
+    expect(await editState(view)).toBe('Options|false');
 
     const before = await boundsOf(id);
     expect(await bodyIsSeeThrough(view)).toBe(false);

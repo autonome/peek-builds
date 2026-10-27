@@ -17,6 +17,7 @@ import 'peek://app/components/peek-card.js';
 import 'peek://app/components/peek-grid.js';
 import 'peek://app/components/peek-input.js';
 import { createGhostCard } from 'peek://app/lib/ghost-card.js';
+import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 
 const DELETE_ICON =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -109,7 +110,8 @@ export const mountCardView = ({ api, searchPlaceholder = 'Search...', logTag = '
 
   const grid = document.createElement('peek-grid');
   grid.className = 'cards';
-  grid.setAttribute('min-item-width', '250');
+  grid.setAttribute('min-item-width', String(DEFAULT_CARD_WIDTH));
+  grid.style.setProperty('--card-default-height', `${DEFAULT_CARD_HEIGHT}px`);
   grid.setAttribute('gap', '10');
 
   document.body.append(searchBox, grid);

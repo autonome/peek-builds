@@ -60,6 +60,12 @@ body.see-through .card-delete-btn:hover {
   padding: 12px 16px;
 }
 
+/* Every card, the ghost "+" card included, is at least the default height
+   (set on the grid by card-view.js from card-size.js). */
+.cards > peek-card::part(card) {
+  min-height: var(--card-default-height, 200px);
+}
+
 .card-header-row {
   display: flex;
   align-items: center;

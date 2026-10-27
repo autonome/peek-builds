@@ -230,6 +230,8 @@ const sortAddresses = (addresses) => sortAddressesBy(addresses, viewPrefs.sortBy
 /**
  * Set up create group UI (button, form, submit/cancel)
  */
+let openCreateGroupForm = () => {};
+
 const setupCreateGroup = () => {
   const createBtn = document.querySelector('.create-group-btn');
   const form = document.querySelector('.create-group-form');
@@ -272,6 +274,7 @@ const setupCreateGroup = () => {
     }
   };
 
+  openCreateGroupForm = showForm;
   createBtn.addEventListener('click', showForm);
   cancelBtn.addEventListener('click', hideForm);
   submitBtn.addEventListener('click', submitGroup);
@@ -1114,7 +1117,7 @@ const renderGroups = () => {
   // The "+" card opens the same name form as the header "+" button.
   container.appendChild(createGhostCard({
     title: 'New group',
-    onClick: () => document.querySelector('.create-group-btn')?.click()
+    onClick: () => openCreateGroupForm()
   }));
 
   // Tags section — always show unpromoted tags below a separator

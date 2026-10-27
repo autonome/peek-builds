@@ -453,6 +453,8 @@ const addInlineSortControls = (container) => {
 /**
  * Set up create space UI
  */
+let openCreateSpaceForm = () => {};
+
 const setupCreateSpace = () => {
   const createBtn = document.querySelector('.create-space-btn');
   const form = document.querySelector('.create-space-form');
@@ -494,6 +496,7 @@ const setupCreateSpace = () => {
     }
   };
 
+  openCreateSpaceForm = showForm;
   createBtn.addEventListener('click', showForm);
   cancelBtn.addEventListener('click', hideForm);
   submitBtn.addEventListener('click', submitSpace);
@@ -575,7 +578,7 @@ const renderSpaces = () => {
   // The "+" card opens the same name form as the header "+" button.
   container.appendChild(createGhostCard({
     title: 'New space',
-    onClick: () => document.querySelector('.create-space-btn')?.click()
+    onClick: () => openCreateSpaceForm()
   }));
 
   if (state.lastViewedSpaceId) {

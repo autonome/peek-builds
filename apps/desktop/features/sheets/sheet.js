@@ -8,6 +8,7 @@
 import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.js';
 import { withSheetName } from './sheet-commands.js';
 import { createGhostCard } from 'peek://app/lib/ghost-card.js';
+import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
   SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC
@@ -21,7 +22,6 @@ const api = window.app;
 
 let sheetId = null;
 let sheetConfig = null;
-let editing = false;
 
 /**
  * Parse sheetId from URL query params
@@ -74,6 +74,8 @@ const createCard = (item) => {
   removeBtn.className = 'card-remove-btn';
   removeBtn.textContent = '\u00d7';
   removeBtn.title = 'Remove card';
+  // Keep the press away from the grid's drag handling, which would capture the pointer.
+  removeBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
   removeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     removeCard(item.id);
@@ -93,8 +95,8 @@ const createCard = (item) => {
 
 const GHOST_ID = 'ghost-add';
 const SLOT_COLS = 3;
-const SLOT_W = 300;
-const SLOT_H = 200;
+const SLOT_W = DEFAULT_CARD_WIDTH;
+const SLOT_H = DEFAULT_CARD_HEIGHT;
 const SLOT_GAP = 12;
 
 /** Bounds of the nth auto-placed slot (3 columns, row by row). */
@@ -178,31 +180,11 @@ const removeCard = async (cardId) => {
 };
 
 /**
- * Toggle edit mode
- */
-const toggleEdit = () => {
-  editing = !editing;
-  updateEditState();
-};
-
-/**
- * Apply edit mode state to UI
+ * Cards can always be dragged and resized (there is no separate edit mode);
+ * the remove control shows while the pointer is over a card (sheet.css).
  */
 const updateEditState = () => {
-  const grid = document.querySelector('peek-grid.cards');
-  const editBtn = document.querySelector('.btn-edit');
-
-  grid.freeformEditing = editing;
-
-  if (editing) {
-    document.body.classList.add('editing');
-    editBtn.textContent = 'Done';
-    editBtn.classList.add('active');
-  } else {
-    document.body.classList.remove('editing');
-    editBtn.textContent = 'Edit';
-    editBtn.classList.remove('active');
-  }
+  document.querySelector('peek-grid.cards').freeformEditing = true;
 };
 
 /**
@@ -240,9 +222,6 @@ const confirmAddDialog = () => {
  * Set up event listeners
  */
 const setupEvents = () => {
-  // Edit toggle
-  document.querySelector('.btn-edit').addEventListener('click', toggleEdit);
-
   // Add dialog
   document.querySelector('.add-dialog-backdrop').addEventListener('click', hideAddDialog);
   document.querySelector('.btn-cancel').addEventListener('click', hideAddDialog);

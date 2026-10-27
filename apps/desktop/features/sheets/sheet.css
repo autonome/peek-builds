@@ -40,14 +40,13 @@ body {
  *   affordances, and the add dialog's heading and field — so they are
  *   redefined light here. --base05 is also the colour see-through.css asks
  *   for by name for the body text.
- * - --base0D is the accent on the active Edit button's fill and the add
- *   field's focus ring, lifted to a light blue that reads on the frost.
- * - --base00 is the ink of the active Edit button and of a card's remove
- *   button on hover, each of which fills itself with a colour and then draws
- *   its label in the page colour — which the shared sheet turns fully
- *   transparent, an invisible label. Those places ask for "whatever
- *   contrasts with the coloured fill behind me", so they get a dark ink of
- *   their own rather than a redefinition of the page colour.
+ * - --base0D is the accent on the add field's focus ring, lifted to a light
+ *   blue that reads on the frost.
+ * - --base00 is the ink of a card's remove button on hover, which fills
+ *   itself with a colour and then draws its label in the page colour — which
+ *   the shared sheet turns fully transparent, an invisible label. That place
+ *   asks for "whatever contrasts with the coloured fill behind me", so it
+ *   gets a dark ink of its own rather than a redefinition of the page colour.
  * - --base03 is the ink of the empty state, the only text this view draws in
  *   it. The shared sheet gives that variable 0.28 alpha, which is a panel
  *   edge rather than readable text, so the empty state is brightened by name.
@@ -64,7 +63,6 @@ body.see-through {
   --base0D: #aab6ff;
 }
 
-body.see-through .btn-edit.active,
 body.see-through .card-remove-btn:hover {
   color: rgba(0, 0, 0, 0.82);
 }
@@ -110,12 +108,6 @@ body.see-through .add-dialog-input {
 
 .btn:hover {
   background: var(--base02);
-}
-
-.btn-edit.active {
-  background: var(--base0D);
-  color: var(--base00);
-  border-color: var(--base0D);
 }
 
 /* Cards container */
@@ -176,21 +168,19 @@ peek-card {
   color: var(--base00);
 }
 
-/* Show remove button in edit mode */
-body.editing .card-remove-btn {
+/* The remove button shows while the pointer is over the card */
+peek-card:hover .card-remove-btn {
   display: block;
 }
 
-/* Webview inside card */
+/* Webview inside card. Inset from the card edge so the grid's edge-resize
+   and header-drag handling still receive presses there. */
 .card-webview {
-  width: 100%;
-  height: calc(100% - 28px);
+  display: block;
+  width: calc(100% - 12px);
+  height: calc(100% - 28px - 6px);
+  margin: 0 6px 6px;
   border: none;
-}
-
-/* Disable webview interaction in edit mode */
-body.editing .card-webview {
-  pointer-events: none;
 }
 
 /* Add dialog */

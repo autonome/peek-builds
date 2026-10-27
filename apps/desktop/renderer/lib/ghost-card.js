@@ -23,18 +23,37 @@ const CSS = `
 peek-card.ghost-card::part(card) {
   border-style: dashed;
   background: transparent;
-  min-height: 80px;
+  min-height: var(--card-default-height, 120px);
+}
+/* The body fills the card and centers the plus both ways. */
+peek-card.ghost-card::part(body) {
+  display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
 }
+/* The plus is two bars, not a glyph, so it is centered exactly whatever the font. */
 peek-card.ghost-card .ghost-plus {
-  font-size: 32px;
-  line-height: 1;
-  text-align: center;
-  color: var(--theme-text-muted, var(--base04, #999));
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  font-size: 0;
+  --ghost-plus-color: var(--theme-text-muted, var(--base04, #999));
 }
+peek-card.ghost-card .ghost-plus::before,
+peek-card.ghost-card .ghost-plus::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: var(--ghost-plus-color);
+  transform: translate(-50%, -50%);
+}
+peek-card.ghost-card .ghost-plus::before { width: 100%; height: 2px; }
+peek-card.ghost-card .ghost-plus::after { width: 2px; height: 100%; }
 peek-card.ghost-card:hover .ghost-plus {
-  color: var(--theme-accent, var(--base0D, #007aff));
+  --ghost-plus-color: var(--theme-accent, var(--base0D, #007aff));
 }
 peek-card.ghost-card .ghost-label {
   position: absolute;
