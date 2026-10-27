@@ -40,6 +40,10 @@ export class PeekGridToolbar extends PeekElement {
     css`
       :host {
         display: block;
+        /* Empty toolbar space is dead space for the window double-click; a
+           double-click there must not select the dropdown's text. */
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .toolbar {

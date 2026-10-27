@@ -39,6 +39,10 @@ describe('isInteractiveTarget / gestureSuppressed', () => {
       assert.strictEqual(shared.gestureSuppressed(click([n, el('body')]), noSelection), true);
     }
   });
+  it('a select, seen through a shadow-root path, suppresses; its toolbar row does not', () => {
+    assert.strictEqual(shared.gestureSuppressed(click([el('select'), el('div'), el('peek-grid-toolbar')]), noSelection), true);
+    assert.strictEqual(shared.gestureSuppressed(click([el('div'), el('peek-grid-toolbar')]), noSelection), false);
+  });
   it('a checkbox input is interactive even though it is not editable', () => {
     assert.strictEqual(shared.isInteractiveTarget(el('input', { type: 'checkbox' })), false);
     assert.strictEqual(shared.isInteractiveTarget(el('button')), true);

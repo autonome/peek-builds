@@ -3060,6 +3060,9 @@ __preloadMark('preload-done');
       if (!node || (node as Node).nodeType !== 1) continue;
       const el = node as HTMLElement;
       if (el.closest('[data-no-drag]')) return true;
+      // A <select> opens a native popup that swallows the mouseup, so main
+      // would never see the release and the hold-to-drag state would stay armed.
+      if ((el.tagName || '').toLowerCase() === 'select') return true;
       if (!isTextField(el)) continue;
       onTextField = true;
       // A press in the field being edited places the caret or extends the
