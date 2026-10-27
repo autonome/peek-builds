@@ -1,13 +1,12 @@
 ---
-enabled: false
+enabled: true
 touches: [apps/desktop/main/entry.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/startup-consent.ts, apps/desktop/main/startup-consent.test.ts, apps/desktop/main/startup-consent-electron.ts, apps/desktop/main/startup-consent-preload.cts, apps/desktop/renderer/startup-consent/, apps/desktop/tests/desktop/startup-risk-acknowledgment.spec.ts, apps/desktop/tests/fixtures/, scripts/live-check.mjs, docs/design/startup-risk-acknowledgment.md]
 depends-on: []
 ---
 
 # Require informed risk acceptance before Peek starts
 
-Draft: disabled until the account holder approves the wording and behavior below.
-Do not enable or implement as part of drafting this spec.
+The account holder approved this wording and behavior for implementation.
 
 Automated desktop builds let anyone download and run Peek. Peek has not been security
 audited, may be unstable in ways its author does not know about, and is not a conventional
@@ -76,7 +75,7 @@ second launch must never dismiss or bypass the notice.
 
 These words express the requested assumption of risk; they do not guarantee an enforceable
 transfer of all liability. Do not describe them as a substitute for security work or legal
-advice. Account-holder approval is required before enabling this spec; legal review of
+advice. The account holder has approved this notice for implementation; legal review of
 release wording remains recommended, not something a code test can certify.
 
 ## Acceptance storage and startup behavior
