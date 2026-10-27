@@ -16,6 +16,7 @@
 import 'peek://app/components/peek-card.js';
 import 'peek://app/components/peek-grid.js';
 import 'peek://app/components/peek-input.js';
+import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 
 const DELETE_ICON =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -72,20 +73,8 @@ export const createCard = ({ title, meta, onClick, onDelete, deleteTitle, id }) 
   return card;
 };
 
-/** The trailing "+" card that adds a new item. */
-export const createGhostCard = ({ title, onClick }) => {
-  const card = document.createElement('peek-card');
-  card.className = 'ghost-card';
-  card.interactive = true;
-  card.title = title || 'New';
-  card.setAttribute('aria-label', title || 'New');
-  const plus = document.createElement('div');
-  plus.className = 'ghost-plus';
-  plus.textContent = '+';
-  card.appendChild(plus);
-  if (onClick) card.addEventListener('card-click', onClick);
-  return card;
-};
+// The trailing "+" card lives in ghost-card.js, shared by every card grid.
+export { createGhostCard };
 
 /** Read this window's see-through state from main and draw it. */
 const setupSeeThrough = (api, tag) => {

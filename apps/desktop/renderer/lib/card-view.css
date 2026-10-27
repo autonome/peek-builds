@@ -4,8 +4,8 @@
  *   <link rel="stylesheet" href="peek://app/lib/card-view.css">
  *
  * Brings the app theme variables, the see-through look, and the page layout,
- * card, delete-control and trailing ghost-card styles that card-view.js
- * builds. A feature adds its own sheet only for what is specific to it.
+ * card and delete-control styles that card-view.js builds (the ghost card
+ * styles itself, in ghost-card.js). A feature adds its own sheet only for what is specific to it.
  */
 
 /* Theme variables (--base00 ... --base0F, --theme-font-sans). */
@@ -77,6 +77,12 @@ body.see-through .card-delete-btn:hover {
   white-space: nowrap;
 }
 
+/* peek-card draws a rule above its footer; with no body between the title and
+   the footer it reads as a stray line under the name. */
+peek-card::part(footer) {
+  border-top: none;
+}
+
 .card-meta {
   font-size: 12px;
   color: var(--base04);
@@ -101,22 +107,6 @@ body.see-through .card-delete-btn:hover {
 .card-delete-btn:hover {
   background: var(--base08);
   color: var(--base00);
-}
-
-/* The trailing card that adds a new item. */
-.ghost-card::part(card) {
-  border-style: dashed;
-  background: transparent;
-  min-height: 80px;
-  align-items: center;
-  justify-content: center;
-}
-
-.ghost-plus {
-  font-size: 32px;
-  line-height: 1;
-  text-align: center;
-  color: var(--base04);
 }
 
 .empty-state {

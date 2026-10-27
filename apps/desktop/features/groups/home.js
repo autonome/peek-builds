@@ -19,6 +19,7 @@ import {
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
+import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 import { labels } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 import {
@@ -1109,6 +1110,12 @@ const renderGroups = () => {
       container.appendChild(card);
     });
   }
+
+  // The "+" card opens the same name form as the header "+" button.
+  container.appendChild(createGhostCard({
+    title: 'New group',
+    onClick: () => document.querySelector('.create-group-btn')?.click()
+  }));
 
   // Tags section — always show unpromoted tags below a separator
   const hasUnpromotedTags = unpromotedTags.length > 0;

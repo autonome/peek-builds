@@ -17,6 +17,7 @@ import {
 } from 'peek://app/lib/grid-nav.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
+import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 import { attachPinBadge } from 'peek://app/lib/pin-badge.js';
 import {
   resolveVividColor, countSpaceWindows, liveSpaceWindowIds, formatWindowCount, initialSelectedIndex, urlsFromDrop,
@@ -570,6 +571,12 @@ const renderSpaces = () => {
       container.appendChild(card);
     });
   }
+
+  // The "+" card opens the same name form as the header "+" button.
+  container.appendChild(createGhostCard({
+    title: 'New space',
+    onClick: () => document.querySelector('.create-space-btn')?.click()
+  }));
 
   if (state.lastViewedSpaceId) {
     const cards = Array.from(container.querySelectorAll('peek-card'));

@@ -7,6 +7,7 @@
 
 import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.js';
 import { withSheetName } from './sheet-commands.js';
+import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
   SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC
@@ -90,6 +91,20 @@ const createCard = (item) => {
   return card;
 };
 
+const GHOST_ID = 'ghost-add';
+const SLOT_COLS = 3;
+const SLOT_W = 300;
+const SLOT_H = 200;
+const SLOT_GAP = 12;
+
+/** Bounds of the nth auto-placed slot (3 columns, row by row). */
+const slotFor = (index) => ({
+  x: (index % SLOT_COLS) * (SLOT_W + SLOT_GAP),
+  y: Math.floor(index / SLOT_COLS) * (SLOT_H + SLOT_GAP),
+  w: SLOT_W,
+  h: SLOT_H
+});
+
 /**
  * Render all cards from config
  */
@@ -97,19 +112,11 @@ const renderCards = () => {
   const grid = document.querySelector('peek-grid.cards');
   grid.innerHTML = '';
 
-  if (!sheetConfig || sheetConfig.items.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.textContent = editing
-      ? 'No cards yet. Click "+ Add Card" to add one.'
-      : 'This sheet is empty. Click "Edit" to add cards.';
-    grid.appendChild(empty);
-    return;
-  }
+  const items = sheetConfig ? sheetConfig.items : [];
 
   // Build freeform layout map from config
   const layout = {};
-  for (const item of sheetConfig.items) {
+  for (const item of items) {
     layout[item.id] = {
       x: item.x,
       y: item.y,
@@ -119,10 +126,17 @@ const renderCards = () => {
   }
 
   // Create card elements
-  for (const item of sheetConfig.items) {
+  for (const item of items) {
     const card = createCard(item);
     grid.appendChild(card);
   }
+
+  // The "+" card sits in the next free slot, after the last card. It needs an
+  // id for the freeform layout to place it; the grid never drags it.
+  const ghost = createGhostCard({ title: 'Add card', onClick: showAddDialog });
+  ghost.id = GHOST_ID;
+  grid.appendChild(ghost);
+  layout[GHOST_ID] = slotFor(items.length);
 
   // Set freeform layout on grid
   grid.freeformLayout = layout;
@@ -136,22 +150,15 @@ const addCard = async (url) => {
 
   const id = crypto.randomUUID().slice(0, 8);
 
-  // Auto-place: find a position that doesn't overlap
-  const existingItems = sheetConfig.items;
-  const cols = 3;
-  const defaultW = 300;
-  const defaultH = 200;
-  const gap = 12;
-  const col = existingItems.length % cols;
-  const row = Math.floor(existingItems.length / cols);
-
+  // Auto-place in the next free slot
+  const slot = slotFor(sheetConfig.items.length);
   const newItem = {
     id,
     url,
-    x: col * (defaultW + gap),
-    y: row * (defaultH + gap),
-    width: defaultW,
-    height: defaultH
+    x: slot.x,
+    y: slot.y,
+    width: slot.w,
+    height: slot.h
   };
 
   sheetConfig.items.push(newItem);
@@ -184,7 +191,6 @@ const toggleEdit = () => {
 const updateEditState = () => {
   const grid = document.querySelector('peek-grid.cards');
   const editBtn = document.querySelector('.btn-edit');
-  const addBtn = document.querySelector('.btn-add');
 
   grid.freeformEditing = editing;
 
@@ -192,12 +198,10 @@ const updateEditState = () => {
     document.body.classList.add('editing');
     editBtn.textContent = 'Done';
     editBtn.classList.add('active');
-    addBtn.style.display = '';
   } else {
     document.body.classList.remove('editing');
     editBtn.textContent = 'Edit';
     editBtn.classList.remove('active');
-    addBtn.style.display = 'none';
   }
 };
 
@@ -238,9 +242,6 @@ const confirmAddDialog = () => {
 const setupEvents = () => {
   // Edit toggle
   document.querySelector('.btn-edit').addEventListener('click', toggleEdit);
-
-  // Add card button
-  document.querySelector('.btn-add').addEventListener('click', showAddDialog);
 
   // Add dialog
   document.querySelector('.add-dialog-backdrop').addEventListener('click', hideAddDialog);

@@ -845,6 +845,8 @@ export class PeekGrid extends PeekElement {
   _attachEditListeners() {
     const children = this._getSlottedChildren();
     for (const child of children) {
+      // A ghost "+" card (lib/ghost-card.js) is placed but never dragged.
+      if (child.hasAttribute('data-ghost')) continue;
       if (!child._peekFreeformDown) {
         child._peekFreeformDown = (e) => this._onChildPointerDown(child, e);
         child._peekFreeformMove = (e) => this._onChildHoverMove(child, e);
