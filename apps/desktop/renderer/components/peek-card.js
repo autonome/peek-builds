@@ -199,7 +199,6 @@ export class PeekCard extends PeekElement {
       .footer {
         padding: var(--peek-card-padding, var(--peek-space-lg));
         padding-top: 0;
-        border-top: 1px solid var(--peek-card-border, var(--theme-border, #e0e0e0));
         margin-top: auto;
         padding-top: var(--peek-card-gap, var(--peek-space-md));
         font-size: var(--peek-font-sm);
@@ -208,11 +207,6 @@ export class PeekCard extends PeekElement {
 
       .footer.slot-empty {
         display: none;
-      }
-
-      /* Remove border-top when footer directly follows header (no body) */
-      .header + .footer {
-        border-top: none;
       }
 
       .media {

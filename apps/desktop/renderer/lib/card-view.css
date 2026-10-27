@@ -77,12 +77,6 @@ body.see-through .card-delete-btn:hover {
   white-space: nowrap;
 }
 
-/* peek-card draws a rule above its footer; with no body between the title and
-   the footer it reads as a stray line under the name. */
-peek-card::part(footer) {
-  border-top: none;
-}
-
 .card-meta {
   font-size: 12px;
   color: var(--base04);
