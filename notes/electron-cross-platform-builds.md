@@ -295,9 +295,11 @@ need a shared coordinator. Per-platform publishing is simpler and idempotent
 
 ### Phase 4 — signing, when there is something to distribute
 
-- macOS: Developer ID Application cert + notarization, set `identity` and
-  `notarize` in `electron-builder.yml`, add `CSC_LINK`, `CSC_KEY_PASSWORD`,
-  `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` as secrets.
+- macOS: see [macOS signing readiness](macos-signing-readiness.md) for the
+  current configuration audit, account-holder checklist, preferred team API-key
+  authentication, native-code/entitlement requirements and fail-closed publication
+  gates. Signing remains disabled; merely setting `identity`/`notarize` and adding
+  secrets is not a complete release pipeline. The implementation spec is disabled.
 - Windows: OV/EV cert or Azure Trusted Signing, then re-add `nsis` if wanted.
 - Until then, label macOS/Windows artifacts explicitly as unsigned.
 
