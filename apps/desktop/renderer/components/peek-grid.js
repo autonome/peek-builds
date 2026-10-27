@@ -173,16 +173,10 @@ export class PeekGrid extends PeekElement {
         box-sizing: border-box;
       }
 
-      /* Edit mode — visual affordance */
+      /* Edit mode — cards drag and resize; no outline, the cards draw their own edges */
       :host([view-mode="freeform"][freeform-editing]) ::slotted(*) {
         cursor: move;
-        outline: 1px dashed var(--peek-border, #ccc);
-        outline-offset: 2px;
         user-select: none;
-      }
-
-      :host([view-mode="freeform"][freeform-editing]) ::slotted(*:hover) {
-        outline-color: var(--peek-accent, #007aff);
       }
 
       /* ── Virtual windowing mode ──────────────────────────────────────────────
