@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
-# Publishes the packaged Linux AppImage for a release tag.
+# Publishes packaged release artifacts for a release tag.
 #
-#   1. Uploads the AppImage and a SHA256SUMS file to an R2 bucket, under <tag>/.
-#   2. Attaches a small text file to the tag on tangled — the download URL and
-#      checksum — as a sh.tangled.repo.artifact record in the repo owner's
+#   1. Uploads each artifact and a per-platform SHA256SUMS file to an R2
+#      bucket, under <tag>/.
+#   2. Attaches a small text file to the tag on tangled — the download URLs and
+#      checksums — as a sh.tangled.repo.artifact record in the repo owner's
 #      atproto repo, so the tag page links to the build.
 #
-# The binary goes to R2 rather than straight onto the tag because tangled's
-# artifact lexicon caps a blob at 50 MiB, and the AppImage is several times that.
+# Artifacts go to R2 rather than straight onto the tag because tangled's
+# artifact lexicon caps a blob at 50 MiB, and every desktop build is larger.
 #
-# Runs in CI after the AppImage is packaged (.tangled/workflows/appimage.yml).
-# When the run was not triggered by a tag, it exits 0 without publishing, so
-# manual runs of that workflow only build.
+# Usage:
+#   scripts/publish-release.sh                      # legacy: one out/*.AppImage
+#   scripts/publish-release.sh <platform> <file>... # e.g. macos-arm64 out/*.dmg out/*.zip
 #
-# Environment. The spindle sets the TANGLED_* variables; the rest are repo
-# secrets, added in the repo's tangled settings:
+# Runs in CI after packaging (.tangled/workflows/appimage.yml and
+# .github/workflows/macos.yml). When the run was not triggered by a tag, it
+# exits 0 without publishing, so manual runs only build.
+#
+# Environment. The spindle sets the TANGLED_* variables; GitHub Actions sets
+# them explicitly. The rest are repo secrets:
 #   TANGLED_REF_TYPE, TANGLED_REF_NAME
 #   TANGLED_REPO_DID        the repo owner's DID
 #   TANGLED_REPO_REPO_DID   the repo's own DID
@@ -22,8 +27,41 @@
 #   R2_PUBLIC_URL           public base URL of the bucket, no trailing slash
 #   ATP_APP_PASSWORD        an app password for the repo owner's account
 #
-# Requires curl, jq, git, node and sha256sum.
+# Requires curl, jq, git, node and either sha256sum or shasum.
 set -euo pipefail
+
+legacy=0
+platform=""
+built=()
+
+if [ "$#" -eq 0 ]; then
+  legacy=1
+  shopt -s nullglob
+  built=(out/*.AppImage)
+elif [ "$#" -ge 2 ]; then
+  platform=$1
+  shift
+  built=("$@")
+else
+  echo "usage: $0 [<platform> <file>...]" >&2
+  echo "  with no arguments, publishes exactly one out/*.AppImage" >&2
+  exit 2
+fi
+
+if [ "${#built[@]}" -eq 0 ]; then
+  echo "publish-release: no artifacts to publish" >&2
+  exit 1
+fi
+if [ "$legacy" -eq 1 ] && [ "${#built[@]}" -ne 1 ]; then
+  echo "publish-release: expected exactly one out/*.AppImage, found ${#built[@]}" >&2
+  exit 1
+fi
+for f in "${built[@]}"; do
+  if [ ! -f "$f" ]; then
+    echo "publish-release: no such file: $f" >&2
+    exit 1
+  fi
+done
 
 if [ "${TANGLED_REF_TYPE:-}" != "tag" ]; then
   echo "publish-release: not a tag run, nothing to publish"
@@ -52,26 +90,68 @@ fi
 # atproto encodes bytes as unpadded standard base64.
 tag_bytes=$(node -e 'process.stdout.write(Buffer.from(process.argv[1], "hex").toString("base64").replace(/=+$/, ""))' "$tag_hash")
 
-shopt -s nullglob
-built=(out/*.AppImage)
-if [ "${#built[@]}" -ne 1 ]; then
-  echo "publish-release: expected exactly one out/*.AppImage, found ${#built[@]}" >&2
-  exit 1
+if [ "$legacy" -eq 1 ]; then
+  legacy_arch=$(uname -m)
+  platform="linux-$legacy_arch"
 fi
+case "$platform" in
+*[!A-Za-z0-9._-]*)
+  echo "publish-release: platform label must be filename-safe: $platform" >&2
+  exit 2
+  ;;
+esac
 
-arch=$(uname -m)
-name="Peek-$tag-$arch.AppImage"
-sha=$(sha256sum "${built[0]}" | cut -d' ' -f1)
-url="$R2_PUBLIC_URL/$tag/$name"
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+names=()
+shas=()
+for f in "${built[@]}"; do
+  if [ "$legacy" -eq 1 ]; then
+    name="Peek-$tag-$legacy_arch.AppImage"
+  else
+    name="Peek-$tag-$platform.${f##*.}"
+  fi
+  names+=("$name")
+  shas+=("$(sha256 "$f")")
+done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-printf '%s  %s\n' "$sha" "$name" >"$work/SHA256SUMS"
+
+if [ "$legacy" -eq 1 ]; then
+  sums="SHA256SUMS"
+  pointer="$name.txt"
+else
+  sums="SHA256SUMS-$platform"
+  pointer="Peek-$tag-$platform.txt"
+fi
+
+: >"$work/$sums"
+for ((i = 0; i < ${#names[@]}; i++)); do
+  printf '%s  %s\n' "${shas[$i]}" "${names[$i]}" >>"$work/$sums"
+done
+
+{
+  if [ "$legacy" -eq 1 ]; then
+    printf 'Peek %s for Linux (%s)\n' "$tag" "$legacy_arch"
+  else
+    printf 'Peek %s for %s\n' "$tag" "$platform"
+  fi
+  for ((i = 0; i < ${#names[@]}; i++)); do
+    printf '%s\nsha256 %s\n' "$R2_PUBLIC_URL/$tag/${names[$i]}" "${shas[$i]}"
+  done
+} >"$work/$pointer"
 
 # --- R2 -----------------------------------------------------------------------
 
 # R2 speaks the S3 API; curl signs the request itself. The payload is sent
-# unsigned so curl does not hash the whole AppImage into the signature.
+# unsigned so curl does not hash the whole artifact into the signature.
 r2_put() { # <file> <object key> <content type>
   curl -fsS --retry 3 \
     --aws-sigv4 "aws:amz:auto:s3" \
@@ -82,9 +162,12 @@ r2_put() { # <file> <object key> <content type>
     "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com/$R2_BUCKET/$2"
 }
 
-echo "publish-release: uploading $name to R2"
-r2_put "${built[0]}" "$tag/$name" application/octet-stream
-r2_put "$work/SHA256SUMS" "$tag/SHA256SUMS" text/plain
+for ((i = 0; i < ${#names[@]}; i++)); do
+  echo "publish-release: uploading ${names[$i]} to R2"
+  r2_put "${built[$i]}" "$tag/${names[$i]}" application/octet-stream
+done
+echo "publish-release: uploading $sums to R2"
+r2_put "$work/$sums" "$tag/$sums" text/plain
 
 # --- tangled ------------------------------------------------------------------
 
@@ -110,9 +193,6 @@ xrpc_post() { # <method> ; JSON body on stdin
   curl -fsS -X POST -H "Authorization: Bearer $jwt" \
     -H "Content-Type: application/json" --data @- "$pds/xrpc/$1"
 }
-
-pointer="$name.txt"
-printf 'Peek %s for Linux (%s)\n%s\nsha256 %s\n' "$tag" "$arch" "$url" "$sha" >"$work/$pointer"
 
 # Tangled keeps one artifact per tag and name and ignores later duplicates, so
 # a re-run for the same tag deletes the earlier record before writing its own.
@@ -149,4 +229,4 @@ jq -n --arg repo "$did" --arg c "$collection" --arg name "$pointer" \
              repoDid: $repoDid, artifact: $blob, createdAt: $now}}' |
   xrpc_post com.atproto.repo.createRecord >/dev/null
 
-echo "publish-release: published $url"
+echo "publish-release: published $pointer"

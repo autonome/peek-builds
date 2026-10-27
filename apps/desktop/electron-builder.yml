@@ -41,6 +41,9 @@ files:
   - "!.claude"
   - "!.claude/**"
   - "!.agent-task.md"
+  # GitHub Actions definitions are CI, not app content.
+  - "!.github"
+  - "!.github/**"
   # Exclude agent workspaces (CRITICAL - these are full project copies)
   - "!tmp"
   - "!tmp/**"
