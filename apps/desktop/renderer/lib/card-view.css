@@ -1,0 +1,126 @@
+/*
+ * card-view.css — the shared page styling for a card-grid view.
+ *
+ *   <link rel="stylesheet" href="peek://app/lib/card-view.css">
+ *
+ * Brings the app theme variables, the see-through look, and the page layout,
+ * card, delete-control and trailing ghost-card styles that card-view.js
+ * builds. A feature adds its own sheet only for what is specific to it.
+ */
+
+/* Theme variables (--base00 ... --base0F, --theme-font-sans). */
+@import url('peek://theme/variables.css');
+/* The see-through look, inert until main puts `see-through` on <body>. */
+@import url('peek://app/lib/see-through.css');
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/*
+ * The opaque normal look lives on `body` alone and the root element paints
+ * nothing, which is the arrangement see-through.css relies on.
+ */
+body {
+  margin: 0;
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+}
+
+/* Over a dark frosted background the theme's ink must be light. */
+body.see-through {
+  --base05: rgba(255, 255, 255, 0.95);
+  --base04: rgba(255, 255, 255, 0.72);
+  --base0D: #aab6ff;
+}
+
+body.see-through .card-meta,
+body.see-through .empty-state {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+body.see-through .card-delete-btn:hover {
+  color: rgba(0, 0, 0, 0.82);
+}
+
+.search-container {
+  padding: 12px 16px 0 16px;
+}
+
+.cards {
+  display: block;
+  padding: 12px 16px;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--base04);
+}
+
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.card-delete-btn:hover {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+/* The trailing card that adds a new item. */
+.ghost-card::part(card) {
+  border-style: dashed;
+  background: transparent;
+  min-height: 80px;
+  align-items: center;
+  justify-content: center;
+}
+
+.ghost-plus {
+  font-size: 32px;
+  line-height: 1;
+  text-align: center;
+  color: var(--base04);
+}
+
+.empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--base04);
+}

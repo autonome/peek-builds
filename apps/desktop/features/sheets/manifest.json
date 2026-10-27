@@ -47,6 +47,7 @@
         "app:shutdown",
         "sheets:open",
         "sheets:settings-changed",
+        "sheets:deleted",
         "window:see-through"
       ]
     },

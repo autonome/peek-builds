@@ -14,6 +14,8 @@
 
 export const SHEET_OPEN_TOPIC = 'sheets:open';
 export const SHEETS_CHANGED_TOPIC = 'sheets:settings-changed';
+/** Published after a sheet is deleted; an open window of that sheet closes itself. */
+export const SHEET_DELETED_TOPIC = 'sheets:deleted';
 export const HOTKEY_SCOPES = ['global', 'app'];
 
 const MODIFIER_ALIASES = {

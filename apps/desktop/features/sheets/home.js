@@ -1,58 +1,69 @@
 /**
- * Sheets card grid: every saved sheet as a card. Clicking a card opens it.
+ * Sheets card grid: every saved sheet as a card. Clicking a card opens it, the
+ * corner control deletes it, and the trailing "+" card makes a new one.
  *
+ * Page chrome, cards and the ghost card come from the shared card-view shell.
  * Opening goes through the same SHEET_OPEN_TOPIC publish the per-sheet keys
  * use, so the feature's background has one way to open a sheet.
  */
 
-import { loadSheetsMap } from './sheet-store.js';
-import { SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC } from './sheet-hotkeys.js';
-import { sheetIdOfKey } from './sheet-commands.js';
+import { mountCardView, createCard } from 'peek://app/lib/card-view.js';
+import { loadSheetsMap, createSheet, deleteSheet } from './sheet-store.js';
+import { SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC } from './sheet-hotkeys.js';
+import { sheetIdOfKey, normalizeSheetName } from './sheet-commands.js';
 
 const api = window.app;
 
 let sheets = [];
-let searchQuery = '';
 
 const cardCountText = (sheet) => {
   const count = Array.isArray(sheet.items) ? sheet.items.length : 0;
   return count === 1 ? '1 card' : `${count} cards`;
 };
 
-const createSheetCard = (sheet) => {
-  const card = document.createElement('peek-card');
-  card.className = 'sheet-card';
-  card.interactive = true;
-  card.dataset.sheetId = sheet.id;
-
-  const title = document.createElement('h2');
-  title.className = 'card-title';
-  title.slot = 'header';
-  title.textContent = sheet.name;
-  card.appendChild(title);
-
-  const footer = document.createElement('div');
-  footer.slot = 'footer';
-  footer.className = 'card-meta';
-  footer.textContent = cardCountText(sheet);
-  card.appendChild(footer);
-
-  card.addEventListener('card-click', () => {
-    api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheet.id] });
-  });
-
-  return card;
+const confirmDeleteSheet = async (sheet) => {
+  if (!confirm(`Delete sheet "${sheet.name}"? This cannot be undone.`)) return;
+  const result = await deleteSheet(api, sheet.id);
+  if (result && result.error) {
+    console.error('[ext:sheets] Failed to delete sheet:', result.error);
+    return;
+  }
+  // Closes an open window of the sheet, then refreshes lists and name options.
+  api.pubsub.publish(SHEET_DELETED_TOPIC, { sheetId: sheet.id });
+  api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId: sheet.id });
 };
 
-const render = () => {
-  const grid = document.querySelector('peek-grid.cards');
-  const empty = document.querySelector('.empty-state');
-  const query = searchQuery.trim().toLowerCase();
-  const shown = sheets.filter((s) => !query || s.name.toLowerCase().includes(query));
+/** Create an untitled sheet and open it. */
+const addSheet = async () => {
+  const { sheetId, result } = await createSheet(api, normalizeSheetName(''));
+  if (result && result.error) {
+    console.error('[ext:sheets] Failed to save sheet:', result.error);
+    return;
+  }
+  api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+  api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheetId] });
+};
 
-  grid.innerHTML = '';
-  for (const sheet of shown) grid.appendChild(createSheetCard(sheet));
-  empty.style.display = sheets.length === 0 ? '' : 'none';
+const view = mountCardView({
+  api,
+  searchPlaceholder: 'Search sheets...',
+  logTag: 'ext:sheets'
+});
+
+const render = () => {
+  view.render({
+    items: sheets,
+    matches: (sheet, q) => sheet.name.toLowerCase().includes(q),
+    toCard: (sheet) => createCard({
+      id: sheet.id,
+      title: sheet.name,
+      meta: cardCountText(sheet),
+      deleteTitle: `Delete sheet ${sheet.name}`,
+      onClick: () => api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheet.id] }),
+      onDelete: () => confirmDeleteSheet(sheet)
+    }),
+    ghost: { title: 'New sheet', onClick: addSheet }
+  });
 };
 
 const loadSheets = async () => {
@@ -64,31 +75,10 @@ const loadSheets = async () => {
   render();
 };
 
-/** Read this window's see-through state from main and draw it. */
-const applySeeThrough = async () => {
-  try {
-    const result = await api?.window?.getSeeThrough?.();
-    const on = result?.success === true && result.data?.seeThrough === true;
-    document.body.classList.toggle('see-through', on);
-  } catch (error) {
-    console.log('[ext:sheets] see-through state unavailable:', error);
-  }
-};
-
-const setupSeeThrough = () => {
-  api?.pubsub?.subscribe('window:see-through', () => { applySeeThrough(); });
-  applySeeThrough();
-};
-
 const init = async () => {
-  document.querySelector('peek-input.search-input').addEventListener('input', (e) => {
-    searchQuery = e.target.value || '';
-    render();
-  });
   api.pubsub.subscribe(SHEETS_CHANGED_TOPIC, () => { loadSheets(); });
-  setupSeeThrough();
   await loadSheets();
-  document.body.dataset.ready = 'true';
+  view.markReady();
 };
 
 init();

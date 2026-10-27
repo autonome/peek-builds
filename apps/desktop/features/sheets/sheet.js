@@ -5,11 +5,11 @@
  * Uses peek-grid in freeform mode with drag/resize in edit mode.
  */
 
-import { loadSheet, saveSheet, loadSheetsMap } from './sheet-store.js';
+import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.js';
 import { withSheetName } from './sheet-commands.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
-  SHEETS_CHANGED_TOPIC
+  SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC
 } from './sheet-hotkeys.js';
 import {
   sheetBackgroundStyle, resolveSheetOptions, withSheetOptions, backgroundNeedsReopen,
@@ -437,6 +437,23 @@ const setupOptionsPanel = () => {
   });
 
   refreshKey();
+
+  // ----- Delete this sheet -----
+  // A deleted sheet's window closes (here and in any other window of it) so a
+  // later edit cannot save the sheet back.
+  api.pubsub.subscribe(SHEET_DELETED_TOPIC, (msg) => {
+    if (msg?.sheetId === sheetId) api.window.close(undefined, { force: true });
+  });
+  panel.querySelector('.opt-delete').addEventListener('click', async () => {
+    if (!confirm(`Delete sheet "${sheetConfig.name || 'Untitled'}"? This cannot be undone.`)) return;
+    const result = await deleteSheet(api, sheetId);
+    if (result && result.error) {
+      console.error('[ext:sheets] Failed to delete sheet:', result.error);
+      return;
+    }
+    api.pubsub.publish(SHEET_DELETED_TOPIC, { sheetId });
+    api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+  });
 
   document.querySelector('.btn-options').addEventListener('click', () => {
     panel.style.display = panel.style.display === 'none' ? '' : 'none';

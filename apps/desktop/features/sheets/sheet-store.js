@@ -97,3 +97,40 @@ export const saveSheet = async (api, sheetId, config) => {
   map[sheetKey(sheetId)] = { ...config, legacyMerged: true };
   return api.settings.set(SHEETS_KEY, map);
 };
+
+/**
+ * Create a sheet and save it into the map.
+ * @param {string} name already-normalized name
+ * @returns {Promise<{sheetId: string, key: string, config: object, result: object}>}
+ */
+export const createSheet = async (api, name) => {
+  const sheetId = crypto.randomUUID().slice(0, 8);
+  const key = sheetKey(sheetId);
+  const config = { version: 1, name, createdAt: Date.now(), items: [] };
+  const map = await loadSheetsMap(api);
+  map[key] = { ...config, legacyMerged: true };
+  const result = await api.settings.set(SHEETS_KEY, map);
+  return { sheetId, key, config, result };
+};
+
+/** A copy of the map without one sheet (same object when it is not there). */
+export const withoutSheet = (map, sheetId) => {
+  const key = sheetKey(sheetId);
+  if (!isObject(map) || !(key in map)) return map;
+  const { [key]: _removed, ...rest } = map;
+  return rest;
+};
+
+/**
+ * Delete one sheet: remove it from the map (re-read first so other sheets are
+ * not clobbered) and clear any legacy per-sheet key.
+ * @returns {Promise<object>} the settings result of saving the map
+ */
+export const deleteSheet = async (api, sheetId) => {
+  const map = await loadSheetsMap(api);
+  const result = await api.settings.set(SHEETS_KEY, withoutSheet(map, sheetId));
+  if (!result || !result.error) {
+    try { await api.settings.set(sheetKey(sheetId), null); } catch { /* legacy key is best effort */ }
+  }
+  return result;
+};

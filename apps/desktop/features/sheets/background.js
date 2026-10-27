@@ -6,10 +6,11 @@
  * Runs in isolated extension process (peek://sheets/background.html)
  */
 
+import { cardViewWindowParams } from 'peek://app/lib/card-view-params.js';
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { windowParamsForSheet } from './sheet-options.js';
 import { buildSheetShortcuts, SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC } from './sheet-hotkeys.js';
-import { loadSheetsMap, loadSheet, sheetKey, SHEETS_KEY } from './sheet-store.js';
+import { loadSheetsMap, loadSheet, createSheet as createSheetInStore } from './sheet-store.js';
 import {
   argsFromCommandMessage, sheetNameOptions, findSheetByName, normalizeSheetName, sheetIdOfKey
 } from './sheet-commands.js';
@@ -32,23 +33,11 @@ const listSheets = async () => {
  * Create a new sheet config
  */
 const createSheet = async (name) => {
-  const sheetId = crypto.randomUUID().slice(0, 8);
-  const key = sheetKey(sheetId);
-  const config = {
-    version: 1,
-    name: normalizeSheetName(name),
-    createdAt: Date.now(),
-    items: []
-  };
-
-  // Load existing sheets, add new one, save back
-  const sheetsMap = await loadSheetsMap(api);
-  sheetsMap[key] = { ...config, legacyMerged: true };
-  const result = await api.settings.set(SHEETS_KEY, sheetsMap);
-  if (result && result.error) {
-    console.error('[ext:sheets] Failed to save sheet:', result.error);
+  const created = await createSheetInStore(api, normalizeSheetName(name));
+  if (created.result && created.result.error) {
+    console.error('[ext:sheets] Failed to save sheet:', created.result.error);
   }
-  return { sheetId, key, config };
+  return created;
 };
 
 /**
@@ -77,14 +66,7 @@ const openSheet = async (sheetId, name) => {
 
 /** Open the card grid that lists every sheet. */
 const openSheetsGrid = () => {
-  api.window.open(sheetsGridUrl, {
-    key: sheetsGridUrl,
-    width: 800,
-    height: 600,
-    role: 'workspace',
-    transparent: true,
-    title: 'Sheets'
-  }).catch(error => {
+  api.window.open(sheetsGridUrl, cardViewWindowParams({ url: sheetsGridUrl, title: 'Sheets' })).catch(error => {
     console.error('[ext:sheets] Failed to open sheets grid:', error);
   });
 };
