@@ -15,6 +15,9 @@ const appPassword = 'abcd-efgh-ijkl-mnop';
 function run(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-signing-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // TMPDIR can be inside this type:module repository. The extensionless gh
+  // fixture is CommonJS regardless of the enclosing checkout's package type.
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"commonjs"}\n');
   const p12 = path.join(dir, 'certificate.p12');
   const p8 = path.join(dir, 'AuthKey.p8');
   fs.writeFileSync(p12, options.big ? 'x'.repeat(37000) : p12Value);
@@ -22,6 +25,7 @@ function run(t, options = {}) {
   fs.writeFileSync(path.join(dir, 'gh'), `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+if (args[0] === '--fixture-self-test') process.exit(0);
 const input = args[0] === 'secret' && args[1] === 'set' ? fs.readFileSync(0, 'utf8') : '';
 const record = { args, input, debug: process.env.GH_DEBUG, leaked: ['password','certificate','private_key','app_password'].filter(k => process.env[k]) };
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(record) + '\\n');
@@ -30,6 +34,9 @@ if (args[0] === 'secret' && args[1] === 'set' && args[2] === process.env.FAKE_FA
 if (args[0] === 'api' && process.env.FAKE_NO_ENV) process.exit(1);
 if (args[0] === process.env.FAKE_FAIL_COMMAND) process.exit(1);
 `, { mode: 0o700 });
+  // A broken executable fixture must not masquerade as a production auth error.
+  const fixtureCheck = spawnSync(path.join(dir, 'gh'), ['--fixture-self-test'], { encoding: 'utf8' });
+  assert.equal(fixtureCheck.status, 0, fixtureCheck.error?.message || fixtureCheck.stderr);
   const mode = options.mode || 'api';
   const metadata = [identity, team, ...(mode === 'api' ? ['123456789A', issuer] : ['test@example.invalid'])];
   const inputs = [...metadata, password, ...(mode === 'password' ? [appPassword] : []), `${options.repo || 'autonome/peek-builds'}/${options.env || 'macos-release-signing'} ${mode}`];
@@ -48,7 +55,7 @@ if (args[0] === process.env.FAKE_FAIL_COMMAND) process.exit(1);
     assert.ok(!JSON.stringify(records.map(r => r.args)).includes(secret), 'secret in argv');
   }
   for (const record of records) { assert.equal(record.debug, ''); assert.deepEqual(record.leaked, []); }
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['AuthKey.p8', 'certificate.p12', 'gh', ...(records.length ? ['log'] : [])].sort(), 'unexpected temporary file');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['AuthKey.p8', 'certificate.p12', 'gh', 'package.json', ...(records.length ? ['log'] : [])].sort(), 'unexpected temporary file');
   return { ...result, output, records, uploads: records.filter(r => r.args[1] === 'set') };
 }
 test('help and dry-run never call gh or request passwords', t => {

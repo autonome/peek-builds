@@ -3,14 +3,78 @@
 Status: **manual candidate-only implementation approved; signing remains disabled**.
 The user approved a candidate-only path and requested the local gh provisioning
 script. The executable [setup script and usage guide](../docs/macos-signing-secrets.md)
-are implemented with offline fake-gh tests. Candidate workflow/signing integration
-is still unimplemented. The spec stays `enabled: false` to prevent a duplicate
+are implemented with offline fake-gh tests. An offline signing policy/orchestration
+module and tests now exist too (see below). Candidate workflow and production
+macOS signing integration are still unimplemented. The spec stays `enabled: false` to prevent a duplicate
 writer. No account/environment prerequisites have been verified. This is not
 authorization for the agent to enroll, spend money, change accounts/secrets, sign
 a live build or publish a release. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
+
+## Offline policy/orchestration layer (not a runnable candidate)
+
+`scripts/macos-signing.cjs` exports `runCandidate` plus shared evidence validators.
+It has no CLI, subprocess, credential-file, upload or publisher implementation.
+`scripts/macos-signing.test.cjs` exercises the module with injected operations and
+synthetic data only. Do not treat its return value as a portable attestation,
+a production upload authorization or a signed release approval.
+
+Implemented policies:
+
+- Explicit `unsigned` mode does not read credentials or call operations. Candidate
+  mode requires a full Developer ID Application name matching the expected team,
+  the existing bundle ID, full SHA, numeric build version, certificate inputs and
+  exactly one complete auth mode. Ambient builder/notary fallback credentials and
+  debug settings are rejected. Returned policy contains no credential material.
+- Numeric format is canonical `major.minor.patch`: major 1–9999, minor/patch 0–99.
+  This is a proposed *validation* policy, not a build-number allocator or owner
+  approval. The eventual workflow must provide a stable, collision-aware numeric
+  mapping and stamp it before signing, while retaining full commit metadata.
+- Required native resources must be regular arm64 Mach-O files. App evidence
+  requires complete native inventory, strict verification, expected signature
+  authority/chain/team, timestamp, runtime for executables, explicit JIT-only
+  Electron entitlements and empty helper/library entitlements. Dependencies must
+  be system libraries or dynamic install names actually resolved inside the app.
+- Both app and DMG submissions require valid IDs, explicit Accepted results and
+  matching successful logs with no issues (warnings also block for review). App,
+  ZIP-extracted app and mounted/copied DMG app evidence independently requires
+  signature/inventory/build-identity/staple/Gatekeeper checks. DMG evidence also
+  requires signature, staple and container verification.
+- Ordering is preflight → prepare → pack/afterPack → inside-out app sign → app
+  notarize/log/staple/verify → archives → DMG sign/notarize/log/staple/verify →
+  extract/copy verification → cleanup → final hashing/manifest. No candidate
+  receipt is returned on any failure, including cleanup failure. Errors suppress
+  raw adapter/tool output; valid submission IDs survive for diagnosis. There is
+  no retry/resubmit loop or public publisher operation.
+
+**Adapter boundary still to implement:** real bounded subprocesses and plist/
+Mach-O parsing; inventory discovery including symlinks and dependency resolution;
+credential/keychain preparation and signal-safe cleanup/search-list restoration;
+release-only builder configuration and per-file entitlements; numeric afterPack
+stamping; real notarization/log retention and extraction/mount/copy verification;
+final-byte immutability; and a separately protected, trusted-ref workflow with
+SHA-pinned actions and fail-closed artifact upload. A boolean evidence flag is a
+contract for that trusted adapter, not an independent observation by this module.
+The fake-operation tests prove cleanup is **called**, not that a real keychain,
+mount or credential file is removed. They prove no policy receipt on failure,
+not that an as-yet-unimplemented workflow prevents uploads. Existing unsigned CI,
+builder config, afterPack and startup behavior have not been modified.
+
+Run the offline gate:
+
+```sh
+node --test scripts/macos-signing.test.cjs scripts/setup-macos-signing-secrets.test.cjs
+bash -n scripts/setup-macos-signing-secrets.sh
+shellcheck scripts/setup-macos-signing-secrets.sh
+git diff --check
+```
+
+Provisioning fixtures now declare their own CommonJS package scope and self-test
+before invoking the script. This avoids false authentication failures when
+`TMPDIR` is inside the repository's `type: module` scope. Only dummy material and
+fake gh are used; no real gh/account/credential operation is needed for the gate.
 
 ## Recommendation and account-holder checklist
 

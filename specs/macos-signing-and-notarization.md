@@ -15,8 +15,11 @@ sign a live build or publish a release. Signed public publication remains unappr
 
 Delivered provisioning component: `scripts/setup-macos-signing-secrets.sh`, fake-gh
 tests in `scripts/setup-macos-signing-secrets.test.cjs`, and
-[usage instructions](../docs/macos-signing-secrets.md). Candidate workflow/signing
-integration below remains unimplemented; unsigned behavior is unchanged.
+[usage instructions](../docs/macos-signing-secrets.md). The offline policy and
+adapter-driven orchestration in `scripts/macos-signing.cjs` and its pure tests
+are also implemented. This is **not an executable signing integration**: the
+production macOS process/filesystem adapter, candidate workflow and release-only
+builder configuration below remain unimplemented; unsigned behavior is unchanged.
 Research and exact proposed secret names: [readiness notes](../notes/macos-signing-readiness.md).
 Do not touch the startup-risk acknowledgment implementation or delay unsigned
 builds. No dependency on that track is required.
@@ -139,7 +142,10 @@ A test fixture's Accepted result is not evidence of live Apple acceptance.
 5. Record human acceptance; only then permit signed tagged publication. Hash final
    bytes only; verify published checksums without changing old release contents.
 
-Research-track verification is documentation/reference/whitespace checking only.
-No signed candidate or any of these live macOS gates has been run. Rollback means
+Research-track verification was documentation/reference/whitespace checking only.
+Provisioning and policy/orchestration now have offline tests. Those tests validate
+injected evidence and operation ordering, not macOS tool behavior, real credential
+cleanup, actual upload gates or Apple acceptance. No signed candidate or any of
+these live macOS gates has been run. Rollback means
 stopping signed publication and deliberately selecting the existing **explicitly
 unsigned** path, never disguising an unsigned artifact as a successful signed one.
