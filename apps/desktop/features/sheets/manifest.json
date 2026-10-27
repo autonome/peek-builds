@@ -17,6 +17,16 @@
       ]
     },
     {
+      "id": "home",
+      "url": "home.html",
+      "role": "workspace",
+      "width": 800,
+      "height": 600,
+      "title": "Sheets",
+      "transparent": true,
+      "seeThrough": true
+    },
+    {
       "id": "sheet",
       "url": "sheet.html",
       "title": "Sheet",
@@ -32,6 +42,7 @@
       ],
       "topics": [
         "ext:ready",
+        "cmd:register",
         "ext:sheets:shutdown",
         "app:shutdown",
         "sheets:open",
@@ -56,8 +67,29 @@
       }
     },
     {
+      "name": "list sheets",
+      "description": "List all widget sheets",
+      "action": {
+        "type": "execute"
+      }
+    },
+    {
+      "name": "open sheets",
+      "description": "Browse all widget sheets as cards",
+      "action": {
+        "type": "window",
+        "url": "peek://sheets/home.html",
+        "options": {
+          "width": 800,
+          "height": 600,
+          "role": "workspace",
+          "transparent": true
+        }
+      }
+    },
+    {
       "name": "new sheet",
-      "description": "Create a new widget sheet",
+      "description": "Create a new widget sheet, optionally named",
       "action": {
         "type": "execute"
       }

@@ -10,11 +10,15 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { windowParamsForSheet } from './sheet-options.js';
 import { buildSheetShortcuts, SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC } from './sheet-hotkeys.js';
 import { loadSheetsMap, loadSheet, sheetKey, SHEETS_KEY } from './sheet-store.js';
+import {
+  argsFromCommandMessage, sheetNameOptions, findSheetByName, normalizeSheetName, sheetIdOfKey
+} from './sheet-commands.js';
 
 const api = window.app;
 
 // Extension content is served from peek://sheets/ (hybrid mode)
 const sheetPageUrl = 'peek://sheets/sheet.html';
+const sheetsGridUrl = 'peek://sheets/home.html';
 
 /**
  * Get all sheet configs (migrating legacy per-sheet configs on first read)
@@ -32,7 +36,7 @@ const createSheet = async (name) => {
   const key = sheetKey(sheetId);
   const config = {
     version: 1,
-    name: name || 'Untitled Sheet',
+    name: normalizeSheetName(name),
     createdAt: Date.now(),
     items: []
   };
@@ -71,73 +75,62 @@ const openSheet = async (sheetId, name) => {
 
 // ===== Command definitions =====
 
-const commandDefinitions = [
-  {
-    name: 'sheets',
-    description: 'List all widget sheets',
-    execute: async (ctx) => {
-      const sheets = await listSheets();
-      if (sheets.length === 0) {
-        return { success: true, message: 'No sheets found' };
-      }
+/** Open the card grid that lists every sheet. */
+const openSheetsGrid = () => {
+  api.window.open(sheetsGridUrl, {
+    key: sheetsGridUrl,
+    width: 800,
+    height: 600,
+    role: 'workspace',
+    transparent: true,
+    title: 'Sheets'
+  }).catch(error => {
+    console.error('[ext:sheets] Failed to open sheets grid:', error);
+  });
+};
 
-      // Return sheet names as results for the cmd palette to display
-      return {
-        success: true,
-        results: sheets.map(s => ({
-          name: s.name,
-          description: `Created ${new Date(s.createdAt).toLocaleDateString()}`,
-          execute: () => {
-            const sheetId = s.key.replace('sheet:', '');
-            openSheet(sheetId, s.name);
-          }
-        }))
-      };
-    }
-  },
+/**
+ * Open the sheet a command message names. With no name, open the grid so the
+ * user can pick one. Command results must be plain data (they cross a process
+ * boundary), so a pick comes back as a name, never as a function.
+ */
+const openSheetForCommand = async (msg, commandName) => {
+  const sheets = await listSheets();
+  const query = argsFromCommandMessage(msg, commandName);
+  if (!query) {
+    openSheetsGrid();
+    return { success: true };
+  }
+  const match = findSheetByName(sheets, query);
+  if (!match) {
+    return { success: false, error: `No sheet named "${query}"` };
+  }
+  openSheet(sheetIdOfKey(match.key), match.name);
+  return { success: true };
+};
+
+const SHEET_PICK_COMMANDS = [
+  { name: 'sheets', description: 'List all widget sheets' },
+  { name: 'list sheets', description: 'List all widget sheets' },
+  { name: 'open sheet', description: 'Open an existing widget sheet by name' }
+];
+
+const commandDefinitions = [
+  ...SHEET_PICK_COMMANDS.map(({ name, description }) => ({
+    name,
+    description,
+    execute: (msg) => openSheetForCommand(msg, name)
+  })),
   {
     name: 'new sheet',
-    description: 'Create a new widget sheet',
-    execute: async (ctx) => {
-      const name = ctx?.args || 'Untitled Sheet';
+    description: 'Create a new widget sheet, optionally named',
+    execute: async (msg) => {
+      const name = normalizeSheetName(argsFromCommandMessage(msg, 'new sheet'));
       const { sheetId } = await createSheet(name);
       openSheet(sheetId, name);
-    }
-  },
-  {
-    name: 'open sheet',
-    description: 'Open an existing widget sheet by name',
-    execute: async (ctx) => {
-      const sheets = await listSheets();
-      if (sheets.length === 0) {
-        return { success: true, message: 'No sheets found' };
-      }
-
-      const query = (ctx?.args || '').toLowerCase();
-
-      // If a name was provided, try to match it
-      if (query) {
-        const match = sheets.find(s => s.name.toLowerCase() === query) ||
-                      sheets.find(s => s.name.toLowerCase().includes(query));
-        if (match) {
-          const sheetId = match.key.replace('sheet:', '');
-          openSheet(sheetId, match.name);
-          return;
-        }
-      }
-
-      // Return sheet list for selection
-      return {
-        success: true,
-        results: sheets.map(s => ({
-          name: s.name,
-          description: `Created ${new Date(s.createdAt).toLocaleDateString()}`,
-          execute: () => {
-            const sheetId = s.key.replace('sheet:', '');
-            openSheet(sheetId, s.name);
-          }
-        }))
-      };
+      // Refreshes the sheet name options and any open sheets grid.
+      api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+      return { success: true };
     }
   }
 ];
@@ -146,11 +139,42 @@ const commandDefinitions = [
 
 let registeredCommands = [];
 
+/**
+ * Tell the command panel which sheet names to offer for the name argument.
+ * Re-publishing a command's registration replaces the earlier one, so this
+ * runs again whenever the set of sheets changes.
+ */
+const refreshNameCommands = async () => {
+  try {
+    const options = sheetNameOptions(await listSheets());
+    for (const { name, description } of SHEET_PICK_COMMANDS) {
+      api.pubsub.publish('cmd:register', {
+        name,
+        description,
+        source: 'sheets',
+        scope: 'global',
+        params: [{
+          name: 'name',
+          type: 'enum',
+          options,
+          required: false,
+          description: 'Sheet name'
+        }]
+      });
+    }
+  } catch (err) {
+    console.error('[ext:sheets] Failed to publish sheet name options:', err);
+  }
+};
+
 const initCommands = async () => {
-  commandDefinitions.forEach(cmd => {
-    api.commands.register(cmd);
+  // Registration is asynchronous and publishes its own (parameter-less)
+  // entry, so wait for it before publishing the name options over it.
+  await Promise.all(commandDefinitions.map(cmd => {
     registeredCommands.push(cmd.name);
-  });
+    return api.commands.register(cmd);
+  }));
+  await refreshNameCommands();
 };
 
 const uninitCommands = () => {
@@ -212,6 +236,7 @@ const init = async () => {
   api.pubsub.subscribe(SHEETS_CHANGED_TOPIC, async () => {
     await settingsLoaded;
     declareSheetShortcuts();
+    refreshNameCommands();
   });
 
   initCommands();

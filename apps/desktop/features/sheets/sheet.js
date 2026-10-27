@@ -6,6 +6,7 @@
  */
 
 import { loadSheet, saveSheet, loadSheetsMap } from './sheet-store.js';
+import { withSheetName } from './sheet-commands.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
   SHEETS_CHANGED_TOPIC
@@ -352,6 +353,33 @@ const setupOptionsPanel = () => {
     applyBackground();
     refresh();
   };
+
+  // ----- Name -----
+  const nameInput = panel.querySelector('.opt-name');
+  nameInput.value = sheetConfig.name || '';
+  const commitName = async () => {
+    const next = withSheetName(sheetConfig, nameInput.value);
+    if (next === sheetConfig || next.name === sheetConfig.name) {
+      // Blank or unchanged: show the saved name again.
+      nameInput.value = sheetConfig.name || '';
+      return;
+    }
+    sheetConfig = next;
+    await saveSheetConfig();
+    nameInput.value = sheetConfig.name;
+    document.querySelector('.sheet-title').textContent = sheetConfig.name;
+    document.title = sheetConfig.name;
+    // Name lists (command options, the sheets grid) follow the new name.
+    api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+  };
+  nameInput.addEventListener('change', commitName);
+  nameInput.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      nameInput.blur();
+    }
+  });
 
   // ----- Key to open this sheet -----
   const keyInput = panel.querySelector('.opt-key');
