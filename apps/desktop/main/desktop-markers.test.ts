@@ -116,6 +116,10 @@ describe('a marker mint never brings the app to the front', () => {
     assert.strictEqual(markerOpenOptions().focusable, false);
   });
 
+  it('the marker cannot go fullscreen, so it never gets a desktop of its own', () => {
+    assert.strictEqual(markerOpenOptions().fullscreenable, false);
+  });
+
   it('the show that puts it on screen asks for no activation and carries no user-gesture intent', () => {
     assert.deepStrictEqual({ ...MARKER_SHOW }, { active: false });
     assert.ok(!('activation' in MARKER_SHOW), 'a user-gesture intent would let the kernel raise past another app');

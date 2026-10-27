@@ -66,6 +66,37 @@ export function shouldMintMarker(
 }
 
 /**
+ * Whether the current desktop is one a window made by going fullscreen.
+ * Such a desktop holds that one window and nothing else, and a marker shown
+ * there would be given a desktop of its own by the platform; that desktop
+ * is unmarked too, so every mint would start another (an endless loop).
+ *
+ * A window mid-entry counts wherever its recorded desktop says it is, since
+ * the report of its new desktop has not landed yet. A settled fullscreen
+ * window counts when its recorded desktop is the current one (or unknown).
+ */
+export function currentDesktopIsFullscreen(state: State): boolean {
+  const current = state.screens[0]?.current ?? null;
+  if (current === null) return false;
+  return state.order.some((w) => {
+    if (w.fsMode.name === 'entering') return true;
+    if (w.fsMode.name !== 'fullscreen') return false;
+    return w.desktop === undefined || w.desktop === current;
+  });
+}
+
+/**
+ * Whether a sync pass over `state` should mint a marker: the plain arrival
+ * rule (`shouldMintMarker`), except never on a fullscreen desktop.
+ */
+export function shouldMintMarkerForState(state: State, marked: ReadonlySet<string>): boolean {
+  const current = state.screens[0]?.current ?? null;
+  const desktopOrder = state.desktops.map((d) => d.id);
+  if (!shouldMintMarker(current, desktopOrder, marked)) return false;
+  return !currentDesktopIsFullscreen(state);
+}
+
+/**
  * Markers whose desktop no longer exists in the layout — desktops can be
  * deleted or rearranged at any time, and a marker with no desktop has
  * nothing left to anchor. Returns them in map order for the caller to close
@@ -105,6 +136,10 @@ export const MARKER_URL = 'peek://spaces/signal.html';
  *   transient mid-load — a user window destroyed. A non-focusable window is
  *   never transient, never holds key, and its show sweeps nothing.
  *
+ * - `fullscreenable: false`: a marker shown on a fullscreen desktop would
+ *   otherwise be given a fullscreen desktop of its own, which is unmarked and
+ *   so mints another marker, without end.
+ *
  * Role `signal` keeps markers out of session saves
  * (`session-projection.ts serializeSession`).
  */
@@ -116,6 +151,7 @@ export function markerOpenOptions(): {
   y: number;
   transparent: true;
   focusable: false;
+  fullscreenable: false;
   skipTaskbar: true;
   show: false;
 } {
@@ -127,6 +163,7 @@ export function markerOpenOptions(): {
     y: 0,
     transparent: true,
     focusable: false,
+    fullscreenable: false,
     skipTaskbar: true,
     show: false,
   };

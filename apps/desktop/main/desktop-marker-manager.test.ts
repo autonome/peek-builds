@@ -8,7 +8,7 @@
 // `ipc.ts` stopped yielding before registering the new window.
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { subscribeMarkerSync } from './desktop-markers.js';
+import { subscribeMarkerSync, shouldMintMarkerForState } from './desktop-markers.js';
 import { WindowKernelExecutor, type CommandOutcome } from './window-kernel-executor.js';
 import { BASE_LAYER, type State, type WindowId } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
@@ -100,6 +100,53 @@ describe('subscribeMarkerSync (the marker sync never runs inside a kernel notifi
     const record = exec.getState().order.find((w) => w.id === MARKER);
     assert.ok(record, 'the marker is registered');
     assert.strictEqual(record.visible, true, 'the marker is on screen');
+  });
+
+  it('a window going fullscreen does not start a chain of markers, one per new desktop', async () => {
+    const exec = new WindowKernelExecutor(new InertBackend());
+    const marked = new Set<string>(['d1']);
+    let minted = 0;
+    let nextDesktop = 3;
+    const desktops = [
+      { id: 'd1', screen: null },
+      { id: 'd2', screen: null },
+    ];
+    // Showing a marker on a fullscreen desktop gives it a new desktop and
+    // switches to it, which the next pass sees as another unmarked desktop.
+    subscribeMarkerSync(exec, (state: State) => {
+      if (!shouldMintMarkerForState(state, marked) || minted > 10) return;
+      minted++;
+      marked.add(state.screens[0]!.current);
+      const id = `d${nextDesktop++}`;
+      desktops.push({ id, screen: null });
+      exec.dispatch({
+        type: 'DesktopLayoutReported',
+        screens: [{ id: 's1', current: id }],
+        desktops: [...desktops],
+      });
+    });
+    exec.dispatch({ type: 'DesktopLayoutReported', screens: [{ id: 's1', current: 'd1' }], desktops: [...desktops] });
+    const WIN = 'wk-app' as WindowId;
+    exec.execute({
+      type: 'RegisterWindow',
+      id: WIN,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      expectedVersion: exec.getState().version,
+    });
+    exec.dispatch({ type: 'FullscreenTransitionStarted', id: WIN, entering: true, preBounds: null });
+    exec.dispatch({ type: 'OsFullscreenEntered', id: WIN });
+    exec.dispatch({
+      type: 'DesktopLayoutReported',
+      screens: [{ id: 's1', current: 'd2' }],
+      desktops: [...desktops],
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    assert.strictEqual(minted, 0, 'no marker is minted on the fullscreen desktop');
   });
 
   it('the install-time pass runs at once, against the state the kernel already holds', () => {

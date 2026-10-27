@@ -33,7 +33,7 @@
  * safety net; the headless gate is.)
  */
 import {
-  shouldMintMarker,
+  shouldMintMarkerForState,
   markersToSweep,
   markerOpenOptions,
   subscribeMarkerSync,
@@ -119,7 +119,7 @@ async function syncMarkers(state: State): Promise<void> {
     void closeOrHideWindow(marker, 'desktop-marker-sweep').catch(() => {});
   }
   const marked = new Set([..._markers.keys(), ..._mintInFlight]);
-  if (current === null || !shouldMintMarker(current, desktopOrder, marked)) return;
+  if (current === null || !shouldMintMarkerForState(state, marked)) return;
   if (!invokeWindowOpen) return; // window handlers not registered yet; a later notification retries
   const bgWin = getBackgroundWindow();
   if (!bgWin || bgWin.isDestroyed()) return;

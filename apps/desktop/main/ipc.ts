@@ -4093,6 +4093,7 @@ export function registerWindowHandlers(): void {
     if (options.alwaysOnTop !== undefined) winOptions.alwaysOnTop = !isHeadless() && !!options.alwaysOnTop;
     if (options.focusable !== undefined) winOptions.focusable = !!options.focusable;
     if (options.skipTaskbar !== undefined) winOptions.skipTaskbar = !!options.skipTaskbar;
+    if (options.fullscreenable !== undefined) winOptions.fullscreenable = !!options.fullscreenable;
     if (options.hasShadow !== undefined && !usePageHost) winOptions.hasShadow = !!options.hasShadow;
 
     // Create new window.
