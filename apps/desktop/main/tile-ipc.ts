@@ -1316,6 +1316,8 @@ export function registerTileIpcHandlers(): void {
 
   registerTileIpc('tile:dialogs:open', { mode: 'handle' }, async (ev, args: {
     token: string;
+    /** 'image' limits the chooser to images and returns the bytes as `dataUrl`. */
+    kind?: string;
   }, _grant) => {
     const grant = _grant;
     const check = checkDialogAllowed(grant, 'open');
@@ -1333,9 +1335,12 @@ export function registerTileIpcHandlers(): void {
         ? frontWin
         : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
 
+      const wantImage = args.kind === 'image';
       const openDialogOpts: Electron.OpenDialogOptions = {
         properties: ['openFile'],
-        filters: [
+        filters: wantImage ? [
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'svg'] },
+        ] : [
           { name: 'All Files', extensions: ['*'] },
           { name: 'Text Files', extensions: ['txt', 'md', 'json', 'html', 'csv', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log'] },
           { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'rtf'] },
@@ -1367,6 +1372,13 @@ export function registerTileIpcHandlers(): void {
         '.yaml': 'text/yaml',
         '.yml': 'text/yaml',
         '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.avif': 'image/avif',
       };
       const mimeType = extToMime[ext] || 'application/octet-stream';
       const isText = mimeType.startsWith('text/') ||
@@ -1376,10 +1388,14 @@ export function registerTileIpcHandlers(): void {
 
       let content: string | null = null;
       if (isText) content = fs.readFileSync(filePath, 'utf-8');
+      const dataUrl = wantImage && mimeType.startsWith('image/')
+        ? `data:${mimeType};base64,${fs.readFileSync(filePath).toString('base64')}`
+        : undefined;
 
       return {
         success: true,
         data: {
+          dataUrl,
           name: fileName,
           path: filePath,
           size: stats.size,

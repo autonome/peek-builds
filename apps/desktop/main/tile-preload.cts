@@ -2030,7 +2030,10 @@ function buildAPI(): Record<string, unknown> {
         mimeType: opts.mimeType,
       });
     },
-    open: () => ipcRenderer.invoke('tile:dialogs:open', { token: tileToken }),
+    open: (options: unknown = {}) => {
+      const opts = (options || {}) as { kind?: string };
+      return ipcRenderer.invoke('tile:dialogs:open', { token: tileToken, kind: opts.kind });
+    },
   };
 
   // ── Features ──────────────────────────────────────────────────────

@@ -54,6 +54,11 @@
       "create": true
     },
     "commands": true,
+    "dialogs": {
+      "types": [
+        "open"
+      ]
+    },
     "settings": true,
     "shortcuts": true,
     "webview": true

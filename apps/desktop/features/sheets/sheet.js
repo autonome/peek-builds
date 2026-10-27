@@ -325,7 +325,6 @@ const setupOptionsPanel = () => {
   const maximized = panel.querySelector('.opt-maximized');
   const group = panel.querySelector('.opt-background');
   const imageRow = panel.querySelector('.opt-image-row');
-  const fileInput = panel.querySelector('.opt-image-file');
   const status = panel.querySelector('.opt-image-status');
   const note = panel.querySelector('.opt-note');
 
@@ -457,14 +456,22 @@ const setupOptionsPanel = () => {
     update({ background: { kind } });
   });
 
-  panel.querySelector('.opt-pick-image').addEventListener('click', () => fileInput.click());
-
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files && fileInput.files[0];
-    fileInput.value = '';
-    if (!file) return;
+  // Main opens the native chooser (api.dialogs.open); a hidden
+  // <input type=file>.click() surfaces no chooser in this window.
+  panel.querySelector('.opt-pick-image').addEventListener('click', async () => {
     try {
+      const picked = await api.dialogs.open({ kind: 'image' });
+      if (!picked?.success) {
+        if (!picked?.canceled) status.textContent = 'Could not open the file chooser';
+        return;
+      }
+      const dataUrl = picked.data?.dataUrl;
+      if (!dataUrl) {
+        status.textContent = 'That file could not be used as an image';
+        return;
+      }
       status.textContent = 'Processing...';
+      const file = await (await fetch(dataUrl)).blob();
       const image = await encodeBackgroundImage(file);
       choosingImage = false;
       await update({ background: { kind: 'image', image } });
