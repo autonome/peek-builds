@@ -69,16 +69,26 @@ describe('resolveSheetOptions', () => {
 });
 
 describe('windowParamsForSheet', () => {
-  it('adds nothing for a default sheet', () => {
-    assert.deepEqual(windowParamsForSheet({ items: [] }), {});
+  const TRANSIENT = { role: 'quick-view', modal: true };
+
+  it('is transient for a default sheet and adds nothing else', () => {
+    assert.deepEqual(windowParamsForSheet({ items: [] }), TRANSIENT);
+  });
+
+  it('is transient whatever the other options are', () => {
+    for (const config of [null, undefined, { maximized: true }, { background: { kind: 'transparent' } }]) {
+      const params = windowParamsForSheet(config);
+      assert.equal(params.role, 'quick-view');
+      assert.equal(params.modal, true);
+    }
   });
 
   it('asks for a maximized window', () => {
-    assert.deepEqual(windowParamsForSheet({ maximized: true }), { maximized: true, maximize: true });
+    assert.deepEqual(windowParamsForSheet({ maximized: true }), { ...TRANSIENT, maximized: true, maximize: true });
   });
 
   it('asks for a transparent window only for the transparent background', () => {
-    assert.deepEqual(windowParamsForSheet({ background: { kind: 'transparent' } }), { transparent: true });
-    assert.deepEqual(windowParamsForSheet({ background: { kind: 'image', image: 'p' } }), {});
+    assert.deepEqual(windowParamsForSheet({ background: { kind: 'transparent' } }), { ...TRANSIENT, transparent: true });
+    assert.deepEqual(windowParamsForSheet({ background: { kind: 'image', image: 'p' } }), TRANSIENT);
   });
 });

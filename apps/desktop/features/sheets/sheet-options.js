@@ -38,11 +38,14 @@ export const resolveSheetOptions = (config) => {
  * window option.
  *
  * @param {object|null|undefined} config saved sheet config
- * @returns {{maximized?: true, maximize?: true, transparent?: true}}
+ * A sheet is a transient window, like a peek: `role: 'quick-view'` with
+ * `modal: true` makes it close when focus goes to any other window.
+ *
+ * @returns {{role: 'quick-view', modal: true, maximized?: true, maximize?: true, transparent?: true}}
  */
 export const windowParamsForSheet = (config) => {
   const { maximized, background } = resolveSheetOptions(config);
-  const params = {};
+  const params = { role: 'quick-view', modal: true };
   if (maximized) {
     params.maximized = true;
     params.maximize = true;
