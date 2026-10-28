@@ -293,24 +293,14 @@ const renderCoreSettings = async () => {
   defaultBrowserGroup.appendChild(defaultBrowserLabel);
 
   const defaultBrowserRow = document.createElement('div');
-  defaultBrowserRow.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+  defaultBrowserRow.className = 'default-browser-row';
 
-  const defaultBrowserBtn = document.createElement('button');
+  const defaultBrowserBtn = document.createElement('peek-button');
+  defaultBrowserBtn.setAttribute('variant', 'secondary');
   defaultBrowserBtn.textContent = 'Set as default handler for HTTP addresses and HTML documents';
-  defaultBrowserBtn.style.cssText = `
-    padding: 8px 16px;
-    font-size: 13px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-  `;
-  defaultBrowserBtn.addEventListener('mouseenter', () => { defaultBrowserBtn.style.background = 'var(--bg-hover)'; });
-  defaultBrowserBtn.addEventListener('mouseleave', () => { defaultBrowserBtn.style.background = 'var(--bg-tertiary)'; });
 
   const defaultBrowserStatus = document.createElement('span');
-  defaultBrowserStatus.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
+  defaultBrowserStatus.className = 'default-browser-status';
 
   // Check current status
   (async () => {
@@ -319,8 +309,6 @@ const renderCoreSettings = async () => {
       if (result.isDefault) {
         defaultBrowserBtn.textContent = 'Already the default handler';
         defaultBrowserBtn.disabled = true;
-        defaultBrowserBtn.style.opacity = '0.6';
-        defaultBrowserBtn.style.cursor = 'default';
         defaultBrowserStatus.textContent = '\u2713 Peek is the default handler';
       }
     } catch { /* ignore */ }
@@ -333,8 +321,6 @@ const renderCoreSettings = async () => {
       const result = await api.app.setDefaultBrowser();
       if (result.success) {
         defaultBrowserBtn.textContent = 'Already the default handler';
-        defaultBrowserBtn.style.opacity = '0.6';
-        defaultBrowserBtn.style.cursor = 'default';
         defaultBrowserStatus.textContent = '\u2713 Peek is the default handler';
       } else {
         defaultBrowserBtn.textContent = 'Set as default handler for HTTP addresses and HTML documents';
@@ -542,8 +528,7 @@ const renderCoreSettings = async () => {
   let cliVerbBlock = null;
   const updateVerbBlockEnabled = (enabled) => {
     if (!cliVerbBlock) return;
-    cliVerbBlock.style.opacity = enabled ? '1' : '0.5';
-    cliVerbBlock.style.pointerEvents = enabled ? 'auto' : 'none';
+    cliVerbBlock.classList.toggle('disabled', !enabled);
   };
 
   if (api.platform?.os === 'linux') {
@@ -564,12 +549,12 @@ const renderCoreSettings = async () => {
   // scripting and we don't surface it here.
   if (api.platform?.isWayland) {
     const block = document.createElement('div');
-    block.style.cssText = 'margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--accent, #888); background: var(--bg-tertiary, rgba(255,255,255,0.04)); font-size: 13px; transition: opacity 0.15s ease;';
+    block.className = 'cli-verb-block';
     cliVerbBlock = block;
     updateVerbBlockEnabled(getVal('cliSocketEnabled'));
 
     const intro = document.createElement('div');
-    intro.style.cssText = 'margin-bottom: 8px; color: var(--text-secondary, #999);';
+    intro.className = 'cli-verb-intro';
     intro.textContent = 'Wayland blocks apps from grabbing global hotkeys directly. Bind these commands in GNOME Settings → Keyboard → Custom Shortcuts (or your desktop’s equivalent):';
     block.appendChild(intro);
 
@@ -593,16 +578,17 @@ const renderCoreSettings = async () => {
         const cmdText = commands[i] || `<could not resolve ${verb} command>`;
 
         const row = document.createElement('div');
-        row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-family: monospace;';
+        row.className = 'cli-verb-row';
 
         const code = document.createElement('span');
         code.textContent = cmdText;
-        code.style.cssText = 'flex: 1; user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        code.className = 'cli-verb-code';
         code.title = label;
 
-        const copy = document.createElement('button');
+        const copy = document.createElement('peek-button');
+        copy.setAttribute('variant', 'secondary');
+        copy.setAttribute('size', 'sm');
         copy.textContent = 'copy';
-        copy.style.cssText = 'padding: 2px 8px; font-size: 11px; cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary);';
         copy.addEventListener('click', async () => {
           try {
             await navigator.clipboard.writeText(cmdText);
@@ -634,7 +620,7 @@ const renderIntegrationsSettings = async () => {
 
   const intro = document.createElement('p');
   intro.className = 'help-text';
-  intro.style.marginBottom = '16px';
+  intro.classList.add('section-intro');
   intro.textContent = 'Connect Peek to external tools.';
   container.appendChild(intro);
 
