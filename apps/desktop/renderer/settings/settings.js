@@ -3099,7 +3099,7 @@ const renderDatastoreSettings = async () => {
   statsSection.appendChild(statsTitle);
 
   const statsGrid = document.createElement('div');
-  statsGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px; margin-bottom: 16px;';
+  statsGrid.className = 'stats-grid';
 
   // Load stats
   let stats = {};
@@ -3161,8 +3161,7 @@ const renderDatastoreSettings = async () => {
   };
 
   const tableSection = document.createElement('div');
-  tableSection.className = 'form-section';
-  tableSection.style.marginTop = '24px';
+  tableSection.className = 'form-section spaced-above';
 
   const tableTitle = document.createElement('h3');
   tableTitle.className = 'form-section-title';
@@ -3170,10 +3169,10 @@ const renderDatastoreSettings = async () => {
   tableSection.appendChild(tableTitle);
 
   const tableList = document.createElement('div');
-  tableList.style.cssText = 'display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;';
+  tableList.className = 'table-list';
 
   const tableDataContainer = document.createElement('div');
-  tableDataContainer.style.cssText = 'margin-top: 16px; max-height: 400px; overflow: auto; border: 1px solid var(--border-primary); border-radius: 6px;';
+  tableDataContainer.className = 'table-data';
 
   // Helper: format timestamp if value looks like ms epoch
   const formatTimestamp = (value) => {
@@ -3207,12 +3206,12 @@ const renderDatastoreSettings = async () => {
     const groupContainer = document.createElement('div');
 
     const groupLabel = document.createElement('div');
-    groupLabel.style.cssText = 'font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;';
+    groupLabel.className = 'table-group-label';
     groupLabel.textContent = group.label;
     groupContainer.appendChild(groupLabel);
 
     const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px;';
+    btnRow.className = 'table-group-buttons';
 
     for (const tableName of group.tables) {
       const count = tableCounts[tableName] || 0;
@@ -3229,7 +3228,7 @@ const renderDatastoreSettings = async () => {
         btn.variant = 'primary';
 
         // Load table data
-        tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Loading...</div>';
+        tableDataContainer.innerHTML = '<div class="table-message">Loading...</div>';
         try {
           const result = await api.datastore.getTable(tableName);
           if (result && result.success && result.data) {
@@ -3239,20 +3238,20 @@ const renderDatastoreSettings = async () => {
             const desc = tableDescriptions[tableName] || '';
             let html = '';
             if (desc) {
-              html += `<div style="padding: 10px 12px; font-size: 12px; color: var(--text-muted); background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);">${desc}</div>`;
+              html += `<div class="table-description">${desc}</div>`;
             }
 
             if (rows.length === 0) {
-              html += '<div style="padding: 16px; color: var(--text-muted);">Table is empty.</div>';
+              html += '<div class="table-message">Table is empty.</div>';
               tableDataContainer.innerHTML = html;
               return;
             }
 
             const columns = ['id', ...Object.keys(rows[0][1]).filter(c => c !== 'id')];
-            html += '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
+            html += '<table>';
             html += '<thead><tr>';
             columns.forEach(col => {
-              html += `<th style="text-align: left; padding: 8px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); font-weight: 600; color: var(--text-primary); position: sticky; top: 0;">${col}</th>`;
+              html += `<th>${col}</th>`;
             });
             html += '</tr></thead><tbody>';
 
@@ -3265,22 +3264,22 @@ const renderDatastoreSettings = async () => {
                 if (tsFormatted) display = tsFormatted;
                 if (display.length > 120) display = display.substring(0, 120) + '...';
                 const escaped = display.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                html += `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-light, var(--border-primary)); color: var(--text-secondary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escaped}">${escaped}</td>`;
+                html += `<td title="${escaped}">${escaped}</td>`;
               });
               html += '</tr>';
             });
 
             if (rows.length > 100) {
-              html += `<tr><td colspan="${columns.length}" style="padding: 8px 10px; color: var(--text-muted); text-align: center;">Showing first 100 of ${rows.length} rows</td></tr>`;
+              html += `<tr><td class="table-footer" colspan="${columns.length}">Showing first 100 of ${rows.length} rows</td></tr>`;
             }
 
             html += '</tbody></table>';
             tableDataContainer.innerHTML = html;
           } else {
-            tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Failed to load table data.</div>';
+            tableDataContainer.innerHTML = '<div class="table-message">Failed to load table data.</div>';
           }
         } catch (e) {
-          tableDataContainer.innerHTML = `<div style="padding: 16px; color: var(--error-text, #dc2626);">Error: ${e.message}</div>`;
+          tableDataContainer.innerHTML = `<div class="table-message error">Error: ${e.message}</div>`;
         }
       });
 
@@ -3297,8 +3296,7 @@ const renderDatastoreSettings = async () => {
 
   // Refresh button
   const refreshSection = document.createElement('div');
-  refreshSection.className = 'form-section';
-  refreshSection.style.marginTop = '24px';
+  refreshSection.className = 'form-section spaced-above';
 
   const refreshBtn = document.createElement('peek-button');
   refreshBtn.variant = 'secondary';
