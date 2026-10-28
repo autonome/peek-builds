@@ -9,14 +9,23 @@ depends-on: []
 User-requested design work, manually owned by the `folknet-peeklets` research track.
 Keep disabled: draft contracts, not authorization to run remote code or spend credits.
 
+**Bez is reference only**, educational documentation and pointers, not an implementation
+prerequisite. Model access and optional execution target the user's Folknet independently;
+never Bez infrastructure, keys, checkout, network, machines, inventory or scheduler.
+No wrapping specialized lane scripts, Dagu/Forgejo job pipeline or coordinator/writer.
+
 ## Completion
 
 Research deliverables now exist in `docs/design/folknet-peeklets.md`,
 `specs/folknet-peeklet-models.md` and `specs/folknet-peeklet-jobs.md`.
 Current code evidence, wire-neutral contracts, security/cost/lifecycle limits,
-staged gates and future tests are recorded there. Public GitHub/npm discovery did
-not establish canonical Folknet documentation; provider conformance remains gated,
-not replaced by guessed endpoints or guarantees. Keep all three specs disabled.
+staged gates and future tests are recorded there. Bez reference review now supplies
+an explicit evidence classification and independent-integration boundary; its deployment
+choices are not Folknet guarantees or Peek dependencies. Earlier public GitHub/npm
+discovery and the supplied Bez references did not establish primary Folknet contracts.
+Provider conformance remains gated, not replaced by guessed endpoints or guarantees.
+Resource admission is mandatory; monetary accounting applies only when actually metered,
+not through invented prices for owned compute. Keep all three specs disabled.
 See `handoff.md` for the docs-only verification result and remaining decisions.
 
 ## Goal
@@ -49,7 +58,8 @@ provider job-submit credentials and user data permissions are distinct authoriti
 - If canonical Folknet docs/SDK contracts cannot be located, list exact unknowns,
   requested references and contract-conformance gate. Never invent endpoints,
   authentication, wire schemas, pricing, arbitrary-code execution or cancellation
-  guarantees. User has been asked for a canonical API/jobs reference.
+  guarantees. Record missing canonical API/jobs references without blocking drafting
+  or asking for a live-session decision.
 
 ## Required design decisions
 
@@ -57,7 +67,8 @@ Model access: catalogue/task types (not chat-only assumptions), request/streamin
 contract, model-ID and parameter validation, capabilities resolved and checked in
 main/server, profile credentials outside renderer, explicit data export consent,
 per-call/per-tile/per-profile hard bounds and aggregate budgets/concurrency,
-usage/cost reservations and reconciliation, unknown-price/unbounded-cost refusal,
+resource reservations and reconciliation in every mode, monetary reservations and
+unknown-price/unbounded-cost refusal only when metered, explicit unknown-billing refusal,
 cancellation/timeout/unload/profile-switch/suspend behavior, response backpressure,
 redacted diagnostics, no silent provider fallback or retry double billing. Clarify
 which limits are truly provider-enforced versus local estimates; no promises of

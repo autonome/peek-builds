@@ -11,6 +11,12 @@ Design contract: `docs/design/folknet-peeklets.md` §§1–5, 7–8. Provider pr
 unverified. Empty dependency list means no verified missing repository prerequisite,
 not that provider work is ready. Do not enable until the gates below are resolved.
 
+**Bez is reference only.** This is an independent Peek-owned broker for the user's
+Folknet, not a wrapper around Bez's gateway, inventories, lanes or coordinator/writer.
+No Bez installation, keys, checkout, network, machines or scheduler is required. See
+the evidence classification in design §1: deployment examples are not platform facts;
+no primary Folknet contract has yet been verified.
+
 ## Scope and approach
 
 First deliver an offline/fake-backed, profile-scoped broker with generic `models`
@@ -21,13 +27,20 @@ renderer IPC. No remote jobs, autonomous tools, datastore mutations, provider fa
 arbitrary fetch proxy, generic agent loop or hosted service in this increment.
 
 - Extend existing `packages/capabilities/index.js` and `index.d.ts`: explicitly validate
-  bounded allowlisted model/task pairs and finite input/output/time/concurrency/charge
-  limits; resolve without granting merely because requested. Reproject server CommonJS
-  using existing codegen/check-freshness. Do not duplicate capability logic.
+  bounded allowlisted model/task pairs and finite input/output/time/concurrency/resource
+  limits, with additional charge limits only for metered accounts; resolve without
+  granting merely because requested. Reproject server CommonJS using existing
+  codegen/check-freshness. Do not duplicate capability logic.
+- Configure independent operator/destination/adapter/account/capability evidence in
+  trusted per-profile settings, not Bez files or aliases. No hardcoded hosts, model
+  aliases, capacities or pricing. Discovery is approved adapter-specific contact, not
+  assumed REST routes or LAN scanning. Separate catalogue membership, readiness,
+  permission and capacity; expire stale evidence. Readiness inference probes require
+  full admission/consent, never automatic background model calls.
 - Add broker-owned contact/export consent and account settings/vault ports. Feature
   `secrets` authority must not read account credentials. Fail closed on unavailable
   secure storage; never use feature settings for plaintext auth.
-- Register paid IPC with explicit capability and READY/VISIBLE states, strict deep
+- Register paid/remote IPC with explicit capability and READY/VISIBLE states, strict deep
   request validation beyond the gate's shallow schema, owner-bound IDs, profile-ready
   and startup/contact/export/budget checks. Core/trustedBuiltin callers do not bypass.
 - Implement the draft request/events contract in the design: task-discriminated schemas,
@@ -36,12 +49,15 @@ arbitrary fetch proxy, generic agent loop or hosted service in this increment.
   tasks share bounded result and terminal envelopes. Task support is discovered and
   verified, not promised from generic types; embeddings/classifiers/images are not
   forced through chat messages.
-- Durable integer-currency ledger atomically reserves worst-case charges across
-  call/install/profile/account and all concurrent processes. Bound rates, queue and
-  concurrency. Unknown-price/unbounded-cost requests fail before contact. Retain
-  uncertain reservations through restart/rollover until authoritative reconciliation.
-- Provider adapter supports wire-neutral catalogue/pricing, start, events/result,
-  cancellation and receipt lookup/reconciliation operations; mark unsupported features
+- Durable resource ledger atomically reserves finite quotas across call/install/profile/
+  account and all concurrent processes. Bound rates, queue and concurrency. Explicit
+  billing classification: operator-attested `unpriced-owned` needs no invented monetary
+  catalogue or currency; `metered` additionally requires integer-currency worst-case
+  charge reservations, fresh prices and finite ceilings; `unknown` refuses submission.
+  Missing prices never imply unpriced. Retain uncertain resource/charge reservations
+  through restart/rollover until safe reconciliation; unknown usage stays unknown.
+- Provider adapter supports wire-neutral capabilities/catalogue (pricing if metered),
+  start, events/result, cancellation and receipt lookup/reconciliation operations; mark unsupported features
   explicitly. Persist intent before send. Never automatically retry an ambiguous paid
   call, change model or refund a timeout based solely on local observation.
 - Implement main-owned deadlines and lifecycle matrix from the design. Unload cancels
@@ -54,16 +70,20 @@ arbitrary fetch proxy, generic agent loop or hosted service in this increment.
   Diagnostics contain only redacted IDs/metrics; output stays untrusted data.
 
 Example capability and call in design §3 are draft API examples, not existing provider
-protocol. First test fixture uses invented **fake** model ID `fake:text-v1`, a finite
-fake price function and known usage, never a real Folknet ID or endpoint.
+protocol. Offline fixtures use invented **fake** model ID `fake:text-v1`, one attested
+unpriced account and one metered account with a finite fake price function and known
+usage, never a real Folknet ID or endpoint. Other tasks are extension points only;
+Bez's text-completion examples establish no general model/task availability.
 
 ## Provider / deployment gates
 
 1. Establish canonical provider identity, versioned docs and SDK provenance; record
    tasks, schemas, framing, auth scopes, model revisions, usage and billing semantics.
-2. Prove finite provider-enforced request/resource ceilings and maximum billable charge
-   (including cancel/failure). Local token estimates do not qualify as hard budgets.
-   No live paid path if unknown; estimate-only mode needs separate approval/spec.
+2. Prove finite provider-enforced request/resource ceilings for every mode. Establish
+   owned/unpriced allocation from operator terms or, if metered, maximum billable charge
+   including cancel/failure. Local token estimates do not qualify as hard budgets.
+   No live path with unknown billing/resource bounds; metered estimate-only mode needs
+   separate approval/spec. No commercial catalogue required for unpriced owned compute.
 3. Document cancellation limits, idempotency/dedupe window, lost-response lookup,
    retention/training/region/operator trust, deletion and account-wide cap limitations.
 4. Approve target OS credential custody and explicit contact/export/spend test policy.
@@ -95,7 +115,9 @@ Offline automated acceptance matrix (to implement, **not run by this design trac
 - IPC tests: stolen/cross-tile IDs, stale grant, LOADING caller, missing profile gate,
   core bypass attempt; no send before consent and no contact from notice/profile picker.
 - Ledger tests: concurrent windows/processes, queue overflow, per-call/install/profile/
-  account aggregate ceilings, stale/unknown pricing, currency mismatch, reservation crash
+  account aggregate resource ceilings; attested unpriced works without prices but never
+  without quotas, unknown billing refuses, missing price cannot select unpriced; metered
+  stale/unknown pricing, currency mismatch, reservation crash
   points, duplicate/conflicting receipts, unknown usage, rollover and external-account
   usage disclosure. No reservation release on mere timeout/cancel request.
 - Fake stream tests: out-of-order/duplicate/malformed chunks, blocked consumer, bounded

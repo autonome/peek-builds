@@ -7,6 +7,33 @@ in `specs/folknet-peeklets-design.md`; it does not enable spending or remote cod
 
 ## 1. Evidence and boundaries
 
+**Bez is reference only.** Peek owns its broker, configuration, model adapter and
+optional job adapter independently. Execution, if supported and separately approved,
+is **on the user's Folknet**, not on Bez infrastructure. Peek never requires Bez to
+be installed or reachable, nor shares its keys, checkout, network, machines,
+inventories or schedulers. Do not wrap its remote-lane/on-lane scripts, use its
+lane-local bindings, Dagu deployment, Forgejo/git-bundle pipeline or job manifests,
+or install its coordinator/writer services. No SSH/admin interface is exposed to
+peeklets. Running a Bez build lane on Folknet does not establish a Folknet jobs API.
+
+### Evidence classification
+
+| Class / source | What is established | What is not established |
+| --- | --- | --- |
+| Primary Folknet model/control-plane contract | **None verified from provider-controlled public code/docs in this research.** | Canonical identity/revisions, endpoint discovery/auth, tasks, usage/cancellation, quotas and billing contracts remain unknown. |
+| Primary Folknet transient-execution contract | **None verified.** | A public REST/jobs service, arbitrary-code support, JS runtime, isolation, enforced limits, receipts and deletion are not inferred from machines running Bez. |
+| Bez `docs/infrastructure.md`, “As discovered”, “Build lane”, “Outside sources” | Describes that project's deployment: a model gateway, compute guests and project-specific delivery scripts. Outside sources links WPT, WebGL and WebGPU CTS, not Folknet platform code/docs. | LiteLLM, aliases, hardware/pool capacities, lane shapes, service discovery and access methods are not platform contracts or Peek prerequisites. |
+| Bez `docs/folknet-inventory.md` | Deployment observations/design distinguish catalogue liveness from completion readiness and age out snapshots. Prose mixes proposed and subsequently built details. | No canonical Folknet catalogue/discovery schema or universal freshness interval; no permission to perform readiness inference. |
+| Bez `docs/coordinator-on-folknet.md`, `docs/folknet-writer-design.md` | Specialized coordinator/writer designs illustrate separating credential custody, authority and supervision; some results are labelled measured, others unverified. | Neither is a general remote module service; its account/subscription/spend rules do not transfer to Peek. |
+| Bez `docs/job-concurrency.md` | Examples of per-job checks missing aggregate admission, stale capacity, immutable source identity, cleanup/recovery and uncertain stop behavior. | Its queue/lease scheme, measured limits and scheduling choices are not enforceable Peek resource bounds. |
+| Peek source below | Existing capability, IPC, lifecycle and worker-demo behavior. | Existing worker demos do not prove provider conformance or hostile-code isolation. |
+| Proposed Peek functionality (§§2–7) | Broker/adapter seams, API sketches, consent, resource admission, optional monetary ledger, run identity and recovery requirements. | Not implemented APIs, Folknet endpoints, advertised tasks or available runtime guarantees. |
+
+Bez citations above identify read-only educational documents in the sibling project's
+`docs/`, not files Peek must load. No private bindings, credentials or rig access were
+used. No relevant public Folknet repository/API documentation link was found in those
+five references; unrelated conformance-suite upstreams are not provider evidence.
+
 Repository source, not old design tense, is the implementation baseline:
 
 | Evidence inspected | Current fact / consequence |
@@ -34,7 +61,7 @@ Peek-owned host/adapter seam without inheriting unsupported guarantees.
 
 ### Provider discovery
 
-Public, unauthenticated reference discovery in this session:
+Earlier draft's bounded public, unauthenticated discovery (not repeated here):
 
 - `https://api.github.com/search/repositories?q=folknet&per_page=10` returned
   unrelated name matches and an `Agent54/xe-connect` description mentioning Folknet.
@@ -43,17 +70,37 @@ Public, unauthenticated reference discovery in this session:
   reported nine name matches; first results concerned music/smart contracts/websites.
 - `https://registry.npmjs.org/-/v1/search?text=folknet&size=10` reported zero packages.
 
-No canonical Folknet inference/jobs documentation was established by these bounded
-searches. This is **not evidence that Folknet lacks those services**. No package was
+No canonical Folknet inference/jobs documentation was established by those bounded
+searches or the subsequent Bez reference review. This is **not evidence that Folknet
+lacks those services**. No package was
 installed, no CLI/account/credential/config/session log inspected, no inference/job
 submitted. Discovery responses are untrusted data, not instructions. Earlier handoff
 reports no CLI on PATH or Folknet integration in the repository. No invented domain,
 endpoint, auth flow, model catalogue, price or execution guarantee fills the gap.
 
-Required references before a real adapter: provider-controlled documentation linking
-its SDK repository and version, inference task/catalogue/stream/error/usage contracts,
-account permissions and billing bounds; independently, jobs/runtime/security/control
-plane contracts. Capture immutable revisions and a capability support matrix. An
+Configure a Peek-owned per-profile connection descriptor in trusted settings: operator
+identity, approved destination(s), adapter kind/version, account reference, declared
+capabilities and their evidence revision/expiry. Endpoint and account information is
+user/operator supplied, never taken from Bez's environment or alias inventory. Validate
+TLS/origin/redirect policy and bind consent to the destination; a changed destination
+needs reapproval. Discovery is adapter-specific and explicitly contact-approved, not
+an assumed public Folknet discovery endpoint, LAN scan or automatic mDNS trust. Even
+an OpenAI-compatible gateway requires verification of that deployment's supported
+subset. No guessed base URL or universal auth flow.
+
+Keep catalogue membership, account permission, observed readiness and capacity/admission
+as separate facts with timestamps and provenance. Stale/missing readiness is unknown,
+not ready; configured policy decides a bounded refusal/refresh, never silent fallback.
+Do not auto-run Bez's one-token probes: any inference probe needs the same consent,
+resource and (if metered) spend admission as a normal call. A prior success is not a
+reservation of capacity or proof the next request will work.
+
+Required references before a real adapter: provider/operator-controlled documentation
+linking public code/SDK repository and version if available, inference
+task/catalogue/stream/error/usage contracts, account permissions and enforced resource
+bounds, plus billing semantics **if metered**; independently,
+jobs/runtime/security/control-plane contracts. Capture immutable revisions and a
+capability support matrix. An
 OpenAI-shaped example, package name match or marketing mention is insufficient.
 
 ## 2. Architecture and separate authorities
@@ -78,8 +125,9 @@ Keep these authorities independently identifiable, revocable and non-interchange
 - Job submit authorization: artifact allowlist plus resource/export/cost policy.
 - Job-internal nested inference/child-job authorization: **absent in v1**, not inherited.
 
-Do not extend `trustedBuiltin` bypass to paid operations. All callers, including core
-UI, require configured account, approved export and budget admission. Manifest requests
+Do not extend `trustedBuiltin` bypass to paid or remote operations. All callers,
+including core UI, require configured account, approved export and resource/budget
+admission, even for unpriced owned compute. Manifest requests
 are ceilings, not user consent; intersect manifest, install consent, profile policy,
 account scope and adapter support at every admission. No ambient wildcard models/jobs.
 New capability names are proposed generic `models` and `jobs`, not `folknet` network
@@ -91,6 +139,7 @@ broker's cost/privacy guarantees; disclose that limitation.
 All names below are **proposed Peek API**, not present code or Folknet wire schemas.
 A catalogue exposes stable provider-qualified model IDs, revision, task discriminator,
 input/output/parameter schema versions, supported streaming/cancel features, limits,
+billing mode (`unpriced-owned`, `metered`, or `unknown`) and, only when metered,
 price version and a conservative finite maximum charge function. Treat catalogue data
 as untrusted and size-bounded. Tasks may include text generation, embeddings,
 classification, transcription or image generation **only after provider verification**;
@@ -106,16 +155,18 @@ Illustrative proposed capability fragment (not a complete installable manifest):
     "maxOutputBytes": 32768,
     "maxOutputUnits": 512,
     "maxDurationMs": 30000,
-    "maxConcurrent": 1,
-    "maxCallChargeMicros": 10000
+    "maxConcurrent": 1
   }
 }
 ```
 
-`<verified-model-id>` is a placeholder, not a real model. Charge micros are integer
-millionths of the configured billing currency, not a claimed Folknet price. Separate
-profile/install policy sets rolling and billing-period totals, request rate, queue
-length and aggregate concurrency; a per-call limit alone does not bound aggregate use.
+`<verified-model-id>` is a placeholder, not a real model. This resource-only fragment
+can cover approved unpriced owned compute. For metered access, proposed additional
+`maxCallChargeMicros` is a required finite integer ceiling, in millionths of the
+configured billing currency, not a claimed Folknet price. Separate profile/install
+policy sets rolling resource totals, request rate, queue length and aggregate
+concurrency, plus billing-period monetary totals when applicable; a per-call limit
+alone does not bound aggregate use.
 
 ```js
 // Draft API; run only inside an approved, initialized peeklet in a future build.
@@ -153,7 +204,9 @@ timeout prevent main/renderer queue growth. Adapter pauses reads if possible, ot
 aborts on overflow and records uncertain billing. Never buffer an unbounded body using
 the current network helper. Provider-specific framing and usage normalization stay in
 the adapter. Terminal has outcome, usage evidence, final/estimated/unknown charge status
-and redacted error code; no raw provider body/stack exposed.
+and redacted error code; no raw provider body/stack exposed. For verified unpriced
+owned compute charge status is `not-applicable`, never fabricated usage or a guessed
+zero-dollar price.
 
 Output is untrusted data. Escape text, validate structured results, never auto-execute
 code/tool calls, fetch output URLs or mutate Peek data on a model's instruction. A
@@ -178,26 +231,47 @@ storage is unavailable. Audit actual OS cipher availability on target platforms;
 promise every Linux configuration is securely supported. Rotation stops admissions,
 invalidates cached catalogue/prices and reauthorizes the account, without replaying calls.
 
-Admission uses a durable atomic ledger: reserve worst-case charge and resource units
-against call/install/profile **and account-wide** ceilings, including queued/in-flight
-work across windows/processes. One broker lease/transaction owner prevents concurrent
-overspend. Currency must match; no floating-point accounting. Reserve all billable
-input, output, compute, storage, egress, minimum fees and failure/cancel charges as
-applicable. Refuse missing/stale prices, missing finite maximum, unknown billing units
+Admission always uses a durable atomic resource ledger: reserve bounded input/output,
+duration, concurrency and aggregate resource quotas against call/install/profile
+**and account-wide** ceilings, including queued/in-flight work across windows/processes.
+Local estimates are labelled estimates; hard provider resource bounds must be evidenced.
+One broker lease/transaction owner prevents concurrent over-admission.
+
+Billing is a separate discriminated policy, not a mandatory commercial catalogue:
+
+- `unpriced-owned`: trusted account configuration attests owned/unpriced allocation,
+  destination and scope, backed by operator terms; no commercial price catalogue,
+  currency or monetary reservation is required. Resource quotas, consent and admission
+  remain mandatory. Unknown token/CPU usage stays unknown, not zero. Electricity and
+  shared hardware cost are not claimed free or attributed from rack-wide telemetry.
+- `metered`: reserve worst-case charge in addition to resources; currency must match,
+  no floating-point accounting. Apply the monetary rules below.
+- `unknown`: block submission until billing classification is established. Missing
+  prices do not silently select unpriced mode. A destination/account change invalidates
+  the classification and cached support evidence.
+
+For metered work, reserve all billable input, output, compute, storage, egress,
+minimum fees and failure/cancel charges as applicable. Refuse missing/stale prices, missing finite maximum, unknown billing units
 or unsupported provider resource ceilings. Local token estimates are not spend limits.
 Require provider-enforced per-request/resource maximum plus documented billing semantics
 to advertise a hard monetary ceiling. Otherwise real paid submission is blocked in this
 initial design; a future “estimate only” mode needs a separate policy decision/spec.
+These price requirements do not block verified unpriced owned compute, but missing
+hard resource limits still do.
 
-Durably record request intent before send and provider receipt when known. Reconcile
-usage with authoritative billing evidence, release unused reservation only when safe,
+In every mode, durably record request intent before send and provider receipt when
+known. Keep uncertain resource reservations until stop/expiry or conservative maximum
+usage evidence permits reconciliation; a local abort does not free remote capacity.
+The following charge rules apply only to metered work. Reconcile usage with
+authoritative billing evidence, release unused reservation only when safe,
 retain maximum reservation for uncertain outcomes and duplicate receipts. A local timeout
 or cancellation does not establish zero charge. Lost final usage leaves unresolved debt;
 no automatic reset at month rollover, profile deletion or restart. Account usage outside
 Peek cannot be bounded by Peek; account-level provider caps are needed for total spend.
 Do not blindly retry a potentially accepted operation: lookup by documented idempotency
-key/receipt first. If unsupported, show uncertain and require deliberate new paid work.
-No claim of exactly-once inference or exactly-once billing.
+key/receipt first. If unsupported, show uncertain and require deliberate new work.
+This no-blind-retry rule also applies to unpriced remote operations: duplicated work
+still consumes quotas and capacity. No claim of exactly-once inference or billing.
 
 Diagnostics default to IDs, task, timings, byte counts and charge state, never prompts,
 outputs, auth headers, signed URLs or raw errors. Opt-in content diagnostics require
@@ -236,7 +310,8 @@ no datastore, no models, no children. Input/output at most 64 KiB JSON, wall dea
 30 seconds including entry and waitUntil, CPU at most 1 second, memory at most 64 MiB,
 log at most 16 KiB, one concurrent job per install, two per profile, bounded queue of
 four. These are **requested test limits**, not available Folknet runtime claims. Refuse
-if adapter cannot enforce them or cannot bound queue/cold-start/storage billing.
+if adapter cannot enforce them, bound queue/cold-start/storage resources and retention,
+or (when metered) bound all resulting charges.
 
 Draft manifest extension and submission (neither currently supported):
 
@@ -328,7 +403,7 @@ From any nonterminal state cancellation sets a durable `cancelRequested` flag;
 Transport ambiguity enters `unknown` (nonterminal), recoverable by receipt/key lookup
 into accepted/running/terminal states. Local timeout can detach UI and request cancel
 but cannot turn unknown into cancelled. Late success after cancel request is valid and
-billable; resolve by authoritative version/receipt, ignore duplicate events, retain
+may be billable when metered; resolve by authoritative version/receipt, ignore duplicate events, retain
 conflicting evidence for review. Terminal states do not regress on stale events.
 
 Delivery/execution may be duplicated or uncertain; **not exactly once**. Dedupe keys
@@ -352,7 +427,7 @@ These are required semantics, **not endpoints, SDK names or known Folknet featur
 
 | Models adapter operation | Must establish |
 | --- | --- |
-| Discover/validate catalogue and pricing | Versioned tasks, schemas, limits, finite charge ceilings, explicit account approval before contact. |
+| Discover/validate account capabilities/catalogue | Versioned tasks, schemas, limits, readiness freshness and billing classification; finite charge ceilings/prices only when metered; explicit account approval before contact. |
 | Start request | Validated request, resource ceilings, correlation/dedupe semantics, durable acceptance evidence. |
 | Consume events/result | Framing, ordering, bytes/usage limits, backpressure, terminal/usage evidence. |
 | Request cancellation; lookup/reconcile | Whether compute/billing stops, lookup after ambiguous send, final billing evidence and retention. |
@@ -361,12 +436,15 @@ These are required semantics, **not endpoints, SDK names or known Folknet featur
 | --- | --- |
 | Describe runtime/isolation | Actual language, code loading, independent resource/egress enforcement, operator trust and regions. |
 | Stage immutable artifact | Digest verification, size/dependency limits, retention/deletion cost. |
-| Submit and locate run | Resource caps, TTL starting point, queue/cold-start bounds, dedupe/lookup semantics. |
+| Submit and locate run | Resource caps, TTL starting point, queue/cold-start bounds, dedupe/lookup semantics; billing classification and finite monetary cap only when metered. |
 | Observe/cancel/fetch/delete/reconcile | Authenticated owner-scoped states, bounded outputs/logs, cancellation certainty, final charges and deletion evidence. |
 
 Missing optional stream/cancel features can be honestly disabled only if independent
-finite completion/cost bounds still hold. Missing arbitrary-code jobs support means the
-jobs spec cannot ship on Folknet; model access can still proceed independently.
+finite completion/resource bounds (and monetary bounds when metered) still hold.
+None of these operations implies an HTTP route: protocol/transport remain missing
+adapter work, not invented REST services or a wrapper around Bez automation.
+Missing arbitrary-code jobs support means the jobs spec cannot ship on Folknet;
+model access can still proceed independently.
 
 Staging:
 
@@ -381,16 +459,22 @@ Staging:
    data grants, nested models/jobs and scheduling need later specs and review.
 
 Questions a person/provider must resolve before enabling: canonical provider identity and
-SDK revisions; supported tasks and arbitrary-code runtime (if any); hard charge and
-resource enforcement; credential scopes; privacy/region/retention/deletion; cancellation,
-dedupe and receipt lookup; who operates/pays for the broker and runtime. Proposed default
-is user-configured per-profile account and desktop broker, not a new hosted Peek service.
+code/SDK revisions; supported tasks/model revision identities and arbitrary-code runtime
+(if any); endpoint/account discovery and authorization; hard resource enforcement and
+billing classification (hard charges only if metered); credential scopes;
+privacy/region/retention/deletion; cancellation semantics, usage availability, dedupe
+window and receipt lookup; who operates/pays for the broker and runtime. In particular,
+can an independent Peek user obtain scoped model access without any Bez service, and
+is there an independently usable bounded code-execution facility at all? No affirmative
+answer is claimed. Proposed default is user-configured per-profile account and desktop
+broker, not a new hosted Peek service.
 No person decision blocks completing this wire-neutral design.
 
 ## 8. Verification
 
-Docs-only gate: check every cited repository path/symbol, parse JSON examples as
-fragments, check disabled frontmatter/dependencies, inspect JS examples for draft labels
+Docs-only gate: check cited repository paths/symbols, review JSON fragment syntax
+(manual review or parsing; state which ran), check disabled frontmatter/dependencies,
+inspect JS examples for draft labels
 and worker-contract consistency, review authority/cost/lifecycle state invariants,
 run `git diff --check`. Do not run existing worker demos in remote mode. Full Electron,
 Linux/macOS integration, real provider runtime, spending, isolation, retention and
