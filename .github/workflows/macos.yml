@@ -18,11 +18,13 @@ name: macOS desktop build
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "!v*-signing-candidate.*"]
   workflow_dispatch:
 
 jobs:
   build:
+    # Also block manual dispatch on reserved tags: never publish candidates here.
+    if: ${{ !(github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(github.ref_name, '-signing-candidate.')) }}
     runs-on: macos-15
     timeout-minutes: 45
 

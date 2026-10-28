@@ -25,10 +25,15 @@ Delivered provisioning component: `scripts/setup-macos-signing-secrets.sh`, fake
 tests in `scripts/setup-macos-signing-secrets.test.cjs`, and
 [usage instructions](../docs/macos-signing-secrets.md). The offline policy and
 adapter-driven orchestration in `scripts/macos-signing.cjs` and its pure tests
-are also implemented. This is **not an executable signing integration**: the
-production macOS process/filesystem adapter, candidate workflow and release-only
-builder configuration below remain the current implementation goal; unsigned behavior
-must stay unchanged outside explicitly named signing-candidate tags/runs.
+are also implemented. The production process/filesystem adapter, protected manual
+candidate workflow, release-scoped builder override and minimal entitlements are
+now implemented with offline fake-tool/schema/workflow tests. **No live signed
+candidate has run**. See the readiness audit and candidate runbook for remaining
+human/macOS gates. One deliberate implementation difference is adapter-owned
+bounded notarization/log inspection instead of the builder's opaque built-in
+notarizer; builder still signs its dir target before mandatory app notarization,
+stapling and final archive creation. Public signed publication remains disabled;
+unsigned behavior is unchanged outside reserved signing-candidate tags/runs.
 
 The user has requested resuming GitHub signing. Metadata-only checks found all seven
 API-mode secret names in `macos-release-signing`, a required-reviewer protection and
@@ -74,7 +79,10 @@ Before operating a signed candidate, record owner approval for:
   verify how it merges with the base `mac.identity: null` before relying on it.
   Require `forceCodeSigning`, Developer ID distribution, hardened runtime and
   notarization. Preflight exactly one complete auth mode because `notarize: true`
-  alone can skip silently on missing auth in builder 26.15.6.
+  alone can skip silently on missing auth in builder 26.15.6. Implementation uses
+  `mac.notarize: false` only inside the generated override: mandatory adapter-owned
+  app/DMG notarization replaces it, retaining IDs, bounding waits and inspecting
+  logs. This is not an option to skip notarization or upload unsigned artifacts.
 - Keep neutral policy/orchestration in `scripts/macos-signing.cjs` plus pure-policy
   tests; add the production process/filesystem adapter and fake-tool regression
   tests in `scripts/macos-signing-adapter.cjs` and its test file. Explicitly
@@ -108,7 +116,10 @@ Before operating a signed candidate, record owner approval for:
 - Keep afterPack build-info/Info.plist writes before signing. Replace hex
   `CFBundleVersion` with the approved valid numeric build version; keep full SHA
   in `PeekBuildCommit` and JSON. Fail signed-mode stamping if invalid/missing.
-- Built-in app signing/notarization/stapling before DMG and ZIP creation. Separately
+- App signing/notarization/stapling before DMG and ZIP creation. The original
+  built-in-notarization proposal is implemented using builder dir-target signing
+  plus explicit adapter-owned app submission/log/stapling, because the locked
+  built-in helper does not expose IDs/logs or a bounded wait. Separately
   sign (if selected), notarize and staple final DMG. Explicitly require Accepted
   status and inspect logs. Verify final ZIP has stapled app; never staple a ZIP.
   No edits to signed app payload after sealing and no checksum/publication until

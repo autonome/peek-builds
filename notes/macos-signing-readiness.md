@@ -1,19 +1,87 @@
 # macOS Developer ID signing readiness
 
-Status: **manual candidate-only implementation approved; signing remains disabled**.
-The user approved a candidate-only path and requested the local gh provisioning
-script. The executable [setup script and usage guide](../docs/macos-signing-secrets.md)
-are implemented with offline fake-gh tests. An offline signing policy/orchestration
-module and tests now exist too (see below). Candidate workflow and production
-macOS signing integration are still unimplemented. The spec stays `enabled: false` to prevent a duplicate
-writer. No account/environment prerequisites have been verified. This is not
+Status: **executable candidate integration implemented; no live candidate run**.
+The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral policy,
+production adapter and manual candidate workflow have offline tests. The spec
+stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
+context reports all seven API secret **names**, reviewer `autonome` (self-review
+allowed), and environment tag policy `v*` in `macos-release-signing`. Values,
+credential validity, immutable-tag rules and clean-Mac acceptance remain unverified. This is not
 authorization for the agent to enroll, spend money, change accounts/secrets, sign
 a live build or publish a release. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
 
-## Offline policy/orchestration layer (not a runnable candidate)
+## Executable candidate path (offline verified, macOS acceptance pending)
+
+`.github/workflows/macos-signing-candidate.yml` is manual-only, tag-only and gated
+by `macos-release-signing`. It checks the reserved `v*-signing-candidate.N` name,
+full expected source SHA, event SHA and tag's peeled commit. Both workflow and
+adapter require GitHub's protected-ref flag; owner verification that the tag rules
+actually prevent updates/deletion is still required. Checkout is detached
+at the event SHA, without persisted credentials. Actions are full-SHA pinned,
+permissions are `contents: read`, and installation/build/tests run before secrets
+are introduced. Both automatic and manual unsigned workflow runs exclude the
+reserved tag namespace. No public publisher or publication credentials are present.
+GitHub artifacts are candidate downloads for repository readers, **not a public
+release or a promise of private storage**.
+
+`scripts/macos-signing-adapter.cjs` supplies real bounded process/filesystem
+operations to the existing `runCandidate` policy. It imports one exact expected
+identity into a random-password temporary keychain, validates/stores notary auth
+there, uses the verified certificate fingerprint (builder rejects full-name
+Developer ID prefixes), and passes only keychain/profile metadata to the builder
+child. Scratch/credentials/config/copies are outside the checkout. It restores the
+original search list even after partial preparation; SIGTERM/SIGINT abort the
+active child then take the same cleanup path. Failed unmounts block success and
+must not recursively delete a still-mounted volume. Hard termination relies on
+hosted-VM disposal; this is not a self-hosted runner design.
+
+The release-only override merges with the base `identity: null` using the locked
+builder's actual merge implementation (covered by schema/merge tests), requires
+`forceCodeSigning`, distribution identity and hardened runtime. Builder performs
+`afterPack` **and signing inside the dir target**; the policy's subsequent
+`signApp` operation verifies that completed seal rather than signing twice. Its
+custom named sign export uses locked osx-sign's native discovery and per-file
+options: JIT-only Electron app/process entitlements, empty Swift/addon/library
+entitlements, no auto-entitlement/provisioning-profile injection. Signed afterPack
+requires clean/full matching commit metadata and an explicitly owner-allocated
+numeric build version; unsigned stamping remains unchanged.
+
+**Deliberate implementation difference from the original built-in-notarize
+proposal:** builder's override has `mac.notarize: false`; the adapter immediately
+submits the signed app ZIP itself, waits at most 20 minutes, inspects Accepted plus
+the matching zero-issue log, then staples/verifies **before any final archive is
+created**. The locked built-in helper hides submission IDs/logs and has an unbounded
+wait, so setting `notarize: true` as well would duplicate submissions without
+meeting the audit/timeout requirement. This is not optional notarization or a
+missing-auth fallback: neutral orchestration mandates both submissions and all
+staple/Gatekeeper checks. Final ZIP uses ditto, final DMG uses hdiutil UDZO with an
+Applications link; DMG is separately signed, notarized and stapled. No extra DMG
+layout dependency or builder archive/notarize fallback is used.
+
+The adapter inventories canonical Mach-O files, rejects symlink escapes, checks
+arm64/signatures/entitlements and resolves dynamic dependencies conservatively
+inside the bundle. It repeats verification on a fresh ZIP extraction and a
+read-only mounted/copied DMG app. Only after both copies and credential cleanup
+pass does it hash/copy exactly two final containers to the upload directory. The
+sanitized receipt includes source/build identity, submission IDs, successful log
+summaries and signature/entitlement/dependency inventories (no raw tool logs).
+The workflow's final upload requires the adapter step's success. Failed verification
+creates no upload directory/receipt and never calls a publisher.
+
+Offline verification exercises the real adapter against filesystem fixtures and
+fake tools, including partial prepare, wrong architecture/authority/team,
+notary failures/timeouts/log issues, symlink escape, extracted-copy failures,
+cleanup and cancellation. It does **not** establish that actual osx-sign discovery,
+notarytool wait JSON, otool output/dyld contexts, keychain access, Gatekeeper or
+Electron 43 works on the selected runner. Those checks, actual credential validity,
+entitlement/build-number owner review, immutable tag creation protections and both
+quarantined/offline clean-Mac downloads remain mandatory. See the operational
+[candidate runbook](../docs/macos-signing-secrets.md#signed-candidate-runbook).
+
+## Neutral policy/orchestration layer
 
 `scripts/macos-signing.cjs` exports `runCandidate` plus shared evidence validators.
 It has no CLI, subprocess, credential-file, upload or publisher implementation.
@@ -49,7 +117,7 @@ Implemented policies:
   raw adapter/tool output; valid submission IDs survive for diagnosis. There is
   no retry/resubmit loop or public publisher operation.
 
-**Adapter boundary still to implement:** real bounded subprocesses and plist/
+**Historical adapter boundary (now implemented above; live validation pending):** real bounded subprocesses and plist/
 Mach-O parsing; inventory discovery including symlinks and dependency resolution;
 credential/keychain preparation and signal-safe cleanup/search-list restoration;
 release-only builder configuration and per-file entitlements; numeric afterPack
@@ -59,8 +127,9 @@ SHA-pinned actions and fail-closed artifact upload. A boolean evidence flag is a
 contract for that trusted adapter, not an independent observation by this module.
 The fake-operation tests prove cleanup is **called**, not that a real keychain,
 mount or credential file is removed. They prove no policy receipt on failure,
-not that an as-yet-unimplemented workflow prevents uploads. Existing unsigned CI,
-builder config, afterPack and startup behavior have not been modified.
+not live GitHub upload enforcement. Adapter/workflow structural tests now cover
+that implementation offline. The only unsigned-CI change is excluding reserved
+candidate tags; unsigned stamping/config and startup behavior are otherwise preserved.
 
 Run the offline gate:
 

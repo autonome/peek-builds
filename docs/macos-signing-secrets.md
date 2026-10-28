@@ -3,8 +3,9 @@
 The user approved **manual implementation of candidate-only signing**. Public
 signed releases are **not** authorized. The automated spec remains `enabled:
 false` so it cannot start a duplicate writer. This script is the provisioning
-component; **the candidate signing workflow is not implemented yet**. Uploading
-secrets does not make the existing unsigned workflow sign builds.
+component; an executable manual candidate workflow and production adapter now
+exist, with offline fake-tool tests but **no live signed candidate validation**.
+Uploading secrets does not make the existing unsigned workflow sign builds.
 
 ## Prerequisites (human-owned)
 
@@ -228,7 +229,99 @@ partial failures, tracing/debug suppression, stdin-only payloads and absence of
 generated credential files. Linux tests cannot certify real macOS signing,
 notarization, Gatekeeper, protected GitHub environment policy or runtime behavior.
 
-Next implementation steps remain the candidate-only workflow and signing policy
-in the [disabled manual-owned spec](../specs/macos-signing-and-notarization.md),
-followed by authorized macOS verification and clean-machine acceptance. Signed
-public publication needs separate human approval after candidate acceptance.
+## Signed candidate runbook
+
+These are **human/coordinator operations after landing and review**, not commands
+run by the implementation agent. No signed job, tag, credential access or public
+publication has been performed. Keep the [spec](../specs/macos-signing-and-notarization.md)
+disabled; there must be no duplicate implementation writer.
+
+1. Review the workflow, adapter, locked dependencies, minimal entitlement plists
+   and numeric build policy. Confirm legal publisher/team/identity/bundle ID,
+   API-key scope/custody and acceptance owner. Review the implementation difference
+   described in [readiness notes](../notes/macos-signing-readiness.md#executable-candidate-path-offline-verified-macos-acceptance-pending):
+   builder signs the dir target, but the adapter—not builder's opaque built-in
+   notarizer—owns bounded app/DMG submission, log inspection and stapling.
+2. Confirm environment `macos-release-signing` actually enforces required reviewer
+   approval on this repository plan. Metadata reports reviewer `autonome`,
+   self-review allowed, tag policy `v*`, and all seven API-mode secret names. This
+   does not validate values or certify protections. Do not change protections or
+   secrets merely to make a run pass. The reviewer approves execution of the
+   selected source and its dependency lifecycle hooks with signing capability.
+3. The owner/coordinator must establish **immutable reserved tags**: protect their
+   creation against untrusted writers and prohibit updates/deletion. Both job and
+   adapter require GitHub's protected-ref flag; **an unprotected tag is skipped**.
+   The flag alone cannot prove that the rule prohibits updates/deletion, so the
+   owner must inspect the rule itself. This track has not read or changed remote
+   tag rules. A tag prefix plus an environment
+   `v*` policy alone does not establish immutability/trust. The workflow binds
+   checkout, event SHA and peeled tag to the expected full commit, never an input
+   checkout ref; a reviewer must independently verify that expected SHA. Do not
+   approve a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag
+   exclusion has landed **before** creating any candidate tag.
+4. Allocate a new tag such as `v0.0.1-signing-candidate.1` at the reviewed landed
+   source commit. Owner allocates a unique numeric `CFBundleVersion`, canonical
+   `major.minor.patch` (major 1–9999, minor/patch 0–99), e.g. `1.0.1`.
+   Keep an allocation record; use a new number/candidate for a rebuild, not a
+   recycled number for different bytes. Full source SHA remains in plist/JSON.
+   This adapter validates numbers but does not allocate them or approve policy.
+5. After the owner has created/pushed the immutable tag, dispatch **on that tag**
+   (not `main` and not this worktree branch), with explicit reviewed source SHA:
+
+   ```sh
+   # Set TAG, SHA and BUILD from the independently reviewed allocation record.
+   gh workflow run macos-signing-candidate.yml --repo autonome/peek-builds \
+     --ref "$TAG" -f expected_source_sha="$SHA" -f build_version="$BUILD"
+   ```
+
+   The workflow must already be present on the default branch for manual dispatch.
+   Review the pending environment deployment, tag object/source, workflow and
+   dependency changes; then the authorized human may approve. Approval gates the
+   entire job. Installation/build/tests execute without signing secrets; only the
+   adapter step receives the seven named API secrets. No other auth mode is wired
+   into this workflow (the adapter's password mode is separately tested).
+6. Require all checks green before downloading anything: imported exact identity,
+   native arm64 inventory, numeric build stamp, app sign/notary/log/staple,
+   ZIP/DMG creation, final DMG sign/notary/log/staple, Gatekeeper and signature /
+   entitlement/dependency verification of staging plus **both extracted copies**,
+   search-list/keychain cleanup and final-byte hashes. A failed gate uploads
+   neither format. Artifact contains exactly one ZIP, one DMG and `receipt.json`,
+   retained seven days. GitHub artifacts are accessible to repository readers;
+   they are candidate artifacts, not a public GitHub/R2/Tangled signed release.
+7. Validate actual macOS tool syntax/output against the selected Xcode, real
+   osx-sign discovery of Resources helpers and framework aliases, per-file
+   entitlements, keychain access/cleanup/search-list restoration (including a
+   controlled failed job/cancellation), and notary IDs/logs. Offline tests are
+   not evidence of these. The adapter intentionally fails closed on unsupported
+   tool versions, ambiguous dyld resolution, notary warnings and output changes;
+   review/fix parsers, never relax trust checks merely to get green.
+8. Download **both** formats in a browser to a clean Apple Silicon Mac with
+   quarantine retained and Gatekeeper on. Validate checksums from the receipt;
+   install/launch fresh offline copies with no prior acceptance cache. Smoke-test
+   JIT/browsing, native window addon, Spaces/Swift helper, extensions, MCP and
+   relaunch. Record owner acceptance. No public signed publication is authorized
+   until a separate owner decision after these tests.
+
+Each notarization submits once and then waits up to 20 minutes. On timeout/failure,
+only sanitized error codes and validated submission UUIDs are logged. Have the
+credential custodian diagnose that submission with `notarytool info`/`log` via the
+approved auth context before deciding whether to retry; do not blindly dispatch
+another submission. Raw diagnostics stay out of uploaded receipts. If uploading
+itself fails after signing succeeded, do not reuse partially uploaded artifacts as
+release authority. Hosted VM disposal is the backstop if hard cancellation prevents
+cleanup; this workflow must not be moved to a persistent self-hosted runner.
+
+Offline gate (no real credentials/Apple tools required):
+
+```sh
+node --test scripts/macos-signing.test.cjs scripts/macos-signing-adapter.test.cjs \
+  scripts/setup-macos-signing-secrets.test.cjs scripts/prepare-macos-signing-credentials.test.cjs
+bash -n scripts/setup-macos-signing-secrets.sh scripts/prepare-macos-signing-credentials.sh
+shellcheck scripts/setup-macos-signing-secrets.sh scripts/prepare-macos-signing-credentials.sh
+git diff --check
+```
+
+The adapter tests parse workflow YAML, validate the locked builder schema/merge,
+exercise the named signing hook and signed/unsigned afterPack stamps, and verify
+both positive and negative process/filesystem fixtures. The remaining live gates
+above are operational prerequisites, not completed tests.

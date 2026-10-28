@@ -1,0 +1,86 @@
+# Candidate artifacts only. No release, R2 or Tangled credentials/calls.
+# Dispatch ON the reviewed reserved tag, not a branch. Environment approval
+# authorizes execution of that tag's code/dependencies with signing credentials.
+name: macOS signed candidate
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Reviewed full 40-character source commit SHA (tag must resolve here)
+        required: true
+        type: string
+      build_version:
+        description: Owner-allocated numeric CFBundleVersion (1-9999.0-99.0-99); never reuse for different bytes
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: macos-signing-candidate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: ${{ github.repository == 'autonome/peek-builds' && github.ref_protected == true && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(github.ref_name, '-signing-candidate.') }}
+    environment: macos-release-signing
+    runs-on: macos-15
+    timeout-minutes: 100
+    env:
+      CANDIDATE_TAG: ${{ github.ref_name }}
+      EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      CANDIDATE_BUILD_VERSION: ${{ inputs.build_version }}
+    steps:
+      # Reviewed upstream releases: checkout v4.2.2, setup-node v4.4.0,
+      # upload-artifact v4.6.2. Re-review pins and tool versions on upgrades.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate immutable candidate selection (no signing secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/tags/$CANDIDATE_TAG" ]]
+          [[ "$CANDIDATE_TAG" =~ ^v[0-9][A-Za-z0-9._-]*-signing-candidate\.[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CANDIDATE_BUILD_VERSION" =~ ^[1-9][0-9]{0,3}\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$(git rev-parse "refs/tags/$CANDIDATE_TAG^{commit}")" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$GITHUB_SHA" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$(uname -m)" == arm64 ]]
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.11.1
+      - name: Install and build without signing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          yarn install --immutable
+          version="$(node -p "require('./node_modules/electron/package.json').version")"
+          ./node_modules/.bin/node-gyp install --target="$version" --dist-url=https://electronjs.org/headers --devdir="$HOME/.electron-gyp"
+          yarn build
+          node --test scripts/macos-signing.test.cjs scripts/macos-signing-adapter.test.cjs
+      - name: Sign, notarize, extract and verify both final containers
+        id: verified
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/macos-signing-adapter.cjs
+      - name: Upload verified candidate only
+        if: ${{ success() && steps.verified.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: peek-signed-candidate-${{ github.ref_name }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/peek-verified-candidate/Peek-*.dmg
+            ${{ runner.temp }}/peek-verified-candidate/Peek-*.zip
+            ${{ runner.temp }}/peek-verified-candidate/receipt.json
+          if-no-files-found: error
+          retention-days: 7
