@@ -64,9 +64,9 @@ test.describe('Settings Extensions buttons @desktop', () => {
       () => {
         const section = document.querySelector('#section-privacy');
         if (!section) return false;
-        // The buttons are plain <button> elements inside .item-card divs.
-        // Their textContent matches entryTypeLabels: 'Popup', 'Options', etc.
-        const buttons = Array.from(section.querySelectorAll('button'));
+        // The buttons are <peek-button> elements inside <peek-card> elements.
+        // Their light-DOM textContent matches entryTypeLabels: 'Popup', 'Options', etc.
+        const buttons = Array.from(section.querySelectorAll('peek-button'));
         return buttons.some(
           (b) =>
             b.textContent === 'Popup' ||
@@ -84,7 +84,7 @@ test.describe('Settings Extensions buttons @desktop', () => {
     const buttonCount = await settings.evaluate(() => {
       const section = document.querySelector('#section-privacy');
       if (!section) return 0;
-      const buttons = Array.from(section.querySelectorAll('button'));
+      const buttons = Array.from(section.querySelectorAll('peek-button'));
       return buttons.filter(
         (b) =>
           b.textContent === 'Popup' ||

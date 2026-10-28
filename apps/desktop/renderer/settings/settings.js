@@ -1466,8 +1466,8 @@ const renderPrivacySettings = async () => {
     console.error('[settings] Failed to load adblocker status:', err);
   }
 
-  const adBlockerCard = document.createElement('div');
-  adBlockerCard.className = 'item-card no-collapse';
+  const adBlockerCard = document.createElement('peek-card');
+  adBlockerCard.style.marginBottom = '8px';
 
   const adBlockerHeader = document.createElement('div');
   adBlockerHeader.className = 'item-card-header';
@@ -1476,20 +1476,20 @@ const renderPrivacySettings = async () => {
   const adBlockerLeft = document.createElement('div');
   adBlockerLeft.style.cssText = 'display: flex; align-items: center; gap: 12px;';
 
-  const adBlockerCheckbox = document.createElement('input');
-  adBlockerCheckbox.type = 'checkbox';
+  const adBlockerCheckbox = document.createElement('peek-switch');
   adBlockerCheckbox.checked = adBlockerEnabled;
-  adBlockerCheckbox.style.cssText = 'width: 16px; height: 16px; cursor: pointer;';
+  adBlockerCheckbox.setAttribute('aria-label', 'Ghostery Ad Blocker');
   adBlockerCheckbox.addEventListener('change', async (e) => {
+    const checked = e.detail.checked;
     try {
-      if (e.target.checked) {
+      if (checked) {
         await api.adblocker.enable();
       } else {
         await api.adblocker.disable();
       }
     } catch (err) {
       console.error('[settings] Failed to toggle adblocker:', err);
-      e.target.checked = !e.target.checked;
+      adBlockerCheckbox.checked = !checked;
     }
   });
   adBlockerLeft.appendChild(adBlockerCheckbox);
@@ -1556,8 +1556,8 @@ const renderPrivacySettings = async () => {
       }
 
       for (const ext of result.data) {
-        const card = document.createElement('div');
-        card.className = 'item-card no-collapse';
+        const card = document.createElement('peek-card');
+        card.style.marginBottom = '8px';
 
         const header = document.createElement('div');
         header.className = 'item-card-header';
@@ -1566,20 +1566,20 @@ const renderPrivacySettings = async () => {
         const leftSide = document.createElement('div');
         leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
 
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
+        const checkbox = document.createElement('peek-switch');
         checkbox.checked = ext.enabled;
-        checkbox.style.cssText = 'width: 16px; height: 16px; cursor: pointer;';
+        checkbox.setAttribute('aria-label', ext.name);
         checkbox.addEventListener('change', async (e) => {
+          const checked = e.detail.checked;
           try {
-            if (e.target.checked) {
+            if (checked) {
               await api.chromeExtensions.enable(ext.id);
             } else {
               await api.chromeExtensions.disable(ext.id);
             }
           } catch (err) {
             console.error('[settings] Failed to toggle chrome extension:', err);
-            e.target.checked = !e.target.checked;
+            checkbox.checked = !checked;
           }
         });
         leftSide.appendChild(checkbox);
@@ -1656,20 +1656,10 @@ const renderPrivacySettings = async () => {
               devtools: 'DevTools', sidepanel: 'Side Panel',
             };
             for (const entry of extEntries) {
-              const btn = document.createElement('button');
+              const btn = document.createElement('peek-button');
+              btn.setAttribute('variant', 'secondary');
               btn.textContent = entryTypeLabels[entry.type] || entry.type;
               btn.title = entry.title;
-              btn.style.cssText = `
-                padding: 4px 8px;
-                font-size: 11px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border-primary);
-                border-radius: 4px;
-                color: var(--text-secondary);
-                cursor: pointer;
-              `;
-              btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
-              btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
               btn.addEventListener('click', async () => {
                 try {
                   await api.chromeExtensions.openPage(ext.id, entry.type);
