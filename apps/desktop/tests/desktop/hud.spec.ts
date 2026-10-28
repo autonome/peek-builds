@@ -76,6 +76,28 @@ test.describe('memory hud @desktop', () => {
     if (app) await app.close();
   });
 
+  // Running `hud` while a HUD is open closes it (toggle), so each test must
+  // start with none open: close whatever the previous test left behind.
+  test.beforeEach(async () => {
+    for (const p of app.windows()) {
+      if (p.isClosed() || !p.url().includes('peek://hud/hud.html')) continue;
+      const info = await p
+        .evaluate(() => (window as unknown as { app: any }).app.window.getInfo())
+        .catch(() => null);
+      if (!info || info.error) continue;
+      await bgWindow.evaluate(
+        async (id: number) => (window as unknown as { app: any }).app.window.close(id),
+        info.id as number,
+      );
+    }
+    await expect
+      .poll(() => app.windows().filter((p) => !p.isClosed() && p.url().includes('peek://hud/hud.html')).length, {
+        timeout: 15000,
+        message: 'a HUD from the previous test is still open',
+      })
+      .toBe(0);
+  });
+
   test('the hud command opens the stats page pinned across workspaces and shows a memory total', async () => {
     const result = await runCommand('hud');
     expect(result?.error, `hud failed: ${result?.error}`).toBeUndefined();
