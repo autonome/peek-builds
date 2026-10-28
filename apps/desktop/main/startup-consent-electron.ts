@@ -21,6 +21,7 @@ import {
   safeRelaunchArgs,
   createPendingWork,
   interactiveDisplayAvailable,
+  noticePresentation,
   validatePendingUrl,
   type ConsentDecision,
   type ConsentOutcome,
@@ -99,6 +100,7 @@ async function ensureWindow(): Promise<BrowserWindow> {
     height: 720,
     minWidth: 320,
     minHeight: 320,
+    show: presentation !== 'hidden',
     backgroundColor: '#1b1b1d',
     title: NOTICE.title,
     autoHideMenuBar: true,
@@ -167,6 +169,7 @@ function installMenu(): void {
 }
 
 let prepared = false;
+let presentation: 'visible' | 'hidden' | 'blocked' = 'visible';
 
 /** Called by entry before yielding to readiness. Accepted launches never call it. */
 export function prepareNotice(): void {
@@ -191,7 +194,8 @@ export function prepareNotice(): void {
 export async function presentNotice(context: { persistenceError?: unknown }): Promise<ConsentDecision> {
   if (!prepared) {
     prepared = true;
-    if (process.env.PEEK_HEADLESS) {
+    presentation = noticePresentation(process.env);
+    if (presentation === 'blocked') {
       throw failure('headless launch is blocked: no startup risk acknowledgment is recorded; launch with a display and accept the notice');
     }
     if (!interactiveDisplayAvailable(process.platform, process.env)) {

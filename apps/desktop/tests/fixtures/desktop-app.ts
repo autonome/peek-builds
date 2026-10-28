@@ -297,6 +297,8 @@ export async function launchStartupGate(
       PROFILE: profile,
       DEBUG: process.env.DEBUG || '1',
       E2E_TEST: 'true',
+      // A headless run keeps the notice window hidden instead of on screen.
+      ...(isHeadless() ? { PEEK_HEADLESS: '1' } : {}),
       ...(options.env ?? {}),
     } as Record<string, string>,
   });

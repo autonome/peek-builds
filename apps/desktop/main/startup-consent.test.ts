@@ -10,7 +10,7 @@ import {
   NOTICE, NOTICE_HASH, NOTICE_VERSION, consentRecordPath, createAcceptanceRecord,
   isValidAcceptanceRecord, allAcknowledged, readAcceptanceRecord,
   persistAcceptanceRecord, createStartupConsentGate, readAcceptanceRecordSync,
-  validatePendingUrl, createPendingWork, interactiveDisplayAvailable,
+  validatePendingUrl, createPendingWork, interactiveDisplayAvailable, noticePresentation,
   safeRelaunchArgs, revokeAcceptanceRecord, type ConsentDependencies,
 } from './startup-consent.js';
 
@@ -285,6 +285,15 @@ describe('startup risk acknowledgment: pending work and environment', () => {
     assert.equal(interactiveDisplayAvailable('linux', { DISPLAY: ':0' }), true);
     assert.equal(interactiveDisplayAvailable('linux', { WAYLAND_DISPLAY: 'wayland-0' }), true);
     assert.equal(interactiveDisplayAvailable('darwin', {}), true);
+  });
+  it('never shows a notice window on a headless launch', () => {
+    assert.equal(noticePresentation({}), 'visible');
+    assert.equal(noticePresentation({ PEEK_HEADLESS: '1' }), 'blocked');
+    assert.equal(noticePresentation({ PEEK_HEADLESS: '1', E2E_TEST: 'false' }), 'blocked');
+    // Only a test launch (which drives the notice through automation) may keep a headless
+    // notice alive, and then its window stays hidden.
+    assert.equal(noticePresentation({ PEEK_HEADLESS: '1', E2E_TEST: 'true' }), 'hidden');
+    assert.equal(noticePresentation({ E2E_TEST: 'true' }), 'visible');
   });
 });
 

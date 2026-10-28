@@ -137,6 +137,17 @@ export function interactiveDisplayAvailable(platform: string, env: Record<string
 }
 
 /**
+ * How the notice may appear. A headless launch has nobody to read it, so it is
+ * blocked (the launch fails with a logged error). The one exception is a test
+ * launch driven by automation, which needs the notice to exist but keeps its
+ * window hidden so it never takes focus.
+ */
+export function noticePresentation(env: Record<string, string | undefined>): 'visible' | 'hidden' | 'blocked' {
+  if (!env.PEEK_HEADLESS) return 'visible';
+  return env.E2E_TEST === 'true' ? 'hidden' : 'blocked';
+}
+
+/**
  * Same-directory exclusive temporary file + flush + atomic replacement. Unique
  * temporary names allow independent consent flows to persist concurrently.
  * Any failure rejects: the caller must never import the runtime after it.
