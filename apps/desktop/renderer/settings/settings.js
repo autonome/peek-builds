@@ -3197,6 +3197,9 @@ const showAddProfileDialog = async (parentContainer) => {
   document.body.appendChild(dialog);
   dialog.open = true;
 
+  // peek-input.focus() forwards to its inner field, which exists only after
+  // the first render.
+  await input.updateComplete;
   input.focus();
 };
 
@@ -3331,32 +3334,17 @@ const renderDatastoreSettings = async () => {
 
     for (const tableName of group.tables) {
       const count = tableCounts[tableName] || 0;
-      const btn = document.createElement('button');
-      btn.style.cssText = `
-        padding: 6px 12px;
-        font-size: 12px;
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border-primary);
-        border-radius: 4px;
-        color: var(--text-secondary);
-        cursor: pointer;
-      `;
+      const btn = document.createElement('peek-button');
+      btn.variant = 'secondary';
+      btn.size = 'sm';
       btn.textContent = `${tableName} (${count.toLocaleString()})`;
-      btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
-      btn.addEventListener('mouseleave', () => { if (!btn.classList.contains('active-table')) btn.style.background = 'var(--bg-tertiary)'; });
 
       btn.addEventListener('click', async () => {
         // Update active state across all groups
-        tableList.querySelectorAll('button').forEach(b => {
-          b.classList.remove('active-table');
-          b.style.background = 'var(--bg-tertiary)';
-          b.style.borderColor = 'var(--border-primary)';
-          b.style.color = 'var(--text-secondary)';
+        tableList.querySelectorAll('peek-button').forEach(b => {
+          b.variant = 'secondary';
         });
-        btn.classList.add('active-table');
-        btn.style.background = 'var(--base0D)';
-        btn.style.borderColor = 'var(--base0D)';
-        btn.style.color = 'white';
+        btn.variant = 'primary';
 
         // Load table data
         tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Loading...</div>';
@@ -3430,17 +3418,9 @@ const renderDatastoreSettings = async () => {
   refreshSection.className = 'form-section';
   refreshSection.style.marginTop = '24px';
 
-  const refreshBtn = document.createElement('button');
+  const refreshBtn = document.createElement('peek-button');
+  refreshBtn.variant = 'secondary';
   refreshBtn.textContent = 'Refresh All';
-  refreshBtn.style.cssText = `
-    padding: 8px 16px;
-    font-size: 13px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-  `;
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.textContent = 'Refreshing...';
     refreshBtn.disabled = true;
@@ -3548,19 +3528,9 @@ const renderDiagnosticsSettings = async () => {
   outputArea.textContent = 'Click a button above to inspect data.';
 
   const makeBtn = (text, fn) => {
-    const btn = document.createElement('button');
+    const btn = document.createElement('peek-button');
+    btn.variant = 'secondary';
     btn.textContent = text;
-    btn.style.cssText = `
-      padding: 8px 16px;
-      font-size: 13px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-primary);
-      border-radius: 6px;
-      color: var(--text-primary);
-      cursor: pointer;
-    `;
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
     btn.addEventListener('click', fn);
     return btn;
   };
