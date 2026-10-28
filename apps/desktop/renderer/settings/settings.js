@@ -2116,29 +2116,21 @@ const renderSyncSettings = async () => {
   const apiKeyWrapper = document.createElement('div');
   apiKeyWrapper.style.cssText = 'display: flex; gap: 8px;';
 
-  const apiKeyInput = document.createElement('input');
+  const apiKeyInput = document.createElement('peek-input');
   apiKeyInput.type = 'password';
   apiKeyInput.value = config.apiKey || '';
   apiKeyInput.style.cssText = 'flex: 1;';
-  apiKeyInput.addEventListener('change', async (e) => {
-    config.apiKey = e.target.value;
-    await api.sync.setConfig({ apiKey: e.target.value });
+  apiKeyInput.addEventListener('change', async () => {
+    config.apiKey = apiKeyInput.value;
+    await api.sync.setConfig({ apiKey: apiKeyInput.value });
     updateStatus();
   });
   apiKeyWrapper.appendChild(apiKeyInput);
 
-  const toggleBtn = document.createElement('button');
+  const toggleBtn = document.createElement('peek-button');
+  toggleBtn.setAttribute('variant', 'secondary');
+  toggleBtn.setAttribute('size', 'sm');
   toggleBtn.textContent = 'Show';
-  toggleBtn.style.cssText = `
-    padding: 6px 12px;
-    font-size: 12px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    min-width: 50px;
-  `;
   toggleBtn.addEventListener('click', () => {
     if (apiKeyInput.type === 'password') {
       apiKeyInput.type = 'text';
@@ -2418,26 +2410,11 @@ const renderSyncSettings = async () => {
   buttonContainer.style.cssText = 'display: flex; gap: 8px; flex-wrap: wrap;';
 
   // Helper to create action buttons
-  const createActionButton = (text, action) => {
-    const btn = document.createElement('button');
+  const createActionButton = (text, action, primary = false) => {
+    const btn = document.createElement('peek-button');
+    btn.setAttribute('variant', primary ? 'primary' : 'secondary');
+    btn.style.cssText = 'flex: 1; min-width: 120px;';
     btn.textContent = text;
-    btn.style.cssText = `
-      padding: 10px 16px;
-      font-size: 13px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-primary);
-      border-radius: 6px;
-      color: var(--text-primary);
-      cursor: pointer;
-      flex: 1;
-      min-width: 120px;
-    `;
-    btn.addEventListener('mouseenter', () => {
-      if (!btn.disabled) btn.style.background = 'var(--bg-hover)';
-    });
-    btn.addEventListener('mouseleave', () => {
-      if (!btn.disabled) btn.style.background = 'var(--bg-tertiary)';
-    });
     btn.addEventListener('click', async () => {
       if (isSyncing) return;
 
@@ -2450,15 +2427,10 @@ const renderSyncSettings = async () => {
       isSyncing = true;
       const originalText = btn.textContent;
       btn.textContent = 'Syncing...';
-      btn.disabled = true;
-      btn.style.opacity = '0.6';
-      btn.style.cursor = 'not-allowed';
 
       // Disable all buttons during operation
-      buttonContainer.querySelectorAll('button').forEach(b => {
+      buttonContainer.querySelectorAll('peek-button').forEach(b => {
         b.disabled = true;
-        b.style.opacity = '0.6';
-        b.style.cursor = 'not-allowed';
       });
 
       try {
@@ -2494,11 +2466,8 @@ const renderSyncSettings = async () => {
         btn.textContent = originalText;
 
         // Re-enable all buttons
-        buttonContainer.querySelectorAll('button').forEach(b => {
+        buttonContainer.querySelectorAll('peek-button').forEach(b => {
           b.disabled = false;
-          b.style.opacity = '1';
-          b.style.cursor = 'pointer';
-          b.style.background = 'var(--bg-tertiary)';
         });
 
         // Update status after sync
@@ -2517,16 +2486,7 @@ const renderSyncSettings = async () => {
   buttonContainer.appendChild(pushBtn);
 
   // Sync All button
-  const syncAllBtn = createActionButton('Sync All', () => api.sync.syncAll());
-  syncAllBtn.style.background = 'var(--base0D)';
-  syncAllBtn.style.color = 'white';
-  syncAllBtn.style.border = '1px solid var(--base0D)';
-  syncAllBtn.addEventListener('mouseenter', () => {
-    if (!syncAllBtn.disabled) syncAllBtn.style.background = 'var(--base0D)';
-  });
-  syncAllBtn.addEventListener('mouseleave', () => {
-    if (!syncAllBtn.disabled) syncAllBtn.style.background = 'var(--base0D)';
-  });
+  const syncAllBtn = createActionButton('Sync All', () => api.sync.syncAll(), true);
   buttonContainer.appendChild(syncAllBtn);
 
   syncSection.appendChild(buttonContainer);
@@ -2548,16 +2508,9 @@ const renderSyncSettings = async () => {
   const logWrap = document.createElement('div');
   logWrap.style.marginTop = '16px';
 
-  const logToggle = document.createElement('button');
-  logToggle.type = 'button';
-  logToggle.style.cssText = `
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 12px;
-    cursor: pointer;
-    padding: 4px 0;
-  `;
+  const logToggle = document.createElement('peek-button');
+  logToggle.setAttribute('variant', 'ghost');
+  logToggle.setAttribute('size', 'sm');
   logWrap.appendChild(logToggle);
 
   const logList = document.createElement('div');
@@ -2720,18 +2673,11 @@ const renderSyncSettings = async () => {
         detailsRow.textContent = `Server profile: ${syncConfig.serverProfileId}`;
         row.appendChild(detailsRow);
 
-        const disableBtn = document.createElement('button');
+        const disableBtn = document.createElement('peek-button');
+        disableBtn.setAttribute('variant', 'secondary');
+        disableBtn.setAttribute('size', 'sm');
+        disableBtn.style.alignSelf = 'flex-start';
         disableBtn.textContent = 'Disable Sync';
-        disableBtn.style.cssText = `
-          padding: 4px 12px;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-primary);
-          border-radius: 4px;
-          color: var(--text-secondary);
-          font-size: 12px;
-          cursor: pointer;
-          align-self: flex-start;
-        `;
         disableBtn.addEventListener('click', async () => {
           if (confirm(`Disable sync for profile "${profile.name}"?`)) {
             const result = await api.profiles.disableSync(profile.id);
@@ -2757,48 +2703,23 @@ const renderSyncSettings = async () => {
         const enableForm = document.createElement('div');
         enableForm.style.cssText = 'display: none; flex-direction: column; gap: 8px;';
 
-        const formApiKeyInput = document.createElement('input');
+        const formApiKeyInput = document.createElement('peek-input');
         formApiKeyInput.type = 'password';
         formApiKeyInput.placeholder = 'API Key';
-        formApiKeyInput.style.cssText = `
-          width: 100%;
-          padding: 8px;
-          border: 1px solid var(--border-primary);
-          border-radius: 4px;
-          background: var(--bg-tertiary);
-          color: var(--text-primary);
-          font-size: 13px;
-        `;
         enableForm.appendChild(formApiKeyInput);
 
-        const formProfileIdInput = document.createElement('input');
+        const formProfileIdInput = document.createElement('peek-input');
         formProfileIdInput.type = 'text';
         formProfileIdInput.placeholder = 'Server profile ID (UUID from server)';
-        formProfileIdInput.style.cssText = `
-          width: 100%;
-          padding: 8px;
-          border: 1px solid var(--border-primary);
-          border-radius: 4px;
-          background: var(--bg-tertiary);
-          color: var(--text-primary);
-          font-size: 13px;
-        `;
         enableForm.appendChild(formProfileIdInput);
 
         const formButtons = document.createElement('div');
         formButtons.style.cssText = 'display: flex; gap: 8px;';
 
-        const formSaveBtn = document.createElement('button');
+        const formSaveBtn = document.createElement('peek-button');
+        formSaveBtn.setAttribute('variant', 'primary');
+        formSaveBtn.setAttribute('size', 'sm');
         formSaveBtn.textContent = 'Enable';
-        formSaveBtn.style.cssText = `
-          padding: 6px 14px;
-          background: var(--accent-primary);
-          border: none;
-          border-radius: 4px;
-          color: white;
-          font-size: 12px;
-          cursor: pointer;
-        `;
         formSaveBtn.addEventListener('click', async () => {
           const apiKey = formApiKeyInput.value.trim();
           const serverProfileId = formProfileIdInput.value.trim();
@@ -2814,17 +2735,10 @@ const renderSyncSettings = async () => {
         });
         formButtons.appendChild(formSaveBtn);
 
-        const formCancelBtn = document.createElement('button');
+        const formCancelBtn = document.createElement('peek-button');
+        formCancelBtn.setAttribute('variant', 'secondary');
+        formCancelBtn.setAttribute('size', 'sm');
         formCancelBtn.textContent = 'Cancel';
-        formCancelBtn.style.cssText = `
-          padding: 6px 14px;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-primary);
-          border-radius: 4px;
-          color: var(--text-secondary);
-          font-size: 12px;
-          cursor: pointer;
-        `;
         formCancelBtn.addEventListener('click', () => {
           enableForm.style.display = 'none';
           enableBtn.style.display = '';
@@ -2834,18 +2748,11 @@ const renderSyncSettings = async () => {
         enableForm.appendChild(formButtons);
         row.appendChild(enableForm);
 
-        const enableBtn = document.createElement('button');
+        const enableBtn = document.createElement('peek-button');
+        enableBtn.setAttribute('variant', 'primary');
+        enableBtn.setAttribute('size', 'sm');
+        enableBtn.style.alignSelf = 'flex-start';
         enableBtn.textContent = 'Enable Sync';
-        enableBtn.style.cssText = `
-          padding: 4px 12px;
-          background: var(--accent-primary);
-          border: none;
-          border-radius: 4px;
-          color: white;
-          font-size: 12px;
-          cursor: pointer;
-          align-self: flex-start;
-        `;
         enableBtn.addEventListener('click', () => {
           enableBtn.style.display = 'none';
           enableForm.style.display = 'flex';
