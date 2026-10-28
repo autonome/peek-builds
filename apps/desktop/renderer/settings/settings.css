@@ -365,3 +365,161 @@ body {
   color: var(--text-muted);
   margin-top: 4px;
 }
+
+/* Permissions: MCP server group */
+.mcp-indent {
+  margin-left: 24px;
+}
+
+.mcp-field-label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.mcp-warning,
+.mcp-restart-banner {
+  margin: 4px 0 0 24px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.mcp-warning {
+  color: var(--error-text);
+  background: var(--error-bg);
+  border-left-color: var(--error-border);
+  font-weight: 500;
+}
+
+/* The theme has no warning token; base0A is the palette's yellow. */
+.mcp-restart-banner {
+  display: none;
+  margin-top: 8px;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--base0A);
+  background: color-mix(in srgb, var(--base0A) 10%, var(--base00));
+  border-left-color: var(--base0A);
+}
+
+.mcp-restart-text {
+  flex: 1;
+}
+
+.mcp-status-row {
+  margin: 8px 0 0 24px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-status-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.mcp-scopes-header {
+  margin: 24px 0 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-scopes-help {
+  margin: 0 0 8px 0;
+}
+
+.mcp-add-scope-btn {
+  display: inline-block;
+  margin-bottom: 8px;
+}
+
+.mcp-scope-form {
+  display: none;
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border-left: 3px solid var(--accent, var(--text-muted));
+}
+
+.mcp-scope-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mcp-scope-form-row-writes {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mcp-scope-form-label {
+  font-size: 12px;
+  min-width: 70px;
+}
+
+.mcp-scope-form-label-inline {
+  font-size: 12px;
+}
+
+.mcp-scope-path {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.mcp-scope-form-error {
+  display: none;
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  color: var(--error-text);
+}
+
+.mcp-scope-form-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.mcp-scopes-list {
+  margin-top: 8px;
+}
+
+.mcp-scopes-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 4px 0;
+}
+
+.mcp-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 2px 0;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.mcp-scope-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-scope-row-path {
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.mcp-scope-row-meta {
+  color: var(--text-secondary);
+  margin-top: 2px;
+}

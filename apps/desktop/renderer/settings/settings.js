@@ -723,10 +723,10 @@ const renderIntegrationsSettings = async () => {
   // Profile dropdown
   const profileGroup = document.createElement('div');
   profileGroup.className = 'form-group';
-  profileGroup.style.marginLeft = '24px';
+  profileGroup.classList.add('mcp-indent');
   const profileLabel = document.createElement('label');
   profileLabel.textContent = 'Profile to expose';
-  profileLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
+  profileLabel.className = 'mcp-field-label';
   profileGroup.appendChild(profileLabel);
   profileSelect = document.createElement('peek-select');
   const profileOptions = mcpState.profiles.length ? mcpState.profiles : [mcpState.profile];
@@ -743,7 +743,6 @@ const renderIntegrationsSettings = async () => {
   profileGroup.appendChild(profileSelect);
   const profileHelp = document.createElement('p');
   profileHelp.className = 'help-text';
-  profileHelp.style.cssText = 'margin-top: 4px; font-size: 12px;';
   profileHelp.textContent = 'Which Peek profile\'s datastore the MCP server reads. Defaults to "default" (prod data).';
   profileGroup.appendChild(profileHelp);
   mcpGroup.appendChild(profileGroup);
@@ -752,10 +751,10 @@ const renderIntegrationsSettings = async () => {
   // <scope>:*. Empty = no scope (agent sees everything).
   const scopeGroup = document.createElement('div');
   scopeGroup.className = 'form-group';
-  scopeGroup.style.marginLeft = '24px';
+  scopeGroup.classList.add('mcp-indent');
   const scopeLabel = document.createElement('label');
   scopeLabel.textContent = 'Scope tag (optional)';
-  scopeLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
+  scopeLabel.className = 'mcp-field-label';
   scopeGroup.appendChild(scopeLabel);
   scopeTagInput = document.createElement('peek-input');
   scopeTagInput.type = 'text';
@@ -772,7 +771,6 @@ const renderIntegrationsSettings = async () => {
   scopeGroup.appendChild(scopeTagInput);
   const scopeHelp = document.createElement('p');
   scopeHelp.className = 'help-text';
-  scopeHelp.style.cssText = 'margin-top: 4px; font-size: 12px;';
   scopeHelp.textContent = 'Confines this MCP session to items tagged <scope> or <scope>:* — reads filter, writes are auto-tagged, foreign namespaces rejected. Leave blank to expose everything.';
   scopeGroup.appendChild(scopeHelp);
   mcpGroup.appendChild(scopeGroup);
@@ -793,22 +791,22 @@ const renderIntegrationsSettings = async () => {
     },
     { helpText: 'Exposes the create / update / delete / tag / complete-task / record-event tools. Off by default — querying always works.' },
   );
-  allowWritesGroup.style.marginLeft = '24px';
+  allowWritesGroup.classList.add('mcp-indent');
   allowWritesInput = allowWritesGroup.querySelector('peek-switch');
   mcpGroup.appendChild(allowWritesGroup);
 
   // Destructive-action warning — red treatment. Always visible so the
   // user reads it before opting in, not only after.
   const readonlyWarning = document.createElement('p');
-  readonlyWarning.style.cssText = 'margin: 4px 0 0 24px; padding: 8px 12px; font-size: 12px; color: #ff8080; background: rgba(220, 53, 53, 0.10); border-left: 3px solid #d44c4c; border-radius: 4px; line-height: 1.4; font-weight: 500;';
+  readonlyWarning.className = 'mcp-warning';
   readonlyWarning.innerHTML = '<strong>Warning:</strong> enabling writes lets any connected agent create, update, tag, and <strong>permanently delete</strong> your Peek items. Only do this if you trust every agent that will connect.';
   mcpGroup.appendChild(readonlyWarning);
 
   // Restart-required banner — hidden until first effective change.
   restartBanner = document.createElement('div');
-  restartBanner.style.cssText = 'display: none; margin: 8px 0 0 24px; padding: 8px 12px; font-size: 12px; color: #f4c430; background: rgba(244, 196, 48, 0.08); border-left: 3px solid #d4a017; border-radius: 4px; line-height: 1.4; align-items: flex-start; gap: 8px;';
+  restartBanner.className = 'mcp-restart-banner';
   const restartText = document.createElement('span');
-  restartText.style.cssText = 'flex: 1;';
+  restartText.className = 'mcp-restart-text';
   restartText.innerHTML = '<strong>Restart Claude Code to apply.</strong> The change is saved, but any MCP client already running won\'t pick it up until you fully quit and reopen it. Re-approving in <code>/mcp</code> is not enough.';
   restartBanner.appendChild(restartText);
   const restartDismiss = document.createElement('peek-button');
@@ -825,13 +823,13 @@ const renderIntegrationsSettings = async () => {
 
   // Status line + Open link
   const statusRow = document.createElement('div');
-  statusRow.style.cssText = 'margin-left: 24px; margin-top: 8px; font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px;';
+  statusRow.className = 'mcp-status-row';
   statusLine = document.createElement('span');
   statusRow.appendChild(statusLine);
   const openLink = document.createElement('a');
   openLink.textContent = 'Open';
   openLink.href = '#';
-  openLink.style.cssText = 'cursor: pointer; text-decoration: underline;';
+  openLink.className = 'mcp-status-link';
   openLink.addEventListener('click', async (e) => {
     e.preventDefault();
     try { await api.shell?.openPath?.(mcpState.settingsPath); } catch { /* ignore */ }
@@ -847,29 +845,28 @@ const renderIntegrationsSettings = async () => {
   // Code session in that directory to a specific tag.
   const scopesHeader = document.createElement('h4');
   scopesHeader.textContent = 'Project scopes';
-  scopesHeader.style.cssText = 'margin: 24px 0 4px 0; font-size: 13px; font-weight: 600;';
+  scopesHeader.className = 'mcp-scopes-header';
   mcpGroup.appendChild(scopesHeader);
 
   const scopesHelp = document.createElement('p');
-  scopesHelp.className = 'help-text';
-  scopesHelp.style.cssText = 'margin: 0 0 8px 0; font-size: 12px;';
+  scopesHelp.className = 'help-text mcp-scopes-help';
   scopesHelp.textContent = 'Write a .mcp.json into a project directory so a Claude Code session there only sees items tagged <scope> or <scope>:*. Useful for per-repo task triage.';
   mcpGroup.appendChild(scopesHelp);
 
   const addScopeBtn = document.createElement('peek-button');
   addScopeBtn.textContent = '+ Add project scope';
-  addScopeBtn.style.cssText = 'display: inline-block; margin-bottom: 8px;';
+  addScopeBtn.className = 'mcp-add-scope-btn';
   mcpGroup.appendChild(addScopeBtn);
 
   // Inline form (hidden until Add / Edit clicked).
   let formExistingPath = null;
   const form = document.createElement('div');
-  form.style.cssText = 'display: none; margin: 8px 0; padding: 10px 12px; background: var(--bg-tertiary, rgba(255,255,255,0.04)); border-radius: 4px; border-left: 3px solid var(--accent, #888);';
+  form.className = 'mcp-scope-form';
 
   const pathRow = document.createElement('div');
-  pathRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 6px;';
+  pathRow.className = 'mcp-scope-form-row';
   const pathLabel = document.createElement('span');
-  pathLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
+  pathLabel.className = 'mcp-scope-form-label';
   pathLabel.textContent = 'Directory:';
   pathRow.appendChild(pathLabel);
   const pickBtn = document.createElement('peek-button');
@@ -877,15 +874,15 @@ const renderIntegrationsSettings = async () => {
   pickBtn.textContent = 'Pick…';
   pathRow.appendChild(pickBtn);
   const pathDisplay = document.createElement('span');
-  pathDisplay.style.cssText = 'font-size: 12px; color: var(--text-secondary); font-family: monospace; word-break: break-all;';
+  pathDisplay.className = 'mcp-scope-path';
   pathDisplay.textContent = '(none selected)';
   pathRow.appendChild(pathDisplay);
   form.appendChild(pathRow);
 
   const tagRow = document.createElement('div');
-  tagRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 6px;';
+  tagRow.className = 'mcp-scope-form-row';
   const tagLabel = document.createElement('span');
-  tagLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
+  tagLabel.className = 'mcp-scope-form-label';
   tagLabel.textContent = 'Scope tag:';
   tagRow.appendChild(tagLabel);
   const tagInput = document.createElement('peek-input');
@@ -895,9 +892,9 @@ const renderIntegrationsSettings = async () => {
   form.appendChild(tagRow);
 
   const formProfileRow = document.createElement('div');
-  formProfileRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 6px;';
+  formProfileRow.className = 'mcp-scope-form-row';
   const formProfileLabel = document.createElement('span');
-  formProfileLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
+  formProfileLabel.className = 'mcp-scope-form-label';
   formProfileLabel.textContent = 'Profile:';
   formProfileRow.appendChild(formProfileLabel);
   const formProfileSelect = document.createElement('peek-select');
@@ -908,23 +905,23 @@ const renderIntegrationsSettings = async () => {
   form.appendChild(formProfileRow);
 
   const writesRow = document.createElement('div');
-  writesRow.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 8px;';
+  writesRow.className = 'mcp-scope-form-row mcp-scope-form-row-writes';
   const writesCheck = document.createElement('peek-switch');
   writesCheck.setAttribute('aria-label', 'Allow writes');
   writesRow.appendChild(writesCheck);
   const writesLabel = document.createElement('label');
-  writesLabel.style.cssText = 'font-size: 12px;';
+  writesLabel.className = 'mcp-scope-form-label-inline';
   writesLabel.textContent = 'Allow writes';
   writesLabel.addEventListener('click', () => writesCheck.toggle());
   writesRow.appendChild(writesLabel);
   form.appendChild(writesRow);
 
   const formError = document.createElement('p');
-  formError.style.cssText = 'display: none; margin: 0 0 6px 0; font-size: 12px; color: #ff8080;';
+  formError.className = 'mcp-scope-form-error';
   form.appendChild(formError);
 
   const formButtons = document.createElement('div');
-  formButtons.style.cssText = 'display: flex; gap: 6px;';
+  formButtons.className = 'mcp-scope-form-buttons';
   const saveBtn = document.createElement('peek-button');
   saveBtn.variant = 'primary';
   saveBtn.size = 'sm';
@@ -938,7 +935,7 @@ const renderIntegrationsSettings = async () => {
   mcpGroup.appendChild(form);
 
   const scopesList = document.createElement('div');
-  scopesList.style.cssText = 'margin-top: 8px;';
+  scopesList.className = 'mcp-scopes-list';
   mcpGroup.appendChild(scopesList);
 
   const showScopeForm = (existing) => {
@@ -981,22 +978,22 @@ const renderIntegrationsSettings = async () => {
     scopesList.replaceChildren();
     if (projects.length === 0) {
       const empty = document.createElement('p');
-      empty.style.cssText = 'font-size: 12px; color: var(--text-secondary); font-style: italic; margin: 4px 0;';
+      empty.className = 'mcp-scopes-empty';
       empty.textContent = 'No project scopes yet.';
       scopesList.appendChild(empty);
       return;
     }
     for (const p of projects) {
       const row = document.createElement('div');
-      row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0; background: var(--bg-tertiary, rgba(255,255,255,0.03)); border-radius: 4px; font-size: 12px;';
+      row.className = 'mcp-scope-row';
       const info = document.createElement('div');
-      info.style.cssText = 'flex: 1; min-width: 0;';
+      info.className = 'mcp-scope-info';
       const pathEl = document.createElement('div');
-      pathEl.style.cssText = 'font-family: monospace; word-break: break-all;';
+      pathEl.className = 'mcp-scope-row-path';
       pathEl.textContent = p.path;
       info.appendChild(pathEl);
       const meta = document.createElement('div');
-      meta.style.cssText = 'color: var(--text-secondary); margin-top: 2px;';
+      meta.className = 'mcp-scope-row-meta';
       if (!p.exists) {
         meta.textContent = 'missing — .mcp.json not found';
       } else {
