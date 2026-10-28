@@ -659,7 +659,7 @@ const renderIntegrationsSettings = async () => {
   const showRestartBanner = () => {
     if (!restartBanner) return;
     if (stateKey(mcpState) === lastAcknowledgedKey) return;
-    restartBanner.style.display = 'flex';
+    restartBanner.classList.add('visible');
   };
 
   const renderStatus = () => {
@@ -802,7 +802,7 @@ const renderIntegrationsSettings = async () => {
   restartDismiss.setAttribute('aria-label', 'Dismiss');
   restartDismiss.addEventListener('click', () => {
     lastAcknowledgedKey = stateKey(mcpState);
-    restartBanner.style.display = 'none';
+    restartBanner.classList.remove('visible');
   });
   restartBanner.appendChild(restartDismiss);
   mcpGroup.appendChild(restartBanner);
@@ -931,18 +931,18 @@ const renderIntegrationsSettings = async () => {
     tagInput.value = existing?.scopeTag || '';
     formProfileSelect.value = existing?.profile || mcpState.profile;
     writesCheck.checked = existing ? !existing.readonly : false;
-    formError.style.display = 'none';
-    form.style.display = 'block';
+    formError.classList.remove('visible');
+    form.classList.add('visible');
     addScopeBtn.disabled = true;
     tagInput.focus();
   };
   const hideScopeForm = () => {
-    form.style.display = 'none';
+    form.classList.remove('visible');
     addScopeBtn.disabled = false;
   };
   const setFormError = (msg) => {
     formError.textContent = msg;
-    formError.style.display = 'block';
+    formError.classList.add('visible');
   };
 
   addScopeBtn.addEventListener('click', () => showScopeForm(null));

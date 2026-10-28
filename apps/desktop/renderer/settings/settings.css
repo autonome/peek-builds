@@ -457,6 +457,10 @@ body {
   border-left-color: var(--base0A);
 }
 
+.mcp-restart-banner.visible {
+  display: flex;
+}
+
 .mcp-restart-text {
   flex: 1;
 }
@@ -499,6 +503,10 @@ body {
   border-left: 3px solid var(--accent, var(--text-muted));
 }
 
+.mcp-scope-form.visible {
+  display: block;
+}
+
 .mcp-scope-form-row {
   display: flex;
   align-items: center;
@@ -532,6 +540,10 @@ body {
   margin: 0 0 6px 0;
   font-size: 12px;
   color: var(--error-text);
+}
+
+.mcp-scope-form-error.visible {
+  display: block;
 }
 
 .mcp-scope-form-buttons {
