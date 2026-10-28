@@ -8,3 +8,4 @@ import 'peek://app/components/peek-input.js';
 import 'peek://app/components/peek-button.js';
 import 'peek://app/components/peek-select.js';
 import 'peek://app/components/peek-switch.js';
+import 'peek://app/components/peek-dialog.js';

@@ -3029,18 +3029,9 @@ const renderProfilesSettings = async () => {
   addSection.className = 'form-section';
   addSection.style.cssText = 'border-top: 1px solid var(--border-primary); padding-top: 16px;';
 
-  const addBtn = document.createElement('button');
+  const addBtn = document.createElement('peek-button');
+  addBtn.variant = 'primary';
   addBtn.textContent = 'Add Profile';
-  addBtn.className = 'btn-primary';
-  addBtn.style.cssText = `
-    padding: 8px 16px;
-    background: var(--accent-primary);
-    border: none;
-    border-radius: 4px;
-    color: white;
-    font-size: 13px;
-    cursor: pointer;
-  `;
   addBtn.addEventListener('click', () => showAddProfileDialog(container));
   addSection.appendChild(addBtn);
 
@@ -3061,78 +3052,49 @@ const renderProfilesSettings = async () => {
   profilesList.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
 
   for (const profile of profiles) {
-    const card = document.createElement('div');
-    card.style.cssText = `
-      padding: 12px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-primary);
-      border-radius: 6px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
+    const card = document.createElement('peek-card');
 
-    // Profile header (radio + name + delete)
+    // Profile header (name + switch + delete)
     const header = document.createElement('div');
-    header.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+    header.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
 
-    // Radio button for switching
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = 'profile-switch';
     const isCurrentProfile = currentProfile && profile.id === currentProfile.id;
-    radio.checked = isCurrentProfile;
-    radio.style.cursor = 'pointer';
-    radio.addEventListener('change', () => {
-      if (radio.checked) {
+
+    // Profile name
+    const nameEl = document.createElement('span');
+    nameEl.textContent = isCurrentProfile ? `${profile.name} (current)` : profile.name;
+    nameEl.style.cssText = 'flex: 1; font-weight: 500;';
+    header.appendChild(nameEl);
+
+    // No radio component exists; non-current profiles get a Switch button
+    if (!isCurrentProfile) {
+      const switchBtn = document.createElement('peek-button');
+      switchBtn.size = 'sm';
+      switchBtn.variant = 'primary';
+      switchBtn.textContent = 'Switch';
+      switchBtn.addEventListener('click', () => {
         console.log(`[profiles] Switching to profile: ${profile.name} (folder: ${profile.folder})`);
-
-        // Double check we're not already on this profile
-        if (isCurrentProfile) {
-          console.log('[profiles] Already on this profile, skipping switch');
-          return;
-        }
-
         if (confirm(`Switch to "${profile.name}"?\n\nThe app will restart to apply the change.`)) {
           console.log('[profiles] User confirmed switch');
           api.profiles.switch(profile.folder).then(result => {
             if (!result.success) {
               console.error('[profiles] Switch failed:', result.error);
               alert(`Failed to switch profile: ${result.error}`);
-              radio.checked = false;
             }
           });
         } else {
           console.log('[profiles] User cancelled switch');
-          radio.checked = false;
         }
-      }
-    });
-    header.appendChild(radio);
-
-    // Profile name
-    const nameEl = document.createElement('span');
-    nameEl.textContent = profile.name;
-    nameEl.style.cssText = 'flex: 1; font-weight: 500;';
-    header.appendChild(nameEl);
+      });
+      header.appendChild(switchBtn);
+    }
 
     // Delete button (disabled for default or active)
-    const deleteBtn = document.createElement('button');
+    const deleteBtn = document.createElement('peek-button');
+    deleteBtn.size = 'sm';
+    deleteBtn.variant = 'danger';
     deleteBtn.textContent = 'Delete';
-    deleteBtn.disabled = profile.isDefault || (currentProfile && profile.id === currentProfile.id);
-    deleteBtn.style.cssText = `
-      padding: 4px 12px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-primary);
-      border-radius: 4px;
-      color: var(--text-secondary);
-      font-size: 12px;
-      cursor: pointer;
-    `;
-    if (deleteBtn.disabled) {
-      deleteBtn.style.opacity = '0.5';
-      deleteBtn.style.cursor = 'not-allowed';
-    }
+    deleteBtn.disabled = !!(profile.isDefault || isCurrentProfile);
     deleteBtn.addEventListener('click', async () => {
       if (confirm(`Delete profile "${profile.name}"? Data will be preserved but the profile record will be removed.`)) {
         const result = await api.profiles.delete(profile.id);
@@ -3184,78 +3146,33 @@ const renderProfilesSettings = async () => {
 
 // Show add profile dialog
 const showAddProfileDialog = async (parentContainer) => {
-  const dialog = document.createElement('div');
-  dialog.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
-  `;
+  const dialog = document.createElement('peek-dialog');
+  dialog.modal = true;
+  dialog.size = 'sm';
 
-  const content = document.createElement('div');
-  content.style.cssText = `
-    background: var(--bg-primary);
-    padding: 24px;
-    border-radius: 8px;
-    width: 400px;
-    max-width: 90%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  `;
-
-  const title = document.createElement('h3');
+  const title = document.createElement('span');
+  title.slot = 'header';
   title.textContent = 'Add Profile';
-  title.style.cssText = 'margin: 0 0 16px 0;';
-  content.appendChild(title);
+  dialog.appendChild(title);
 
-  const input = document.createElement('input');
+  const input = document.createElement('peek-input');
   input.type = 'text';
   input.placeholder = 'Profile name (e.g., Work, Personal)';
-  input.style.cssText = `
-    width: 100%;
-    padding: 8px;
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 14px;
-    margin-bottom: 16px;
-  `;
-  content.appendChild(input);
+  dialog.appendChild(input);
 
-  const buttons = document.createElement('div');
-  buttons.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
+  const footer = document.createElement('div');
+  footer.slot = 'footer';
+  footer.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
 
-  const cancelBtn = document.createElement('button');
+  const cancelBtn = document.createElement('peek-button');
+  cancelBtn.variant = 'secondary';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = `
-    padding: 8px 16px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-  `;
-  cancelBtn.addEventListener('click', () => dialog.remove());
-  buttons.appendChild(cancelBtn);
+  cancelBtn.addEventListener('click', () => dialog.close());
+  footer.appendChild(cancelBtn);
 
-  const createBtn = document.createElement('button');
+  const createBtn = document.createElement('peek-button');
+  createBtn.variant = 'primary';
   createBtn.textContent = 'Create';
-  createBtn.style.cssText = `
-    padding: 8px 16px;
-    background: var(--accent-primary);
-    border: none;
-    border-radius: 4px;
-    color: white;
-    font-size: 13px;
-    cursor: pointer;
-  `;
   createBtn.addEventListener('click', async () => {
     const name = input.value.trim();
     if (!name) {
@@ -3265,7 +3182,7 @@ const showAddProfileDialog = async (parentContainer) => {
 
     const result = await api.profiles.create(name);
     if (result.success) {
-      dialog.remove();
+      dialog.close();
       // Refresh the profiles section
       const newContent = await renderProfilesSettings();
       parentContainer.replaceWith(newContent);
@@ -3273,11 +3190,12 @@ const showAddProfileDialog = async (parentContainer) => {
       alert(`Failed to create profile: ${result.error}`);
     }
   });
-  buttons.appendChild(createBtn);
+  footer.appendChild(createBtn);
+  dialog.appendChild(footer);
 
-  content.appendChild(buttons);
-  dialog.appendChild(content);
+  dialog.addEventListener('close', () => dialog.remove());
   document.body.appendChild(dialog);
+  dialog.open = true;
 
   input.focus();
 };
