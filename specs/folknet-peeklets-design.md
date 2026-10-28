@@ -9,6 +9,16 @@ depends-on: []
 User-requested design work, manually owned by the `folknet-peeklets` research track.
 Keep disabled: draft contracts, not authorization to run remote code or spend credits.
 
+## Completion
+
+Research deliverables now exist in `docs/design/folknet-peeklets.md`,
+`specs/folknet-peeklet-models.md` and `specs/folknet-peeklet-jobs.md`.
+Current code evidence, wire-neutral contracts, security/cost/lifecycle limits,
+staged gates and future tests are recorded there. Public GitHub/npm discovery did
+not establish canonical Folknet documentation; provider conformance remains gated,
+not replaced by guessed endpoints or guarantees. Keep all three specs disabled.
+See `handoff.md` for the docs-only verification result and remaining decisions.
+
 ## Goal
 
 Specify two independently grantable capabilities:
