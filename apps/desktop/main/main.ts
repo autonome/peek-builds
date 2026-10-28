@@ -29,7 +29,8 @@ import {
 import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { installTileSuspension } from './tile-suspension-wiring.js';
-import { startTileSchedules, SCHEDULE_BOOT_HOLD_MS } from './tile-schedule.js';
+import { startTileSchedules, rearmTileSchedules, SCHEDULE_BOOT_HOLD_MS } from './tile-schedule.js';
+import { onSystemResume } from './system-resume.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish, subscribe, unsubscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1359,6 +1360,7 @@ export async function loadFeatures(): Promise<number> {
   try {
     const holdOverride = parseInt(process.env.PEEK_SCHEDULE_BOOT_HOLD_MS ?? '', 10);
     startTileSchedules(Number.isNaN(holdOverride) ? SCHEDULE_BOOT_HOLD_MS : holdOverride);
+    onSystemResume(rearmTileSchedules);
     syncLocalFeatureWatches();
   } catch (err) {
     console.error('[tile-schedule] start failed:', err);

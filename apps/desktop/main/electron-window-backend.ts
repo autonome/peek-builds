@@ -9,8 +9,9 @@
 // A machine-initiated operation must not feed its own side effect back in as
 // fresh OS evidence.
 
-import { app, BrowserWindow, globalShortcut, screen, systemPreferences, webContents } from 'electron';
+import { app, BrowserWindow, globalShortcut, powerMonitor, screen, systemPreferences, webContents } from 'electron';
 import type { WebContents } from 'electron';
+import { notifySystemResume } from './system-resume.js';
 
 import {
   FailSafeDesktopProvider,
@@ -265,6 +266,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // ───────────────────────────────────────────────────────────────────────────
 
   attachAppListeners(): void {
+    powerMonitor.on('resume', notifySystemResume);
     // A fresh quit attempt: `before-quit` always fires strictly before Electron
     // begins closing any window for it, so no prompt record can be stale.
     (app as unknown as { on(e: string, l: () => void): void }).on('before-quit', () => {

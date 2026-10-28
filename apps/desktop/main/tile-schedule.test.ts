@@ -27,6 +27,7 @@ import {
   registerTileSchedule,
   unregisterTileSchedule,
   startTileSchedules,
+  rearmTileSchedules,
   collectScheduleEntries,
   hasScheduleEntries,
   getScheduledTopics,
@@ -208,6 +209,68 @@ describe('tile-schedule', () => {
     __setTileScheduleDepsForTest(null);
     __setTileLazyLauncherForTest(null);
     __clearPrePublishHooksForTest();
+  });
+
+  describe('resume', () => {
+    const topic = 'resume:poll';
+
+    beforeEach(() => {
+      watch(topic);
+      store.setScheduleLastRun('resume', topic, time.now);
+      registerTileSchedule(makeManifest('resume', [{ topic, everyMinutes: 15 }]));
+    });
+
+    afterEach(() => unwatch(topic));
+
+    it('catches up once immediately after 40 minutes asleep, with no replay or duplicate timer', () => {
+      startTileSchedules();
+      // Move only the wall clock: sleep must not execute the original timer.
+      time.now += 40 * MINUTE;
+      rearmTileSchedules();
+      rearmTileSchedules();
+      assert.strictEqual(time.pendingCount, 1);
+      time.advance(0);
+      assert.strictEqual(fires.length, 1);
+      assert.strictEqual(store.getScheduleLastRun('resume', topic), time.now);
+      time.advance(15 * MINUTE - 1);
+      assert.strictEqual(fires.length, 1);
+      time.advance(1);
+      assert.strictEqual(fires.length, 2);
+      assert.strictEqual(time.pendingCount, 1);
+    });
+
+    it('waits the remaining 10 minutes after 5 minutes asleep', () => {
+      startTileSchedules();
+      time.now += 5 * MINUTE;
+      rearmTileSchedules();
+      assert.strictEqual(time.pendingCount, 1);
+      time.advance(10 * MINUTE - 1);
+      assert.strictEqual(fires.length, 0);
+      time.advance(1);
+      assert.strictEqual(fires.length, 1);
+      assert.strictEqual(time.pendingCount, 1);
+    });
+
+    it('arms nothing before startTileSchedules', () => {
+      time.now += 40 * MINUTE;
+      rearmTileSchedules();
+      assert.strictEqual(time.pendingCount, 0);
+      time.advance(0);
+      assert.strictEqual(fires.length, 0);
+    });
+
+    it('preserves the boot hold and does not restore an unregistered schedule', () => {
+      startTileSchedules(30 * 1000);
+      store.setScheduleLastRun('resume', topic, time.now - 40 * MINUTE);
+      rearmTileSchedules();
+      time.advance(30 * 1000 - 1);
+      assert.strictEqual(fires.length, 0);
+      time.advance(1);
+      assert.strictEqual(fires.length, 1);
+      unregisterTileSchedule('resume');
+      rearmTileSchedules();
+      assert.strictEqual(time.pendingCount, 0);
+    });
   });
 
   // ── Manifest reading ──

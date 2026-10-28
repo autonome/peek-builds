@@ -210,6 +210,18 @@ export function startTileSchedules(holdMs = 0): void {
   }
 }
 
+/**
+ * Recompute delays after system sleep from persisted lastRunAt. Missed intervals
+ * collapse to one due fire, never a replay; the boot hold still applies. Only
+ * registered schedules participate, and each existing timer is replaced.
+ */
+export function rearmTileSchedules(): void {
+  if (!started) return;
+  for (const [tileId, armed] of scheduledTiles) {
+    for (const entry of armed) armEntry(tileId, entry);
+  }
+}
+
 // ─── Timers ─────────────────────────────────────────────────────────
 
 function armEntry(tileId: string, entry: ArmedEntry): void {
