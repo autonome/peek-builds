@@ -9,9 +9,12 @@ depends-on: []
 **Manual implementation approved: candidate-only path and local gh secrets setup.**
 The user explicitly approved this implementation and requested a local setup script.
 Keep `enabled: false`: this manual track owns implementation; no duplicate automated
-writer is authorized. This approval is not permission for the agent to enroll,
-purchase, generate/export keys, read real secrets, alter accounts/remote settings,
-sign a live build or publish a release. Signed public publication remains unapproved.
+writer is authorized. The user has additionally approved standard Apple CLI password
+handling on disposable GitHub-hosted runners and proceeding with a protected signed
+candidate. Enrollment, purchases, generating/exporting user keys, reading secret
+values and signed public publication remain unapproved. The coordinator may perform
+the explicitly authorized repo-scoped GitHub setup and candidate dispatch; required
+human environment approval remains in force.
 
 Delivered terminal-only preparation companion:
 `scripts/prepare-macos-signing-credentials.sh` and offline fixture tests create an
@@ -37,8 +40,8 @@ unsigned behavior is unchanged outside reserved signing-candidate tags/runs.
 
 The user has requested resuming GitHub signing. Metadata-only checks found all seven
 API-mode secret names in `macos-release-signing`, a required-reviewer protection and
-custom tag policy `v*`; no secret values were accessed. Self-review is currently
-allowed. Do not modify those protections. Candidate execution must remain behind
+custom tag policy now narrowed to `v*-signing-candidate.*`; no secret values were
+accessed. Self-review is currently allowed. Preserve required reviewer protection. Candidate execution must remain behind
 that explicit GitHub environment approval, and public signed publication stays
 disabled. Use a reviewed immutable candidate tag plus an expected source SHA check;
 never expose credentials to arbitrary mutable refs. Reserve an explicit
@@ -49,17 +52,18 @@ Research and exact proposed secret names: [readiness notes](../notes/macos-signi
 Do not touch the startup-risk acknowledgment implementation or delay unsigned
 builds. No dependency on that track is required.
 
-## Review-fix security boundary (live execution blocked)
+## Review-fix security boundary (hosted-runner exception approved)
 
 The standard `security` CLI currently puts P12 and ephemeral-keychain passwords
 in subprocess argv (`import -P`, `create-keychain -p`, `unlock-keychain -p`,
 `set-key-partition-list -k`). The alternative password-auth adapter path also
 uses `notarytool store-credentials --password`; the workflow wires API-key file
 auth only. Suppressing logs/errors does not prevent local argv inspection.
-The coordinator has asked the user to approve a disposable-hosted-runner exception
-versus requiring a reviewed secure-input helper. **No answer/exception approval is
-recorded. Do not execute live signing until resolved.** Do not generalize the
-preparation/uploader scripts' no-secret-argv guarantee to the signing adapter.
+The user explicitly approved this standard Apple approach for disposable
+GitHub-hosted runners ("apple's way is fine"). This exception permits the protected
+candidate run, not persistent/shared runners, raw argument logging, or public signed
+publication. Do not generalize the preparation/uploader scripts' no-secret-argv
+guarantee to the signing adapter.
 
 Tool subprocesses own isolated POSIX process groups. Timeout/cancellation/output
 limit and surviving descendants receive SIGTERM, then bounded SIGKILL (250 ms).
@@ -71,10 +75,12 @@ unverified. P12 preparation explicitly exports 3DES key/cert PBE plus SHA1 MAC,
 2048 iterations for Apple interoperability; tests inspect actual fixture metadata
 and confirm the AES-encrypted source key is unchanged.
 
-The last coordinator metadata check found no repository rulesets. Immutable
-reserved-tag ruleset creation/authorization remains outstanding; protected-ref
-and environment policy alone do not establish trusted creation/no-update/no-delete.
-No remote settings were changed by this implementation session.
+The coordinator created active tag ruleset `26046298`, matching
+`refs/tags/v*-signing-candidate.*`, with update/deletion restrictions and no bypass
+actors. Candidate creation still requires trusted repository write access; the
+human reviewer must verify the source SHA. The environment permits only those
+candidate tags and retains its required reviewer. Protected-ref and environment
+policy alone are not substitutes for inspecting these rules.
 
 ## Human prerequisites / decisions
 

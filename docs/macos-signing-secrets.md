@@ -230,7 +230,7 @@ partial failures, tracing/debug suppression, stdin-only payloads and absence of
 generated credential files. Linux tests cannot certify real macOS signing,
 notarization, Gatekeeper, protected GitHub environment policy or runtime behavior.
 
-## Signing subprocess password exposure — approval pending
+## Signing subprocess password exposure — hosted-runner exception approved
 
 The setup uploader's stdin-only guarantee above does **not** describe the signing
 adapter. Apple's standard `security` CLI currently receives the P12 password via
@@ -242,12 +242,12 @@ to `notarytool store-credentials --password`; the candidate workflow uses API-ke
 file auth instead. No raw command arguments, child errors or output are logged or
 uploaded; this does not eliminate local process-list exposure.
 
-**Live execution is blocked pending the user's answer**: accept this explicitly
-scoped exception on a disposable GitHub-hosted runner, or require a reviewed
-Security-framework/other secure-input helper before execution. The coordinator
-has asked; no approval is recorded. Environment approval alone must not be
-interpreted as answering that design decision. Do not run real signing, provision
-replacement credentials, or claim that all secrets avoid argv in the meantime.
+The user explicitly approved this standard Apple approach for disposable
+GitHub-hosted runners ("apple's way is fine"). This approval permits a protected
+candidate run; it does not cover persistent/shared runners, logging raw arguments,
+reading secret values into an agent session, or public signed publication.
+Required GitHub environment approval still applies to each run. Do not claim all
+secrets avoid argv.
 
 Tools run in isolated POSIX process groups. Timeout, cancellation and output-limit
 failure send SIGTERM, then SIGKILL after 250 ms if the group remains; normal leader
@@ -260,6 +260,14 @@ escape their group/session; reviewed source/dependencies and runner isolation ar
 still required. Hard cancellation can bypass all handlers. Persistent runners
 remain unsupported; actual macOS cancellation/cleanup still needs validation.
 
+## Candidate build allocations
+
+| Candidate tag | CFBundleVersion | State |
+|---|---|---|
+| `v0.0.1-signing-candidate.1` | `1.0.1` | Allocated for the first protected live candidate; source SHA is bound by the immutable tag and dispatch input. |
+
+Use a new allocation for a rebuild; do not recycle these identifiers for different bytes.
+
 ## Signed candidate runbook
 
 These are **human/coordinator operations after landing and review**, not commands
@@ -267,7 +275,7 @@ run by the implementation agent. No signed job, tag, credential access or public
 publication has been performed. Keep the [spec](../specs/macos-signing-and-notarization.md)
 disabled; there must be no duplicate implementation writer.
 
-1. Resolve and record the password-in-argv decision above **before any live run**.
+1. Confirm the recorded hosted-runner password-in-argv exception above still applies.
    Review the workflow, adapter, locked dependencies, minimal entitlement plists
    and numeric build policy. Confirm legal publisher/team/identity/bundle ID,
    API-key scope/custody and acceptance owner. Review the implementation difference
@@ -276,7 +284,7 @@ disabled; there must be no duplicate implementation writer.
    notarizer—owns bounded app/DMG submission, log inspection and stapling.
 2. Confirm environment `macos-release-signing` actually enforces required reviewer
    approval on this repository plan. Metadata reports reviewer `autonome`,
-   self-review allowed, tag policy `v*`, and all seven API-mode secret names. This
+   self-review allowed, tag policy `v*-signing-candidate.*`, and all seven API-mode secret names. This
    does not validate values or certify protections. Do not change protections or
    secrets merely to make a run pass. The reviewer approves execution of the
    selected source and its dependency lifecycle hooks with signing capability.
@@ -284,11 +292,12 @@ disabled; there must be no duplicate implementation writer.
    creation against untrusted writers and prohibit updates/deletion. Both job and
    adapter require GitHub's protected-ref flag; **an unprotected tag is skipped**.
    The flag alone cannot prove that the rule prohibits updates/deletion, so the
-   owner must inspect the rule itself. The last coordinator metadata check found
-   **no repository rulesets**; reserved-tag ruleset creation/authorization remains
-   outstanding. This implementation session has not changed remote rules.
-   A tag prefix plus an environment
-   `v*` policy alone does not establish immutability/trust. The workflow binds
+   owner must inspect the rule itself. Active ruleset `26046298` now matches
+   `refs/tags/v*-signing-candidate.*`, prohibits updates/deletion and has no bypass
+   actors. Tag creation still requires trusted repository write access; no new
+   writers were granted access. The signing environment was narrowed to the same
+   candidate namespace. A tag prefix or environment policy alone does not
+   establish immutability/trust. The workflow binds
    checkout, event SHA and peeled tag to the expected full commit, never an input
    checkout ref; a reviewer must independently verify that expected SHA. Do not
    approve a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag

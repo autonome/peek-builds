@@ -5,26 +5,30 @@ The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral po
 production adapter and manual candidate workflow have offline tests. The spec
 stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
 context reports all seven API secret **names**, reviewer `autonome` (self-review
-allowed), and environment tag policy `v*` in `macos-release-signing`. Values,
-credential validity, immutable-tag rules and clean-Mac acceptance remain unverified. This is not
-authorization for the agent to enroll, spend money, change accounts/secrets, sign
-a live build or publish a release. Distribution
+allowed), and environment tag policy `v*-signing-candidate.*` in
+`macos-release-signing`. Active tag ruleset `26046298` prevents candidate updates
+and deletion, with no bypass actors. Values, credential validity and clean-Mac
+acceptance remain unverified. The user approved a protected candidate using
+standard Apple CLI password handling on a disposable hosted runner. Enrollment,
+purchases, user key generation/export, secret-value inspection and public signed
+publication remain unapproved. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
 
-## Unresolved execution blockers
+## Execution authorization and remaining live checks
 
 - The standard `security` commands expose P12 and random keychain passwords in
   subprocess argv. Alternative password-auth `notarytool store-credentials` also
   exposes its password; the workflow uses API-key file auth. Logs/receipts suppress
-  raw argv/output, but local process inspection remains possible. The user has
-  been asked to accept a disposable-hosted-runner exception versus requiring a
-  reviewed secure-input helper; **no answer is recorded**. No real signing until
-  resolved. Preparation and upload scripts' no-secret-argv guarantee is narrower.
-- Last coordinator metadata check found **no repository rulesets**. Creation and
-  authorization of immutable reserved-tag rules remain outstanding. Do not infer
-  immutability from environment tag policy or protected-ref status alone.
+  raw argv/output, but local process inspection remains possible. The user
+  explicitly accepted this disposable-hosted-runner exception ("apple's way is
+  fine"). Preparation and upload scripts' no-secret-argv guarantee is narrower.
+- Active reserved-tag ruleset `26046298` has update/deletion restrictions and no
+  bypass actors. Environment approval and source-SHA verification remain required;
+  candidate creation must stay with trusted repository writers.
+- Actual credential import, notarization, cleanup/cancellation and clean-Mac
+  acceptance remain unverified until the authorized candidate is exercised.
 
 ## Executable candidate path (offline verified, macOS acceptance pending)
 
