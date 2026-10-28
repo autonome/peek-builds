@@ -728,19 +728,13 @@ const renderIntegrationsSettings = async () => {
   profileLabel.textContent = 'Profile to expose';
   profileLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
   profileGroup.appendChild(profileLabel);
-  profileSelect = document.createElement('select');
-  profileSelect.style.cssText = 'padding: 4px 8px; font-size: 13px;';
+  profileSelect = document.createElement('peek-select');
   const profileOptions = mcpState.profiles.length ? mcpState.profiles : [mcpState.profile];
-  for (const p of profileOptions) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    if (p === mcpState.profile) opt.selected = true;
-    profileSelect.appendChild(opt);
-  }
+  profileSelect.options = profileOptions.map(p => ({ value: p, label: p }));
+  profileSelect.value = mcpState.profile;
   profileSelect.addEventListener('change', async (e) => {
     try {
-      const res = await api.mcp?.setConfig?.({ profile: e.target.value });
+      const res = await api.mcp?.setConfig?.({ profile: e.detail.value });
       if (res?.success) mcpState = res.state;
     } catch { /* ignore */ }
     syncUI();
@@ -763,14 +757,13 @@ const renderIntegrationsSettings = async () => {
   scopeLabel.textContent = 'Scope tag (optional)';
   scopeLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
   scopeGroup.appendChild(scopeLabel);
-  scopeTagInput = document.createElement('input');
+  scopeTagInput = document.createElement('peek-input');
   scopeTagInput.type = 'text';
   scopeTagInput.placeholder = 'e.g. peek';
   scopeTagInput.value = mcpState.scopeTag || '';
-  scopeTagInput.style.cssText = 'padding: 4px 8px; font-size: 13px; min-width: 200px;';
-  scopeTagInput.addEventListener('change', async (e) => {
+  scopeTagInput.addEventListener('change', async () => {
     try {
-      const res = await api.mcp?.setConfig?.({ scopeTag: e.target.value.trim() });
+      const res = await api.mcp?.setConfig?.({ scopeTag: (scopeTagInput.value || '').trim() });
       if (res?.success) mcpState = res.state;
     } catch { /* ignore */ }
     syncUI();
@@ -818,10 +811,11 @@ const renderIntegrationsSettings = async () => {
   restartText.style.cssText = 'flex: 1;';
   restartText.innerHTML = '<strong>Restart Claude Code to apply.</strong> The change is saved, but any MCP client already running won\'t pick it up until you fully quit and reopen it. Re-approving in <code>/mcp</code> is not enough.';
   restartBanner.appendChild(restartText);
-  const restartDismiss = document.createElement('button');
+  const restartDismiss = document.createElement('peek-button');
+  restartDismiss.variant = 'ghost';
+  restartDismiss.size = 'sm';
   restartDismiss.textContent = '×';
   restartDismiss.setAttribute('aria-label', 'Dismiss');
-  restartDismiss.style.cssText = 'background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; opacity: 0.7;';
   restartDismiss.addEventListener('click', () => {
     lastAcknowledgedKey = stateKey(mcpState);
     restartBanner.style.display = 'none';
@@ -862,9 +856,9 @@ const renderIntegrationsSettings = async () => {
   scopesHelp.textContent = 'Write a .mcp.json into a project directory so a Claude Code session there only sees items tagged <scope> or <scope>:*. Useful for per-repo task triage.';
   mcpGroup.appendChild(scopesHelp);
 
-  const addScopeBtn = document.createElement('button');
+  const addScopeBtn = document.createElement('peek-button');
   addScopeBtn.textContent = '+ Add project scope';
-  addScopeBtn.style.cssText = 'padding: 4px 10px; font-size: 13px; cursor: pointer; margin-bottom: 8px;';
+  addScopeBtn.style.cssText = 'display: inline-block; margin-bottom: 8px;';
   mcpGroup.appendChild(addScopeBtn);
 
   // Inline form (hidden until Add / Edit clicked).
@@ -878,9 +872,9 @@ const renderIntegrationsSettings = async () => {
   pathLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
   pathLabel.textContent = 'Directory:';
   pathRow.appendChild(pathLabel);
-  const pickBtn = document.createElement('button');
+  const pickBtn = document.createElement('peek-button');
+  pickBtn.size = 'sm';
   pickBtn.textContent = 'Pick…';
-  pickBtn.style.cssText = 'padding: 3px 8px; font-size: 12px; cursor: pointer;';
   pathRow.appendChild(pickBtn);
   const pathDisplay = document.createElement('span');
   pathDisplay.style.cssText = 'font-size: 12px; color: var(--text-secondary); font-family: monospace; word-break: break-all;';
@@ -894,10 +888,9 @@ const renderIntegrationsSettings = async () => {
   tagLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
   tagLabel.textContent = 'Scope tag:';
   tagRow.appendChild(tagLabel);
-  const tagInput = document.createElement('input');
+  const tagInput = document.createElement('peek-input');
   tagInput.type = 'text';
   tagInput.placeholder = 'e.g. myproject';
-  tagInput.style.cssText = 'padding: 3px 8px; font-size: 12px; min-width: 180px;';
   tagRow.appendChild(tagInput);
   form.appendChild(tagRow);
 
@@ -907,29 +900,22 @@ const renderIntegrationsSettings = async () => {
   formProfileLabel.style.cssText = 'font-size: 12px; min-width: 70px;';
   formProfileLabel.textContent = 'Profile:';
   formProfileRow.appendChild(formProfileLabel);
-  const formProfileSelect = document.createElement('select');
-  formProfileSelect.style.cssText = 'padding: 3px 8px; font-size: 12px;';
+  const formProfileSelect = document.createElement('peek-select');
   const formProfileOptions = mcpState.profiles.length ? mcpState.profiles : [mcpState.profile];
-  for (const p of formProfileOptions) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    if (p === mcpState.profile) opt.selected = true;
-    formProfileSelect.appendChild(opt);
-  }
+  formProfileSelect.options = formProfileOptions.map(p => ({ value: p, label: p }));
+  formProfileSelect.value = mcpState.profile;
   formProfileRow.appendChild(formProfileSelect);
   form.appendChild(formProfileRow);
 
   const writesRow = document.createElement('div');
   writesRow.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 8px;';
-  const writesCheck = document.createElement('input');
-  writesCheck.type = 'checkbox';
-  writesCheck.id = 'mcp-scope-form-writes';
+  const writesCheck = document.createElement('peek-switch');
+  writesCheck.setAttribute('aria-label', 'Allow writes');
   writesRow.appendChild(writesCheck);
   const writesLabel = document.createElement('label');
-  writesLabel.htmlFor = 'mcp-scope-form-writes';
   writesLabel.style.cssText = 'font-size: 12px;';
   writesLabel.textContent = 'Allow writes';
+  writesLabel.addEventListener('click', () => writesCheck.toggle());
   writesRow.appendChild(writesLabel);
   form.appendChild(writesRow);
 
@@ -939,13 +925,14 @@ const renderIntegrationsSettings = async () => {
 
   const formButtons = document.createElement('div');
   formButtons.style.cssText = 'display: flex; gap: 6px;';
-  const saveBtn = document.createElement('button');
+  const saveBtn = document.createElement('peek-button');
+  saveBtn.variant = 'primary';
+  saveBtn.size = 'sm';
   saveBtn.textContent = 'Save';
-  saveBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer;';
   formButtons.appendChild(saveBtn);
-  const cancelBtn = document.createElement('button');
+  const cancelBtn = document.createElement('peek-button');
+  cancelBtn.size = 'sm';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer;';
   formButtons.appendChild(cancelBtn);
   form.appendChild(formButtons);
   mcpGroup.appendChild(form);
@@ -1019,15 +1006,16 @@ const renderIntegrationsSettings = async () => {
       info.appendChild(meta);
       row.appendChild(info);
       if (p.exists) {
-        const editBtn = document.createElement('button');
+        const editBtn = document.createElement('peek-button');
+        editBtn.size = 'sm';
         editBtn.textContent = 'Edit';
-        editBtn.style.cssText = 'padding: 3px 10px; font-size: 12px; cursor: pointer;';
         editBtn.addEventListener('click', () => showScopeForm(p));
         row.appendChild(editBtn);
       }
-      const removeBtn = document.createElement('button');
+      const removeBtn = document.createElement('peek-button');
+      removeBtn.variant = 'danger';
+      removeBtn.size = 'sm';
       removeBtn.textContent = 'Remove';
-      removeBtn.style.cssText = 'padding: 3px 10px; font-size: 12px; cursor: pointer;';
       removeBtn.addEventListener('click', async () => {
         if (!confirm(`Remove MCP scope from ${p.path}?\n\nThe .mcp.json file (or its peek entry) will be deleted.`)) return;
         try {
@@ -1043,7 +1031,7 @@ const renderIntegrationsSettings = async () => {
   saveBtn.addEventListener('click', async () => {
     const dirPath = formExistingPath || (pathDisplay.textContent === '(none selected)' ? '' : pathDisplay.textContent);
     if (!dirPath) { setFormError('Pick a directory first.'); return; }
-    const scopeTag = tagInput.value.trim();
+    const scopeTag = (tagInput.value || '').trim();
     if (!scopeTag) { setFormError('Scope tag is required.'); return; }
     try {
       const res = await api.mcp?.scaffoldProject?.({
