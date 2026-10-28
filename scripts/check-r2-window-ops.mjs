@@ -146,6 +146,8 @@ const WRITE_ALLOWLIST = [
     why: 'better-sqlite3 profiles DB close — not a window' },
   { file: 'apps/desktop/main/runtime-entry.ts', call: 'close', count: 1,
     why: 'early-boot sqlite handle close (earlyDb) — not a window' },
+  { file: 'apps/desktop/main/window-drag-runtime.ts', call: 'setBounds', count: 1,
+    why: 'calls the injected WindowDragDeps.setBounds port, not a window; the caller routes it to the window manager' },
   { file: 'apps/desktop/main/local-feature-watch.ts', call: 'close', count: 2,
     why: 'folder-watch handle close in LocalFeatureWatcher and fs.FSWatcher close in nodeFolderWatchPort — not a window' },
   { file: 'apps/desktop/main/hotreload.ts', call: 'close', count: 1,
@@ -250,8 +252,8 @@ const READ_ALLOWLIST = [
     why: 'the last-resort candidate filter in tile:theme:setWindowColorScheme, reached only when neither an explicit windowId nor the machine front resolves (headless). It picks a THEME target, not window behaviour — nothing about show/focus/stacking changes. Weakest "reported" claim on this list: if the decision class ever widens, this is the first entry to re-examine (the machine already knows which windows are satellites)' },
   { file: 'apps/desktop/main/windows.ts', call: 'isFocused', count: 1, kind: 'reported',
     why: 'the `focused` field of the wmLog esc-input line in the before-input-event Escape handler — diagnostic output only (destroyed-guarded); the escape decision itself is taken downstream by the machine. No branch' },
-  { file: 'apps/desktop/main/runtime-entry.ts', call: 'isFocused', count: 1, kind: 'reported',
-    why: 'the Cmd+W ("Close Window") menu handler\'s DEVTOOLS guard: wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused()). A detached devtools window is not a machine window, so the machine cannot know it holds OS focus — this read exists precisely because the fact is outside the machine\'s model (isDevToolsFocused() alone returns false in Electron 40 when devtools is OS-focused, hence the !isFocused() half). Accepted: the target of the close is still resolved by the machine front, this only detects "the keystroke went to devtools"' },
+  { file: 'apps/desktop/main/runtime-entry.ts', call: 'isFocused', count: 2, kind: 'reported',
+    why: 'the Cmd+W ("Close Window") menu handler\'s DEVTOOLS guard (devToolsOwnsCloseShortcut), read once for a BrowserWindow front and once for a hybrid page host\'s content WebContentsView: wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused()). A detached devtools window is not a machine window, so the machine cannot know it holds OS focus — this read exists precisely because the fact is outside the machine\'s model (isDevToolsFocused() alone returns false in Electron 40 when devtools is OS-focused, hence the !isFocused() half). Accepted: the target of the close is still resolved by the machine front, this only detects "the keystroke went to devtools"' },
 
   // ── Test-only observability (E2E bridge / _forTests exports) ─────────────
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'isAlwaysOnTop', count: 1, kind: 'reported',
