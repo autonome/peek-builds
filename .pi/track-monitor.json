@@ -1,0 +1,10 @@
+{
+  "targets": [
+    { "name": "startup-profile-picker", "kind": "manual" },
+    { "name": "spec-tile-schedule-resume", "kind": "spec" },
+    { "name": "spec-folknet-peeklet-models", "kind": "spec" },
+    { "name": "macos-signing-diagnostics", "kind": "manual" }
+  ],
+  "githubRepo": "autonome/peek-builds",
+  "workflow": "macos-signing-candidate.yml"
+}
