@@ -1,13 +1,13 @@
 ---
-enabled: false
+enabled: true
 touches: [packages/capabilities/index.js, packages/capabilities/index.d.ts, packages/capabilities/test.js, apps/server/capabilities.js, apps/desktop/main/tile-api.d.ts, apps/desktop/main/tile-preload.cts, apps/desktop/main/tile-ipc.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/model-broker/, docs/design/folknet-peeklets.md]
 depends-on: []
 ---
 
-# Draft: offline text broker and operator-configured gateway profile
+# Offline text broker and operator-configured gateway profile
 
-**DISABLED. Docs only now; do not begin implementation or enable this spec.** No
-credentials, real inference, jobs, billing, deployment or live probes authorized.
+**Approved for automated offline implementation.** No credentials, real inference,
+jobs, billing, deployment or live probes authorized.
 Contract: `docs/design/folknet-peeklets.md` §§1–5, 7–8. Empty dependencies mean no
 missing repository prerequisite; target deployment approval is separate.
 
@@ -18,7 +18,7 @@ wire evidence, not a universal Folknet contract. Design §1 pins evidence and di
 
 ## One milestone, not a platform
 
-Once separately authorized, deliver a fake-backed desktop profile text broker plus
+Deliver a fake-backed desktop profile text broker plus
 `openai-text-v1` adapter tested against loopback HTTP/SSE fixtures. No public universal
 Folknet SDK/docs prerequisite for offline engineering. Live support remains disabled
 until target operator confirmation. Text generation only; no jobs, embeddings, images,
