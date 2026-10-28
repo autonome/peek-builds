@@ -2663,7 +2663,7 @@ const renderDevicesSettings = async () => {
   newDeviceHeader.textContent = 'Add a device';
   newDeviceCard.appendChild(newDeviceHeader);
   const newDeviceBody = document.createElement('p');
-  newDeviceBody.style.cssText = 'margin: 0; color: var(--text-tertiary); font-size: 13px;';
+  newDeviceBody.className = 'device-intro';
   newDeviceBody.textContent =
     "Create a one-time code, then enter it — along with this server's URL — on the new " +
     "device's Sync panel.";
@@ -2671,7 +2671,7 @@ const renderDevicesSettings = async () => {
 
   const codeDisplay = document.createElement('p');
   codeDisplay.dataset.role = 'enrolment-code-display';
-  codeDisplay.style.cssText = 'margin: 8px 0 0; font-family: monospace; font-size: 14px; color: var(--text-primary); display: none;';
+  codeDisplay.className = 'enrolment-code is-hidden';
   newDeviceCard.appendChild(codeDisplay);
 
   const newDeviceFooter = document.createElement('div');
@@ -2683,8 +2683,8 @@ const renderDevicesSettings = async () => {
   addDeviceBtn.textContent = 'Create code';
   const showCodeError = (message) => {
     codeDisplay.textContent = `Failed to create code: ${message}`;
-    codeDisplay.style.color = 'var(--error-text, #dc2626)';
-    codeDisplay.style.display = '';
+    codeDisplay.classList.add('error');
+    codeDisplay.classList.remove('is-hidden');
   };
   addDeviceBtn.addEventListener('click', async () => {
     try {
@@ -2696,8 +2696,7 @@ const renderDevicesSettings = async () => {
       const { code, expiresAt } = result.data || {};
       const expires = expiresAt ? new Date(expiresAt).toLocaleString() : 'unknown';
       codeDisplay.textContent = `Code: ${code} — expires ${expires}`;
-      codeDisplay.style.color = '';
-      codeDisplay.style.display = '';
+      codeDisplay.classList.remove('error', 'is-hidden');
     } catch (err) {
       showCodeError(err.message || String(err));
     }
@@ -2708,12 +2707,10 @@ const renderDevicesSettings = async () => {
 
   const statusLine = document.createElement('p');
   statusLine.className = 'devices-panel-status';
-  statusLine.style.cssText = 'color: var(--text-tertiary); font-size: 13px;';
   container.appendChild(statusLine);
 
   const listContainer = document.createElement('div');
   listContainer.className = 'devices-panel-list';
-  listContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; margin-top: 12px;';
   container.appendChild(listContainer);
 
   const renderDeviceCard = (device) => {
@@ -2725,16 +2722,13 @@ const renderDevicesSettings = async () => {
 
     const header = document.createElement('div');
     header.slot = 'header';
-    header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; width: 100%;';
+    header.className = 'device-header';
     const labelSpan = document.createElement('span');
     labelSpan.className = 'device-label';
     labelSpan.textContent = device.label || '(unnamed device)';
     header.appendChild(labelSpan);
     const badge = document.createElement('span');
-    badge.className = 'device-badge';
-    badge.style.cssText = device.revoked_at
-      ? 'font-size: 12px; color: var(--text-tertiary);'
-      : 'font-size: 12px; color: var(--accent-primary);';
+    badge.className = device.revoked_at ? 'device-badge revoked' : 'device-badge';
     // `current` is the server's word for "the key that made this request" —
     // i.e. this install. Named, since revoking it disconnects this very app.
     badge.textContent = device.revoked_at ? 'Revoked' : device.current ? 'This device' : 'Active';
@@ -2746,7 +2740,6 @@ const renderDevicesSettings = async () => {
 
     const meta = document.createElement('div');
     meta.className = 'device-meta';
-    meta.style.cssText = 'display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-secondary);';
     const created = document.createElement('div');
     created.textContent = `Created: ${device.created_at ? new Date(device.created_at).toLocaleString() : 'unknown'}`;
     meta.appendChild(created);
@@ -2758,13 +2751,12 @@ const renderDevicesSettings = async () => {
     if (!device.revoked_at) {
       const footer = document.createElement('div');
       footer.slot = 'footer';
-      footer.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+      footer.className = 'device-footer';
 
       const renameInput = document.createElement('peek-input');
       renameInput.dataset.role = 'rename-input';
       renameInput.placeholder = 'Device name';
       renameInput.value = device.label || '';
-      renameInput.style.cssText = 'flex: 1;';
       footer.appendChild(renameInput);
 
       const renameBtn = document.createElement('peek-button');
