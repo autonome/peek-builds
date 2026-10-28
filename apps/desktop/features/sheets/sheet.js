@@ -7,6 +7,7 @@
 
 import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.js';
 import { withSheetName } from './sheet-commands.js';
+import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import {
@@ -297,6 +298,40 @@ const encodeBackgroundImage = async (file) => {
   throw new Error('image could not be encoded');
 };
 
+/** The options panel's name box, kept in step with renames made elsewhere. */
+let optionsNameInput = null;
+
+/**
+ * Save a new name from the options panel or the header, and update the header,
+ * window title and name box. A blank or unchanged name only restores the display.
+ */
+const commitName = async (input) => {
+  const next = withSheetName(sheetConfig, input);
+  if (next !== sheetConfig && next.name !== sheetConfig.name) {
+    sheetConfig = next;
+    await saveSheetConfig();
+    // Name lists (command options, the sheets grid) follow the new name.
+    api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+  }
+  const titleEl = document.querySelector('.sheet-title');
+  if (!titleEl.querySelector('input')) titleEl.textContent = sheetConfig.name;
+  document.title = sheetConfig.name;
+  if (optionsNameInput) optionsNameInput.value = sheetConfig.name || '';
+};
+
+/** Click the header title to rename in place. */
+const setupTitleEdit = () => {
+  const titleEl = document.querySelector('.sheet-title');
+  titleEl.addEventListener('click', () => {
+    startNameEdit(titleEl, {
+      name: sheetConfig.name || '',
+      save: (name) => commitName(name)
+    });
+  });
+  // Esc ends only the edit; otherwise it closes the transient sheet window.
+  api.escape?.onEscape?.(() => ({ handled: isNameEditing() }));
+};
+
 /**
  * Wire the options panel: open maximized, background kind, background image.
  */
@@ -336,22 +371,8 @@ const setupOptionsPanel = () => {
   // ----- Name -----
   const nameInput = panel.querySelector('.opt-name');
   nameInput.value = sheetConfig.name || '';
-  const commitName = async () => {
-    const next = withSheetName(sheetConfig, nameInput.value);
-    if (next === sheetConfig || next.name === sheetConfig.name) {
-      // Blank or unchanged: show the saved name again.
-      nameInput.value = sheetConfig.name || '';
-      return;
-    }
-    sheetConfig = next;
-    await saveSheetConfig();
-    nameInput.value = sheetConfig.name;
-    document.querySelector('.sheet-title').textContent = sheetConfig.name;
-    document.title = sheetConfig.name;
-    // Name lists (command options, the sheets grid) follow the new name.
-    api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
-  };
-  nameInput.addEventListener('change', commitName);
+  optionsNameInput = nameInput;
+  nameInput.addEventListener('change', () => commitName(nameInput.value));
   nameInput.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') {
@@ -540,6 +561,7 @@ const init = async () => {
   titleEl.textContent = sheetConfig.name;
   document.title = sheetConfig.name;
 
+  setupTitleEdit();
   setupEvents();
   renderCards();
   updateEditState();

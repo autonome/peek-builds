@@ -87,6 +87,7 @@ body.see-through .add-dialog-input {
   font-size: 18px;
   font-weight: 600;
   color: var(--base05);
+  cursor: text;
 }
 
 .sheet-actions {

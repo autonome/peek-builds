@@ -2,8 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   argsFromCommandMessage, sheetNameOptions, findSheetByName,
-  normalizeSheetName, withSheetName, sheetIdOfKey, DEFAULT_SHEET_NAME
+  normalizeSheetName, withSheetName, sheetIdOfKey, DEFAULT_SHEET_NAME, resolveNameEdit
 } from '../../features/sheets/sheet-commands.js';
+
+test('resolveNameEdit saves a changed name, trimmed and collapsed', () => {
+  assert.deepEqual(resolveNameEdit('Home', '  Work   board ', false), { save: true, name: 'Work board' });
+});
+
+test('resolveNameEdit keeps the current name on cancel, blank or unchanged', () => {
+  assert.deepEqual(resolveNameEdit('Home', 'Work', true), { save: false, name: 'Home' });
+  assert.deepEqual(resolveNameEdit('Home', '   ', false), { save: false, name: 'Home' });
+  assert.deepEqual(resolveNameEdit('Home', ' Home ', false), { save: false, name: 'Home' });
+});
 
 test('argsFromCommandMessage prefers search, then params, then typed text', () => {
   assert.equal(argsFromCommandMessage({ search: ' Work ' }, 'new sheet'), 'Work');

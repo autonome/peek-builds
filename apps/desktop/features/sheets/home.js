@@ -8,9 +8,10 @@
  */
 
 import { mountCardView, createCard } from 'peek://app/lib/card-view.js';
-import { loadSheetsMap, createSheet, deleteSheet } from './sheet-store.js';
+import { loadSheet, saveSheet, loadSheetsMap, createSheet, deleteSheet } from './sheet-store.js';
+import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC } from './sheet-hotkeys.js';
-import { sheetIdOfKey, normalizeSheetName } from './sheet-commands.js';
+import { sheetIdOfKey, normalizeSheetName, withSheetName } from './sheet-commands.js';
 
 const api = window.app;
 
@@ -44,6 +45,46 @@ const addSheet = async () => {
   api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheetId] });
 };
 
+/** Save a new name for a sheet, then refresh lists and name options. */
+const renameSheet = async (sheet, name) => {
+  const config = await loadSheet(api, sheet.id);
+  const next = withSheetName(config, name);
+  if (!config || next === config) return;
+  const result = await saveSheet(api, sheet.id, next);
+  if (result && result.error) {
+    console.error('[ext:sheets] Failed to rename sheet:', result.error);
+    return;
+  }
+  api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId: sheet.id });
+};
+
+/**
+ * Double-click a card's name to edit it. A click on the name waits briefly
+ * before opening the sheet, so the first click of a double-click does not.
+ */
+const OPEN_DELAY_MS = 250;
+let pendingOpen = null;
+
+const attachNameEdit = (card, sheet) => {
+  const title = card.querySelector('.card-title');
+  card.addEventListener('card-click', (e) => {
+    if (e.detail?.originalEvent?.target !== title) {
+      api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheet.id] });
+      return;
+    }
+    clearTimeout(pendingOpen);
+    pendingOpen = setTimeout(
+      () => api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheet.id] }),
+      OPEN_DELAY_MS
+    );
+  });
+  title.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    clearTimeout(pendingOpen);
+    startNameEdit(title, { name: sheet.name, save: (name) => renameSheet(sheet, name) });
+  });
+};
+
 const view = mountCardView({
   api,
   searchPlaceholder: 'Search sheets...',
@@ -54,14 +95,17 @@ const render = () => {
   view.render({
     items: sheets,
     matches: (sheet, q) => sheet.name.toLowerCase().includes(q),
-    toCard: (sheet) => createCard({
-      id: sheet.id,
-      title: sheet.name,
-      meta: cardCountText(sheet),
-      deleteTitle: `Delete sheet ${sheet.name}`,
-      onClick: () => api.pubsub.publish(SHEET_OPEN_TOPIC, { args: [sheet.id] }),
-      onDelete: () => confirmDeleteSheet(sheet)
-    }),
+    toCard: (sheet) => {
+      const card = createCard({
+        id: sheet.id,
+        title: sheet.name,
+        meta: cardCountText(sheet),
+        deleteTitle: `Delete sheet ${sheet.name}`,
+        onDelete: () => confirmDeleteSheet(sheet)
+      });
+      attachNameEdit(card, sheet);
+      return card;
+    },
     ghost: { title: 'New sheet', onClick: addSheet }
   });
 };
@@ -76,6 +120,8 @@ const loadSheets = async () => {
 };
 
 const init = async () => {
+  // Esc ends only a name edit; otherwise it closes the window as before.
+  api.escape?.onEscape?.(() => ({ handled: isNameEditing() }));
   api.pubsub.subscribe(SHEETS_CHANGED_TOPIC, () => { loadSheets(); });
   await loadSheets();
   view.markReady();

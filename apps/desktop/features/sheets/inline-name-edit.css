@@ -1,0 +1,12 @@
+/* The text box that replaces a sheet name while it is edited in place. */
+.inline-name-input {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--base03, currentColor);
+  border-radius: 4px;
+  padding: 0 4px;
+  min-width: 12ch;
+  max-width: 100%;
+  outline: none;
+}

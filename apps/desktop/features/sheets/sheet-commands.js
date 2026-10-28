@@ -90,3 +90,20 @@ export const withSheetName = (config, input) => {
   if (!name) return config;
   return { ...(config || {}), name };
 };
+
+/**
+ * What finishing an in-place name edit should do. Saves only when the edit was
+ * not cancelled and the cleaned-up text is non-blank and differs from the
+ * current name; otherwise the current name is shown again.
+ *
+ * @param {string} currentName the saved name
+ * @param {string} input the text in the edit box
+ * @param {boolean} cancelled true when the edit ended with Esc
+ * @returns {{save: boolean, name: string}} `name` is what to display afterwards
+ */
+export const resolveNameEdit = (currentName, input, cancelled) => {
+  if (cancelled) return { save: false, name: currentName };
+  const next = withSheetName({ name: currentName }, input).name;
+  if (next === currentName) return { save: false, name: currentName };
+  return { save: true, name: next };
+};
