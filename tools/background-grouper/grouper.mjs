@@ -17,13 +17,23 @@ export const DEFAULTS = {
 
 // Hand-set weights; they sum to 1 so a pair score stays in 0..1.
 export const WEIGHTS = {
-  title: 0.25,
-  site: 0.15,
-  session: 0.3,
-  navigation: 0.1,
-  entities: 0.1,
-  tags: 0.1,
+  title: 0.2,
+  site: 0.12,
+  session: 0.24,
+  navigation: 0.08,
+  entities: 0.08,
+  tags: 0.08,
+  embedding: 0.2,
 };
+
+/** WEIGHTS, or with the embedding weight spread back over the rest (the --no-embed scoring). */
+export function weightsFor(withEmbedding) {
+  if (withEmbedding) return WEIGHTS;
+  const rest = 1 - WEIGHTS.embedding;
+  const out = {};
+  for (const [k, v] of Object.entries(WEIGHTS)) if (k !== 'embedding') out[k] = Math.round((v / rest) * 1e6) / 1e6;
+  return out;
+}
 
 const STOPWORDS = new Set(
   ('the and for with from that this your you are was were have has not but all can any new ' +
@@ -240,6 +250,46 @@ export function buildTfidf(pages) {
   return vecs;
 }
 
+/** Text embedded for a page: its effective title plus its site. Empty when there is no title. */
+export function embeddingText(page) {
+  if (!page.title) return '';
+  let host = '';
+  try {
+    host = new URL(page.url).hostname.replace(/^www\./, '');
+  } catch {
+    // keep the title alone
+  }
+  return host ? `${page.title} (${host})` : page.title;
+}
+
+/** Cosine similarity of two embedding vectors, clamped to 0..1; 0 when either is missing. */
+export function embeddingSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (!na || !nb) return 0;
+  return Math.min(1, Math.max(0, dot / Math.sqrt(na * nb)));
+}
+
+/**
+ * Set `page.embedding` for every page with an effective title, one embedding per page.
+ * `embed` is `async (texts) => vectors`. Pages without a title get none.
+ */
+export async function embedPages(pages, embed) {
+  const todo = pages.filter((p) => embeddingText(p));
+  const vecs = todo.length ? await embed(todo.map(embeddingText)) : [];
+  todo.forEach((p, i) => {
+    p.embedding = vecs[i];
+  });
+  return pages;
+}
+
 function jaccard(a, b) {
   if (!a || !b || !a.size || !b.size) return 0;
   let inter = 0;
@@ -265,6 +315,7 @@ export function pairSignals(pages, sessions, opts = {}) {
         navigation: adj.has(key) ? 1 : 0,
         entities: jaccard(a.entities, b.entities),
         tags: jaccard(a.tags, b.tags),
+        embedding: embeddingSimilarity(a.embedding, b.embedding),
       };
       s.score = scoreOf(s, opts.weights);
       if (s.score > 0) out.set(key, s);
@@ -351,7 +402,8 @@ export function nameGroup(titles, max = 3) {
 /** Cluster pages, apply the cohesion filter, and describe each group. */
 export function groupPages(pages, sessions, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
-  const pairs = pairSignals(pages, sessions, o);
+  const weights = o.weights || weightsFor(pages.some((p) => p.embedding));
+  const pairs = pairSignals(pages, sessions, { ...o, weights });
   const byId = new Map(pages.map((p) => [p.id, p]));
   const sessionOf = new Map(); // page id -> Set(session index)
   sessions.forEach((s, i) => {
@@ -366,7 +418,7 @@ export function groupPages(pages, sessions, opts = {}) {
     const sess = new Set();
     for (const id of ids) for (const s of sessionOf.get(id) || []) sess.add(s);
     if (sess.size < o.minSessions) continue;
-    const contrib = Object.fromEntries(Object.keys(WEIGHTS).map((k) => [k, 0]));
+    const contrib = Object.fromEntries(Object.keys(weights).map((k) => [k, 0]));
     let total = 0;
     let n = 0;
     for (let i = 0; i < ids.length; i++) {
@@ -376,7 +428,7 @@ export function groupPages(pages, sessions, opts = {}) {
         n++;
         if (!s) continue;
         total += s.score;
-        for (const w of Object.keys(WEIGHTS)) contrib[w] += WEIGHTS[w] * s[w];
+        for (const w of Object.keys(weights)) contrib[w] += weights[w] * s[w];
       }
     }
     for (const w of Object.keys(contrib)) contrib[w] /= n;
@@ -476,9 +528,11 @@ export function loadData(dbPath, { days = DEFAULTS.days, now = Date.now(), entit
   }
 }
 
-export function runGrouper(dbPath, opts = {}) {
+/** `opts.embed` (async texts => vectors) turns the embedding signal on; without it, it is off. */
+export async function runGrouper(dbPath, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const { pages, visits, excludedAuth, excludedSearch, appTitles } = loadData(dbPath, o);
+  if (o.embed) await embedPages(pages, o.embed);
   const sessions = cutSessions(visits, o.sessionGapMs);
   const groups = groupPages(pages, sessions, o);
   return {
@@ -494,6 +548,9 @@ export function formatReport({ groups, stats }, opts = {}) {
     '# Background grouper report',
     '',
     `Window: last ${o.days} days. Cutoff: ${o.cutoff}.`,
+    o.embed || o.embedModel
+      ? `Embedding signal: on (${o.embedModel || 'custom embedder'}), weight ${WEIGHTS.embedding}.`
+      : 'Embedding signal: off.',
     `${stats.visits} visits, ${stats.pages} web pages after filtering (${stats.excludedAuth} sign-in/redirect pages and ${stats.excludedSearch} search-results pages dropped; ${stats.appTitles} pages had an app-assigned title treated as none), ${stats.sessions} sessions.`,
     `${groups.length} groups, ${grouped} of ${stats.pages} pages grouped.`,
     '',

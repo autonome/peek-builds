@@ -189,6 +189,12 @@ The one signal that could tie a listing page to a spreadsheet about the same pur
 meaning across different sites. That is the case for an embedding signal, and it is the first
 thing the bake-off should add to this baseline.
 
+The offline tool now has that signal: each page's effective title plus its hostname is embedded
+once with `Xenova/all-MiniLM-L6-v2` (Transformers.js, mean pooled, normalized), and the pair
+signal is the cosine clamped to 0..1, weighted 0.2 beside the TF-IDF title signal. `--no-embed`
+turns it off and restores the earlier weights. No results are recorded yet: it has not been run
+on real data.
+
 ## First step (as planned)
 
 Run the heuristic grouper offline, read-only, against a copy of the real profile's

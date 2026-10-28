@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   isAuthPage, isSearchPage, effectiveTitle, titleTokens, registrableDomain, siteSignal,
   visitWeight, cutSessions, sessionCooccurrence, nameGroup, runGrouper, formatReport,
+  WEIGHTS, weightsFor, embeddingSimilarity, embedPages, pairSignals, groupPages,
 } from './grouper.mjs';
 import { assertOutsideRepo, parseArgs } from './cli.mjs';
 
@@ -128,12 +129,96 @@ function makeFixture(dir, now) {
   return file;
 }
 
-test('end to end on a synthetic database copy', () => {
+test('weights sum to 1 with and without the embedding signal', () => {
+  const sum = (w) => Object.values(w).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sum(WEIGHTS) - 1) < 1e-9);
+  assert.equal(WEIGHTS.embedding, 0.2);
+  assert.ok(Math.abs(sum(weightsFor(false)) - 1) < 1e-5);
+  assert.equal(weightsFor(false).title, 0.25);
+  assert.ok(!('embedding' in weightsFor(false)));
+});
+
+test('embeddingSimilarity clamps to 0..1 and is 0 for a missing vector', () => {
+  assert.equal(embeddingSimilarity([1, 0], [1, 0]), 1);
+  assert.equal(embeddingSimilarity([1, 0], [-1, 0]), 0);
+  assert.equal(embeddingSimilarity([1, 0], [0, 1]), 0);
+  assert.ok(Math.abs(embeddingSimilarity([1, 1], [1, 0]) - Math.SQRT1_2) < 1e-9);
+  assert.equal(embeddingSimilarity(undefined, [1, 0]), 0);
+  assert.equal(embeddingSimilarity([0, 0], [1, 0]), 0);
+});
+
+// Fake embedder: a topic word in the text selects a fixed direction, so meaning is shared
+// without any shared title word.
+const TOPICS = { flat: [1, 0, 0], apartment: [1, 0.05, 0], rent: [0.95, 0, 0.1], pizza: [0, 1, 0] };
+function fakeEmbed(texts) {
+  return Promise.resolve(texts.map((t) => {
+    const hit = Object.keys(TOPICS).find((k) => t.toLowerCase().includes(k));
+    return Float32Array.from(hit ? TOPICS[hit] : [0, 0, 1]);
+  }));
+}
+
+test('embedPages embeds titled pages only, once each', async () => {
+  const pages = [
+    { id: 'a', url: 'https://www.x.example/1', title: 'Flat' },
+    { id: 'b', url: 'https://y.example/2', title: '' },
+  ];
+  let seen = [];
+  await embedPages(pages, (texts) => { seen = texts; return fakeEmbed(texts); });
+  assert.deepEqual(seen, ['Flat (x.example)']);
+  assert.ok(pages[0].embedding);
+  assert.equal(pages[1].embedding, undefined);
+  assert.equal(embeddingSimilarity(pages[0].embedding, pages[1].embedding), 0);
+});
+
+test('pages sharing meaning but no title words score above the cutoff with embeddings', async () => {
+  const mk = () => [
+    { id: 'a', url: 'https://one.example/1', title: 'Flat hunting', tokens: titleTokens('Flat hunting'), entities: new Set(), tags: new Set() },
+    { id: 'b', url: 'https://two.example/2', title: 'Apartment listings', tokens: titleTokens('Apartment listings'), entities: new Set(), tags: new Set() },
+    { id: 'c', url: 'https://three.example/3', title: 'Cheap rent options', tokens: titleTokens('Cheap rent options'), entities: new Set(), tags: new Set() },
+  ];
+  const sessions = cutSessions([
+    { itemId: 'a', timestamp: 1_000_000, duration: 60000, interacted: 1 },
+    { itemId: 'b', timestamp: 1_001_000, duration: 60000, interacted: 1 },
+    { itemId: 'c', timestamp: 1_002_000, duration: 60000, interacted: 1 },
+  ]);
+  const plain = mk();
+  const without = groupPages(plain, sessions, { minSessions: 1, cutoff: 0.3 });
+  assert.equal(without.length, 0);
+  const embedded = await embedPages(mk(), fakeEmbed);
+  const pairs = pairSignals(embedded, sessions, { weights: WEIGHTS });
+  assert.ok(pairs.get('a|b').embedding > 0.9);
+  assert.equal(pairs.get('a|b').title, 0);
+  const withEmb = groupPages(embedded, sessions, { minSessions: 1, cutoff: 0.3 });
+  assert.equal(withEmb.length, 1);
+  assert.equal(withEmb[0].members.length, 3);
+});
+
+test('end to end on a synthetic database copy with the fake embedder', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grouper-test-'));
   try {
     const now = Date.now();
     const file = makeFixture(dir, now);
-    const result = runGrouper(file, { now });
+    const result = await runGrouper(file, { now, embed: fakeEmbed, embedModel: 'fake' });
+    assert.equal(result.groups.length, 1);
+    assert.match(formatReport(result, { embed: fakeEmbed, embedModel: 'fake' }), /Embedding signal: on \(fake\)/);
+    assert.match(formatReport(await runGrouper(file, { now })), /Embedding signal: off/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--no-embed and --model-cache parse', () => {
+  assert.equal(parseArgs(['a', 'b', '--no-embed']).opts.noEmbed, true);
+  assert.equal(parseArgs(['a', 'b', '--model-cache', '/x']).opts.modelCache, '/x');
+  assert.throws(() => parseArgs(['a', 'b', '--model-cache']));
+});
+
+test('end to end on a synthetic database copy', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grouper-test-'));
+  try {
+    const now = Date.now();
+    const file = makeFixture(dir, now);
+    const result = await runGrouper(file, { now });
     assert.equal(result.stats.excludedAuth, 1);
     assert.equal(result.stats.excludedSearch, 1);
     assert.equal(result.stats.appTitles, 1);

@@ -1,0 +1,10 @@
+{
+  "name": "@peek/background-grouper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline tool that proposes page groups from a copy of a profile datastore",
+  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.0"
+  }
+}

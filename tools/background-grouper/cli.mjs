@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Usage: node tools/background-grouper/cli.mjs <database-copy> <report-path> [--days N] [--cutoff X]
+// Usage: node tools/background-grouper/cli.mjs <database-copy> <report-path> [--days N] [--cutoff X] [--no-embed] [--model-cache DIR]
 // Both paths must be outside the repository: they hold real browsing data.
 
 import fs from 'node:fs';
@@ -40,6 +40,8 @@ export function parseArgs(argv) {
     const a = argv[i];
     if (a === '--days') opts.days = Number(argv[++i]);
     else if (a === '--cutoff') opts.cutoff = Number(argv[++i]);
+    else if (a === '--no-embed') opts.noEmbed = true;
+    else if (a === '--model-cache') opts.modelCache = argv[++i];
     else if (a.startsWith('--')) throw new Error(`unknown option ${a}`);
     else pos.push(a);
   }
@@ -47,22 +49,31 @@ export function parseArgs(argv) {
   for (const k of ['days', 'cutoff']) {
     if (k in opts && !(opts[k] > 0)) throw new Error(`--${k} must be a positive number`);
   }
+  if ('modelCache' in opts && !opts.modelCache) throw new Error('--model-cache needs a directory');
   return { dbPath: pos[0], reportPath: pos[1], opts: { ...DEFAULTS, ...opts } };
 }
 
-function main() {
+async function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
     assertOutsideRepo(args.dbPath, 'database path');
     assertOutsideRepo(args.reportPath, 'report path');
     if (!fs.existsSync(args.dbPath)) throw new Error(`no such file: ${args.dbPath}`);
+    if (args.opts.modelCache) assertOutsideRepo(args.opts.modelCache, 'model cache');
   } catch (e) {
     console.error(`background-grouper: ${e.message}`);
-    console.error('usage: cli.mjs <database-copy> <report-path> [--days N] [--cutoff X]');
+    console.error('usage: cli.mjs <database-copy> <report-path> [--days N] [--cutoff X] [--no-embed] [--model-cache DIR]');
     process.exit(2);
   }
-  const result = runGrouper(args.dbPath, args.opts);
+  if (!args.opts.noEmbed) {
+    const { createEmbedder, defaultCacheDir, MODEL } = await import('./embedder.mjs');
+    const cacheDir = args.opts.modelCache || defaultCacheDir();
+    assertOutsideRepo(cacheDir, 'model cache');
+    args.opts.embed = await createEmbedder({ cacheDir });
+    args.opts.embedModel = MODEL;
+  }
+  const result = await runGrouper(args.dbPath, args.opts);
   fs.writeFileSync(args.reportPath, formatReport(result, args.opts));
   console.log(`${result.groups.length} groups from ${result.stats.pages} pages; report written to ${args.reportPath}`);
 }
