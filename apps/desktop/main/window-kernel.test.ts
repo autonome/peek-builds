@@ -9485,6 +9485,21 @@ describe('window-kernel: maximize-all mode', () => {
     assert.deepStrictEqual(rec.bounds, WORK_AREA);
   });
 
+  it('a new window is maximized when it is shown, before its first painted frame', () => {
+    const { state: on } = enter(twoWindowsHere());
+    const events: Event[] = [
+      { type: 'WindowRegistered', id: wid(8), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content', bounds: rect(8) },
+      { type: 'WindowShown', id: wid(8) },
+    ];
+    const { state, effects } = foldWithEffects(events, on);
+    const rec = recordFor(state, 8);
+    assert.strictEqual(rec.orderable, false, 'precondition: no first frame yet');
+    assert.strictEqual(rec.maximized, true);
+    assert.strictEqual(rec.maximizeAllMark, 'marked');
+    assert.deepStrictEqual(rec.bounds, WORK_AREA);
+    assert.deepStrictEqual(boundsWrites(effects).map((e) => [e.id, e.bounds]), [[wid(8), WORK_AREA]]);
+  });
+
   it('a window shown in scope while the mode is on is maximized and marked', () => {
     const hidden = fold([...open(7, rect(7)), { type: 'WindowHidden', id: wid(7) }], twoWindowsHere());
     const { state: on } = enter(hidden);

@@ -3171,7 +3171,10 @@ export function isMaximizeAllEligible(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (record.pendingHidden === true) return false;
   if (record.transient === true) return false;
-  if (!record.orderable) return false;
+  // `orderable` is deliberately not asked: a page host is shown at load start
+  // and only becomes orderable on its first painted frame, so requiring it
+  // would show a new window at its opening size and maximize it afterwards.
+  // Maximizing is a bounds write, which needs no window-server ordering.
   if (!record.canBecomeKey) return false;
   if (record.layer !== BASE_LAYER) return false;
   if (record.overlayFor !== undefined) return false;
