@@ -60,8 +60,8 @@ function integer(value: unknown, max: number): asserts value is number {
 function safeUsage(value: unknown): Record<string, number> | null {
   if (value == null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) invalid();
-  const allowed = new Set(['inputTokens', 'outputTokens', 'totalTokens',
-    'prompt_tokens', 'completion_tokens', 'total_tokens']);
+  const allowed = new Set(['promptTokens', 'completionTokens', 'totalTokens']);
+  if (Object.keys(value).length !== 3 || ![...allowed].every(key => Object.hasOwn(value, key))) invalid();
   const result: Record<string, number> = {};
   for (const [key, count] of Object.entries(value)) {
     if (!allowed.has(key)) invalid();
@@ -125,6 +125,7 @@ export class ModelStore {
           if (dispatched) this.latch();
         }
       });
+      this.maintain();
     } catch (error) {
       try { db?.close(); } catch { /* preserve redaction */ }
       try { owner?.close(); } catch { /* preserve redaction */ }
@@ -174,7 +175,18 @@ export class ModelStore {
       .run(call.state, call.updatedAt, JSON.stringify(call), call.callId);
   }
 
+  private maintain(): void {
+    this.transaction(() => {
+      const time = this.clock();
+      this.db.prepare("DELETE FROM model_calls WHERE state='terminal' AND created_at <= ?").run(time - RETENTION);
+      this.db.prepare("DELETE FROM model_quota WHERE (period='day' AND bucket < ?) OR (period='hour' AND bucket < ?)")
+        .run(Math.floor((time - RETENTION) / DAY), Math.floor((time - RETENTION) / HOUR));
+    });
+  }
+
   prepare(record: ModelReservation): { callId: string; fresh: boolean } {
+    // Maintenance/high-water survives even when admission is refused by a latch or quota.
+    this.maintain();
     return this.transaction(() => {
       text(record.callId, 256); text(record.owner, 4096); text(record.clientRequestId, 256);
       text(record.requestHash, 256); text(record.accountRevision, 256);
@@ -182,9 +194,6 @@ export class ModelStore {
       integer(record.maxOutputTokens, 512); integer(record.maxDurationMs, 30_000);
       if (!record.maxOutputTokens || !record.maxDurationMs) invalid();
       const time = this.clock();
-      this.db.prepare("DELETE FROM model_calls WHERE state='terminal' AND created_at <= ?").run(time - RETENTION);
-      this.db.prepare("DELETE FROM model_quota WHERE (period='day' AND bucket < ?) OR (period='hour' AND bucket < ?)")
-        .run(Math.floor((time - RETENTION) / DAY), Math.floor((time - RETENTION) / HOUR));
       const existing = this.db.prepare('SELECT metadata FROM model_calls WHERE owner=? AND client_key=?')
         .get(record.owner, record.clientRequestId);
       if (existing) {
@@ -262,6 +271,17 @@ export class ModelStore {
       this.save(call);
       if (call.remoteState === 'unknown') this.latch();
     });
+  }
+
+  find(owner: string, clientRequestId: string): ModelCallMetadata | undefined {
+    return this.guard(() => {
+      const row = this.db.prepare('SELECT metadata FROM model_calls WHERE owner=? AND client_key=?').get(owner, clientRequestId);
+      return row ? JSON.parse(row.metadata as string) as ModelCallMetadata : undefined;
+    });
+  }
+
+  hasUnknown(): boolean {
+    return this.guard(() => this.db.prepare('SELECT unknown_latch FROM model_meta WHERE id=1').get()?.unknown_latch !== 0);
   }
 
   status(callId: string): ModelCallMetadata | undefined {

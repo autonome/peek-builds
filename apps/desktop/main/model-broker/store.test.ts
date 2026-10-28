@@ -43,6 +43,20 @@ function child(dir: string, body: string) {
   { encoding: 'utf8' });
 }
 
+test('retention commits even when unknown latch refuses every subsequent admission', t => {
+  const f = fixture(t); const store = f.open();
+  store.prepare(record('uncertain')); store.dispatch('uncertain');
+  store.terminal('uncertain', {localState: 'aborted', remoteState: 'unknown', usage: null, errorCode: 'TIMEOUT'});
+  f.setTime(START + 31 * DAY);
+  assert.throws(() => store.prepare(record('new')), code('UNKNOWN_REMOTE'));
+  assert.equal(store.status('uncertain'), undefined);
+  assert.equal(store.hasUnknown(), true);
+  store.close();
+  const reopened = f.open();
+  assert.equal(reopened.hasUnknown(), true);
+  assert.equal(reopened.status('uncertain'), undefined);
+});
+
 test('durable metadata, owner-scoped dedupe, conflicts and one active call', t => {
   const f = fixture(t);
   let store = f.open();
@@ -86,7 +100,7 @@ for (const phase of ['prepared', 'dispatching', 'terminal'] as const) {
     const request = record('crash');
     const result = child(f.dir, `store.prepare(${JSON.stringify(request)});
       ${phase !== 'prepared' ? "store.dispatch('crash');" : ''}
-      ${phase === 'terminal' ? "store.terminal('crash', {localState:'completed',remoteState:'finished',usage:{inputTokens:2,outputTokens:3},errorCode:null});" : ''}
+      ${phase === 'terminal' ? "store.terminal('crash', {localState:'completed',remoteState:'finished',usage:{promptTokens:2,completionTokens:3,totalTokens:5},errorCode:null});" : ''}
       process.exit(0);`);
     assert.equal(result.status, 0, result.stderr);
     const store = f.open();
@@ -288,7 +302,7 @@ test('strict bounds, metadata-only usage and fixed errors prevent content persis
   assert.throws(() => store.terminal('privacy', { localState: 'completed', remoteState: 'finished',
     usage: { message: 'PRIVATE_PROVIDER_MESSAGE' }, errorCode: null }), code('INVALID_RECORD'));
   store.terminal('privacy', { localState: 'completed', remoteState: 'finished',
-    usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 }, errorCode: 'PRIVATE_ERROR' });
+    usage: { promptTokens: 3, completionTokens: 4, totalTokens: 7 }, errorCode: 'PRIVATE_ERROR' });
   assert.equal(store.status('privacy')?.errorCode, 'INTERNAL');
   store.close();
   for (const filename of readdirSync(f.dir)) {

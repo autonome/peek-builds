@@ -1019,7 +1019,8 @@ interface TileAPI {
   network: TileNetwork;
   automation: TileAutomation;
   secrets: TileSecrets;
-  /** Absent unless explicitly granted models authority, including builtins. */
+  /** Reserved offline contract. Currently absent in the production preload until
+   * secure grant bootstrap/runtime integration exists; builtin trust cannot enable it. */
   models?: TileModels;
   features: TileFeatures;
   oauth: TileOAuth;

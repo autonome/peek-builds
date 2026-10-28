@@ -140,11 +140,11 @@ test('broker remains independent policy boundary; fixed errors only, no raw host
   await assert.rejects(f.invoke(), /^Error: MODEL_IPC_DENIED$/);
 });
 
-test('real preload bridge snapshot omits models without explicit grant; wrappers preserve token', async () => {
+test('production preload preserves synchronous app bootstrap and leaves models disabled pending secure grant bootstrap', async () => {
   const source = readFileSync(new URL(import.meta.url.endsWith('.ts')
     ? '../tile-preload.cts' : '../../../main/tile-preload.cts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
-  for (const [caps, builtin, expected] of [[{}, false, false], [{}, true, false], [{ models: true }, true, false], [{ models: cap }, false, true]] as const) {
+  for (const [caps, builtin, expected] of [[{}, false, false], [{}, true, false], [{ models: true }, true, false], [{ models: cap }, false, false]] as const) {
     const exposed = new Map<string, Record<string, unknown>>();
     const calls: unknown[][] = [];
     const ipcRenderer = { invoke: async (...args: unknown[]) => {
@@ -158,19 +158,12 @@ test('real preload bridge snapshot omits models without explicit grant; wrappers
       console: { log() {}, warn() {}, error() {}, debug() {}, info() {} }, performance: { now: () => 0 },
       setTimeout: () => 0, clearTimeout() {}, window: { addEventListener() {} }, document, URL, exports: {} });
     vm.runInContext(js, context);
-    // Drain token-validation and bridge-exposure promise reactions.
+    // Existing renderer imports capture window.app immediately, before validation.
+    assert.ok(exposed.get('app'), 'base bridge must exist synchronously');
     await new Promise(resolve => setImmediate(resolve));
     const api = exposed.get('app')!;
     assert.ok(api); assert.equal(Object.hasOwn(api, 'models'), expected);
-    if (expected) {
-      const facade = api.models as Record<string, (request: unknown) => Promise<unknown>>;
-      assert.deepEqual(Object.keys(facade), ['start', 'poll', 'cancel', 'status']);
-      for (const op of Object.keys(facade)) {
-        await facade[op]({ callId: 'id', token: 'forged' });
-        assert.equal(calls.at(-1)?.[0], `tile:models:${op}`);
-        assert.equal((calls.at(-1)?.[1] as { token: string }).token, 'secret-token');
-      }
-    }
+    assert.equal(calls.some(call => String(call[0]).startsWith('tile:models:')), false);
   }
 });
 // Simulate contextBridge's object snapshot without cloning function proxies.

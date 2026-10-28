@@ -184,9 +184,9 @@ __preloadMark('preload-start');
 
 // ─── Token Validation (Synchronous bootstrap) ────────────────────────
 
-// Token validation is asynchronous. The bridge is exposed only after validation
-// settles so capability-absent surfaces (models) are genuinely absent. Callers
-// must wait for the app bridge before using it; initialize() remains compatible.
+// We validate the token asynchronously but build the API synchronously
+// with placeholder functions that queue until validation completes.
+// The tile must call initialize() which awaits validation.
 
 let tokenValid = false;
 let trustedBuiltin = false;
@@ -352,21 +352,11 @@ function buildAPI(): Record<string, unknown> {
     }
   };
 
-  // Models have no trustedBuiltin exemption. buildAPI runs after token validation
-  // so the bridge snapshot contains no models property at all without a grant.
-  if (tokenValid && grantedCapabilities.models !== null
-    && typeof grantedCapabilities.models === 'object' && !Array.isArray(grantedCapabilities.models)) {
-    api.models = {
-      start: (request: Record<string, unknown>) =>
-        ipcRenderer.invoke('tile:models:start', { ...request, token: tileToken }),
-      poll: (request: Record<string, unknown>) =>
-        ipcRenderer.invoke('tile:models:poll', { ...request, token: tileToken }),
-      cancel: (request: Record<string, unknown>) =>
-        ipcRenderer.invoke('tile:models:cancel', { ...request, token: tileToken }),
-      status: (request: Record<string, unknown>) =>
-        ipcRenderer.invoke('tile:models:status', { ...request, token: tileToken }),
-    };
-  }
+  // Models remain deliberately absent in the production bridge. A secure
+  // synchronous grant bootstrap is required before this snapshot can include
+  // them: deferring the entire app exposure breaks existing renderer imports,
+  // and contextBridge does not propagate later object-property additions.
+  // Offline tests exercise the four guarded IPC handlers and host harness only.
 
   // ── Profiles (admin surface) ──
   //
@@ -2726,8 +2716,10 @@ function buildAPI(): Record<string, unknown> {
   // so we keep a thin trustedBuiltin wrapper here that resolves the ID
   // before forwarding to the strict channel. All other theme methods route
   // through the base api.theme.* implementations above (tile:theme:*).
-  // Install the override unconditionally; the handler checks the validated
-  // `trustedBuiltin` flag at call time as well. Non-trusted
+  // Install the override unconditionally (the install-time `trustedBuiltin`
+  // flag is still `false` here — buildAPI runs synchronously before
+  // api.initialize() flips it). The handler itself runs at call time, by
+  // which point `trustedBuiltin` reflects the validated grant. Non-trusted
   // callers are still rejected by the strict tile:theme:setWindowColorScheme
   // handler which enforces `grant.trustedBuiltin`.
   (api.theme as Record<string, unknown>).setWindowColorScheme = async (
@@ -3031,10 +3023,6 @@ function buildAPI(): Record<string, unknown> {
 
 // ─── Expose API ──────────────────────────────────────────────────────
 
-// contextBridge copies objects at exposure time; adding models after exposure
-// would not update the renderer snapshot. Wait for the actual granted authority,
-// never a manifest request or builtin flag. No sync IPC / bootstrap trust shortcut.
-void validationPromise.then(() => {
 const api = buildAPI();
 
 // Diagnostic perf-log channel. Always available (no token/cap gate); sends
@@ -3052,7 +3040,6 @@ const api = buildAPI();
 
 contextBridge.exposeInMainWorld('app', api);
 __preloadMark('preload-done');
-});
 
 // ─── Press blockers for the window manager's hold-to-drag ───────────
 //

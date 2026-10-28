@@ -245,7 +245,7 @@ test('loopback statuses and unsupported response headers: fixed codes, one POST,
   ]) {
     let attempts = 0;
     await assert.rejects(new OpenAITextAdapter(async () => {
-      attempts++; return new Response(finish + done, { headers });
+      attempts++; return new Response(finish + done, { headers: new Headers(Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) });
     }).run(config, new AbortController().signal, () => {}), errorCode('PROTOCOL'));
     assert.equal(attempts, 1);
   }

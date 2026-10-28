@@ -1,8 +1,43 @@
 # Folknet for peeklets: a small text broker, jobs later
 
-Status: **draft; specs disabled; no implementation or remote operations authorized**.
+Status: **model spec enabled for offline implementation only; partial implementation,
+not a completed desktop milestone. Jobs and all live transport remain disabled.**
 Companions: `specs/folknet-peeklet-models.md`, `specs/folknet-peeklet-jobs.md`.
 This refines the research in `specs/folknet-peeklets-design.md`.
+
+### Offline implementation state
+
+`apps/desktop/main/model-broker/` now contains the injected profile broker, strict
+policy/plain contracts, metadata-only SQLite store with exclusive ownership and
+unknown-work latch, isolated encrypted account vault, single-attempt bounded SSE
+adapter, guarded IPC registration, trusted profile configuration controller and
+selected-text test harness. Capability resolution requires explicit installed consent;
+a manifest request or builtin status cannot grant models. Fake/loopback tests cover
+these pieces; none import an ambient production HTTP transport.
+
+**Not shipped:** runtime construction and lifecycle wiring, authoritative persistent
+install/grant revision identities, a production `api.models` contextBridge facade,
+or an actual trusted profile panel window. The profile panel and selection harness
+are host controllers exercised in tests, not a delivered UI. `setModelIpcHost(null)`
+is the default, so all production model IPC denies. The synchronous `window.app`
+bootstrap is preserved; delaying it until async validation would break existing
+renderer imports. The bridge consequently exposes no models namespace, even when
+an injected test token reports a models grant.
+
+The spec's current-owner/revision and absent-without-grant facade requirements need
+an authoritative installation/grant lifecycle and a secure preload grant bootstrap.
+The existing token record has neither persistent revision identity, and the launch/token
+lifecycle and bootstrap gate are outside the declared touches. No revision is fabricated
+from manifest versions, timestamps or transient tokens. Complete that integration under
+an expanded scope before marking the milestone complete; passing offline component
+fixtures is not acceptance of the whole spec, deployment approval or live conformance.
+
+Reproduce the scoped verify gate from the worktree root:
+`node apps/desktop/main/model-broker/verify.mjs`. It runs full desktop TypeScript noEmit,
+compiled broker/policy/store/adapter/panel/harness suites, source IPC/preload tests,
+shared capability tests, generated projection freshness, targeted repository test-honesty
+lint and `git diff --check`. Build output stays under this worktree's `.tmp`; tests
+use uniquely named disposable fixtures. No full Electron/OS/live-provider gate is claimed.
 
 ## 1. Evidence and non-dependencies
 
@@ -331,9 +366,10 @@ answer or deploy permission is inferred. See `specs/folknet-peeklet-jobs.md` for
 Concrete new modules/symbols and acceptance plan are in the model spec. Defaults chosen:
 text only, desktop profile broker, no queue, pull-based plain-data events, owned/unpriced
 only, operator-configured exact endpoint, no discovery, metadata-only persistence and
-uncertain-outcome latch. No human decision blocks this disabled offline design.
+uncertain-outcome latch. Offline engineering is approved; the partial implementation
+and integration blockers above are not deployment authorization.
 
-1. Separately authorize offline implementation: shared capability and pure policy,
+1. Offline implementation is authorized: shared capability and pure policy,
    SQLite recovery, injected vault/HTTP adapter, fake SSE fixtures and bridge harness.
 2. Offline acceptance passes without network except explicitly local fixture server.
    No universal public Folknet API prerequisite.
@@ -341,14 +377,15 @@ uncertain-outcome latch. No human decision blocks this disabled offline design.
    unpriced allocation, key custody, privacy and acceptance of unverified remote bounds.
    Separately authorize any OS/live conformance tests; this design grants none.
 4. Jobs, metered accounts and other tasks need separate scoped approval/spec work.
-   Keep both existing specs disabled now; the small trusted profile panel is included
-   in the future offline model milestone, not a generic settings/account service.
+   Keep jobs and live transport disabled; the model spec alone is enabled offline.
+   The small trusted profile panel is part of that milestone, not a generic
+   settings/account service; only its controller is currently implemented.
 
-## 8. Docs-only verify gate
+## 8. Original design-only verify gate
 
 Check cited paths/symbols, parse JSON fences, syntax-check JS fences as async function
 bodies with external harness names left unresolved, validate disabled frontmatter and
 empty dependencies, check projection freshness, and run `git diff --check`. Review
 owner/builtin/startup/export/lifecycle/uncertainty invariants. No full Electron gate
-needed for docs-only changes. Implementation/OS/live provider/isolation/spending tests
-are **unrun**; fixture plans do not establish deployment guarantees.
+needed for docs-only changes. The implementation-slice gate is documented above. OS/live provider/isolation/spending
+tests remain **unrun**; passing fixtures does not establish deployment guarantees.
