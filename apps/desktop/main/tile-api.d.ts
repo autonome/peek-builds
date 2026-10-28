@@ -17,6 +17,35 @@
  *   // or place in tsconfig.json "typeRoots" / "types" array
  */
 
+// ─── Models (plain-data pull/ack; no callbacks, signals or iterators) ───
+
+type TileModelUsage = { promptTokens: number; completionTokens: number; totalTokens: number };
+type TileModelOutcome = 'completed' | 'truncated' | 'refused' | 'failed' | 'aborted';
+type TileModelRemoteState = 'finished' | 'unknown' | 'not-sent';
+type TileModelLocalState = 'prepared' | 'dispatching' | TileModelOutcome;
+interface TileModelRequest {
+  model: string;
+  task: 'text.generate';
+  input: { text: string };
+  maxOutputTokens: number;
+  exportApprovalId: string;
+  clientRequestId: string;
+}
+type TileModelEvent =
+  | { callId: string; seq: number; kind: 'delta'; text: string }
+  | { callId: string; seq: number; kind: 'terminal'; outcome: TileModelOutcome;
+      remoteState: TileModelRemoteState; usage: TileModelUsage | null; errorCode: string | null };
+interface TileModels {
+  start(request: TileModelRequest): Promise<{ callId: string }>;
+  /** Acknowledge only delivered seqs; dedupe redelivery. At most one outstanding poll. */
+  poll(request: { callId: string; afterSeq: number }): Promise<{ events: TileModelEvent[]; lastSeq: number }>;
+  /** Local abort is not a guarantee of remote cancellation. */
+  cancel(request: { callId: string }): Promise<{ callId: string; localState: TileModelLocalState; remoteState: TileModelRemoteState }>;
+  /** Metadata only; never replays generation. Unknown usage is null, not zero. */
+  status(request: { callId: string }): Promise<{ callId: string; localState: TileModelLocalState;
+    remoteState: TileModelRemoteState; usage: TileModelUsage | null; errorCode: string | null }>;
+}
+
 // ─── PubSub ──────────────────────────────────────────────────────────
 
 interface TilePubSub {
@@ -990,6 +1019,8 @@ interface TileAPI {
   network: TileNetwork;
   automation: TileAutomation;
   secrets: TileSecrets;
+  /** Absent unless explicitly granted models authority, including builtins. */
+  models?: TileModels;
   features: TileFeatures;
   oauth: TileOAuth;
   sync: TileSync;

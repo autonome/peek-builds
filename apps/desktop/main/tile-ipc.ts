@@ -33,6 +33,7 @@ import {
 import { recordSeeThrough, urlSupportsSeeThrough } from './see-through-support.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
+import { registerModelIpc } from './model-broker/ipc.js';
 import { EncryptedFileSecretStore, type SecretStore } from './feature-secrets.js';
 import { electronSecretCipher } from './electron-secret-cipher.js';
 import { registerTileProtocol } from './tile-protocols.js';
@@ -580,6 +581,8 @@ function isAppChromeWindow(electronId: number): boolean {
  * Call this once during app initialization
  */
 export function registerTileIpcHandlers(): void {
+  // Independent fail-closed model authority; builtin gate exemptions do not apply.
+  registerModelIpc(registerTileIpc);
 
   // ── Token Validation ──
 
