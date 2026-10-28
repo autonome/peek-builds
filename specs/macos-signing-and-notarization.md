@@ -13,8 +13,9 @@ writer is authorized. The user has additionally approved standard Apple CLI pass
 handling on disposable GitHub-hosted runners and proceeding with a protected signed
 candidate. Enrollment, purchases, generating/exporting user keys, reading secret
 values and signed public publication remain unapproved. The coordinator may perform
-the explicitly authorized repo-scoped GitHub setup and candidate dispatch; required
-human environment approval remains in force.
+the explicitly authorized repo-scoped GitHub setup and candidate dispatch. The user
+subsequently removed required human environment review for candidate-only runs;
+actual signed public releases remain unapproved and require a separate policy.
 
 Delivered terminal-only preparation companion:
 `scripts/prepare-macos-signing-credentials.sh` and offline fixture tests create an
@@ -41,8 +42,9 @@ unsigned behavior is unchanged outside reserved signing-candidate tags/runs.
 The user has requested resuming GitHub signing. Metadata-only checks found all seven
 API-mode secret names in `macos-release-signing`, a required-reviewer protection and
 custom tag policy now narrowed to `v*-signing-candidate.*`; no secret values were
-accessed. Self-review is currently allowed. Preserve required reviewer protection. Candidate execution must remain behind
-that explicit GitHub environment approval, and public signed publication stays
+accessed. The user explicitly approved removing required reviewers for candidate
+runs; the coordinator removed that requirement while preserving tag restrictions.
+Candidate execution remains explicit-dispatch and public signed publication stays
 disabled. Use a reviewed immutable candidate tag plus an expected source SHA check;
 never expose credentials to arbitrary mutable refs. Reserve an explicit
 `v*-signing-candidate.*` namespace and prevent the existing unsigned tag workflow
@@ -78,8 +80,8 @@ and confirm the AES-encrypted source key is unchanged.
 The coordinator created active tag ruleset `26046298`, matching
 `refs/tags/v*-signing-candidate.*`, with update/deletion restrictions and no bypass
 actors. Candidate creation still requires trusted repository write access; the
-human reviewer must verify the source SHA. The environment permits only those
-candidate tags and retains its required reviewer. Protected-ref and environment
+coordinator must verify the source SHA. The environment permits only those
+candidate tags and no longer requires a manual reviewer, per user authorization. Protected-ref and environment
 policy alone are not substitutes for inspecting these rules.
 
 ## Human prerequisites / decisions

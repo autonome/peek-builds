@@ -246,8 +246,10 @@ The user explicitly approved this standard Apple approach for disposable
 GitHub-hosted runners ("apple's way is fine"). This approval permits a protected
 candidate run; it does not cover persistent/shared runners, logging raw arguments,
 reading secret values into an agent session, or public signed publication.
-Required GitHub environment approval still applies to each run. Do not claim all
-secrets avoid argv.
+The user subsequently authorized removing manual environment approval for
+candidate-only runs; immutable candidate tags, exact SHA validation and explicit
+dispatch remain required. Public signed releases remain unapproved. Do not claim
+all secrets avoid argv.
 
 Tools run in isolated POSIX process groups. Timeout, cancellation and output-limit
 failure send SIGTERM, then SIGKILL after 250 ms if the group remains; normal leader
@@ -264,7 +266,8 @@ remain unsupported; actual macOS cancellation/cleanup still needs validation.
 
 | Candidate tag | CFBundleVersion | State |
 |---|---|---|
-| `v0.0.1-signing-candidate.1` | `1.0.1` | Allocated for the first protected live candidate; source SHA is bound by the immutable tag and dispatch input. |
+| `v0.0.1-signing-candidate.1` | `1.0.1` | Run `40705597132` failed in pre-credential adapter tests (`output-location` from macOS temporary-directory aliases); signing step never ran. |
+| `v0.0.1-signing-candidate.2` | `1.0.2` | Allocated for the path-corrected candidate; bind the new source SHA through its immutable tag and dispatch input. |
 
 Use a new allocation for a rebuild; do not recycle these identifiers for different bytes.
 
@@ -282,12 +285,13 @@ disabled; there must be no duplicate implementation writer.
    described in [readiness notes](../notes/macos-signing-readiness.md#executable-candidate-path-offline-verified-macos-acceptance-pending):
    builder signs the dir target, but the adapter—not builder's opaque built-in
    notarizer—owns bounded app/DMG submission, log inspection and stapling.
-2. Confirm environment `macos-release-signing` actually enforces required reviewer
-   approval on this repository plan. Metadata reports reviewer `autonome`,
-   self-review allowed, tag policy `v*-signing-candidate.*`, and all seven API-mode secret names. This
-   does not validate values or certify protections. Do not change protections or
-   secrets merely to make a run pass. The reviewer approves execution of the
-   selected source and its dependency lifecycle hooks with signing capability.
+2. Confirm environment `macos-release-signing` permits only
+   `v*-signing-candidate.*` tags and contains the seven API-mode secret names.
+   The user explicitly authorized removing required reviewer approval for candidate
+   runs; that requirement is now removed. This does not authorize public releases
+   or validate credential values. Explicit dispatch authorizes the selected source
+   and dependency hooks; do not weaken source/tag/verification checks to make a
+   run pass.
 3. The owner/coordinator must establish **immutable reserved tags**: protect their
    creation against untrusted writers and prohibit updates/deletion. Both job and
    adapter require GitHub's protected-ref flag; **an unprotected tag is skipped**.
@@ -318,9 +322,9 @@ disabled; there must be no duplicate implementation writer.
    ```
 
    The workflow must already be present on the default branch for manual dispatch.
-   Review the pending environment deployment, tag object/source, workflow and
-   dependency changes; then the authorized human may approve. Approval gates the
-   entire job. Installation/build/tests execute without signing secrets; only the
+   Review the tag object/source, workflow and dependency changes before dispatch.
+   Candidate-only runs no longer pause for environment approval, per user policy.
+   Installation/build/tests execute without signing secrets; only the
    adapter step receives the seven named API secrets. No other auth mode is wired
    into this workflow (the adapter's password mode is separately tested).
 6. Require all checks green before downloading anything: imported exact identity,

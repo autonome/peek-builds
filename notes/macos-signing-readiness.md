@@ -4,8 +4,8 @@ Status: **executable candidate integration implemented; no live candidate run**.
 The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral policy,
 production adapter and manual candidate workflow have offline tests. The spec
 stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
-context reports all seven API secret **names**, reviewer `autonome` (self-review
-allowed), and environment tag policy `v*-signing-candidate.*` in
+context reports all seven API secret **names** and environment tag policy
+`v*-signing-candidate.*` in
 `macos-release-signing`. Active tag ruleset `26046298` prevents candidate updates
 and deletion, with no bypass actors. Values, credential validity and clean-Mac
 acceptance remain unverified. The user approved a protected candidate using
@@ -25,8 +25,9 @@ unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-sign
   explicitly accepted this disposable-hosted-runner exception ("apple's way is
   fine"). Preparation and upload scripts' no-secret-argv guarantee is narrower.
 - Active reserved-tag ruleset `26046298` has update/deletion restrictions and no
-  bypass actors. Environment approval and source-SHA verification remain required;
-  candidate creation must stay with trusted repository writers.
+  bypass actors. The user authorized removing manual environment approval for
+  candidate-only runs; that setting is now removed. Exact source-SHA verification,
+  explicit dispatch and trusted candidate-tag creation remain required.
 - Actual credential import, notarization, cleanup/cancellation and clean-Mac
   acceptance remain unverified until the authorized candidate is exercised.
 
