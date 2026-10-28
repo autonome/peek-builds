@@ -43,6 +43,24 @@ parent resolution and directory identity before removal. Absent parent suffixes
 are canonicalized but not automatically created; publication requires an existing
 parent directory, preserving the previous nonrecursive creation behavior. Portable symlink tests
 exercise the alias and rejection paths without disabling Darwin coverage.
+The second candidate (`v0.0.1-signing-candidate.2`, build `1.0.2`, run
+`40729841853`, source `262715904daed272789325a60645994b006d5148`) passed
+setup/selection/install/build, then failed in the signing step with only
+`macOS candidate blocked: tool-exit` (2026-10-28 16:51:00–16:51:02 UTC).
+Upload was skipped. This establishes neither the failing tool nor signing/notary
+success; elapsed time is not evidence of certificate-import failure.
+
+The bounded follow-up adds fixed allowlisted stage/operation/reason diagnostics
+on tool failure, with optional integer exit status (0–255). No dynamic paths,
+argv, environment values, stdout/stderr, secret strings or error messages may be
+logged. Wrapper failures identify the wrapper, not its internal failing child.
+Exhaustive fake-tool failure injection covers every call in the successful path,
+including cleanup, with nonnumeric status, thrown errors and unsafe-tree results.
+No additional Darwin command bug was proven offline; no speculative credential
+or command changes are included. Reserve `.3` / `1.0.3` for the diagnostic retry;
+the coordinator chooses a new reviewed landed source SHA, never moves .1/.2 tags,
+and captures fixed failure lines, final blocked code, validated submission IDs
+and cleanup/upload outcomes. Raw tool logs remain prohibited.
 See the readiness audit and candidate runbook for remaining human/macOS gates.
 One deliberate implementation difference is adapter-owned bounded notarization/log
 inspection instead of the builder's opaque built-in
@@ -231,6 +249,7 @@ Provisioning and policy/orchestration now have offline tests. Those tests valida
 injected evidence and operation ordering, not macOS tool behavior, real credential
 cleanup, actual upload gates or Apple acceptance. The first macOS candidate attempt
 stopped during presecret tests; no signed candidate or live signing acceptance
-gate has completed. Rollback means
+gate has completed. The second attempt reached child tools but failed opaquely;
+it does not change that acceptance status. Rollback means
 stopping signed publication and deliberately selecting the existing **explicitly
 unsigned** path, never disguising an unsigned artifact as a successful signed one.

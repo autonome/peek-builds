@@ -154,6 +154,36 @@ function cleanEnv(env) {
     'CI', 'GITHUB_ACTIONS'].filter(k => env[k] !== undefined).map(k => [k, env[k]]));
 }
 
+// Values are trusted literals, never command/argument interpolation. Unknown
+// tools fail closed rather than turning a path or an argv value into a label.
+function toolOperation(file, args) {
+  const lookup = (table, key) => Object.hasOwn(table, key) ? table[key] : 'unknown';
+  const commands = {
+    git: { 'rev-parse': 'git-head', status: 'git-status' },
+    security: { 'list-keychains': args.includes('-s') ? 'keychain-search-set' : 'keychain-search-read',
+      'create-keychain': 'keychain-create', 'set-keychain-settings': 'keychain-settings',
+      'unlock-keychain': 'keychain-unlock', import: 'keychain-import',
+      'set-key-partition-list': 'keychain-partitions', 'find-identity': 'keychain-identity',
+      'delete-keychain': 'keychain-delete' },
+    codesign: { '--verify': 'signature-verify', '--display': 'signature-display', '--force': 'dmg-sign' },
+    otool: { '-L': 'dependencies', '-D': 'dylib-id', '-l': 'load-commands' },
+    hdiutil: { create: 'dmg-create', verify: 'dmg-verify', attach: 'dmg-attach', detach: 'dmg-detach' },
+  };
+  if (file === process.execPath) return 'builder';
+  if (file === 'file') return 'file-type';
+  if (file === 'lipo') return 'architectures';
+  if (file === 'spctl') return 'gatekeeper';
+  if (file === 'ditto') return 'copy-archive';
+  if (file === 'xcrun') {
+    if (args[0] === '--find') return args[1] === 'notarytool' ? 'find-notarytool' :
+      args[1] === 'stapler' ? 'find-stapler' : 'unknown';
+    if (args[0] === 'notarytool') return lookup({ 'store-credentials': 'notary-store',
+      submit: 'notary-submit', wait: 'notary-wait', log: 'notary-log', info: 'notary-info' }, args[1]);
+    if (args[0] === 'stapler') return lookup({ staple: 'staple', validate: 'staple-validate' }, args[1]);
+  }
+  return Object.hasOwn(commands, file) && Object.hasOwn(commands[file], args[0]) ? commands[file][args[0]] : 'unknown';
+}
+
 function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   run = runner, env = process.env, platform = process.platform, arch = process.arch } = {}) {
   need(temp && output, 'adapter-paths');
@@ -184,14 +214,23 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   const abort = new AbortController();
   const summaries = [];
   const inventories = [];
+  let stage = 'idle';
   const call = async (file, args, opts = {}) => {
+    const operation = toolOperation(file, args);
+    const failed = (reason, status) => {
+      // Numeric exit status only; never stringify arbitrary runner values.
+      const exit = Number.isInteger(status) && status >= 0 && status <= 255 ? `; status=${status}` : '';
+      console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}`);
+      block(reason);
+    };
+    need(operation !== 'unknown', 'tool-operation');
     need(!unsafeTree, 'tool-tree-active');
     if (interrupted && !opts.cleanup) block('interrupted');
     let result;
     try { result = await run(file, args, { cwd: root, env: childEnv,
-      timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; block('tool-execution'); }
-    if (result?.quiescent !== true) { unsafeTree = true; block('tool-tree-active'); }
-    if (result.code !== 0) block('tool-exit');
+      timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; failed('tool-execution'); }
+    if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active'); }
+    if (result.code !== 0) failed('tool-exit', result.code);
     return result;
   };
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
@@ -458,6 +497,17 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       return artifacts;
     },
   };
+  // Explicit allowlist: stage never comes from paths, policy, env or errors.
+  for (const name of ['preflight', 'prepare', 'pack', 'signApp', 'submitApp', 'stapleApp',
+    'verifyApp', 'archive', 'signDmg', 'submitDmg', 'stapleDmg', 'verifyDmg',
+    'verifyZip', 'verifyDmgApp', 'cleanup', 'hashFinal']) {
+    const operation = operations[name];
+    operations[name] = async (...args) => {
+      const previous = stage;
+      stage = name;
+      try { return await operation(...args); } finally { stage = previous; }
+    };
+  }
   return { operations, summaries, inventories, output, discardOutput, interrupt() { interrupted = true; abort.abort(); },
     async destroy() {
       try { await operations.cleanup(); } finally {

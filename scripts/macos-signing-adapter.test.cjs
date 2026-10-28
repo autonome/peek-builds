@@ -51,7 +51,14 @@ function fixture(t, mutation = {}) {
     calls.push({ file, args, options });
     const target = args.at(-1);
     if (mutation.active?.(file, args)) return { ...ok(), quiescent: false };
-    if (mutation.fail?.(file, args, calls)) return { code: 1, stdout: 'SECRET-TOOL-OUTPUT', stderr: secrets.MACOS_CERTIFICATE_PASSWORD, quiescent: true };
+    if (mutation.fail?.(file, args, calls)) {
+      // Simulate every private channel a child/error could populate.
+      args.push('SEEDED-PRIVATE-ARGV');
+      if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
+      return { code: mutation.failureMode === 'status' ? 'SEEDED-PRIVATE-STATUS' : 73,
+        stdout: 'SECRET-TOOL-OUTPUT', stderr: secrets.MACOS_CERTIFICATE_PASSWORD,
+        quiescent: mutation.failureMode !== 'active' };
+    }
     if (file === 'git') return ok(args[0] === 'status' ? '' : SHA + '\n');
     if (file === 'file') return ok(fs.readFileSync(target, 'utf8') === 'MACHO' ?
       (target.endsWith('.node') ? 'Mach-O 64-bit bundle arm64\n' :
@@ -343,6 +350,46 @@ for (const [name, mutation, expected] of [
   assert.equal(fs.existsSync(f.output), false);
   assert.deepEqual(fs.readdirSync(f.temp), []);
   if (name === 'notary wait timeout') assert.ok(f.calls.some(c => c.file === 'xcrun' && c.args[1] === 'info'));
+});
+
+test('every reachable tool failure emits only fixed stage/operation/reason and bounded numeric status', async t => {
+  const logs = [];
+  t.mock.method(console, 'error', (...args) => {
+    assert.equal(args.length, 1, 'no hidden error/command objects in extra console arguments');
+    logs.push(args[0]);
+  });
+  const baseline = fixture(t);
+  await baseline.execute();
+  const count = baseline.calls.length;
+  assert.ok(count > 100, 'covers staging, ZIP and mounted DMG verification plus cleanup');
+  for (const mode of ['exit', 'throw', 'active', 'status']) {
+    for (let index = 1; index <= count; index++) {
+      logs.length = 0;
+      const f = fixture(t, { failureMode: mode, fail: (_file, _args, calls) => calls.length === index });
+      await assert.rejects(f.execute());
+      assert.equal(fs.existsSync(f.output), false);
+      assert.ok(logs.length >= 1, `${mode} call ${index} is diagnosed`);
+      for (const line of logs) {
+        assert.match(line, /^macOS candidate tool failed: stage=(?:preflight|prepare|pack|signApp|submitApp|stapleApp|verifyApp|archive|signDmg|submitDmg|stapleDmg|verifyDmg|verifyZip|verifyDmgApp|cleanup); operation=[a-z-]+; reason=tool-(?:exit|execution|tree-active)(?:; status=73)?$/);
+        assert.doesNotMatch(line, /unknown|SEEDED|SECRET-TOOL-OUTPUT|dummy-password|PRIVATE KEY/);
+        for (const value of [f.root, f.temp, ...Object.values(secrets)]) assert.ok(!line.includes(value));
+        assert.equal(line.includes('status='), mode === 'exit');
+      }
+      // Avoid retaining hundreds of fixture trees until this test completes.
+      fs.rmSync(path.dirname(f.root), { recursive: true, force: true });
+    }
+  }
+});
+
+test('prepare and cleanup diagnostics distinguish import, restore and delete without argv', async t => {
+  const logs = [];
+  t.mock.method(console, 'error', line => logs.push(line));
+  const f = fixture(t, { fail: (file, args) => file === 'security' &&
+    (args[0] === 'import' || args[0] === 'delete-keychain' || (args[0] === 'list-keychains' && args.includes('-s'))) });
+  await assert.rejects(f.execute());
+  assert.ok(logs.some(l => l.includes('stage=prepare; operation=keychain-import; reason=tool-exit; status=73')));
+  assert.ok(logs.some(l => l.includes('stage=cleanup; operation=keychain-search-set; reason=tool-exit; status=73')));
+  assert.ok(logs.some(l => l.includes('stage=cleanup; operation=keychain-delete; reason=tool-exit; status=73')));
 });
 
 test('cleanup failure never creates output', async t => {

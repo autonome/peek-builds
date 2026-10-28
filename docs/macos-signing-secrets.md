@@ -272,7 +272,8 @@ remain unsupported; actual macOS cancellation/cleanup still needs validation.
 | Candidate tag | CFBundleVersion | State |
 |---|---|---|
 | `v0.0.1-signing-candidate.1` | `1.0.1` | Run `40705597132` failed in pre-credential adapter tests (`output-location` from macOS temporary-directory aliases); signing step never ran. |
-| `v0.0.1-signing-candidate.2` | `1.0.2` | Allocated for the path-corrected candidate; bind the new source SHA through its immutable tag and dispatch input. |
+| `v0.0.1-signing-candidate.2` | `1.0.2` | Run `40729841853`, source `262715904daed272789325a60645994b006d5148`: setup/selection/install/build passed; signing step failed with only `tool-exit` (2026-10-28 16:51:00–16:51:02 UTC). Upload skipped; failing tool unknown. |
+| `v0.0.1-signing-candidate.3` | `1.0.3` | Reserved for fixed stage/operation diagnostics; coordinator must choose a new reviewed landed source SHA before immutable tagging/dispatch. |
 
 Use a new allocation for a rebuild; do not recycle these identifiers for different bytes.
 
@@ -312,8 +313,9 @@ disabled; there must be no duplicate implementation writer.
    before dispatch (there is no candidate environment approval click). Do not
    dispatch a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag
    exclusion has landed **before** creating any candidate tag.
-4. Use the next allocation above: `v0.0.1-signing-candidate.2` with build `1.0.2`
-   for this path-corrected retry, at the reviewed landed source commit. Subsequent
+4. Use the next allocation above: `v0.0.1-signing-candidate.3` with build `1.0.3`
+   for this diagnostic retry, at a new reviewed landed source commit. Never move
+   the existing .1/.2 tags. Subsequent
    retries need a new tag and unique numeric `CFBundleVersion`, canonical
    `major.minor.patch` (major 1–9999, minor/patch 0–99).
    Keep an allocation record; use a new number/candidate for a rebuild, not a
@@ -357,13 +359,29 @@ disabled; there must be no duplicate implementation writer.
    until a separate owner decision after these tests.
 
 Each notarization submits once and then waits up to 20 minutes. On timeout/failure,
-only sanitized error codes and validated submission UUIDs are logged. Have the
+only sanitized error codes, validated submission UUIDs and fixed allowlisted
+stage/operation failure diagnostics are logged. Tool failures report a fixed reason
+and optionally an integer exit status (0–255), never paths, argv, environment,
+child stdout/stderr or error messages. A wrapper/builder failure identifies that
+wrapper only, not its hidden internal child. Have the
 credential custodian diagnose that submission with `notarytool info`/`log` via the
 approved auth context before deciding whether to retry; do not blindly dispatch
 another submission. Raw diagnostics stay out of uploaded receipts. If uploading
 itself fails after signing succeeded, do not reuse partially uploaded artifacts as
 release authority. Hosted VM disposal is the backstop if hard cancellation prevents
 cleanup; this workflow must not be moved to a persistent self-hosted runner.
+
+Candidate .2 reached child tools, but its two-second failure does **not** prove
+certificate import or any other specific operation failed. No artifact,
+notarization or signing success was established. Offline source review found no
+provable additional Darwin command compatibility bug, so this retry changes
+observability only; it does not rotate, repackage or guess credentials. For .3,
+record the exact fixed `stage`, `operation`, `reason` and optional `status` lines,
+the final sanitized blocked code, any validated submission IDs, source SHA/build,
+and whether cleanup failed and upload was skipped. Do not collect raw tool logs,
+argv, keychain contents or credential values. If `builder` fails, that only narrows
+the failure to the builder; further secret-safe instrumentation would need review.
+A passing Linux fake tool is not evidence of Darwin or Apple acceptance.
 
 Offline gate (no real credentials/Apple tools required):
 
