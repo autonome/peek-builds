@@ -115,6 +115,18 @@ test.describe('Lazy noun commands in the cmd panel @desktop', () => {
     expect(opened.success).toBe(true);
     pageId = opened.id;
 
+    // "new group" saves the windows `api.window.list` reports, which leaves out
+    // a window that is not on screen yet. Run the command once the page shows.
+    await expect
+      .poll(
+        () => bgWindow.evaluate(async (id: number) => {
+          const r = await (window as any).app.window.list({});
+          return (r.windows || []).some((w: { id: number }) => w.id === id);
+        }, pageId),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+
     const groupName = `lazy-noun-${Date.now()}`;
     const { cmdWindow, panelId } = await openPanel();
     await cmdWindow.fill('input', `new group ${groupName}`);
