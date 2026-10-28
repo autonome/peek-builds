@@ -274,6 +274,7 @@ export class ModelStore {
   }
 
   find(owner: string, clientRequestId: string): ModelCallMetadata | undefined {
+    this.maintain();
     return this.guard(() => {
       const row = this.db.prepare('SELECT metadata FROM model_calls WHERE owner=? AND client_key=?').get(owner, clientRequestId);
       return row ? JSON.parse(row.metadata as string) as ModelCallMetadata : undefined;
@@ -281,10 +282,12 @@ export class ModelStore {
   }
 
   hasUnknown(): boolean {
+    this.maintain();
     return this.guard(() => this.db.prepare('SELECT unknown_latch FROM model_meta WHERE id=1').get()?.unknown_latch !== 0);
   }
 
   status(callId: string): ModelCallMetadata | undefined {
+    this.maintain();
     return this.guard(() => this.get(callId));
   }
 

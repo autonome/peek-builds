@@ -31,7 +31,7 @@ export class ModelBroker {
   /** Host-only explicit selected snapshot approval. Never registered as tile IPC. */
   approve(owner: ModelOwner, text: string): string {
     this.guard();
-    const { account, state } = admitModels(this.ports, owner);
+    const { account, state } = this.current(owner);
     if (typeof text !== 'string' || !text.length || Buffer.byteLength(text) > state.grant!.maxInputBytes
       || Buffer.from(text).toString('utf8') !== text) return fail('INVALID_REQUEST');
     const now = this.ports.now();
@@ -45,7 +45,7 @@ export class ModelBroker {
   async start(owner: ModelOwner, input: unknown): Promise<{callId: string}> {
     this.guard();
     const request = validateStart(input);
-    const { account, state } = admitModels(this.ports, owner);
+    const { account, state } = this.current(owner);
     const grant = state.grant!;
     if (!grant.allow.some(pair => pair.model === request.model && pair.task === request.task)
       || !Object.hasOwn(account.models, request.model) || Buffer.byteLength(request.input.text) > grant.maxInputBytes
@@ -183,9 +183,13 @@ export class ModelBroker {
     const {localState, remoteState} = this.status(owner, input);
     return {callId, localState, remoteState};
   }
+  private current(owner: ModelOwner) {
+    try { return admitModels(this.ports, owner); }
+    catch { this.cancelOwner(owner, 'REVOKED'); return fail(); }
+  }
   private authorizeCall(owner: ModelOwner, callId: string) {
     this.guard();
-    const { account, state } = admitModels(this.ports, owner);
+    const { account, state } = this.current(owner);
     if (this.live?.callId === callId && (!this.live.terminal || this.live.events.length > 0)
       && (accountBinding(account) !== this.live.accountBinding
       || JSON.stringify(state.grant) !== this.live.grantBinding)) this.cancelOwner(owner, 'REVOKED');
@@ -210,6 +214,14 @@ export class ModelBroker {
   private tick(): void {
     const call = this.live;
     if (!call || this.closed || this.failed) return;
+    // Terminal retention is still sensitive output. Observe authority loss even
+    // after a valid finish, not only while an adapter remains active.
+    try {
+      const {account, state} = this.current(call.owner);
+      if (accountBinding(account) !== call.accountBinding || JSON.stringify(state.grant) !== call.grantBinding) {
+        this.cancelOwner(call.owner, 'REVOKED'); return;
+      }
+    } catch { return; }
     if (!call.terminal) {
       if (!this.accept(call)) return;
       const first = call.events[0];

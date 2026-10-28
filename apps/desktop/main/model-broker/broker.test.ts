@@ -495,6 +495,32 @@ for (const field of ['url', 'accountId', 'models'] as const) {
   });
 }
 
+for (const finished of [false, true]) for (const detection of ['poll', 'timer'] as const) {
+  test(`lock observed through ${detection} clears output/approval with finished=${finished}`, async t => {
+    const f = fixture(t); const request = f.request(); const unused = f.request('unused');
+    const {callId} = await f.broker.start(OWNER, request);
+    f.runs[0].delta(OUTPUT);
+    if (finished) { completed(f.runs[0]); await settled(); }
+    f.state.profileUnlocked = false;
+    if (detection === 'poll') await assert.rejects(f.broker.poll(OWNER, {callId, afterSeq: 0}), {message: 'DENIED'});
+    else await delay(65);
+    f.state.profileUnlocked = true;
+    assert.deepEqual((await f.broker.poll(OWNER, {callId, afterSeq: 0})).events, []);
+    if (!finished) f.store.acknowledgeUnknown();
+    await assert.rejects(f.broker.start(OWNER, unused), {message: 'DENIED'});
+  });
+}
+
+test('dedupe-only broker lookups cannot return expired metadata while unknown latch remains', async t => {
+  const f = fixture(t); const request = f.request();
+  const {callId} = await f.broker.start(OWNER, request);
+  f.broker.cancel(OWNER, {callId});
+  f.advance(31 * 86400000);
+  await assert.rejects(f.broker.start(OWNER, request), {message: 'DENIED'});
+  assert.equal(f.store.find(ownerKey(OWNER), request.clientRequestId), undefined);
+  assert.equal(f.store.hasUnknown(), true);
+});
+
 test('detected lock clears buffered output and approvals, even if the host cleanup hook was missed', async t => {
   const f = fixture(t); const request = f.request();
   const extra = f.request('next');
