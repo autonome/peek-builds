@@ -1,6 +1,6 @@
 ---
 enabled: false
-touches: [.github/workflows/macos.yml, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, scripts/setup-macos-signing-secrets.sh, scripts/setup-macos-signing-secrets.test.cjs, scripts/prepare-macos-signing-credentials.sh, scripts/prepare-macos-signing-credentials.test.cjs, docs/macos-signing-secrets.md, notes/macos-signing-credentials-setup.md, notes/macos-signing-readiness.md]
+touches: [.github/workflows/macos-signing-candidate.yml, .github/workflows/macos.yml, scripts/macos-signing-adapter.cjs, scripts/macos-signing-adapter.test.cjs, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, scripts/setup-macos-signing-secrets.sh, scripts/setup-macos-signing-secrets.test.cjs, scripts/prepare-macos-signing-credentials.sh, scripts/prepare-macos-signing-credentials.test.cjs, docs/macos-signing-secrets.md, notes/macos-signing-credentials-setup.md, notes/macos-signing-readiness.md]
 depends-on: []
 ---
 
@@ -27,7 +27,19 @@ tests in `scripts/setup-macos-signing-secrets.test.cjs`, and
 adapter-driven orchestration in `scripts/macos-signing.cjs` and its pure tests
 are also implemented. This is **not an executable signing integration**: the
 production macOS process/filesystem adapter, candidate workflow and release-only
-builder configuration below remain unimplemented; unsigned behavior is unchanged.
+builder configuration below remain the current implementation goal; unsigned behavior
+must stay unchanged outside explicitly named signing-candidate tags/runs.
+
+The user has requested resuming GitHub signing. Metadata-only checks found all seven
+API-mode secret names in `macos-release-signing`, a required-reviewer protection and
+custom tag policy `v*`; no secret values were accessed. Self-review is currently
+allowed. Do not modify those protections. Candidate execution must remain behind
+that explicit GitHub environment approval, and public signed publication stays
+disabled. Use a reviewed immutable candidate tag plus an expected source SHA check;
+never expose credentials to arbitrary mutable refs. Reserve an explicit
+`v*-signing-candidate.*` namespace and prevent the existing unsigned tag workflow
+from publishing those candidates. Existing normal release/unsigned behavior stays
+unchanged outside this namespace.
 Research and exact proposed secret names: [readiness notes](../notes/macos-signing-readiness.md).
 Do not touch the startup-risk acknowledgment implementation or delay unsigned
 builds. No dependency on that track is required.
@@ -63,8 +75,10 @@ Before operating a signed candidate, record owner approval for:
   Require `forceCodeSigning`, Developer ID distribution, hardened runtime and
   notarization. Preflight exactly one complete auth mode because `notarize: true`
   alone can skip silently on missing auth in builder 26.15.6.
-- Limit new orchestration to `scripts/macos-signing.cjs` plus pure-policy tests.
-  It should explicitly separate preparation, verification and cleanup. Credential
+- Keep neutral policy/orchestration in `scripts/macos-signing.cjs` plus pure-policy
+  tests; add the production process/filesystem adapter and fake-tool regression
+  tests in `scripts/macos-signing-adapter.cjs` and its test file. Explicitly
+  separate preparation, verification and cleanup. Credential
   handling must not log values, shell-expand secrets into command strings, enable
   tracing/debug output or persist private material in the checkout. Review even
   errors/debug output from child tools for sensitive arguments before recording.
