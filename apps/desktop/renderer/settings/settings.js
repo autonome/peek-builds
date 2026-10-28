@@ -2914,15 +2914,14 @@ const renderProfilesSettings = async () => {
 
   const currentName = document.createElement('p');
   currentName.textContent = currentProfile ? currentProfile.name : 'Unknown';
-  currentName.style.cssText = 'margin: 8px 0; font-weight: 500;';
+  currentName.className = 'profile-current-name';
   currentSection.appendChild(currentName);
 
   container.appendChild(currentSection);
 
   // Add Profile button
   const addSection = document.createElement('div');
-  addSection.className = 'form-section';
-  addSection.style.cssText = 'border-top: 1px solid var(--border-primary); padding-top: 16px;';
+  addSection.className = 'form-section divided';
 
   const addBtn = document.createElement('peek-button');
   addBtn.variant = 'primary';
@@ -2934,8 +2933,7 @@ const renderProfilesSettings = async () => {
 
   // Profiles list section
   const listSection = document.createElement('div');
-  listSection.className = 'form-section';
-  listSection.style.cssText = 'border-top: 1px solid var(--border-primary); padding-top: 16px;';
+  listSection.className = 'form-section divided';
 
   const listTitle = document.createElement('h3');
   listTitle.className = 'form-section-title';
@@ -2944,21 +2942,20 @@ const renderProfilesSettings = async () => {
 
   const profilesList = document.createElement('div');
   profilesList.className = 'profiles-list';
-  profilesList.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
 
   for (const profile of profiles) {
     const card = document.createElement('peek-card');
 
     // Profile header (name + switch + delete)
     const header = document.createElement('div');
-    header.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
+    header.className = 'profile-header';
 
     const isCurrentProfile = currentProfile && profile.id === currentProfile.id;
 
     // Profile name
     const nameEl = document.createElement('span');
     nameEl.textContent = isCurrentProfile ? `${profile.name} (current)` : profile.name;
-    nameEl.style.cssText = 'flex: 1; font-weight: 500;';
+    nameEl.className = 'profile-name';
     header.appendChild(nameEl);
 
     // No radio component exists; non-current profiles get a Switch button
@@ -3006,23 +3003,13 @@ const renderProfilesSettings = async () => {
 
     // Sync link — config is now in the Sync pane
     const syncNote = document.createElement('div');
-    syncNote.style.cssText = `
-      padding: 8px;
-      background: var(--bg-tertiary);
-      border-radius: 4px;
-      font-size: 12px;
-      color: var(--text-secondary);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    `;
+    syncNote.className = 'profile-sync-note';
     const syncLabel = document.createElement('span');
     syncLabel.textContent = 'Sync:';
     syncNote.appendChild(syncLabel);
     const syncLink = document.createElement('a');
     syncLink.textContent = 'configure in Sync section';
     syncLink.href = '#';
-    syncLink.style.cssText = 'color: var(--accent-primary); cursor: pointer; text-decoration: none;';
     syncLink.addEventListener('click', (e) => {
       e.preventDefault();
       showSection('sync');
@@ -3057,7 +3044,7 @@ const showAddProfileDialog = async (parentContainer) => {
 
   const footer = document.createElement('div');
   footer.slot = 'footer';
-  footer.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
+  footer.className = 'button-row end';
 
   const cancelBtn = document.createElement('peek-button');
   cancelBtn.variant = 'secondary';
