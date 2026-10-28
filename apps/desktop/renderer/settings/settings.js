@@ -2267,8 +2267,7 @@ const renderSyncSettings = async () => {
 
   // Manual Sync section
   const syncSection = document.createElement('div');
-  syncSection.className = 'form-section';
-  syncSection.style.marginTop = '24px';
+  syncSection.className = 'form-section spaced-above';
 
   const syncTitle = document.createElement('h3');
   syncTitle.className = 'form-section-title';
@@ -2283,26 +2282,22 @@ const renderSyncSettings = async () => {
   // Function to show result message
   const showResult = (message, isError = false) => {
     resultArea.textContent = message;
-    resultArea.style.display = 'block';
-    resultArea.style.background = isError ? 'var(--error-bg, #fef2f2)' : 'var(--success-bg, #f0fdf4)';
-    resultArea.style.border = isError ? '1px solid var(--error-border, #fecaca)' : '1px solid var(--success-border, #bbf7d0)';
-    resultArea.style.color = isError ? 'var(--error-text, #dc2626)' : 'var(--success-text, #16a34a)';
+    resultArea.className = `result-banner visible ${isError ? 'error' : 'success'}`;
 
     // Auto-hide after 5 seconds
     setTimeout(() => {
-      resultArea.style.display = 'none';
+      resultArea.classList.remove('visible');
     }, 5000);
   };
 
   // Button container
   const buttonContainer = document.createElement('div');
-  buttonContainer.style.cssText = 'display: flex; gap: 8px; flex-wrap: wrap;';
+  buttonContainer.className = 'button-row fill wrap';
 
   // Helper to create action buttons
   const createActionButton = (text, action, primary = false) => {
     const btn = document.createElement('peek-button');
     btn.setAttribute('variant', primary ? 'primary' : 'secondary');
-    btn.style.cssText = 'flex: 1; min-width: 120px;';
     btn.textContent = text;
     btn.addEventListener('click', async () => {
       if (isSyncing) return;
@@ -2382,8 +2377,7 @@ const renderSyncSettings = async () => {
 
   // Help text
   const helpText = document.createElement('div');
-  helpText.className = 'help-text';
-  helpText.style.marginTop = '12px';
+  helpText.className = 'help-text gap-above-md';
   helpText.textContent = 'Pull downloads new items from the server. Push uploads local items. Sync All does both.';
   syncSection.appendChild(helpText);
 
@@ -2395,7 +2389,7 @@ const renderSyncSettings = async () => {
   // happened instead of an empty log; a run that has never happened (or a
   // restart mid-run, which clears the buffer) just shows an empty log.
   const logWrap = document.createElement('div');
-  logWrap.style.marginTop = '16px';
+  logWrap.className = 'sync-log';
 
   const logToggle = document.createElement('peek-button');
   logToggle.setAttribute('variant', 'ghost');
@@ -2403,19 +2397,7 @@ const renderSyncSettings = async () => {
   logWrap.appendChild(logToggle);
 
   const logList = document.createElement('div');
-  logList.style.cssText = `
-    display: none;
-    max-height: 240px;
-    overflow-y: auto;
-    margin-top: 8px;
-    padding: 8px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    font-family: monospace;
-    font-size: 11px;
-    line-height: 1.6;
-  `;
+  logList.className = 'sync-log-list is-hidden';
   logWrap.appendChild(logList);
 
   let logExpanded = false;
@@ -2428,7 +2410,7 @@ const renderSyncSettings = async () => {
 
   logToggle.addEventListener('click', () => {
     logExpanded = !logExpanded;
-    logList.style.display = logExpanded ? 'block' : 'none';
+    logList.classList.toggle('is-hidden', !logExpanded);
     updateLogToggleLabel();
     if (logExpanded) logList.scrollTop = logList.scrollHeight;
   });
@@ -2455,10 +2437,11 @@ const renderSyncSettings = async () => {
     const line = document.createElement('div');
     const time = new Date(entry.ts).toLocaleTimeString();
     line.textContent = `[${time}] ${entry.stage}: ${entry.message}`;
+    line.className = 'sync-log-line';
     if (entry.phase === 'error') {
-      line.style.color = 'var(--base08, #cc241d)';
+      line.classList.add('error');
     } else if (entry.phase === 'dropped') {
-      line.style.color = 'var(--base0A, #d79921)';
+      line.classList.add('dropped');
     }
     logList.appendChild(line);
 
@@ -2497,8 +2480,7 @@ const renderSyncSettings = async () => {
 
   // Profile Sync section
   const profileSyncSection = document.createElement('div');
-  profileSyncSection.className = 'form-section';
-  profileSyncSection.style.marginTop = '24px';
+  profileSyncSection.className = 'form-section spaced-above';
 
   const profileSyncTitle = document.createElement('h3');
   profileSyncTitle.className = 'form-section-title';
@@ -2506,13 +2488,12 @@ const renderSyncSettings = async () => {
   profileSyncSection.appendChild(profileSyncTitle);
 
   const profileSyncDesc = document.createElement('div');
-  profileSyncDesc.className = 'help-text';
-  profileSyncDesc.style.marginBottom = '12px';
+  profileSyncDesc.className = 'help-text gap-below-md';
   profileSyncDesc.textContent = 'Enable or disable sync for each profile and configure its server profile ID.';
   profileSyncSection.appendChild(profileSyncDesc);
 
   const profileSyncList = document.createElement('div');
-  profileSyncList.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
+  profileSyncList.className = 'profile-sync-list';
 
   // Load profiles and their sync configs
   try {
@@ -2531,41 +2512,32 @@ const renderSyncSettings = async () => {
       }
 
       const row = document.createElement('div');
-      row.style.cssText = `
-        padding: 12px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-primary);
-        border-radius: 6px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      `;
+      row.className = 'profile-sync-row';
 
       const rowHeader = document.createElement('div');
-      rowHeader.style.cssText = 'display: flex; align-items: center; justify-content: space-between;';
+      rowHeader.className = 'profile-sync-header';
 
       const profileName = document.createElement('span');
       profileName.textContent = profile.name;
-      profileName.style.cssText = 'font-weight: 500;';
+      profileName.className = 'profile-sync-name';
       rowHeader.appendChild(profileName);
 
       if (syncConfig) {
         // Sync enabled — show status and disable button
         const statusBadge = document.createElement('span');
         statusBadge.textContent = 'Enabled';
-        statusBadge.style.cssText = 'font-size: 12px; color: var(--success-text, #16a34a); font-weight: 500;';
+        statusBadge.className = 'profile-sync-badge on';
         rowHeader.appendChild(statusBadge);
         row.appendChild(rowHeader);
 
         const detailsRow = document.createElement('div');
-        detailsRow.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
+        detailsRow.className = 'profile-sync-details';
         detailsRow.textContent = `Server profile: ${syncConfig.serverProfileId}`;
         row.appendChild(detailsRow);
 
         const disableBtn = document.createElement('peek-button');
         disableBtn.setAttribute('variant', 'secondary');
         disableBtn.setAttribute('size', 'sm');
-        disableBtn.style.alignSelf = 'flex-start';
         disableBtn.textContent = 'Disable Sync';
         disableBtn.addEventListener('click', async () => {
           if (confirm(`Disable sync for profile "${profile.name}"?`)) {
@@ -2584,13 +2556,13 @@ const renderSyncSettings = async () => {
         // Sync not enabled — show enable button
         const statusBadge = document.createElement('span');
         statusBadge.textContent = 'Disabled';
-        statusBadge.style.cssText = 'font-size: 12px; color: var(--text-tertiary);';
+        statusBadge.className = 'profile-sync-badge off';
         rowHeader.appendChild(statusBadge);
         row.appendChild(rowHeader);
 
         // Inline enable form (hidden by default)
         const enableForm = document.createElement('div');
-        enableForm.style.cssText = 'display: none; flex-direction: column; gap: 8px;';
+        enableForm.className = 'profile-sync-form is-hidden';
 
         const formApiKeyInput = document.createElement('peek-input');
         formApiKeyInput.type = 'password';
@@ -2603,7 +2575,7 @@ const renderSyncSettings = async () => {
         enableForm.appendChild(formProfileIdInput);
 
         const formButtons = document.createElement('div');
-        formButtons.style.cssText = 'display: flex; gap: 8px;';
+        formButtons.className = 'button-row';
 
         const formSaveBtn = document.createElement('peek-button');
         formSaveBtn.setAttribute('variant', 'primary');
@@ -2629,8 +2601,8 @@ const renderSyncSettings = async () => {
         formCancelBtn.setAttribute('size', 'sm');
         formCancelBtn.textContent = 'Cancel';
         formCancelBtn.addEventListener('click', () => {
-          enableForm.style.display = 'none';
-          enableBtn.style.display = '';
+          enableForm.classList.add('is-hidden');
+          enableBtn.classList.remove('is-hidden');
         });
         formButtons.appendChild(formCancelBtn);
 
@@ -2640,11 +2612,10 @@ const renderSyncSettings = async () => {
         const enableBtn = document.createElement('peek-button');
         enableBtn.setAttribute('variant', 'primary');
         enableBtn.setAttribute('size', 'sm');
-        enableBtn.style.alignSelf = 'flex-start';
         enableBtn.textContent = 'Enable Sync';
         enableBtn.addEventListener('click', () => {
-          enableBtn.style.display = 'none';
-          enableForm.style.display = 'flex';
+          enableBtn.classList.add('is-hidden');
+          enableForm.classList.remove('is-hidden');
           formApiKeyInput.focus();
         });
         row.appendChild(enableBtn);
