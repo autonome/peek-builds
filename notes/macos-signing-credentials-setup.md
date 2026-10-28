@@ -33,20 +33,39 @@ Use this route if you need a new certificate. If you already have a valid P12 or
 an existing signing identity, reuse it according to your team's key-custody policy
 instead of generating another certificate unnecessarily.
 
-On a trusted Mac with `openssl` installed, run each command separately:
+Preparation and uploading are separate scripts. On a trusted Mac with Bash,
+OpenSSL and Git installed, use the preparation companion (no accounts, keychain
+imports or uploads). Create the parent in approved encrypted storage first, then
+choose a **new** directory outside every git checkout:
 
 ```sh
-umask 077
-mkdir -p "$HOME/secure/peek-signing"
-chmod 700 "$HOME/secure/peek-signing"
-cd "$HOME/secure/peek-signing"
-openssl genrsa -aes256 -out developer-id-private-key.pem 2048
-openssl req -new -sha256 -key developer-id-private-key.pem -out developer-id.certSigningRequest
+mkdir -p "$HOME/secure"
+./scripts/prepare-macos-signing-credentials.sh --help
+./scripts/prepare-macos-signing-credentials.sh generate --dir "$HOME/secure/peek-signing"
 ```
 
-- The first OpenSSL command prompts for a passphrase to encrypt the private key.
+The script creates the directory with mode 700 and files with mode 600. It refuses
+existing directories for generation and never overwrites outputs. Do not run with
+shell recording, untrusted executables, shell startup hooks or debug wrappers.
+Passphrases go directly to OpenSSL terminal prompts, never arguments/environment.
+If CSR creation fails or is cancelled after the encrypted key was saved, that key
+is preserved. Do not rerun generation against it or delete it; retry just the CSR
+with OpenSSL (only if the CSR does not already exist):
+
+```sh
+(umask 077; set -C; openssl req -new -sha256 \
+  -key "$HOME/secure/peek-signing/developer-id-private-key.pem" \
+  > "$HOME/secure/peek-signing/developer-id.certSigningRequest")
+```
+
+Keep any partial CSR under review; the encrypted key remains the essential recovery
+material. Hard termination/power loss may leave a hidden `.prepare.*` scratch
+directory: inspect locally with the custodian before removal, never delete a key
+that has not been backed up.
+
+- The generation step first prompts for a passphrase to encrypt the private key.
   Do not put that passphrase in command-line arguments.
-- The request command prompts for that passphrase and certificate-request subject
+- The CSR step prompts for that passphrase and certificate-request subject
   details. Use your legal/team identity information; leave optional challenge
   password unset. Apple controls the final Developer ID certificate identity.
 - Keep `developer-id-private-key.pem` private and backed up securely. Upload only
@@ -59,13 +78,24 @@ Then:
    (not Developer ID Installer, Apple Development, or Apple Distribution).
 3. Upload `developer-id.certSigningRequest` and download the issued `.cer` into
    this private directory as `developer-id.cer`. Creation may require Account Holder.
-4. Convert Apple's DER certificate to PEM, then export it together with the same
-   private key into a password-protected P12:
+4. Inspect and package the certificate with the **same** encrypted key. The script
+   safely tries PEM and DER, checks the Developer ID Application subject/extension
+   and team OU, and compares public keys **before** P12 export:
 
 ```sh
-openssl x509 -inform DER -in developer-id.cer -out developer-id-certificate.pem
-openssl pkcs12 -export -inkey developer-id-private-key.pem -in developer-id-certificate.pem -out peek-developer-id.p12
+./scripts/prepare-macos-signing-credentials.sh inspect \
+  --cert "$HOME/secure/peek-signing/developer-id.cer"
+./scripts/prepare-macos-signing-credentials.sh package \
+  --dir "$HOME/secure/peek-signing" \
+  --cert "$HOME/secure/peek-signing/developer-id.cer" \
+  --key "$HOME/secure/peek-signing/developer-id-private-key.pem"
 ```
+
+`package` requires an existing owner-owned, non-symlink directory with mode 700,
+and refuses an existing `signing.p12`. Failed exports/cancellation remove scratch
+artifacts and preserve input keys/certificates. Choose a strong nonempty export
+password; empty passwords are rejected. Metadata/type/key-match checks are not
+Apple chain, revocation, expiry, account authorization or macOS acceptance checks.
 
 The export prompts for the private-key passphrase and a new **P12 export password**.
 Keep both securely; the setup script needs only the P12 export password. Do not
@@ -73,7 +103,7 @@ supply passwords through OpenSSL's command-line password options. If OpenSSL rep
 that the certificate does not match the private key, stop: obtain the certificate
 issued for this CSR rather than combining unrelated keys/certificates.
 
-Your `--p12` input is now `$HOME/secure/peek-signing/peek-developer-id.p12`.
+Your upload script's `--p12` input is now `$HOME/secure/peek-signing/signing.p12`.
 No GUI import into the local keychain is needed for the CI setup script.
 
 ### GUI alternative: reuse or generate through Keychain Access
@@ -127,12 +157,13 @@ backup, or create a new certificate under the team's certificate policy.
 For the terminal-only route, inspect the issued certificate's subject:
 
 ```sh
-openssl x509 -in "$HOME/secure/peek-signing/developer-id-certificate.pem" -noout -subject -nameopt multiline
+./scripts/prepare-macos-signing-credentials.sh inspect \
+  --cert "$HOME/secure/peek-signing/developer-id.cer"
 ```
 
 Copy the entire **commonName** value, normally
 `Developer ID Application: Your Legal Name or Company (ABCDEFGHIJ)`. Do not include
-`commonName =`, indentation, or surrounding output. This is public certificate
+the `Signing identity / commonName:` label or surrounding output. This is public certificate
 metadata, not a private key. Cross-check its team suffix with Membership details.
 
 If the certificate and private key are already installed in a Mac keychain, you
@@ -174,7 +205,8 @@ the API key authenticates requests to Apple's notarization service.
 7. Download its private key, usually named `AuthKey_<KEY_ID>.p8`.
 
 Apple permits downloading that private key only once. Keep an encrypted backup.
-Never paste it into chat or commit it. This file is the script's `--p8` input.
+Never paste it into chat or commit it. This file is the upload script's `--p8` input. Do **not** generate a P8 locally:
+Apple must issue the API key and associate its key ID, issuer and permissions.
 
 **Scope warning:** this is not a notarization-only permission. Team API keys can
 have access beyond Peek; review the impact if the team ships other apps.
@@ -216,12 +248,11 @@ depend on the repository visibility and GitHub plan.
 
 ## 7. Run the setup script
 
-At the time this note was written, the setup script was committed in the
-**macos-signing** worktree, not yet merged to main. From that worktree, preview:
+From a checkout containing the separate upload script, preview:
 
 ```sh
 ./scripts/setup-macos-signing-secrets.sh \
-  --p12 "$HOME/secure/peek-developer-id.p12" \
+  --p12 "$HOME/secure/peek-signing/signing.p12" \
   --p8 "$HOME/secure/AuthKey_YOURKEYID.p8" \
   --dry-run
 ```

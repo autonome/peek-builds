@@ -1,6 +1,6 @@
 ---
 enabled: false
-touches: [.github/workflows/macos.yml, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, scripts/setup-macos-signing-secrets.sh, scripts/setup-macos-signing-secrets.test.cjs, docs/macos-signing-secrets.md, notes/macos-signing-readiness.md]
+touches: [.github/workflows/macos.yml, apps/desktop/electron-builder.yml, apps/desktop/assets/entitlements.mac.plist, apps/desktop/assets/entitlements.mac.inherit.plist, apps/desktop/assets/entitlements.mac.helper.plist, scripts/electron-after-pack.cjs, scripts/macos-signing.cjs, scripts/macos-signing.test.cjs, scripts/setup-macos-signing-secrets.sh, scripts/setup-macos-signing-secrets.test.cjs, scripts/prepare-macos-signing-credentials.sh, scripts/prepare-macos-signing-credentials.test.cjs, docs/macos-signing-secrets.md, notes/macos-signing-credentials-setup.md, notes/macos-signing-readiness.md]
 depends-on: []
 ---
 
@@ -12,6 +12,14 @@ Keep `enabled: false`: this manual track owns implementation; no duplicate autom
 writer is authorized. This approval is not permission for the agent to enroll,
 purchase, generate/export keys, read real secrets, alter accounts/remote settings,
 sign a live build or publish a release. Signed public publication remains unapproved.
+
+Delivered terminal-only preparation companion:
+`scripts/prepare-macos-signing-credentials.sh` and offline fixture tests create an
+encrypted RSA key/CSR, validate and package a manually issued Developer ID
+Application certificate as P12, and inspect public identity/team metadata. This
+is separate from uploading, never generates an Apple API P8, and performs no
+account/keychain operations. Apple portal issuance and API key download remain
+human-owned. See the [credential checklist](../notes/macos-signing-credentials-setup.md).
 
 Delivered provisioning component: `scripts/setup-macos-signing-secrets.sh`, fake-gh
 tests in `scripts/setup-macos-signing-secrets.test.cjs`, and

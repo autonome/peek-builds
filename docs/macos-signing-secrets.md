@@ -13,7 +13,9 @@ secrets does not make the existing unsigned workflow sign builds.
    Application** certificate and private-key custody. Do not buy/enroll or create
    duplicate identities merely to run this script. See the
    [readiness checklist](../notes/macos-signing-readiness.md).
-2. On a trusted Mac, open Keychain Access → My Certificates, select the approved
+2. Prepare credentials separately from uploading. For the terminal-only route use
+   [`prepare-macos-signing-credentials.sh`](../notes/macos-signing-credentials-setup.md)
+   as described below. Alternatively, on a trusted Mac, open Keychain Access → My Certificates, select the approved
    Developer ID Application identity **with its private key**, and export it as
    a password-protected `.p12`. A downloaded `.cer` alone is insufficient. Keep it
    in approved encrypted storage **outside the checkout**, restrict local access,
@@ -46,7 +48,60 @@ secrets does not make the existing unsigned workflow sign builds.
    script stores both as environment **secrets**, consistently with the proposed
    workflow contract. Do not simultaneously rely on conflicting GitHub variables.
 
-## Run
+## Prepare locally (separate companion; no upload)
+
+Only if the owner needs a new certificate, on a trusted Mac with Bash, OpenSSL
+and Git, choose approved encrypted storage **outside all checkouts**. The parent
+must exist, and `generate` requires a fresh directory:
+
+```sh
+mkdir -p "$HOME/secure"
+./scripts/prepare-macos-signing-credentials.sh generate --dir "$HOME/secure/peek-signing"
+```
+
+OpenSSL prompts for the encrypted RSA key's passphrase and CSR subject. Upload
+**only** `developer-id.certSigningRequest` to Apple Developer → Certificates →
+**Developer ID Application**, under the approved team. Certificate issuance is
+manual; download the `.cer`, then run:
+
+```sh
+./scripts/prepare-macos-signing-credentials.sh inspect \
+  --cert "$HOME/secure/peek-signing/developer-id.cer"
+./scripts/prepare-macos-signing-credentials.sh package \
+  --dir "$HOME/secure/peek-signing" \
+  --cert "$HOME/secure/peek-signing/developer-id.cer" \
+  --key "$HOME/secure/peek-signing/developer-id-private-key.pem"
+```
+
+`inspect` shows the exact commonName/signing identity, team OU, validity and public
+fingerprint. `package` accepts DER or PEM, rejects non-Developer-ID-Application
+subjects/extensions and mismatched keys, then prompts through OpenSSL for the key
+passphrase and a strong nonempty P12 export password. Output is `signing.p12`.
+These checks do not establish Apple trust, revocation, account authorization or
+macOS acceptance. Download the approved team API `.p8` manually from App Store
+Connect: **do not generate it locally**. No preparation command calls Apple/GitHub
+APIs or imports anything into a keychain.
+
+Directories/files are mode 700/600; outputs are never overwritten. Partial
+exports and scratch artifacts are cleaned on ordinary failure/cancellation.
+Completed encrypted keys survive subsequent CSR failure: see the
+[credential checklist](../notes/macos-signing-credentials-setup.md) for CSR retry
+and crash-recovery guidance. Keep encrypted backups; neither script is a key
+recovery service. Passwords belong only at terminal prompts, never flags, exported
+environment variables, shell history or logs. Run `--help` for the full interface.
+
+After reviewing the protected environment, preview uploading the prepared P12:
+
+```sh
+./scripts/setup-macos-signing-secrets.sh \
+  --p12 "$HOME/secure/peek-signing/signing.p12" \
+  --p8 "$HOME/secure/AuthKey_YOURKEYID.p8" --dry-run
+```
+
+Remove `--dry-run` only when authorized to upload. Preparation and uploading do
+not implement/enable the candidate signing workflow.
+
+## Run the upload script
 
 Start with a local-only preview (still prompts for identity, team, API key ID and
 issuer, but not passwords). Replace paths with your approved local files:
@@ -133,12 +188,16 @@ setup is complete. A completed setup does not start a job or publish anything.
 ## Offline tests
 
 ```sh
-bash -n scripts/setup-macos-signing-secrets.sh
-node --test scripts/setup-macos-signing-secrets.test.cjs
+bash -n scripts/prepare-macos-signing-credentials.sh scripts/setup-macos-signing-secrets.sh
+node --test scripts/prepare-macos-signing-credentials.test.cjs scripts/setup-macos-signing-secrets.test.cjs
 git diff --check
 ```
 
-Tests use only dummy local fixtures and a fake `gh` on PATH, never real accounts,
+Preparation tests generate disposable local test keys/certificates with fixture-only
+passwords supplied through descriptors by an OpenSSL wrapper; they check real
+PEM/DER/key matching and export, cleanup, cancellation, nonoverwrite, permissions,
+input/type failures, empty export-password rejection and tracing/argv safety.
+Upload tests use only dummy local fixtures and a fake `gh` on PATH, never real accounts,
 network, keychains or credentials. They cover both modes, dry-run/help, invalid
 inputs/destinations, explicit confirmation, mode conflicts, missing environment,
 partial failures, tracing/debug suppression, stdin-only payloads and absence of
