@@ -2489,8 +2489,10 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
       const a = b.makeFakeHybridWindow((arg as any).startA);
       const w = b.makeFakeHybridWindow((arg as any).startB);
       b.showHybridHost(a, { inactive: true });
-      b.showHybridHost(w, { inactive: true });
+      // setActive drains every other base-layer page host to hidden, so the
+      // unfocused page is shown after it: a hidden page cannot be dragged.
       b.setActive(a);
+      b.showHybridHost(w, { inactive: true });
       return { a, b: w };
     }, { startA, startB });
     await waitOverlayReady();
