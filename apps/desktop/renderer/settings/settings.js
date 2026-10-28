@@ -3332,8 +3332,7 @@ const renderDiagnosticsSettings = async () => {
   // The change listener subscribes to `peek:debug:changed` so toggles
   // stay in sync if the flag was flipped from elsewhere.
   const debugSection = document.createElement('div');
-  debugSection.className = 'form-section';
-  debugSection.style.marginBottom = '24px';
+  debugSection.className = 'form-section spaced';
 
   const debugTitle = document.createElement('h3');
   debugTitle.className = 'form-section-title';
@@ -3394,17 +3393,16 @@ const renderDiagnosticsSettings = async () => {
   container.appendChild(debugSection);
 
   const desc = document.createElement('p');
-  desc.className = 'help-text';
-  desc.style.marginBottom = '16px';
+  desc.className = 'help-text gap-below-lg';
   desc.textContent = 'Inspect localStorage and datastore contents for debugging.';
   container.appendChild(desc);
 
   // Button row
   const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;';
+  btnRow.className = 'diagnostics-buttons';
 
   const outputArea = document.createElement('pre');
-  outputArea.style.cssText = 'background: var(--bg-tertiary); padding: 16px; border-radius: 6px; overflow: auto; max-height: 500px; font-size: 12px; font-family: monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;';
+  outputArea.className = 'diagnostics-output';
   outputArea.textContent = 'Click a button above to inspect data.';
 
   const makeBtn = (text, fn) => {
@@ -3474,8 +3472,7 @@ const renderDiagnosticsSettings = async () => {
 
   // Backup tools section
   const backupSection = document.createElement('div');
-  backupSection.className = 'form-section';
-  backupSection.style.marginTop = '24px';
+  backupSection.className = 'form-section spaced-above';
 
   const backupTitle = document.createElement('h3');
   backupTitle.className = 'form-section-title';
@@ -3483,16 +3480,15 @@ const renderDiagnosticsSettings = async () => {
   backupSection.appendChild(backupTitle);
 
   const backupDesc = document.createElement('p');
-  backupDesc.className = 'help-text';
-  backupDesc.style.marginBottom = '12px';
+  backupDesc.className = 'help-text gap-below-md';
   backupDesc.textContent = 'Create and manage database backups.';
   backupSection.appendChild(backupDesc);
 
   const backupBtnRow = document.createElement('div');
-  backupBtnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;';
+  backupBtnRow.className = 'diagnostics-buttons compact';
 
   const backupOutput = document.createElement('div');
-  backupOutput.style.cssText = 'padding: 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px; font-family: monospace; color: var(--text-secondary); white-space: pre-wrap;';
+  backupOutput.className = 'diagnostics-output compact';
   backupOutput.textContent = '';
 
   backupBtnRow.appendChild(makeBtn('Backup Now', async () => {
@@ -3664,7 +3660,7 @@ const init = async () => {
   permissionsNavLabel.textContent = 'Permissions';
   permissionsNav.appendChild(permissionsNavLabel);
   const permissionsNavCount = document.createElement('span');
-  permissionsNavCount.style.cssText = 'margin-left: 6px; opacity: 0.6;';
+  permissionsNavCount.className = 'nav-count';
   permissionsNav.appendChild(permissionsNavCount);
   window._setPermissionsNavCount = (n) => {
     permissionsNavCount.textContent = (typeof n === 'number' && n > 0) ? `(${n})` : '';

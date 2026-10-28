@@ -1101,3 +1101,45 @@ a.item-card-meta:hover {
 .device-footer peek-input {
   flex: 1;
 }
+
+/* Diagnostics pane */
+.help-text.gap-below-lg {
+  margin-bottom: 16px;
+}
+
+.diagnostics-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.diagnostics-buttons.compact {
+  margin-bottom: 12px;
+}
+
+.diagnostics-output {
+  background: var(--bg-tertiary);
+  padding: 16px;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 500px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diagnostics-output.compact {
+  padding: 12px;
+  max-height: none;
+  overflow: visible;
+  word-break: normal;
+}
+
+/* Count beside a sidebar nav label */
+.nav-count {
+  margin-left: 6px;
+  opacity: 0.6;
+}
