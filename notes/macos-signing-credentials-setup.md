@@ -16,7 +16,69 @@ the app's bundle ID.
 
 ## 1. Developer ID Application certificate → `.p12` file
 
-On your **Mac**:
+You do not need the Keychain Access GUI. On newer macOS, the **Passwords** app is
+separate from certificate/private-key management, and Keychain Access may not be
+visible where older instructions expect it. If installed, try:
+
+```sh
+open -a "Keychain Access"
+```
+
+If that is unavailable, use the terminal-only route below. Do not use the
+Passwords app to generate/export a signing certificate.
+
+### Terminal-only route: generate a new key and certificate request
+
+Use this route if you need a new certificate. If you already have a valid P12 or
+an existing signing identity, reuse it according to your team's key-custody policy
+instead of generating another certificate unnecessarily.
+
+On a trusted Mac with `openssl` installed, run each command separately:
+
+```sh
+umask 077
+mkdir -p "$HOME/secure/peek-signing"
+chmod 700 "$HOME/secure/peek-signing"
+cd "$HOME/secure/peek-signing"
+openssl genrsa -aes256 -out developer-id-private-key.pem 2048
+openssl req -new -sha256 -key developer-id-private-key.pem -out developer-id.certSigningRequest
+```
+
+- The first OpenSSL command prompts for a passphrase to encrypt the private key.
+  Do not put that passphrase in command-line arguments.
+- The request command prompts for that passphrase and certificate-request subject
+  details. Use your legal/team identity information; leave optional challenge
+  password unset. Apple controls the final Developer ID certificate identity.
+- Keep `developer-id-private-key.pem` private and backed up securely. Upload only
+  `developer-id.certSigningRequest`, never the private-key file.
+
+Then:
+
+1. Open [Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list).
+2. Select the correct team and create a **Developer ID Application** certificate
+   (not Developer ID Installer, Apple Development, or Apple Distribution).
+3. Upload `developer-id.certSigningRequest` and download the issued `.cer` into
+   this private directory as `developer-id.cer`. Creation may require Account Holder.
+4. Convert Apple's DER certificate to PEM, then export it together with the same
+   private key into a password-protected P12:
+
+```sh
+openssl x509 -inform DER -in developer-id.cer -out developer-id-certificate.pem
+openssl pkcs12 -export -inkey developer-id-private-key.pem -in developer-id-certificate.pem -out peek-developer-id.p12
+```
+
+The export prompts for the private-key passphrase and a new **P12 export password**.
+Keep both securely; the setup script needs only the P12 export password. Do not
+supply passwords through OpenSSL's command-line password options. If OpenSSL reports
+that the certificate does not match the private key, stop: obtain the certificate
+issued for this CSR rather than combining unrelated keys/certificates.
+
+Your `--p12` input is now `$HOME/secure/peek-signing/peek-developer-id.p12`.
+No GUI import into the local keychain is needed for the CI setup script.
+
+### GUI alternative: reuse or generate through Keychain Access
+
+If Keychain Access is installed, on your **Mac**:
 
 1. Open **Keychain Access**.
 2. Select **login → My Certificates**.
@@ -62,7 +124,19 @@ backup, or create a new certificate under the team's certificate policy.
 
 ## 2. Full signing identity name
 
-On the Mac containing the certificate and private key, run:
+For the terminal-only route, inspect the issued certificate's subject:
+
+```sh
+openssl x509 -in "$HOME/secure/peek-signing/developer-id-certificate.pem" -noout -subject -nameopt multiline
+```
+
+Copy the entire **commonName** value, normally
+`Developer ID Application: Your Legal Name or Company (ABCDEFGHIJ)`. Do not include
+`commonName =`, indentation, or surrounding output. This is public certificate
+metadata, not a private key. Cross-check its team suffix with Membership details.
+
+If the certificate and private key are already installed in a Mac keychain, you
+can instead run:
 
 ```sh
 security find-identity -v -p codesigning
@@ -170,9 +244,9 @@ message and rerun with the same destination, auth mode, and complete inputs.
 
 | Script input | Source |
 |---|---|
-| `.p12` file | Keychain Access export of certificate and private key |
+| `.p12` file | OpenSSL or Keychain Access export of certificate and matching private key |
 | P12 password | Chosen during export |
-| Signing identity | Full `Developer ID Application: … (TEAMID)` name |
+| Signing identity | Issued certificate's commonName, or matching `security find-identity` entry |
 | Team ID | Apple Developer membership details |
 | `.p8` file | App Store Connect team API key download |
 | Key ID | That API key's row |
