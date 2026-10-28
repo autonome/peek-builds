@@ -239,6 +239,48 @@ peek-card.list-card {
   gap: 12px;
 }
 
+.item-card-meta {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.item-card-meta.muted {
+  color: var(--text-muted);
+}
+
+a.item-card-meta {
+  text-decoration: none;
+}
+
+a.item-card-meta:hover {
+  color: var(--text-primary);
+}
+
+.item-card-meta.help-cursor {
+  cursor: help;
+  border-bottom: 1px dotted var(--text-muted);
+}
+
+.help-text.small {
+  font-size: 11px;
+}
+
+.help-text.attribution a {
+  color: var(--text-muted);
+}
+
+.help-text.error {
+  color: var(--error-text);
+}
+
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 /* General: default browser row */
 .default-browser-row {
   display: flex;

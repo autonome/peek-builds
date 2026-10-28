@@ -1367,8 +1367,7 @@ const renderPrivacySettings = async () => {
   extSection.appendChild(extSectionTitle);
 
   const extSectionDesc = document.createElement('p');
-  extSectionDesc.className = 'help-text';
-  extSectionDesc.style.marginBottom = '16px';
+  extSectionDesc.className = 'help-text section-intro';
   extSectionDesc.textContent = 'Web extensions bundled with Peek. These run in isolated processes for security.';
   extSection.appendChild(extSectionDesc);
 
@@ -1387,14 +1386,14 @@ const renderPrivacySettings = async () => {
   }
 
   const adBlockerCard = document.createElement('peek-card');
-  adBlockerCard.style.marginBottom = '8px';
+  adBlockerCard.className = 'list-card';
 
   const adBlockerHeader = document.createElement('div');
   adBlockerHeader.className = 'item-card-header';
 
   // Left side: checkbox + name
   const adBlockerLeft = document.createElement('div');
-  adBlockerLeft.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+  adBlockerLeft.className = 'item-card-left';
 
   const adBlockerCheckbox = document.createElement('peek-switch');
   adBlockerCheckbox.checked = adBlockerEnabled;
@@ -1416,7 +1415,6 @@ const renderPrivacySettings = async () => {
 
   const adBlockerTitle = document.createElement('div');
   adBlockerTitle.className = 'item-card-title';
-  adBlockerTitle.style.margin = '0';
 
   const adBlockerName = document.createElement('span');
   adBlockerName.textContent = 'Ghostery Ad Blocker';
@@ -1426,9 +1424,7 @@ const renderPrivacySettings = async () => {
   adBlockerSourceLink.href = 'https://github.com/ghostery/adblocker';
   adBlockerSourceLink.target = '_blank';
   adBlockerSourceLink.textContent = 'source';
-  adBlockerSourceLink.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-muted); text-decoration: none; font-weight: 400;';
-  adBlockerSourceLink.addEventListener('mouseenter', () => { adBlockerSourceLink.style.color = 'var(--text-primary)'; });
-  adBlockerSourceLink.addEventListener('mouseleave', () => { adBlockerSourceLink.style.color = 'var(--text-muted)'; });
+  adBlockerSourceLink.className = 'item-card-meta muted';
   adBlockerTitle.appendChild(adBlockerSourceLink);
 
   adBlockerLeft.appendChild(adBlockerTitle);
@@ -1440,21 +1436,18 @@ const renderPrivacySettings = async () => {
   adBlockerBody.className = 'item-card-body';
 
   const adBlockerDesc = document.createElement('div');
-  adBlockerDesc.className = 'help-text';
-  adBlockerDesc.style.marginBottom = '4px';
+  adBlockerDesc.className = 'help-text gap-below-sm';
   adBlockerDesc.textContent = 'Block ads and trackers for faster, cleaner browsing.';
   adBlockerBody.appendChild(adBlockerDesc);
 
   const adBlockerStats = document.createElement('div');
-  adBlockerStats.className = 'help-text';
-  adBlockerStats.style.marginBottom = '4px';
+  adBlockerStats.className = 'help-text gap-below-sm';
   adBlockerStats.innerHTML = `<strong>${blockedCount.toLocaleString()}</strong> requests blocked this session`;
   adBlockerBody.appendChild(adBlockerStats);
 
   const adBlockerAttr = document.createElement('div');
-  adBlockerAttr.className = 'help-text';
-  adBlockerAttr.style.fontSize = '11px';
-  adBlockerAttr.innerHTML = 'Powered by <a href="https://github.com/ghostery/adblocker" target="_blank" style="color: var(--text-muted);">@ghostery/adblocker</a> (MPL-2.0). Filter lists: <a href="https://easylist.to/" target="_blank" style="color: var(--text-muted);">EasyList</a> and <a href="https://easylist.to/easylist/easyprivacy.txt" target="_blank" style="color: var(--text-muted);">EasyPrivacy</a>.';
+  adBlockerAttr.className = 'help-text small attribution';
+  adBlockerAttr.innerHTML = 'Powered by <a href="https://github.com/ghostery/adblocker" target="_blank">@ghostery/adblocker</a> (MPL-2.0). Filter lists: <a href="https://easylist.to/" target="_blank">EasyList</a> and <a href="https://easylist.to/easylist/easyprivacy.txt" target="_blank">EasyPrivacy</a>.';
   adBlockerBody.appendChild(adBlockerAttr);
 
   adBlockerCard.appendChild(adBlockerBody);
@@ -1477,14 +1470,14 @@ const renderPrivacySettings = async () => {
 
       for (const ext of result.data) {
         const card = document.createElement('peek-card');
-        card.style.marginBottom = '8px';
+        card.className = 'list-card';
 
         const header = document.createElement('div');
         header.className = 'item-card-header';
 
         // Left side: checkbox + name + source link
         const leftSide = document.createElement('div');
-        leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+        leftSide.className = 'item-card-left';
 
         const checkbox = document.createElement('peek-switch');
         checkbox.checked = ext.enabled;
@@ -1506,7 +1499,6 @@ const renderPrivacySettings = async () => {
 
         const cardTitle = document.createElement('div');
         cardTitle.className = 'item-card-title';
-        cardTitle.style.margin = '0';
 
         const nameSpan = document.createElement('span');
         nameSpan.textContent = ext.name;
@@ -1514,7 +1506,7 @@ const renderPrivacySettings = async () => {
 
         if (ext.version) {
           const versionSpan = document.createElement('span');
-          versionSpan.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-tertiary); font-weight: 400;';
+          versionSpan.className = 'item-card-meta';
           versionSpan.textContent = `v${ext.version}`;
           cardTitle.appendChild(versionSpan);
         }
@@ -1524,7 +1516,7 @@ const renderPrivacySettings = async () => {
           const sourceLink = document.createElement('span');
           sourceLink.textContent = 'source';
           sourceLink.title = ext.path;
-          sourceLink.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-muted); font-weight: 400; cursor: help; border-bottom: 1px dotted var(--text-muted);';
+          sourceLink.className = 'item-card-meta muted help-cursor';
           cardTitle.appendChild(sourceLink);
         }
 
@@ -1539,8 +1531,7 @@ const renderPrivacySettings = async () => {
 
         if (ext.description) {
           const desc = document.createElement('div');
-          desc.className = 'help-text';
-          desc.style.marginBottom = '4px';
+          desc.className = 'help-text gap-below-sm';
           desc.textContent = ext.description;
           body.appendChild(desc);
         }
@@ -1548,15 +1539,14 @@ const renderPrivacySettings = async () => {
         // Inline attribution
         if (ext.attribution) {
           const attrDiv = document.createElement('div');
-          attrDiv.className = 'help-text';
-          attrDiv.style.fontSize = '11px';
+          attrDiv.className = 'help-text small attribution';
           // Check if attribution contains a URL and make it a link
           const urlMatch = ext.attribution.match(/(https?:\/\/[^\s]+)/);
           if (urlMatch) {
             const beforeUrl = ext.attribution.substring(0, ext.attribution.indexOf(urlMatch[1]));
             const url = urlMatch[1];
             const afterUrl = ext.attribution.substring(ext.attribution.indexOf(urlMatch[1]) + urlMatch[1].length);
-            attrDiv.innerHTML = `${beforeUrl}<a href="${url}" target="_blank" style="color: var(--text-muted);">${url}</a>${afterUrl}`;
+            attrDiv.innerHTML = `${beforeUrl}<a href="${url}" target="_blank">${url}</a>${afterUrl}`;
           } else {
             attrDiv.textContent = ext.attribution;
           }
@@ -1569,7 +1559,7 @@ const renderPrivacySettings = async () => {
           const extEntries = uiEntries.filter(e => e.extensionId === ext.id && e.openable);
           if (extEntries.length > 0) {
             const actions = document.createElement('div');
-            actions.style.cssText = 'display: flex; gap: 6px; margin-top: 8px;';
+            actions.className = 'card-actions';
             const entryTypeLabels = {
               popup: 'Popup', options: 'Options', background: 'Background',
               newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
@@ -1599,8 +1589,7 @@ const renderPrivacySettings = async () => {
   } catch (err) {
     console.error('[settings] Failed to load chrome extensions:', err);
     const errorMsg = document.createElement('p');
-    errorMsg.className = 'help-text';
-    errorMsg.style.color = 'var(--error-color, #f44)';
+    errorMsg.className = 'help-text error';
     errorMsg.textContent = 'Failed to load extensions: ' + err.message;
     extSection.appendChild(errorMsg);
   }
