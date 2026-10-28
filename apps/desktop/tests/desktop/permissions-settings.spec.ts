@@ -91,12 +91,12 @@ test.describe('Permissions Settings UI @desktop', () => {
 
     // Wait for at least one row to render.
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length >= 2,
+      () => document.querySelectorAll('#section-permissions peek-card').length >= 2,
       undefined,
       { timeout: 5000 },
     );
 
-    const rows = settings.locator('#section-permissions .item-card');
+    const rows = settings.locator('#section-permissions peek-card');
     await expect(rows).toHaveCount(2);
 
     // Each row should mention an origin and a verdict.
@@ -116,14 +116,14 @@ test.describe('Permissions Settings UI @desktop', () => {
     const settings = await openSettings();
     await settings.locator('a.nav-item[data-section="permissions"]').click();
 
-    await settings.waitForSelector('#section-permissions .item-card', { timeout: 5000 });
-    expect(await settings.locator('#section-permissions .item-card').count()).toBe(1);
+    await settings.waitForSelector('#section-permissions peek-card', { timeout: 5000 });
+    expect(await settings.locator('#section-permissions peek-card').count()).toBe(1);
 
-    await settings.locator('#section-permissions .item-card button:has-text("Revoke")').click();
+    await settings.locator('#section-permissions peek-card peek-button:has-text("Revoke")').click();
 
     // Row gone in UI.
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length === 0,
+      () => document.querySelectorAll('#section-permissions peek-card').length === 0,
       undefined,
       { timeout: 5000 },
     );
@@ -149,13 +149,13 @@ test.describe('Permissions Settings UI @desktop', () => {
     await settings.locator('a.nav-item[data-section="permissions"]').click();
 
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length === 4,
+      () => document.querySelectorAll('#section-permissions peek-card').length === 4,
       undefined,
       { timeout: 5000 },
     );
 
     // Read the visual order — each row's origin text in DOM order.
-    const origins = await settings.locator('#section-permissions .item-card').evaluateAll(
+    const origins = await settings.locator('#section-permissions peek-card').evaluateAll(
       (rows) => rows.map((r) => {
         const originEl = r.querySelector('div[style*="font-family"]');
         return originEl?.textContent || '';
@@ -180,7 +180,7 @@ test.describe('Permissions Settings UI @desktop', () => {
 
     // Wait for both rows to render (proxy for refresh having completed).
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length === 2,
+      () => document.querySelectorAll('#section-permissions peek-card').length === 2,
       undefined,
       { timeout: 5000 },
     );
@@ -190,7 +190,7 @@ test.describe('Permissions Settings UI @desktop', () => {
     expect(navText1).toMatch(/Permissions\s*\(2\)/);
 
     // Revoke one — badge should drop to (1).
-    await settings.locator('#section-permissions .item-card button:has-text("Revoke")').first().click();
+    await settings.locator('#section-permissions peek-card peek-button:has-text("Revoke")').first().click();
     await settings.waitForFunction(
       () => /\(1\)/.test(document.querySelector('a.nav-item[data-section="permissions"]')?.textContent || ''),
       undefined,
@@ -199,7 +199,7 @@ test.describe('Permissions Settings UI @desktop', () => {
 
     // Clear all — badge should disappear (no parens).
     settings.once('dialog', dialog => dialog.accept());
-    await settings.locator('#section-permissions button:has-text("Clear all")').click();
+    await settings.locator('#section-permissions peek-button:has-text("Clear all")').click();
     await settings.waitForFunction(
       () => !/\(\d+\)/.test(document.querySelector('a.nav-item[data-section="permissions"]')?.textContent || ''),
       undefined,
@@ -214,7 +214,7 @@ test.describe('Permissions Settings UI @desktop', () => {
     const settings = await openSettings();
     await settings.locator('a.nav-item[data-section="permissions"]').click();
 
-    await settings.waitForSelector('#section-permissions .item-card', { timeout: 5000 });
+    await settings.waitForSelector('#section-permissions peek-card', { timeout: 5000 });
 
     const favicons = settings.locator('#section-permissions .permissions-row-favicon');
     await expect(favicons).toHaveCount(2);
@@ -234,7 +234,7 @@ test.describe('Permissions Settings UI @desktop', () => {
     await settings.locator('a.nav-item[data-section="permissions"]').click();
 
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length >= 3,
+      () => document.querySelectorAll('#section-permissions peek-card').length >= 3,
       undefined,
       { timeout: 5000 },
     );
@@ -242,10 +242,10 @@ test.describe('Permissions Settings UI @desktop', () => {
     // Auto-accept the confirm() dialog.
     settings.once('dialog', dialog => dialog.accept());
 
-    await settings.locator('#section-permissions button:has-text("Clear all")').click();
+    await settings.locator('#section-permissions peek-button:has-text("Clear all")').click();
 
     await settings.waitForFunction(
-      () => document.querySelectorAll('#section-permissions .item-card').length === 0,
+      () => document.querySelectorAll('#section-permissions peek-card').length === 0,
       undefined,
       { timeout: 5000 },
     );

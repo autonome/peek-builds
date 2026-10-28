@@ -1796,12 +1796,10 @@ const renderPermissionsSettings = async () => {
   };
 
   const renderRow = (decision) => {
-    const row = document.createElement('div');
-    row.className = 'item-card no-collapse';
+    const row = document.createElement('peek-card');
     row.style.marginBottom = '8px';
 
     const header = document.createElement('div');
-    header.className = 'item-card-header';
     header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 12px;';
 
     const left = document.createElement('div');
@@ -1837,8 +1835,8 @@ const renderPermissionsSettings = async () => {
     textCol.appendChild(meta);
     left.appendChild(textCol);
 
-    const revokeBtn = document.createElement('button');
-    revokeBtn.className = 'btn btn-secondary';
+    const revokeBtn = document.createElement('peek-button');
+    revokeBtn.setAttribute('variant', 'secondary');
     revokeBtn.textContent = 'Revoke';
     revokeBtn.style.flexShrink = '0';
     revokeBtn.addEventListener('click', async () => {
@@ -1872,8 +1870,8 @@ const renderPermissionsSettings = async () => {
 
   const clearAllWrap = document.createElement('div');
   clearAllWrap.style.cssText = 'margin-top: 16px; display: flex; justify-content: flex-end;';
-  const clearAllBtn = document.createElement('button');
-  clearAllBtn.className = 'btn btn-secondary';
+  const clearAllBtn = document.createElement('peek-button');
+  clearAllBtn.setAttribute('variant', 'secondary');
   clearAllBtn.textContent = 'Clear all';
   clearAllBtn.addEventListener('click', async () => {
     if (!confirm('Clear all saved permission decisions? Sites will be prompted again next time they request a permission.')) return;
