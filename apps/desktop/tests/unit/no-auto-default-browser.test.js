@@ -27,16 +27,20 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAIN_DIR = join(__dirname, '..', '..', 'main');
 
 describe('no-auto-default-browser', () => {
-  it('entry.ts has zero setAsDefaultProtocolClient calls', () => {
-    const src = readFileSync(join(MAIN_DIR, 'entry.ts'), 'utf8');
-    const matches = src.match(/setAsDefaultProtocolClient/g);
-    assert.equal(
-      matches,
-      null,
-      `entry.ts must not call setAsDefaultProtocolClient (found ${matches ? matches.length : 0} occurrence(s)); ` +
-      'default-browser registration must only happen via the tile:app:set-default-browser IPC handler in tile-ipc.ts'
-    );
-  });
+  // entry.ts is the startup gate; the startup code that used to live there is
+  // now runtime-entry.ts. Both are scanned so the split cannot hide a call.
+  for (const file of ['entry.ts', 'runtime-entry.ts']) {
+    it(`${file} has zero setAsDefaultProtocolClient calls`, () => {
+      const src = readFileSync(join(MAIN_DIR, file), 'utf8');
+      const matches = src.match(/setAsDefaultProtocolClient/g);
+      assert.equal(
+        matches,
+        null,
+        `${file} must not call setAsDefaultProtocolClient (found ${matches ? matches.length : 0} occurrence(s)); ` +
+        'default-browser registration must only happen via the tile:app:set-default-browser IPC handler in tile-ipc.ts'
+      );
+    });
+  }
 
   it('tile-ipc.ts still has the tile:app:set-default-browser handler (Settings-button path intact)', () => {
     const src = readFileSync(join(MAIN_DIR, 'tile-ipc.ts'), 'utf8');

@@ -144,7 +144,7 @@ const WRITE_ALLOWLIST = [
     why: 'better-sqlite3 Database close in closeDatastore — not a window' },
   { file: 'apps/desktop/main/profiles.ts', call: 'close', count: 1,
     why: 'better-sqlite3 profiles DB close — not a window' },
-  { file: 'apps/desktop/main/entry.ts', call: 'close', count: 1,
+  { file: 'apps/desktop/main/runtime-entry.ts', call: 'close', count: 1,
     why: 'early-boot sqlite handle close (earlyDb) — not a window' },
   { file: 'apps/desktop/main/local-feature-watch.ts', call: 'close', count: 2,
     why: 'folder-watch handle close in LocalFeatureWatcher and fs.FSWatcher close in nodeFolderWatchPort — not a window' },
@@ -170,7 +170,7 @@ const WRITE_ALLOWLIST = [
   // ── App/Dock-level surface, not per-window, but same API family ──────────
   { file: 'apps/desktop/main/headless-policy.ts', call: 'hide', count: 1,
     why: 'app.dock.hide under headless activation policy — Dock tile, not a window' },
-  { file: 'apps/desktop/main/entry.ts', call: 'hide', count: 2,
+  { file: 'apps/desktop/main/runtime-entry.ts', call: 'hide', count: 2,
     why: 'app.dock.hide (headless boot + LSUIElement path) — Dock tile, not a window' },
   { file: 'apps/desktop/main/windows.ts', call: 'show', count: 1,
     why: 'app.dock.show in applyDockPreference — Dock tile, not a window (the per-window show/showInactive seams route through the machine since §5 step 6A-2)' },
@@ -250,7 +250,7 @@ const READ_ALLOWLIST = [
     why: 'the last-resort candidate filter in tile:theme:setWindowColorScheme, reached only when neither an explicit windowId nor the machine front resolves (headless). It picks a THEME target, not window behaviour — nothing about show/focus/stacking changes. Weakest "reported" claim on this list: if the decision class ever widens, this is the first entry to re-examine (the machine already knows which windows are satellites)' },
   { file: 'apps/desktop/main/windows.ts', call: 'isFocused', count: 1, kind: 'reported',
     why: 'the `focused` field of the wmLog esc-input line in the before-input-event Escape handler — diagnostic output only (destroyed-guarded); the escape decision itself is taken downstream by the machine. No branch' },
-  { file: 'apps/desktop/main/entry.ts', call: 'isFocused', count: 1, kind: 'reported',
+  { file: 'apps/desktop/main/runtime-entry.ts', call: 'isFocused', count: 1, kind: 'reported',
     why: 'the Cmd+W ("Close Window") menu handler\'s DEVTOOLS guard: wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused()). A detached devtools window is not a machine window, so the machine cannot know it holds OS focus — this read exists precisely because the fact is outside the machine\'s model (isDevToolsFocused() alone returns false in Electron 40 when devtools is OS-focused, hence the !isFocused() half). Accepted: the target of the close is still resolved by the machine front, this only detects "the keystroke went to devtools"' },
 
   // ── Test-only observability (E2E bridge / _forTests exports) ─────────────

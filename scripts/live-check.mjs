@@ -26,6 +26,12 @@
  *     `stop`; otherwise an exit ends the check.
  *   Unfiltered stdout/stderr go to electron.out.log beside the event log.
  *
+ * Startup risk notice: the app shows it until the installation has an
+ * acknowledgment recorded. This script never records one. A headless `start`
+ * with no record is refused; a `--visible` start lets the person at the machine
+ * accept it, and the supervisor then follows the copy the app restarts itself
+ * as, rather than ending the check at the first copy's exit.
+ *
  * `stop` kills only processes whose command line contains this worktree's
  * absolute Electron.app path — never /Applications/Peek.app or another
  * checkout — and confirms none are left.
@@ -47,7 +53,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn, execFileSync, execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_SCRIPTS = path.dirname(SCRIPT_PATH);
@@ -123,6 +129,18 @@ function userDataBase() {
     return path.join(os.homedir(), 'Library', 'Application Support', 'Peek');
   }
   return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Peek');
+}
+
+/**
+ * Whether the installation's startup risk acknowledgment is recorded, judged by
+ * the worktree's own built validation rules. This only ever READS the record:
+ * a check never writes consent on anyone's behalf.
+ */
+async function acknowledgmentRecorded(worktree) {
+  const moduleFile = path.join(worktree, 'apps', 'desktop', 'dist', 'main', 'startup-consent.js');
+  if (!fs.existsSync(moduleFile)) return false;
+  const consent = await import(pathToFileURL(moduleFile).href);
+  return consent.readAcceptanceRecordSync(userDataBase()) !== null;
 }
 
 function mainLogPath(profile) {
@@ -252,6 +270,17 @@ async function cmdStart(argv) {
 
   const refusal = launchRefusal(worktree);
   if (refusal) die(`refused: ${refusal}`);
+
+  // The app shows a startup risk notice until the installation has recorded an
+  // acknowledgment. A headless launch has nobody to read it, and this script
+  // never records consent for anyone, so that launch is blocked.
+  const acknowledged = await acknowledgmentRecorded(worktree);
+  if (!acknowledged && !opts.visible) {
+    die(
+      `refused: headless launch is blocked: no startup risk acknowledgment is recorded in ${userDataBase()}. ` +
+        'Run once with --visible and have the person at the machine accept the notice.'
+    );
+  }
 
   const dir = stateDir(worktree);
   const supPid = readPid(path.join(dir, 'supervisor.pid'));
@@ -467,6 +496,19 @@ async function supervise(worktree) {
   if (opts.visible) delete env.PEEK_HEADLESS;
   else env.PEEK_HEADLESS = '1';
 
+  let acknowledgedAtLaunch = await acknowledgmentRecorded(worktree);
+
+  // The restarted copy appears within moments of the first copy exiting.
+  const waitForRestartedCopy = async () => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const pids = worktreeElectronPids(worktree);
+      if (pids.length) return Math.min(...pids);
+      await sleep(200);
+    }
+    return null;
+  };
+
   const launch = () => {
     generation += 1;
     const gen = generation;
@@ -519,10 +561,31 @@ async function supervise(worktree) {
     };
     lines(electron.stdout, onLine('stdout'));
     lines(electron.stderr, onLine('stderr'));
-    electron.on('exit', (code, signal) => {
+    electron.on('exit', async (code, signal) => {
       electron = null;
       if (stopping) return;
       emit('lifecycle', `exited code=${code} signal=${signal}`);
+      // First acceptance of the startup notice: the app records it and starts
+      // itself again. Keep supervising that copy instead of ending the check.
+      if (opts.visible && code === 0 && !acknowledgedAtLaunch && (await acknowledgmentRecorded(worktree))) {
+        const adopted = await waitForRestartedCopy();
+        if (adopted) {
+          emit('lifecycle', `relaunched after the startup acknowledgment pid=${adopted} profile=${opts.profile}`);
+          fs.writeFileSync(path.join(dir, 'electron.pid'), String(adopted));
+          acknowledgedAtLaunch = true;
+          generation += 1;
+          pollReady(generation);
+          const watchTimer = setInterval(() => {
+            if (stopping) return clearInterval(watchTimer);
+            if (!isAlive(adopted)) {
+              clearInterval(watchTimer);
+              emit('lifecycle', 'exited (restarted copy)');
+              shutdown(0);
+            }
+          }, 500);
+          return;
+        }
+      }
       if (opts.visible && opts.relaunch) {
         // Asked for when a restart is part of the check (a setting persisting):
         // bring the app back until told to stop. Without it a quit ends the check.

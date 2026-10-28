@@ -1,0 +1,81 @@
+# macOS build for the Electron desktop app.
+#
+# Tangled's spindles are Linux-only, so this runs on GitHub's arm64 macOS
+# runner. It assumes this GitHub repo is a mirror of
+# https://tangled.org/burrito.space/peek; pushing a version tag to the mirror
+# starts a build. See notes/electron-cross-platform-builds.md.
+#
+# The .dmg is unsigned (`identity: null` in electron-builder.yml), so Gatekeeper
+# will block it on download. That is deliberate until signing/notarization
+# credentials exist.
+#
+# `yarn build` builds the two macOS native helpers only on Darwin. The
+# nonactivating-window addon needs Electron's Node-API headers, which a fresh
+# runner does not have, so install them before the build. Without them the
+# addon is silently skipped and pages over other apps open as ordinary windows.
+
+name: macOS desktop build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # publish-release.sh verifies that the tag is annotated; a shallow
+          # checkout does not fetch the tag object.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+
+      - name: Enable Yarn
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Install Electron Node-API headers
+        run: |
+          version="$(node -p "require('./node_modules/electron/package.json').version")"
+          npx node-gyp install \
+            --target="$version" \
+            --dist-url=https://electronjs.org/headers \
+            --devdir="$HOME/.electron-gyp"
+
+      - name: Build
+        run: yarn build
+
+      - name: Package dmg and zip
+        run: npx electron-builder --mac dmg zip --arm64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: peek-macos-${{ github.ref_name }}
+          path: |
+            out/*.dmg
+            out/*.zip
+          if-no-files-found: error
+
+      - name: Publish to R2 and Tangled
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TANGLED_REF_TYPE: tag
+          TANGLED_REF_NAME: ${{ github.ref_name }}
+          TANGLED_REPO_DID: ${{ secrets.TANGLED_REPO_DID }}
+          TANGLED_REPO_REPO_DID: ${{ secrets.TANGLED_REPO_REPO_DID }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          ATP_APP_PASSWORD: ${{ secrets.ATP_APP_PASSWORD }}
+        run: scripts/publish-release.sh macos-arm64 out/*.dmg out/*.zip

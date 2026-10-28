@@ -28,6 +28,7 @@ import http from 'http';
 import { fileURLToPath } from 'url';
 import { waitForWindow as waitForWindowHelper, sleep, getTestProfile, waitForAppReady, waitForStartupWindowOpened } from '../helpers/window-utils';
 import { accessoryElectronBinaryPath } from '../helpers/accessory-electron';
+import { consentRecordPath, createAcceptanceRecord } from '../../main/startup-consent';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -181,6 +182,11 @@ export interface LaunchOptions {
    * leak into the next app launched by the same worker.
    */
   env?: Record<string, string>;
+  /**
+   * Seed a valid startup risk acknowledgment in this launch's isolated
+   * user-data root (default true). Only the startup notice spec opts out.
+   */
+  seedAcknowledgment?: boolean;
 }
 
 /**
@@ -240,6 +246,63 @@ function packagedExecutablePath(): string {
  *
  * Test data is stored in OS temp directory and cleaned up when test closes.
  */
+/**
+ * Write a valid startup risk acknowledgment record into an isolated user-data
+ * root so specs that are not testing the notice start the normal runtime.
+ * Refuses any directory outside the OS temp directory, so a developer's real
+ * record can never be written from here.
+ */
+export function seedStartupAcknowledgment(userDataRoot: string): void {
+  const resolved = path.resolve(userDataRoot);
+  const tmpRoot = path.resolve(os.tmpdir()) + path.sep;
+  if (!resolved.startsWith(tmpRoot)) {
+    throw new Error(`Refusing to seed a startup acknowledgment outside the temp directory: ${resolved}`);
+  }
+  fs.mkdirSync(resolved, { recursive: true });
+  fs.writeFileSync(
+    consentRecordPath(resolved),
+    `${JSON.stringify(createAcceptanceRecord('test-fixture'))}\n`,
+    { mode: 0o600 },
+  );
+}
+
+/** Temp user-data root of a profile's launches (created on first use). */
+export function tempUserDataRoot(profile: string): string {
+  return getOrCreateTempDir(profile);
+}
+
+/**
+ * Launch the app WITHOUT seeding an acknowledgment and WITHOUT waiting for the
+ * runtime. For specs that test the startup notice itself. Returns the raw
+ * application so the spec can inspect windows and processes.
+ */
+export async function launchStartupGate(
+  profile: string,
+  options: { env?: Record<string, string>; extraArgs?: string[]; userDataRoot?: string } = {},
+): Promise<{ app: ElectronApplication; userDataRoot: string }> {
+  const userDataRoot = options.userDataRoot ?? getOrCreateTempDir(profile);
+  const packaged = isPackaged();
+  const linuxArgs = process.platform === 'linux' ? ['--ozone-platform=x11', '--no-sandbox'] : [];
+  const args = [
+    ...(packaged ? [] : [REPO_ROOT]),
+    ...linuxArgs,
+    `--user-data-dir=${userDataRoot}`,
+    ...(options.extraArgs ?? []),
+  ];
+  const app = await electron.launch({
+    ...(packaged ? { executablePath: packagedExecutablePath() } : {}),
+    args,
+    env: {
+      ...process.env,
+      PROFILE: profile,
+      DEBUG: process.env.DEBUG || '1',
+      E2E_TEST: 'true',
+      ...(options.env ?? {}),
+    } as Record<string, string>,
+  });
+  return { app, userDataRoot };
+}
+
 async function launchElectron(profile: string, options: LaunchOptions = {}): Promise<DesktopApp> {
   // Translate unified HEADLESS to Electron's PEEK_HEADLESS
   const headless = options.headless ?? isHeadless();
@@ -248,6 +311,11 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   // Get or create temp directory for test data
   // Reuses same dir if same profile is relaunched (for persistence tests)
   const tempDir = getOrCreateTempDir(profile);
+  // Specs that are not testing the notice start with a valid record in their
+  // isolated root only. Existing records (a spec that wrote its own) are kept.
+  if (options.seedAcknowledgment !== false && !fs.existsSync(consentRecordPath(tempDir))) {
+    seedStartupAcknowledgment(tempDir);
+  }
 
   // For packaged builds, use the executable path
   // For source builds, pass the project root as the first arg

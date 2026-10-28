@@ -46,6 +46,12 @@ interface InventoryRow {
  */
 const EXPECTED: InventoryRow[] = [
   {
+    file: 'startup-consent-electron.ts',
+    ctor: 'BrowserWindow',
+    count: 1,
+    reason: 'ensureWindow(): the sandboxed offline startup risk notice, shown before the runtime loads',
+  },
+  {
     file: 'tile-launcher.ts',
     ctor: 'BrowserWindow',
     count: 1,
