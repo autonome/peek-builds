@@ -29,8 +29,7 @@ required_permissions() {
     "  Resource owner: the owner of $1" \
     "  Repository access: only select repositories -> $1" \
     '  Repository permissions: Administration: read and write; Environments: read and write;' \
-    '    Actions: read; Metadata: read (automatic)' \
-    '  An organization may require owner approval of the token before it works.'
+    '    Actions: read; Metadata: read (automatic)'
 }
 gh_config_dir=''
 cleanup() { [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir"; }
@@ -194,7 +193,7 @@ main() {
   prompt gh_token 'GitHub fine-grained token' private
   [[ $gh_token =~ ^github_pat_[A-Za-z0-9_]+$ && ${#gh_token} -le 1000 ]] || fail 'Expected a fine-grained personal access token (github_pat_...). Classic and OAuth tokens reach too much.'
   export GH_TOKEN=$gh_token
-  gh api "repos/$repo" --silent >/dev/null 2>&1 || { required_permissions "$repo" >&2; fail "The token cannot access $repo (rejected, wrong owner or repository, or awaiting organization approval). Nothing uploaded."; }
+  gh api "repos/$repo" --silent >/dev/null 2>&1 || { required_permissions "$repo" >&2; fail "The token cannot access $repo (rejected, expired, or wrong owner or repository). Nothing uploaded."; }
   local env_path="repos/$repo/environments/$environment" policy_line="$ref_type $ref_pattern" out
   if ((allow_unprotected)); then
     gh api "$env_path" --silent >/dev/null 2>&1 || fail 'Environment must already exist and be accessible (protections were not managed: --allow-unprotected).'

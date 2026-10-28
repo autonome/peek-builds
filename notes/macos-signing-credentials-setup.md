@@ -131,14 +131,14 @@ cp scripts/macos-signing.env.example "$SIGN_DIR/signing.env"
 is not recorded anywhere else yet. The P12 export password is never read from this file.
 
 Then create a fine-grained personal access token for the one repository. The script never uses
-the stored `gh auth login` credential, which reaches every organization the account belongs to.
+the stored `gh auth login` credential, which reaches every repository and organization the
+account can reach.
 
 ```sh
 open 'https://github.com/settings/personal-access-tokens/new'
 ```
 
-- Resource owner: the owner of the repository (`autonome`); the organization may need to approve
-  the token before it works.
+- Resource owner: the account that owns the repository (`autonome`).
 - Expiration: 7 days.
 - Repository access: only select repositories, then `autonome/peek-builds`.
 - Repository permissions: Administration read and write, Environments read and write,
