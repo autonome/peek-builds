@@ -12,6 +12,37 @@
 
 // ─── Capability Types ────────────────────────────────────────────────
 
+/** Exact local model/task pair. Wildcards and provider URLs are not accepted. */
+export interface ModelAllowance {
+  /** ASCII local identifier, 1–128 characters: letters/digits then letters/digits/._:- */
+  model: string;
+  task: 'text.generate';
+}
+
+/** Manifest request only; every field is required and bounded by the local broker. */
+export interface ModelsCapability {
+  /** 1–50 unique exact pairs. */
+  allow: ModelAllowance[];
+  /** Positive safe integer <= 16384 (UTF-8 bytes). */
+  maxInputBytes: number;
+  /** Positive safe integer <= 32768 (UTF-8 bytes). */
+  maxOutputBytes: number;
+  /** Positive safe integer <= 512; requested remote bound, not a guarantee. */
+  maxOutputTokens: number;
+  /** Positive safe integer <= 30000. */
+  maxDurationMs: number;
+  /** Must be 1. */
+  maxConcurrent: number;
+}
+
+/** Host-supplied installed consent, never inferred from the manifest or builtin trust. */
+export interface CapabilityConsent {
+  models?: ModelsCapability;
+}
+
+/** Reduced models authority; runtime must also intersect current grant/profile/configuration. */
+export type ModelsGrant = ModelsCapability;
+
 /**
  * PubSub capability: which topic scopes the tile can access
  * - 'self': only topics within its own namespace (tile:{tileId}:*)
@@ -366,6 +397,8 @@ export interface TileCapabilities {
   rules?: boolean;
   /** Can drive pages it opened, on the listed origins */
   automation?: AutomationCapability;
+  /** Requests bounded text generation; absent unless explicitly consented at resolution. */
+  models?: ModelsCapability;
   /** Can keep its own secrets (tokens, passwords), encrypted at rest */
   secrets?: boolean;
   /** Its own windows may embed <webview> elements (builtin features only) */
@@ -678,8 +711,9 @@ export interface ParsedManifest {
 /**
  * A resolved capability grant — what the runtime actually gives the tile.
  *
- * When `trustedBuiltin` is true, capability checks are expected to
- * short-circuit to "allowed" at every enforcement site. This is reserved
+ * Models NEVER honor `trustedBuiltin`: they require explicit consent and independent
+ * broker checks. For legacy capabilities, when `trustedBuiltin` is true, checks
+ * short-circuit to "allowed" at their enforcement sites. This is reserved
  * for CORE renderers bundled with the app (cmd, hud, page, and test
  * fixtures) — NOT for external feature tiles. See
  * `createTrustedBuiltinGrant` and the bypass calls in the `check*Allowed`
@@ -697,8 +731,8 @@ export interface CapabilityGrant {
   /** Capabilities that were requested but denied */
   denied: string[];
   /**
-   * If true, every capability check at runtime returns `ok` without
-   * consulting the granted capabilities. Reserved for bundled core
+   * If true, legacy capability checks return `ok` without consulting the
+   * granted capabilities. NEVER grants models authority. Reserved for bundled core
    * renderers. Default: omitted/false.
    */
   trustedBuiltin?: boolean;
@@ -735,16 +769,19 @@ export function parseManifestJSON(json: Record<string, unknown>): ParsedManifest
 
 /**
  * Resolve capability grants for a tile. Takes the requested capabilities
- * from the manifest and determines what to actually grant.
+ * from the manifest and determines what to actually grant. Models require explicit
+ * installed consent even for builtins; exact pairs intersect and lower limits win.
+ * Missing/invalid consent denies models. Other capabilities retain legacy behavior.
  */
 export function resolveCapabilities(
   tileId: string,
   requested: TileCapabilities,
-  isBuiltin: boolean
+  isBuiltin: boolean,
+  consent?: CapabilityConsent
 ): CapabilityGrant;
 
 /**
- * Build a capability grant that short-circuits every check with "allowed".
+ * Build a grant that bypasses legacy checks, never models authority.
  * See `index.js` for the full rationale and the bypass contract.
  */
 export function createTrustedBuiltinGrant(rendererId: string): CapabilityGrant;

@@ -56,6 +56,70 @@ const BUILTIN_ONLY_CAPABILITIES = new Set([
   'sync',
 ]);
 
+// Models are deliberately independent of network, secrets and builtin trust.
+// These are local broker ceilings, not guarantees of remote resource usage.
+const MODEL_LIMITS = {
+  maxInputBytes: 16384,
+  maxOutputBytes: 32768,
+  maxOutputTokens: 512,
+  maxDurationMs: 30000,
+  maxConcurrent: 1,
+};
+const MAX_MODEL_ALLOW = 50;
+const MODEL_KEYS = new Set(['allow', ...Object.keys(MODEL_LIMITS)]);
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+/** Validate the entire request/consent fragment; partial authority fails closed. */
+function validateModels(value, path = 'capabilities.models') {
+  const errors = [];
+  const fail = (suffix, message) => errors.push({ path: path + suffix, message });
+  if (!isPlainObject(value)) {
+    fail('', 'models must be an object');
+    return errors;
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    if (!MODEL_KEYS.has(key)) fail('', 'unknown models field');
+  }
+  for (const [key, ceiling] of Object.entries(MODEL_LIMITS)) {
+    if (!Object.hasOwn(value, key) || !Number.isSafeInteger(value[key]) || value[key] < 1 || value[key] > ceiling) {
+      fail(`.${key}`, `${key} must be a positive safe integer <= ${ceiling}`);
+    }
+  }
+  if (!Object.hasOwn(value, 'allow') || !Array.isArray(value.allow) || value.allow.length < 1 || value.allow.length > MAX_MODEL_ALLOW) {
+    fail('.allow', `allow must contain 1 to ${MAX_MODEL_ALLOW} exact model/task pairs`);
+  } else {
+    const seen = new Set();
+    for (let i = 0; i < value.allow.length; i++) {
+      const entry = value.allow[i];
+      const prefix = `.allow[${i}]`;
+      if (!isPlainObject(entry)) {
+        fail(prefix, 'allow entries must be objects');
+        continue;
+      }
+      if (Reflect.ownKeys(entry).some(key => key !== 'model' && key !== 'task')) {
+        fail(prefix, 'unknown model allow field');
+      }
+      // Local IDs only: no wildcard, URL, whitespace or unbounded provider data.
+      if (!Object.hasOwn(entry, 'model') || typeof entry.model !== 'string' ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(entry.model)) {
+        fail(`${prefix}.model`, 'model must be an exact ASCII local identifier of 1 to 128 characters');
+      }
+      if (!Object.hasOwn(entry, 'task') || entry.task !== 'text.generate') {
+        fail(`${prefix}.task`, 'task must be text.generate');
+      }
+      if (typeof entry.model === 'string') {
+        if (seen.has(entry.model)) fail(prefix, 'duplicate model/task pair');
+        seen.add(entry.model);
+      }
+    }
+  }
+  return errors;
+}
+
 // ─── Detection ───────────────────────────────────────────────────────
 
 /**
@@ -178,6 +242,10 @@ export function validateTileManifest(json) {
     errors.push({ path: 'capabilities', message: 'capabilities must be an object' });
   } else {
     const caps = json.capabilities;
+
+    if (caps.models !== undefined) {
+      errors.push(...validateModels(caps.models));
+    }
 
     // Validate network domains
     if (caps.network && typeof caps.network === 'object') {
@@ -615,12 +683,34 @@ export function parseManifestJSON(json) {
  * Resolve capability grants for a tile
  *
  * Takes the requested capabilities from the manifest and determines
- * what to actually grant. Built-in tiles get broader access; external
- * tiles may have some capabilities denied.
+ * what to actually grant. Built-in tiles get broader legacy access;
+ * models always require explicit consent (fourth argument: { models }).
  */
-export function resolveCapabilities(tileId, requested, isBuiltin) {
+export function resolveCapabilities(tileId, requested, isBuiltin, consent) {
   const granted = {};
   const denied = [];
+
+  // A manifest is only a request. Even builtins require explicit installed
+  // consent; current grants/profile/configuration must further reduce this at runtime.
+  if (requested.models !== undefined) {
+    const approved = isPlainObject(consent) && Object.hasOwn(consent, 'models') ? consent.models : undefined;
+    if (validateModels(requested.models).length || validateModels(approved).length) {
+      denied.push('models');
+    } else {
+      const allow = requested.models.allow.filter(entry => approved.allow.some(
+        candidate => candidate.model === entry.model && candidate.task === entry.task
+      )).map(entry => ({ model: entry.model, task: entry.task }));
+      if (allow.length === 0) {
+        denied.push('models');
+      } else {
+        const models = { allow };
+        for (const key of Object.keys(MODEL_LIMITS)) {
+          models[key] = Math.min(requested.models[key], approved[key]);
+        }
+        granted.models = models;
+      }
+    }
+  }
 
   // PubSub: always grant self scope, grant global/system based on request
   if (requested.pubsub) {
@@ -815,17 +905,18 @@ export function resolveCapabilities(tileId, requested, isBuiltin) {
 // ─── Trusted Builtin Grant ──────────────────────────────────────────
 
 /**
- * Build a capability grant that short-circuits every check with "allowed".
+ * Build a capability grant that bypasses legacy checks, never models authority.
+ * Models always require explicit consent and independent broker checks.
  *
  * This is used by the Electron glue that launches bundled CORE renderers
  * (cmd, hud, page, test fixtures) — the tile mechanics are identical to
  * any other tile, but capability enforcement is skipped because the
  * renderer ships with the app and is part of the trusted codebase.
  *
- * The returned grant carries `trustedBuiltin: true`. Every `check*Allowed`
- * pure-module helper AND every inline capability gate in `tile-ipc.ts`
- * checks this flag FIRST and returns `ok: true` when it is set — the
- * bypass is explicit at every site (grep for `trustedBuiltin` to audit).
+ * The returned grant carries `trustedBuiltin: true`. Legacy `check*Allowed`
+ * helpers and inline capability gates honor that bypass (grep for
+ * `trustedBuiltin` to audit). Models must never honor it: this grant has
+ * no models capability, and broker admission requires independent checks.
  *
  * The `capabilities` object is populated with broad, permissive defaults
  * so that any code path that reads the shape directly (e.g. listing the
@@ -834,8 +925,7 @@ export function resolveCapabilities(tileId, requested, isBuiltin) {
  * respected, the allowlist is never consulted.
  *
  * Core renderers (cmd, hud, page) participate in the same tile mechanics
- * as feature tiles, but do not require capability gating because they
- * are trusted bundled code.
+ * as feature tiles. Their legacy bypass does not confer models authority.
  */
 export function createTrustedBuiltinGrant(rendererId) {
   const capabilities = {
