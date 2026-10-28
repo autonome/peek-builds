@@ -737,11 +737,10 @@ test.describe('Session Restore Page Host @desktop', () => {
     await closeAndAwait(windowId);
   });
 
-  test('hybrid page host: a window maximized at save time restores unmaximized at its pre-maximize bounds', async () => {
-    // Maximize is not restored: a window manager may refit a window mapped at
-    // full work-area size, and restoring at the normal size avoids a stale
-    // maximized flag. The snapshot saves the rect the window unmaximizes back
-    // to, so the restored window is both unmaximized and at its old size.
+  test('hybrid page host: a window maximized at save time restores maximized, keeping its pre-maximize bounds', async () => {
+    // Maximize is restored (window-rules G12). The snapshot saves the rect the
+    // window unmaximizes back to, with maximized: true; restore opens the
+    // window at that rect and then maximizes it through the kernel.
     const slug = 'hybrid-premax-roundtrip';
     const windowId = await openHybridPageHost(slug);
 
@@ -760,15 +759,17 @@ test.describe('Session Restore Page Host @desktop', () => {
       { windows: Array<{ url: string; bounds: unknown; params: Record<string, unknown> }> } | null;
     const saved = (snapshot?.windows || []).find((w) => w.url.includes(slug));
     expect(saved?.bounds, 'a maximized window is saved at its pre-maximize bounds').toEqual(original);
-    expect(saved?.params.maximized, 'maximize is not written to the snapshot').toBeUndefined();
+    expect(saved?.params.maximized, 'the snapshot records that the window was maximized').toBe(true);
     expect(saved?.params.preMaxBounds, 'the pre-maximize stash is not written to the snapshot').toBeUndefined();
 
     await closeAndAwait(windowId);
 
     const restoredId = await restoreAndFind(slug);
-    const restored = await findEntry(restoredId);
-    expect(restored?.maximized, 'a window maximized at save time must not come back maximized').toBe(false);
-    expect(restored?.bounds, 'restored window must come back at its pre-maximize bounds').toEqual(original);
+    await waitForEntry(restoredId, { maximized: true });
+
+    // Unmaximizing returns the restored window to its pre-maximize bounds.
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId: restoredId });
+    await waitForEntry(restoredId, { maximized: false, bounds: original });
 
     await closeAndAwait(restoredId);
   });

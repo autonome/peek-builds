@@ -220,7 +220,7 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     expect(reopened).toBeTruthy();
   });
 
-  test('reopen a maximized hybrid page-host restores it unmaximized at its pre-maximize bounds', async () => {
+  test('reopen a maximized hybrid page-host restores it maximized, keeping its pre-maximize bounds', async () => {
     const url = `http://127.0.0.1:${serverPort}/maximize-reopen`;
     const id = await openWindow(url);
     await findWindowWithUrl('/maximize-reopen');
@@ -274,12 +274,19 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     }, '/maximize-reopen');
     expect(reopenedId).not.toBeNull();
 
-    // OUTCOME: maximize is not restored. The closed-window entry holds the
-    // pre-maximize rect, so the window comes back unmaximized at its old size.
+    // OUTCOME: a window maximized at close comes back maximized (window-rules
+    // G12). The closed-window entry holds the pre-maximize rect; the window
+    // opens there and is then maximized through the kernel, which stashes it.
+    await expect.poll(async () => (await findEntry(reopenedId!))?.maximized,
+      'reopened window must come back maximized').toBe(true);
     const reopenedEntry = await findEntry(reopenedId!);
-    expect(reopenedEntry?.maximized, 'reopened window must not come back maximized').toBe(false);
-    expect(reopenedEntry?.bounds, 'reopened window must come back at the pre-maximize bounds').toEqual(originalBounds);
-    expect(reopenedEntry?.preMaxBounds, 'an unmaximized window carries no pre-maximize stash').toBeNull();
+    expect(reopenedEntry?.preMaxBounds, 'the reopened window keeps its pre-maximize bounds').toEqual(originalBounds);
+
+    // Unmaximizing returns it to the original bounds.
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId: reopenedId! });
+    await expect.poll(async () => (await findEntry(reopenedId!))?.maximized).toBe(false);
+    expect((await findEntry(reopenedId!))?.bounds,
+      'unmaximizing returns the reopened window to its pre-maximize bounds').toEqual(originalBounds);
 
     // Cleanup.
     await closeWindowById(reopenedId!);
