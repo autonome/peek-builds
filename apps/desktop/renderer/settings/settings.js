@@ -1076,30 +1076,16 @@ const renderThemesSettings = async () => {
   schemeGroup.style.cssText = 'display: flex; gap: 8px;';
 
   ['system', 'light', 'dark'].forEach(scheme => {
-    const btn = document.createElement('button');
+    const btn = document.createElement('peek-button');
     btn.textContent = scheme.charAt(0).toUpperCase() + scheme.slice(1);
-    const isActive = colorScheme === scheme;
-    btn.style.cssText = `
-      padding: 8px 16px;
-      font-size: 13px;
-      background: ${isActive ? 'var(--base0D)' : 'var(--bg-tertiary)'};
-      border: 2px solid ${isActive ? 'var(--base0D)' : 'var(--base03)'};
-      border-radius: 6px;
-      color: ${isActive ? 'white' : 'var(--text-primary)'};
-      cursor: pointer;
-      flex: 1;
-      font-weight: ${isActive ? '600' : '400'};
-    `;
+    btn.dataset.scheme = scheme;
+    btn.variant = colorScheme === scheme ? 'primary' : 'secondary';
+    btn.style.flex = '1';
     btn.addEventListener('click', async () => {
       const result = await api.theme.setColorScheme(scheme);
       if (result.success) {
-        // Update button styles
-        schemeGroup.querySelectorAll('button').forEach(b => {
-          const btnIsActive = b.textContent.toLowerCase() === scheme;
-          b.style.background = btnIsActive ? 'var(--base0D)' : 'var(--bg-tertiary)';
-          b.style.borderColor = btnIsActive ? 'var(--base0D)' : 'var(--base03)';
-          b.style.color = btnIsActive ? 'white' : 'var(--text-primary)';
-          b.style.fontWeight = btnIsActive ? '600' : '400';
+        schemeGroup.querySelectorAll('peek-button').forEach(b => {
+          b.variant = b.dataset.scheme === scheme ? 'primary' : 'secondary';
         });
       }
     });
@@ -1121,24 +1107,9 @@ const renderThemesSettings = async () => {
   addSection.className = 'form-section';
   addSection.style.marginBottom = '24px';
 
-  const addBtn = document.createElement('button');
+  const addBtn = document.createElement('peek-button');
   addBtn.textContent = '+ Add Theme';
-  addBtn.style.cssText = `
-    padding: 10px 16px;
-    font-size: 13px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-    width: 100%;
-  `;
-  addBtn.addEventListener('mouseenter', () => {
-    addBtn.style.background = 'var(--bg-hover)';
-  });
-  addBtn.addEventListener('mouseleave', () => {
-    addBtn.style.background = 'var(--bg-tertiary)';
-  });
+  addBtn.style.display = 'block';
   addBtn.addEventListener('click', async () => {
     addBtn.textContent = 'Selecting folder...';
     addBtn.disabled = true;
@@ -1243,32 +1214,16 @@ const renderThemesSettings = async () => {
         const isActive = theme.id === activeId;
         const isBuiltin = theme.builtin;
 
-        const card = document.createElement('div');
-        card.className = 'item-card';
+        const card = document.createElement('peek-card');
+        card.style.marginBottom = '8px';
+        card.dataset.themeId = theme.id;
 
         const header = document.createElement('div');
         header.className = 'item-card-header';
 
-        // Left side: radio + name
+        // Left side: name (no radio component exists; inactive themes get a Use button)
         const leftSide = document.createElement('div');
         leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
-
-        // Radio button for selection
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = 'active-theme';
-        radio.checked = isActive;
-        radio.style.cssText = 'width: 16px; height: 16px; cursor: pointer;';
-        radio.addEventListener('change', async () => {
-          if (radio.checked) {
-            const result = await api.theme.setTheme(theme.id);
-            if (result.success) {
-              // Refresh to update UI
-              refreshThemesList();
-            }
-          }
-        });
-        leftSide.appendChild(radio);
 
         const cardTitle = document.createElement('div');
         cardTitle.className = 'item-card-title';
@@ -1306,18 +1261,27 @@ const renderThemesSettings = async () => {
         const actions = document.createElement('div');
         actions.style.cssText = 'display: flex; gap: 8px; align-items: center;';
 
+        if (!isActive) {
+          const useBtn = document.createElement('peek-button');
+          useBtn.variant = 'primary';
+          useBtn.size = 'sm';
+          useBtn.textContent = 'Use';
+          useBtn.addEventListener('click', async () => {
+            useBtn.disabled = true;
+            const result = await api.theme.setTheme(theme.id);
+            if (result.success) {
+              refreshThemesList();
+            } else {
+              useBtn.disabled = false;
+            }
+          });
+          actions.appendChild(useBtn);
+        }
+
         // Reload button
-        const reloadBtn = document.createElement('button');
+        const reloadBtn = document.createElement('peek-button');
+        reloadBtn.size = 'sm';
         reloadBtn.textContent = 'Reload';
-        reloadBtn.style.cssText = `
-          padding: 4px 8px;
-          font-size: 11px;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-primary);
-          border-radius: 4px;
-          color: var(--text-secondary);
-          cursor: pointer;
-        `;
         reloadBtn.addEventListener('click', async () => {
           reloadBtn.textContent = '...';
           reloadBtn.disabled = true;
@@ -1336,17 +1300,10 @@ const renderThemesSettings = async () => {
 
         // Remove button (only for external themes)
         if (!isBuiltin) {
-          const removeBtn = document.createElement('button');
+          const removeBtn = document.createElement('peek-button');
+          removeBtn.variant = 'danger';
+          removeBtn.size = 'sm';
           removeBtn.textContent = 'Remove';
-          removeBtn.style.cssText = `
-            padding: 4px 8px;
-            font-size: 11px;
-            background: var(--bg-tertiary);
-            border: 1px solid #ef4444;
-            border-radius: 4px;
-            color: #ef4444;
-            cursor: pointer;
-          `;
           removeBtn.addEventListener('click', async () => {
             if (!confirm(`Remove theme "${theme.name || theme.id}"?`)) return;
 
