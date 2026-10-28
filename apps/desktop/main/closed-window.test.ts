@@ -14,6 +14,7 @@ import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import {
   createClosedWindowEntry,
+  reopenKeyOpen,
   getClosedWindowCount,
   popClosedWindow,
   pushClosedWindow,
@@ -115,6 +116,27 @@ describe('Closed window stack operations', () => {
 });
 
 describe('Space mode capture', () => {
+  it('carries the window key and title onto the entry, and back out for reopen', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'peek://research/home.html?space=cat%20stuff', key: 'research-view:cat stuff', title: 'Research: cat stuff' },
+      null,
+      capturedBounds(null),
+      'peek://research/home.html',
+    );
+    assert.strictEqual(entry!.key, 'research-view:cat stuff');
+    assert.strictEqual(entry!.title, 'Research: cat stuff');
+    assert.deepStrictEqual(reopenKeyOpen(entry!, 'peek://app/background.html'), {
+      source: 'peek://research/home.html',
+      options: { key: 'research-view:cat stuff', title: 'Research: cat stuff' },
+    });
+  });
+
+  it('an unkeyed entry reopens under the default source with no key', () => {
+    const entry = createClosedWindowEntry({ address: 'https://example.com' }, null, capturedBounds(null), 'test-ext');
+    assert.strictEqual('key' in entry!, false);
+    assert.deepStrictEqual(reopenKeyOpen(entry!, 'default-src'), { source: 'default-src', options: {} });
+  });
+
   it('captures spaceMode when context.mode is space with spaceId/spaceName', () => {
     const modeEntry: ClosedWindowModeEntry = {
       value: 'space',

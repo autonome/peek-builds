@@ -43,6 +43,7 @@ import {
   setActiveThemeId,
 } from './protocol.js';
 
+import { reopenKeyOpen } from './closed-window-stack.js';
 import {
   getWindowInfo,
   removeWindow,
@@ -655,6 +656,11 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   }
   if (entry.maximized) options.maximized = true;
 
+  // Keyed windows reopen under their key, so an already-open one is raised
+  // rather than duplicated, and the reopened window keeps the key.
+  const keyOpen = reopenKeyOpen(entry, WEB_CORE_ADDRESS);
+  Object.assign(options, keyOpen.options);
+
   if (entry.spaceMode) {
     options.spaceMode = entry.spaceMode;
   }
@@ -693,7 +699,7 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   // and will see the registered window.
   void invokeWindowOpen(
     { sender: bgWin.webContents },
-    { source: WEB_CORE_ADDRESS, url: entry.url, options },
+    { source: keyOpen.source, url: entry.url, options },
   ).catch((err) => {
     console.error('[reopen] invokeWindowOpen failed:', err);
   });

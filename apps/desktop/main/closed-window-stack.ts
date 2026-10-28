@@ -19,6 +19,11 @@ export interface ClosedWindowEntry {
   source: string;
   bounds: Rect | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
+  // Registry key the window was opened with (e.g. one research view per space).
+  // Reopen passes it back so the open raises a window already holding the key
+  // instead of duplicating it, and a reopened window stays findable by it.
+  key?: string;
+  title?: string;        // Title the window was opened with, kept alongside `key`
   role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
   scrollX?: number;      // Scroll position at time of close
   scrollY?: number;
@@ -168,6 +173,10 @@ export function createClosedWindowEntry(
     bounds: saveBounds,
     spaceMode,
     role: role || undefined,
+    ...(typeof params.key === 'string' && params.key ? { key: params.key } : {}),
+    ...(typeof params.key === 'string' && params.key && typeof params.title === 'string' && params.title
+      ? { title: params.title }
+      : {}),
     scrollX: scrollX || undefined,
     scrollY: scrollY || undefined,
     // `bounds` is the pre-maximize rect; reopen maximizes the window from there.
@@ -178,5 +187,22 @@ export function createClosedWindowEntry(
       ? { navHistory: trail.navHistory, navHistoryIndex: trail.navHistoryIndex }
       : {}),
     timestamp: Date.now(),
+  };
+}
+
+/**
+ * The source and key-related open options for reopening an entry. A keyed entry
+ * reopens under the source that owns its key (keys are namespaced by source), so
+ * the open handler finds and raises a window already holding it; an unkeyed
+ * entry opens under `defaultSource` as before.
+ */
+export function reopenKeyOpen(
+  entry: Pick<ClosedWindowEntry, 'key' | 'title' | 'source'>,
+  defaultSource: string,
+): { source: string; options: { key?: string; title?: string } } {
+  if (!entry.key) return { source: defaultSource, options: {} };
+  return {
+    source: entry.source || defaultSource,
+    options: { key: entry.key, ...(entry.title ? { title: entry.title } : {}) },
   };
 }

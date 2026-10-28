@@ -1057,6 +1057,8 @@ export function saveSessionSnapshot(
           bounds: descriptor.bounds,
           spaceMode,
           role: (descriptor.params.role as string) || undefined,
+          ...(descriptor.key ? { key: descriptor.key } : {}),
+          ...(descriptor.key && descriptor.title ? { title: descriptor.title } : {}),
           scrollX: scrollX || undefined,
           scrollY: scrollY || undefined,
           // The trail the descriptor was just saved with, so undo-close after a
