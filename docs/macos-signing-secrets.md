@@ -34,15 +34,16 @@ secrets does not make the existing unsigned workflow sign builds.
    organization's SSO authorization if required. This script targets github.com,
    not GitHub Enterprise. Run from a trusted local shell; no shell recording,
    untrusted `BASH_ENV`, wrappers, debug proxies or compromised executables.
-5. An administrator must create the GitHub environment **out of band**. Default:
-   `autonome/peek-builds` → Settings → Environments → `macos-release-signing`.
-   Configure required reviewers, prevent self-review, restrict deployment refs to
-   reviewed immutable candidate tags/commits, and protect tag creation and changes
-   to workflow/build/dependency code. Confirm the repository's plan supports the
-   required protections; do not proceed on an unprotected environment. The script
-   verifies only existence/access, **not the adequacy of protections**. It does
-   not create environments or weaken settings. No arbitrary dispatch/PR ref may
-   receive credentials in the future workflow.
+5. The script creates or updates the GitHub environment (default:
+   `autonome/peek-builds` → `macos-release-signing`) with one required reviewer
+   and a custom deployment ref policy, both taken from the settings file, then
+   reads the environment back and **refuses to upload** unless both are in effect
+   (a repository plan may silently not support required reviewers).
+   `--allow-unprotected` skips this knowingly. The account needs admin rights. The
+   script does **not** verify prevent-self-review, protection of tag creation, or
+   protection of workflow/build/dependency code: an administrator must still
+   configure and confirm those. No arbitrary dispatch/PR ref may receive
+   credentials in the future workflow.
 6. Record the exact full identity `Developer ID Application: … (TEAMID)` and its
    10-character team ID from the authorized owner, not a guessed publisher. This
    script stores both as environment **secrets**, consistently with the proposed
@@ -101,10 +102,30 @@ After reviewing the protected environment, preview uploading the prepared P12:
 Remove `--dry-run` only when authorized to upload. Preparation and uploading do
 not implement/enable the candidate signing workflow.
 
+## Settings file
+
+`--config FILE` reads non-secret settings so the run is not a series of prompts. Copy
+[`scripts/macos-signing.env.example`](../scripts/macos-signing.env.example) to a path outside
+the checkout (a repo-root `.env.signing` or `signing.env` is gitignored). It is parsed as
+`KEY=value` data, never sourced; only the keys in the example are accepted, and a key that
+looks like a password or token is rejected. Values still pass the script's validation;
+command-line options override the file; anything missing is prompted. The P12 export
+password and app-specific password are only ever read from hidden prompts. The file needs
+`REVIEWER_LOGIN` and `REF_PATTERN` (with `REF_TYPE` tag or branch) unless
+`--allow-unprotected` is given. `--dry-run` prints the `gh api` calls that would create the
+environment and contacts nothing.
+
+```sh
+./scripts/setup-macos-signing-secrets.sh --config "$HOME/secure/peek-signing/signing.env" --dry-run
+./scripts/setup-macos-signing-secrets.sh --config "$HOME/secure/peek-signing/signing.env"
+```
+
 ## Run the upload script
 
-Start with a local-only preview (still prompts for identity, team, API key ID and
-issuer, but not passwords). Replace paths with your approved local files:
+The examples below pass everything on the command line instead. Start with a local-only
+preview (still prompts for identity, team, API key ID and issuer, but not passwords; add
+`--config` as above to supply the environment protection settings). Replace paths with
+your approved local files:
 
 ```sh
 ./scripts/setup-macos-signing-secrets.sh \

@@ -111,51 +111,50 @@ Keep an encrypted backup of the `.p8` and of `$SIGN_DIR` as a whole.
 
 ## 7. GitHub login and the protected environment
 
+Copy the example settings file to a place outside the checkout and fill it in. It holds only
+non-secret values; the script reads it as data and rejects unknown keys.
+
+```sh
+cp scripts/macos-signing.env.example "$SIGN_DIR/signing.env"
+```
+
+| Key | Value |
+|---|---|
+| `P12_PATH`, `P8_PATH` | `$HOME/secure/peek-signing/signing.p12` and `.../AuthKey_<key id>.p8` (only a leading `$HOME/` is expanded) |
+| `SIGNING_IDENTITY` | commonName from step 4 |
+| `TEAM_ID` | from steps 4 and 5 |
+| `API_KEY_ID`, `API_ISSUER` | Key ID and Issuer ID from step 6 |
+| `REVIEWER_LOGIN` | GitHub login of the person who approves signing runs |
+| `REF_PATTERN`, `REF_TYPE` | the tags (or branches) the signing workflow runs on; only refs matching it can reach the secrets |
+
+`specs/macos-signing-and-notarization.md` asks only for immutable trusted refs, so the pattern
+is not recorded anywhere else yet. The P12 export password is never read from this file.
+
+Then log in to GitHub (the account needs admin rights on the repo to manage the environment
+and its secrets):
+
 ```sh
 gh auth login --hostname github.com
 gh auth status --hostname github.com
-REPO=autonome/peek-builds
-ENV=macos-release-signing
-CANDIDATE_REF_PATTERN='<tag pattern>'   # the tags the signing workflow runs on
-REVIEWER_ID=$(gh api user --jq .id)
-gh api -X PUT "repos/$REPO/environments/$ENV" \
-  -F "reviewers[][type]=User" -F "reviewers[][id]=$REVIEWER_ID" \
-  -F "deployment_branch_policy[protected_branches]=false" \
-  -F "deployment_branch_policy[custom_branch_policies]=true"
-gh api -X POST "repos/$REPO/environments/$ENV/deployment-branch-policies" \
-  -f name="$CANDIDATE_REF_PATTERN" -f type=tag
-gh api "repos/$REPO/environments/$ENV" --jq '{protection_rules, deployment_branch_policy}'
 ```
 
-- The account needs admin rights on the repo to manage the environment and its secrets.
-- `CANDIDATE_REF_PATTERN` is not recorded anywhere yet:
-  `specs/macos-signing-and-notarization.md` asks only for immutable trusted refs. Only refs
-  matching it can reach the secrets. Use `type=branch` for a branch pattern.
-- Required reviewers on a private repository depend on the GitHub plan; the last command
-  shows what actually took effect. Set the protection before uploading any secret.
-
-## 8. Upload the secrets
+## 8. Create the environment and upload the secrets
 
 ```sh
-./scripts/setup-macos-signing-secrets.sh \
-  --p12 "$SIGN_DIR/signing.p12" \
-  --p8 "$SIGN_DIR/AuthKey_$KEY_ID.p8" \
-  --dry-run
-./scripts/setup-macos-signing-secrets.sh \
-  --p12 "$SIGN_DIR/signing.p12" \
-  --p8 "$SIGN_DIR/AuthKey_$KEY_ID.p8"
+./scripts/setup-macos-signing-secrets.sh --config "$SIGN_DIR/signing.env" --dry-run
+./scripts/setup-macos-signing-secrets.sh --config "$SIGN_DIR/signing.env"
 ```
 
-The dry run checks the inputs without contacting GitHub. The real run prompts for:
+The dry run checks the local inputs and prints the `gh api` calls it would make, without
+contacting GitHub. The real run:
 
-| Prompt | Value |
-|---|---|
-| Developer ID Application identity | commonName from step 4 |
-| Apple team ID | from steps 4 and 5 |
-| Team API key ID | `$KEY_ID` |
-| Team API issuer UUID | Issuer ID from step 6 |
-| P12 password (hidden) | export password from step 4 |
-| Destination confirmation | `autonome/peek-builds`, environment `macos-release-signing` |
+1. Creates or updates the `autonome/peek-builds` environment `macos-release-signing` with the
+   required reviewer and the ref policy (rerunning does not duplicate the policy).
+2. Reads the environment back and stops, uploading nothing, unless the reviewer and ref policy
+   are in effect. Required reviewers on a private repository depend on the GitHub plan;
+   `--allow-unprotected` skips this knowingly and only checks that the environment exists.
+3. Prompts for anything missing from the file, then for the P12 export password (hidden; export
+   password from step 4) and a destination confirmation (`autonome/peek-builds/macos-release-signing api`).
 
 It uploads, with values on stdin, never as arguments:
 `MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY`,
@@ -168,7 +167,7 @@ already in the environment; remove those first.
 Check what landed:
 
 ```sh
-gh secret list --repo "$REPO" --env "$ENV"
+gh secret list --repo autonome/peek-builds --env macos-release-signing
 ```
 
 ## Not covered here

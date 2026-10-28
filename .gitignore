@@ -29,6 +29,9 @@ apps/server/data/
 .env
 .env.local
 .env.*.local
+# Local macOS signing settings (non-secret, but identify the account)
+.env.signing
+signing.env
 
 # Test output
 test-results/

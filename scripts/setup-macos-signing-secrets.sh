@@ -7,14 +7,19 @@ umask 077
 export LC_ALL=C
 
 usage() {
-  printf '%s\n' 'Usage: scripts/setup-macos-signing-secrets.sh --p12 FILE [--p8 FILE] [options]' \
+  printf '%s\n' 'Usage: scripts/setup-macos-signing-secrets.sh [--config FILE] [--p12 FILE] [--p8 FILE] [options]' \
+    '  --config FILE        Non-secret settings file (KEY=value lines); see scripts/macos-signing.env.example' \
     '  --mode api|password  Notarization auth (default: api; team API keys only)' \
     '  --repo OWNER/REPO    Default: autonome/peek-builds (github.com only)' \
     '  --env NAME           Default: macos-release-signing' \
-    '  --dry-run            Validate local inputs; no gh calls or secret prompts/uploads' \
+    '  --p12 FILE, --p8 FILE  Credential files (override the config file)' \
+    '  --allow-unprotected  Skip creating/verifying reviewer and ref protection (NOT recommended)' \
+    '  --dry-run            Validate local inputs and print the planned gh api calls; contacts nothing' \
     '  --help               Show help' \
-    'Metadata and passwords are prompted locally; never pass passwords as arguments.' \
-    'Requires an existing protected environment. Does not create/change protections.' \
+    'Settings missing from the config file are prompted for. The P12 export password and' \
+    'app-specific password are only ever read from a hidden prompt, never from a file or flag.' \
+    'The script creates or updates the GitHub environment (required reviewer, ref policy), reads' \
+    'it back, and refuses to upload secrets unless the protections are in effect.' \
     'See docs/macos-signing-secrets.md for preparation, permissions and retry guidance.'
 }
 fail() { printf '%s\n' "Error: $*" >&2; exit 1; }
@@ -28,28 +33,76 @@ prompt() {
   fi
   [[ -n ${!1} ]] || fail 'Empty input is not allowed.'
 }
+# Prompt only when the value was not supplied by the config file.
+ask() { [[ -n ${!1} ]] || prompt "$@"; }
+# Parse a settings file as data: strict key allowlist, never sourced or evaluated.
+# Sets cfg_* variables in the caller's scope (bash 3.2 compatible: no arrays).
+load_config() {
+  local file=$1 line key value seen=' ' n=0
+  [[ -f $file && -r $file ]] || fail 'Config must be a readable regular file.'
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=${line%$'\r'}
+    [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    [[ $line =~ ^([A-Z0-9_]+)=(.*)$ ]] || fail "Config line $n is not KEY=value."
+    key=${BASH_REMATCH[1]}; value=${BASH_REMATCH[2]}
+    case $key in
+      *PASS*|*SECRET*|*PRIVATE*|*TOKEN*) fail "Config line $n: $key looks like a secret. Secrets are only accepted at hidden prompts." ;;
+    esac
+    [[ $seen != *" $key "* ]] || fail "Config line $n: duplicate key $key."
+    seen="$seen$key "
+    [[ $value != *[[:cntrl:]]* ]] || fail "Config line $n: control characters are not allowed."
+    case $key in
+      P12_PATH|P8_PATH)
+        # Only a leading $HOME/ or ~/ is expanded; nothing else is interpreted.
+        case $value in '$HOME/'*) value=$HOME/${value#'$HOME/'} ;; '~/'*) value=$HOME/${value#'~/'} ;; esac ;;
+    esac
+    case $key in
+      P12_PATH) cfg_p12=$value ;; P8_PATH) cfg_p8=$value ;;
+      SIGNING_IDENTITY) cfg_identity=$value ;; TEAM_ID) cfg_team=$value ;;
+      API_KEY_ID) cfg_key_id=$value ;; API_ISSUER) cfg_issuer=$value ;;
+      APPLE_ID_EMAIL) cfg_apple_id=$value ;;
+      REPO) cfg_repo=$value ;; ENVIRONMENT) cfg_environment=$value ;;
+      REF_PATTERN) cfg_ref_pattern=$value ;; REF_TYPE) cfg_ref_type=$value ;;
+      REVIEWER_LOGIN) cfg_reviewer=$value ;;
+      *) fail "Config line $n: unknown key $key." ;;
+    esac
+  done < "$file"
+}
 main() {
   # Clear inherited export bindings before creating local prompt storage.
   unset certificate password private_key app_password identity team key_id issuer apple_id
-  local repo=autonome/peek-builds environment=macos-release-signing mode=api dry=0 p12='' p8=''
-  local identity team key_id issuer apple_id confirm names name opposite completed=0
-  local certificate password private_key app_password
+  local repo='' environment='' mode='' dry=0 p12='' p8='' config='' allow_unprotected=0
+  local reviewer='' ref_pattern='' ref_type='' reviewer_id=''
+  local cfg_p12='' cfg_p8='' cfg_identity='' cfg_team='' cfg_key_id='' cfg_issuer='' cfg_apple_id=''
+  local cfg_repo='' cfg_environment='' cfg_ref_pattern='' cfg_ref_type='' cfg_reviewer=''
+  local identity='' team='' key_id='' issuer='' apple_id='' confirm names name opposite completed=0
+  local certificate='' password='' private_key='' app_password=''
   # Do not let inherited exported variables turn prompt results into child environment.
   export -n certificate password private_key app_password identity team key_id issuer apple_id
   while (($#)); do
     case $1 in
       --help|-h) usage; return ;;
       --dry-run) dry=1; shift ;;
-      --repo|--env|--mode|--p12|--p8)
+      --allow-unprotected) allow_unprotected=1; shift ;;
+      --repo|--env|--mode|--p12|--p8|--config)
         [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail 'Option requires a value.'
         case $1 in
           --repo) repo=$2 ;; --env) environment=$2 ;; --mode) mode=$2 ;;
-          --p12) p12=$2 ;; --p8) p8=$2 ;;
+          --p12) p12=$2 ;; --p8) p8=$2 ;; --config) config=$2 ;;
         esac
         shift 2 ;;
       *) fail 'Unknown option; use --help.' ;;
     esac
   done
+  if [[ -n $config ]]; then
+    load_config "$config"
+    # Command-line options win over the config file.
+    : "${p12:=$cfg_p12}" "${p8:=$cfg_p8}" "${repo:=$cfg_repo}" "${environment:=$cfg_environment}"
+    identity=$cfg_identity team=$cfg_team key_id=$cfg_key_id issuer=$cfg_issuer apple_id=$cfg_apple_id
+    reviewer=$cfg_reviewer ref_pattern=$cfg_ref_pattern ref_type=$cfg_ref_type
+  fi
+  : "${repo:=autonome/peek-builds}" "${environment:=macos-release-signing}" "${mode:=api}"
   [[ $repo =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ && $repo != */. && $repo != */.. ]] || fail 'Invalid OWNER/REPO.'
   # Conservative subset avoids API path escaping/terminal control ambiguities.
   [[ $environment =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && ${#environment} -le 255 ]] || fail 'Invalid environment name (use letters, digits, dot, underscore, hyphen).'
@@ -60,25 +113,34 @@ main() {
   else
     [[ -z $p8 ]] || fail 'Password mode cannot include --p8.'
   fi
+  if ((allow_unprotected)); then
+    printf '%s\n' 'WARNING: --allow-unprotected: the environment will NOT be created or checked for reviewers and ref policy.' >&2
+  else
+    [[ -n $reviewer && -n $ref_pattern ]] || fail 'REVIEWER_LOGIN and REF_PATTERN are required (config file) so the environment can be protected. Use --allow-unprotected only to knowingly skip this.'
+    : "${ref_type:=tag}"
+    [[ $reviewer =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] || fail 'Invalid reviewer login.'
+    [[ $ref_type == tag || $ref_type == branch ]] || fail 'REF_TYPE must be tag or branch.'
+    [[ $ref_pattern =~ ^[A-Za-z0-9._/*-]+$ && ${#ref_pattern} -le 255 ]] || fail 'Invalid REF_PATTERN (letters, digits, dot, underscore, slash, hyphen, asterisk).'
+  fi
   command -v base64 >/dev/null || fail 'base64 is required.'
   command -v tr >/dev/null || fail 'tr is required.'
   # Values stay in shell memory/pipes; no generated credential files, no exports.
   certificate=$(base64 < "$p12" | tr -d '\r\n') || fail 'Cannot encode P12.'
   [[ ${#certificate} -le 48000 ]] || fail 'Encoded P12 exceeds conservative GitHub secret size limit (48000 bytes).'
-  prompt identity 'Expected full Developer ID Application identity (including team)'
+  ask identity 'Expected full Developer ID Application identity (including team)'
   [[ $identity == 'Developer ID Application: '* && $identity != *$'\r'* && ${#identity} -le 48000 ]] || fail 'Expected a Developer ID Application identity.'
-  prompt team 'Expected Apple team ID'
+  ask team 'Expected Apple team ID'
   [[ $team =~ ^[A-Z0-9]{10}$ && $identity == *"($team)" ]] || fail 'Team ID must be 10 uppercase letters/digits and match identity suffix.'
   if [[ $mode == api ]]; then
     private_key=$(< "$p8")
     [[ ${#private_key} -le 48000 && $private_key == *'-----BEGIN PRIVATE KEY-----'* && $private_key == *'-----END PRIVATE KEY-----'* ]] || fail 'P8 must contain a PEM private key under 48000 bytes.'
-    prompt key_id 'Team API key ID'
+    ask key_id 'Team API key ID'
     [[ $key_id =~ ^[A-Z0-9]{10}$ ]] || fail 'Invalid team API key ID.'
-    prompt issuer 'Team API issuer UUID'
+    ask issuer 'Team API issuer UUID'
     [[ $issuer =~ ^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$ ]] || fail 'Invalid issuer UUID.'
     opposite='APPLE_ID APPLE_APP_SPECIFIC_PASSWORD'
   else
-    prompt apple_id 'Dedicated authorized Apple Account email'
+    ask apple_id 'Dedicated authorized Apple Account email'
     [[ $apple_id =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ && ${#apple_id} -le 48000 ]] || fail 'Invalid Apple Account email.'
     opposite='APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER'
   fi
@@ -90,6 +152,16 @@ main() {
     printf '%s\n' 'Secrets: APPLE_ID APPLE_APP_SPECIFIC_PASSWORD'
   fi
   if ((dry)); then
+    if ((allow_unprotected)); then
+      printf '%s\n' 'Planned: gh api repos/'"$repo/environments/$environment"' (existence check only; protections skipped)'
+    else
+      printf '%s\n' 'Planned gh api calls (not executed):' \
+        "  gh api users/$reviewer --jq .id" \
+        "  gh api -X PUT repos/$repo/environments/$environment -F reviewers[][type]=User -F reviewers[][id]=<reviewer id> -F deployment_branch_policy[protected_branches]=false -F deployment_branch_policy[custom_branch_policies]=true" \
+        "  gh api repos/$repo/environments/$environment/deployment-branch-policies   (list; add only if missing)" \
+        "  gh api -X POST repos/$repo/environments/$environment/deployment-branch-policies -f name=$ref_pattern -f type=$ref_type" \
+        "  gh api repos/$repo/environments/$environment   (read back; refuse to upload unless reviewer $reviewer and $ref_type policy $ref_pattern are in effect)"
+    fi
     printf '%s\n' 'Dry-run: no gh calls, password prompts, or mutations. Remote prerequisites NOT checked.'
     return
   fi
@@ -97,15 +169,36 @@ main() {
   # Pin the host; never inherit GH_DEBUG, which can log request bodies.
   export GH_HOST=github.com GH_DEBUG='' GH_PROMPT_DISABLED=1
   gh auth status --hostname github.com >/dev/null 2>&1 || fail 'Run gh auth login --hostname github.com separately first.'
-  gh api "repos/$repo/environments/$environment" --silent >/dev/null 2>&1 || fail 'Environment must already exist and be accessible; create/protect it separately.'
+  local env_path="repos/$repo/environments/$environment" policy_line="$ref_type $ref_pattern" out
+  if ((allow_unprotected)); then
+    gh api "$env_path" --silent >/dev/null 2>&1 || fail 'Environment must already exist and be accessible (protections were not managed: --allow-unprotected).'
+  else
+    reviewer_id=$(gh api "users/$reviewer" --jq .id 2>/dev/null) || fail "Cannot look up GitHub user $reviewer."
+    [[ $reviewer_id =~ ^[0-9]+$ ]] || fail "Unexpected id for GitHub user $reviewer."
+    gh api -X PUT "$env_path" -F 'reviewers[][type]=User' -F "reviewers[][id]=$reviewer_id" \
+      -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true' \
+      --silent >/dev/null 2>&1 || fail 'Cannot create or update the environment (admin rights on the repository are required). Nothing uploaded.'
+    out=$(gh api "$env_path/deployment-branch-policies" --jq '.branch_policies[]? | "\(.type // "branch") \(.name)"' 2>/dev/null) || fail 'Cannot list environment ref policies.'
+    if [[ $'\n'"$out"$'\n' != *$'\n'"$policy_line"$'\n'* ]]; then
+      gh api -X POST "$env_path/deployment-branch-policies" -f "name=$ref_pattern" -f "type=$ref_type" --silent >/dev/null 2>&1 || fail 'Cannot add the ref policy. Nothing uploaded.'
+    fi
+    # Read everything back: a plan may silently ignore reviewers or ref policies.
+    out=$(gh api "$env_path" --jq '[.protection_rules[]? | select(.type=="required_reviewers") | .reviewers[]? | .reviewer.id | tostring] | join(",")' 2>/dev/null) || fail 'Cannot read back the environment.'
+    [[ ",$out," == *",$reviewer_id,"* ]] || fail "Required reviewer $reviewer is NOT in effect on this environment (the repository plan may not support required reviewers). Nothing uploaded. Use --allow-unprotected only to knowingly accept this."
+    out=$(gh api "$env_path" --jq '.deployment_branch_policy.custom_branch_policies // false' 2>/dev/null) || fail 'Cannot read back the environment.'
+    [[ $out == true ]] || fail 'Custom ref policy is NOT in effect on this environment. Nothing uploaded. Use --allow-unprotected only to knowingly accept this.'
+    out=$(gh api "$env_path/deployment-branch-policies" --jq '.branch_policies[]? | "\(.type // "branch") \(.name)"' 2>/dev/null) || fail 'Cannot list environment ref policies.'
+    [[ $'\n'"$out"$'\n' == *$'\n'"$policy_line"$'\n'* ]] || fail "Ref policy $ref_type $ref_pattern is NOT in effect. Nothing uploaded."
+    printf 'Environment protections verified: required reviewer %s; %s ref policy %s.\n' "$reviewer" "$ref_type" "$ref_pattern"
+  fi
   names=$(gh secret list --repo "$repo" --env "$environment" --json name --jq '.[].name' 2>/dev/null) || fail 'Cannot list environment secret names.'
   for name in $opposite; do
     if [[ $'\n'"$names"$'\n' == *$'\n'"$name"$'\n'* ]]; then
       fail "Opposite auth-mode secret $name exists. Remove obsolete credentials out of band after owner approval, then retry. Nothing uploaded."
     fi
   done
-  printf '%s\n' 'Before continuing: verify required reviewers, prevent self-review, trusted immutable ref policy,' \
-    'and workflow/dependency protection in GitHub settings. This script cannot certify those controls.' \
+  printf '%s\n' 'Reviewer and ref policy are verified above; prevent-self-review, tag protection and' \
+    'workflow/dependency protection must still be reviewed in GitHub settings.' \
     'Uploads overwrite names and are NOT transactional. No secrets are deleted.'
   prompt password 'P12 export password' private
   [[ ${#password} -le 48000 ]] || fail 'P12 password too long.'
