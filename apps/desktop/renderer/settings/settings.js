@@ -20,25 +20,24 @@ const createInput = (label, value, onChange, options = {}) => {
   const labelEl = document.createElement('label');
   labelEl.textContent = label;
 
-  const input = document.createElement('input');
+  const input = document.createElement('peek-input');
   input.type = options.type || 'text';
   const isMissing = (v) => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
   const renderValue = isMissing(value) && options.default !== undefined ? options.default : value;
-  input.value = (renderValue === null || renderValue === undefined) ? '' : renderValue;
+  input.value = (renderValue === null || renderValue === undefined) ? '' : String(renderValue);
   input.disabled = options.disabled || false;
   if (options.placeholder) input.placeholder = options.placeholder;
 
-  if (options.type === 'number') {
-    if (options.step) input.step = options.step;
-    if (options.min !== undefined) input.min = options.min;
-    if (options.max !== undefined) input.max = options.max;
-  }
-
-  input.addEventListener('change', (e) => {
-    let val = options.type === 'number' ? parseFloat(e.target.value) : e.target.value;
-    if (options.type === 'number' && Number.isNaN(val) && options.default !== undefined) {
-      val = options.default;
-      input.value = val;
+  // <peek-input> has no min/max/step, so number bounds are enforced here.
+  input.addEventListener('change', () => {
+    let val = options.type === 'number' ? parseFloat(input.value) : input.value;
+    if (options.type === 'number') {
+      if (Number.isNaN(val) && options.default !== undefined) val = options.default;
+      if (!Number.isNaN(val)) {
+        if (options.min !== undefined) val = Math.max(options.min, val);
+        if (options.max !== undefined) val = Math.min(options.max, val);
+      }
+      input.value = Number.isNaN(val) ? '' : String(val);
     }
     onChange(val);
   });
@@ -85,14 +84,18 @@ const createCheckbox = (label, value, onChange, options = {}) => {
   const wrapper = document.createElement('div');
   wrapper.className = 'checkbox-wrapper';
 
-  const input = document.createElement('input');
-  input.type = 'checkbox';
+  const input = document.createElement('peek-switch');
   input.checked = value || false;
   input.disabled = options.disabled || false;
+  input.setAttribute('aria-label', label);
 
   input.addEventListener('change', (e) => {
-    onChange(e.target.checked);
+    onChange(e.detail.checked);
   });
+
+  // The switch carries no label of its own here (the text sits beside it),
+  // so clicking the text toggles it.
+  labelEl.addEventListener('click', () => input.toggle());
 
   wrapper.appendChild(input);
 
@@ -121,21 +124,13 @@ const createSelect = (label, value, options, onChange, extraOptions = {}) => {
   const labelEl = document.createElement('label');
   labelEl.textContent = label;
 
-  const select = document.createElement('select');
+  const select = document.createElement('peek-select');
   select.disabled = extraOptions.disabled || false;
-
-  options.forEach(opt => {
-    const optionEl = document.createElement('option');
-    optionEl.value = opt.value;
-    optionEl.textContent = opt.label;
-    if (opt.value === value) {
-      optionEl.selected = true;
-    }
-    select.appendChild(optionEl);
-  });
+  select.options = options.map(opt => ({ value: opt.value, label: opt.label }));
+  select.value = value;
 
   select.addEventListener('change', (e) => {
-    onChange(e.target.value);
+    onChange(e.detail.value);
   });
 
   group.appendChild(labelEl);
@@ -198,17 +193,17 @@ const createBackupDirInput = (label, value, onChange, options = {}) => {
   const inputRow = document.createElement('div');
   inputRow.className = 'input-with-button';
 
-  const input = document.createElement('input');
+  const input = document.createElement('peek-input');
   input.type = 'text';
   input.value = value || '';
   if (options.placeholder) input.placeholder = options.placeholder;
 
-  input.addEventListener('change', (e) => {
-    onChange(e.target.value);
+  input.addEventListener('change', () => {
+    onChange(input.value);
   });
 
-  const browseBtn = document.createElement('button');
-  browseBtn.className = 'btn browse-btn';
+  const browseBtn = document.createElement('peek-button');
+  browseBtn.className = 'browse-btn';
   browseBtn.textContent = 'Browse';
   browseBtn.addEventListener('click', async () => {
     try {
@@ -806,7 +801,7 @@ const renderIntegrationsSettings = async () => {
     { helpText: 'Exposes the create / update / delete / tag / complete-task / record-event tools. Off by default — querying always works.' },
   );
   allowWritesGroup.style.marginLeft = '24px';
-  allowWritesInput = allowWritesGroup.querySelector('input[type="checkbox"]');
+  allowWritesInput = allowWritesGroup.querySelector('peek-switch');
   mcpGroup.appendChild(allowWritesGroup);
 
   // Destructive-action warning — red treatment. Always visible so the
@@ -2384,7 +2379,7 @@ const renderSyncSettings = async () => {
       const configResult = await api.sync.getConfig();
       if (configResult.success && configResult.data) {
         config = { ...config, ...configResult.data };
-        serverUrlGroup.querySelector('input').value = config.serverUrl || '';
+        serverUrlGroup.querySelector('peek-input').value = config.serverUrl || '';
         apiKeyInput.value = config.apiKey || '';
       }
     } catch (err) {
@@ -3749,7 +3744,7 @@ const renderDiagnosticsSettings = async () => {
   );
   // Track the checkbox input so the pubsub listener can re-sync it
   // without re-rendering the whole pane.
-  verboseInput = verboseGroup.querySelector('input[type="checkbox"]');
+  verboseInput = verboseGroup.querySelector('peek-switch');
   debugSection.appendChild(verboseGroup);
 
   const devtoolsGroup = createCheckbox(
@@ -3763,7 +3758,7 @@ const renderDiagnosticsSettings = async () => {
     },
     { helpText: 'New windows are created with DevTools enabled (Cmd+Opt+I). Existing windows are unaffected — close and reopen to inspect.' }
   );
-  devtoolsInput = devtoolsGroup.querySelector('input[type="checkbox"]');
+  devtoolsInput = devtoolsGroup.querySelector('peek-switch');
   debugSection.appendChild(devtoolsGroup);
 
   // Keep checkboxes in sync if the flag is flipped from somewhere else
@@ -4288,25 +4283,10 @@ const init = async () => {
   contentArea.appendChild(diagnosticsSection);
 
   // Add Quit button at the very bottom
-  const quitBtn = document.createElement('button');
+  const quitBtn = document.createElement('peek-button');
+  quitBtn.variant = 'secondary';
+  quitBtn.className = 'quit-btn';
   quitBtn.textContent = 'Quit';
-  quitBtn.style.cssText = `
-    margin: auto 20px 20px 20px;
-    padding: 8px 16px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-    width: calc(100% - 40px);
-  `;
-  quitBtn.addEventListener('mouseenter', () => {
-    quitBtn.style.background = 'var(--bg-hover)';
-  });
-  quitBtn.addEventListener('mouseleave', () => {
-    quitBtn.style.background = 'var(--bg-tertiary)';
-  });
   quitBtn.addEventListener('click', () => {
     api.quit();
   });
