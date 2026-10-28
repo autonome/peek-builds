@@ -546,6 +546,43 @@ a.item-card-meta:hover {
   color: var(--success-text);
 }
 
+/* Input plus button on one line; the input takes the free width */
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.field-row peek-input {
+  flex: 1;
+}
+
+.stacked-input {
+  margin-bottom: 8px;
+}
+
+.status-block.error {
+  background: var(--error-bg);
+  border-left: 3px solid var(--error-border);
+}
+
+.help-text.status-line-ok {
+  color: var(--text-primary);
+}
+
+.help-text.status-line-off {
+  color: var(--text-tertiary);
+}
+
+.help-text.live-status-line {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.help-text.status-error-line {
+  margin-top: 6px;
+  color: var(--error-text);
+}
+
 /* Sync status block and manual-sync result banner */
 .status-block {
   padding: 12px;

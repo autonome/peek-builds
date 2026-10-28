@@ -2011,12 +2011,11 @@ const renderSyncSettings = async () => {
   apiKeyGroup.appendChild(apiKeyLabel);
 
   const apiKeyWrapper = document.createElement('div');
-  apiKeyWrapper.style.cssText = 'display: flex; gap: 8px;';
+  apiKeyWrapper.className = 'field-row';
 
   const apiKeyInput = document.createElement('peek-input');
   apiKeyInput.type = 'password';
   apiKeyInput.value = config.apiKey || '';
-  apiKeyInput.style.cssText = 'flex: 1;';
   apiKeyInput.addEventListener('change', async () => {
     config.apiKey = apiKeyInput.value;
     await api.sync.setConfig({ apiKey: apiKeyInput.value });
@@ -2063,16 +2062,15 @@ const renderSyncSettings = async () => {
   const enrolLabelInput = document.createElement('peek-input');
   enrolLabelInput.dataset.role = 'enrol-label-input';
   enrolLabelInput.placeholder = 'Device name (optional)';
-  enrolLabelInput.style.cssText = 'margin-bottom: 8px;';
+  enrolLabelInput.className = 'stacked-input';
   enrolGroup.appendChild(enrolLabelInput);
 
   const enrolWrapper = document.createElement('div');
-  enrolWrapper.style.cssText = 'display: flex; gap: 8px;';
+  enrolWrapper.className = 'field-row';
 
   const enrolInput = document.createElement('peek-input');
   enrolInput.dataset.role = 'enrol-code-input';
   enrolInput.placeholder = 'Code from another device';
-  enrolInput.style.cssText = 'flex: 1;';
   enrolWrapper.appendChild(enrolInput);
 
   const enrolBtn = document.createElement('peek-button');
@@ -2091,7 +2089,7 @@ const renderSyncSettings = async () => {
 
   const showEnrolError = (message) => {
     enrolStatus.textContent = message;
-    enrolStatus.style.color = 'var(--error-text, #dc2626)';
+    enrolStatus.classList.add('error');
   };
 
   enrolBtn.addEventListener('click', async () => {
@@ -2123,7 +2121,7 @@ const renderSyncSettings = async () => {
       enrolInput.value = '';
       enrolLabelInput.value = '';
       enrolStatus.textContent = 'Enrolled — this device now has its own key.';
-      enrolStatus.style.color = '';
+      enrolStatus.classList.remove('error');
       updateStatus();
     } catch (err) {
       showEnrolError(err.message || 'Failed to enroll');
@@ -2143,8 +2141,7 @@ const renderSyncSettings = async () => {
 
   // Sync Status section
   const statusSection = document.createElement('div');
-  statusSection.className = 'form-section';
-  statusSection.style.marginTop = '24px';
+  statusSection.className = 'form-section spaced-above';
 
   const statusTitle = document.createElement('h3');
   statusTitle.className = 'form-section-title';
@@ -2155,13 +2152,11 @@ const renderSyncSettings = async () => {
   statusContainer.className = 'status-block';
 
   const statusLine = document.createElement('div');
-  statusLine.className = 'help-text';
-  statusLine.style.marginBottom = '4px';
+  statusLine.className = 'help-text gap-below-sm';
   statusContainer.appendChild(statusLine);
 
   const lastSyncLine = document.createElement('div');
-  lastSyncLine.className = 'help-text';
-  lastSyncLine.style.marginBottom = '4px';
+  lastSyncLine.className = 'help-text gap-below-sm';
   statusContainer.appendChild(lastSyncLine);
 
   const pendingLine = document.createElement('div');
@@ -2175,16 +2170,14 @@ const renderSyncSettings = async () => {
   // set by handleSyncProgressEntry() below, seeded from the on-load log
   // fetch so opening the panel mid-run shows the current stage immediately.
   const liveStatusLine = document.createElement('div');
-  liveStatusLine.className = 'help-text';
-  liveStatusLine.style.cssText = 'margin-top: 4px; display: none; font-weight: 500; color: var(--text-primary);';
+  liveStatusLine.className = 'help-text live-status-line is-hidden';
   statusContainer.appendChild(liveStatusLine);
 
   // Error line — only shown when the most recent syncAll threw. The
   // background color of the whole status block also goes red so the
   // failure is hard to miss without having to scan text.
   const errorLine = document.createElement('div');
-  errorLine.className = 'help-text';
-  errorLine.style.cssText = 'margin-top: 6px; color: var(--base08, #cc241d); display: none;';
+  errorLine.className = 'help-text status-error-line is-hidden';
   statusContainer.appendChild(errorLine);
 
   statusSection.appendChild(statusContainer);
@@ -2202,7 +2195,8 @@ const renderSyncSettings = async () => {
 
     const isConfigured = config.serverUrl && config.apiKey;
     statusLine.textContent = `Status: ${isConfigured ? 'Configured' : 'Not configured'}`;
-    statusLine.style.color = isConfigured ? 'var(--text-primary)' : 'var(--text-tertiary)';
+    statusLine.classList.toggle('status-line-ok', !!isConfigured);
+    statusLine.classList.toggle('status-line-off', !isConfigured);
 
     if (status.lastSyncTime && status.lastSyncTime > 0) {
       const lastSyncDate = new Date(status.lastSyncTime);
@@ -2220,14 +2214,12 @@ const renderSyncSettings = async () => {
       errorLine.textContent = at
         ? `Last error (${at}): ${status.lastError}`
         : `Last error: ${status.lastError}`;
-      errorLine.style.display = '';
-      statusContainer.style.background = 'var(--base08-bg, rgba(204, 36, 29, 0.12))';
-      statusContainer.style.borderLeft = '3px solid var(--base08, #cc241d)';
+      errorLine.classList.remove('is-hidden');
+      statusContainer.classList.add('error');
     } else {
-      errorLine.style.display = 'none';
+      errorLine.classList.add('is-hidden');
       errorLine.textContent = '';
-      statusContainer.style.background = 'var(--bg-tertiary)';
-      statusContainer.style.borderLeft = '';
+      statusContainer.classList.remove('error');
     }
   };
 
@@ -2265,7 +2257,7 @@ const renderSyncSettings = async () => {
   const handleSyncProgressEntry = (entry) => {
     const isRunEnd = entry.stage === 'run' && (entry.phase === 'finish' || entry.phase === 'error');
     liveStatusLine.textContent = isRunEnd ? entry.message : `Now: ${entry.message}`;
-    liveStatusLine.style.display = '';
+    liveStatusLine.classList.remove('is-hidden');
     if (isRunEnd) {
       updateStatus();
     }
