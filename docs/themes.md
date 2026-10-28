@@ -74,6 +74,13 @@ Defines CSS custom properties using the Base16 color scheme. The file must defin
   --theme-text: var(--base05);
   --theme-accent: var(--base0D);
 
+  /* Status tokens (each theme defines all of these) */
+  --accent: var(--theme-accent);
+  --error-bg: color-mix(in srgb, var(--base08) 15%, var(--base00));
+  --error-border: var(--base08);
+  --error-text: var(--base08);
+  /* --warning-* uses --base0A and --success-* uses --base0B, same shape */
+
   /* Typography */
   --theme-font-sans: -apple-system, BlinkMacSystemFont, sans-serif;
   --theme-font-mono: "SF Mono", monospace;

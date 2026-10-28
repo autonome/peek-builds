@@ -43,6 +43,19 @@
   --theme-warning: var(--base0A);
   --theme-danger: var(--base08);
 
+  /* Status tokens: tinted background, border and text per status. Derived
+     from the base16 slots, so light and dark modes follow automatically. */
+  --accent: var(--theme-accent);
+  --error-bg: color-mix(in srgb, var(--base08) 15%, var(--base00));
+  --error-border: var(--base08);
+  --error-text: var(--base08);
+  --warning-bg: color-mix(in srgb, var(--base0A) 15%, var(--base00));
+  --warning-border: var(--base0A);
+  --warning-text: var(--base0A);
+  --success-bg: color-mix(in srgb, var(--base0B) 15%, var(--base00));
+  --success-border: var(--base0B);
+  --success-text: var(--base0B);
+
   /* Surface — floating panels on transparent/layered backgrounds */
   --theme-surface-border: 1px solid rgba(0, 0, 0, 0.12);
   --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.08);
