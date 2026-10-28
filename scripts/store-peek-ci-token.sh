@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import warnings
 
 folder = Path.home() / '.config' / 'peek-ci'
 target = folder / 'github-token'
@@ -32,10 +33,15 @@ try:
     # remove an obsolete token before replacing it.
     if os.path.lexists(target):
         raise ValueError('Token file already exists. Remove it explicitly before replacing it.')
-    with open('/dev/tty', 'r+') as terminal:
+    # This stream is output-only. Buffered r+ streams require seeking when
+    # switching direction, which a terminal cannot support. getpass opens its
+    # own controlling-terminal input and disables echo there.
+    with open('/dev/tty', 'w') as terminal:
         terminal.write('Use a fine-grained token restricted to autonome/peek-builds.\n')
         terminal.flush()
-        token = getpass.getpass('GitHub token (hidden): ', stream=terminal)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', getpass.GetPassWarning)
+            token = getpass.getpass('GitHub token (hidden): ', stream=terminal)
     if not re.fullmatch(r'github_pat_[A-Za-z0-9_]+', token) or len(token) > 1000:
         raise ValueError('Expected a fine-grained personal access token (github_pat_...).')
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -55,6 +61,9 @@ except (KeyboardInterrupt, EOFError):
     sys.exit(1)
 except ValueError as error:
     print(f'Error: {error}', file=sys.stderr)
+    sys.exit(1)
+except getpass.GetPassWarning:
+    print('Error: hidden terminal input is unavailable; no token saved.', file=sys.stderr)
     sys.exit(1)
 except OSError:
     print('Error: could not securely read or save the token. Check local permissions and terminal access.', file=sys.stderr)
