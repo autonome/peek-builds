@@ -13,7 +13,9 @@ import './headless-policy.js';
 import { app } from 'electron';
 import { readBuildInfo } from './build-info.js';
 import {
+  createAcceptanceRecord,
   createStartupConsentGate,
+  noticeRequired,
   persistAcceptanceRecord,
   readAcceptanceRecordSync,
   revokeAcceptanceRecord,
@@ -21,7 +23,11 @@ import {
 
 // The installation user-data root, captured before the runtime selects a profile.
 const consentRoot = app.getPath('userData');
-const alreadyAccepted = readAcceptanceRecordSync(consentRoot) !== null;
+// An unpackaged run skips the notice and never touches the record.
+const alreadyAccepted = !noticeRequired({
+  packaged: app.isPackaged,
+  accepted: app.isPackaged && readAcceptanceRecordSync(consentRoot) !== null,
+});
 const presenter = alreadyAccepted ? null : await import('./startup-consent-electron.js');
 presenter?.prepareNotice();
 
@@ -32,7 +38,8 @@ function buildIdentity(): string {
 
 const gate = createStartupConsentGate({
   buildIdentity: alreadyAccepted ? undefined : buildIdentity(),
-  readRecord: async () => readAcceptanceRecordSync(consentRoot),
+  // Unpackaged: an in-memory stand-in so the gate passes without disk access.
+  readRecord: async () => (app.isPackaged ? readAcceptanceRecordSync(consentRoot) : createAcceptanceRecord()),
   present: async context => (await import('./startup-consent-electron.js')).presentNotice(context),
   persist: record => persistAcceptanceRecord(consentRoot, record),
   revoke: () => revokeAcceptanceRecord(consentRoot),

@@ -82,6 +82,8 @@ test.afterEach(async () => {
 });
 
 test.describe('startup risk acknowledgment', () => {
+  // A run from source skips the notice by design; only a packaged build shows it.
+  test.skip(process.env.PACKAGED !== '1', 'the notice appears only in packaged builds');
   test('startup risk acknowledgment: only the notice appears, with the exact wording and unchecked boxes', async () => {
     const { app, root, profile } = await start();
     const page = await noticePage(app);

@@ -130,6 +130,15 @@ export function createPendingWork(limit = 16): PendingWork {
   };
 }
 
+/**
+ * Whether the startup notice must be shown. A run from source (not packaged)
+ * is a developer or test run: it skips the notice and neither reads nor writes
+ * an acceptance record. Packaged builds require a valid record.
+ */
+export function noticeRequired(state: { packaged: boolean; accepted: boolean }): boolean {
+  return state.packaged && !state.accepted;
+}
+
 /** A notice needs a display. On Linux that means an X or Wayland session. */
 export function interactiveDisplayAvailable(platform: string, env: Record<string, string | undefined>): boolean {
   if (platform !== 'linux') return true;

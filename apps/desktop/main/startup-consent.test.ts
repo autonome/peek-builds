@@ -11,7 +11,7 @@ import {
   isValidAcceptanceRecord, allAcknowledged, readAcceptanceRecord,
   persistAcceptanceRecord, createStartupConsentGate, readAcceptanceRecordSync,
   validatePendingUrl, createPendingWork, interactiveDisplayAvailable, noticePresentation,
-  safeRelaunchArgs, revokeAcceptanceRecord, type ConsentDependencies,
+  safeRelaunchArgs, revokeAcceptanceRecord, noticeRequired, type ConsentDependencies,
 } from './startup-consent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -294,6 +294,22 @@ describe('startup risk acknowledgment: pending work and environment', () => {
     // notice alive, and then its window stays hidden.
     assert.equal(noticePresentation({ PEEK_HEADLESS: '1', E2E_TEST: 'true' }), 'hidden');
     assert.equal(noticePresentation({ E2E_TEST: 'true' }), 'visible');
+  });
+});
+
+describe('startup risk acknowledgment: when the notice is required', () => {
+  it('requires the notice only for a packaged run without a record', () => {
+    assert.equal(noticeRequired({ packaged: true, accepted: false }), true);
+    assert.equal(noticeRequired({ packaged: true, accepted: true }), false);
+  });
+  it('never requires the notice for a run from source', () => {
+    assert.equal(noticeRequired({ packaged: false, accepted: false }), false);
+    assert.equal(noticeRequired({ packaged: false, accepted: true }), false);
+  });
+  it('entry.ts gates the record read on app.isPackaged', () => {
+    const source = readFileSync(path.resolve(__dirname, '../../main/entry.ts'), 'utf8');
+    assert.match(source, /noticeRequired\(\{\s*packaged: app\.isPackaged/);
+    assert.match(source, /app\.isPackaged \? readAcceptanceRecordSync/);
   });
 });
 

@@ -38,6 +38,11 @@ entry.ts (gate)
                                             relaunch the app, exit 0
 ```
 
+The notice is for packaged builds only. A run from source (`app.isPackaged` false:
+`yarn start`, `scripts/live-check.mjs`, `yarn test:grep`) behaves as if a valid
+record exists: the runtime loads before ready, nothing is shown, and the record
+file is neither read nor written (`startup-consent.ts noticeRequired()`).
+
 `entry.ts` imports `headless-policy.js` first, so the macOS headless activation
 policy is still applied before anything else with side effects. The runtime lives
 in `runtime-entry.ts` and is reachable only through the gate's `loadRuntime`
