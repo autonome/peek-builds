@@ -204,7 +204,8 @@ function applyEdit(item, text) {
  * @param {boolean} deps.vimMode
  * @param {(index: number) => void} [deps.onBlockChanged] called after a block
  *   was re-rendered with edited text (the outline refreshes its titles)
- * @param {(item: object) => void} [deps.onClosed] called after the editor closed
+ * @param {(item: object, openedText: string) => void} [deps.onClosed] called after the editor closed, with the
+ *   text the editor held when it opened
  * @param {(item: object) => boolean} [deps.isDiscarded] true when the item no
  *   longer exists, so closing drops the pending text instead of writing it
  * @param {(dir: 'up'|'down', index: number, goalX: number|null) => boolean} [deps.onEdge]
@@ -296,7 +297,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
       (block.querySelector('.qs-block-main') || block).appendChild(holder);
       block.classList.add('editing', item.type === 'text' ? 'editing-text' : 'editing-notes');
 
-      const s = { index, item, holder, block, view: null, timer: null, savedText: text };
+      const s = { index, item, holder, block, view: null, timer: null, savedText: text, openedText: text };
       takeOverStatusLine();
       s.view = cm.createEditor({
         parent: holder,
@@ -364,7 +365,7 @@ export function createInlineEditor({ api, surface, items, statusLine, vimMode, o
     onBlockChanged?.(s.index);
     giveBackStatusLine();
     surface.element.focus();
-    onClosed?.(s.item);
+    onClosed?.(s.item, s.openedText);
     return flushed;
   }
 

@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { createUndoStack, inverseAffordance, UNDO_LIMIT } from '../../features/editor/undo-stack.js';
+import { createUndoStack, inverseAffordance, UNDO_LIMIT, deleteEntry, restorePayload } from '../../features/editor/undo-stack.js';
 import { attachQueryKeys } from '../../features/editor/query-keys.js';
 
 describe('createUndoStack', () => {
@@ -142,5 +142,23 @@ describe('delete key and delete undo entry', () => {
     assert.equal(entry.kind, 'delete');
     assert.equal(entry.itemId, 'i1');
     assert.deepEqual(entry.previousOrder, ['a', 'i1', 'b']);
+  });
+});
+
+describe('deleteEntry / restorePayload', () => {
+  it('a delete of an emptied item carries the text it had and undo writes it back', () => {
+    const entry = deleteEntry('i1', ['i1', 'i2'], 'Buy milk\nand eggs');
+    assert.deepEqual(entry, { kind: 'delete', itemId: 'i1', previousOrder: ['i1', 'i2'], restoreText: 'Buy milk\nand eggs' });
+    assert.deepEqual(restorePayload(entry), { content: 'Buy milk\nand eggs', title: 'Buy milk' });
+  });
+
+  it('a plain delete has nothing to write back', () => {
+    const entry = deleteEntry('i1', ['i1']);
+    assert.equal('restoreText' in entry, false);
+    assert.equal(restorePayload(entry), null);
+  });
+
+  it('blank text is not restored', () => {
+    assert.equal(restorePayload(deleteEntry('i1', [], '  ')), null);
   });
 });

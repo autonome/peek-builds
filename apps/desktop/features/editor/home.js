@@ -18,7 +18,7 @@ import { loadOrder, saveOrder, loadSort, saveSort, reorderBase, moveBlock, moveB
 import { createBlockRenderer } from './query-blocks.js';
 import { resolveTagQuery, startQueryLive, diffBlocks, liveAction, blockSignature, LEAVE_MS } from './query-live.js';
 import { attachQueryKeys, isEditClick } from './query-keys.js';
-import { createUndoStack, inverseAffordance } from './undo-stack.js';
+import { createUndoStack, inverseAffordance, deleteEntry, restorePayload } from './undo-stack.js';
 import { createTaggedItem, discardItem, closeEmptyAction } from './query-add-item.js';
 import { createInlineEditor } from './query-inline-editor.js';
 import { createActionRulesCache, findAffordanceByKey, triggerAffordance } from 'peek://app/lib/tag-action-affordances.js';
@@ -359,13 +359,13 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
         guarded.open(target, { dir, goalX });
         return true;
       },
-      onClosed: (item) => {
+      onClosed: (item, openedText) => {
         // A new item closed without any text is removed again; an existing one
         // emptied and closed is deleted through the undoable delete.
         const wasAdded = addedIds.delete(item.id);
         const action = closeEmptyAction(item, wasAdded);
         if (action === 'discard') discardItem(api, item.id);
-        else if (action === 'delete') deleteBlock(item);
+        else if (action === 'delete') deleteBlock(item, openedText);
         if (rebuilding) return;
         // After the current event finishes: the close may sit inside a selection change.
         setTimeout(() => {
@@ -489,14 +489,14 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
    * Soft-delete the item behind `item`'s block. The block leaves through the live
    * update (red slide-out); undo restores the item and the manual order.
    */
-  const deleteBlock = async (item) => {
+  const deleteBlock = async (item, restoreText) => {
     if (!item || leaving.has(item.id)) return;
     const isManual = sortOption === MANUAL_SORT_OPTION;
     const current = sortItems(items, sortOption, manualOrder).map(other => other.id);
     const previousOrder = reorderBase(current, manualOrder, isManual);
     const res = await api.datastore.deleteItem(item.id);
     if (!res?.success || !res.data) { say('The item could not be deleted'); return; }
-    undoStack.push({ kind: 'delete', itemId: item.id, previousOrder });
+    undoStack.push(deleteEntry(item.id, previousOrder, restoreText));
   };
 
   /**
@@ -516,7 +516,11 @@ async function renderTagQuery(rootEl, tagNames, vimMode) {
     } else if (entry.kind === 'delete') {
       manualOrder = entry.previousOrder;
       saveOrder(orderKey, manualOrder, localStorage);
-      api.datastore.restoreItem(entry.itemId);
+      const text = restorePayload(entry);
+      // An item emptied by an edit comes back with the text it had before.
+      Promise.resolve(api.datastore.restoreItem(entry.itemId)).then(() => {
+        if (text) return api.datastore.updateItem(entry.itemId, text);
+      }).catch((err) => console.error('[editor] Undo delete failed:', err));
     }
   };
 

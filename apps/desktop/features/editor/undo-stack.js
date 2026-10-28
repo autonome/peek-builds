@@ -12,6 +12,8 @@
  *     an item was soft-deleted; undo restores it and puts the manual order back.
  */
 
+import { savePayload } from './query-inline-editor.js';
+
 /** Most entries kept; the oldest is dropped past it. */
 export const UNDO_LIMIT = 50;
 
@@ -33,6 +35,22 @@ export function createUndoStack(limit = UNDO_LIMIT) {
     clear() { entries = []; },
     size: () => entries.length,
   };
+}
+
+/**
+ * A delete entry. `restoreText` is the text the item had before an edit emptied
+ * it (the empty text is already stored when the delete happens); undo writes it back.
+ */
+export function deleteEntry(itemId, previousOrder, restoreText) {
+  const entry = { kind: 'delete', itemId, previousOrder };
+  if (typeof restoreText === 'string') entry.restoreText = restoreText;
+  return entry;
+}
+
+/** The datastore update that puts a delete entry's text back, or null when it has none. */
+export function restorePayload(entry) {
+  if (typeof entry?.restoreText !== 'string' || entry.restoreText.trim() === '') return null;
+  return savePayload({ type: 'text' }, entry.restoreText);
 }
 
 /**
