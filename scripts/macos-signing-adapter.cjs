@@ -102,6 +102,23 @@ function within(root, target) {
   const relative = path.relative(root, target);
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
 }
+// Resolve existing directory aliases (e.g. /var -> /private/var on macOS),
+// retaining absent suffixes. lstat first: a dangling symlink is not an absent
+// directory and must never be treated as a safe suffix. Other errors fail closed.
+function canonicalDirectory(directory) {
+  try { fs.lstatSync(directory); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return path.join(canonicalDirectory(path.dirname(directory)), path.basename(directory));
+  }
+  const real = fs.realpathSync(directory);
+  need(fs.statSync(real).isDirectory(), 'output-location');
+  return real;
+}
+function outputExists(output) {
+  try { fs.lstatSync(output); return true; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
+}
 function otoolLibraries(text) {
   const lines = text.trimEnd().split('\n');
   need(lines.length >= 1 && lines[0].endsWith(':'), 'otool-libraries');
@@ -144,7 +161,23 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   const scratchRoot = fs.realpathSync(temp);
   need(!within(root, scratchRoot), 'scratch-in-checkout');
   output = path.resolve(output);
-  need(!within(root, output) && within(scratchRoot, output), 'output-location');
+  // Canonicalize parents only. Never follow an existing output leaf, including
+  // a dangling symlink; preflight must refuse all preexisting output objects.
+  output = path.join(canonicalDirectory(path.dirname(output)), path.basename(output));
+  need(!within(root, output) && within(scratchRoot, output) && output !== scratchRoot, 'output-location');
+  const checkOutputParent = () => {
+    need(canonicalDirectory(path.dirname(output)) === path.dirname(output), 'output-location');
+  };
+  let ownedOutput;
+  const discardOutput = () => {
+    if (!ownedOutput) return;
+    checkOutputParent();
+    const current = fs.lstatSync(output);
+    need(current.isDirectory() && current.dev === ownedOutput.dev && current.ino === ownedOutput.ino,
+      'output-ownership');
+    fs.rmSync(output, { recursive: true, force: true });
+    ownedOutput = undefined;
+  };
   let scratch, keychain, identityHash, originalList, searchChanged = false, keychainCreated = false;
   let mounted = false, mountpoint, childEnv = cleanEnv(env), app, zip, dmg;
   let interrupted = false, unsafeTree = false;
@@ -286,7 +319,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       need(!(await text('git', ['status', '--porcelain', '--untracked-files=normal'])).trim(), 'dirty-checkout');
       await call('xcrun', ['--find', 'notarytool']);
       await call('xcrun', ['--find', 'stapler']);
-      need(!fs.existsSync(output), 'output-already-exists');
+      checkOutputParent();
+      need(!outputExists(output), 'output-already-exists');
       return Promise.all(['peek-desktop-helper', 'nonactivating-window.node'].map(name => native(path.join(root, 'apps/desktop/dist/native', name))));
     },
     async prepare(policy, secrets) {
@@ -415,13 +449,16 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       const artifacts = [dmg, zip].map(target => ({ name: path.basename(target),
         sha256: crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex') }));
       // Output is created only after every verification and credential cleanup.
+      checkOutputParent();
+      need(!outputExists(output), 'output-already-exists');
       fs.mkdirSync(output, { mode: 0o700 });
+      ownedOutput = fs.lstatSync(output);
       for (const target of [dmg, zip]) fs.copyFileSync(target, path.join(output, path.basename(target)), fs.constants.COPYFILE_EXCL);
       fs.rmSync(scratch, { recursive: true, force: true }); scratch = undefined;
       return artifacts;
     },
   };
-  return { operations, summaries, inventories, interrupt() { interrupted = true; abort.abort(); },
+  return { operations, summaries, inventories, output, discardOutput, interrupt() { interrupted = true; abort.abort(); },
     async destroy() {
       try { await operations.cleanup(); } finally {
         if (scratch && !mounted && !unsafeTree) fs.rmSync(scratch, { recursive: true, force: true });
@@ -457,8 +494,8 @@ async function main(env = process.env) {
   const tagged = await runner('git', ['rev-parse', `refs/tags/${env.CANDIDATE_TAG}^{commit}`], { env: cleanEnv(env) });
   need(tagged.code === 0 && tagged.quiescent && tagged.stdout.trim() === head, 'tag-sha');
   const temp = env.RUNNER_TEMP;
-  const output = path.join(temp, 'peek-verified-candidate');
-  const adapter = createAdapter({ temp, output, env });
+  const adapter = createAdapter({ temp, output: path.join(temp, 'peek-verified-candidate'), env });
+  const output = adapter.output;
   const interrupt = () => adapter.interrupt();
   process.on('SIGTERM', interrupt); process.on('SIGINT', interrupt);
   try {
@@ -471,12 +508,12 @@ async function main(env = process.env) {
       notary: adapter.summaries, inventories: adapter.inventories }, null, 2) + '\n');
     console.log('Verified candidate only; no public publication authorized.');
   } catch (error) {
-    fs.rmSync(output, { recursive: true, force: true });
+    adapter.discardOutput();
     throw error;
   } finally {
     try { await adapter.destroy(); }
     catch {
-      fs.rmSync(output, { recursive: true, force: true });
+      adapter.discardOutput();
       const failure = new SigningError('cleanup-failed');
       failure.submissionIds = adapter.summaries.map(s => s.id);
       throw failure;

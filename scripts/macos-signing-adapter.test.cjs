@@ -116,13 +116,182 @@ function fixture(t, mutation = {}) {
     }
     throw new Error('Unexpected fixture tool');
   };
-  const output = path.join(temp, 'verified');
+  const output = mutation.paths?.({ base, root, temp }) || path.join(temp, 'verified');
   const adapter = createAdapter({ root, temp, output, run: fakeRun,
     env: { PATH: '/usr/bin', ...secrets }, platform: 'darwin', arch: 'arm64' });
   return { adapter, calls, root, temp, output,
     async execute() { try { return await runCandidate(input, secrets, adapter.operations); }
       finally { await adapter.destroy(); } } };
 }
+
+test('output through a portable temp-root alias uses canonical paths throughout publication and cleanup', async t => {
+  const f = fixture(t, { paths({ base, temp }) {
+    const alias = path.join(base, 'temp-alias');
+    fs.symlinkSync(temp, alias);
+    return path.join(alias, 'verified');
+  } });
+  assert.equal(f.adapter.output, path.join(fs.realpathSync(f.temp), 'verified'));
+  await f.execute();
+  assert.equal(fs.readdirSync(f.output).length, 2);
+  await f.adapter.discardOutput();
+  assert.deepEqual(fs.readdirSync(f.temp), []);
+});
+
+test('an internal directory alias publishes only beneath its canonical scratch directory', async t => {
+  const f = fixture(t, { paths({ temp }) {
+    const parent = path.join(temp, 'actual'); fs.mkdirSync(parent);
+    fs.symlinkSync(parent, path.join(temp, 'alias'));
+    return path.join(temp, 'alias/verified');
+  } });
+  assert.equal(f.adapter.output, path.join(fs.realpathSync(f.temp), 'actual/verified'));
+  await f.execute();
+  assert.equal(fs.readdirSync(f.output).length, 2);
+  f.adapter.discardOutput();
+  assert.deepEqual(fs.readdirSync(path.dirname(f.output)), []);
+});
+
+for (const createParent of [false, true]) {
+  test(`absent output ancestors remain bounded; parent created before publication: ${createParent}`, async t => {
+    const f = fixture(t, { paths({ temp }) { return path.join(temp, 'new/nested/verified'); },
+      fail(file, args) {
+        if (createParent && file === 'security' && args[0] === 'delete-keychain') {
+          fs.mkdirSync(path.dirname(f.output), { recursive: true });
+        }
+        return false;
+      } });
+    assert.equal(f.adapter.output, path.join(fs.realpathSync(f.temp), 'new/nested/verified'));
+    if (createParent) {
+      await f.execute();
+      assert.equal(fs.readdirSync(f.output).length, 2);
+    } else {
+      await assert.rejects(f.execute(), { code: 'hash-failed' });
+      assert.equal(fs.existsSync(path.dirname(f.output)), false);
+    }
+    f.adapter.discardOutput();
+    assert.equal(fs.existsSync(f.output), false);
+  });
+}
+
+test('output boundary resolves existing ancestors without following the output leaf', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'signing-paths-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'repo'), temp = path.join(base, 'runner');
+  fs.mkdirSync(root); fs.mkdirSync(temp);
+  const alias = path.join(base, 'alias'); fs.symlinkSync(temp, alias);
+  const checkout = path.join(temp, 'checkout'); fs.symlinkSync(root, checkout);
+  const outside = path.join(base, 'outside'); fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(temp, 'escape'));
+  fs.symlinkSync(path.join(base, 'missing'), path.join(temp, 'dangling-parent'));
+  fs.writeFileSync(path.join(temp, 'file-parent'), 'KEEP');
+  fs.symlinkSync('loop', path.join(temp, 'loop'));
+  const make = output => createAdapter({ root, temp: alias, output });
+  const a = make(path.join(alias, 'new-parent/verified'));
+  assert.equal(a.output, path.join(fs.realpathSync(temp), 'new-parent/verified'));
+  await a.destroy();
+  for (const output of [path.join(temp, 'escape/verified'), path.join(checkout, 'verified'),
+    path.join(base, 'runner-sibling/verified'), temp, path.join(temp, 'file-parent/verified')]) {
+    assert.throws(() => make(output), { code: 'output-location' });
+  }
+  assert.throws(() => make(path.join(temp, 'dangling-parent/verified')));
+  assert.throws(() => make(path.join(temp, 'loop/verified')));
+  assert.throws(() => createAdapter({ root, temp: checkout, output: path.join(checkout, 'verified') }),
+    { code: 'scratch-in-checkout' });
+});
+
+for (const kind of ['directory', 'file', 'symlink', 'dangling-symlink']) {
+  test(`preexisting output ${kind} is refused and never cleaned up`, async t => {
+    let existing;
+    const f = fixture(t, { paths({ base, temp }) {
+      existing = path.join(temp, 'verified');
+      if (kind === 'directory') fs.mkdirSync(existing);
+      else if (kind === 'file') fs.writeFileSync(existing, 'KEEP');
+      else {
+        const target = path.join(base, 'user-data');
+        if (kind === 'symlink') fs.writeFileSync(target, 'KEEP');
+        fs.symlinkSync(target, existing);
+      }
+      return existing;
+    } });
+    await assert.rejects(f.execute(), { code: 'output-already-exists' });
+    await f.adapter.discardOutput();
+    assert.ok(fs.lstatSync(existing));
+    if (kind === 'file' || kind === 'symlink') assert.equal(fs.readFileSync(existing, 'utf8'), 'KEEP');
+    assert.ok(!f.calls.some(c => c.file === 'security'), 'preflight refuses before credentials');
+  });
+}
+
+test('output appearing after preflight is not overwritten or cleaned up', async t => {
+  const f = fixture(t, { fail(file, args) {
+    if (file === 'security' && args[0] === 'delete-keychain') {
+      fs.mkdirSync(f.output);
+      fs.writeFileSync(path.join(f.output, 'keep'), 'KEEP');
+    }
+    return false;
+  } });
+  await assert.rejects(f.execute(), { code: 'hash-failed' });
+  f.adapter.discardOutput();
+  assert.equal(fs.readFileSync(path.join(f.output, 'keep'), 'utf8'), 'KEEP');
+});
+
+test('a newly created output ancestor cannot redirect publication outside scratch', async t => {
+  let outside;
+  const f = fixture(t, { paths({ base, temp }) {
+    outside = path.join(base, 'outside'); fs.mkdirSync(outside);
+    return path.join(temp, 'new-parent/verified');
+  }, fail(file, args) {
+    if (file === 'security' && args[0] === 'delete-keychain') {
+      fs.symlinkSync(outside, path.dirname(f.output));
+    }
+    return false;
+  } });
+  await assert.rejects(f.execute(), { code: 'hash-failed' });
+  f.adapter.discardOutput();
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('partial publication cleanup removes only adapter-created output', async t => {
+  const f = fixture(t);
+  const copy = fs.copyFileSync;
+  t.mock.method(fs, 'copyFileSync', (source, destination, flags) => {
+    if (path.dirname(destination) === f.adapter.output && destination.endsWith('.zip')) {
+      throw new Error('fixture copy failure');
+    }
+    return copy(source, destination, flags);
+  });
+  await assert.rejects(f.execute(), { code: 'hash-failed' });
+  assert.equal(fs.readdirSync(f.output).length, 1);
+  f.adapter.discardOutput();
+  f.adapter.discardOutput(); // idempotent after successful removal
+  assert.equal(fs.existsSync(f.output), false);
+});
+
+test('owned-output cleanup refuses a replacement leaf and leaves its target untouched', async t => {
+  const f = fixture(t);
+  await f.execute();
+  const saved = f.output + '-saved';
+  fs.renameSync(f.output, saved);
+  fs.symlinkSync(saved, f.output);
+  assert.throws(() => f.adapter.discardOutput(), { code: 'output-ownership' });
+  assert.equal(fs.readdirSync(saved).length, 2);
+  assert.ok(fs.lstatSync(f.output).isSymbolicLink());
+});
+
+test('owned-output cleanup refuses a redirected parent without touching either directory', async t => {
+  const f = fixture(t, { paths({ temp }) {
+    const parent = path.join(temp, 'parent'); fs.mkdirSync(parent);
+    return path.join(parent, 'verified');
+  } });
+  await f.execute();
+  const parent = path.dirname(f.output), saved = parent + '-saved';
+  fs.renameSync(parent, saved);
+  const replacement = path.join(f.temp, 'replacement'); fs.mkdirSync(replacement);
+  fs.mkdirSync(path.join(replacement, 'verified'));
+  fs.writeFileSync(path.join(replacement, 'verified/keep'), 'KEEP');
+  fs.symlinkSync(replacement, parent);
+  assert.throws(() => f.adapter.discardOutput(), { code: 'output-location' });
+  assert.equal(fs.readdirSync(path.join(saved, 'verified')).length, 2);
+  assert.equal(fs.readFileSync(path.join(replacement, 'verified/keep'), 'utf8'), 'KEEP');
+});
 
 test('real adapter parses tools, verifies staging and two copies, restores search list before hash/output', async t => {
   const f = fixture(t, { validateConfig: true });

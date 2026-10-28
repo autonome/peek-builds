@@ -31,10 +31,21 @@ tests in `scripts/setup-macos-signing-secrets.test.cjs`, and
 adapter-driven orchestration in `scripts/macos-signing.cjs` and its pure tests
 are also implemented. The production process/filesystem adapter, protected manual
 candidate workflow, release-scoped builder override and minimal entitlements are
-now implemented with offline fake-tool/schema/workflow tests. **No live signed
-candidate has run**. See the readiness audit and candidate runbook for remaining
-human/macOS gates. One deliberate implementation difference is adapter-owned
-bounded notarization/log inspection instead of the builder's opaque built-in
+now implemented with offline fake-tool/schema/workflow tests. The first macOS
+candidate attempt (`v0.0.1-signing-candidate.1`, run `40705597132`) failed in
+presecret adapter tests: `/var` versus `/private/var` temp aliases caused an
+output containment mismatch. No signing or Apple submission occurred. The bounded
+follow-up canonicalizes existing output ancestors while retaining absent suffixes,
+rejects checkout/scratch escapes and existing output leaves (including dangling
+symlinks), and uses the canonical output for publication and receipt writing.
+Failure cleanup removes only an output directory created by this adapter, checking
+parent resolution and directory identity before removal. Absent parent suffixes
+are canonicalized but not automatically created; publication requires an existing
+parent directory, preserving the previous nonrecursive creation behavior. Portable symlink tests
+exercise the alias and rejection paths without disabling Darwin coverage.
+See the readiness audit and candidate runbook for remaining human/macOS gates.
+One deliberate implementation difference is adapter-owned bounded notarization/log
+inspection instead of the builder's opaque built-in
 notarizer; builder still signs its dir target before mandatory app notarization,
 stapling and final archive creation. Public signed publication remains disabled;
 unsigned behavior is unchanged outside reserved signing-candidate tags/runs.
@@ -95,8 +106,10 @@ Before operating a signed candidate, record owner approval for:
 3. Preferred dedicated App Store Connect team API key (App Manager scope, not
    app-limited) vs dedicated Apple Account/app-specific password. Do not use
    individual API keys with the current builder auth adapter.
-4. Protected signing environment, reviewer(s), permitted immutable refs/tags,
-   workflow/dependency change policy and clean-Mac acceptance owner. Confirm the
+4. Protected signing environment, permitted immutable refs/tags,
+   workflow/dependency change policy and clean-Mac acceptance owner. Candidate
+   runs have no required environment reviewer, per user approval; establish a
+   separate approval policy before any public signed release. Confirm the
    account plan supports the required environment protections before relying on them.
 5. Explicit resolution of the password-in-argv decision above, and authorization
    of an immutable reserved-tag ruleset before a candidate run.
@@ -134,7 +147,8 @@ Before operating a signed candidate, record owner approval for:
   Map them deliberately. Cleanup runs on success/failure/cancellation where the
   runner is still executing; VM disposal is the final backstop for hard termination.
 - Workflow permissions `contents: read`, checkout without persisted credentials,
-  reviewed SHA-pinned actions, trusted protected refs and environment approval.
+  reviewed SHA-pinned actions, trusted protected refs and environment tag restrictions
+  (no required reviewer for candidate-only runs, per user approval).
   Build/dependency installation without signing credentials. Publication secrets
   only on the final step. Retain no secret-bearing keychain/cache/artifact.
 - Assert native helper/addon existence/arm64 architecture in signed mode without
@@ -215,7 +229,8 @@ A test fixture's Accepted result is not evidence of live Apple acceptance.
 Research-track verification was documentation/reference/whitespace checking only.
 Provisioning and policy/orchestration now have offline tests. Those tests validate
 injected evidence and operation ordering, not macOS tool behavior, real credential
-cleanup, actual upload gates or Apple acceptance. No signed candidate or any of
-these live macOS gates has been run. Rollback means
+cleanup, actual upload gates or Apple acceptance. The first macOS candidate attempt
+stopped during presecret tests; no signed candidate or live signing acceptance
+gate has completed. Rollback means
 stopping signed publication and deliberately selecting the existing **explicitly
 unsigned** path, never disguising an unsigned artifact as a successful signed one.

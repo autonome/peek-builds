@@ -47,7 +47,12 @@ Uploading secrets does not make the existing unsigned workflow sign builds.
    script does **not** verify prevent-self-review, protection of tag creation, or
    protection of workflow/build/dependency code: an administrator must still
    configure and confirm those. No arbitrary dispatch/PR ref may receive
-   credentials in the future workflow.
+   credentials in the future workflow. This describes the uploader's existing
+   behavior, **not current candidate policy**: the user removed required reviewers
+   for candidate-only runs. Do not rerun its default protection update against the
+   candidate environment unchanged; it would reinstate a reviewer. Any authorized
+   secret rotation must preserve the candidate tag restriction and immutable-tag
+   rules described in the runbook; `--allow-unprotected` does not verify those.
 6. Record the exact full identity `Developer ID Application: … (TEAMID)` and its
    10-character team ID from the authorized owner, not a guessed publisher. This
    script stores both as environment **secrets**, consistently with the proposed
@@ -303,12 +308,14 @@ disabled; there must be no duplicate implementation writer.
    candidate namespace. A tag prefix or environment policy alone does not
    establish immutability/trust. The workflow binds
    checkout, event SHA and peeled tag to the expected full commit, never an input
-   checkout ref; a reviewer must independently verify that expected SHA. Do not
-   approve a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag
+   checkout ref; the owner/coordinator must independently verify that expected SHA
+   before dispatch (there is no candidate environment approval click). Do not
+   dispatch a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag
    exclusion has landed **before** creating any candidate tag.
-4. Allocate a new tag such as `v0.0.1-signing-candidate.1` at the reviewed landed
-   source commit. Owner allocates a unique numeric `CFBundleVersion`, canonical
-   `major.minor.patch` (major 1–9999, minor/patch 0–99), e.g. `1.0.1`.
+4. Use the next allocation above: `v0.0.1-signing-candidate.2` with build `1.0.2`
+   for this path-corrected retry, at the reviewed landed source commit. Subsequent
+   retries need a new tag and unique numeric `CFBundleVersion`, canonical
+   `major.minor.patch` (major 1–9999, minor/patch 0–99).
    Keep an allocation record; use a new number/candidate for a rebuild, not a
    recycled number for different bytes. Full source SHA remains in plist/JSON.
    This adapter validates numbers but does not allocate them or approve policy.
