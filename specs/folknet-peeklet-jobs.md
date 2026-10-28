@@ -32,8 +32,9 @@ profile database/snapshot, cookies, filesystem, OS automation or feature secrets
 
 Draft API is `api.jobs.submit({entry,input,exportApprovalId,clientRequestId})`, returning
 an owner-bound opaque run ID; status/cancel/result query methods survive UI reopening.
-Draft manifest extension and `(api, ctx)` example are in design §6. Do not interpret
-currently ignored unknown manifest keys as approved capabilities.
+Design §6 retains the `(api, ctx)` host contract and requested bounds. A precise
+worker manifest extension belongs to this future jobs increment, not the model slice.
+Do not interpret currently ignored unknown manifest keys as approved capabilities.
 
 ## Work
 
@@ -72,8 +73,10 @@ currently ignored unknown manifest keys as approved capabilities.
   after UI closure is disclosed; profile lock/switch, revoke, disable or uninstall
   requests cancellation and revokes run relay authority. Pending compute stays visible
   until stop/terminal evidence. No renderer timer/hold makes job expiry reliable.
-- Implement state machine from design §6, including nonterminal unknown and orthogonal
-  cancelRequested. Late success may follow cancel request; local timeout is not proof
+- Implement durable states prepared -> submitting -> accepted -> running ->
+  succeeded|failed, with nonterminal unknown on transport ambiguity and orthogonal
+  cancelRequested. Cancelled/expired require provider stop/expiry evidence; stale events
+  cannot regress terminal state. Late success may follow cancel request; local timeout is not proof
   of remote cancellation. No automatic resubmission after ambiguous acceptance. Dedupe
   conflicting input reuse; idempotency does not promise exactly-once execution/billing.
 - Local bounded result/log retention defaults to 24 hours after terminal; keep minimal
