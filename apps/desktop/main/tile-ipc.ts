@@ -167,9 +167,10 @@ import {
   kernelSetAcceptsInput,
   kernelSetLayer,
   kernelArmSelectionFocus,
+  kernelPressedInNonActivatingWindow,
 } from './window-kernel-dispatch.js';
 import { BASE_LAYER } from './window-kernel.js';
-import { FLOATING_LAYER } from './izui-roles.js';
+import { FLOATING_LAYER, dialogOwnedByRequester } from './izui-roles.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -519,6 +520,29 @@ export function findOpenWindowIdForUrl(url: string, excludeId?: number | null): 
  * or slide that was dismissed is hidden this way while its window lives on. A
  * window the kernel has no record of falls back to the native visibility.
  */
+/**
+ * Where a native file dialog goes. A showing transient window (a sheet, peek or
+ * slide) that asks for one owns it: the dialog attaches to that window and the
+ * kernel is told the user is working in it, so the app activation the dialog
+ * causes is not read as the user leaving it. Anything else goes over the front
+ * window (see the `tile:dialogs:save` comment).
+ */
+function dialogParentWindow(senderWindow: Electron.BrowserWindow | null): Electron.BaseWindow | null {
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    const senderMachineId = getWindowIdFor(senderWindow.id);
+    const senderRecord = senderMachineId != null ? getMachineWindowRecord(senderMachineId) : undefined;
+    if (senderMachineId != null && dialogOwnedByRequester(senderRecord)) {
+      kernelPressedInNonActivatingWindow(senderMachineId);
+      return senderWindow;
+    }
+  }
+  const frontId = getTopmostContentWindowId();
+  const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
+  return frontWin && !frontWin.isDestroyed()
+    ? frontWin
+    : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
+}
+
 function isWindowShowing(electronId: number, nativeWin: { isDestroyed(): boolean; isVisible(): boolean }): boolean {
   if (nativeWin.isDestroyed()) return false;
   const machineId = getWindowIdFor(electronId);
@@ -1295,11 +1319,7 @@ export function registerTileIpcHandlers(): void {
       // unparented) and returns the chrome overlay when the address bar is
       // focused (dialog would parent over the chrome, not the page). dialog
       // parenting accepts a BaseWindow, so a hybrid front parents directly.
-      const frontId = getTopmostContentWindowId();
-      const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
-      const parentWindow = frontWin && !frontWin.isDestroyed()
-        ? frontWin
-        : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
+      const parentWindow = dialogParentWindow(senderWindow);
 
       const dialogOpts: Electron.SaveDialogOptions = {
         defaultPath: args.filename,
@@ -1336,11 +1356,7 @@ export function registerTileIpcHandlers(): void {
       const senderWindow = windowFromWebContents(ev.sender);
       // Same front-based parenting as tile:dialogs:save above (machine front,
       // not getFocusedWindow() — see that handler's comment).
-      const frontId = getTopmostContentWindowId();
-      const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
-      const parentWindow = frontWin && !frontWin.isDestroyed()
-        ? frontWin
-        : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
+      const parentWindow = dialogParentWindow(senderWindow);
 
       const wantImage = args.kind === 'image';
       const openDialogOpts: Electron.OpenDialogOptions = {

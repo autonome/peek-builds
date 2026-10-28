@@ -161,6 +161,17 @@ export function windowIsTransient(
   return TRANSIENT_FROM_OTHER_APP && keyHeldWhileAppInactive && options.show !== false;
 }
 
+// Whether a native file dialog asked for by a window is part of that window
+// rather than a window of its own. A transient window the user is using ends
+// when focus moves to any other window, so its dialog must attach to it (and
+// count as the user working in it) instead of going over the front window,
+// which would move focus there and close it.
+export function dialogOwnedByRequester(
+  record: { transient?: boolean; visible: boolean; pendingHidden?: boolean } | undefined,
+): boolean {
+  return record !== undefined && record.transient === true && record.visible && record.pendingHidden !== true;
+}
+
 export function spacesPolicyForRole(
   role: string,
   platform: NodeJS.Platform,

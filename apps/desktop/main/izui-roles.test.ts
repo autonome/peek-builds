@@ -39,8 +39,26 @@ import {
   deriveAcceptsInput,
   FLOATING_LAYER,
   classifyWindowRegistration,
+  dialogOwnedByRequester,
 } from './izui-roles.js';
 import { BASE_LAYER } from './window-kernel.js';
+
+describe('dialogOwnedByRequester', () => {
+  it('a showing transient window owns the dialog it asks for', () => {
+    assert.strictEqual(dialogOwnedByRequester({ transient: true, visible: true }), true);
+  });
+  it('a window that is not transient does not (the dialog goes over the front window)', () => {
+    assert.strictEqual(dialogOwnedByRequester({ transient: false, visible: true }), false);
+    assert.strictEqual(dialogOwnedByRequester({ visible: true }), false);
+  });
+  it('a hidden or being-dismissed transient does not', () => {
+    assert.strictEqual(dialogOwnedByRequester({ transient: true, visible: false }), false);
+    assert.strictEqual(dialogOwnedByRequester({ transient: true, visible: true, pendingHidden: true }), false);
+  });
+  it('an unknown window does not', () => {
+    assert.strictEqual(dialogOwnedByRequester(undefined), false);
+  });
+});
 
 describe('inferIzuiRole', () => {
   it('returns the explicit role when caller provided one', () => {
