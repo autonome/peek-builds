@@ -1613,8 +1613,7 @@ const renderPermissionsSettings = async () => {
   const container = document.createElement('div');
 
   const desc = document.createElement('p');
-  desc.className = 'help-text';
-  desc.style.marginBottom = '16px';
+  desc.className = 'help-text section-intro';
   desc.textContent = 'Sites you have allowed or denied for sensors, media, screen capture, MIDI, etc. Revoking a decision means the next request from that site will prompt again.';
   container.appendChild(desc);
 
@@ -1623,10 +1622,8 @@ const renderPermissionsSettings = async () => {
   container.appendChild(list);
 
   const emptyMsg = document.createElement('p');
-  emptyMsg.className = 'help-text';
-  emptyMsg.style.fontStyle = 'italic';
+  emptyMsg.className = 'help-text italic is-hidden';
   emptyMsg.textContent = 'No saved permission decisions.';
-  emptyMsg.style.display = 'none';
   container.appendChild(emptyMsg);
 
   // Friendly labels — keep in sync with apps/desktop/main/permission-policy.ts
@@ -1696,36 +1693,34 @@ const renderPermissionsSettings = async () => {
 
   const renderRow = (decision) => {
     const row = document.createElement('peek-card');
-    row.style.marginBottom = '8px';
+    row.classList.add('list-card');
 
     const header = document.createElement('div');
-    header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 12px;';
+    header.className = 'permissions-row-header';
 
     const left = document.createElement('div');
-    left.style.cssText = 'display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;';
+    left.className = 'permissions-row-left';
 
     // Favicon — Google s2 favicon service with globe-emoji fallback. Same
     // pattern used in the page-host permission prompt + search-result cards.
     const favicon = document.createElement('img');
     favicon.className = 'permissions-row-favicon';
     favicon.alt = '';
-    favicon.style.cssText = 'width: 20px; height: 20px; flex-shrink: 0; object-fit: contain;';
     const host = hostFromOrigin(decision.origin);
     favicon.src = host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : FALLBACK_FAVICON;
     favicon.onerror = () => { favicon.src = FALLBACK_FAVICON; favicon.onerror = null; };
     left.appendChild(favicon);
 
     const textCol = document.createElement('div');
-    textCol.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1;';
+    textCol.className = 'permissions-row-text';
 
     const originEl = document.createElement('div');
-    originEl.style.cssText = 'font-family: var(--font-mono, monospace); font-size: 13px; word-break: break-all;';
+    originEl.className = 'permissions-row-origin';
     originEl.textContent = decision.origin;
     textCol.appendChild(originEl);
 
     const meta = document.createElement('div');
-    meta.className = 'help-text';
-    meta.style.fontSize = '12px';
+    meta.className = 'help-text meta-line';
     const label = PERMISSION_LABELS[decision.permission] || decision.permission;
     const glyph = PERMISSION_GLYPHS[decision.permission] || '\u{1F512}';
     const verdict = decision.allowed ? 'Allowed' : 'Denied';
@@ -1737,7 +1732,7 @@ const renderPermissionsSettings = async () => {
     const revokeBtn = document.createElement('peek-button');
     revokeBtn.setAttribute('variant', 'secondary');
     revokeBtn.textContent = 'Revoke';
-    revokeBtn.style.flexShrink = '0';
+    revokeBtn.className = 'permissions-row-revoke';
     revokeBtn.addEventListener('click', async () => {
       revokeBtn.disabled = true;
       try {
@@ -1745,8 +1740,8 @@ const renderPermissionsSettings = async () => {
         if (res?.success) {
           row.remove();
           if (list.children.length === 0) {
-            emptyMsg.style.display = '';
-            clearAllBtn.style.display = 'none';
+            emptyMsg.classList.remove('is-hidden');
+            clearAllBtn.classList.add('is-hidden');
           }
           if (typeof window._setPermissionsNavCount === 'function') {
             window._setPermissionsNavCount(list.children.length);
@@ -1768,7 +1763,7 @@ const renderPermissionsSettings = async () => {
   };
 
   const clearAllWrap = document.createElement('div');
-  clearAllWrap.style.cssText = 'margin-top: 16px; display: flex; justify-content: flex-end;';
+  clearAllWrap.className = 'permissions-clear-all';
   const clearAllBtn = document.createElement('peek-button');
   clearAllBtn.setAttribute('variant', 'secondary');
   clearAllBtn.textContent = 'Clear all';
@@ -1779,8 +1774,8 @@ const renderPermissionsSettings = async () => {
       const res = await api.permissions.forgetAll();
       if (res?.success) {
         list.replaceChildren();
-        emptyMsg.style.display = '';
-        clearAllBtn.style.display = 'none';
+        emptyMsg.classList.remove('is-hidden');
+        clearAllBtn.classList.add('is-hidden');
         if (typeof window._setPermissionsNavCount === 'function') {
           window._setPermissionsNavCount(0);
         }
@@ -1822,12 +1817,12 @@ const renderPermissionsSettings = async () => {
           return a.permission.localeCompare(b.permission);
         });
         for (const decision of sorted) list.appendChild(renderRow(decision));
-        emptyMsg.style.display = 'none';
-        clearAllBtn.style.display = '';
+        emptyMsg.classList.add('is-hidden');
+        clearAllBtn.classList.remove('is-hidden');
         clearAllBtn.disabled = false;
       } else {
-        emptyMsg.style.display = '';
-        clearAllBtn.style.display = 'none';
+        emptyMsg.classList.remove('is-hidden');
+        clearAllBtn.classList.add('is-hidden');
         clearAllBtn.disabled = false;
       }
       updateNavCount(data.length);
@@ -1835,8 +1830,8 @@ const renderPermissionsSettings = async () => {
       console.error('[settings] permissions.list threw:', err);
       list.replaceChildren();
       emptyMsg.textContent = 'Failed to load permissions.';
-      emptyMsg.style.display = '';
-      clearAllBtn.style.display = 'none';
+      emptyMsg.classList.remove('is-hidden');
+      clearAllBtn.classList.add('is-hidden');
       updateNavCount(0);
     }
   };

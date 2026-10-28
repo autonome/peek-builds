@@ -281,6 +281,66 @@ a.item-card-meta:hover {
   margin-top: 8px;
 }
 
+/* Runtime show/hide toggled from JS */
+.is-hidden {
+  display: none !important;
+}
+
+.help-text.italic {
+  font-style: italic;
+}
+
+.help-text.meta-line {
+  font-size: 12px;
+}
+
+/* Permissions: saved decision rows */
+.permissions-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.permissions-row-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.permissions-row-favicon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.permissions-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.permissions-row-origin {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.permissions-row-revoke {
+  flex-shrink: 0;
+}
+
+.permissions-clear-all {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* General: default browser row */
 .default-browser-row {
   display: flex;
