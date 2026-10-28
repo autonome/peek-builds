@@ -1235,21 +1235,21 @@ const renderThemesSettings = async () => {
 
         if (theme.version) {
           const versionSpan = document.createElement('span');
-          versionSpan.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-tertiary);';
+          versionSpan.className = 'item-version';
           versionSpan.textContent = `v${theme.version}`;
           cardTitle.appendChild(versionSpan);
         }
 
         if (isBuiltin) {
           const badge = document.createElement('span');
-          badge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: var(--bg-tertiary); border-radius: 4px; color: var(--text-tertiary);';
+          badge.className = 'item-badge';
           badge.textContent = 'built-in';
           cardTitle.appendChild(badge);
         }
 
         if (isActive) {
           const activeBadge = document.createElement('span');
-          activeBadge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: #22c55e; border-radius: 4px; color: white;';
+          activeBadge.className = 'item-badge item-badge-active';
           activeBadge.textContent = 'active';
           cardTitle.appendChild(activeBadge);
         }
@@ -2212,7 +2212,7 @@ const renderSyncSettings = async () => {
   statusSection.appendChild(statusTitle);
 
   const statusContainer = document.createElement('div');
-  statusContainer.style.cssText = 'padding: 12px; background: var(--bg-tertiary); border-radius: 6px; margin-bottom: 16px;';
+  statusContainer.className = 'status-block';
 
   const statusLine = document.createElement('div');
   statusLine.className = 'help-text';
@@ -2345,7 +2345,7 @@ const renderSyncSettings = async () => {
 
   // Result display area
   const resultArea = document.createElement('div');
-  resultArea.style.cssText = 'padding: 12px; border-radius: 6px; margin-bottom: 16px; display: none;';
+  resultArea.className = 'result-banner';
   syncSection.appendChild(resultArea);
 
   // Function to show result message
@@ -3241,10 +3241,10 @@ const renderDatastoreSettings = async () => {
 
   statItems.forEach(({ label, value }) => {
     const stat = document.createElement('div');
-    stat.style.cssText = 'text-align: center; padding: 16px; background: var(--bg-tertiary); border-radius: 6px;';
+    stat.className = 'stat-tile';
     stat.innerHTML = `
-      <div style="font-size: 24px; font-weight: 600; color: var(--text-primary);">${value}</div>
-      <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${label}</div>
+      <div class="stat-tile-value">${value}</div>
+      <div class="stat-tile-label">${label}</div>
     `;
     statsGrid.appendChild(stat);
   });

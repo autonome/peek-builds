@@ -187,15 +187,7 @@ body {
   margin-top: 4px;
 }
 
-/* Item Card */
-.item-card {
-  padding: 20px;
-  margin-bottom: 16px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-}
-
+/* Item card header/body inside a peek-card */
 .item-card-header {
   display: flex;
   justify-content: space-between;
@@ -211,16 +203,6 @@ body {
   opacity: 0.8;
 }
 
-.item-card.collapsed .item-card-header {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-
-.item-card.collapsed .item-card-body {
-  display: none;
-}
-
 .item-card-title {
   font-size: 15px;
   font-weight: 600;
@@ -233,84 +215,12 @@ body {
   margin-right: 6px;
 }
 
-.item-card.collapsed .item-card-title::before {
-  content: '\25B6 ';
-}
-
-/* Scope to the no-collapse card's OWN header so per-item cards rendered
- * inside the feature's Options accordion (which live in the body, not the
- * header) keep their expand arrows. */
-.item-card.no-collapse > .item-card-header .item-card-title::before {
-  content: none;
-}
-
-.item-card.no-collapse > .item-card-header {
-  cursor: default;
-  margin-bottom: 8px;
-}
-
 .item-card-body .form-group {
   margin-bottom: 16px;
 }
 
 .item-card-body .form-group:last-child {
   margin-bottom: 0;
-}
-
-/* Feature List */
-.feature-list {
-  list-style: none;
-}
-
-.feature-item {
-  padding: 16px;
-  margin-bottom: 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-}
-
-.feature-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.feature-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.feature-description {
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-/* Button */
-.btn {
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  color: var(--btn-text);
-  background: var(--btn-bg);
-  border: 1px solid var(--btn-bg);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.btn:hover {
-  background: var(--btn-bg-hover);
-  border-color: var(--btn-bg-hover);
-}
-
-.btn:disabled {
-  background: var(--btn-disabled-bg);
-  border-color: var(--btn-disabled-bg);
-  cursor: not-allowed;
 }
 
 /* Settings Groups */
@@ -400,20 +310,58 @@ body {
   }
 }
 
-/* Extension inline options accordion */
-.ext-options-toggle:hover {
-  color: var(--text-primary);
+/* Version and status badges in card titles */
+.item-version {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
-.ext-options-content .form-section {
+.item-badge {
+  margin-left: 8px;
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  color: var(--text-tertiary);
+}
+
+.item-badge.item-badge-active {
+  background: #22c55e;
+  color: white;
+}
+
+/* Sync status block and manual-sync result banner */
+.status-block {
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
   margin-bottom: 16px;
 }
 
-.ext-options-content .form-section-title {
-  font-size: 14px;
-  margin-bottom: 12px;
+.result-banner {
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  display: none;
 }
 
-.ext-options-content .item-card {
-  margin-bottom: 12px;
+/* Datastore stat tiles */
+.stat-tile {
+  text-align: center;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.stat-tile-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-tile-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
