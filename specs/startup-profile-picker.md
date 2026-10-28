@@ -1,6 +1,6 @@
 ---
 enabled: false
-touches: [apps/desktop/main/entry.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/profiles.ts, apps/desktop/main/profiles.test.ts, apps/desktop/main/startup-profile.ts, apps/desktop/main/startup-profile.test.ts, apps/desktop/main/startup-profile-electron.ts, apps/desktop/main/startup-profile-preload.cts, apps/desktop/main/startup-consent-electron.ts, apps/desktop/main/startup-consent.test.ts, apps/desktop/renderer/startup-profile/, apps/desktop/tests/desktop/startup-profile-picker.spec.ts, apps/desktop/tests/fixtures/, apps/desktop/main/window-construction-gate.test.ts, scripts/live-check.mjs, docs/design/startup-profile-picker.md]
+touches: [scripts/check-r2-window-ops.mjs, apps/desktop/main/entry.ts, apps/desktop/main/runtime-entry.ts, apps/desktop/main/profiles.ts, apps/desktop/main/profiles.test.ts, apps/desktop/main/startup-profile.ts, apps/desktop/main/startup-profile.test.ts, apps/desktop/main/startup-profile-electron.ts, apps/desktop/main/startup-profile-preload.cts, apps/desktop/main/startup-consent-electron.ts, apps/desktop/main/startup-consent.test.ts, apps/desktop/renderer/startup-profile/, apps/desktop/tests/desktop/startup-profile-picker.spec.ts, apps/desktop/tests/fixtures/, apps/desktop/main/window-construction-gate.test.ts, scripts/live-check.mjs, docs/design/startup-profile-picker.md]
 depends-on: []
 ---
 
@@ -106,8 +106,13 @@ using the same installation user-data root; explain this in the chooser/docs.
 - Do not change data root, app ID, signing, sync protocol, existing profile content,
   normal post-startup profile management or release workflow under this task.
 - Guard-file change may inventory exactly the new sandboxed chooser window; do
-  not weaken sandbox/headless/platform/window-construction invariants. If another
-  file is genuinely needed, request a bounded `touches` amendment.
+  not weaken sandbox/headless/platform/window-construction invariants. The R2
+  checker may add exact-count, symbol-justified non-window SQLite close inventory
+  entries for entry.ts (1), startup-profile.ts (2), startup-profile-electron.ts (4),
+  after auditing all receivers; its existing documented policy allows database
+  cleanup false positives. Never exempt a file/method broadly or allow an actual
+  window operation. If another file is genuinely needed, request a bounded
+  `touches` amendment.
 
 ## Tests first
 
