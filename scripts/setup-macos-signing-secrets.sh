@@ -16,12 +16,24 @@ usage() {
     '  --allow-unprotected  Skip creating/verifying reviewer and ref protection (NOT recommended)' \
     '  --dry-run            Validate local inputs and print the planned gh api calls; contacts nothing' \
     '  --help               Show help' \
-    'Settings missing from the config file are prompted for. The P12 export password and' \
-    'app-specific password are only ever read from a hidden prompt, never from a file or flag.' \
+    'Settings missing from the config file are prompted for. The P12 export password,' \
+    'app-specific password and the GitHub token are only ever read from a hidden prompt, never' \
+    'from a file, flag or inherited environment. The token must be a fine-grained personal access' \
+    'token limited to the target repository; the stored gh login is never used.' \
     'The script creates or updates the GitHub environment (required reviewer, ref policy), reads' \
     'it back, and refuses to upload secrets unless the protections are in effect.' \
     'See docs/macos-signing-secrets.md for preparation, permissions and retry guidance.'
 }
+required_permissions() {
+  printf '%s\n' 'Required fine-grained token settings (https://github.com/settings/personal-access-tokens/new):' \
+    "  Resource owner: the owner of $1" \
+    "  Repository access: only select repositories -> $1" \
+    '  Repository permissions: Administration: read and write; Environments: read and write;' \
+    '    Actions: read; Metadata: read (automatic)' \
+    '  An organization may require owner approval of the token before it works.'
+}
+gh_config_dir=''
+cleanup() { [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir"; }
 fail() { printf '%s\n' "Error: $*" >&2; exit 1; }
 prompt() {
   printf '%s: ' "$2" >&2
@@ -71,15 +83,15 @@ load_config() {
 }
 main() {
   # Clear inherited export bindings before creating local prompt storage.
-  unset certificate password private_key app_password identity team key_id issuer apple_id
+  unset certificate password private_key app_password gh_token identity team key_id issuer apple_id
   local repo='' environment='' mode='' dry=0 p12='' p8='' config='' allow_unprotected=0
   local reviewer='' ref_pattern='' ref_type='' reviewer_id=''
   local cfg_p12='' cfg_p8='' cfg_identity='' cfg_team='' cfg_key_id='' cfg_issuer='' cfg_apple_id=''
   local cfg_repo='' cfg_environment='' cfg_ref_pattern='' cfg_ref_type='' cfg_reviewer=''
   local identity='' team='' key_id='' issuer='' apple_id='' confirm names name opposite completed=0
-  local certificate='' password='' private_key='' app_password=''
+  local certificate='' password='' private_key='' app_password='' gh_token=''
   # Do not let inherited exported variables turn prompt results into child environment.
-  export -n certificate password private_key app_password identity team key_id issuer apple_id
+  export -n certificate password private_key app_password gh_token identity team key_id issuer apple_id
   while (($#)); do
     case $1 in
       --help|-h) usage; return ;;
@@ -102,6 +114,10 @@ main() {
     identity=$cfg_identity team=$cfg_team key_id=$cfg_key_id issuer=$cfg_issuer apple_id=$cfg_apple_id
     reviewer=$cfg_reviewer ref_pattern=$cfg_ref_pattern ref_type=$cfg_ref_type
   fi
+  local v
+  for v in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
+    [[ -z ${!v:-} ]] || fail "$v is set in the environment. Unset it; the token is only accepted at the script's hidden prompt."
+  done
   : "${repo:=autonome/peek-builds}" "${environment:=macos-release-signing}" "${mode:=api}"
   [[ $repo =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ && $repo != */. && $repo != */.. ]] || fail 'Invalid OWNER/REPO.'
   # Conservative subset avoids API path escaping/terminal control ambiguities.
@@ -162,13 +178,23 @@ main() {
         "  gh api -X POST repos/$repo/environments/$environment/deployment-branch-policies -f name=$ref_pattern -f type=$ref_type" \
         "  gh api repos/$repo/environments/$environment   (read back; refuse to upload unless reviewer $reviewer and $ref_type policy $ref_pattern are in effect)"
     fi
+    printf '%s\n' "A fine-grained GitHub token will be requested at a hidden prompt (not in dry-run), first verified with: gh api repos/$repo"
+    required_permissions "$repo"
     printf '%s\n' 'Dry-run: no gh calls, password prompts, or mutations. Remote prerequisites NOT checked.'
     return
   fi
   command -v gh >/dev/null || fail 'Install GitHub CLI (gh) first.'
   # Pin the host; never inherit GH_DEBUG, which can log request bodies.
   export GH_HOST=github.com GH_DEBUG='' GH_PROMPT_DISABLED=1
-  gh auth status --hostname github.com >/dev/null 2>&1 || fail 'Run gh auth login --hostname github.com separately first.'
+  # An empty config dir keeps the stored gh login from ever being read or used.
+  trap cleanup EXIT
+  gh_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/peek-gh-config.XXXXXX") || fail 'Cannot create a temporary gh config directory.'
+  export GH_CONFIG_DIR=$gh_config_dir
+  printf '%s\n' "Paste a fine-grained token limited to $repo (input is hidden)." >&2
+  prompt gh_token 'GitHub fine-grained token' private
+  [[ $gh_token =~ ^github_pat_[A-Za-z0-9_]+$ && ${#gh_token} -le 1000 ]] || fail 'Expected a fine-grained personal access token (github_pat_...). Classic and OAuth tokens reach too much.'
+  export GH_TOKEN=$gh_token
+  gh api "repos/$repo" --silent >/dev/null 2>&1 || { required_permissions "$repo" >&2; fail "The token cannot access $repo (rejected, wrong owner or repository, or awaiting organization approval). Nothing uploaded."; }
   local env_path="repos/$repo/environments/$environment" policy_line="$ref_type $ref_pattern" out
   if ((allow_unprotected)); then
     gh api "$env_path" --silent >/dev/null 2>&1 || fail 'Environment must already exist and be accessible (protections were not managed: --allow-unprotected).'

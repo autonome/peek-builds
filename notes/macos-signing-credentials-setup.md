@@ -130,13 +130,23 @@ cp scripts/macos-signing.env.example "$SIGN_DIR/signing.env"
 `specs/macos-signing-and-notarization.md` asks only for immutable trusted refs, so the pattern
 is not recorded anywhere else yet. The P12 export password is never read from this file.
 
-Then log in to GitHub (the account needs admin rights on the repo to manage the environment
-and its secrets):
+Then create a fine-grained personal access token for the one repository. The script never uses
+the stored `gh auth login` credential, which reaches every organization the account belongs to.
 
 ```sh
-gh auth login --hostname github.com
-gh auth status --hostname github.com
+open 'https://github.com/settings/personal-access-tokens/new'
 ```
+
+- Resource owner: the owner of the repository (`autonome`); the organization may need to approve
+  the token before it works.
+- Expiration: 7 days.
+- Repository access: only select repositories, then `autonome/peek-builds`.
+- Repository permissions: Administration read and write, Environments read and write,
+  Actions read (Metadata read is added automatically).
+
+Copy the token; the script asks for it at a hidden prompt and holds it only in its own process.
+`GH_TOKEN`, `GITHUB_TOKEN` and `GH_ENTERPRISE_TOKEN` must not be set in the shell. Revoke the
+token on the same settings page once step 8 has finished.
 
 ## 8. Create the environment and upload the secrets
 
@@ -153,7 +163,8 @@ contacting GitHub. The real run:
 2. Reads the environment back and stops, uploading nothing, unless the reviewer and ref policy
    are in effect. Required reviewers on a private repository depend on the GitHub plan;
    `--allow-unprotected` skips this knowingly and only checks that the environment exists.
-3. Prompts for anything missing from the file, then for the P12 export password (hidden; export
+3. Prompts for anything missing from the file, then for the GitHub token (hidden), verifies it
+   can reach the repository, then for the P12 export password (hidden; export
    password from step 4) and a destination confirmation (`autonome/peek-builds/macos-release-signing api`).
 
 It uploads, with values on stdin, never as arguments:

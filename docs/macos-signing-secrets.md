@@ -28,10 +28,14 @@ secrets does not make the existing unsigned workflow sign builds.
    are not supported by this contract. Alternatively, obtain an app-specific
    password for an authorized dedicated Apple Account. Never supply a normal
    Apple Account password or a 2FA code.
-4. Install GitHub CLI (`gh`) from its official distribution and authenticate
-   separately with `gh auth login --hostname github.com`. Use an account/token
-   authorized to manage environment secrets in the target repository, with the
-   organization's SSO authorization if required. This script targets github.com,
+4. Install GitHub CLI (`gh`) from its official distribution. The script does not
+   use the stored `gh auth login` credential: it asks at a hidden prompt for a
+   fine-grained personal access token (short expiry, revoke after the run) whose
+   resource owner is the repository owner and whose repository access is only the
+   target repository, with permissions Administration: read and write,
+   Environments: read and write, Actions: read, Metadata: read. The organization
+   may need to approve the token. `GH_TOKEN`, `GITHUB_TOKEN` and
+   `GH_ENTERPRISE_TOKEN` must be unset. This script targets github.com,
    not GitHub Enterprise. Run from a trusted local shell; no shell recording,
    untrusted `BASH_ENV`, wrappers, debug proxies or compromised executables.
 5. The script creates or updates the GitHub environment (default:

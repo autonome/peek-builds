@@ -12,6 +12,7 @@ const p12Value = 'dummy-certificate-not-a-real-key';
 const p8Value = '-----BEGIN PRIVATE KEY-----\nFAKE-PRIVATE-MATERIAL\n-----END PRIVATE KEY-----';
 const password = 'test-only-p12-password';
 const appPassword = 'abcd-efgh-ijkl-mnop';
+const token = 'github_pat_TESTFIXTURE0000';
 function run(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-signing-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -27,11 +28,12 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args[0] === '--fixture-self-test') process.exit(0);
 const input = args[0] === 'secret' && args[1] === 'set' ? fs.readFileSync(0, 'utf8') : '';
-const record = { args, input, debug: process.env.GH_DEBUG, leaked: ['password','certificate','private_key','app_password'].filter(k => process.env[k]) };
+const record = { args, input, debug: process.env.GH_DEBUG, tokenSeen: process.env.GH_TOKEN === process.env.FAKE_TOKEN, cfgDir: process.env.GH_CONFIG_DIR, cfgEntries: process.env.GH_CONFIG_DIR && fs.existsSync(process.env.GH_CONFIG_DIR) ? fs.readdirSync(process.env.GH_CONFIG_DIR) : null, leaked: ['password','certificate','private_key','app_password'].filter(k => process.env[k]) };
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(record) + '\\n');
 if (args[0] === 'secret' && args[1] === 'list') console.log(process.env.FAKE_NAMES || '');
 if (args[0] === 'secret' && args[1] === 'set' && args[2] === process.env.FAKE_FAIL) { console.error(input); process.exit(1); }
-if (args[0] === 'api' && process.env.FAKE_NO_ENV) process.exit(1);
+if (args[0] === 'api' && process.env.FAKE_BAD_TOKEN && args[1].split('/').length === 3 && args[1].startsWith('repos/')) { console.error('GH-BODY-LEAK Resource not accessible'); process.exit(1); }
+if (args[0] === 'api' && process.env.FAKE_NO_ENV && args.some(a => a.includes('/environments/'))) process.exit(1);
 if (args[0] === process.env.FAKE_FAIL_COMMAND) process.exit(1);
 if (args[0] === 'api') {
   // Minimal stateful model of the environment API; the state file lives next to this fixture.
@@ -59,27 +61,31 @@ if (args[0] === 'api') {
   assert.equal(fixtureCheck.status, 0, fixtureCheck.error?.message || fixtureCheck.stderr);
   const mode = options.mode || 'api';
   const metadata = [identity, team, ...(mode === 'api' ? ['123456789A', issuer] : ['test@example.invalid'])];
-  const inputs = [...metadata, password, ...(mode === 'password' ? [appPassword] : []), `${options.repo || 'autonome/peek-builds'}/${options.env || 'macos-release-signing'} ${mode}`];
+  const inputs = [...metadata, ...(options.noToken ? [] : [token]), password, ...(mode === 'password' ? [appPassword] : []), `${options.repo || 'autonome/peek-builds'}/${options.env || 'macos-release-signing'} ${mode}`];
   const configFile = path.join(dir, 'signing.env');
   const hasConfig = options.config !== null;
   const baseConfig = 'REVIEWER_LOGIN=release-reviewer\nREF_PATTERN=candidate-*\nREF_TYPE=tag\n';
   if (hasConfig) fs.writeFileSync(configFile, typeof options.config === 'function' ? options.config({ p12, p8, base: baseConfig }) : options.config ?? baseConfig);
   if (options.state) fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(options.state));
   const args = [...(hasConfig ? ['--config', configFile] : []), ...(options.pathsFromConfig ? ['--mode', mode] : ['--p12', p12, '--mode', mode, ...(mode === 'api' ? ['--p8', p8] : [])]), ...(options.args || [])];
+  const cleanEnv = { ...process.env };
+  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete cleanEnv[k];
   const result = spawnSync('/bin/bash', [...(options.trace ? ['-xv'] : []), script, ...args], {
     input: options.input === undefined ? inputs.join('\n') + '\n' : options.input,
-    encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, TMPDIR: dir,
+    encoding: 'utf8', env: { ...cleanEnv, FAKE_TOKEN: token, PATH: `${dir}:${process.env.PATH}`, TMPDIR: dir,
       FAKE_LOG: path.join(dir, 'log'), GH_DEBUG: 'api', password: 'inherited',
       ...(options.trace ? { SHELLOPTS: 'braceexpand:hashall:interactive-comments:verbose:xtrace' } : {}),
       ...(options.fake || {}) }
   });
   const records = fs.existsSync(path.join(dir, 'log')) ? fs.readFileSync(path.join(dir, 'log'), 'utf8').trim().split('\n').map(JSON.parse) : [];
   const output = result.stdout + result.stderr;
-  for (const secret of [password, appPassword, p12Value, Buffer.from(p12Value).toString('base64'), 'FAKE-PRIVATE-MATERIAL']) {
+  for (const secret of [token, password, appPassword, p12Value, Buffer.from(p12Value).toString('base64'), 'FAKE-PRIVATE-MATERIAL']) {
     assert.ok(!output.includes(secret), `secret in output: ${output}`);
     assert.ok(!JSON.stringify(records.map(r => r.args)).includes(secret), 'secret in argv');
   }
   for (const record of records) { assert.equal(record.debug, ''); assert.deepEqual(record.leaked, []); }
+  const tmpLeft = fs.readdirSync(dir).filter(f => f.startsWith('peek-gh-config.'));
+  assert.deepEqual(tmpLeft, [], 'temporary gh config dir not removed');
   assert.deepEqual(fs.readdirSync(dir).sort(), ['AuthKey.p8', 'certificate.p12', 'gh', 'package.json', ...(hasConfig ? ['signing.env'] : []), ...(fs.existsSync(path.join(dir, 'state.json')) ? ['state.json'] : []), ...(records.length ? ['log'] : [])].sort(), 'unexpected temporary file');
   const apiCalls = records.filter(r => r.args[0] === 'api').map(r => r.args.join(' '));
   return { ...result, output, records, apiCalls, uploads: records.filter(r => r.args[1] === 'set') };
@@ -89,7 +95,7 @@ test('help and dry-run never call gh or request passwords', t => {
   const help = run(t, { args: ['--help'], input: '' });
   assert.equal(help.status, 0); assert.match(help.output, /Usage:/); assert.equal(help.records.length, 0);
   const dry = run(t, { args: ['--dry-run'], input: [identity, team, '123456789A', issuer].join('\n') + '\n' });
-  assert.equal(dry.status, 0); assert.match(dry.output, /Remote prerequisites NOT checked/); assert.equal(dry.records.length, 0);
+  assert.equal(dry.status, 0); assert.match(dry.output, /Remote prerequisites NOT checked/); assert.match(dry.output, /token will be requested/); assert.match(dry.output, /Administration: read and write/); assert.equal(dry.records.length, 0);
 });
 test('API mode stdin uploads, tracing/debug disabled, no temp credentials', t => {
   const r = run(t, { trace: true }); assert.equal(r.status, 0, r.output); assert.equal(r.uploads.length, 7);
@@ -111,8 +117,9 @@ test('preflight rejects invalid, incomplete and mutually exclusive input before 
     { args: ['--mode', 'password'] }, { args: ['--p8', '/nonexistent'] },
     { input: `${identity}\nWRONG\n` }, { big: true },
     { input: [identity, team, 'bad'].join('\n') + '\n' },
+    { input: [identity, team, '123456789A', issuer, 'ghp_classictoken'].join('\n') + '\n' },
     { input: [identity, team, '123456789A', 'bad'].join('\n') + '\n' },
-    { input: [identity, team, '123456789A', issuer, password, 'no'].join('\n') + '\n' },
+    { input: [identity, team, '123456789A', issuer, token, password, 'no'].join('\n') + '\n' },
   ]) {
     const r = run(t, options); assert.notEqual(r.status, 0, r.output); assert.equal(r.uploads.length, 0);
   }
@@ -122,8 +129,7 @@ test('existing opposite-mode names refused in either mode; environment required'
     { fake: { FAKE_NAMES: 'OTHER\nAPPLE_ID' } },
     { mode: 'password', fake: { FAKE_NAMES: 'APPLE_API_KEY_P8' } },
     { fake: { FAKE_NO_ENV: '1' } },
-    { fake: { FAKE_FAIL_COMMAND: 'auth' } },
-    { fake: { FAKE_FAIL_COMMAND: 'secret' } },
+        { fake: { FAKE_FAIL_COMMAND: 'secret' } },
   ]) { const r = run(t, options); assert.notEqual(r.status, 0); assert.equal(r.uploads.length, 0); }
 });
 test('partial failure stops immediately, hides gh error payload and explains retry', t => {
@@ -134,7 +140,7 @@ test('partial failure stops immediately, hides gh error payload and explains ret
 const confirmLine = 'autonome/peek-builds/macos-release-signing api';
 const fullConfig = ({ p12, p8, base }) => `# comment\n\n${base}P12_PATH=${p12}\nP8_PATH=${p8}\nSIGNING_IDENTITY=${identity}\nTEAM_ID=${team}\nAPI_KEY_ID=123456789A\nAPI_ISSUER=${issuer}\n`;
 test('config file supplies paths and metadata; only the password and confirmation are prompted', t => {
-  const r = run(t, { config: fullConfig, pathsFromConfig: true, input: [password, confirmLine].join('\n') + '\n' });
+  const r = run(t, { config: fullConfig, pathsFromConfig: true, input: [token, password, confirmLine].join('\n') + '\n' });
   assert.equal(r.status, 0, r.output); assert.equal(r.uploads.length, 7);
   const values = Object.fromEntries(r.uploads.map(u => [u.args[2], u.input]));
   assert.equal(values.MACOS_SIGNING_IDENTITY, identity); assert.equal(values.APPLE_API_KEY_ID, '123456789A');
@@ -208,4 +214,31 @@ test('dry-run prints planned gh api calls and contacts nothing', t => {
   assert.equal(r.status, 0, r.output); assert.equal(r.records.length, 0);
   assert.match(r.output, /gh api -X PUT repos\/autonome\/peek-builds\/environments\/macos-release-signing/);
   assert.match(r.output, /-f name=candidate-\* -f type=tag/); assert.match(r.output, /release-reviewer/);
+});
+test('token comes from the hidden prompt, reaches gh, and the gh config dir is empty and removed', t => {
+  const r = run(t);
+  assert.equal(r.status, 0, r.output);
+  assert.ok(r.records.length > 0 && r.records.every(x => x.tokenSeen), 'gh did not see the token');
+  const dirs = new Set(r.records.map(x => x.cfgDir)); assert.equal(dirs.size, 1);
+  const [cfg] = dirs; assert.ok(cfg && path.basename(cfg).startsWith('peek-gh-config.'));
+  assert.ok(r.records.every(x => Array.isArray(x.cfgEntries) && x.cfgEntries.length === 0), 'config dir not empty');
+  assert.ok(!fs.existsSync(cfg), 'config dir remains');
+  assert.equal(r.records[0].args.join(' '), 'api repos/autonome/peek-builds --silent', 'token check comes first');
+  assert.ok(!r.records.some(x => x.args[0] === 'auth'), 'gh auth must not be used');
+});
+test('ambient token variables are refused before anything runs', t => {
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN']) {
+    const r = run(t, { fake: { [name]: 'github_pat_AMBIENT' }, args: ['--dry-run'] });
+    assert.notEqual(r.status, 0, name); assert.match(r.output, new RegExp(name + ' is set')); assert.equal(r.records.length, 0);
+  }
+});
+test('a rejected token stops before any write, names the permissions, and hides gh output', t => {
+  const r = run(t, { fake: { FAKE_BAD_TOKEN: '1' } });
+  assert.notEqual(r.status, 0); assert.equal(r.records.length, 1); assert.equal(r.uploads.length, 0);
+  assert.match(r.output, /Administration: read and write/); assert.match(r.output, /Environments: read and write/);
+  assert.ok(!r.output.includes('GH-BODY-LEAK'));
+});
+test('a token that is not fine-grained is refused without calling gh', t => {
+  const r = run(t, { input: [identity, team, '123456789A', issuer, 'ghp_classictoken', password].join('\n') + '\n' });
+  assert.notEqual(r.status, 0); assert.equal(r.records.length, 0); assert.match(r.output, /fine-grained/);
 });
