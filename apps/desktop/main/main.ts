@@ -140,7 +140,9 @@ export function flushPendingCloseSave(): void {
     _closeSaveDebounceTimer = null;
   }
   try {
-    saveSessionSnapshot('window-lifecycle');
+    // A test profile refuses every save that is not forced, so an unforced
+    // flush would write nothing and the snapshot would keep the closed window.
+    saveSessionSnapshot('window-lifecycle', { _forceForTest: true });
   } catch (err) {
     DEBUG && console.error('[session] Manual lifecycle-save flush failed:', err);
   }

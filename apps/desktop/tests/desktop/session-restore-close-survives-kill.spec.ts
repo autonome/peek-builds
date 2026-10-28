@@ -58,7 +58,7 @@ test.describe('Session Restore Close Survives Kill @desktop', () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return;
       for (const w of list.windows || []) {
-        if (typeof w.url === 'string' && w.url.startsWith('peek://app/page/')) {
+        if (typeof w.url === 'string' && (w.url.startsWith('peek://app/page/') || w.url.includes('close-survives'))) {
           await (window as any).app.window.close(w.id);
         }
       }
@@ -67,7 +67,7 @@ test.describe('Session Restore Close Survives Kill @desktop', () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return false;
       return !(list.windows || []).some((w: any) =>
-        typeof w.url === 'string' && w.url.startsWith('peek://app/page/'));
+        typeof w.url === 'string' && (w.url.startsWith('peek://app/page/') || w.url.includes('close-survives')));
     });
   }
 
@@ -147,13 +147,21 @@ test.describe('Session Restore Close Survives Kill @desktop', () => {
     const restored = await forceRestore();
 
     // Verify A and C came back, B did NOT.
-    const restoredUrls = await bgWindow.evaluate(async () => {
+    const listRestoredUrls = () => bgWindow.evaluate(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
-      if (!list?.success) return [];
+      if (!list?.success) return [] as string[];
       return (list.windows || [])
         .map((w: any) => w.url as string)
         .filter((u: string) => typeof u === 'string' && u.includes('close-survives'));
     });
+
+    // Restore opens windows one after another, so the last one can still be
+    // loading when forceRestore returns; wait for both to be listed.
+    await expect.poll(async () => {
+      const urls = await listRestoredUrls();
+      return ['close-survives-a', 'close-survives-c'].every((s) => urls.some((u) => u.includes(s)));
+    }, { timeout: 10000 }).toBe(true);
+    const restoredUrls = await listRestoredUrls();
 
     expect(restoredUrls.some((u: string) => u.includes('close-survives-a')),
       `closed-survives test: window A must restore`).toBe(true);
