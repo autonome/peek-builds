@@ -1047,8 +1047,7 @@ const renderThemesSettings = async () => {
 
   // Color scheme selector at top
   const schemeSection = document.createElement('div');
-  schemeSection.className = 'form-section';
-  schemeSection.style.marginBottom = '24px';
+  schemeSection.className = 'form-section spaced';
 
   const schemeTitle = document.createElement('h3');
   schemeTitle.className = 'form-section-title';
@@ -1056,14 +1055,13 @@ const renderThemesSettings = async () => {
   schemeSection.appendChild(schemeTitle);
 
   const schemeGroup = document.createElement('div');
-  schemeGroup.style.cssText = 'display: flex; gap: 8px;';
+  schemeGroup.className = 'button-row fill';
 
   ['system', 'light', 'dark'].forEach(scheme => {
     const btn = document.createElement('peek-button');
     btn.textContent = scheme.charAt(0).toUpperCase() + scheme.slice(1);
     btn.dataset.scheme = scheme;
     btn.variant = colorScheme === scheme ? 'primary' : 'secondary';
-    btn.style.flex = '1';
     btn.addEventListener('click', async () => {
       const result = await api.theme.setColorScheme(scheme);
       if (result.success) {
@@ -1078,8 +1076,7 @@ const renderThemesSettings = async () => {
   schemeSection.appendChild(schemeGroup);
 
   const schemeHelp = document.createElement('div');
-  schemeHelp.className = 'help-text';
-  schemeHelp.style.marginTop = '8px';
+  schemeHelp.className = 'help-text gap-above';
   schemeHelp.textContent = 'System follows your OS preference. Light/Dark forces that mode.';
   schemeSection.appendChild(schemeHelp);
 
@@ -1087,12 +1084,11 @@ const renderThemesSettings = async () => {
 
   // Add Theme button
   const addSection = document.createElement('div');
-  addSection.className = 'form-section';
-  addSection.style.marginBottom = '24px';
+  addSection.className = 'form-section spaced';
 
   const addBtn = document.createElement('peek-button');
   addBtn.textContent = '+ Add Theme';
-  addBtn.style.display = 'block';
+  addBtn.className = 'block-button';
   addBtn.addEventListener('click', async () => {
     addBtn.textContent = 'Selecting folder...';
     addBtn.disabled = true;
@@ -1198,7 +1194,7 @@ const renderThemesSettings = async () => {
         const isBuiltin = theme.builtin;
 
         const card = document.createElement('peek-card');
-        card.style.marginBottom = '8px';
+        card.className = 'list-card';
         card.dataset.themeId = theme.id;
 
         const header = document.createElement('div');
@@ -1206,11 +1202,10 @@ const renderThemesSettings = async () => {
 
         // Left side: name (no radio component exists; inactive themes get a Use button)
         const leftSide = document.createElement('div');
-        leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+        leftSide.className = 'item-card-left';
 
         const cardTitle = document.createElement('div');
         cardTitle.className = 'item-card-title';
-        cardTitle.style.margin = '0';
 
         const nameSpan = document.createElement('span');
         nameSpan.textContent = theme.name || theme.id;
@@ -1242,7 +1237,7 @@ const renderThemesSettings = async () => {
 
         // Right side: actions
         const actions = document.createElement('div');
-        actions.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+        actions.className = 'button-row centered';
 
         if (!isActive) {
           const useBtn = document.createElement('peek-button');
@@ -1316,16 +1311,14 @@ const renderThemesSettings = async () => {
 
         if (theme.description) {
           const desc = document.createElement('div');
-          desc.className = 'help-text';
-          desc.style.marginBottom = '8px';
+          desc.className = 'help-text gap-below';
           desc.textContent = theme.description;
           body.appendChild(desc);
         }
 
         if (theme.author) {
           const authorInfo = document.createElement('div');
-          authorInfo.className = 'help-text';
-          authorInfo.style.marginBottom = '4px';
+          authorInfo.className = 'help-text gap-below-sm';
           authorInfo.textContent = `Author: ${theme.author}`;
           body.appendChild(authorInfo);
         }
@@ -1333,8 +1326,7 @@ const renderThemesSettings = async () => {
         // Show path for external themes
         if (theme.path && !isBuiltin) {
           const pathInfo = document.createElement('div');
-          pathInfo.className = 'help-text';
-          pathInfo.style.cssText = 'font-family: monospace; font-size: 11px;';
+          pathInfo.className = 'help-text mono-small';
           pathInfo.textContent = theme.path;
           body.appendChild(pathInfo);
         }

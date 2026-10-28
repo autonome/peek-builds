@@ -191,6 +191,57 @@ body {
   margin-bottom: 16px;
 }
 
+.help-text.gap-above {
+  margin-top: 8px;
+}
+
+.help-text.gap-below {
+  margin-bottom: 8px;
+}
+
+.help-text.gap-below-sm {
+  margin-bottom: 4px;
+}
+
+.help-text.mono-small {
+  font-family: monospace;
+  font-size: 11px;
+}
+
+/* Wider spacing under a form section */
+.form-section.spaced {
+  margin-bottom: 24px;
+}
+
+/* Horizontal run of buttons */
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.button-row.fill peek-button {
+  flex: 1;
+}
+
+.button-row.centered {
+  align-items: center;
+}
+
+.block-button {
+  display: block;
+}
+
+/* Cards in a list */
+peek-card.list-card {
+  margin-bottom: 8px;
+}
+
+.item-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 /* General: default browser row */
 .default-browser-row {
   display: flex;
