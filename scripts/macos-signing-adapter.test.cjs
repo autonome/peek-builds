@@ -46,11 +46,12 @@ function fixture(t, mutation = {}) {
     fs.symlinkSync('Versions/Current/Example', path.join(framework, 'Example'));
     if (mutation.escape) fs.symlinkSync(root, path.join(target, 'Contents/escape'));
   }
-  const ok = (stdout = '', stderr = '') => ({ code: 0, stdout, stderr });
+  const ok = (stdout = '', stderr = '') => ({ code: 0, stdout, stderr, quiescent: true });
   const fakeRun = async (file, args, options) => {
     calls.push({ file, args, options });
     const target = args.at(-1);
-    if (mutation.fail?.(file, args, calls)) return { code: 1, stdout: 'SECRET-TOOL-OUTPUT', stderr: secrets.MACOS_CERTIFICATE_PASSWORD };
+    if (mutation.active?.(file, args)) return { ...ok(), quiescent: false };
+    if (mutation.fail?.(file, args, calls)) return { code: 1, stdout: 'SECRET-TOOL-OUTPUT', stderr: secrets.MACOS_CERTIFICATE_PASSWORD, quiescent: true };
     if (file === 'git') return ok(args[0] === 'status' ? '' : SHA + '\n');
     if (file === 'file') return ok(fs.readFileSync(target, 'utf8') === 'MACHO' ?
       (target.endsWith('.node') ? 'Mach-O 64-bit bundle arm64\n' :
@@ -180,6 +181,22 @@ test('cleanup failure never creates output', async t => {
   await assert.rejects(f.execute(), { code: 'cleanup-failed' });
   assert.equal(fs.existsSync(f.output), false);
 });
+for (const phase of ['import', 'list-keychains']) test(`unverified tool quiescence preserves scratch and stops cleanup: ${phase}`, async t => {
+  let armed = phase === 'import';
+  const f = fixture(t, { active: (file, args) => armed && file === 'security' && args[0] === phase });
+  if (phase === 'import') {
+    await assert.rejects(f.adapter.operations.prepare({ ...input, authMode: 'api' }, secrets), { code: 'tool-tree-active' });
+  } else {
+    await f.adapter.operations.prepare({ ...input, authMode: 'api' }, secrets);
+    armed = true;
+    await assert.rejects(f.adapter.operations.cleanup(), { code: 'tool-tree-active' });
+  }
+  const count = f.calls.length;
+  await assert.rejects(f.adapter.destroy(), { code: 'tool-tree-active' });
+  assert.equal(f.calls.length, count, 'no further tool or credential cleanup after unsafe result');
+  assert.ok(fs.readdirSync(f.temp).length > 0, 'scratch retained for VM disposal');
+  assert.equal(fs.existsSync(f.output), false);
+});
 test('cancellation interrupts operations but permits credential cleanup', async t => {
   const f = fixture(t);
   await f.adapter.operations.prepare({ ...input, authMode: 'api' }, secrets);
@@ -209,6 +226,46 @@ test('actual process runner bounds subprocess and keeps errors private', async (
   const result = await runner(process.execPath, ['-e', 'setTimeout(()=>{}, 10000)'], { timeout: 20 });
   assert.notEqual(result.code, 0);
   assert.equal(result.stdout, '');
+});
+for (const mode of ['timeout', 'abort', 'leader-exit', 'inherited-pipes', 'overflow']) test(`runner quiesces SIGTERM-resistant tree: ${mode}`, { skip: process.platform === 'win32' }, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-tool-tree-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const heartbeat = path.join(dir, 'heartbeat');
+  const grandchild = `const fs=require('node:fs'); process.on('SIGTERM',()=>{}); setInterval(()=>fs.appendFileSync(${JSON.stringify(heartbeat)},'x'),10);`;
+  const tool = `process.on('SIGTERM',()=>{}); require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:${mode === 'inherited-pipes' ? "'inherit'" : "'ignore'"}}); ${['leader-exit', 'inherited-pipes'].includes(mode) ? 'setTimeout(()=>process.exit(0),300)' : mode === 'overflow' ? "setTimeout(()=>process.stdout.write('x'.repeat(10000)),300); setInterval(()=>{},1000)" : 'setInterval(()=>{},1000)'};`;
+  const controller = new AbortController();
+  const start = Date.now();
+  const pending = runner(process.execPath, ['-e', tool, 'dummy-secret-argument'], { timeout: mode === 'overflow' ? 10000 : 1500, signal: controller.signal, maxBuffer: 100 });
+  if (mode === 'abort') {
+    while (!fs.existsSync(heartbeat) && Date.now() - start < 1200) await new Promise(r => setTimeout(r, 10));
+    controller.abort();
+  }
+  const result = await pending;
+  assert.equal(result.quiescent, true);
+  assert.ok(Date.now() - start < 4000);
+  assert.ok(fs.existsSync(heartbeat), 'grandchild actually started');
+  const before = fs.readFileSync(heartbeat, 'utf8');
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(fs.readFileSync(heartbeat, 'utf8'), before, 'no descendant can access scratch after return');
+  assert.equal(result.code === 0, ['leader-exit', 'inherited-pipes'].includes(mode));
+  assert.ok(!JSON.stringify(result).includes('dummy-secret-argument'));
+});
+test('runner drains successful output and sanitizes spawn errors', async () => {
+  const output = 'x'.repeat(200000);
+  const result = await runner(process.execPath, ['-e', `process.stdout.write('x'.repeat(${output.length}))`]);
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, output);
+  assert.equal(result.quiescent, true);
+  const failed = await runner('/nonexistent/peek-test-tool', ['dummy-secret-argument']);
+  assert.notEqual(failed.code, 0);
+  assert.equal(failed.quiescent, true);
+  assert.ok(!JSON.stringify(failed).includes('dummy-secret-argument'));
+});
+test('runner bounds output without exposing secret argv in errors', async () => {
+  const result = await runner(process.execPath, ['-e', "process.stdout.write('x'.repeat(10000))", 'dummy-secret-argument'], { maxBuffer: 100 });
+  assert.notEqual(result.code, 0);
+  assert.ok(result.stdout.length <= 100);
+  assert.ok(!JSON.stringify(result).includes('dummy-secret-argument'));
 });
 test('candidate workflow has pinned actions, protected environment, nonpersisted checkout and success-only exact upload', () => {
   const yaml = require('js-yaml');

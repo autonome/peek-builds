@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const plist = require('plist');
 const { SigningError, runCandidate, validateNotary } = require('./macos-signing.cjs');
 const block = code => { throw new SigningError(code); };
@@ -13,11 +13,81 @@ const need = (ok, code) => { if (!ok) block(code); };
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 function runner(file, args, options = {}) {
+  // execFile's timeout kills only the leader. Own the POSIX group instead,
+  // including descendants which outlive the leader or ignore SIGTERM.
+  const { timeout = 120000, signal, cleanup: _cleanup,
+    maxBuffer = 16 * 1024 * 1024, ...rest } = options;
   return new Promise(resolve => {
-    execFile(file, args, { encoding: 'utf8', timeout: 120000,
-      maxBuffer: 16 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
-      resolve({ code: error ? (error.code || 1) : 0, stdout: stdout || '', stderr: stderr || '' });
-    });
+    let stopped = false, finishing = false, overflow = false, killTimer, timer;
+    let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0);
+    const posix = process.platform !== 'win32';
+    const kill = sig => {
+      try { if (posix && child.pid) process.kill(-child.pid, sig); else child.kill(sig); }
+      catch (error) { if (error.code !== 'ESRCH') stopped = true; }
+    };
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      kill('SIGTERM');
+      killTimer = setTimeout(() => kill('SIGKILL'), 250);
+      // Do not wait for close: descendants can retain the leader's pipes.
+      void finish(1);
+    };
+    const child = spawn(file, args, { ...rest, detached: posix, stdio: ['ignore', 'pipe', 'pipe'] });
+    async function finish(code) {
+      if (finishing) return;
+      finishing = true;
+      const terminated = stopped;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      // Also reap an otherwise-successful tool's surviving descendants.
+      stop();
+      let quiescent = !posix || !child.pid;
+      const deadline = Date.now() + 2500;
+      while (!quiescent && Date.now() < deadline) {
+        try { process.kill(-child.pid, 0); }
+        catch (e) { if (e.code === 'ESRCH') { quiescent = true; break; } }
+        // Orphan zombies cannot execute or access scratch. Some Linux test
+        // containers do not reap them; do not confuse them with live tools.
+        quiescent = await new Promise(done => execFile('/bin/ps', ['-axo', 'pgid=,stat='],
+          { encoding: 'utf8', timeout: 500, maxBuffer: 4 * 1024 * 1024,
+            env: cleanEnv(rest.env || process.env) }, (e, out) => {
+            const rows = out?.trim().split('\n') || [];
+            done(!e && rows.length > 0 && rows.every(line => /^\s*\d+\s+\S+\s*$/.test(line)) &&
+              !rows.some(line => {
+                const [group, state] = line.trim().split(/\s+/);
+                return Number(group) === child.pid && !state.startsWith('Z');
+              }));
+          }));
+        if (!quiescent) await new Promise(done => setTimeout(done, 25));
+      }
+      clearTimeout(killTimer);
+      // Drain already-written output after exit; never await inherited pipes
+      // indefinitely (a tool leaving its group is outside this containment).
+      const drained = await Promise.race([
+        Promise.all([child.stdout, child.stderr].map(stream => new Promise(done => {
+          if (stream.readableEnded || stream.destroyed) done();
+          else { stream.once('end', done); stream.once('close', done); }
+        }))).then(() => true),
+        new Promise(done => { const timer = setTimeout(() => done(false), 500); timer.unref(); }),
+      ]);
+      child.stdout.destroy(); child.stderr.destroy();
+      resolve({ code: code || (terminated || overflow || !drained ? 1 : 0),
+        stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), quiescent });
+    }
+    const collect = (stream, chunk) => {
+      const prior = stream === 'stdout' ? stdout : stderr;
+      const next = Buffer.concat([prior, chunk.subarray(0, Math.max(0, maxBuffer - prior.length))]);
+      if (stream === 'stdout') stdout = next; else stderr = next;
+      if (prior.length + chunk.length > maxBuffer) { overflow = true; stop(); }
+    };
+    child.stdout.on('data', chunk => collect('stdout', chunk));
+    child.stderr.on('data', chunk => collect('stderr', chunk));
+    child.on('error', () => { void finish(1); });
+    child.on('exit', (code, sig) => { void finish(sig ? 1 : code); });
+    signal?.addEventListener('abort', stop, { once: true });
+    if (signal?.aborted) stop();
+    if (!finishing && timeout > 0) timer = setTimeout(stop, timeout);
   });
 }
 function json(text) {
@@ -77,15 +147,17 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   need(!within(root, output) && within(scratchRoot, output), 'output-location');
   let scratch, keychain, identityHash, originalList, searchChanged = false, keychainCreated = false;
   let mounted = false, mountpoint, childEnv = cleanEnv(env), app, zip, dmg;
-  let interrupted = false;
+  let interrupted = false, unsafeTree = false;
   const abort = new AbortController();
   const summaries = [];
   const inventories = [];
   const call = async (file, args, opts = {}) => {
+    need(!unsafeTree, 'tool-tree-active');
     if (interrupted && !opts.cleanup) block('interrupted');
     let result;
     try { result = await run(file, args, { cwd: root, env: childEnv,
-      timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { block('tool-execution'); }
+      timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; block('tool-execution'); }
+    if (result?.quiescent !== true) { unsafeTree = true; block('tool-tree-active'); }
     if (result.code !== 0) block('tool-exit');
     return result;
   };
@@ -320,6 +392,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       return evidence;
     },
     async cleanup() {
+      // Fail closed: VM disposal, not credential deletion racing a live tool.
+      need(!unsafeTree, 'tool-tree-active');
       let failed = false;
       const attempt = async (file, args) => {
         try { await call(file, args, { cleanup: true }); return true; }
@@ -330,6 +404,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       if (keychainCreated && await attempt('security', ['delete-keychain', keychain])) keychainCreated = false;
       // Keep only verified final containers until hashFinal. Remove credentials,
       // copies and keychain even when another cleanup action failed.
+      need(!unsafeTree, 'tool-tree-active');
       if (scratch) for (const name of fs.readdirSync(scratch)) {
         if (name !== 'final' && !(mounted && name === 'mount')) fs.rmSync(path.join(scratch, name), { recursive: true, force: true });
       }
@@ -349,7 +424,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   return { operations, summaries, inventories, interrupt() { interrupted = true; abort.abort(); },
     async destroy() {
       try { await operations.cleanup(); } finally {
-        if (scratch && !mounted) fs.rmSync(scratch, { recursive: true, force: true });
+        if (scratch && !mounted && !unsafeTree) fs.rmSync(scratch, { recursive: true, force: true });
       }
     } };
 }
@@ -374,11 +449,13 @@ async function sign(options) {
 async function main(env = process.env) {
   need(env.GITHUB_ACTIONS === 'true', 'github-only');
   need(env.GITHUB_REF_PROTECTED === 'true', 'protected-tag-required');
-  const head = (await runner('git', ['rev-parse', 'HEAD'], { env: cleanEnv(env) })).stdout.trim();
+  const checkedHead = await runner('git', ['rev-parse', 'HEAD'], { env: cleanEnv(env) });
+  need(checkedHead.code === 0 && checkedHead.quiescent, 'source-tool');
+  const head = checkedHead.stdout.trim();
   need(head === env.GITHUB_SHA, 'event-sha');
   candidateRef(env.CANDIDATE_TAG, env.EXPECTED_SOURCE_SHA, env.GITHUB_REF, head);
   const tagged = await runner('git', ['rev-parse', `refs/tags/${env.CANDIDATE_TAG}^{commit}`], { env: cleanEnv(env) });
-  need(tagged.code === 0 && tagged.stdout.trim() === head, 'tag-sha');
+  need(tagged.code === 0 && tagged.quiescent && tagged.stdout.trim() === head, 'tag-sha');
   const temp = env.RUNNER_TEMP;
   const output = path.join(temp, 'peek-verified-candidate');
   const adapter = createAdapter({ temp, output, env });

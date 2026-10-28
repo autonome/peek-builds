@@ -220,7 +220,8 @@ git diff --check
 
 Preparation tests generate disposable local test keys/certificates with fixture-only
 passwords supplied through descriptors by an OpenSSL wrapper; they check real
-PEM/DER/key matching and export, cleanup, cancellation, nonoverwrite, permissions,
+PEM/DER/key matching and actual P12 metadata (3DES key/certificate PBE, SHA1 MAC,
+2048 iterations), unchanged AES-encrypted source key, cleanup, cancellation, nonoverwrite, permissions,
 input/type failures, empty export-password rejection and tracing/argv safety.
 Upload tests use only dummy local fixtures and a fake `gh` on PATH, never real accounts,
 network, keychains or credentials. They cover both modes, dry-run/help, invalid
@@ -229,6 +230,36 @@ partial failures, tracing/debug suppression, stdin-only payloads and absence of
 generated credential files. Linux tests cannot certify real macOS signing,
 notarization, Gatekeeper, protected GitHub environment policy or runtime behavior.
 
+## Signing subprocess password exposure — approval pending
+
+The setup uploader's stdin-only guarantee above does **not** describe the signing
+adapter. Apple's standard `security` CLI currently receives the P12 password via
+`import -P`, and the random ephemeral-keychain password via `create-keychain -p`,
+`unlock-keychain -p` and `set-key-partition-list -k`: these secrets are in child
+**argv**, observable by sufficiently privileged local processes. The separately
+supported alternative password-auth mode also supplies the app-specific password
+to `notarytool store-credentials --password`; the candidate workflow uses API-key
+file auth instead. No raw command arguments, child errors or output are logged or
+uploaded; this does not eliminate local process-list exposure.
+
+**Live execution is blocked pending the user's answer**: accept this explicitly
+scoped exception on a disposable GitHub-hosted runner, or require a reviewed
+Security-framework/other secure-input helper before execution. The coordinator
+has asked; no approval is recorded. Environment approval alone must not be
+interpreted as answering that design decision. Do not run real signing, provision
+replacement credentials, or claim that all secrets avoid argv in the meantime.
+
+Tools run in isolated POSIX process groups. Timeout, cancellation and output-limit
+failure send SIGTERM, then SIGKILL after 250 ms if the group remains; normal leader
+exit also terminates surviving descendants. The runner verifies no live group
+members (zombies cannot execute) within a bounded quiescence window before
+credential cleanup. If verification fails, further tools, cleanup and upload stop;
+private scratch is left for hosted-VM disposal rather than deleted under a live
+tool. This controls ordinary descendant trees, not hostile tools that deliberately
+escape their group/session; reviewed source/dependencies and runner isolation are
+still required. Hard cancellation can bypass all handlers. Persistent runners
+remain unsupported; actual macOS cancellation/cleanup still needs validation.
+
 ## Signed candidate runbook
 
 These are **human/coordinator operations after landing and review**, not commands
@@ -236,7 +267,8 @@ run by the implementation agent. No signed job, tag, credential access or public
 publication has been performed. Keep the [spec](../specs/macos-signing-and-notarization.md)
 disabled; there must be no duplicate implementation writer.
 
-1. Review the workflow, adapter, locked dependencies, minimal entitlement plists
+1. Resolve and record the password-in-argv decision above **before any live run**.
+   Review the workflow, adapter, locked dependencies, minimal entitlement plists
    and numeric build policy. Confirm legal publisher/team/identity/bundle ID,
    API-key scope/custody and acceptance owner. Review the implementation difference
    described in [readiness notes](../notes/macos-signing-readiness.md#executable-candidate-path-offline-verified-macos-acceptance-pending):
@@ -252,8 +284,10 @@ disabled; there must be no duplicate implementation writer.
    creation against untrusted writers and prohibit updates/deletion. Both job and
    adapter require GitHub's protected-ref flag; **an unprotected tag is skipped**.
    The flag alone cannot prove that the rule prohibits updates/deletion, so the
-   owner must inspect the rule itself. This track has not read or changed remote
-   tag rules. A tag prefix plus an environment
+   owner must inspect the rule itself. The last coordinator metadata check found
+   **no repository rulesets**; reserved-tag ruleset creation/authorization remains
+   outstanding. This implementation session has not changed remote rules.
+   A tag prefix plus an environment
    `v*` policy alone does not establish immutability/trust. The workflow binds
    checkout, event SHA and peeled tag to the expected full commit, never an input
    checkout ref; a reviewer must independently verify that expected SHA. Do not

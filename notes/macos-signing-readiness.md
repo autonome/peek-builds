@@ -13,6 +13,19 @@ is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
 
+## Unresolved execution blockers
+
+- The standard `security` commands expose P12 and random keychain passwords in
+  subprocess argv. Alternative password-auth `notarytool store-credentials` also
+  exposes its password; the workflow uses API-key file auth. Logs/receipts suppress
+  raw argv/output, but local process inspection remains possible. The user has
+  been asked to accept a disposable-hosted-runner exception versus requiring a
+  reviewed secure-input helper; **no answer is recorded**. No real signing until
+  resolved. Preparation and upload scripts' no-secret-argv guarantee is narrower.
+- Last coordinator metadata check found **no repository rulesets**. Creation and
+  authorization of immutable reserved-tag rules remain outstanding. Do not infer
+  immutability from environment tag policy or protected-ref status alone.
+
 ## Executable candidate path (offline verified, macOS acceptance pending)
 
 `.github/workflows/macos-signing-candidate.yml` is manual-only, tag-only and gated
@@ -34,7 +47,12 @@ there, uses the verified certificate fingerprint (builder rejects full-name
 Developer ID prefixes), and passes only keychain/profile metadata to the builder
 child. Scratch/credentials/config/copies are outside the checkout. It restores the
 original search list even after partial preparation; SIGTERM/SIGINT abort the
-active child then take the same cleanup path. Failed unmounts block success and
+active POSIX tool group, send SIGTERM then SIGKILL after 250 ms as needed, and
+verify no live group members before taking the same cleanup path. Normal leader
+exit also terminates descendants; output overflow follows the bounded stop path.
+If quiescence cannot be verified, no further tool/credential cleanup or upload
+runs and scratch is preserved for VM disposal. Group isolation is not a sandbox
+against hostile tools escaping their group. Failed unmounts block success and
 must not recursively delete a still-mounted volume. Hard termination relies on
 hosted-VM disposal; this is not a self-hosted runner design.
 
@@ -74,7 +92,11 @@ creates no upload directory/receipt and never calls a publisher.
 Offline verification exercises the real adapter against filesystem fixtures and
 fake tools, including partial prepare, wrong architecture/authority/team,
 notary failures/timeouts/log issues, symlink escape, extracted-copy failures,
-cleanup and cancellation. It does **not** establish that actual osx-sign discovery,
+cleanup and cancellation, plus actual benign SIGTERM-resistant child/grandchild
+trees (timeout, abort, leader exit, inherited pipes and output overflow) and
+fail-closed cleanup when quiescence is unverified. Preparation tests inspect real
+P12 fixture metadata for explicit 3DES key/cert PBE and SHA1 MAC (2048 iterations),
+while the source key stays AES encrypted. It does **not** establish that actual osx-sign discovery,
 notarytool wait JSON, otool output/dyld contexts, keychain access, Gatekeeper or
 Electron 43 works on the selected runner. Those checks, actual credential validity,
 entitlement/build-number owner review, immutable tag creation protections and both

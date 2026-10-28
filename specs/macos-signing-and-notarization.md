@@ -49,6 +49,33 @@ Research and exact proposed secret names: [readiness notes](../notes/macos-signi
 Do not touch the startup-risk acknowledgment implementation or delay unsigned
 builds. No dependency on that track is required.
 
+## Review-fix security boundary (live execution blocked)
+
+The standard `security` CLI currently puts P12 and ephemeral-keychain passwords
+in subprocess argv (`import -P`, `create-keychain -p`, `unlock-keychain -p`,
+`set-key-partition-list -k`). The alternative password-auth adapter path also
+uses `notarytool store-credentials --password`; the workflow wires API-key file
+auth only. Suppressing logs/errors does not prevent local argv inspection.
+The coordinator has asked the user to approve a disposable-hosted-runner exception
+versus requiring a reviewed secure-input helper. **No answer/exception approval is
+recorded. Do not execute live signing until resolved.** Do not generalize the
+preparation/uploader scripts' no-secret-argv guarantee to the signing adapter.
+
+Tool subprocesses own isolated POSIX process groups. Timeout/cancellation/output
+limit and surviving descendants receive SIGTERM, then bounded SIGKILL (250 ms).
+Before credential cleanup the runner verifies group quiescence (no live members;
+zombies cannot execute). Failure stops further tools/cleanup/upload and preserves
+scratch for VM disposal. This is not containment of malicious dependencies that
+escape process groups. Actual macOS cancellation and credential cleanup remain
+unverified. P12 preparation explicitly exports 3DES key/cert PBE plus SHA1 MAC,
+2048 iterations for Apple interoperability; tests inspect actual fixture metadata
+and confirm the AES-encrypted source key is unchanged.
+
+The last coordinator metadata check found no repository rulesets. Immutable
+reserved-tag ruleset creation/authorization remains outstanding; protected-ref
+and environment policy alone do not establish trusted creation/no-update/no-delete.
+No remote settings were changed by this implementation session.
+
 ## Human prerequisites / decisions
 
 Before operating a signed candidate, record owner approval for:
@@ -63,7 +90,9 @@ Before operating a signed candidate, record owner approval for:
 4. Protected signing environment, reviewer(s), permitted immutable refs/tags,
    workflow/dependency change policy and clean-Mac acceptance owner. Confirm the
    account plan supports the required environment protections before relying on them.
-5. Numeric CFBundleVersion policy, reviewed entitlement policy, recommended final
+5. Explicit resolution of the password-in-argv decision above, and authorization
+   of an immutable reserved-tag ruleset before a candidate run.
+6. Numeric CFBundleVersion policy, reviewed entitlement policy, recommended final
    DMG signature and candidate approval-to-publication process. Reject any
    entitlement broadening without evidence and explicit review.
 

@@ -79,6 +79,11 @@ mv ~/Downloads/developerID_application.cer "$SIGN_DIR/developer-id.cer"
 - `package` checks that the certificate is a Developer ID Application certificate and that
   it matches the private key, then prompts for the key's passphrase and a new, non-empty
   **P12 export password**. Keep that password; step 8 asks for it.
+- The export explicitly uses 3DES key and certificate PBE, SHA1 MAC and 2048
+  iterations for macOS import compatibility rather than OpenSSL's changing defaults.
+  This is a password-protected transport profile, not the source-key encryption:
+  the original AES-encrypted private key is unchanged. Keep a strong export password
+  and encrypted storage; actual macOS import remains a candidate validation gate.
 - Result: `$SIGN_DIR/signing.p12`. If it reports that the certificate and key don't match,
   stop: get the certificate issued for this request instead.
 
@@ -127,8 +132,13 @@ cp scripts/macos-signing.env.example "$SIGN_DIR/signing.env"
 | `REVIEWER_LOGIN` | GitHub login of the person who approves signing runs |
 | `REF_PATTERN`, `REF_TYPE` | the tags (or branches) the signing workflow runs on; only refs matching it can reach the secrets |
 
-`specs/macos-signing-and-notarization.md` asks only for immutable trusted refs, so the pattern
-is not recorded anywhere else yet. The P12 export password is never read from this file.
+For the implemented candidate path, the reserved namespace is
+`v*-signing-candidate.*` (`REF_TYPE=tag`); replace the example's generic pattern after
+owner review. Environment ref policy is not tag immutability: trusted creation and
+no-update/no-delete rules must be separately authorized and established. The last
+coordinator metadata check found no repository rulesets. Do not change existing
+settings or reprovision secrets just to make a candidate pass. The P12 export
+password is never read from this file.
 
 Then create a fine-grained personal access token for the one repository. The script never uses
 the stored `gh auth login` credential, which reaches every repository and organization the
@@ -182,6 +192,13 @@ gh secret list --repo autonome/peek-builds --env macos-release-signing
 ```
 
 ## Not covered here
+
+The preparation/uploader scripts avoid secret argv, but the signing adapter's
+standard `security` CLI currently exposes P12/keychain passwords in subprocess
+argv (alternative password-auth `notarytool` also does). The user has been asked
+to approve a disposable-hosted-runner exception versus requiring a secure-input
+helper; **no answer is recorded, and live signing remains blocked**. See
+[the explicit exposure/approval boundary](../docs/macos-signing-secrets.md#signing-subprocess-password-exposure--approval-pending).
 
 The secrets being present proves nothing about signing. A real candidate signing run, Apple's
 notarization verdict, Gatekeeper on the result and a launch on a clean Mac are separate checks.

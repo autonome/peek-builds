@@ -127,7 +127,10 @@ case $command_name in
     openssl x509 -in "$work/cert.pem" -pubkey -noout > "$work/cert.pub"
     cmp -s "$work/key.pub" "$work/cert.pub" || fail 'Certificate/key mismatch; obtain the certificate issued for this key CSR.'
     printf '%s\n' 'Unlock the key again, then choose and confirm a strong nonempty P12 export password.'
-    openssl pkcs12 -export -inkey "$key" -in "$work/cert.pem" -out "$work/signing.p12" || fail 'P12 export failed; inputs preserved.'
+    # Explicit Apple interoperability profile, independent of OpenSSL defaults.
+    # P12 is a password-protected transport; the source key remains AES encrypted.
+    openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -iter 2048 \
+      -inkey "$key" -in "$work/cert.pem" -out "$work/signing.p12" || fail 'P12 export failed; inputs preserved.'
     # Probe ONLY the empty password (not a secret); never read a real password into Bash.
     if openssl pkcs12 -in "$work/signing.p12" -noout -passin pass: >/dev/null 2>&1; then
       fail 'Empty P12 password refused; rerun package and choose a nonempty password.'

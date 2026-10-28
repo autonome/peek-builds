@@ -38,7 +38,7 @@ process.exit(r.status ?? 1);
   }
   function crypto(args) {
     const fd = fs.openSync(secret, 'r');
-    try { const r = spawnSync(real, args, { stdio: ['ignore', 'pipe', 'pipe', fd], encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); }
+    try { const r = spawnSync(real, args, { stdio: ['ignore', 'pipe', 'pipe', fd], encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r; }
     finally { fs.closeSync(fd); }
   }
   function cert(key, name = 'Developer ID Application: Fixture (ABCDEFGHIJ)', oid = '1.2.840.113635.100.6.1.13') {
@@ -64,7 +64,13 @@ test('encrypted generation, PEM and DER packaging, metadata, permissions, nonove
   const generated = f.run(['generate', '--dir', dir], {}, true);
   assert.equal(generated.status, 0, generated.stderr);
   const key = path.join(dir, 'developer-id-private-key.pem');
-  assert.match(fs.readFileSync(key, 'utf8'), /ENCRYPTED/);
+  const keyPem = fs.readFileSync(key, 'utf8');
+  assert.match(keyPem, /ENCRYPTED/);
+  if (keyPem.includes('BEGIN ENCRYPTED PRIVATE KEY')) {
+    assert.match(f.crypto(['asn1parse', '-in', key]).stdout, /aes-256-cbc/i);
+  } else {
+    assert.match(keyPem, /DEK-Info: AES-256-CBC,/);
+  }
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
   for (const n of fs.readdirSync(dir)) assert.equal(fs.statSync(path.join(dir, n)).mode & 0o777, 0o600);
   const original = fs.readFileSync(key);
@@ -85,6 +91,11 @@ test('encrypted generation, PEM and DER packaging, metadata, permissions, nonove
     const args = ['package', '--dir', out, '--cert', cert, '--key', key];
     const r = f.run(args, {}, true); assert.equal(r.status, 0, r.stderr);
     assert.equal(fs.statSync(path.join(out, 'signing.p12')).mode & 0o777, 0o600);
+    const metadata = f.crypto(['pkcs12', '-in', path.join(out, 'signing.p12'), '-passin', 'fd:3', '-info', '-noout']).stderr;
+    assert.match(metadata, /MAC: sha1, Iteration 2048/);
+    assert.match(metadata, /PKCS7 Encrypted data: pbeWithSHA1And3-KeyTripleDES-CBC, Iteration 2048/);
+    assert.match(metadata, /Shrouded Keybag: pbeWithSHA1And3-KeyTripleDES-CBC, Iteration 2048/);
+    assert.deepEqual(fs.readFileSync(key), original, 'AES-encrypted source key unchanged');
     clean(out);
     const before = fs.readFileSync(path.join(out, 'signing.p12'));
     assert.notEqual(f.run(args).status, 0);

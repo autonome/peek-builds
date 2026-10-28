@@ -65,7 +65,8 @@ load_config() {
     [[ $value != *[[:cntrl:]]* ]] || fail "Config line $n: control characters are not allowed."
     case $key in
       P12_PATH|P8_PATH)
-        # Only a leading $HOME/ or ~/ is expanded; nothing else is interpreted.
+        # Match literal $HOME/ and ~/ prefixes in data; expand them ourselves.
+        # shellcheck disable=SC2016,SC2088
         case $value in '$HOME/'*) value=$HOME/${value#'$HOME/'} ;; '~/'*) value=$HOME/${value#'~/'} ;; esac ;;
     esac
     case $key in
