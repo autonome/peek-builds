@@ -196,6 +196,18 @@ body {
   margin-bottom: 8px;
 }
 
+.help-text p.gap-below {
+  margin-bottom: 8px;
+}
+
+.help-text.warning {
+  color: var(--warning-text);
+}
+
+.form-section.spaced-above {
+  margin-top: 24px;
+}
+
 .help-text.gap-below-sm {
   margin-bottom: 4px;
 }

@@ -1848,8 +1848,7 @@ const renderDarkModeSettings = async () => {
 
   // Description
   const desc = document.createElement('p');
-  desc.className = 'help-text';
-  desc.style.marginBottom = '16px';
+  desc.className = 'help-text section-intro';
   desc.textContent = 'Control how dark mode is applied to web pages loaded in Peek.';
   container.appendChild(desc);
 
@@ -1877,7 +1876,7 @@ const renderDarkModeSettings = async () => {
   modeSection.appendChild(modeTitle);
 
   const modeGroup = document.createElement('div');
-  modeGroup.style.cssText = 'display: flex; gap: 8px;';
+  modeGroup.className = 'button-row fill';
 
   const modes = [
     { value: 'off', label: 'Off', desc: 'Pages render as-is' },
@@ -1887,36 +1886,20 @@ const renderDarkModeSettings = async () => {
 
   // Restart notice (hidden by default)
   const restartNotice = document.createElement('div');
-  restartNotice.className = 'help-text';
-  restartNotice.style.cssText = 'margin-top: 8px; color: var(--warning-text); display: none;';
+  restartNotice.className = 'help-text warning gap-above is-hidden';
   restartNotice.textContent = 'Restart required for this change to take full effect.';
 
   const updateButtons = (activeValue) => {
-    modeGroup.querySelectorAll('button').forEach(btn => {
-      const isActive = btn.dataset.mode === activeValue;
-      btn.style.background = isActive ? 'var(--base0D)' : 'var(--bg-tertiary)';
-      btn.style.borderColor = isActive ? 'var(--base0D)' : 'var(--base03)';
-      btn.style.color = isActive ? 'white' : 'var(--text-primary)';
-      btn.style.fontWeight = isActive ? '600' : '400';
+    modeGroup.querySelectorAll('peek-button').forEach(btn => {
+      btn.variant = btn.dataset.mode === activeValue ? 'primary' : 'secondary';
     });
   };
 
   modes.forEach(mode => {
-    const btn = document.createElement('button');
+    const btn = document.createElement('peek-button');
     btn.textContent = mode.label;
     btn.dataset.mode = mode.value;
-    const isActive = currentMode === mode.value;
-    btn.style.cssText = `
-      padding: 8px 16px;
-      font-size: 13px;
-      background: ${isActive ? 'var(--base0D)' : 'var(--bg-tertiary)'};
-      border: 2px solid ${isActive ? 'var(--base0D)' : 'var(--base03)'};
-      border-radius: 6px;
-      color: ${isActive ? 'white' : 'var(--text-primary)'};
-      cursor: pointer;
-      flex: 1;
-      font-weight: ${isActive ? '600' : '400'};
-    `;
+    btn.variant = currentMode === mode.value ? 'primary' : 'secondary';
     btn.addEventListener('click', async () => {
       try {
         const result = await api.darkMode.set(mode.value);
@@ -1927,9 +1910,9 @@ const renderDarkModeSettings = async () => {
           modeDesc.textContent = modes.find(m => m.value === mode.value)?.desc || '';
           // Show restart notice if Tier 2 changed
           if (result.data?.restartRequired) {
-            restartNotice.style.display = 'block';
+            restartNotice.classList.remove('is-hidden');
           } else {
-            restartNotice.style.display = 'none';
+            restartNotice.classList.add('is-hidden');
           }
         }
       } catch (err) {
@@ -1943,8 +1926,7 @@ const renderDarkModeSettings = async () => {
 
   // Current mode description
   const modeDesc = document.createElement('div');
-  modeDesc.className = 'help-text';
-  modeDesc.style.marginTop = '8px';
+  modeDesc.className = 'help-text gap-above';
   modeDesc.textContent = modes.find(m => m.value === currentMode)?.desc || '';
   modeSection.appendChild(modeDesc);
 
@@ -1954,8 +1936,7 @@ const renderDarkModeSettings = async () => {
 
   // Tier explanation
   const tierSection = document.createElement('div');
-  tierSection.className = 'form-section';
-  tierSection.style.marginTop = '24px';
+  tierSection.className = 'form-section spaced-above';
 
   const tierTitle = document.createElement('h3');
   tierTitle.className = 'form-section-title';
@@ -1965,8 +1946,8 @@ const renderDarkModeSettings = async () => {
   const tierDesc = document.createElement('div');
   tierDesc.className = 'help-text';
   tierDesc.innerHTML = `
-    <p style="margin-bottom: 8px;"><strong>System</strong> sets <code>prefers-color-scheme: dark</code> so sites with built-in dark mode support switch automatically. Zero performance cost.</p>
-    <p style="margin-bottom: 8px;"><strong>Force</strong> additionally enables Chromium's auto-dark mode, which uses CIELAB-based color inversion in the rendering pipeline. This forces dark mode on all sites, including those without native support. Images are preserved. Changing this requires an app restart.</p>
+    <p class="gap-below"><strong>System</strong> sets <code>prefers-color-scheme: dark</code> so sites with built-in dark mode support switch automatically. Zero performance cost.</p>
+    <p class="gap-below"><strong>Force</strong> additionally enables Chromium's auto-dark mode, which uses CIELAB-based color inversion in the rendering pipeline. This forces dark mode on all sites, including those without native support. Images are preserved. Changing this requires an app restart.</p>
     <p><strong>Per-site dark mode</strong> (via Dark Reader) is planned for a future update.</p>
   `;
   tierSection.appendChild(tierDesc);
