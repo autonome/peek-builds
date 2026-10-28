@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  isAuthPage, effectiveTitle, titleTokens, registrableDomain, siteSignal,
+  isAuthPage, isSearchPage, effectiveTitle, titleTokens, registrableDomain, siteSignal,
   visitWeight, cutSessions, sessionCooccurrence, nameGroup, runGrouper, formatReport,
 } from './grouper.mjs';
 import { assertOutsideRepo, parseArgs } from './cli.mjs';
@@ -25,6 +25,23 @@ test('effectiveTitle treats a URL title as no title', () => {
   assert.equal(effectiveTitle('', 'https://example.com'), '');
   assert.equal(effectiveTitle('Flat for rent - Example', 'https://example.com/1'), 'Flat for rent - Example');
   assert.deepEqual(titleTokens(effectiveTitle('https://example.com/?q=zebra')), []);
+});
+
+test('effectiveTitle treats an app-assigned peek label as no title', () => {
+  assert.equal(effectiveTitle('Peek key 0', 'https://example.com'), '');
+  assert.equal(effectiveTitle(' Peek key 12 '), '');
+  assert.equal(effectiveTitle('Peek key bindings explained'), 'Peek key bindings explained');
+});
+
+test('isSearchPage matches search-results pages only', () => {
+  assert.ok(isSearchPage('https://kagi.com/search?q=x'));
+  assert.ok(isSearchPage('https://www.google.com/search?q=x'));
+  assert.ok(isSearchPage('https://www.bing.com/search?q=x'));
+  assert.ok(isSearchPage('https://duckduckgo.com/?q=x'));
+  assert.ok(isSearchPage('https://html.duckduckgo.com/html/?q=x'));
+  assert.ok(!isSearchPage('https://duckduckgo.com/'));
+  assert.ok(!isSearchPage('https://kagi.com/about'));
+  assert.ok(!isSearchPage('https://example.com/search'));
 });
 
 test('site signal: same site scores, shared path prefix scores more', () => {
@@ -89,6 +106,8 @@ function makeFixture(dir, now) {
     ['c', 'https://sheets.example/d/3', 'Berlin flat comparison sheet'],
     ['d', 'https://accounts.example/login?client_id=9', 'Sign in'],
     ['e', 'https://other.example/q?x=1', 'https://other.example/q?x=1'],
+    ['f', 'https://kagi.com/search?q=berlin+flat', 'berlin flat search'],
+    ['g', 'https://mail.example/inbox', 'Peek key 3'],
   ];
   const ins = db.prepare('INSERT INTO items (id, type, content, title) VALUES (?, ?, ?, ?)');
   for (const [id, url, title] of pages) ins.run(id, 'url', url, title);
@@ -101,7 +120,7 @@ function makeFixture(dir, now) {
   let n = 0;
   const day = 86400000;
   for (const base of [now - 2 * day, now - 5 * day]) {
-    ['a', 'b', 'c', 'd', 'e'].forEach((id, i) => vis.run('v' + n++, id, base + i * 60000, 60000, 1));
+    ['a', 'b', 'c', 'd', 'e', 'f', 'g'].forEach((id, i) => vis.run('v' + n++, id, base + i * 60000, 60000, 1));
   }
   vis.run('v' + n++, 'a', now - 40 * day, 1000, 1); // outside the window
   vis.run('v' + n++, 'gone', now - 2 * day, 1000, 1);
@@ -116,7 +135,10 @@ test('end to end on a synthetic database copy', () => {
     const file = makeFixture(dir, now);
     const result = runGrouper(file, { now });
     assert.equal(result.stats.excludedAuth, 1);
-    assert.equal(result.stats.pages, 4);
+    assert.equal(result.stats.excludedSearch, 1);
+    assert.equal(result.stats.appTitles, 1);
+    assert.equal(result.stats.pages, 5);
+    assert.ok(!result.groups.some((g) => g.members.some((m) => m.id === 'f')));
     assert.equal(result.groups.length, 1);
     const g = result.groups[0];
     assert.deepEqual(g.members.map((m) => m.id).sort().slice(0, 3), ['a', 'b', 'c']);

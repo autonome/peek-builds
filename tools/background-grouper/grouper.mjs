@@ -61,10 +61,42 @@ export function isAuthPage(url, title = '') {
   return false;
 }
 
-/** A title that is just a URL (or host/path) counts as no title. */
+// Search-results pages group only by the search site, so they are dropped. Explicit host + path list.
+const SEARCH_PAGES = [
+  { host: /(^|\.)kagi\.com$/, path: /^\/search\/?$/ },
+  { host: /(^|\.)google\.[a-z.]+$/, path: /^\/search\/?$/ },
+  { host: /(^|\.)bing\.com$/, path: /^\/search\/?$/ },
+  { host: /^duckduckgo\.com$/, path: /^\/?$/, query: 'q' },
+  { host: /^html\.duckduckgo\.com$/, path: /.*/ },
+];
+
+/** True for search-engine results pages. */
+export function isSearchPage(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = u.hostname.toLowerCase();
+  return SEARCH_PAGES.some(
+    (s) => s.host.test(host) && s.path.test(u.pathname) && (!s.query || u.searchParams.has(s.query))
+  );
+}
+
+// The peek window's label, stored as the page title for pages opened through a shortcut.
+const APP_TITLE = /^Peek key \d+$/;
+
+/** True when the title is a label the app assigned rather than the page's own. */
+export function isAppTitle(title) {
+  return APP_TITLE.test((title || '').trim());
+}
+
+/** A title that is just a URL (or host/path), or an app-assigned label, counts as no title. */
 export function effectiveTitle(title, url = '') {
   const t = (title || '').trim();
   if (!t) return '';
+  if (APP_TITLE.test(t)) return '';
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return '';
   if (url && (t === url || t === url.replace(/^https?:\/\//, ''))) return '';
   // bare host or host/path with no spaces: "example.com/foo?x=1"
@@ -381,6 +413,8 @@ export function loadData(dbPath, { days = DEFAULTS.days, now = Date.now(), entit
     const visits = [];
     const pageMap = new Map();
     let excludedAuth = 0;
+    let excludedSearch = 0;
+    let appTitles = 0;
     const excluded = new Set();
     for (const r of rows) {
       if (!/^https?:\/\//i.test(r.url || '')) continue;
@@ -391,6 +425,12 @@ export function loadData(dbPath, { days = DEFAULTS.days, now = Date.now(), entit
           excludedAuth++;
           continue;
         }
+        if (isSearchPage(r.url)) {
+          excluded.add(r.itemId);
+          excludedSearch++;
+          continue;
+        }
+        if (isAppTitle(r.title)) appTitles++;
         const title = effectiveTitle(r.title, r.url);
         pageMap.set(r.itemId, {
           id: r.itemId,
@@ -430,7 +470,7 @@ export function loadData(dbPath, { days = DEFAULTS.days, now = Date.now(), entit
       if (r.name.startsWith('space:') || r.name.startsWith('from:')) continue;
       p.tags.add(r.name);
     }
-    return { pages, visits, excludedAuth };
+    return { pages, visits, excludedAuth, excludedSearch, appTitles };
   } finally {
     db.close();
   }
@@ -438,10 +478,13 @@ export function loadData(dbPath, { days = DEFAULTS.days, now = Date.now(), entit
 
 export function runGrouper(dbPath, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
-  const { pages, visits, excludedAuth } = loadData(dbPath, o);
+  const { pages, visits, excludedAuth, excludedSearch, appTitles } = loadData(dbPath, o);
   const sessions = cutSessions(visits, o.sessionGapMs);
   const groups = groupPages(pages, sessions, o);
-  return { groups, stats: { visits: visits.length, pages: pages.length, sessions: sessions.length, excludedAuth } };
+  return {
+    groups,
+    stats: { visits: visits.length, pages: pages.length, sessions: sessions.length, excludedAuth, excludedSearch, appTitles },
+  };
 }
 
 export function formatReport({ groups, stats }, opts = {}) {
@@ -451,7 +494,7 @@ export function formatReport({ groups, stats }, opts = {}) {
     '# Background grouper report',
     '',
     `Window: last ${o.days} days. Cutoff: ${o.cutoff}.`,
-    `${stats.visits} visits, ${stats.pages} web pages after filtering (${stats.excludedAuth} sign-in/redirect pages dropped), ${stats.sessions} sessions.`,
+    `${stats.visits} visits, ${stats.pages} web pages after filtering (${stats.excludedAuth} sign-in/redirect pages and ${stats.excludedSearch} search-results pages dropped; ${stats.appTitles} pages had an app-assigned title treated as none), ${stats.sessions} sessions.`,
     `${groups.length} groups, ${grouped} of ${stats.pages} pages grouped.`,
     '',
   ];
