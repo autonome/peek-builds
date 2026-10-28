@@ -16,7 +16,7 @@ import {
 } from './sheet-hotkeys.js';
 import {
   sheetBackgroundStyle, resolveSheetOptions, withSheetOptions, backgroundNeedsReopen,
-  fitWithin, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
+  fitWithin, dataUrlToBlob, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
 } from './sheet-options.js';
 
 const api = window.app;
@@ -489,7 +489,11 @@ const setupOptionsPanel = () => {
         return;
       }
       status.textContent = 'Processing...';
-      const file = await (await fetch(dataUrl)).blob();
+      const file = dataUrlToBlob(dataUrl);
+      if (!file) {
+        status.textContent = 'That file could not be used as an image';
+        return;
+      }
       const image = await encodeBackgroundImage(file);
       choosingImage = false;
       await update({ background: { kind: 'image', image } });

@@ -92,3 +92,20 @@ describe('windowParamsForSheet', () => {
     assert.deepEqual(windowParamsForSheet({ background: { kind: 'image', image: 'p' } }), TRANSIENT);
   });
 });
+
+describe('dataUrlToBlob', () => {
+  it('decodes a base64 data URL into bytes and type', async () => {
+    const { dataUrlToBlob } = await import(modulePath);
+    const blob = dataUrlToBlob('data:image/png;base64,iVBORw==');
+    assert.equal(blob.type, 'image/png');
+    assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it('returns null for non-base64, malformed or non-string input', async () => {
+    const { dataUrlToBlob } = await import(modulePath);
+    assert.equal(dataUrlToBlob('data:text/plain,hello'), null);
+    assert.equal(dataUrlToBlob('https://example.com/a.png'), null);
+    assert.equal(dataUrlToBlob('data:image/png;base64,@@@'), null);
+    assert.equal(dataUrlToBlob(undefined), null);
+  });
+});

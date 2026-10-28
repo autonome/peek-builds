@@ -85,7 +85,25 @@ export const fitWithin = (width, height, maxWidth, maxHeight) => {
 };
 
 /** Encoded formats tried in order; the first the browser really produces wins. */
-export const IMAGE_ENCODINGS = ['image/webp', 'image/jpeg'];
+/**
+ * Decode a base64 `data:` URL into a Blob without any network request (the sheet
+ * page's CSP forbids fetch() of data: URLs). Returns null for anything else.
+ */
+export const dataUrlToBlob = (dataUrl) => {
+  const match = /^data:([^;,]*)((?:;[^;,]*)*?),(.*)$/s.exec(typeof dataUrl === 'string' ? dataUrl : '');
+  if (!match || !/;base64$/i.test(match[2])) return null;
+  let binary;
+  try {
+    binary = atob(match[3]);
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: match[1] || 'application/octet-stream' });
+};
+
+export const IMAGE_ENCODINGS =['image/webp', 'image/jpeg'];
 export const IMAGE_QUALITY = 0.85;
 
 /** True when a data URL was encoded as one of IMAGE_ENCODINGS. */
