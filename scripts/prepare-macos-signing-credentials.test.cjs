@@ -25,7 +25,8 @@ if(a[0]==='genrsa') a.splice(1,0,'-passout','fd:3');
 if(a[0]==='req') a.push('-passin','fd:3','-subj','/CN=Fixture');
 if(a[0]==='pkey') a.push('-passin','fd:3');
 if(a[0]==='pkcs12' && a.includes('-export')) a.push('-passin','fd:3','-passout','fd:4');
-const r=spawnSync(process.env.TEST_OPENSSL,a,{stdio:['inherit','inherit','inherit',fs.openSync(process.env.TEST_SECRET,'r'),fs.openSync(process.env.TEST_EMPTY || process.env.TEST_SECRET,'r')]});
+// stdin is ignored: OpenSSL 4 on macOS fails to decode keys with -passin fd: when stdin is a pipe.
+const r=spawnSync(process.env.TEST_OPENSSL,a,{stdio:['ignore','inherit','inherit',fs.openSync(process.env.TEST_SECRET,'r'),fs.openSync(process.env.TEST_EMPTY || process.env.TEST_SECRET,'r')]});
 process.exit(r.status ?? 1);
 `, { mode: 0o700 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_LOG: log, TEST_SECRET: secret, TEST_OPENSSL: real };
