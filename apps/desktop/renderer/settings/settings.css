@@ -29,9 +29,6 @@
   --scrollbar-track: var(--base01);
   --scrollbar-thumb: var(--base02);
   --scrollbar-thumb-hover: var(--base03);
-  --error-bg: color-mix(in srgb, var(--base08) 15%, var(--base00));
-  --error-border: var(--base08);
-  --error-text: var(--base08);
 }
 
 body {
@@ -258,7 +255,7 @@ peek-card.list-card {
 .cli-verb-block {
   margin-top: 12px;
   padding: 10px 12px;
-  border-left: 3px solid var(--text-muted);
+  border-left: 3px solid var(--accent);
   background: var(--bg-tertiary);
   font-size: 13px;
   transition: opacity 0.15s ease;
@@ -430,8 +427,9 @@ peek-card.list-card {
 }
 
 .item-badge.item-badge-active {
-  background: #22c55e;
-  color: white;
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
 }
 
 /* Sync status block and manual-sync result banner */
@@ -497,15 +495,14 @@ peek-card.list-card {
   font-weight: 500;
 }
 
-/* The theme has no warning token; base0A is the palette's yellow. */
 .mcp-restart-banner {
   display: none;
   margin-top: 8px;
   align-items: flex-start;
   gap: 8px;
-  color: var(--base0A);
-  background: color-mix(in srgb, var(--base0A) 10%, var(--base00));
-  border-left-color: var(--base0A);
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border-left-color: var(--warning-border);
 }
 
 .mcp-restart-banner.visible {
@@ -551,7 +548,7 @@ peek-card.list-card {
   padding: 10px 12px;
   background: var(--bg-tertiary);
   border-radius: 4px;
-  border-left: 3px solid var(--accent, var(--text-muted));
+  border-left: 3px solid var(--accent);
 }
 
 .mcp-scope-form.visible {

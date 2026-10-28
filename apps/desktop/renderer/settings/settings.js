@@ -1904,7 +1904,7 @@ const renderDarkModeSettings = async () => {
   // Restart notice (hidden by default)
   const restartNotice = document.createElement('div');
   restartNotice.className = 'help-text';
-  restartNotice.style.cssText = 'margin-top: 8px; color: var(--base09); display: none;';
+  restartNotice.style.cssText = 'margin-top: 8px; color: var(--warning-text); display: none;';
   restartNotice.textContent = 'Restart required for this change to take full effect.';
 
   const updateButtons = (activeValue) => {
