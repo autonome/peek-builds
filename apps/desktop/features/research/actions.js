@@ -79,6 +79,59 @@ export const searchQueryOf = (item) => {
 };
 
 /**
+ * The results URLs each search round has been run to, from its run events. A
+ * run event carries the URL the engine's template built (`url` in its metadata,
+ * and as its content), so the URLs are known without asking the engine again.
+ *
+ * @param {Array<{itemId: string, content?: string, metadata?: string|object}>} events
+ * @returns {Map<string, string[]>} round item id to the distinct URLs it was run to
+ */
+export const searchRunUrls = (events) => {
+  const urls = new Map();
+  for (const event of Array.isArray(events) ? events : []) {
+    if (!event || !event.itemId) continue;
+    let metadata = event.metadata;
+    if (typeof metadata === 'string' && metadata !== '') {
+      try { metadata = JSON.parse(metadata); } catch { metadata = null; }
+    }
+    if (!metadata || typeof metadata !== 'object' || metadata.kind !== 'search-run') continue;
+    const url = typeof metadata.url === 'string' && metadata.url !== ''
+      ? metadata.url
+      : (typeof event.content === 'string' ? event.content : '');
+    if (url === '') continue;
+    const known = urls.get(event.itemId) || [];
+    if (!known.includes(url)) known.push(url);
+    urls.set(event.itemId, known);
+  }
+  return urls;
+};
+
+/**
+ * What activating a search row should do: raise a window already showing one
+ * of the search's results pages, or run the search again (which adds a run).
+ * A raise is not a run.
+ *
+ * @param {unknown} item the `search-round` item
+ * @param {Map<string, string[]>} [runUrls] from `searchRunUrls`
+ * @param {Map<string, number>|Record<string, number>} [openWindows] window ids
+ *   keyed by `urlKey`
+ * @returns {{kind: 'raise', windowId: number}
+ *   | {kind: 'run', query: string}
+ *   | {kind: 'none'}}
+ */
+export const planSearchActivation = (item, runUrls, openWindows) => {
+  const query = searchQueryOf(item);
+  if (query === null) return { kind: 'none' };
+
+  const urls = (runUrls && typeof runUrls.get === 'function' ? runUrls.get(item.id) : null) || [];
+  for (const url of urls) {
+    const windowId = windowIdFor(openWindows, urlKey(url));
+    if (windowId !== null) return { kind: 'raise', windowId };
+  }
+  return { kind: 'run', query };
+};
+
+/**
  * The title a note's text reads as: its first line, with the leading `#`s of a
  * heading dropped. The same shape `features/editor` saves a text item with, so
  * a note edited here and one edited there end up titled the same way.

@@ -18,8 +18,9 @@
  * `.click()` on the selected card the way `features/spaces/home.js` relies on:
  *
  * - A page raises the window it is already open in, or opens in the research.
- * - A search runs again through `web search`, adding a run to the round it
- *   already is and opening its results in the research.
+ * - A search whose results page is already open raises that window and adds no
+ *   run; otherwise it runs again through `web search`, adding a run to the
+ *   round it already is and opening its results in the research.
  * - A note opens for editing where it is read; Enter or leaving the row saves,
  *   Escape closes the editor and a second Escape closes the view.
  *
@@ -44,6 +45,7 @@ import {
 } from './groups.js';
 import {
   urlKey, planPageActivation, searchQueryOf, planNoteSave,
+  planSearchActivation, searchRunUrls,
 } from './actions.js';
 
 const api = window.app;
@@ -66,7 +68,6 @@ let savingNote = false;
  * last draw read them. A page row raises the window it names.
  */
 let openWindows = new Map();
-
 /** The note being edited in place, or `null`. */
 let noteEditor = null;
 
@@ -256,9 +257,29 @@ const activatePage = async (item) => {
  * The row's run count does not move until the query re-resolves for another
  * reason — run events publish on no live topic.
  */
-const activateSearch = (item) => {
+const activateSearch = async (item) => {
+  // Both are read again here: a run recorded or a window opened since the last
+  // draw publishes on no live topic, so the drawn copies can be a run behind.
+  const [windows, events] = await Promise.all([
+    openPageWindows(),
+    item?.id ? searchRunEvents([item]) : [],
+  ]);
+  const plan = planSearchActivation(item, searchRunUrls(events), windows);
+  if (plan.kind === 'none') return;
+
+  if (plan.kind === 'raise') {
+    try {
+      const there = await api.window.exists(plan.windowId);
+      if (there?.exists === true) {
+        await api.window.focus(plan.windowId);
+        return;
+      }
+    } catch (err) {
+      console.error('[research] Failed to raise the search results', err);
+    }
+  }
+
   const query = searchQueryOf(item);
-  if (query === null) return;
   api.pubsub.publish('cmd:execute:web search', { search: query, params: [query] });
 };
 

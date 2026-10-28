@@ -11,7 +11,43 @@ import assert from 'node:assert/strict';
 
 import {
   urlKey, planPageActivation, searchQueryOf, noteTitleOf, planNoteSave,
+  searchRunUrls, planSearchActivation,
 } from '../../features/research/actions.js';
+
+describe('planSearchActivation', () => {
+  const round = { id: 'r1', content: 'cat pictures' };
+  const events = [{
+    itemId: 'r1',
+    content: 'https://kagi.com/search?q=cat%20pictures',
+    metadata: JSON.stringify({ kind: 'search-run', engineId: 'kagi', url: 'https://kagi.com/search?q=cat%20pictures' }),
+  }];
+
+  test('raises the window showing the results, whether it spells a space + or %20', () => {
+    const open = new Map([[urlKey('https://kagi.com/search?q=cat+pictures'), 4]]);
+    assert.deepEqual(planSearchActivation(round, searchRunUrls(events), open), { kind: 'raise', windowId: 4 });
+  });
+
+  test('runs the search when no window shows its results', () => {
+    const open = new Map([[urlKey('https://example.com/'), 4]]);
+    assert.deepEqual(planSearchActivation(round, searchRunUrls(events), open), { kind: 'run', query: 'cat pictures' });
+  });
+
+  test('runs a search that has never run', () => {
+    assert.deepEqual(planSearchActivation(round, searchRunUrls([]), new Map()), { kind: 'run', query: 'cat pictures' });
+  });
+
+  test('does nothing for a round with no query', () => {
+    assert.deepEqual(planSearchActivation({ id: 'r1', content: ' ' }, new Map(), new Map()), { kind: 'none' });
+  });
+
+  test('ignores other items and other kinds of event', () => {
+    const urls = searchRunUrls([
+      { itemId: 'r2', metadata: { kind: 'search-run', url: 'https://a.com/' } },
+      { itemId: 'r1', metadata: { kind: 'other', url: 'https://b.com/' } },
+    ]);
+    assert.equal(urls.has('r1'), false);
+  });
+});
 
 describe('urlKey', () => {
   test('matches two spellings of the same page', () => {
