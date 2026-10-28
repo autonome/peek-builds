@@ -1,316 +1,179 @@
-# Obtaining macOS signing credentials and setting up CI secrets
+# macOS signing credentials: setup on the Mac
 
-Reference checklist for Peek's downloadable macOS `.dmg` and `.zip` builds.
-This document contains no credentials. Never put private keys or passwords in
-this note, source control, chat, logs, or build artifacts.
+One pass, top to bottom, in a terminal on the Mac, from the repo root. It produces the
+Developer ID signing `.p12` and the notarization `.p8`, and uploads both, with their metadata,
+as GitHub environment secrets for the signing workflow.
 
-A **signing identity** is an Apple signing certificate **plus its matching private
-key**. Its display name looks like:
+This document holds no credentials. Never put a private key, passphrase or password in a file
+under source control, a chat, a log or a build artifact. Run in a plain shell with no session
+recording, debug wrappers or tracing (`set -x`). Passphrases are typed only at the scripts'
+hidden prompts, never as arguments or environment variables.
 
-```text
-Developer ID Application: Your Legal Name or Company (ABCDEFGHIJ)
-```
+Three steps happen in a browser, because Apple issues the certificate and the API key there:
+3, 6 and the Team ID lookup in 5. Everything else is a command.
 
-The setup script asks for that full display name. It is not an Apple ID email or
-the app's bundle ID.
-
-## 1. Developer ID Application certificate → `.p12` file
-
-You do not need the Keychain Access GUI. On newer macOS, the **Passwords** app is
-separate from certificate/private-key management, and Keychain Access may not be
-visible where older instructions expect it. If installed, try:
+## 1. Tools and working directory
 
 ```sh
-open -a "Keychain Access"
-```
-
-If that is unavailable, use the terminal-only route below. Do not use the
-Passwords app to generate/export a signing certificate.
-
-### Terminal-only route: generate a new key and certificate request
-
-Use this route if you need a new certificate. If you already have a valid P12 or
-an existing signing identity, reuse it according to your team's key-custody policy
-instead of generating another certificate unnecessarily.
-
-Preparation and uploading are separate scripts. On a trusted Mac with Bash,
-OpenSSL and Git installed, use the preparation companion (no accounts, keychain
-imports or uploads). Create the parent in approved encrypted storage first, then
-choose a **new** directory outside every git checkout:
-
-```sh
+brew install openssl gh
+export PATH="$(brew --prefix openssl)/bin:$PATH"
+openssl version          # Homebrew OpenSSL, not LibreSSL
+SIGN_DIR="$HOME/secure/peek-signing"
 mkdir -p "$HOME/secure"
-./scripts/prepare-macos-signing-credentials.sh --help
-./scripts/prepare-macos-signing-credentials.sh generate --dir "$HOME/secure/peek-signing"
 ```
 
-The script creates the directory with mode 700 and files with mode 600. It refuses
-existing directories for generation and never overwrites outputs. Do not run with
-shell recording, untrusted executables, shell startup hooks or debug wrappers.
-Passphrases go directly to OpenSSL terminal prompts, never arguments/environment.
-If CSR creation fails or is cancelled after the encrypted key was saved, that key
-is preserved. Do not rerun generation against it or delete it; retry just the CSR
-with OpenSSL (only if the CSR does not already exist):
+`$HOME/secure` should sit on encrypted storage that is backed up, and outside every git
+checkout. `SIGN_DIR` itself must not exist yet: step 2 creates it.
+
+## 2. Generate the private key and certificate request
+
+```sh
+./scripts/prepare-macos-signing-credentials.sh generate --dir "$SIGN_DIR"
+```
+
+- First prompt: a passphrase that encrypts the private key. Keep it; step 4 needs it.
+- Then the request asks for that passphrase again and for subject details: use the legal
+  name of the person or company on the Apple team. Leave the challenge password empty.
+- Result: `developer-id-private-key.pem` (mode 600, never uploaded anywhere) and
+  `developer-id.certSigningRequest`, in a mode-700 directory.
+
+If the request step fails after the key was saved, the key is kept. Do not rerun `generate`
+and do not delete the key; create only the request:
 
 ```sh
 (umask 077; set -C; openssl req -new -sha256 \
-  -key "$HOME/secure/peek-signing/developer-id-private-key.pem" \
-  > "$HOME/secure/peek-signing/developer-id.certSigningRequest")
+  -key "$SIGN_DIR/developer-id-private-key.pem" \
+  > "$SIGN_DIR/developer-id.certSigningRequest")
 ```
 
-Keep any partial CSR under review; the encrypted key remains the essential recovery
-material. Hard termination/power loss may leave a hidden `.prepare.*` scratch
-directory: inspect locally with the custodian before removal, never delete a key
-that has not been backed up.
-
-- The generation step first prompts for a passphrase to encrypt the private key.
-  Do not put that passphrase in command-line arguments.
-- The CSR step prompts for that passphrase and certificate-request subject
-  details. Use your legal/team identity information; leave optional challenge
-  password unset. Apple controls the final Developer ID certificate identity.
-- Keep `developer-id-private-key.pem` private and backed up securely. Upload only
-  `developer-id.certSigningRequest`, never the private-key file.
-
-Then:
-
-1. Open [Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list).
-2. Select the correct team and create a **Developer ID Application** certificate
-   (not Developer ID Installer, Apple Development, or Apple Distribution).
-3. Upload `developer-id.certSigningRequest` and download the issued `.cer` into
-   this private directory as `developer-id.cer`. Creation may require Account Holder.
-4. Inspect and package the certificate with the **same** encrypted key. The script
-   safely tries PEM and DER, checks the Developer ID Application subject/extension
-   and team OU, and compares public keys **before** P12 export:
+## 3. Get the certificate from Apple (browser)
 
 ```sh
-./scripts/prepare-macos-signing-credentials.sh inspect \
-  --cert "$HOME/secure/peek-signing/developer-id.cer"
+open "https://developer.apple.com/account/resources/certificates/add"
+```
+
+Choose the team, then **Developer ID Application** (not Installer, Development or
+Distribution). Upload `$SIGN_DIR/developer-id.certSigningRequest`. Creating it may need the
+team's Account Holder. Do not revoke an existing production certificate to do this. Then move
+the download into place:
+
+```sh
+mv ~/Downloads/developerID_application.cer "$SIGN_DIR/developer-id.cer"
+```
+
+(Adjust the source name if the download is named differently.)
+
+## 4. Check the certificate and package the `.p12`
+
+```sh
+./scripts/prepare-macos-signing-credentials.sh inspect --cert "$SIGN_DIR/developer-id.cer"
 ./scripts/prepare-macos-signing-credentials.sh package \
-  --dir "$HOME/secure/peek-signing" \
-  --cert "$HOME/secure/peek-signing/developer-id.cer" \
-  --key "$HOME/secure/peek-signing/developer-id-private-key.pem"
+  --dir "$SIGN_DIR" \
+  --cert "$SIGN_DIR/developer-id.cer" \
+  --key "$SIGN_DIR/developer-id-private-key.pem"
 ```
 
-`package` requires an existing owner-owned, non-symlink directory with mode 700,
-and refuses an existing `signing.p12`. Failed exports/cancellation remove scratch
-artifacts and preserve input keys/certificates. Choose a strong nonempty export
-password; empty passwords are rejected. Metadata/type/key-match checks are not
-Apple chain, revocation, expiry, account authorization or macOS acceptance checks.
+- `inspect` prints the certificate's **commonName**, for example
+  `Developer ID Application: Legal Name (ABCDEFGHIJ)`. Copy the value alone: it is the
+  signing identity asked for in step 8. The ten characters in parentheses are the Team ID.
+- `package` checks that the certificate is a Developer ID Application certificate and that
+  it matches the private key, then prompts for the key's passphrase and a new, non-empty
+  **P12 export password**. Keep that password; step 8 asks for it.
+- Result: `$SIGN_DIR/signing.p12`. If it reports that the certificate and key don't match,
+  stop: get the certificate issued for this request instead.
 
-The export prompts for the private-key passphrase and a new **P12 export password**.
-Keep both securely; the setup script needs only the P12 export password. Do not
-supply passwords through OpenSSL's command-line password options. If OpenSSL reports
-that the certificate does not match the private key, stop: obtain the certificate
-issued for this CSR rather than combining unrelated keys/certificates.
-
-Your upload script's `--p12` input is now `$HOME/secure/peek-signing/signing.p12`.
-No GUI import into the local keychain is needed for the CI setup script.
-
-### GUI alternative: reuse or generate through Keychain Access
-
-If Keychain Access is installed, on your **Mac**:
-
-1. Open **Keychain Access**.
-2. Select **login → My Certificates**.
-3. Look for **Developer ID Application: …**.
-4. Expand it. A **private key must appear underneath**.
-
-If the certificate and private key are already present, skip to exporting.
-
-### If you need a new certificate
-
-1. In Keychain Access, choose **Keychain Access → Certificate Assistant → Request
-   a Certificate From a Certificate Authority**.
-2. Enter your email and common name, select **Saved to disk**, and save the
-   certificate signing request (`.certSigningRequest`). This creates the matching
-   private key on this Mac.
-3. Open [Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list).
-4. Select the correct team, then **+ → Developer ID Application**—not Developer ID
-   Installer, Apple Development, or Apple Distribution.
-5. Upload the certificate signing request, create the certificate, and download
-   the `.cer`.
-6. Open the `.cer` to import it into Keychain Access. Confirm it appears under
-   **My Certificates**, with its private key beneath it.
-
-Creating this certificate may require the team's Account Holder. Do not revoke or
-replace an existing production certificate merely to follow this checklist.
-
-### Export the `.p12`
-
-1. Under **My Certificates**, select the Developer ID Application certificate
-   with its private key.
-2. Choose **File → Export Items**.
-3. Export as **Personal Information Exchange (`.p12`)**.
-4. Set a strong export password and store the file and password securely.
-
-You now have two setup-script inputs:
-
-- `--p12`: path to the exported `.p12`.
-- **P12 export password**: the password you just chose, not your Apple password.
-
-If `.p12` export is unavailable, the certificate may lack its matching private key.
-Downloading the `.cer` again will not recover that key; locate the original Mac or
-backup, or create a new certificate under the team's certificate policy.
-
-## 2. Full signing identity name
-
-For the terminal-only route, inspect the issued certificate's subject:
+## 5. Confirm the Team ID (browser)
 
 ```sh
-./scripts/prepare-macos-signing-credentials.sh inspect \
-  --cert "$HOME/secure/peek-signing/developer-id.cer"
+open "https://developer.apple.com/account#MembershipDetailsCard"
 ```
 
-Copy the entire **commonName** value, normally
-`Developer ID Application: Your Legal Name or Company (ABCDEFGHIJ)`. Do not include
-the `Signing identity / commonName:` label or surrounding output. This is public certificate
-metadata, not a private key. Cross-check its team suffix with Membership details.
+The **Team ID** there must equal the ten characters at the end of the signing identity.
 
-If the certificate and private key are already installed in a Mac keychain, you
-can instead run:
+## 6. Create the notarization API key (browser)
 
 ```sh
-security find-identity -v -p codesigning
+open "https://appstoreconnect.apple.com/access/integrations/api"
 ```
 
-Find the entry beginning with `Developer ID Application:`. Copy the complete text
-inside its quotation marks, including the team ID in parentheses. Do not copy the
-numbered prefix or certificate fingerprint.
+Under **Team Keys** (not an individual key), generate a key named `Peek CI Notarization`
+with **App Manager** access. If API access isn't enabled, the Account Holder must request it.
+Note the key's **Key ID** (on its row) and the **Issuer ID** (at the top of the page). Download
+the key; Apple allows this only once. Team keys reach every app on the team, not just Peek.
 
-This is the script's **Expected full Developer ID Application identity** input.
+```sh
+KEY_ID=ABCDEFGHIJ        # the Key ID from that page
+mv ~/Downloads/AuthKey_$KEY_ID.p8 "$SIGN_DIR/"
+chmod 600 "$SIGN_DIR/AuthKey_$KEY_ID.p8"
+```
 
-## 3. Apple Team ID
+Keep an encrypted backup of the `.p8` and of `$SIGN_DIR` as a whole.
 
-1. Open [Apple Developer Account](https://developer.apple.com/account).
-2. Select the same team that issued the certificate.
-3. Open **Membership details** and find **Team ID**.
-
-It is a ten-character uppercase letters/digits identifier. It should match the
-identifier in parentheses at the end of the signing identity.
-
-This is the script's **Apple team ID** input.
-
-## 4. Notarization API private key → `.p8` file
-
-This key is separate from the signing certificate. The certificate signs the app;
-the API key authenticates requests to Apple's notarization service.
-
-1. Open [App Store Connect](https://appstoreconnect.apple.com/).
-2. Select the same organization/team.
-3. Go to **Users and Access → Integrations → App Store Connect API**.
-4. Use **Team Keys**, not an individual API key for this pipeline.
-5. If API access is not enabled, the Account Holder must request it.
-6. Generate a dedicated key, for example **Peek CI Notarization**, with
-   **App Manager** access.
-7. Download its private key, usually named `AuthKey_<KEY_ID>.p8`.
-
-Apple permits downloading that private key only once. Keep an encrypted backup.
-Never paste it into chat or commit it. This file is the upload script's `--p8` input. Do **not** generate a P8 locally:
-Apple must issue the API key and associate its key ID, issuer and permissions.
-
-**Scope warning:** this is not a notarization-only permission. Team API keys can
-have access beyond Peek; review the impact if the team ships other apps.
-
-## 5. API Key ID and Issuer ID
-
-On the same **App Store Connect API → Team Keys** page:
-
-- **Key ID:** on the row for the key you created; ten uppercase letters/digits.
-- **Issuer ID:** on the team API page; a UUID with hyphens.
-
-These are the script's **Team API key ID** and **Team API issuer UUID** inputs.
-Use the values belonging to the same team/key as the `.p8`.
-
-## 6. GitHub authentication and protected environment
-
-For the account running the setup script:
+## 7. GitHub login and the protected environment
 
 ```sh
 gh auth login --hostname github.com
 gh auth status --hostname github.com
+REPO=autonome/peek-builds
+ENV=macos-release-signing
+CANDIDATE_REF_PATTERN='<tag pattern>'   # the tags the signing workflow runs on
+REVIEWER_ID=$(gh api user --jq .id)
+gh api -X PUT "repos/$REPO/environments/$ENV" \
+  -F "reviewers[][type]=User" -F "reviewers[][id]=$REVIEWER_ID" \
+  -F "deployment_branch_policy[protected_branches]=false" \
+  -F "deployment_branch_policy[custom_branch_policies]=true"
+gh api -X POST "repos/$REPO/environments/$ENV/deployment-branch-policies" \
+  -f name="$CANDIDATE_REF_PATTERN" -f type=tag
+gh api "repos/$REPO/environments/$ENV" --jq '{protection_rules, deployment_branch_policy}'
 ```
 
-That account needs permission to manage environment secrets in
-**`autonome/peek-builds`**.
+- The account needs admin rights on the repo to manage the environment and its secrets.
+- `CANDIDATE_REF_PATTERN` is not recorded anywhere yet:
+  `specs/macos-signing-and-notarization.md` asks only for immutable trusted refs. Only refs
+  matching it can reach the secrets. Use `type=branch` for a branch pattern.
+- Required reviewers on a private repository depend on the GitHub plan; the last command
+  shows what actually took effect. Set the protection before uploading any secret.
 
-In GitHub:
-
-1. Open **autonome/peek-builds → Settings → Environments**.
-2. Create **macos-release-signing**.
-3. Configure required approval and deployment branch/tag restrictions before
-   adding credentials.
-4. Restrict access to the trusted candidate refs used by the signing workflow;
-   do not allow arbitrary branches to obtain signing secrets.
-
-The exact ref policy must match the candidate workflow. The setup script does not
-configure or certify these protections. Availability of protection features can
-depend on the repository visibility and GitHub plan.
-
-## 7. Run the setup script
-
-From a checkout containing the separate upload script, preview:
+## 8. Upload the secrets
 
 ```sh
 ./scripts/setup-macos-signing-secrets.sh \
-  --p12 "$HOME/secure/peek-signing/signing.p12" \
-  --p8 "$HOME/secure/AuthKey_YOURKEYID.p8" \
+  --p12 "$SIGN_DIR/signing.p12" \
+  --p8 "$SIGN_DIR/AuthKey_$KEY_ID.p8" \
   --dry-run
+./scripts/setup-macos-signing-secrets.sh \
+  --p12 "$SIGN_DIR/signing.p12" \
+  --p8 "$SIGN_DIR/AuthKey_$KEY_ID.p8"
 ```
 
-Replace the paths with your actual local files. Then run the same command without
-`--dry-run`. It prompts locally for metadata, the hidden P12 password, and explicit
-destination confirmation before uploading.
+The dry run checks the inputs without contacting GitHub. The real run prompts for:
 
-Default destination:
-
-- Repository: `autonome/peek-builds`
-- GitHub environment: `macos-release-signing`
-
-The script uses `gh secret set` with secret values on stdin, not command-line
-arguments. Dry-run does not contact GitHub or validate remote prerequisites.
-Uploads are not transactional; if one fails, follow the script's partial-failure
-message and rerun with the same destination, auth mode, and complete inputs.
-
-### Inputs at a glance
-
-| Script input | Source |
+| Prompt | Value |
 |---|---|
-| `.p12` file | OpenSSL or Keychain Access export of certificate and matching private key |
-| P12 password | Chosen during export |
-| Signing identity | Issued certificate's commonName, or matching `security find-identity` entry |
-| Team ID | Apple Developer membership details |
-| `.p8` file | App Store Connect team API key download |
-| Key ID | That API key's row |
-| Issuer ID | Team API page |
-| GitHub access | `gh auth login`, with environment-secret permissions |
+| Developer ID Application identity | commonName from step 4 |
+| Apple team ID | from steps 4 and 5 |
+| Team API key ID | `$KEY_ID` |
+| Team API issuer UUID | Issuer ID from step 6 |
+| P12 password (hidden) | export password from step 4 |
+| Destination confirmation | `autonome/peek-builds`, environment `macos-release-signing` |
 
-### GitHub environment secret names
+It uploads, with values on stdin, never as arguments:
+`MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY`,
+`APPLE_TEAM_ID`, `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`.
 
-For API-key mode, the script uploads:
+Uploads are not transactional. If one fails, rerun the same command with the same inputs. The
+script refuses to run if Apple-ID/password secrets from the other authentication mode are
+already in the environment; remove those first.
 
-- `MACOS_CERTIFICATE_P12_BASE64`
-- `MACOS_CERTIFICATE_PASSWORD`
-- `MACOS_SIGNING_IDENTITY`
-- `APPLE_TEAM_ID`
-- `APPLE_API_KEY_P8`
-- `APPLE_API_KEY_ID`
-- `APPLE_API_ISSUER`
+Check what landed:
 
-Base64 is encoding, not encryption. Protect the P12 secret as private key material.
-Do not mix API authentication with stale Apple-ID/password authentication secrets;
-the script refuses opposite-mode environment secrets rather than deleting them.
+```sh
+gh secret list --repo "$REPO" --env "$ENV"
+```
 
-For this route, you do not need a Developer ID Installer certificate, provisioning
-profile, App Store listing, or normal Apple Account password. Reassess provisioning
-if restricted Apple capabilities are introduced later.
+## Not covered here
 
-## Related material
-
-- `notes/macos-signing-readiness.md` — detailed implementation findings and
-  official sources; initially committed in the signing worktree.
-- `docs/macos-signing-secrets.md` — setup script usage and safety details, in that
-  same worktree until landed.
-
-Signing/notarization is not a security audit or a runtime compatibility guarantee.
-Real candidate signing, Apple acceptance, Gatekeeper verification, and clean-Mac
-runtime checks remain separate rollout gates.
+The secrets being present proves nothing about signing. A real candidate signing run, Apple's
+notarization verdict, Gatekeeper on the result and a launch on a clean Mac are separate checks.
+Background and sources: `notes/macos-signing-readiness.md`; script details:
+`docs/macos-signing-secrets.md`.
