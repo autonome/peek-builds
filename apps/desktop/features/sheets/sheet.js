@@ -21,6 +21,9 @@ import {
   sheetBackgroundStyle, resolveSheetOptions, withSheetOptions, backgroundNeedsReopen,
   fitWithin, dataUrlToBlob, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
 } from './sheet-options.js';
+import {
+  CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFile, imageCardBounds, isImageItem
+} from './image-drop.js';
 
 const api = window.app;
 
@@ -72,6 +75,15 @@ const createCard = (item) => {
     removeCard(item.id);
   });
   card.appendChild(removeBtn);
+
+  if (isImageItem(item)) {
+    const img = document.createElement('img');
+    img.className = 'card-image';
+    img.src = item.image;
+    img.draggable = false;
+    card.appendChild(img);
+    return card;
+  }
 
   // Webview
   const webview = document.createElement('webview');
@@ -350,13 +362,9 @@ let openedBackgroundKind = 'opaque';
  * Downscale a picked image to at most the screen size and encode it as WebP
  * (JPEG where WebP is not produced), returning a data URL.
  */
-const encodeBackgroundImage = async (file) => {
+const encodeImageWithin = async (file, maxWidth, maxHeight) => {
   const bitmap = await createImageBitmap(file);
-  const ratio = window.devicePixelRatio || 1;
-  const { width, height } = fitWithin(
-    bitmap.width, bitmap.height,
-    Math.round(window.screen.width * ratio), Math.round(window.screen.height * ratio)
-  );
+  const { width, height } = fitWithin(bitmap.width, bitmap.height, maxWidth, maxHeight);
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -364,9 +372,61 @@ const encodeBackgroundImage = async (file) => {
   bitmap.close?.();
   for (const type of IMAGE_ENCODINGS) {
     const url = canvas.toDataURL(type, IMAGE_QUALITY);
-    if (isStoredImageDataUrl(url)) return url;
+    if (isStoredImageDataUrl(url)) return { url, width, height };
   }
   throw new Error('image could not be encoded');
+};
+
+const encodeBackgroundImage = async (file) => {
+  const ratio = window.devicePixelRatio || 1;
+  const { url } = await encodeImageWithin(
+    file,
+    Math.round(window.screen.width * ratio), Math.round(window.screen.height * ratio)
+  );
+  return url;
+};
+
+/**
+ * Add an image card at a point (relative to the grid) from a dropped image file.
+ */
+const addImageCard = async (file, point) => {
+  const grid = document.querySelector('peek-grid.cards');
+  const { url, width, height } = await encodeImageWithin(file, CARD_IMAGE_MAX_SIDE, CARD_IMAGE_MAX_SIDE);
+  const bounds = imageCardBounds(point, { width, height }, grid.freeformSnap);
+  sheetConfig.items.push({
+    id: crypto.randomUUID().slice(0, 8),
+    kind: 'image',
+    image: url,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.w,
+    height: bounds.h
+  });
+  await saveSheetConfig();
+  renderCards();
+  updateEditState();
+};
+
+/** Accept dropped image files on the grid; other drags (links, text) are left alone. */
+const setupImageDrop = () => {
+  const grid = document.querySelector('peek-grid.cards');
+  grid.addEventListener('dragover', (e) => {
+    if (!dragHasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  grid.addEventListener('drop', async (e) => {
+    if (!dragHasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    const file = pickImageFile(e.dataTransfer);
+    if (!file) return;
+    const rect = grid.getBoundingClientRect();
+    try {
+      await addImageCard(file, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    } catch (err) {
+      console.error('[sheets] Failed to add dropped image:', err);
+    }
+  });
 };
 
 /** The options panel's name box, kept in step with renames made elsewhere. */
@@ -644,6 +704,7 @@ const init = async () => {
 
   setupTitleEdit();
   setupEvents();
+  setupImageDrop();
   renderCards();
   updateEditState();
 
