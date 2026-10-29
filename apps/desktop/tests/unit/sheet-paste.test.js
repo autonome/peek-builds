@@ -9,7 +9,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { normalizePastedUrl, classifyPaste, pastePoint, urlCardBounds, shouldIgnorePaste } =
+const { normalizePastedUrl, classifyPaste, pastePoint, urlCardBounds, clickCardBounds, shouldIgnorePaste } =
   await import(join(__dirname, '..', '..', 'features', 'sheets', 'paste.js'));
 
 const clip = ({ files = [], text = '' } = {}) => ({ files, items: [], getData: () => text });
@@ -72,6 +72,21 @@ describe('urlCardBounds', () => {
     const b = urlCardBounds({ x: 0, y: 0 }, { w: 300, h: 200 }, 0);
     assert.equal(b.x, 0);
     assert.equal(b.y, 0);
+  });
+});
+
+describe('clickCardBounds', () => {
+  const visible = { left: 0, top: 0, right: 800, bottom: 600 };
+  it('centres on the click and snaps', () => {
+    assert.deepEqual(clickCardBounds({ x: 400, y: 300 }, { w: 300, h: 200 }, 20, visible), { x: 260, y: 200, w: 300, h: 200 });
+  });
+  it('moves inside the visible area near the far edges', () => {
+    const b = clickCardBounds({ x: 790, y: 590 }, { w: 300, h: 200 }, 20, visible);
+    assert.deepEqual(b, { x: 500, y: 400, w: 300, h: 200 });
+  });
+  it('shrinks to a small visible area', () => {
+    const b = clickCardBounds({ x: 50, y: 50 }, { w: 300, h: 200 }, 0, { left: 0, top: 0, right: 200, bottom: 100 });
+    assert.deepEqual(b, { x: 0, y: 0, w: 200, h: 100 });
   });
 });
 

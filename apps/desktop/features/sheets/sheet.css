@@ -134,6 +134,29 @@ body.see-through .sheet-title {
 }
 
 /* Rectangle outline shown while dragging out a new card on empty space */
+.inline-url {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border: 2px dashed var(--base0D, #6c9ef8);
+  border-radius: 8px;
+}
+
+.inline-url-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--base05, inherit);
+  background: var(--base00, #1e1e1e);
+  border: 1px solid var(--base03, #666);
+  border-radius: 4px;
+}
+
 .draw-outline {
   position: fixed;
   z-index: 50;

@@ -72,6 +72,21 @@ export const urlCardBounds = (point, size, snap = 0) => {
 };
 
 /**
+ * Bounds for a default-size card centred on a double-click point: snapped like
+ * urlCardBounds, then shrunk and moved to lie inside `visible`
+ * ({left, top, right, bottom}) when given.
+ */
+export const clickCardBounds = (point, size, snap = 0, visible = null) => {
+  const b = urlCardBounds(point, size, snap);
+  if (!visible) return b;
+  const w = Math.min(b.w, Math.max(1, visible.right - visible.left));
+  const h = Math.min(b.h, Math.max(1, visible.bottom - visible.top));
+  const x = Math.min(Math.max(b.x, visible.left), Math.max(visible.left, visible.right - w));
+  const y = Math.min(Math.max(b.y, visible.top), Math.max(visible.top, visible.bottom - h));
+  return { x, y, w, h };
+};
+
+/**
  * Whether the paste should be left alone: focus is in a text field or editable
  * element, or the add dialog / options panel is open.
  */

@@ -27,7 +27,7 @@ import {
   CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFiles, imageCardBounds, fitCardsInView, isImageItem
 } from './image-drop.js';
 import {
-  classifyPaste, pastePoint, urlCardBounds, shouldIgnorePaste
+  classifyPaste, pastePoint, urlCardBounds, clickCardBounds, normalizePastedUrl, shouldIgnorePaste
 } from './paste.js';
 
 const api = window.app;
@@ -264,9 +264,6 @@ const updateEditState = () => {
   document.querySelector('peek-grid.cards').freeformEditing = true;
 };
 
-/** Rectangle drawn on empty space that the next added card takes; null for auto-placement. */
-let pendingRect = null;
-
 /** The grid's visible area in grid coordinates, as peek-grid computes it for pushing. */
 const gridBounds = (grid) => {
   const inner = grid.shadowRoot?.querySelector('.grid');
@@ -275,36 +272,56 @@ const gridBounds = (grid) => {
   return { left: 0, top: 0, right: width, bottom: Math.max(MIN_CARD_H, window.innerHeight - top - grid.gap) };
 };
 
+/** The inline URL field on the sheet ({el, input, close}), or null when none is open. */
+let inlineUrl = null;
+
+const closeInlineUrl = () => {
+  if (!inlineUrl) return;
+  const { el } = inlineUrl;
+  inlineUrl = null;
+  el.remove();
+};
+
 /**
- * Show URL input dialog
+ * Show a dashed rectangle with a focused URL field at `rect` (grid coordinates).
+ * Enter adds a card with the normalised URL, at `rect` when `placeAtRect` is set
+ * and in the next free slot otherwise; Escape, clicking elsewhere, or empty or
+ * invalid input cancels.
  */
-const showAddDialog = () => {
-  const dialog = document.querySelector('.add-dialog');
-  const input = dialog.querySelector('.add-dialog-input');
-  dialog.style.display = '';
-  input.value = '';
+const openInlineUrl = (rect, placeAtRect = true) => {
+  closeInlineUrl();
+  const grid = document.querySelector('peek-grid.cards');
+  const inner = grid.shadowRoot?.querySelector('.grid');
+  const box = inner ? inner.getBoundingClientRect() : grid.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = 'inline-url';
+  el.style.left = `${box.left + rect.x}px`;
+  el.style.top = `${box.top + rect.y}px`;
+  el.style.width = `${rect.w}px`;
+  el.style.height = `${rect.h}px`;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'inline-url-input';
+  input.placeholder = 'Enter URL (peek:// or https://)';
+  el.appendChild(input);
+  document.body.appendChild(el);
+  inlineUrl = { el, input };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const url = normalizePastedUrl(input.value);
+      closeInlineUrl();
+      if (url) addCard(url, placeAtRect ? rect : null);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeInlineUrl();
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (inlineUrl && inlineUrl.el === el) closeInlineUrl();
+  });
   input.focus();
-};
-
-/**
- * Hide URL input dialog
- */
-const hideAddDialog = () => {
-  const dialog = document.querySelector('.add-dialog');
-  dialog.style.display = 'none';
-  pendingRect = null;
-};
-
-/**
- * Handle dialog confirm
- */
-const confirmAddDialog = () => {
-  const input = document.querySelector('.add-dialog-input');
-  const url = input.value.trim();
-  if (url) {
-    addCard(url, pendingRect);
-  }
-  hideAddDialog();
 };
 
 /** Outline element shown while drawing, and the in-progress gesture (null when idle). */
@@ -354,14 +371,26 @@ const setupDrawCard = (grid) => {
     if (!isDrag(start, end)) return;
     const inner = grid.shadowRoot?.querySelector('.grid');
     const box = inner ? inner.getBoundingClientRect() : grid.getBoundingClientRect();
-    pendingRect = dragRectToGrid(start, end, { x: box.left, y: box.top }, {
+    openInlineUrl(dragRectToGrid(start, end, { x: box.left, y: box.top }, {
       snap: grid.freeformSnap,
       bounds: gridBounds(grid)
-    });
-    showAddDialog();
+    }));
   });
 
   grid.addEventListener('pointercancel', endDrawing);
+
+  // Double-click on empty space: a default-size card at the click point
+  grid.addEventListener('dblclick', (e) => {
+    if (e.target !== grid) return;
+    const inner = grid.shadowRoot?.querySelector('.grid');
+    const box = inner ? inner.getBoundingClientRect() : grid.getBoundingClientRect();
+    openInlineUrl(clickCardBounds(
+      { x: e.clientX - box.left, y: e.clientY - box.top },
+      { w: SLOT_W, h: SLOT_H },
+      grid.freeformSnap,
+      gridBounds(grid)
+    ));
+  });
 };
 
 const keyNavState = { selectedIndex: -1 };
@@ -375,7 +404,7 @@ const keyNavShouldIgnore = (e) => {
     const el = document.querySelector(sel);
     return !!el && el.style.display !== 'none';
   };
-  return open('.add-dialog') || open('.options-panel');
+  return !!inlineUrl || open('.options-panel');
 };
 
 const keyNavHandler = createKeydownHandler(keyNavState, {
@@ -395,22 +424,9 @@ const keyNavHandler = createKeydownHandler(keyNavState, {
 const setupEvents = () => {
   document.addEventListener('keydown', keyNavHandler);
 
-  // Add dialog
-  document.querySelector('.btn-add').addEventListener('click', showAddDialog);
-  document.querySelector('.add-dialog-backdrop').addEventListener('click', hideAddDialog);
-  document.querySelector('.btn-cancel').addEventListener('click', hideAddDialog);
-  document.querySelector('.btn-confirm').addEventListener('click', confirmAddDialog);
-
-  // Enter key in dialog input
-  document.querySelector('.add-dialog-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      confirmAddDialog();
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      hideAddDialog();
-    }
+  // Add button: the URL field appears in the slot the new card will take
+  document.querySelector('.btn-add').addEventListener('click', () => {
+    openInlineUrl(slotFor(sheetConfig.items.length), false);
   });
 
   // Listen for freeform layout changes from peek-grid (drag/resize)
@@ -594,7 +610,7 @@ const setupPaste = () => {
     const isOpen = (sel) => document.querySelector(sel)?.style.display !== 'none';
     if (shouldIgnorePaste({
       target: document.activeElement,
-      dialogOpen: isOpen('.add-dialog'),
+      dialogOpen: !!inlineUrl,
       panelOpen: isOpen('.options-panel')
     })) return;
     const pasted = classifyPaste(e.clipboardData);
@@ -648,6 +664,10 @@ const setupTitleEdit = () => {
   api.escape?.onEscape?.(() => {
     if (drawing) {
       endDrawing();
+      return { handled: true };
+    }
+    if (inlineUrl) {
+      closeInlineUrl();
       return { handled: true };
     }
     return { handled: isNameEditing() };
