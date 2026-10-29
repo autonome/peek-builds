@@ -10,6 +10,8 @@ const plist = require('plist');
 const { SigningError, runCandidate, validateNotary } = require('./macos-signing.cjs');
 const block = code => { throw new SigningError(code); };
 const need = (ok, code) => { if (!ok) block(code); };
+// Apple's public CA download, vendored for offline CI (DER, not a trust override).
+const DEVELOPER_ID_G2_SHA256 = 'f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a';
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 function runner(file, args, options = {}) {
@@ -363,6 +365,11 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       return Promise.all(['peek-desktop-helper', 'nonactivating-window.node'].map(name => native(path.join(root, 'apps/desktop/dist/native', name))));
     },
     async prepare(policy, secrets) {
+      let intermediate;
+      try { intermediate = fs.readFileSync(path.join(root, 'scripts/DeveloperIDG2CA.cer')); }
+      catch { block('intermediate-certificate'); }
+      need(crypto.createHash('sha256').update(intermediate).digest('hex') === DEVELOPER_ID_G2_SHA256,
+        'intermediate-certificate-hash');
       scratch = fs.mkdtempSync(path.join(scratchRoot, 'peek-signing-'));
       fs.chmodSync(scratch, 0o700);
       keychain = path.join(scratch, 'candidate.keychain-db');
@@ -380,12 +387,34 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       await call('security', ['set-keychain-settings', '-lut', '14400', keychain]);
       await call('security', ['unlock-keychain', '-p', password, keychain]);
       await call('security', ['import', p12, '-k', keychain, '-P', secrets.MACOS_CERTIFICATE_PASSWORD, '-T', '/usr/bin/codesign']);
+      // Import exactly the bytes checked above, only into our ephemeral keychain.
+      const intermediatePath = path.join(scratch, 'DeveloperIDG2CA.cer');
+      fs.writeFileSync(intermediatePath, intermediate, { mode: 0o600 });
+      await call('security', ['import', intermediatePath, '-k', keychain]);
       await call('security', ['set-key-partition-list', '-S', 'apple-tool:,apple:,codesign:', '-s', '-k', password, keychain]);
       searchChanged = true;
       await call('security', ['list-keychains', '-d', 'user', '-s', keychain, ...originalList]);
       const identities = await text('security', ['find-identity', '-v', '-p', 'codesigning', keychain]);
       const matches = [...identities.matchAll(/^\s*\d+\) ([A-Fa-f0-9]{40}) "([^"\n]+)"\s*$/gm)];
-      need(matches.length === 1 && matches[0][2] === policy.identity, 'imported-identity');
+      if (matches.length !== 1 || matches[0][2] !== policy.identity) {
+        // Only parsed public certificate names/trust tokens may leave the private
+        // child-output boundary. JSON quoting prevents multiline/log injection.
+        if (matches.length === 0) {
+          const all = await text('security', ['find-identity', '-p', 'codesigning', keychain]);
+          const present = [...all.matchAll(/^\s*\d+\) [A-Fa-f0-9]{40} "([^"\r\n]+)"(?:[ \t]+\(([^\r\n)]*)\))?[ \t]*$/gm)];
+          console.error(present.length ? 'macOS identity diagnostic: identities present but none valid' :
+            'macOS identity diagnostic: zero identities at all');
+          for (const entry of present) {
+            const reason = /^CSSMERR_[A-Z0-9_]+$/.test(entry[2] || '') ? entry[2] : 'trust reason unavailable';
+            console.error(`macOS identity diagnostic: name=${JSON.stringify(entry[1])}; trust=${reason}`);
+          }
+        } else {
+          console.error('macOS identity diagnostic: valid identity name/count mismatch');
+          console.error(`macOS identity diagnostic: configured=${JSON.stringify(policy.identity)}`);
+          for (const entry of matches) console.error(`macOS identity diagnostic: found=${JSON.stringify(entry[2])}; equal=${entry[2] === policy.identity}`);
+        }
+        block('imported-identity');
+      }
       identityHash = matches[0][1];
       let authArgs;
       let p8;

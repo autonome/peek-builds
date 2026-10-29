@@ -1,6 +1,6 @@
 # macOS Developer ID signing readiness
 
-Status: **candidate .3 reached ephemeral-keychain import and failed; no live signing success**.
+Status: **candidates .4/.5 imported the P12 but failed identity validation; no live signing success**.
 The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral policy,
 production adapter and manual candidate workflow have offline tests. The spec
 stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
@@ -15,6 +15,34 @@ publication remain unapproved. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
+
+## Candidate .4/.5 identity evidence and offline remediation
+
+Candidates .4 (run `40847896812`) and .5 (run `40849118464`), both on
+`3ae7810a83e90ba9bbd59b147425b3dfa7506adf`, passed `security import` with the
+re-wrapped 3DES/SHA-1 P12, then blocked at `imported-identity`. The same P12
+reported one valid identity in a fresh keychain on the owner's Mac.
+`MACOS_SIGNING_IDENTITY` and `APPLE_TEAM_ID` were re-set before .5. A missing
+Developer ID G2 intermediate on the fresh macos-15 runner is the leading,
+unproven explanation; a residual configured-name mismatch remains possible.
+
+The adapter now vendors Apple's public
+[`DeveloperIDG2CA.cer`](https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer)
+in `scripts/DeveloperIDG2CA.cer`, pinned to SHA-256
+`f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a`.
+It checks the bytes before keychain setup and imports those same bytes into only
+the ephemeral candidate keychain before identity lookup. No CI network fetch,
+login/system-keychain import, or explicit trust override is added. The certificate
+is Developer ID Certification Authority, OU G2, issued by Apple Root CA, valid
+2021-09-22 through 2031-09-17.
+
+An identity refusal now explains zero identities, present-but-invalid identities
+(with parsed public names and CSSM trust reasons), or valid-name/count mismatch
+(with found/configured names). Raw child output and credentials remain private;
+the final `macOS candidate blocked: imported-identity` line is unchanged. Stubbed
+security tests cover ordering, hash refusal and all three diagnostic branches.
+A new candidate run after landing is still required to prove runner behaviour;
+this offline change does not authorize a tag, dispatch or credential operation.
 
 ## Execution authorization and remaining live checks
 

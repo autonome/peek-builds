@@ -32,6 +32,8 @@ function fixture(t, mutation = {}) {
     const target = path.join(root, 'apps/desktop/dist/native', path.basename(name));
     write(target, 'MACHO'); fs.chmodSync(target, 0o755);
   }
+  write(path.join(root, 'scripts/DeveloperIDG2CA.cer'), mutation.badIntermediate ? 'tampered' :
+    fs.readFileSync(path.join(__dirname, 'DeveloperIDG2CA.cer')));
   const calls = [];
   let app, zipApp, imageApp;
   function makeApp(target) {
@@ -67,6 +69,7 @@ function fixture(t, mutation = {}) {
     if (file === 'security') {
       if (args[0] === 'list-keychains' && !args.includes('-s')) return ok('    "/Users/runner/Library/Keychains/login.keychain-db"\n');
       if (args[0] === 'create-keychain') write(target, 'DUMMY KEYCHAIN');
+      if (args[0] === 'find-identity' && mutation.identities) return ok(args.includes('-v') ? mutation.identities.valid : mutation.identities.all);
       if (args[0] === 'find-identity') return ok(`  1) ${'B'.repeat(40)} "${mutation.identity || IDENTITY}"\n     1 valid identities found\n`);
       return ok();
     }
@@ -129,6 +132,48 @@ function fixture(t, mutation = {}) {
   return { adapter, calls, root, temp, output,
     async execute() { try { return await runCandidate(input, secrets, adapter.operations); }
       finally { await adapter.destroy(); } } };
+}
+
+test('pinned intermediate is imported only into the ephemeral keychain before identity lookup', async t => {
+  const f = fixture(t);
+  await f.execute();
+  const imports = f.calls.filter(c => c.file === 'security' && c.args[0] === 'import');
+  assert.equal(imports.length, 2);
+  assert.equal(path.basename(imports[1].args[1]), 'DeveloperIDG2CA.cer');
+  assert.equal(imports[1].args[3], imports[0].args[3]);
+  assert.ok(imports[1].args[3].startsWith(f.temp + path.sep));
+  assert.ok(f.calls.indexOf(imports[1]) < f.calls.findIndex(c => c.args[0] === 'find-identity'));
+});
+
+test('intermediate hash mismatch refuses before any security operation', async t => {
+  const f = fixture(t, { badIntermediate: true });
+  await assert.rejects(f.execute(), { code: 'intermediate-certificate-hash' });
+  assert.equal(f.calls.some(c => c.file === 'security'), false);
+});
+
+for (const scenario of [
+  { name: 'zero identities at all', valid: '0 valid identities found', all: '0 identities found' },
+  { name: 'identities present but none valid', valid: '0 valid identities found',
+    all: `  1) ${'B'.repeat(40)} "${IDENTITY}" (CSSMERR_TP_NOT_TRUSTED)\n`, reason: 'CSSMERR_TP_NOT_TRUSTED' },
+  { name: 'valid identity name/count mismatch', valid: `  1) ${'B'.repeat(40)} "Another Owner"\n`, all: '', reason: 'Another Owner' },
+]) {
+  test(`identity failure explains ${scenario.name} without private output`, async t => {
+    const f = fixture(t, { identities: scenario });
+    const lines = [];
+    const original = console.error;
+    console.error = line => lines.push(line);
+    try { await assert.rejects(f.execute(), { code: 'imported-identity' }); }
+    finally { console.error = original; }
+    const log = lines.join('\n');
+    assert.ok(log.includes(scenario.name));
+    if (scenario.reason) assert.ok(log.includes(scenario.reason));
+    if (scenario.name.startsWith('valid')) assert.ok(log.includes(IDENTITY));
+    assert.ok(!log.includes(secrets.MACOS_CERTIFICATE_PASSWORD));
+    assert.ok(!log.includes(secrets.APPLE_API_KEY_P8));
+    const lookups = f.calls.filter(c => c.args[0] === 'find-identity');
+    assert.equal(lookups.length, scenario.name.startsWith('valid') ? 1 : 2);
+    assert.ok(lookups.every(c => c.args.at(-1).startsWith(f.temp + path.sep)));
+  });
 }
 
 test('output through a portable temp-root alias uses canonical paths throughout publication and cleanup', async t => {
