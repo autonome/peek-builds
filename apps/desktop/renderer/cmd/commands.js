@@ -120,6 +120,8 @@ function createProxyCommand(cmdData) {
     params: cmdData.params || [],
     // Order among top-level rows that pair commands with the same option (object-pairs.js)
     ...(cmdData.pairPriority != null ? { pairPriority: cmdData.pairPriority } : {}),
+    // Raw typed text this command takes though it is not a command name (input-claims.js)
+    ...(cmdData.claimsInput ? { claimsInput: cmdData.claimsInput } : {}),
   };
 
   // Noun proxy — dispatch via noun:{capability}:{nounName} instead of cmd:execute:{name}

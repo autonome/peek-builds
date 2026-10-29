@@ -1499,3 +1499,42 @@ describe('Edge cases', () => {
     assert.equal(machine.is(States.IDLE), false);
   });
 });
+
+// ===== Input claimed by a command =====
+
+describe('TYPING + Enter on input a command claims', () => {
+  it('runs the claiming command and closes', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    machine._actionLog.length = 0;
+
+    machine.dispatch(Events.ENTER, { value: '#todo', claimedBy: 'search' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('executeClaimingCommand'));
+    assert.ok(machine._actionLog.indexOf('executeClaimingCommand') < machine._actionLog.indexOf('clearInput'));
+    assert.ok(!machine._actionLog.includes('executeCommand'));
+  });
+
+  it('does nothing when no command claims the text', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    machine._actionLog.length = 0;
+
+    machine.dispatch(Events.ENTER, { value: '#todo', claimedBy: null });
+
+    assert.equal(machine.getState(), States.TYPING);
+    assert.ok(!machine._actionLog.includes('executeClaimingCommand'));
+  });
+
+  it('a URL still opens as a URL ahead of a claim', () => {
+    const machine = makeMachine();
+    machine.setState(States.TYPING);
+    machine._actionLog.length = 0;
+
+    machine.dispatch(Events.ENTER, { value: 'a.io', isURL: true, claimedBy: 'search' });
+
+    assert.ok(machine._actionLog.includes('openURL'));
+    assert.ok(!machine._actionLog.includes('executeClaimingCommand'));
+  });
+});

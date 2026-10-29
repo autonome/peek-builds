@@ -251,8 +251,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       return payload?.isURL === true;
     },
     hasActionUrl: (payload) => typeof payload?.url === 'string' && payload.url.length > 0,
-    isAllHashtags: (payload) => {
-      return payload?.allHashtags === true;
+    // The typed text matches no command name and a command claims it (input-claims.js)
+    inputClaimedByCommand: (payload) => {
+      return typeof payload?.claimedBy === 'string' && payload.claimedBy.length > 0;
     },
     // "The row the user can SEE selected is a url-history row / a command row."
     // Derived from the FSM — no payload backdoor, so what Enter does always
@@ -462,14 +463,13 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           actions: ['openURL', 'recordFrecency', 'clearInput', 'shutdown'],
         },
         {
-          // All-hashtag input ("#todo #today") opens the search view filtered
-          // by those tags. The narrow shape (every token is `#name`) is an
-          // explicit user intent to query items by tag, distinct from the
-          // generic "type random text → web search" fallback that was
+          // Input a command declares it claims (e.g. "#todo #today") runs that
+          // command with the typed text. Claims are narrow shapes, distinct from
+          // the generic "type random text → web search" fallback that was
           // intentionally removed.
-          guard: 'isAllHashtags',
+          guard: 'inputClaimedByCommand',
           target: States.CLOSING,
-          actions: ['openSearch', 'clearInput', 'shutdown'],
+          actions: ['executeClaimingCommand', 'clearInput', 'shutdown'],
         },
         {
           // A url-history row is visibly selected (the list auto-opened and the

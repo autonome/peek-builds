@@ -15,6 +15,7 @@ import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
+import { findClaimingCommand } from './input-claims.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -2743,25 +2744,12 @@ function actionHandlers() {
       runUrlAction(payload?.url);
     },
 
-    openSearch(payload) {
-      const trimmedText = (payload?.value || state.typed || '').trim();
-      if (!trimmedText) return;
-
-      log('cmd:panel', 'Opening search for:', trimmedText);
-      // No `key` — each invocation creates a new search window so users
-      // can compare tag results side-by-side. The previous single-instance
-      // `key:'search-home'` collapsed every `#tag` invocation onto the same
-      // window and discarded the new query because the keepLive-reuse path
-      // never gave the renderer the new URL.
-      api.window.open(`peek://search/home.html?q=${encodeURIComponent(trimmedText)}`, {
-        role: 'workspace',
-        width: 700,
-        height: 768,
-        trackingSource: 'cmd',
-        trackingSourceId: 'search'
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open search:', error);
-      });
+    // Enter on text no command name matches but a command claims (input-claims.js):
+    // run that command with the typed text.
+    executeClaimingCommand(payload) {
+      const name = payload?.claimedBy;
+      if (!name) return;
+      doExecute(name, (payload?.value || state.typed || '').trim());
     },
 
     openUrlGhost() {
@@ -3174,10 +3162,8 @@ async function render() {
       // fake TAB for the param case, so Enter's behavior disagreed with what the
       // list rendered.)
 
-      // All tokens are `#name` (no inner whitespace, no `#`-only): treat as
-      // a tag-search shortcut. Routes to the `search` view filtered by tags.
-      const tokens = trimmedText.split(/\s+/).filter(Boolean);
-      const allHashtags = tokens.length > 0 && tokens.every(t => /^#[^\s#]+$/.test(t));
+      // Text that matches no command name but some command claims (input-claims.js).
+      const claimedBy = state.matches.length === 0 ? findClaimingCommand(state.commands, trimmedText) : null;
 
       // URL ghost: active when there's a ghost suggestion (the frecency-best
       // substring match) and there are no command matches. Substring-everywhere:
@@ -3199,7 +3185,7 @@ async function render() {
         value: commandInput.value,
         isURL: urlResult.valid,
         url: urlResult.url,
-        allHashtags,
+        claimedBy,
         commandName: name,
         typed: commandInput.value,
         hasUrlGhost,

@@ -289,6 +289,7 @@ export function registerLazyTile(
           accepts: cmd.accepts,
           produces: cmd.produces,
           params: cmd.params,
+          claimsInput: cmd.claimsInput,
         })),
       },
     );

@@ -62,6 +62,7 @@ export interface ManifestCommandDecl {
   accepts?: string[];
   produces?: string[];
   params?: unknown[];
+  claimsInput?: { tokenPattern: string };
 }
 
 export interface ManifestNounDecl {
@@ -339,6 +340,7 @@ function extractCommands(manifest: TileManifest): ManifestCommandDecl[] {
     accepts: (cmd as { accepts?: string[] }).accepts,
     produces: (cmd as { produces?: string[] }).produces,
     params: (cmd as { params?: unknown[] }).params,
+    claimsInput: cmd.claimsInput,
   }));
 }
 

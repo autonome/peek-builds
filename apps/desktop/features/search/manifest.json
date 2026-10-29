@@ -56,7 +56,8 @@
     {
       "name": "search",
       "description": "Search items by text and tags",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "claimsInput": { "tokenPattern": "^#[^\\s#]+$" }
     }
   ]
 }

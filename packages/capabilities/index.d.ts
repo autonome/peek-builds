@@ -495,6 +495,12 @@ export interface TileCommand {
     description?: string;
     [key: string]: unknown;
   }>;
+  /**
+   * Typed text that is not a command name but this command takes anyway: Enter on it
+   * runs the command with the text. Matches when every whitespace-separated token
+   * matches `tokenPattern` (a regular expression source).
+   */
+  claimsInput?: { tokenPattern: string };
 }
 
 /**

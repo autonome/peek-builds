@@ -11,6 +11,9 @@ const api = window.app;
 
 const baseAddress = 'peek://search/home.html';
 
+// Typing only `#tags` and pressing Enter searches by those tags: every token is `#name`.
+const HASHTAG_QUERY_CLAIM = { tokenPattern: '^#[^\\s#]+$' };
+
 let isOpeningSearch = false;
 
 const openSearchWindow = async (query) => {
@@ -43,8 +46,9 @@ const init = async () => {
   api.commands.register({
     name: 'search',
     description: 'Search items by text and tags',
+    claimsInput: HASHTAG_QUERY_CLAIM,
     execute: async (params) => {
-      const query = params?.text || '';
+      const query = params?.text || params?.search || '';
       openSearchWindow(query);
     }
   });

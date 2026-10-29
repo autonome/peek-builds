@@ -487,6 +487,7 @@ function buildAPI(): Record<string, unknown> {
       let accepts: unknown;
       let produces: unknown;
       let params: unknown;
+      let claimsInput: unknown;
 
       if (typeof nameOrCommand === 'string') {
         name = nameOrCommand;
@@ -505,6 +506,7 @@ function buildAPI(): Record<string, unknown> {
           accepts?: unknown;
           produces?: unknown;
           params?: unknown;
+          claimsInput?: unknown;
         };
         if (!cmd.name || typeof cmd.execute !== 'function') {
           console.error('[tile-preload] commands.register: name and execute are required');
@@ -518,6 +520,7 @@ function buildAPI(): Record<string, unknown> {
         accepts = cmd.accepts;
         produces = cmd.produces;
         params = cmd.params;
+        claimsInput = cmd.claimsInput;
       } else {
         console.error('[tile-preload] commands.register: invalid arguments');
         return;
@@ -553,6 +556,8 @@ function buildAPI(): Record<string, unknown> {
         accepts: accepts || [],
         produces: produces || [],
         params: params || [],
+        // Serializable only (a tile's functions cannot cross the process boundary)
+        ...(claimsInput && typeof claimsInput === 'object' ? { claimsInput } : {}),
       };
       ipcRenderer.send('tile:pubsub:publish', {
         token: tileToken,
