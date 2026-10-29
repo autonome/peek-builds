@@ -2,6 +2,24 @@ use rusqlite::{params, Connection};
 use crate::helpers::generate_tag_id;
 use crate::types::SCHEMA_VERSION;
 
+/// Add each listed column to `table` when it is not already present.
+fn add_missing_columns(conn: &Connection, table: &str, columns: &[(&str, &str)]) {
+    for (name, decl) in columns {
+        let exists: bool = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name=?", table),
+                [name],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0) > 0;
+        if !exists {
+            if let Err(e) = conn.execute(&format!("ALTER TABLE {} ADD COLUMN {} {}", table, name, decl), []) {
+                println!("[peek-core] Warning: Failed to add {}.{}: {}", table, name, e);
+            }
+        }
+    }
+}
+
 /// Initialize the database schema, running all migrations as needed.
 /// Takes an open Connection — caller is responsible for opening the DB at the right path.
 /// Returns the device_id (generated or loaded from settings).
@@ -164,6 +182,12 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     source TEXT DEFAULT 'direct',
                     window_type TEXT DEFAULT 'main',
                     metadata TEXT DEFAULT '{}',
+                    source_id TEXT DEFAULT '',
+                    scroll_depth INTEGER DEFAULT 0,
+                    interacted INTEGER DEFAULT 0,
+                    prev_id TEXT DEFAULT NULL,
+                    next_id TEXT DEFAULT NULL,
+                    pushed_at INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
                 );
 
@@ -195,7 +219,8 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     value REAL,
                     occurredAt INTEGER NOT NULL,
                     metadata TEXT DEFAULT '{}',
-                    createdAt INTEGER NOT NULL
+                    createdAt INTEGER NOT NULL,
+                    pushedAt INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
                 CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
@@ -432,6 +457,12 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     source TEXT DEFAULT 'direct',
                     window_type TEXT DEFAULT 'main',
                     metadata TEXT DEFAULT '{}',
+                    source_id TEXT DEFAULT '',
+                    scroll_depth INTEGER DEFAULT 0,
+                    interacted INTEGER DEFAULT 0,
+                    prev_id TEXT DEFAULT NULL,
+                    next_id TEXT DEFAULT NULL,
+                    pushed_at INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
@@ -486,7 +517,8 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     value REAL,
                     occurredAt INTEGER NOT NULL,
                     metadata TEXT DEFAULT '{}',
-                    createdAt INTEGER NOT NULL
+                    createdAt INTEGER NOT NULL,
+                    pushedAt INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
                 CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
@@ -495,6 +527,25 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
             println!("[peek-core] Warning: Failed to create item_events table: {}", e);
         }
     }
+
+    // Add sync columns to item_events / item_visits (for existing installs)
+    add_missing_columns(
+        conn,
+        "item_events",
+        &[("pushedAt", "INTEGER NOT NULL DEFAULT 0")],
+    );
+    add_missing_columns(
+        conn,
+        "item_visits",
+        &[
+            ("source_id", "TEXT DEFAULT ''"),
+            ("scroll_depth", "INTEGER DEFAULT 0"),
+            ("interacted", "INTEGER DEFAULT 0"),
+            ("prev_id", "TEXT DEFAULT NULL"),
+            ("next_id", "TEXT DEFAULT NULL"),
+            ("pushed_at", "INTEGER NOT NULL DEFAULT 0"),
+        ],
+    );
 
     // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
     let tags_has_integer_id: bool = conn
@@ -1092,5 +1143,80 @@ mod tests {
             )
             .unwrap();
         assert_eq!(sync_error.as_deref(), Some("permanent: 400 bad request"));
+    }
+
+    fn column_names(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("SELECT name FROM pragma_table_info('{}')", table))
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    }
+
+    const NEW_VISIT_COLUMNS: [&str; 6] =
+        ["source_id", "scroll_depth", "interacted", "prev_id", "next_id", "pushed_at"];
+
+    #[test]
+    fn test_fresh_install_has_sync_columns() {
+        let conn = open_memory_db();
+        ensure_database_initialized(&conn).unwrap();
+        let visits = column_names(&conn, "item_visits");
+        for c in NEW_VISIT_COLUMNS {
+            assert!(visits.iter().any(|v| v == c), "item_visits missing {}", c);
+        }
+        assert!(column_names(&conn, "item_events").iter().any(|c| c == "pushedAt"));
+    }
+
+    #[test]
+    fn test_migration_adds_sync_columns_to_old_tables_and_is_repeatable() {
+        let conn = open_memory_db();
+        ensure_database_initialized(&conn).unwrap();
+        conn.execute_batch(
+            "
+            DROP TABLE item_visits;
+            DROP TABLE item_events;
+            CREATE TABLE item_visits (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                duration INTEGER DEFAULT 0,
+                source TEXT DEFAULT 'direct',
+                window_type TEXT DEFAULT 'main',
+                metadata TEXT DEFAULT '{}'
+            );
+            CREATE TABLE item_events (
+                id TEXT PRIMARY KEY NOT NULL,
+                itemId TEXT NOT NULL,
+                content TEXT,
+                value REAL,
+                occurredAt INTEGER NOT NULL,
+                metadata TEXT DEFAULT '{}',
+                createdAt INTEGER NOT NULL
+            );
+            INSERT INTO item_visits (id, item_id, timestamp) VALUES ('v', 'i', 1);
+            INSERT INTO item_events (id, itemId, occurredAt, createdAt) VALUES ('e', 'i', 1, 1);
+            ",
+        )
+        .unwrap();
+
+        ensure_database_initialized(&conn).unwrap();
+        ensure_database_initialized(&conn).unwrap();
+
+        let visits = column_names(&conn, "item_visits");
+        for c in NEW_VISIT_COLUMNS {
+            assert_eq!(visits.iter().filter(|v| *v == c).count(), 1, "item_visits {}", c);
+        }
+        assert_eq!(column_names(&conn, "item_events").iter().filter(|c| *c == "pushedAt").count(), 1);
+
+        let pushed: i64 = conn
+            .query_row("SELECT pushed_at FROM item_visits WHERE id = 'v'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pushed, 0);
+        let pushed: i64 = conn
+            .query_row("SELECT pushedAt FROM item_events WHERE id = 'e'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pushed, 0);
     }
 }

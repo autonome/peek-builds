@@ -5,6 +5,7 @@
 
 use chrono::Utc;
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 
 use crate::helpers::{calculate_frecency, generate_tag_id};
 use crate::types::ServerItem;
@@ -69,6 +70,326 @@ pub fn set_last_sync(conn: &Connection, timestamp: &str) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to set last_sync: {}", e))?;
     Ok(())
+}
+
+fn get_setting(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM settings WHERE key = ?", params![key], |row| row.get(0))
+        .ok()
+}
+
+fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        params![key, value],
+    )
+    .map_err(|e| format!("Failed to set {}: {}", key, e))?;
+    Ok(())
+}
+
+/// Get the watermark for pulling events from the server.
+pub fn get_last_events_pull(conn: &Connection) -> Result<Option<String>, String> {
+    Ok(get_setting(conn, "last_events_pull"))
+}
+
+/// Set the watermark for pulling events from the server.
+pub fn set_last_events_pull(conn: &Connection, timestamp: &str) -> Result<(), String> {
+    set_setting(conn, "last_events_pull", timestamp)
+}
+
+/// Get the watermark for pulling visits from the server.
+pub fn get_last_visits_pull(conn: &Connection) -> Result<Option<String>, String> {
+    Ok(get_setting(conn, "last_visits_pull"))
+}
+
+/// Set the watermark for pulling visits from the server.
+pub fn set_last_visits_pull(conn: &Connection, timestamp: &str) -> Result<(), String> {
+    set_setting(conn, "last_visits_pull", timestamp)
+}
+
+/// An item event ready to be pushed. `item_id` holds the item's `sync_id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushEvent {
+    pub id: String,
+    pub item_id: String,
+    pub content: Option<String>,
+    pub value: Option<f64>,
+    pub occurred_at: i64,
+    pub metadata: serde_json::Value,
+    pub created_at: i64,
+}
+
+/// An item visit ready to be pushed. `item_id` holds the item's `sync_id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushVisit {
+    pub id: String,
+    pub item_id: String,
+    pub timestamp: i64,
+    pub duration: i64,
+    pub source: String,
+    pub source_id: String,
+    pub window_type: String,
+    pub metadata: serde_json::Value,
+    pub scroll_depth: i64,
+    pub interacted: i64,
+    pub prev_id: Option<String>,
+    pub next_id: Option<String>,
+}
+
+/// An event as the server returns it; `item_id` is the server item id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerEvent {
+    pub id: String,
+    pub item_id: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub value: Option<f64>,
+    pub occurred_at: i64,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: i64,
+}
+
+/// A visit as the server returns it; `item_id` is the server item id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerVisit {
+    pub id: String,
+    pub item_id: String,
+    pub timestamp: i64,
+    #[serde(default)]
+    pub duration: Option<i64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub window_type: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub scroll_depth: Option<i64>,
+    #[serde(default)]
+    pub interacted: Option<i64>,
+    #[serde(default)]
+    pub prev_id: Option<String>,
+    #[serde(default)]
+    pub next_id: Option<String>,
+}
+
+/// Result of merging one pulled event or visit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// A row was written (or, for an event, already present).
+    Merged,
+    /// The row's item is not present locally, or the row is malformed.
+    Skipped,
+    /// A local visit with an unpushed change was left alone.
+    KeptLocal,
+}
+
+fn parse_metadata(raw: Option<String>) -> serde_json::Value {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn metadata_to_string(meta: &Option<serde_json::Value>) -> String {
+    match meta {
+        None | Some(serde_json::Value::Null) => "{}".to_string(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(v) => v.to_string(),
+    }
+}
+
+fn local_item_id_for_sync_id(conn: &Connection, sync_id: &str) -> Option<String> {
+    if sync_id.is_empty() {
+        return None;
+    }
+    conn.query_row(
+        "SELECT id FROM items WHERE sync_id = ? LIMIT 1",
+        params![sync_id],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Events not yet delivered (`pushedAt = 0`) whose item has a sync id, oldest first.
+/// Rows with a non-finite `occurredAt` or `createdAt` are skipped and stay unpushed.
+pub fn get_events_to_push(conn: &Connection, limit: usize) -> Result<Vec<PushEvent>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.id, i.sync_id, e.content, e.value, e.occurredAt, e.metadata, e.createdAt \
+             FROM item_events e JOIN items i ON e.itemId = i.id \
+             WHERE COALESCE(i.sync_id, '') != '' AND e.pushedAt = 0 \
+             ORDER BY e.createdAt ASC",
+        )
+        .map_err(|e| format!("Failed to prepare events query: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<f64>>(3)?,
+                row.get::<_, Option<f64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<f64>>(6)?,
+            ))
+        })
+        .map_err(|e| format!("Failed to query events: {}", e))?;
+
+    let mut out = Vec::new();
+    for r in rows.filter_map(|r| r.ok()) {
+        let (id, item_id, content, value, occurred, metadata, created) = r;
+        let (Some(occurred), Some(created)) = (occurred, created) else { continue };
+        if !occurred.is_finite() || !created.is_finite() || id.is_empty() {
+            continue;
+        }
+        out.push(PushEvent {
+            id,
+            item_id,
+            content,
+            value: value.filter(|v| v.is_finite()),
+            occurred_at: occurred as i64,
+            metadata: parse_metadata(metadata),
+            created_at: created as i64,
+        });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Stamp events as delivered.
+pub fn mark_events_pushed(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    let now = Utc::now().timestamp_millis();
+    for id in ids {
+        conn.execute("UPDATE item_events SET pushedAt = ? WHERE id = ?", params![now, id])
+            .map_err(|e| format!("Failed to mark event pushed: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Insert a pulled event if absent. Skipped when its item is not present locally.
+pub fn merge_server_event(conn: &Connection, ev: ServerEvent) -> Result<MergeOutcome, String> {
+    let Some(local_id) = local_item_id_for_sync_id(conn, &ev.item_id) else {
+        return Ok(MergeOutcome::Skipped);
+    };
+    if ev.id.is_empty() {
+        return Ok(MergeOutcome::Skipped);
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt, pushedAt) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            ev.id,
+            local_id,
+            ev.content,
+            ev.value,
+            ev.occurred_at,
+            metadata_to_string(&ev.metadata),
+            ev.created_at,
+            Utc::now().timestamp_millis()
+        ],
+    )
+    .map_err(|e| format!("Failed to merge event: {}", e))?;
+    Ok(MergeOutcome::Merged)
+}
+
+/// Visits not yet delivered (`pushed_at = 0`) whose item has a sync id, oldest first.
+pub fn get_visits_to_push(conn: &Connection, limit: usize) -> Result<Vec<PushVisit>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT v.id, i.sync_id, v.timestamp, COALESCE(v.duration, 0), COALESCE(v.source, 'direct'), \
+             COALESCE(v.source_id, ''), COALESCE(v.window_type, 'main'), v.metadata, \
+             COALESCE(v.scroll_depth, 0), COALESCE(v.interacted, 0), v.prev_id, v.next_id \
+             FROM item_visits v JOIN items i ON v.item_id = i.id \
+             WHERE COALESCE(i.sync_id, '') != '' AND v.pushed_at = 0 \
+             ORDER BY v.timestamp ASC, v.id ASC LIMIT ?",
+        )
+        .map_err(|e| format!("Failed to prepare visits query: {}", e))?;
+
+    let visits = stmt
+        .query_map(params![limit as i64], |row| {
+            Ok(PushVisit {
+                id: row.get(0)?,
+                item_id: row.get(1)?,
+                timestamp: row.get(2)?,
+                duration: row.get(3)?,
+                source: row.get(4)?,
+                source_id: row.get(5)?,
+                window_type: row.get(6)?,
+                metadata: parse_metadata(row.get(7)?),
+                scroll_depth: row.get(8)?,
+                interacted: row.get(9)?,
+                prev_id: row.get(10)?,
+                next_id: row.get(11)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query visits: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(visits)
+}
+
+/// Stamp visits as delivered.
+pub fn mark_visits_pushed(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    let now = Utc::now().timestamp_millis();
+    for id in ids {
+        conn.execute("UPDATE item_visits SET pushed_at = ? WHERE id = ?", params![now, id])
+            .map_err(|e| format!("Failed to mark visit pushed: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Upsert a pulled visit by id. Does not touch the item's visit count or last-visit time.
+/// A local visit with an unpushed change (`pushed_at = 0`) is kept so the push carries it.
+pub fn merge_server_visit(conn: &Connection, v: ServerVisit) -> Result<MergeOutcome, String> {
+    let Some(local_id) = local_item_id_for_sync_id(conn, &v.item_id) else {
+        return Ok(MergeOutcome::Skipped);
+    };
+    if v.id.is_empty() {
+        return Ok(MergeOutcome::Skipped);
+    }
+    let existing: Option<i64> = conn
+        .query_row("SELECT pushed_at FROM item_visits WHERE id = ?", params![v.id], |row| row.get(0))
+        .ok();
+    if existing == Some(0) {
+        return Ok(MergeOutcome::KeptLocal);
+    }
+    conn.execute(
+        "INSERT INTO item_visits (id, item_id, timestamp, duration, source, source_id, window_type, metadata, \
+         scroll_depth, interacted, prev_id, next_id, pushed_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET \
+           item_id = excluded.item_id, timestamp = excluded.timestamp, duration = excluded.duration, \
+           source = excluded.source, source_id = excluded.source_id, window_type = excluded.window_type, \
+           metadata = excluded.metadata, scroll_depth = excluded.scroll_depth, \
+           interacted = excluded.interacted, prev_id = excluded.prev_id, next_id = excluded.next_id, \
+           pushed_at = excluded.pushed_at",
+        params![
+            v.id,
+            local_id,
+            v.timestamp,
+            v.duration.unwrap_or(0),
+            v.source.unwrap_or_else(|| "direct".to_string()),
+            v.source_id.unwrap_or_default(),
+            v.window_type.unwrap_or_else(|| "main".to_string()),
+            metadata_to_string(&v.metadata),
+            v.scroll_depth.unwrap_or(0),
+            v.interacted.unwrap_or(0),
+            v.prev_id,
+            v.next_id,
+            Utc::now().timestamp_millis()
+        ],
+    )
+    .map_err(|e| format!("Failed to merge visit: {}", e))?;
+    Ok(MergeOutcome::Merged)
 }
 
 /// Item types this client syncs by default. Mobile intentionally pushes only these
@@ -985,5 +1306,193 @@ mod tests {
         assert_eq!(merge_server_item(&conn, &url, "bucket-a").unwrap(), "pulled");
         let n2: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
         assert_eq!(n2, 1);
+    }
+
+    fn add_event(conn: &Connection, id: &str, item_id: &str, occurred: &str) {
+        conn.execute(
+            &format!(
+                "INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt) \
+                 VALUES (?, ?, 'c', 1.5, {occ}, '{{\"k\":1}}', {occ})",
+                occ = occurred
+            ),
+            params![id, item_id],
+        )
+        .unwrap();
+    }
+
+    fn set_sync_id(conn: &Connection, item_id: &str, sync_id: &str) {
+        conn.execute("UPDATE items SET sync_id = ? WHERE id = ?", params![sync_id, item_id])
+            .unwrap();
+    }
+
+    fn server_visit(id: &str, item_id: &str) -> ServerVisit {
+        ServerVisit {
+            id: id.to_string(),
+            item_id: item_id.to_string(),
+            timestamp: 1700000000000,
+            duration: Some(5),
+            source: None,
+            source_id: None,
+            window_type: None,
+            metadata: Some(serde_json::json!({"a": 1})),
+            scroll_depth: Some(10),
+            interacted: Some(1),
+            prev_id: None,
+            next_id: Some("n".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_event_pushable_only_after_item_has_sync_id() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        let conn = store.conn.lock().unwrap();
+        add_event(&conn, "e1", &item, "1000");
+
+        assert!(get_events_to_push(&conn, 10).unwrap().is_empty());
+
+        set_sync_id(&conn, &item, "srv-1");
+        let evs = get_events_to_push(&conn, 10).unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].item_id, "srv-1");
+        assert_eq!(evs[0].metadata, serde_json::json!({"k": 1}));
+
+        mark_events_pushed(&conn, &["e1".to_string()]).unwrap();
+        assert!(get_events_to_push(&conn, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_event_with_non_finite_time_is_skipped() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        let conn = store.conn.lock().unwrap();
+        set_sync_id(&conn, &item, "srv-1");
+        add_event(&conn, "good", &item, "1000");
+        // Recreate the table shape without NOT NULL to hold a NULL time.
+        conn.execute_batch(
+            "CREATE TABLE ev_bak AS SELECT * FROM item_events; DROP TABLE item_events; \
+             CREATE TABLE item_events (id TEXT PRIMARY KEY, itemId TEXT, content TEXT, value REAL, \
+             occurredAt INTEGER, metadata TEXT, createdAt INTEGER, pushedAt INTEGER NOT NULL DEFAULT 0); \
+             INSERT INTO item_events SELECT * FROM ev_bak; DROP TABLE ev_bak; \
+             INSERT INTO item_events (id, itemId, occurredAt, createdAt) VALUES ('bad', (SELECT id FROM items LIMIT 1), NULL, 5);",
+        )
+        .unwrap();
+        let evs = get_events_to_push(&conn, 10).unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].id, "good");
+    }
+
+    #[test]
+    fn test_visit_pushable_after_sync_id_and_repushed_after_duration_change() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        let visit = store.record_visit(&item, "direct", "main").unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        assert!(get_visits_to_push(&conn, 10).unwrap().is_empty());
+
+        set_sync_id(&conn, &item, "srv-1");
+        assert_eq!(get_visits_to_push(&conn, 10).unwrap().len(), 1);
+
+        mark_visits_pushed(&conn, &[visit.clone()]).unwrap();
+        assert!(get_visits_to_push(&conn, 10).unwrap().is_empty());
+
+        crate::items::set_visit_duration(&conn, &visit, 4200).unwrap();
+        let again = get_visits_to_push(&conn, 10).unwrap();
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].duration, 4200);
+    }
+
+    #[test]
+    fn test_visit_push_body_uses_desktop_field_names() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        store.record_visit(&item, "direct", "main").unwrap();
+        let conn = store.conn.lock().unwrap();
+        set_sync_id(&conn, &item, "srv-1");
+
+        let visits = get_visits_to_push(&conn, 10).unwrap();
+        let v = serde_json::to_value(&visits[0]).unwrap();
+        let obj = v.as_object().unwrap();
+        for key in [
+            "id", "itemId", "timestamp", "duration", "source", "sourceId", "windowType",
+            "metadata", "scrollDepth", "interacted", "prevId", "nextId",
+        ] {
+            assert!(obj.contains_key(key), "missing {}", key);
+        }
+        assert_eq!(obj.len(), 12);
+        assert_eq!(obj["itemId"], "srv-1");
+        assert_eq!(obj["windowType"], "main");
+
+        let e = serde_json::to_value(PushEvent {
+            id: "e".into(), item_id: "s".into(), content: None, value: None,
+            occurred_at: 1, metadata: serde_json::json!({}), created_at: 2,
+        })
+        .unwrap();
+        assert!(e.get("occurredAt").is_some() && e.get("createdAt").is_some());
+    }
+
+    #[test]
+    fn test_merge_for_unknown_item_is_skipped() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let conn = store.conn.lock().unwrap();
+        let ev = ServerEvent {
+            id: "e".into(), item_id: "nope".into(), content: None, value: None,
+            occurred_at: 1, metadata: None, created_at: 1,
+        };
+        assert_eq!(merge_server_event(&conn, ev).unwrap(), MergeOutcome::Skipped);
+        assert_eq!(merge_server_visit(&conn, server_visit("v", "nope")).unwrap(), MergeOutcome::Skipped);
+    }
+
+    #[test]
+    fn test_merged_visit_is_not_pushable_and_leaves_item_totals() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        let conn = store.conn.lock().unwrap();
+        set_sync_id(&conn, &item, "srv-1");
+        let before: (i64, Option<String>) = conn
+            .query_row("SELECT visit_count, last_visit_at FROM items WHERE id = ?", params![item], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+
+        assert_eq!(merge_server_visit(&conn, server_visit("v1", "srv-1")).unwrap(), MergeOutcome::Merged);
+        assert_eq!(merge_server_visit(&conn, server_visit("v1", "srv-1")).unwrap(), MergeOutcome::Merged);
+
+        assert!(get_visits_to_push(&conn, 10).unwrap().is_empty());
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM item_visits", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        let after: (i64, Option<String>) = conn
+            .query_row("SELECT visit_count, last_visit_at FROM items WHERE id = ?", params![item], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn test_merging_same_event_twice_leaves_one_row() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let item = store.save_url("https://example.com", &[], None).unwrap().item_id;
+        let conn = store.conn.lock().unwrap();
+        set_sync_id(&conn, &item, "srv-1");
+        let ev = ServerEvent {
+            id: "e1".into(), item_id: "srv-1".into(), content: Some("x".into()), value: Some(2.0),
+            occurred_at: 10, metadata: Some(serde_json::json!({"a": 1})), created_at: 11,
+        };
+        assert_eq!(merge_server_event(&conn, ev.clone()).unwrap(), MergeOutcome::Merged);
+        assert_eq!(merge_server_event(&conn, ev).unwrap(), MergeOutcome::Merged);
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM item_events", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        // Pulled events are not pushed back.
+        assert!(get_events_to_push(&conn, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_pull_watermarks_round_trip() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(get_last_events_pull(&conn).unwrap(), None);
+        assert_eq!(get_last_visits_pull(&conn).unwrap(), None);
+        set_last_events_pull(&conn, "5").unwrap();
+        set_last_visits_pull(&conn, "7").unwrap();
+        assert_eq!(get_last_events_pull(&conn).unwrap(), Some("5".to_string()));
+        assert_eq!(get_last_visits_pull(&conn).unwrap(), Some("7".to_string()));
     }
 }

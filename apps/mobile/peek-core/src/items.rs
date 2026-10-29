@@ -712,6 +712,16 @@ pub fn record_visit(
     Ok(visit_id)
 }
 
+/// Set a visit's duration (ms). Resets `pushed_at` so the changed visit is pushed again.
+pub fn set_visit_duration(conn: &Connection, visit_id: &str, duration: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE item_visits SET duration = ?, pushed_at = 0 WHERE id = ?",
+        params![duration, visit_id],
+    )
+    .map_err(|e| format!("Failed to set visit duration: {}", e))?;
+    Ok(())
+}
+
 /// Find or create a URL item for webview navigation tracking.
 /// Tags it with from:history and records a visit. Returns item_id.
 pub fn track_navigation(

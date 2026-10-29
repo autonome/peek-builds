@@ -98,8 +98,12 @@ set and never changes `items.visitCount` or `lastVisitAt`.
 
 Still open:
 
-- **The phone's `item_visits` table does not sync.** The mobile client has no visit
-  push or pull.
+- **The phone does not yet send or fetch events or visits.** The phone store
+  (`apps/mobile/peek-core/src/sync.rs`) can now produce and merge both:
+  `get_events_to_push()`, `mark_events_pushed()`, `merge_server_event()` and the
+  matching visit functions, with per-row `pushedAt` / `pushed_at` stamps and separate
+  pull watermarks. Nothing calls them yet: the HTTP calls in
+  `apps/mobile/src-tauri/src/lib.rs sync_all_internal()` are a separate step.
 - **Visit deletion does not propagate**, for the same reason as events: no tombstone.
 - **The server's boot-time schema validation does not cover `item_visits`.**
   `apps/server/schema.json` is generated from `packages/schema/codegen.js`'s

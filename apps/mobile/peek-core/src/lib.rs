@@ -33,7 +33,7 @@ pub use profiles::{
     get_db_path_for_profile, get_profiles_config_path,
     load_profile_config, save_profile_config,
 };
-pub use sync::PushItem;
+pub use sync::{MergeOutcome, PushEvent, PushItem, PushVisit, ServerEvent, ServerVisit};
 pub use tags::TagChanges;
 pub use types::*;
 
@@ -251,6 +251,66 @@ impl PeekStore {
     pub fn set_last_sync(&self, timestamp: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
         sync::set_last_sync(&conn, timestamp)
+    }
+
+    /// Get the watermark for pulling events.
+    pub fn get_last_events_pull(&self) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_last_events_pull(&conn)
+    }
+
+    /// Set the watermark for pulling events.
+    pub fn set_last_events_pull(&self, timestamp: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::set_last_events_pull(&conn, timestamp)
+    }
+
+    /// Get the watermark for pulling visits.
+    pub fn get_last_visits_pull(&self) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_last_visits_pull(&conn)
+    }
+
+    /// Set the watermark for pulling visits.
+    pub fn set_last_visits_pull(&self, timestamp: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::set_last_visits_pull(&conn, timestamp)
+    }
+
+    /// Events not yet pushed whose item has a sync id (oldest first).
+    pub fn get_events_to_push(&self, limit: usize) -> Result<Vec<PushEvent>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_events_to_push(&conn, limit)
+    }
+
+    /// Mark events as pushed.
+    pub fn mark_events_pushed(&self, ids: &[String]) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::mark_events_pushed(&conn, ids)
+    }
+
+    /// Merge one event pulled from the server.
+    pub fn merge_server_event(&self, event: ServerEvent) -> Result<MergeOutcome, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::merge_server_event(&conn, event)
+    }
+
+    /// Visits not yet pushed whose item has a sync id (oldest first).
+    pub fn get_visits_to_push(&self, limit: usize) -> Result<Vec<PushVisit>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_visits_to_push(&conn, limit)
+    }
+
+    /// Mark visits as pushed.
+    pub fn mark_visits_pushed(&self, ids: &[String]) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::mark_visits_pushed(&conn, ids)
+    }
+
+    /// Merge one visit pulled from the server.
+    pub fn merge_server_visit(&self, visit: ServerVisit) -> Result<MergeOutcome, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::merge_server_visit(&conn, visit)
     }
 
     /// Count items that need to be pushed to the given server bucket.
