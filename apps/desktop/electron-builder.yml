@@ -115,6 +115,14 @@ files:
   # resolves to the built-in module at runtime, never this dir.
   - "!**/node_modules/electron"
   - "!**/node_modules/electron/**"
+  # Build/development-only transitive tools are not desktop runtime code.
+  # extract-zip (Electron installer) ships a universal Darwin addon;
+  # node-notifier (web-ext) ships an x86_64-only terminal-notifier app.
+  # Keep both out rather than signing unused, wrong-architecture prebuilds.
+  - "!**/node_modules/@electron-internal/extract-zip"
+  - "!**/node_modules/@electron-internal/extract-zip/**"
+  - "!**/node_modules/node-notifier"
+  - "!**/node_modules/node-notifier/**"
   # Standard node_modules exclusions
   - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
   - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"

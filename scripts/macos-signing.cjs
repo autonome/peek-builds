@@ -87,7 +87,20 @@ function validateNative(entries) {
   }
 }
 
-function validateEntitlements(entitlements, role) {
+// Policy diagnostics contain only bundle-relative context and allowlisted facts,
+// never signature text, entitlement values, dependency strings or tool output.
+function inventoryCheck(value, code, entry) {
+  if (value) return;
+  const relative = safeRelative(entry?.path) ? entry.path : '<invalid-or-unavailable>';
+  const role = ['electron', 'standalone', 'library'].includes(entry?.role) ? entry.role : '<invalid-or-unavailable>';
+  const architectures = Array.isArray(entry?.architectures) ? entry.architectures.map(a =>
+    ['arm64', 'arm64e', 'x86_64', 'i386', 'ppc', 'ppc64'].includes(a) ? a : '<unknown>') : null;
+  console.error(`macOS candidate inventory failed: path=${JSON.stringify(relative)}; role=${role}; code=${code}; architectures=${JSON.stringify(architectures)}; strict=${entry?.strict === true}; machO=${entry?.machO === true}`);
+  fail(code);
+}
+
+function validateEntitlements(entitlements, role, entry) {
+  const check = (value, code) => inventoryCheck(value, code, entry);
   check(entitlements && typeof entitlements === 'object' && !Array.isArray(entitlements), 'entitlements');
   const keys = Object.keys(entitlements);
   if (role === 'electron') {
@@ -98,7 +111,8 @@ function validateEntitlements(entitlements, role) {
   }
 }
 
-function validateSignature(text, policy, executable = true) {
+function validateSignature(text, policy, executable = true, entry) {
+  const check = (value, code) => inventoryCheck(value, code, entry);
   check(typeof text === 'string', 'signature-output');
   const lines = text.split(/\r?\n/);
   check(lines.filter(l => l === `Authority=${policy.identity}`).length === 1, 'signature-authority');
@@ -121,7 +135,8 @@ function safeRelative(p) {
     !/[\r\n\0]/.test(p) && !path.posix.isAbsolute(p) &&
     p.split('/').every(part => part !== '..' && part !== '.' && part !== '');
 }
-function validateDependencies(dependencies) {
+function validateDependencies(dependencies, entry) {
+  const check = (value, code) => inventoryCheck(value, code, entry);
   check(Array.isArray(dependencies), 'dependencies');
   check(dependencies.every(dependency => {
     // Absolute dependencies must be Apple system libraries. Dynamic install
@@ -139,6 +154,8 @@ function validateDependencies(dependencies) {
 }
 
 function validateApp(evidence, policy) {
+  let current;
+  const check = (value, code) => inventoryCheck(value, code, current);
   check(evidence && evidence.deepStrict === true && evidence.staple === true &&
     evidence.gatekeeper === 'Notarized Developer ID', 'app-verification');
   check(evidence.bundleId === policy.bundleId && evidence.buildVersion === policy.buildVersion &&
@@ -150,15 +167,16 @@ function validateApp(evidence, policy) {
   let helper = 0;
   let addon = 0;
   for (const entry of evidence.inventory) {
+    current = entry;
     check(entry && safeRelative(entry.path) && !paths.has(entry.path), 'inventory-path');
     paths.add(entry.path);
     check(['electron', 'standalone', 'library'].includes(entry.role), 'inventory-role');
     check(entry.strict === true && entry.machO === true &&
       Array.isArray(entry.architectures) && entry.architectures.length === 1 &&
       entry.architectures[0] === 'arm64', 'inventory-code');
-    validateSignature(entry.signature, policy, entry.role !== 'library');
-    validateEntitlements(entry.entitlements, entry.role);
-    validateDependencies(entry.dependencies);
+    validateSignature(entry.signature, policy, entry.role !== 'library', entry);
+    validateEntitlements(entry.entitlements, entry.role, entry);
+    validateDependencies(entry.dependencies, entry);
     if (entry.path === 'Contents/MacOS/Peek') {
       check(entry.role === 'electron', 'main-role'); main++;
     }
@@ -169,7 +187,16 @@ function validateApp(evidence, policy) {
       check(entry.role === 'library', 'addon-role'); addon++;
     }
   }
-  check(main === 1 && helper === 1 && addon === 1, 'packaged-native-missing');
+  for (const [name, count, relative, role] of [
+    ['main', main, 'Contents/MacOS/Peek', 'electron'],
+    ['helper', helper, 'Contents/Resources/peek-desktop-helper', 'standalone'],
+    ['addon', addon, 'Contents/Resources/nonactivating-window.node', 'library'],
+  ]) {
+    if (count !== 1) {
+      console.error(`macOS candidate inventory count: native=${name}; count=${count}; expected=1`);
+      inventoryCheck(false, 'packaged-native-missing', { path: relative, role });
+    }
+  }
 }
 
 function parseJSON(value, code) {

@@ -83,6 +83,45 @@ function blocked(fn, code) {
   assert.throws(fn, e => e instanceof SigningError && e.code === code && !e.message.includes(SECRET));
 }
 
+test('inventory diagnostics identify universal code and redact private evidence', () => {
+  const lines = [];
+  const original = console.error;
+  console.error = line => lines.push(line);
+  try {
+    for (const [patch, code] of [
+      [{ architectures: ['x86_64', 'arm64'] }, 'inventory-code'],
+      [{ strict: false }, 'inventory-code'],
+      [{ signature: SECRET }, 'signature-authority'],
+      [{ entitlements: { [SECRET]: SECRET } }, 'electron-entitlements'],
+      [{ dependencies: [SECRET] }, 'external-dependency'],
+      [{ role: SECRET }, 'inventory-role'],
+    ]) {
+      const evidence = app();
+      Object.assign(evidence.inventory[0], patch);
+      lines.length = 0;
+      blocked(() => validateApp(evidence, policy()), code);
+      assert.equal(lines.length, 1);
+      assert.ok(lines[0].includes('path="Contents/MacOS/Peek"'));
+      assert.ok(lines[0].includes(`code=${code}`));
+      assert.ok(lines[0].includes('role='));
+      if (patch.architectures) assert.ok(lines[0].includes('architectures=["x86_64","arm64"]'));
+      assert.ok(!lines[0].includes(SECRET));
+    }
+    for (const [name, relative] of [
+      ['main', 'Contents/MacOS/Peek'],
+      ['helper', 'Contents/Resources/peek-desktop-helper'],
+      ['addon', 'Contents/Resources/nonactivating-window.node'],
+    ]) {
+      const evidence = app();
+      evidence.inventory = evidence.inventory.filter(e => e.path !== relative);
+      lines.length = 0;
+      blocked(() => validateApp(evidence, policy()), 'packaged-native-missing');
+      assert.ok(lines.join('\n').includes(`native=${name}; count=0`));
+      assert.ok(lines.join('\n').includes(relative));
+    }
+  } finally { console.error = original; }
+});
+
 test('unsigned mode never reads credentials or invokes an adapter', async () => {
   const poison = new Proxy({}, { get() { throw new Error('unexpected credential read'); } });
   assert.deepEqual(validateConfig({ mode: 'unsigned' }, poison), { mode: 'unsigned' });

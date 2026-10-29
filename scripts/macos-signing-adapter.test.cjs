@@ -809,6 +809,22 @@ test('afterPack preserves unsigned stamping and enforces numeric signed build id
   assert.throws(() => stamp(context, { ...info, commit: 'b'.repeat(40) }));
 });
 
+test('packaging excludes build-only universal and x86_64 prebuilds at source', () => {
+  const root = path.resolve(__dirname, '..');
+  const config = require('js-yaml').load(fs.readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8'));
+  const { FileMatcher } = require('app-builder-lib/out/fileMatcher.js');
+  const filter = new FileMatcher(root, root, value => value, config.files).createFilter();
+  const stat = { isDirectory: () => false };
+  for (const relative of [
+    'node_modules/@electron-internal/extract-zip/index.darwin-universal.node',
+    'node_modules/node-notifier/vendor/mac.noindex/terminal-notifier.app/Contents/MacOS/terminal-notifier',
+    'node_modules/nested/node_modules/@electron-internal/extract-zip/index.darwin-universal.node',
+  ]) assert.equal(filter(path.join(root, relative), stat), false, relative);
+  assert.equal(filter(path.join(root, 'apps/desktop/dist/main/entry.js'), stat), true);
+  assert.equal(config.extraResources.some(e => e.to === 'peek-desktop-helper'), true);
+  assert.equal(config.extraResources.some(e => e.to === 'nonactivating-window.node'), true);
+});
+
 test('builder loads named custom signing export and per-file JIT is not inherited by Swift/addon/frameworks', async () => {
   const vm = require('node:vm');
   let options;
