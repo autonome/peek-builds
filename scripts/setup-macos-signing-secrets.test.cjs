@@ -14,7 +14,7 @@ const password = 'test-only-p12-password';
 const appPassword = 'abcd-efgh-ijkl-mnop';
 const token = 'github_pat_TESTFIXTURE0000';
 function run(t, options = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-signing-test-'));
+  const dir = fs.mkdtempSync(path.join('/tmp', 'peek-signing-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // TMPDIR can be inside this type:module repository. The extensionless gh
   // fixture is CommonJS regardless of the enclosing checkout's package type.
@@ -23,6 +23,30 @@ function run(t, options = {}) {
   const p8 = path.join(dir, 'AuthKey.p8');
   fs.writeFileSync(p12, options.big ? 'x'.repeat(37000) : p12Value);
   fs.writeFileSync(p8, p8Value);
+  fs.writeFileSync(path.join(dir, 'uname'), '#!/bin/bash\nprintf "%s\\n" "${FAKE_OS:-Darwin}"\n', { mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'security'), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const op = args[0];
+const kc = op === 'import' ? args[args.indexOf('-k') + 1] : args.at(-1);
+if (!/^\\/tmp\\/peek-signing-preflight\\.[^/]+\\/preflight.keychain-db$/.test(kc)) process.exit(90);
+const record = { op, kc, mode: fs.statSync(require('node:path').dirname(kc)).mode & 0o777 };
+if (op === 'import') {
+  record.correctPassword = args[args.indexOf('-P') + 1] === process.env.FAKE_PASSWORD;
+  record.trustedTool = args[args.indexOf('-T') + 1];
+  record.p12 = args[1];
+}
+fs.appendFileSync(process.env.FAKE_SECURITY_LOG, JSON.stringify(record) + '\\n');
+if (op === 'create-keychain') fs.writeFileSync(kc, 'fixture');
+if (op === process.env.FAKE_SECURITY_FAIL) { console.error('RAW-SECURITY-OUTPUT ' + process.env.FAKE_PASSWORD); process.exit(1); }
+if (op === 'find-identity') {
+  const names = JSON.parse(process.env.FAKE_IDENTITIES);
+  names.forEach((name, i) => console.log('  ' + (i + 1) + ') ' + 'A'.repeat(40) + ' "' + name + '"'));
+  console.log('     ' + names.length + ' valid identities found');
+}
+if (op === 'delete-keychain') fs.rmSync(kc, { force: true });
+if (op === process.env.FAKE_SECURITY_SIGNAL) process.kill(process.ppid, 'SIGTERM');
+`, { mode: 0o700 });
   fs.writeFileSync(path.join(dir, 'gh'), `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -73,12 +97,21 @@ if (args[0] === 'api') {
   const result = spawnSync('/bin/bash', [...(options.trace ? ['-xv'] : []), script, ...args], {
     input: options.input === undefined ? inputs.join('\n') + '\n' : options.input,
     encoding: 'utf8', env: { ...cleanEnv, FAKE_TOKEN: token, PATH: `${dir}:${process.env.PATH}`, TMPDIR: dir,
-      FAKE_LOG: path.join(dir, 'log'), GH_DEBUG: 'api', password: 'inherited',
+      FAKE_LOG: path.join(dir, 'log'), FAKE_SECURITY_LOG: path.join(dir, 'security-log'),
+      FAKE_PASSWORD: password, FAKE_IDENTITIES: JSON.stringify(options.identities ?? [identity]),
+      GH_DEBUG: 'api', password: 'inherited',
       ...(options.trace ? { SHELLOPTS: 'braceexpand:hashall:interactive-comments:verbose:xtrace' } : {}),
       ...(options.fake || {}) }
   });
   const records = fs.existsSync(path.join(dir, 'log')) ? fs.readFileSync(path.join(dir, 'log'), 'utf8').trim().split('\n').map(JSON.parse) : [];
+  const securityRecords = fs.existsSync(path.join(dir, 'security-log')) ? fs.readFileSync(path.join(dir, 'security-log'), 'utf8').trim().split('\n').map(JSON.parse) : [];
+  for (const kc of new Set(securityRecords.map(r => r.kc))) {
+    assert.ok(!fs.existsSync(path.dirname(kc)), 'preflight scratch not removed');
+    assert.ok(securityRecords.some(r => r.op === 'delete-keychain' && r.kc === kc), 'keychain not deleted');
+  }
+  for (const record of securityRecords) assert.equal(record.mode, 0o700);
   const output = result.stdout + result.stderr;
+  assert.ok(!output.includes('RAW-SECURITY-OUTPUT'));
   for (const secret of [token, password, appPassword, p12Value, Buffer.from(p12Value).toString('base64'), 'FAKE-PRIVATE-MATERIAL']) {
     assert.ok(!output.includes(secret), `secret in output: ${output}`);
     assert.ok(!JSON.stringify(records.map(r => r.args)).includes(secret), 'secret in argv');
@@ -86,9 +119,9 @@ if (args[0] === 'api') {
   for (const record of records) { assert.equal(record.debug, ''); assert.deepEqual(record.leaked, []); }
   const tmpLeft = fs.readdirSync(dir).filter(f => f.startsWith('peek-gh-config.'));
   assert.deepEqual(tmpLeft, [], 'temporary gh config dir not removed');
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['AuthKey.p8', 'certificate.p12', 'gh', 'package.json', ...(hasConfig ? ['signing.env'] : []), ...(fs.existsSync(path.join(dir, 'state.json')) ? ['state.json'] : []), ...(records.length ? ['log'] : [])].sort(), 'unexpected temporary file');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['AuthKey.p8', 'certificate.p12', 'gh', 'uname', 'security', 'package.json', ...(securityRecords.length ? ['security-log'] : []), ...(hasConfig ? ['signing.env'] : []), ...(fs.existsSync(path.join(dir, 'state.json')) ? ['state.json'] : []), ...(records.length ? ['log'] : [])].sort(), 'unexpected temporary file');
   const apiCalls = records.filter(r => r.args[0] === 'api').map(r => r.args.join(' '));
-  return { ...result, output, records, apiCalls, uploads: records.filter(r => r.args[1] === 'set') };
+  return { ...result, output, records, securityRecords, apiCalls, uploads: records.filter(r => r.args[1] === 'set') };
 }
 test('help and dry-run never call gh or request passwords', t => {
   assert.ok(fs.statSync(script).mode & 0o111, 'setup script must be executable');
@@ -96,6 +129,45 @@ test('help and dry-run never call gh or request passwords', t => {
   assert.equal(help.status, 0); assert.match(help.output, /Usage:/); assert.equal(help.records.length, 0);
   const dry = run(t, { args: ['--dry-run'], input: [identity, team, '123456789A', issuer].join('\n') + '\n' });
   assert.equal(dry.status, 0); assert.match(dry.output, /Remote prerequisites NOT checked/); assert.match(dry.output, /token will be requested/); assert.match(dry.output, /Administration: read and write/); assert.equal(dry.records.length, 0);
+});
+test('local import failures stop before confirmation/upload and always delete keychain', t => {
+  for (const [options, message] of [
+    [{ fake: { FAKE_SECURITY_FAIL: 'import' } }, /P12 did not import with that password/],
+    [{ identities: ['Developer ID Application: Other (ABCDEFGHIJ)'] }, /Imported, but identity Developer ID Application: Other/],
+    [{ identities: [] }, /No codesigning identity \(cert without private key\?\)/],
+    [{ identities: [identity, identity] }, /exactly one identity required/],
+    [{ fake: { FAKE_SECURITY_FAIL: 'find-identity' } }, /Cannot check the imported codesigning identity/],
+    [{ fake: { FAKE_SECURITY_FAIL: 'create-keychain' } }, /Cannot create the temporary preflight keychain/],
+    [{ fake: { FAKE_SECURITY_FAIL: 'unlock-keychain' } }, /Cannot unlock the temporary preflight keychain/],
+    [{ fake: { FAKE_SECURITY_SIGNAL: 'import' } }, /P12 export password/],
+    [{ fake: { FAKE_SECURITY_FAIL: 'delete-keychain' } }, /Cannot delete the temporary preflight keychain/],
+  ]) {
+    const r = run(t, options);
+    assert.notEqual(r.status, 0, r.output);
+    assert.match(r.output, message);
+    assert.equal(r.uploads.length, 0);
+    assert.ok(!r.output.includes('to confirm protections'));
+    assert.equal(r.securityRecords.at(-1).op, 'delete-keychain');
+  }
+});
+test('successful preflight uses only explicit scratch keychain and cleans before uploads', t => {
+  const r = run(t);
+  assert.equal(r.status, 0, r.output);
+  assert.deepEqual(r.securityRecords.map(r => r.op), ['create-keychain', 'set-keychain-settings', 'unlock-keychain', 'import', 'find-identity', 'delete-keychain']);
+  const imported = r.securityRecords.find(r => r.op === 'import');
+  assert.equal(imported.correctPassword, true);
+  assert.equal(imported.trustedTool, '/usr/bin/codesign');
+  assert.equal(path.basename(imported.p12), 'certificate.p12');
+  assert.ok(r.output.indexOf('Local P12 import') < r.output.indexOf('Type autonome/peek-builds'));
+});
+test('real path requires Darwin; dry-run only describes preflight even on Linux', t => {
+  const real = run(t, { fake: { FAKE_OS: 'Linux' } });
+  assert.notEqual(real.status, 0); assert.match(real.output, /Real uploads require macOS/);
+  assert.equal(real.records.length, 0); assert.equal(real.securityRecords.length, 0);
+  const dry = run(t, { fake: { FAKE_OS: 'Linux' }, args: ['--dry-run'] });
+  assert.equal(dry.status, 0, dry.output);
+  assert.match(dry.output, /temporary keychain.*not executed/);
+  assert.equal(dry.securityRecords.length, 0); assert.equal(dry.records.length, 0);
 });
 test('API mode stdin uploads, tracing/debug disabled, no temp credentials', t => {
   const r = run(t, { trace: true }); assert.equal(r.status, 0, r.output); assert.equal(r.uploads.length, 7);

@@ -20,8 +20,9 @@ Uploading secrets does not make the existing unsigned workflow sign builds.
    Developer ID Application identity **with its private key**, and export it as
    a password-protected `.p12`. A downloaded `.cer` alone is insufficient. Keep it
    in approved encrypted storage **outside the checkout**, restrict local access,
-   and retain an encrypted recovery copy. The script neither exports keys nor
-   changes any local keychain. Do not put certificate passwords in shell commands.
+   and retain an encrypted recovery copy. The uploader does not export keys or import
+   into login/system keychains; it uses a disposable local keychain for preflight.
+   Do not put certificate passwords in shell commands.
 3. Prefer an approved dedicated App Store Connect **team API key**, App Manager
    scope, with its downloaded `.p8`, key ID and issuer UUID. Team API keys have
    account-wide scope, not single-app access; get explicit owner approval. Keep
@@ -178,11 +179,40 @@ aborts without uploads. Do not pipe real credentials from shell commands/history
 
 All selected local inputs are checked before the first upload. Validation covers
 file readability/nonempty regular files, PEM boundaries, conservative GitHub size
-limits and metadata shape; it **does not prove** certificate/password pairing,
-private-key validity, Apple authorization, expiry or team ownership. Those require
-future macOS signing preflight and account-owner review. Dry-run makes **no gh or
-network calls**, but reads the local files for validation. It is not a remote
-permission/protection check.
+limits and metadata shape. A real upload requires **macOS** and, after the hidden
+P12 password prompt but before confirmation or any secret upload, imports that
+P12/password into a fresh random-password keychain under `/tmp/peek-signing-preflight.*`.
+Like CI, it uses `security import -T /usr/bin/codesign` and
+`security find-identity -v -p codesigning` against the explicit temporary keychain;
+exactly one identity must be listed and its name must equal `SIGNING_IDENTITY`.
+The keychain and scratch are deleted before confirmation, and cleanup is also
+attempted on failure, HUP, INT and TERM (not uncatchable SIGKILL or power loss).
+Cleanup failure blocks uploads; inspect leftover scratch locally, never share contents.
+No login/system keychain is targeted, and no `list-keychains -s` is issued.
+**Limitation:** Apple's `create-keychain` can itself add the keychain to the user
+search list; deletion normally removes it. Thus the strict requirement to never
+touch the user search list is not established by this CLI approach. No explicit
+search-list replacement/restoration is attempted. macOS validation and a decision
+on this automatic side effect are still required before real use.
+
+Preflight failures upload nothing (earlier environment protection updates may already
+have occurred):
+
+- **P12 did not import with that password:** recheck the export password and selected
+  P12. This also covers malformed/incompatible P12s; it does not prove a typo.
+- **Imported, but identity … does not match configured …:** only found identity names
+  and the configured name are printed. Check the full name/team and choose the
+  intended export. Multiple identities are rejected even if one matches.
+- **No codesigning identity (cert without private key?):** import succeeded but no
+  valid codesigning identity was listed. A missing private key is one possible
+  cause, as are trust/validity issues; do not assume password failure.
+
+Raw `security` output is suppressed. This check establishes local import and
+identity recognition, not actual signing, Apple authorization, revocation,
+notarization acceptance or ownership. Those still need macOS candidate validation
+and account-owner review. Dry-run makes **no gh, security or network calls**, but
+reads the local files and describes the preflight without requesting passwords;
+it works on non-macOS hosts. It is not a remote permission/protection check.
 
 ## Credential contract and safety
 
@@ -200,8 +230,8 @@ API mode additionally uploads `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, and
 shell interpolation commands, logs or exported environment variables. Inherited
 shell xtrace/verbose and `GH_DEBUG` are disabled before private values are used.
 Only secret **names** are listed remotely; values are never fetched. No temporary
-secret files are created, so there is no cleanup path that can leave generated
-credentials in the checkout. Shell variables/pipes are not secure erasure; use a
+credential export files are created; preflight does create a temporary keychain
+containing the imported private key outside the checkout. Shell variables/pipes are not secure erasure; use a
 trusted machine. Upload tool output is suppressed to avoid accidental payload
 logging in errors. Original files remain under your custody.
 
@@ -236,7 +266,7 @@ passwords supplied through descriptors by an OpenSSL wrapper; they check real
 PEM/DER/key matching and actual P12 metadata (3DES key/certificate PBE, SHA1 MAC,
 2048 iterations), unchanged AES-encrypted source key, cleanup, cancellation, nonoverwrite, permissions,
 input/type failures, empty export-password rejection and tracing/argv safety.
-Upload tests use only dummy local fixtures and a fake `gh` on PATH, never real accounts,
+Upload tests use only dummy local fixtures and fake `gh`, `security` and `uname` on PATH, never real accounts,
 network, keychains or credentials. They cover both modes, dry-run/help, invalid
 inputs/destinations, explicit confirmation, mode conflicts, missing environment,
 partial failures, tracing/debug suppression, stdin-only payloads and absence of
@@ -245,8 +275,12 @@ notarization, Gatekeeper, protected GitHub environment policy or runtime behavio
 
 ## Signing subprocess password exposure — hosted-runner exception approved
 
-The setup uploader's stdin-only guarantee above does **not** describe the signing
-adapter. Apple's standard `security` CLI currently receives the P12 password via
+The stdin-only guarantee above applies to **GitHub uploads**, not the uploader's
+local preflight or the signing adapter. Local preflight on a trusted Mac accepts
+the same argv exposure as the CI adapter: `security import` has no documented
+noninteractive stdin/file-descriptor password option, so it uses `-P` rather than
+an interactive tool prompt that cannot validate the exact typed upload password.
+Do not run on a shared/untrusted Mac. Apple's standard `security` CLI receives the P12 password via
 `import -P`, and the random ephemeral-keychain password via `create-keychain -p`,
 `unlock-keychain -p` and `set-key-partition-list -k`: these secrets are in child
 **argv**, observable by sufficiently privileged local processes. The separately

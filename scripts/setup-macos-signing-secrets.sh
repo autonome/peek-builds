@@ -32,7 +32,48 @@ required_permissions() {
     '    Actions: read; Metadata: read (automatic)'
 }
 gh_config_dir=''
-cleanup() { [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir"; }
+preflight_dir=''
+preflight_keychain=''
+cleanup() {
+  local status=$?
+  if [[ -n $preflight_keychain ]]; then
+    if ! security delete-keychain "$preflight_keychain" >/dev/null 2>&1; then
+      printf '%s\n' 'Error: Could not delete the temporary preflight keychain; inspect local scratch.' >&2
+      status=1
+    fi
+  fi
+  [[ -z $preflight_dir ]] || rm -rf "$preflight_dir"
+  [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir"
+  return "$status"
+}
+preflight() {
+  local p12=$1 password=$2 identity=$3 keychain_password output line found='' count=0
+  export -n password keychain_password
+  # Fixed system scratch root: never inherit a TMPDIR inside a checkout.
+  preflight_dir=$(mktemp -d /tmp/peek-signing-preflight.XXXXXX) || fail 'Cannot create preflight scratch.'
+  keychain_password=$(openssl rand -hex 32 2>/dev/null) || fail 'Cannot generate a random keychain password.'
+  [[ $keychain_password =~ ^[a-f0-9]{64}$ ]] || fail 'Cannot generate a random keychain password.'
+  preflight_keychain=$preflight_dir/preflight.keychain-db
+  security create-keychain -p "$keychain_password" "$preflight_keychain" >/dev/null 2>&1 || fail 'Cannot create the temporary preflight keychain.'
+  security set-keychain-settings -lut 14400 "$preflight_keychain" >/dev/null 2>&1 || fail 'Cannot configure the temporary preflight keychain.'
+  security unlock-keychain -p "$keychain_password" "$preflight_keychain" >/dev/null 2>&1 || fail 'Cannot unlock the temporary preflight keychain.'
+  security import "$p12" -k "$preflight_keychain" -P "$password" -T /usr/bin/codesign >/dev/null 2>&1 || fail 'P12 did not import with that password. Nothing uploaded.'
+  output=$(security find-identity -v -p codesigning "$preflight_keychain" 2>/dev/null) || fail 'Cannot check the imported codesigning identity. Nothing uploaded.'
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*[0-9]+\)[[:space:]]([A-Fa-f0-9]{40})[[:space:]]\"([^\"]+)\"[[:space:]]*$ ]]; then
+      count=$((count + 1))
+      found="${found}${found:+; }${BASH_REMATCH[2]}"
+    fi
+  done <<< "$output"
+  ((count > 0)) || fail 'No codesigning identity (cert without private key?). Nothing uploaded.'
+  [[ $count == 1 && $found == "$identity" ]] || fail "Imported, but identity $found does not match configured $identity (exactly one identity required). Nothing uploaded."
+  # Delete before confirmation/upload, so cleanup failure also blocks uploads.
+  security delete-keychain "$preflight_keychain" >/dev/null 2>&1 || fail 'Cannot delete the temporary preflight keychain. Nothing uploaded.'
+  preflight_keychain=''
+  rm -rf "$preflight_dir"
+  preflight_dir=''
+  printf '%s\n' 'Local P12 import and exact codesigning identity verified.'
+}
 fail() { printf '%s\n' "Error: $*" >&2; exit 1; }
 prompt() {
   printf '%s: ' "$2" >&2
@@ -168,6 +209,7 @@ main() {
     printf '%s\n' 'Secrets: APPLE_ID APPLE_APP_SPECIFIC_PASSWORD'
   fi
   if ((dry)); then
+    printf '%s\n' 'Planned: on macOS, import P12 with the prompted password into a temporary keychain, verify exactly one configured codesigning identity, then delete keychain and scratch before confirmation/upload (not executed).'
     if ((allow_unprotected)); then
       printf '%s\n' 'Planned: gh api repos/'"$repo/environments/$environment"' (existence check only; protections skipped)'
     else
@@ -183,11 +225,17 @@ main() {
     printf '%s\n' 'Dry-run: no gh calls, password prompts, or mutations. Remote prerequisites NOT checked.'
     return
   fi
+  [[ $(uname -s) == Darwin ]] || fail 'Real uploads require macOS for the local P12 import preflight; use --dry-run for a plan only.'
+  command -v security >/dev/null || fail 'macOS security is required for the local P12 import preflight.'
+  command -v openssl >/dev/null || fail 'openssl is required for a random preflight keychain password.'
   command -v gh >/dev/null || fail 'Install GitHub CLI (gh) first.'
   # Pin the host; never inherit GH_DEBUG, which can log request bodies.
   export GH_HOST=github.com GH_DEBUG='' GH_PROMPT_DISABLED=1
   # An empty config dir keeps the stored gh login from ever being read or used.
   trap cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   gh_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/peek-gh-config.XXXXXX") || fail 'Cannot create a temporary gh config directory.'
   export GH_CONFIG_DIR=$gh_config_dir
   printf '%s\n' "Paste a fine-grained token limited to $repo (input is hidden)." >&2
@@ -228,6 +276,7 @@ main() {
     'Uploads overwrite names and are NOT transactional. No secrets are deleted.'
   prompt password 'P12 export password' private
   [[ ${#password} -le 48000 ]] || fail 'P12 password too long.'
+  preflight "$p12" "$password" "$identity"
   if [[ $mode == password ]]; then
     prompt app_password 'Apple APP-SPECIFIC password (never normal password or 2FA)' private
     [[ $app_password =~ ^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$ ]] || fail 'Expected Apple app-specific password format.'

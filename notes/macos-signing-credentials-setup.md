@@ -181,7 +181,8 @@ before changing real secrets; a retry by itself cannot correct the P12.
 ```
 
 The dry run checks the local inputs and prints the `gh api` calls it would make, without
-contacting GitHub. The real run:
+contacting GitHub or running `security`; it describes but skips import preflight.
+The real run requires macOS (non-Darwin refuses rather than skipping the check):
 
 1. Creates or updates the `autonome/peek-builds` environment `macos-release-signing` with the
    required reviewer and the ref policy (rerunning does not duplicate the policy).
@@ -190,7 +191,29 @@ contacting GitHub. The real run:
    `--allow-unprotected` skips this knowingly and only checks that the environment exists.
 3. Prompts for anything missing from the file, then for the GitHub token (hidden), verifies it
    can reach the repository, then for the P12 export password (hidden; export
-   password from step 4) and a destination confirmation (`autonome/peek-builds/macos-release-signing api`).
+   password from step 4). Before destination confirmation or any secret upload,
+   creates a random-password temporary keychain under `/tmp/peek-signing-preflight.*`,
+   imports that P12 using the typed password and `/usr/bin/codesign` trust, and requires
+   exactly one valid codesigning identity whose name equals `SIGNING_IDENTITY`.
+   Deletes the temporary keychain and scratch before asking for destination confirmation
+   (`autonome/peek-builds/macos-release-signing api`). Cleanup also runs on failure and
+   catchable cancellation signals; uncatchable termination/power loss can leave scratch.
+
+Preflight failure means **no secrets uploaded** (environment protection updates can
+already have happened). “P12 did not import with that password” means check the
+selected P12/password; a malformed or incompatible P12 can also cause it.
+“Imported, but identity … does not match configured …” reports found names only;
+check the full configured name/team and export, including whether multiple identities
+were bundled. “No codesigning identity (cert without private key?)” means import
+succeeded but no valid identity was listed: check private-key inclusion and certificate
+validity/trust. Raw tool diagnostics are suppressed, not sent to GitHub.
+
+The script targets only the disposable keychain, never login/system keychains,
+and issues no search-list commands. However, Apple's `create-keychain` can itself
+add to the user search list (deletion normally removes it). **Strict never-touch
+search-list isolation is not established**; macOS verification and acceptance of
+this side effect or a different creation mechanism are required before real use.
+This is a local import check, not proof of actual signing or notarization.
 
 It uploads, with values on stdin, never as arguments:
 `MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY`,
@@ -208,11 +231,14 @@ gh secret list --repo autonome/peek-builds --env macos-release-signing
 
 ## Not covered here
 
-The preparation/uploader scripts avoid secret argv, but the signing adapter's
-standard `security` CLI currently exposes P12/keychain passwords in subprocess
-argv (alternative password-auth `notarytool` also does). The user approved that
-exception on disposable GitHub-hosted runners only; no persistent/shared-runner
-or raw-log authorization follows. See
+Preparation prompts and GitHub uploads avoid secret argv, but the uploader's local
+preflight and the signing adapter use standard `security` CLI P12/keychain passwords
+in subprocess argv (alternative password-auth `notarytool` also does). `security
+import` has no documented noninteractive stdin/descriptor password option; `-P`
+checks the exact password that will be uploaded, with the same local process-list
+exposure CI accepts. Use only a trusted local Mac without recording/debug wrappers.
+The existing user approval for CI covers disposable GitHub-hosted runners only;
+no persistent/shared-runner or raw-log authorization follows. See
 [the explicit exposure/approval boundary](../docs/macos-signing-secrets.md#signing-subprocess-password-exposure--hosted-runner-exception-approved).
 
 The secrets being present proves nothing about signing. A real candidate signing run, Apple's
