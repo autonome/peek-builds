@@ -58,7 +58,8 @@ function fixture(t, mutation = {}) {
       args.push('SEEDED-PRIVATE-ARGV');
       if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
       return { code: mutation.failureMode === 'status' ? 'SEEDED-PRIVATE-STATUS' : 73,
-        stdout: 'SECRET-TOOL-OUTPUT', stderr: mutation.stderr ?? secrets.MACOS_CERTIFICATE_PASSWORD,
+        stdout: 'SECRET-TOOL-OUTPUT', stderr: typeof mutation.stderr === 'function' ? mutation.stderr(target) :
+          mutation.stderr ?? secrets.MACOS_CERTIFICATE_PASSWORD,
         quiescent: mutation.failureMode !== 'active' };
     }
     if (file === 'git') return ok(args[0] === 'status' ? '' : SHA + '\n');
@@ -128,7 +129,7 @@ function fixture(t, mutation = {}) {
   };
   const output = mutation.paths?.({ base, root, temp }) || path.join(temp, 'verified');
   const adapter = createAdapter({ root, temp, output, run: fakeRun,
-    env: { PATH: '/usr/bin', ...secrets }, platform: 'darwin', arch: 'arm64' });
+    env: { PATH: '/usr/bin', TMPDIR: temp, ...secrets }, platform: 'darwin', arch: 'arm64' });
   return { adapter, calls, root, temp, output,
     async execute() { try { return await runCandidate(input, secrets, adapter.operations); }
       finally { await adapter.destroy(); } } };
@@ -413,6 +414,33 @@ for (const stderr of ['truncated load command\nSECOND LINE', '/private/secret: i
     assert.equal(logs[index], 'macOS candidate tool target: "Contents/Frameworks/Example.framework/Versions/A/Example"' +
       (stderr.startsWith('truncated') ? '; stderr="truncated load command"' : ''));
     assert.equal(logs[index + 1], 'macOS candidate tool failed: stage=verifyApp; operation=dependencies; reason=tool-exit; status=73');
+    assert.equal(fs.existsSync(f.output), false);
+    assert.deepEqual(fs.readdirSync(f.temp), []);
+  });
+}
+
+for (const kind of ['canonical', 'var alias', 'repeated', 'other path', 'adjacent path', 'secret', 'long']) {
+  test(`bundle-path stderr is redacted before filtering: ${kind}`, async t => {
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const relative = 'Contents/Frameworks/Example.framework/Versions/A/Example';
+    const f = fixture(t, {
+      fail: (file, args) => file === 'otool' && args[0] === '-L' && args.at(-1).endsWith('/' + relative),
+      stderr(target) {
+        assert.equal(target, fs.realpathSync(target), 'tool receives canonical target even with aliased TMPDIR');
+        const operand = kind === 'var alias' && target.startsWith('/private/var/') ? target.slice('/private'.length) : target;
+        if (kind === 'repeated') return `otool: "${operand}" and '${operand}': invalid`;
+        const extra = { 'other path': ' /private/secret', 'adjacent path': ':/private/secret',
+          secret: ' ' + secrets.MACOS_CERTIFICATE_PASSWORD, long: ' ' + 'x'.repeat(241) }[kind] || '';
+        return `otool: "${operand}": invalid${extra}\nPRIVATE SECOND LINE`;
+      },
+    });
+    await assert.rejects(f.execute(), { code: 'tool-exit' });
+    const detail = kind === 'repeated' ? `otool: "<bundle>/${relative}" and '<bundle>/${relative}': invalid` :
+      `otool: "<bundle>/${relative}": invalid`;
+    const suppressed = ['other path', 'adjacent path', 'secret', 'long'].includes(kind);
+    assert.equal(logs.find(line => line.startsWith('macOS candidate tool target:')),
+      `macOS candidate tool target: "${relative}"` + (suppressed ? '' : `; stderr=${JSON.stringify(detail)}`));
     assert.equal(fs.existsSync(f.output), false);
     assert.deepEqual(fs.readdirSync(f.temp), []);
   });

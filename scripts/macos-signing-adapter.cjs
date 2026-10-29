@@ -219,12 +219,22 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   let stage = 'idle';
   let inventoryBundle;
   const inventoryTools = new Set(['file', 'lipo', 'otool', 'codesign', 'spctl']);
-  // Deliberately narrower than arbitrary tool prose: no paths, shell syntax,
-  // control characters, or subsequent lines. Never echo known environment values.
+  // Only bundle-relative operands may contain slashes/quotes. After removing
+  // those operands, retain the original prose allowlist and first-line bound.
+  // Never echo known environment values remaining after bundle redaction.
   const safeReason = stderr => {
     if (typeof stderr !== 'string') return '';
-    const first = stderr.split(/\r?\n/, 1)[0];
-    return first.length <= 240 && /^[A-Za-z0-9 .,:()_-]+$/.test(first) &&
+    const raw = stderr.split(/\r?\n/, 1)[0];
+    let first = raw;
+    if (inventoryBundle) {
+      const aliases = [inventoryBundle];
+      if (inventoryBundle.startsWith('/private/var/')) aliases.push(inventoryBundle.slice('/private'.length));
+      for (const bundle of aliases) first = first.split(bundle).join('<bundle>');
+    }
+    // Spaces inside bundle filenames are allowed, but not before another slash:
+    // an unrelated absolute path must remain visible to the rejecting filter.
+    const prose = first.replace(/"<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*"|'<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*'|<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*/g, 'bundle');
+    return first.length <= 240 && /^[A-Za-z0-9 .,:()_-]+$/.test(prose) &&
       !Object.values(env).some(value => typeof value === 'string' && value && first.includes(value)) ? first : '';
   };
   const call = async (file, args, opts = {}) => {

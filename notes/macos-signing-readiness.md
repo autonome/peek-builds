@@ -1,6 +1,6 @@
 # macOS Developer ID signing readiness
 
-Status: **candidates .4/.5 imported the P12 but failed identity validation; no live signing success**.
+Status: **candidate .9 signed and submitted for notarization, then failed app inventory at `otool -L`; no verified candidate artifacts**.
 The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral policy,
 production adapter and manual candidate workflow have offline tests. The spec
 stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
@@ -15,6 +15,31 @@ publication remain unapproved. Distribution
 is downloadable **arm64 `.dmg` and `.zip`**, not the Mac App Store. The unsigned
 CI/test-build path and the separate startup-risk acknowledgment work must continue
 unchanged. Manual-owned implementation plan: [disabled spec](../specs/macos-signing-and-notarization.md).
+
+## Candidate .9 dependency diagnostic follow-up
+
+Candidate .9 (run `40886910152`, source `55d7c7ff`, build `1.0.9`)
+signed and submitted with submission `d2b8b7ca-42af-4839-9e23-5e7bb60bda88`,
+then stopped in `verifyApp` / `dependencies` with tool exit status 1 for
+`Contents/Frameworks/Peek Helper (GPU).app/Contents/MacOS/Peek Helper (GPU)`.
+This is not evidence of completed app verification or downloadable signed artifacts.
+
+Inventory failure diagnostics now redact the canonical bundle root and its macOS
+`/var` alias to `<bundle>` before filtering bounded first-line stderr. Quoted
+bundle-relative operands are permitted; other paths, secrets, control characters
+and subsequent lines remain suppressed. Stubbed-tool suites cover the behavior,
+including canonical targets under a symlinked TMPDIR.
+
+The offline audit found no proven cause: `dependencies()` passes `['-L', target]`
+as separate argv (no shell, no `-arch`), using a canonical absolute file path and
+the checkout as cwd. Discovery requires `file -b` to report Mach-O; native checks
+also run `lipo -archs` and signature verification before `otool -L`. There is no
+helper rewrite between signing and this verification: ditto archives for app
+submission, notary calls and stapling do not intentionally rewrite helpers.
+Fat-binary output could require future parser work, but cannot explain a proven
+child exit 1 from code alone. No acceptance rules, architecture selection,
+packaging or workflows were changed. The next separately authorized candidate
+must establish the actual tool error; candidate tags .1–.9 remain immutable.
 
 ## Candidate .4/.5 identity evidence and offline remediation
 
