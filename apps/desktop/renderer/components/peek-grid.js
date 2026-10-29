@@ -66,6 +66,7 @@
 import { html, css } from 'lit';
 import { PeekElement, sharedStyles } from './base.js';
 import { pushLayout, clampRect } from '../lib/push-layout.js';
+import { lockAspectResize } from '../lib/aspect-resize.js';
 
 // Smallest size a card can be dragged or squished to in freeform mode.
 const MIN_CARD_W = 100;
@@ -1032,6 +1033,21 @@ export class PeekGrid extends PeekElement {
       if (s.edge.includes('s')) newH = Math.min(newH, b.bottom - newTop);
       newW = Math.max(minW, newW);
       newH = Math.max(minH, newH);
+    }
+
+    // A card with a data-aspect (width / height) keeps that ratio from every handle.
+    const ratio = parseFloat(s.child.dataset.aspect);
+    if (ratio > 0) {
+      ({ x: newLeft, y: newTop, w: newW, h: newH } = lockAspectResize({
+        edge: s.edge,
+        orig: { x: s.origLeft, y: s.origTop, w: s.origWidth, h: s.origHeight },
+        w: newW,
+        h: newH,
+        ratio,
+        minW,
+        minH,
+        bounds: push ? s.bounds : null
+      }));
     }
 
     s.child.style.left = `${newLeft}px`;

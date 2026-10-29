@@ -10,6 +10,7 @@ import { withSheetName } from './sheet-commands.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import { pushLayout } from 'peek://app/lib/push-layout.js';
+import { heightForRatio } from 'peek://app/lib/aspect-resize.js';
 import { createKeydownHandler, getCards } from 'peek://app/lib/grid-nav.js';
 import {
   MIN_CARD_W, MIN_CARD_H, isDrag, rectFromPoints, dragRectToGrid
@@ -60,6 +61,26 @@ const saveSheetConfig = async () => {
 };
 
 /**
+ * Once an image card's picture has loaded, make sure the card has its ratio:
+ * cards saved without one read it from the loaded image, and a card whose height
+ * does not match its width is snapped (width kept, height fixed) and saved.
+ */
+const fitImageCard = (item, card, img) => {
+  if (!img.naturalWidth || !img.naturalHeight) return;
+  if (!(item.aspect > 0)) item.aspect = img.naturalWidth / img.naturalHeight;
+  card.dataset.aspect = String(item.aspect);
+
+  const grid = document.querySelector('peek-grid.cards');
+  const bounds = grid?.freeformLayout?.[item.id];
+  if (!bounds) return;
+  const h = heightForRatio(bounds.w, item.aspect);
+  if (Math.abs(h - bounds.h) <= 1) return;
+  item.height = h;
+  grid.freeformLayout = { ...grid.freeformLayout, [item.id]: { ...bounds, h } };
+  saveSheetConfig();
+};
+
+/**
  * Create a card element with a webview for a sheet item
  */
 const createCard = (item) => {
@@ -85,6 +106,9 @@ const createCard = (item) => {
     img.className = 'card-image';
     img.src = item.image;
     img.draggable = false;
+    // Resizing keeps the image's ratio, so the image fills the card with no bands.
+    if (item.aspect > 0) card.dataset.aspect = String(item.aspect);
+    img.addEventListener('load', () => fitImageCard(item, card, img));
     card.appendChild(img);
     return card;
   }
@@ -94,6 +118,14 @@ const createCard = (item) => {
   webview.className = 'card-webview';
   webview.src = item.url;
   card.appendChild(webview);
+
+  // A webview swallows pointer events, so thin transparent strips along the card
+  // edges pass presses on to the grid's edge-resize and drag handling.
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const strip = document.createElement('div');
+    strip.className = `card-edge-strip card-edge-${side}`;
+    card.appendChild(strip);
+  }
 
   return card;
 };
@@ -497,7 +529,7 @@ const addImageCards = async (files, point) => {
         // Another card may have been pushed aside meanwhile; keep the placeholder's current spot.
         const bounds = grid.freeformLayout?.[job.id] || { x: job.x, y: job.y, w: job.w, h: job.h };
         const item = {
-          id: job.id, kind: 'image', image: img.url,
+          id: job.id, kind: 'image', image: img.url, aspect: img.width / img.height,
           x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h
         };
         sheetConfig.items.push(item);
