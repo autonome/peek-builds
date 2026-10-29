@@ -43,7 +43,7 @@
  * @prop {Object} freeformLayout - Map of item id → {x, y, w, h} bounds
  * @prop {boolean} freeformEditing - Toggle edit mode for freeform layout
  * @prop {number} freeformSnap - Snap grid in px (default 20, 0 = off)
- * @prop {boolean} pushCards - Freeform drag/resize pushes overlapped cards down (default false)
+ * @prop {boolean} pushCards - Freeform drag/resize pushes overlapped cards away (Panorama-style, within the visible area) (default false)
  *
  * @slot - Default slot for grid items (slotted-children path)
  *
@@ -63,7 +63,13 @@
 
 import { html, css } from 'lit';
 import { PeekElement, sharedStyles } from './base.js';
-import { pushLayout } from '../lib/push-layout.js';
+import { pushLayout, clampRect } from '../lib/push-layout.js';
+
+// Smallest size a card can be dragged or squished to in freeform mode.
+const MIN_CARD_W = 100;
+const MIN_CARD_H = 60;
+// Applied to non-active cards during a push gesture only.
+const PUSH_TRANSITION = 'left 150ms ease, top 150ms ease, width 150ms ease, height 150ms ease';
 
 export class PeekGrid extends PeekElement {
   static properties = {
@@ -822,7 +828,7 @@ export class PeekGrid extends PeekElement {
 
     // Set container min-height
     const grid = this.shadowRoot?.querySelector('.grid');
-    if (grid) grid.style.minHeight = `${maxBottom}px`;
+    if (grid) grid.style.minHeight = `${this._capMinHeight(maxBottom)}px`;
   }
 
   _clearFreeformStyles() {
@@ -933,11 +939,19 @@ export class PeekGrid extends PeekElement {
       origHeight: rect.height,
       // Every card's rectangle at gesture start; the push on drop is computed
       // from where cards were before the gesture.
-      startRects: this.pushCards ? this._readChildRects() : null
+      startRects: this.pushCards ? this._readChildRects() : null,
+      bounds: this.pushCards ? this._readFreeformBounds() : null,
+      rects: null
     };
 
-    // Push mode lets the active card overlap others, so draw it on top.
-    if (this.pushCards) child.style.zIndex = '1000';
+    if (this.pushCards) {
+      // Push mode lets the active card overlap others, so draw it on top.
+      child.style.zIndex = '1000';
+      // Other cards glide to their pushed positions; the active card follows the pointer.
+      for (const el of this._getSlottedChildren()) {
+        if (el !== child) el.style.transition = PUSH_TRANSITION;
+      }
+    }
 
     child.setPointerCapture(e.pointerId);
     child.addEventListener('pointermove', this._boundPointerMove);
@@ -951,12 +965,19 @@ export class PeekGrid extends PeekElement {
 
     const dx = e.clientX - s.startX;
     const dy = e.clientY - s.startY;
-    const minW = 100;
-    const minH = 60;
+    const minW = MIN_CARD_W;
+    const minH = MIN_CARD_H;
+    const push = this.pushCards && s.startRects;
 
     if (s.edge === 'move') {
-      s.child.style.left = `${this._snap(s.origLeft + dx)}px`;
-      s.child.style.top = `${this._snap(s.origTop + dy)}px`;
+      let x = this._snap(s.origLeft + dx);
+      let y = this._snap(s.origTop + dy);
+      if (push) {
+        ({ x, y } = clampRect({ x, y, w: s.origWidth, h: s.origHeight }, s.bounds));
+      }
+      s.child.style.left = `${x}px`;
+      s.child.style.top = `${y}px`;
+      if (push) this._applyLivePush();
       return;
     }
 
@@ -977,41 +998,108 @@ export class PeekGrid extends PeekElement {
       newTop = s.origTop + (s.origHeight - newH);
     }
 
-    s.child.style.left = `${this._snap(newLeft)}px`;
-    s.child.style.top = `${this._snap(newTop)}px`;
-    s.child.style.width = `${this._snap(newW)}px`;
-    s.child.style.height = `${this._snap(newH)}px`;
+    newLeft = this._snap(newLeft);
+    newTop = this._snap(newTop);
+    newW = this._snap(newW);
+    newH = this._snap(newH);
+
+    if (push) {
+      // The visible area is a wall: a dragged edge stops at the bounds.
+      const b = s.bounds;
+      if (s.edge.includes('w') && newLeft < b.left) {
+        newW -= b.left - newLeft;
+        newLeft = b.left;
+      }
+      if (s.edge.includes('n') && newTop < b.top) {
+        newH -= b.top - newTop;
+        newTop = b.top;
+      }
+      if (s.edge.includes('e')) newW = Math.min(newW, b.right - newLeft);
+      if (s.edge.includes('s')) newH = Math.min(newH, b.bottom - newTop);
+      newW = Math.max(minW, newW);
+      newH = Math.max(minH, newH);
+    }
+
+    s.child.style.left = `${newLeft}px`;
+    s.child.style.top = `${newTop}px`;
+    s.child.style.width = `${newW}px`;
+    s.child.style.height = `${newH}px`;
+    if (push) this._applyLivePush();
   }
 
   /** Current bounds of every slotted child, in slot order. */
   _readChildRects() {
-    return this._getSlottedChildren().map((el) => ({
-      x: parseFloat(el.style.left) || 0,
-      y: parseFloat(el.style.top) || 0,
-      w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
-      h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
-      ghost: el.hasAttribute('data-ghost')
-    }));
+    return this._getSlottedChildren().map((el) => {
+      const id = this._getChildId(el);
+      const entry = id && this.freeformLayout?.[id];
+      const w = parseFloat(el.style.width) || el.getBoundingClientRect().width;
+      const h = parseFloat(el.style.height) || el.getBoundingClientRect().height;
+      return {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        w,
+        h,
+        // The card's own chosen size; a stored w/h may be a squished size.
+        userW: entry?.userW ?? w,
+        userH: entry?.userH ?? h,
+        ghost: el.hasAttribute('data-ghost')
+      };
+    });
   }
 
   /**
-   * Layout entries for cards the active card's final rectangle pushes down
-   * (pushCards mode), computed once from the gesture-start rectangles.
+   * The visible grid area in grid coordinates: the grid's content box, from
+   * its top down to the window viewport bottom less the gap.
    */
-  _computePushedLayout(activeBounds) {
+  _readFreeformBounds() {
+    const grid = this.shadowRoot?.querySelector('.grid');
+    const top = grid ? grid.getBoundingClientRect().top : 0;
+    const width = grid?.clientWidth || this.clientWidth || 600;
+    return {
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: Math.max(MIN_CARD_H, window.innerHeight - top - this.gap)
+    };
+  }
+
+  /** Active card's current rectangle from its inline style. */
+  _readActiveRect() {
     const s = this._dragState;
-    if (!this.pushCards || !s?.startRects) return {};
+    return {
+      x: parseFloat(s.child.style.left) || 0,
+      y: parseFloat(s.child.style.top) || 0,
+      w: parseFloat(s.child.style.width) || s.origWidth,
+      h: parseFloat(s.child.style.height) || s.origHeight
+    };
+  }
+
+  /**
+   * Run the full push from the gesture-start rectangles (not accumulated) for
+   * the active card's current rectangle and apply the result to every other
+   * card. Returns the resulting rect per slotted child, or null.
+   */
+  _applyLivePush() {
+    const s = this._dragState;
+    if (!this.pushCards || !s?.startRects) return null;
     const children = this._getSlottedChildren();
     const activeIndex = children.indexOf(s.child);
-    if (activeIndex < 0 || children.length !== s.startRects.length) return {};
-    const rects = pushLayout(s.startRects, activeIndex, activeBounds);
-    const pushed = {};
-    children.forEach((el, i) => {
-      const cid = this._getChildId(el);
-      if (!cid || i === activeIndex) return;
-      if (rects[i].y !== s.startRects[i].y) pushed[cid] = rects[i];
+    if (activeIndex < 0 || children.length !== s.startRects.length) return null;
+    const rects = pushLayout(s.startRects, activeIndex, this._readActiveRect(), {
+      bounds: s.bounds,
+      gap: this.gap,
+      minW: MIN_CARD_W,
+      minH: MIN_CARD_H
     });
-    return pushed;
+    children.forEach((el, i) => {
+      if (i === activeIndex) return;
+      el.style.left = `${rects[i].x}px`;
+      el.style.top = `${rects[i].y}px`;
+      el.style.width = `${rects[i].w}px`;
+      el.style.height = `${rects[i].h}px`;
+    });
+    s.rects = rects;
+    return rects;
   }
 
   _onPointerUp(e) {
@@ -1031,17 +1119,39 @@ export class PeekGrid extends PeekElement {
     };
 
     if (id) {
-      this.freeformLayout = { ...this.freeformLayout, [id]: bounds };
+      const entry = { ...bounds };
+      if (this.pushCards && s.startRects) {
+        // A resize sets the card's own size; a move keeps whatever it had.
+        const prev = this.freeformLayout?.[id];
+        if (s.edge !== 'move') {
+          entry.userW = bounds.w;
+          entry.userH = bounds.h;
+        } else if (prev?.userW != null) {
+          entry.userW = prev.userW;
+          entry.userH = prev.userH;
+        }
+      }
+      this.freeformLayout = { ...this.freeformLayout, [id]: entry };
     }
 
-    // On drop, cards the final rectangle covers move down and persist there.
+    // On drop, every card the push moved or resized persists its new rectangle.
     if (this.pushCards && s.startRects) {
-      const pushed = this._computePushedLayout(bounds);
-      this.freeformLayout = { ...this.freeformLayout, ...pushed };
-      for (const el of this._getSlottedChildren()) {
-        const b = pushed[this._getChildId(el)];
-        if (b) el.style.top = `${b.y}px`;
+      const rects = this._applyLivePush();
+      const children = this._getSlottedChildren();
+      if (rects) {
+        const changed = {};
+        children.forEach((el, i) => {
+          const cid = this._getChildId(el);
+          if (!cid || el === s.child) return;
+          const a = s.startRects[i];
+          const b = rects[i];
+          if (a.x !== b.x || a.y !== b.y || a.w !== b.w || a.h !== b.h) {
+            changed[cid] = { ...b, userW: a.userW, userH: a.userH };
+          }
+        });
+        this.freeformLayout = { ...this.freeformLayout, ...changed };
       }
+      for (const el of children) el.style.transition = '';
       s.child.style.zIndex = '';
     }
 
@@ -1061,7 +1171,12 @@ export class PeekGrid extends PeekElement {
       maxBottom = Math.max(maxBottom, top + height + this.gap);
     }
     const grid = this.shadowRoot?.querySelector('.grid');
-    if (grid) grid.style.minHeight = `${maxBottom}px`;
+    if (grid) grid.style.minHeight = `${this._capMinHeight(maxBottom)}px`;
+  }
+
+  /** In push mode the grid never grows past the viewport bottom. */
+  _capMinHeight(height) {
+    return this.pushCards ? Math.min(height, this._readFreeformBounds().bottom) : height;
   }
 
   _onSlotChange() {
