@@ -179,9 +179,21 @@ peek-card:hover .card-remove-btn {
 .card-webview {
   display: block;
   width: calc(100% - 12px);
-  height: calc(100% - 28px - 6px);
+  /* Takes the card body's remaining height by flex, not by percentage: the
+     body's height comes from flexing, which a percentage cannot always
+     resolve against, leaving the webview at its default height when the card
+     is made taller. */
+  flex: 1 1 0;
+  min-height: 0;
   margin: 0 6px 6px;
   border: none;
+}
+
+/* The card body is a column so a card's webview can fill it. */
+peek-card::part(body) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Add dialog */
