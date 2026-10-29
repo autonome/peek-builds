@@ -161,6 +161,7 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
       };
       if (cmd.pairPriority != null) entry.pairPriority = cmd.pairPriority;
       if (cmd.claimsInput) entry.claimsInput = cmd.claimsInput;
+      if (cmd.opensUrl) entry.opensUrl = cmd.opensUrl;
       // Preserve noun routing metadata in cache
       if (cmd._nounName) entry._nounName = cmd._nounName;
       if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
@@ -295,6 +296,7 @@ const initCommandRegistry = () => {
       };
       if (cmd.pairPriority != null || existing.pairPriority != null) entry.pairPriority = cmd.pairPriority ?? existing.pairPriority;
       if (cmd.claimsInput || existing.claimsInput) entry.claimsInput = cmd.claimsInput || existing.claimsInput;
+      if (cmd.opensUrl || existing.opensUrl) entry.opensUrl = cmd.opensUrl || existing.opensUrl;
       if (cmd._nounName || existing._nounName) entry._nounName = cmd._nounName || existing._nounName;
       if (cmd._nounCapability || existing._nounCapability) entry._nounCapability = cmd._nounCapability || existing._nounCapability;
       commandRegistry.set(cmd.name, entry);
@@ -322,6 +324,7 @@ const initCommandRegistry = () => {
     };
     if (msg.pairPriority != null || existing.pairPriority != null) entry.pairPriority = msg.pairPriority ?? existing.pairPriority;
     if (msg.claimsInput || existing.claimsInput) entry.claimsInput = msg.claimsInput || existing.claimsInput;
+    if (msg.opensUrl || existing.opensUrl) entry.opensUrl = msg.opensUrl || existing.opensUrl;
     if (msg._nounName || existing._nounName) entry._nounName = msg._nounName || existing._nounName;
     if (msg._nounCapability || existing._nounCapability) entry._nounCapability = msg._nounCapability || existing._nounCapability;
     commandRegistry.set(msg.name, entry);
@@ -592,6 +595,7 @@ const init = async () => {
       };
       if (cmd.pairPriority != null) entry.pairPriority = cmd.pairPriority;
       if (cmd.claimsInput) entry.claimsInput = cmd.claimsInput;
+      if (cmd.opensUrl) entry.opensUrl = cmd.opensUrl;
       // Restore noun routing metadata from cache
       if (cmd._nounName) entry._nounName = cmd._nounName;
       if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;

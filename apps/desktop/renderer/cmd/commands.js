@@ -122,6 +122,8 @@ function createProxyCommand(cmdData) {
     ...(cmdData.pairPriority != null ? { pairPriority: cmdData.pairPriority } : {}),
     // Raw typed text this command takes though it is not a command name (input-claims.js)
     ...(cmdData.claimsInput ? { claimsInput: cmdData.claimsInput } : {}),
+    // Address of the window this command opens (open-window-commands.js)
+    ...(cmdData.opensUrl ? { opensUrl: cmdData.opensUrl } : {}),
   };
 
   // Noun proxy — dispatch via noun:{capability}:{nounName} instead of cmd:execute:{name}

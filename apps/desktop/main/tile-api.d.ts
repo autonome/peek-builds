@@ -47,8 +47,7 @@ interface TileCommandDefinition {
   accepts?: unknown;
   produces?: unknown;
   params?: unknown;
-  claimsInput?: { tokenPattern: string };
-}
+  claimsInput?: { tokenPattern: string };}
 
 interface TileCommands {
   /**

@@ -290,6 +290,8 @@ export function registerLazyTile(
           produces: cmd.produces,
           params: cmd.params,
           claimsInput: cmd.claimsInput,
+          // The window this command opens, so the panel can switch to it when open
+          opensUrl: cmd.action?.type === 'window' ? cmd.action.url : undefined,
         })),
       },
     );

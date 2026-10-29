@@ -19,6 +19,8 @@
 // Pure: no DOM, no config reads. The `enterRunsInlineSuggestion` pref is carried
 // in `data`, synced by the panel from prefs.
 
+import { openWindowForCommand } from './open-window-commands.js';
+
 /**
  * Is the results list visible?
  * @param {string} currentState - a States value
@@ -177,6 +179,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
 
     // UI flags
     urlMatches: [],   // url-history items matching typed text (parallel lane)
+    openWindowIds: new Map(), // address -> id of the window showing it, mirrored by the panel
     // Escape hid the auto-opened list for the current text; owned by this module.
     resultsDismissed: false,
 
@@ -271,6 +274,19 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     commandRowSelected: () => {
       if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
       return commandRowAutoSelect(data) !== null;
+    },
+    // The command Enter is about to run opens a window (`opensUrl`) that is already
+    // open: switch to that window instead of running the command.
+    commandOpensOpenWindow: () => {
+      // In TYPING/IDLE Enter only runs a command row when one is auto-selected.
+      if (currentState === States.TYPING || currentState === States.IDLE) {
+        if (commandRowAutoSelect(data) === null) return false;
+      }
+      return openWindowForCommand(data.commands[data.matches[data.matchIndex]], data.openWindowIds) !== null;
+    },
+    // Same, for a clicked command row (the click names its row).
+    clickedCommandOpensOpenWindow: (payload) => {
+      return openWindowForCommand(data.commands[payload?.commandName], data.openWindowIds) !== null;
     },
     // The auto-selected command came from a suggestion (not yet committed) AND
     // takes params → complete the name and enter param mode rather than
@@ -479,6 +495,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'],
         },
         {
+          // The command opens a window that is already open → switch to it.
+          guard: 'commandOpensOpenWindow',
+          target: States.CLOSING,
+          actions: ['recordFrecency', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+        },
+        {
           // Strict-prefix suggestion that takes params → complete + param mode,
           // don't execute with empty params.
           guard: 'suggestedCommandNeedsParams',
@@ -522,6 +544,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
         { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
       ],
       [Events.CLICK_RESULT]: [
+        {
+          guard: 'clickedCommandOpensOpenWindow',
+          target: States.CLOSING,
+          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+        },
         { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'] },
       ],
       [Events.CLICK_URL_RESULT]: [
@@ -583,6 +610,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       [Events.ENTER]: [
         { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
+          // The highlighted command opens a window that is already open → switch to it.
+          guard: 'commandOpensOpenWindow',
+          target: States.CLOSING,
+          actions: ['recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+        },
+        {
           // Explicit selected command match wins. Reaching RESULTS_OPEN means the
           // user navigated the results list (ArrowDown), so the highlighted row
           // (state.matchIndex) is an intentional selection — execute it. The
@@ -609,6 +642,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
         { guard: 'hasActionUrl', target: States.CLOSING, actions: ['runUrlAction', 'clearInput', 'shutdown'] },
       ],
       [Events.CLICK_RESULT]: [
+        {
+          guard: 'clickedCommandOpensOpenWindow',
+          target: States.CLOSING,
+          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+        },
         {
           target: States.EXECUTING,
           actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],

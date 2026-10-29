@@ -1538,3 +1538,66 @@ describe('TYPING + Enter on input a command claims', () => {
     assert.ok(!machine._actionLog.includes('executeClaimingCommand'));
   });
 });
+
+// ===== Command whose window is already open =====
+
+describe('a command that opens a window already open', () => {
+  function windowMachine(state, openIds) {
+    const machine = makeMachine();
+    machine.setState(state);
+    const data = machine.getMutableData();
+    data.commands = { 'open things': { name: 'open things', opensUrl: 'peek://things/home.html' }, tags: { name: 'tags' } };
+    data.matches = ['open things'];
+    data.typed = 'open things';
+    data.openWindowIds = new Map(openIds);
+    machine._actionLog.length = 0;
+    return machine;
+  }
+
+  it('Enter in TYPING switches to the window instead of running the command', () => {
+    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
+    machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
+    assert.ok(!machine._actionLog.includes('executeCommand'));
+  });
+
+  it('Enter runs the command when no window is open', () => {
+    const machine = windowMachine(States.TYPING, [['peek://things/home.html', null]]);
+    machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
+
+    assert.equal(machine.getState(), States.EXECUTING);
+    assert.ok(machine._actionLog.includes('executeCommand'));
+    assert.ok(!machine._actionLog.includes('switchToCommandWindow'));
+  });
+
+  it('Enter on the highlighted row in RESULTS_OPEN switches to the window', () => {
+    const machine = windowMachine(States.RESULTS_OPEN, [['peek://things/home.html', 7]]);
+    machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
+    assert.ok(!machine._actionLog.includes('executeCommand'));
+  });
+
+  it('a click on the row switches to the window', () => {
+    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
+    machine.dispatch(Events.CLICK_RESULT, { index: 0, commandName: 'open things' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
+    assert.ok(!machine._actionLog.includes('executeCommand'));
+  });
+
+  it('a command that opens no window still runs', () => {
+    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
+    const data = machine.getMutableData();
+    data.matches = ['tags'];
+    data.typed = 'tags';
+    machine.dispatch(Events.ENTER, { value: 'tags', commandName: 'tags' });
+
+    assert.ok(machine._actionLog.includes('executeCommand'));
+    assert.ok(!machine._actionLog.includes('switchToCommandWindow'));
+  });
+});

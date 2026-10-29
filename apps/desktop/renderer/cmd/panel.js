@@ -16,6 +16,7 @@ import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from 
 import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
 import { findClaimingCommand } from './input-claims.js';
+import { openWindowForCommand, commandOpenUrls } from './open-window-commands.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -1684,8 +1685,12 @@ function applyOpenWindows() {
   const id = isSwitchableUrl(url) ? openWindowIds.get(url) : undefined;
   urlAction = typeof id === 'number' ? { url, action: 'switch', id } : null;
   renderUrlAction();
+  state.openWindowIds = openWindowIds;
   document.querySelectorAll('#results .url-result-item[data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
+  });
+  document.querySelectorAll('#results [data-opens-url]').forEach((el) => {
+    renderRowMarker(el, el.dataset.opensUrl);
   });
 }
 
@@ -1697,6 +1702,10 @@ function shownSwitchableUrls() {
   if (machine.getState() !== States.CHAIN_MODE) {
     for (const item of state.urlMatches || []) {
       if (isSwitchableUrl(item?.content)) urls.add(item.content);
+    }
+    // Commands that open a window: asked about so Enter can switch to it.
+    for (const url of commandOpenUrls(state.commands, state.matches)) {
+      if (isSwitchableUrl(url)) urls.add(url);
     }
   }
   return [...urls];
@@ -2099,6 +2108,12 @@ function updateResultsUI() {
       if (badgesSpan.children.length > 0) {
         item.appendChild(badgesSpan);
       }
+    }
+
+    // A command that opens a window gets the "Switch to window" marker while that window is open
+    if (cmd && cmd.opensUrl) {
+      item.dataset.opensUrl = cmd.opensUrl;
+      renderRowMarker(item, cmd.opensUrl);
     }
 
     // Route clicks through state machine dispatch (bug fix #3)
@@ -2742,6 +2757,13 @@ function actionHandlers() {
 
     runUrlAction(payload) {
       runUrlAction(payload?.url);
+    },
+
+    // The picked command opens a window that is already open: bring that window forward.
+    switchToCommandWindow(payload) {
+      const name = payload?.commandName || state.matches[state.matchIndex];
+      const target = openWindowForCommand(state.commands[name], openWindowIds);
+      if (target) runUrlAction(target.url, 'command-window');
     },
 
     // Enter on text no command name matches but a command claims (input-claims.js):
