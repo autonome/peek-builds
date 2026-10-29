@@ -1541,63 +1541,77 @@ describe('TYPING + Enter on input a command claims', () => {
 
 // ===== Command whose window is already open =====
 
-describe('a command that opens a window already open', () => {
-  function windowMachine(state, openIds) {
+describe('a "Switch to window" row after a command whose window is open', () => {
+  const ROW = 'Switch to window: open things';
+
+  // The command row followed by its switch row, as the panel builds them.
+  function windowMachine(state, matches = ['open things', ROW]) {
     const machine = makeMachine();
     machine.setState(state);
     const data = machine.getMutableData();
     data.commands = { 'open things': { name: 'open things', opensUrl: 'peek://things/home.html' }, tags: { name: 'tags' } };
-    data.matches = ['open things'];
+    data.matches = matches;
     data.typed = 'open things';
-    data.openWindowIds = new Map(openIds);
+    data.switchRows = new Map([[ROW, { command: 'open things', url: 'peek://things/home.html' }]]);
     machine._actionLog.length = 0;
     return machine;
   }
 
-  it('Enter in TYPING switches to the window instead of running the command', () => {
-    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
-    machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
-
-    assert.equal(machine.getState(), States.CLOSING);
-    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
-    assert.ok(!machine._actionLog.includes('executeCommand'));
-  });
-
-  it('Enter runs the command when no window is open', () => {
-    const machine = windowMachine(States.TYPING, [['peek://things/home.html', null]]);
+  it('Enter in TYPING runs the command, not the switch', () => {
+    const machine = windowMachine(States.TYPING);
     machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
 
     assert.equal(machine.getState(), States.EXECUTING);
     assert.ok(machine._actionLog.includes('executeCommand'));
-    assert.ok(!machine._actionLog.includes('switchToCommandWindow'));
+    assert.ok(!machine._actionLog.includes('switchToRowWindow'));
   });
 
-  it('Enter on the highlighted row in RESULTS_OPEN switches to the window', () => {
-    const machine = windowMachine(States.RESULTS_OPEN, [['peek://things/home.html', 7]]);
+  it('Enter on the command row in RESULTS_OPEN runs the command', () => {
+    const machine = windowMachine(States.RESULTS_OPEN);
     machine.dispatch(Events.ENTER, { value: 'open things', commandName: 'open things' });
 
+    assert.equal(machine.getState(), States.EXECUTING);
+    assert.ok(machine._actionLog.includes('executeCommand'));
+    assert.ok(!machine._actionLog.includes('switchToRowWindow'));
+  });
+
+  it('the command row is highlighted first and the list shows for a lone match', () => {
+    const machine = windowMachine(States.TYPING);
+    const data = machine.getData();
+    assert.equal(resultsListOpen(States.TYPING, data), true);
+    assert.equal(selectedRow(States.TYPING, data), 0);
+  });
+
+  it('Enter on the highlighted switch row switches to the window', () => {
+    const machine = windowMachine(States.RESULTS_OPEN);
+    machine.getMutableData().matchIndex = 1;
+    machine.dispatch(Events.ENTER, { value: 'open things' });
+
     assert.equal(machine.getState(), States.CLOSING);
-    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
+    assert.ok(machine._actionLog.includes('switchToRowWindow'));
     assert.ok(!machine._actionLog.includes('executeCommand'));
   });
 
-  it('a click on the row switches to the window', () => {
-    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
+  it('a click on the switch row switches to the window', () => {
+    const machine = windowMachine(States.TYPING);
+    machine.dispatch(Events.CLICK_RESULT, { index: 1, commandName: ROW });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('switchToRowWindow'));
+    assert.ok(!machine._actionLog.includes('executeCommand'));
+  });
+
+  it('a click on the command row runs the command', () => {
+    const machine = windowMachine(States.TYPING);
     machine.dispatch(Events.CLICK_RESULT, { index: 0, commandName: 'open things' });
 
-    assert.equal(machine.getState(), States.CLOSING);
-    assert.ok(machine._actionLog.includes('switchToCommandWindow'));
-    assert.ok(!machine._actionLog.includes('executeCommand'));
+    assert.equal(machine.getState(), States.EXECUTING);
+    assert.ok(machine._actionLog.includes('executeCommand'));
+    assert.ok(!machine._actionLog.includes('switchToRowWindow'));
   });
 
-  it('a command that opens no window still runs', () => {
-    const machine = windowMachine(States.TYPING, [['peek://things/home.html', 7]]);
-    const data = machine.getMutableData();
-    data.matches = ['tags'];
-    data.typed = 'tags';
-    machine.dispatch(Events.ENTER, { value: 'tags', commandName: 'tags' });
-
-    assert.ok(machine._actionLog.includes('executeCommand'));
-    assert.ok(!machine._actionLog.includes('switchToCommandWindow'));
+  it('without a switch row the lone command keeps the list closed', () => {
+    const machine = windowMachine(States.TYPING, ['open things']);
+    assert.equal(resultsListOpen(States.TYPING, machine.getData()), false);
   });
 });

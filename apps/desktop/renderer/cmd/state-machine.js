@@ -19,8 +19,6 @@
 // Pure: no DOM, no config reads. The `enterRunsInlineSuggestion` pref is carried
 // in `data`, synced by the panel from prefs.
 
-import { openWindowForCommand } from './open-window-commands.js';
-
 /**
  * Is the results list visible?
  * @param {string} currentState - a States value
@@ -179,7 +177,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
 
     // UI flags
     urlMatches: [],   // url-history items matching typed text (parallel lane)
-    openWindowIds: new Map(), // address -> id of the window showing it, mirrored by the panel
+    // Rows in `matches` that switch to an open window: row name -> { command, url }, mirrored by the panel
+    switchRows: new Map(),
     // Escape hid the auto-opened list for the current text; owned by this module.
     resultsDismissed: false,
 
@@ -275,19 +274,16 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
       return commandRowAutoSelect(data) !== null;
     },
-    // The command Enter is about to run opens a window (`opensUrl`) that is already
-    // open: switch to that window instead of running the command.
-    commandOpensOpenWindow: () => {
-      // In TYPING/IDLE Enter only runs a command row when one is auto-selected.
+    // The row Enter is about to act on is a "Switch to window" row.
+    switchRowSelected: () => {
+      // In TYPING/IDLE Enter only acts on a row when one is auto-selected.
       if (currentState === States.TYPING || currentState === States.IDLE) {
         if (commandRowAutoSelect(data) === null) return false;
       }
-      return openWindowForCommand(data.commands[data.matches[data.matchIndex]], data.openWindowIds) !== null;
+      return data.switchRows.has(data.matches[data.matchIndex]);
     },
-    // Same, for a clicked command row (the click names its row).
-    clickedCommandOpensOpenWindow: (payload) => {
-      return openWindowForCommand(data.commands[payload?.commandName], data.openWindowIds) !== null;
-    },
+    // Same, for a clicked row (the click names its row).
+    clickedSwitchRow: (payload) => data.switchRows.has(payload?.commandName),
     // The auto-selected command came from a suggestion (not yet committed) AND
     // takes params → complete the name and enter param mode rather than
     // executing with empty params (previously the panel faked this by
@@ -495,10 +491,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'],
         },
         {
-          // The command opens a window that is already open → switch to it.
-          guard: 'commandOpensOpenWindow',
+          // A "Switch to window" row is selected → switch to that window.
+          guard: 'switchRowSelected',
           target: States.CLOSING,
-          actions: ['recordFrecency', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+          actions: ['switchToRowWindow', 'clearInput', 'shutdown'],
         },
         {
           // Strict-prefix suggestion that takes params → complete + param mode,
@@ -545,9 +541,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       ],
       [Events.CLICK_RESULT]: [
         {
-          guard: 'clickedCommandOpensOpenWindow',
+          guard: 'clickedSwitchRow',
           target: States.CLOSING,
-          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+          actions: ['setMatchIndexFromClick', 'switchToRowWindow', 'clearInput', 'shutdown'],
         },
         { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'] },
       ],
@@ -610,10 +606,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       [Events.ENTER]: [
         { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
-          // The highlighted command opens a window that is already open → switch to it.
-          guard: 'commandOpensOpenWindow',
+          // The highlighted row is a "Switch to window" row → switch to that window.
+          guard: 'switchRowSelected',
           target: States.CLOSING,
-          actions: ['recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+          actions: ['switchToRowWindow', 'clearInput', 'shutdown'],
         },
         {
           // Explicit selected command match wins. Reaching RESULTS_OPEN means the
@@ -643,9 +639,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       ],
       [Events.CLICK_RESULT]: [
         {
-          guard: 'clickedCommandOpensOpenWindow',
+          guard: 'clickedSwitchRow',
           target: States.CLOSING,
-          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'switchToCommandWindow', 'clearInput', 'shutdown'],
+          actions: ['setMatchIndexFromClick', 'switchToRowWindow', 'clearInput', 'shutdown'],
         },
         {
           target: States.EXECUTING,

@@ -16,7 +16,7 @@ import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from 
 import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
 import { findClaimingCommand } from './input-claims.js';
-import { openWindowForCommand, commandOpenUrls } from './open-window-commands.js';
+import { commandOpenUrls, withSwitchRows } from './open-window-commands.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -133,7 +133,9 @@ function matchesWithPairRows(typed) {
     .map(name => ({ name, params: state.commands[name].params, pairPriority: state.commands[name].pairPriority }));
   const pairs = pairRowsFor(typed, available, paramUsage, Date.now());
   pairRowTargets = new Map(pairs.map(p => [p.name, p]));
-  return withPairRows(commandMatches, pairs);
+  const withSwitch = withSwitchRows(withPairRows(commandMatches, pairs), state.commands, openWindowIds);
+  state.switchRows = withSwitch.rows;
+  return withSwitch.matches;
 }
 
 // The pair row's command and option, or null for a plain command row.
@@ -1685,13 +1687,27 @@ function applyOpenWindows() {
   const id = isSwitchableUrl(url) ? openWindowIds.get(url) : undefined;
   urlAction = typeof id === 'number' ? { url, action: 'switch', id } : null;
   renderUrlAction();
-  state.openWindowIds = openWindowIds;
   document.querySelectorAll('#results .url-result-item[data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
   });
-  document.querySelectorAll('#results [data-opens-url]').forEach((el) => {
-    renderRowMarker(el, el.dataset.opensUrl);
-  });
+  if (refreshSwitchRows()) updateResultsUI();
+}
+
+// Add or drop the "Switch to window" rows to match the windows now open. Returns
+// whether the rows changed, so the list needs drawing again. The highlighted row
+// stays highlighted when it survives.
+function refreshSwitchRows() {
+  const stateName = machine.getState();
+  if (stateName !== States.TYPING && stateName !== States.RESULTS_OPEN) return false;
+  const next = withSwitchRows(state.matches, state.commands, openWindowIds, state.switchRows);
+  const unchanged = next.matches.length === state.matches.length
+    && next.matches.every((name, i) => name === state.matches[i]);
+  state.switchRows = next.rows;
+  if (unchanged) return false;
+  const highlighted = state.matches[state.matchIndex];
+  state.matches = next.matches;
+  state.matchIndex = Math.max(0, next.matches.indexOf(highlighted));
+  return true;
 }
 
 // Every address the panel shows that could be open in a window.
@@ -2072,6 +2088,17 @@ function updateResultsUI() {
     nameSpan.textContent = match;
     item.appendChild(nameSpan);
 
+    // A row that switches to an open window carries the "Switch to window" marker
+    const switchRow = state.switchRows.get(match);
+    if (switchRow) {
+      renderRowMarker(item, switchRow.url);
+      item.addEventListener('click', () => {
+        machine.dispatch(Events.CLICK_RESULT, { index, commandName: match });
+      });
+      resultsContainer.appendChild(item);
+      return;
+    }
+
     if (cmd && cmd.description) {
       const descSpan = document.createElement('span');
       descSpan.className = 'cmd-desc';
@@ -2108,12 +2135,6 @@ function updateResultsUI() {
       if (badgesSpan.children.length > 0) {
         item.appendChild(badgesSpan);
       }
-    }
-
-    // A command that opens a window gets the "Switch to window" marker while that window is open
-    if (cmd && cmd.opensUrl) {
-      item.dataset.opensUrl = cmd.opensUrl;
-      renderRowMarker(item, cmd.opensUrl);
     }
 
     // Route clicks through state machine dispatch (bug fix #3)
@@ -2759,10 +2780,9 @@ function actionHandlers() {
       runUrlAction(payload?.url);
     },
 
-    // The picked command opens a window that is already open: bring that window forward.
-    switchToCommandWindow(payload) {
-      const name = payload?.commandName || state.matches[state.matchIndex];
-      const target = openWindowForCommand(state.commands[name], openWindowIds);
+    // The picked row is a "Switch to window" row: bring that window forward.
+    switchToRowWindow(payload) {
+      const target = state.switchRows.get(payload?.commandName || state.matches[state.matchIndex]);
       if (target) runUrlAction(target.url, 'command-window');
     },
 
