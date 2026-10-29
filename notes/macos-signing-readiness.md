@@ -593,6 +593,17 @@ CI `spctl` on a non-quarantined staging bundle does not replace this acceptance.
   43 and native helpers; whether to require DMG signing (recommended here);
   candidate-only workflow/ref policy and clean-Mac acceptance owner.
 
+## Candidate .8 dependency-verification follow-up
+
+Per the candidate handoff, run 40876514899 (source `54a811e3`, build 1.0.8)
+imported the identity, signed and submitted notarization ID
+`6e019078-e173-413e-8826-7bb41bf2c426`, then blocked in `verifyApp` on
+`otool -L` with status 1. That log did not identify the bundle file.
+The adapter now emits a JSON-quoted canonical bundle-relative target for failed
+inventory checks, optionally followed by a strictly allowlisted first stderr
+line. This changes diagnostics only; it does not establish why .8 failed or
+relax verification. A subsequent candidate run is still needed for that evidence.
+
 ## Evidence and limits
 
 Official pages retrieved during this track's research on **2026-10-27** (runner

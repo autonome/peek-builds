@@ -217,11 +217,37 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   const summaries = [];
   const inventories = [];
   let stage = 'idle';
+  let inventoryBundle;
+  const inventoryTools = new Set(['file', 'lipo', 'otool', 'codesign', 'spctl']);
+  // Deliberately narrower than arbitrary tool prose: no paths, shell syntax,
+  // control characters, or subsequent lines. Never echo known environment values.
+  const safeReason = stderr => {
+    if (typeof stderr !== 'string') return '';
+    const first = stderr.split(/\r?\n/, 1)[0];
+    return first.length <= 240 && /^[A-Za-z0-9 .,:()_-]+$/.test(first) &&
+      !Object.values(env).some(value => typeof value === 'string' && value && first.includes(value)) ? first : '';
+  };
   const call = async (file, args, opts = {}) => {
     const operation = toolOperation(file, args);
-    const failed = (reason, status) => {
+    // Capture before invoking a runner; never use arbitrary runner/error fields
+    // to identify the target. Both operands are canonical bundle inventory paths.
+    let relativeTarget;
+    if (inventoryBundle && (inventoryTools.has(file) ||
+        (file === 'xcrun' && args[0] === 'stapler' && args[1] === 'validate'))) {
+      try {
+        const target = fs.realpathSync(args.at(-1));
+        if (within(inventoryBundle, target)) {
+          relativeTarget = path.relative(inventoryBundle, target).split(path.sep).join('/') || '.';
+        }
+      } catch { /* Diagnostic context must not change verification behavior. */ }
+    }
+    const failed = (reason, status, stderr) => {
       // Numeric exit status only; never stringify arbitrary runner values.
       const exit = Number.isInteger(status) && status >= 0 && status <= 255 ? `; status=${status}` : '';
+      if (relativeTarget !== undefined) {
+        const detail = safeReason(stderr);
+        console.error(`macOS candidate tool target: ${JSON.stringify(relativeTarget)}${detail ? `; stderr=${JSON.stringify(detail)}` : ''}`);
+      }
       console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}`);
       block(reason);
     };
@@ -231,8 +257,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     let result;
     try { result = await run(file, args, { cwd: root, env: childEnv,
       timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; failed('tool-execution'); }
-    if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active'); }
-    if (result.code !== 0) failed('tool-exit', result.code);
+    if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active', undefined, result?.stderr); }
+    if (result.code !== 0) failed('tool-exit', result.code, result.stderr);
     return result;
   };
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
@@ -295,6 +321,11 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   }
   async function verifyApp(bundle, policy) {
     bundle = fs.realpathSync(bundle);
+    inventoryBundle = bundle;
+    try { return await verifyBundle(bundle, policy); }
+    finally { inventoryBundle = undefined; }
+  }
+  async function verifyBundle(bundle, policy) {
     await call('codesign', ['--verify', '--deep', '--strict', '--verbose=2', bundle]);
     const info = plist.parse(fs.readFileSync(path.join(bundle, 'Contents/Info.plist'), 'utf8'));
     const build = json(fs.readFileSync(path.join(bundle, 'Contents/Resources/build-info.json'), 'utf8'));

@@ -58,7 +58,7 @@ function fixture(t, mutation = {}) {
       args.push('SEEDED-PRIVATE-ARGV');
       if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
       return { code: mutation.failureMode === 'status' ? 'SEEDED-PRIVATE-STATUS' : 73,
-        stdout: 'SECRET-TOOL-OUTPUT', stderr: secrets.MACOS_CERTIFICATE_PASSWORD,
+        stdout: 'SECRET-TOOL-OUTPUT', stderr: mutation.stderr ?? secrets.MACOS_CERTIFICATE_PASSWORD,
         quiescent: mutation.failureMode !== 'active' };
     }
     if (file === 'git') return ok(args[0] === 'status' ? '' : SHA + '\n');
@@ -400,6 +400,24 @@ for (const [name, mutation, expected] of [
   if (name === 'notary wait timeout') assert.ok(f.calls.some(c => c.file === 'xcrun' && c.args[1] === 'info'));
 });
 
+for (const stderr of ['truncated load command\nSECOND LINE', '/private/secret: invalid',
+  'bad $TOKEN', 'bad\u001b[31m', 'bad C:\\private\\secret', secrets.MACOS_CERTIFICATE_PASSWORD]) {
+  test(`nested dependency failure has bounded inventory evidence: ${JSON.stringify(stderr)}`, async t => {
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const f = fixture(t, { stderr, fail: (file, args) => file === 'otool' && args[0] === '-L' &&
+      args.at(-1).endsWith('/Contents/Frameworks/Example.framework/Versions/A/Example') });
+    await assert.rejects(f.execute(), { code: 'tool-exit' });
+    const index = logs.findIndex(line => line.startsWith('macOS candidate tool target:'));
+    assert.ok(index >= 0);
+    assert.equal(logs[index], 'macOS candidate tool target: "Contents/Frameworks/Example.framework/Versions/A/Example"' +
+      (stderr.startsWith('truncated') ? '; stderr="truncated load command"' : ''));
+    assert.equal(logs[index + 1], 'macOS candidate tool failed: stage=verifyApp; operation=dependencies; reason=tool-exit; status=73');
+    assert.equal(fs.existsSync(f.output), false);
+    assert.deepEqual(fs.readdirSync(f.temp), []);
+  });
+}
+
 test('every reachable tool failure emits only fixed stage/operation/reason and bounded numeric status', async t => {
   const logs = [];
   t.mock.method(console, 'error', (...args) => {
@@ -418,6 +436,12 @@ test('every reachable tool failure emits only fixed stage/operation/reason and b
       assert.equal(fs.existsSync(f.output), false);
       assert.ok(logs.length >= 1, `${mode} call ${index} is diagnosed`);
       for (const line of logs) {
+        if (line.startsWith('macOS candidate tool target:')) {
+          const target = JSON.parse(line.slice('macOS candidate tool target: '.length));
+          assert.ok(target === '.' || target.startsWith('Contents/'));
+          assert.ok(!target.includes('..'));
+          continue;
+        }
         assert.match(line, /^macOS candidate tool failed: stage=(?:preflight|prepare|pack|signApp|submitApp|stapleApp|verifyApp|archive|signDmg|submitDmg|stapleDmg|verifyDmg|verifyZip|verifyDmgApp|cleanup); operation=[a-z-]+; reason=tool-(?:exit|execution|tree-active)(?:; status=73)?$/);
         assert.doesNotMatch(line, /unknown|SEEDED|SECRET-TOOL-OUTPUT|dummy-password|PRIVATE KEY/);
         for (const value of [f.root, f.temp, ...Object.values(secrets)]) assert.ok(!line.includes(value));
