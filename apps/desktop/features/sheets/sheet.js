@@ -9,6 +9,10 @@ import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.
 import { withSheetName } from './sheet-commands.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
+import { pushLayout } from 'peek://app/lib/push-layout.js';
+import {
+  MIN_CARD_W, MIN_CARD_H, isDrag, rectFromPoints, dragRectToGrid
+} from './drag-rect.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
   SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC
@@ -126,13 +130,13 @@ const renderCards = () => {
 /**
  * Add a new card with a URL
  */
-const addCard = async (url) => {
+const addCard = async (url, rect = null) => {
   if (!url) return;
 
   const id = crypto.randomUUID().slice(0, 8);
 
-  // Auto-place in the next free slot
-  const slot = slotFor(sheetConfig.items.length);
+  // Place at the drawn rectangle, else in the next free slot
+  const slot = rect || slotFor(sheetConfig.items.length);
   const newItem = {
     id,
     url,
@@ -141,6 +145,24 @@ const addCard = async (url) => {
     width: slot.w,
     height: slot.h
   };
+
+  // Cards under a drawn rectangle are pushed aside the way they are on a drop.
+  if (rect) {
+    const grid = document.querySelector('peek-grid.cards');
+    const rects = [...sheetConfig.items.map(it => ({ x: it.x, y: it.y, w: it.width, h: it.height })), rect];
+    const pushed = pushLayout(rects, rects.length - 1, rect, {
+      bounds: gridBounds(grid),
+      gap: grid.gap,
+      minW: MIN_CARD_W,
+      minH: MIN_CARD_H
+    });
+    sheetConfig.items.forEach((it, i) => {
+      it.x = pushed[i].x;
+      it.y = pushed[i].y;
+      it.width = pushed[i].w;
+      it.height = pushed[i].h;
+    });
+  }
 
   sheetConfig.items.push(newItem);
   await saveSheetConfig();
@@ -166,6 +188,17 @@ const updateEditState = () => {
   document.querySelector('peek-grid.cards').freeformEditing = true;
 };
 
+/** Rectangle drawn on empty space that the next added card takes; null for auto-placement. */
+let pendingRect = null;
+
+/** The grid's visible area in grid coordinates, as peek-grid computes it for pushing. */
+const gridBounds = (grid) => {
+  const inner = grid.shadowRoot?.querySelector('.grid');
+  const top = inner ? inner.getBoundingClientRect().top : 0;
+  const width = inner?.clientWidth || grid.clientWidth || 600;
+  return { left: 0, top: 0, right: width, bottom: Math.max(MIN_CARD_H, window.innerHeight - top - grid.gap) };
+};
+
 /**
  * Show URL input dialog
  */
@@ -183,6 +216,7 @@ const showAddDialog = () => {
 const hideAddDialog = () => {
   const dialog = document.querySelector('.add-dialog');
   dialog.style.display = 'none';
+  pendingRect = null;
 };
 
 /**
@@ -192,9 +226,66 @@ const confirmAddDialog = () => {
   const input = document.querySelector('.add-dialog-input');
   const url = input.value.trim();
   if (url) {
-    addCard(url);
+    addCard(url, pendingRect);
   }
   hideAddDialog();
+};
+
+/** Outline element shown while drawing, and the in-progress gesture (null when idle). */
+let drawing = null;
+
+const endDrawing = () => {
+  if (!drawing) return;
+  drawing.outline.remove();
+  drawing = null;
+};
+
+/**
+ * Pressing on empty grid space and dragging draws a rectangle; releasing opens
+ * the add dialog, and the card is created at that rectangle. Escape or
+ * cancelling the dialog discards it. A press that barely moves does nothing.
+ */
+const setupDrawCard = (grid) => {
+  grid.addEventListener('pointerdown', (e) => {
+    // Cards are light-DOM children, so only a press on the grid itself is empty space.
+    if (e.button !== 0 || e.target !== grid || drawing) return;
+    const outline = document.createElement('div');
+    outline.className = 'draw-outline';
+    outline.style.display = 'none';
+    document.body.appendChild(outline);
+    drawing = { pointerId: e.pointerId, start: { x: e.clientX, y: e.clientY }, outline };
+    grid.setPointerCapture(e.pointerId);
+  });
+
+  grid.addEventListener('pointermove', (e) => {
+    if (!drawing || e.pointerId !== drawing.pointerId) return;
+    const end = { x: e.clientX, y: e.clientY };
+    if (!isDrag(drawing.start, end)) return;
+    const r = rectFromPoints(drawing.start, end);
+    const s = drawing.outline.style;
+    s.display = '';
+    s.left = `${r.x}px`;
+    s.top = `${r.y}px`;
+    s.width = `${r.w}px`;
+    s.height = `${r.h}px`;
+  });
+
+  grid.addEventListener('pointerup', (e) => {
+    if (!drawing || e.pointerId !== drawing.pointerId) return;
+    const { start } = drawing;
+    const end = { x: e.clientX, y: e.clientY };
+    endDrawing();
+    if (!isDrag(start, end)) return;
+    const inner = grid.shadowRoot?.querySelector('.grid');
+    const box = inner ? inner.getBoundingClientRect() : grid.getBoundingClientRect();
+    pendingRect = dragRectToGrid(start, end, { x: box.left, y: box.top }, {
+      snap: grid.freeformSnap,
+      bounds: gridBounds(grid)
+    });
+    showAddDialog();
+  });
+
+  grid.addEventListener('pointercancel', endDrawing);
 };
 
 /**
@@ -221,6 +312,7 @@ const setupEvents = () => {
 
   // Listen for freeform layout changes from peek-grid (drag/resize)
   const grid = document.querySelector('peek-grid.cards');
+  setupDrawCard(grid);
   grid.addEventListener('freeform-layout-change', (e) => {
     const { layout } = e.detail;
 
@@ -307,8 +399,14 @@ const setupTitleEdit = () => {
       save: (name) => commitName(name)
     });
   });
-  // Esc ends only the edit; otherwise it closes the transient sheet window.
-  api.escape?.onEscape?.(() => ({ handled: isNameEditing() }));
+  // Esc ends only the edit or the rectangle being drawn; otherwise it closes the transient sheet window.
+  api.escape?.onEscape?.(() => {
+    if (drawing) {
+      endDrawing();
+      return { handled: true };
+    }
+    return { handled: isNameEditing() };
+  });
 };
 
 /**
