@@ -43,6 +43,7 @@
  * @prop {Object} freeformLayout - Map of item id → {x, y, w, h} bounds
  * @prop {boolean} freeformEditing - Toggle edit mode for freeform layout
  * @prop {number} freeformSnap - Snap grid in px (default 20, 0 = off)
+ * @prop {boolean} pushCards - Freeform drag/resize pushes overlapped cards down (default false)
  *
  * @slot - Default slot for grid items (slotted-children path)
  *
@@ -62,6 +63,7 @@
 
 import { html, css } from 'lit';
 import { PeekElement, sharedStyles } from './base.js';
+import { pushLayout } from '../lib/push-layout.js';
 
 export class PeekGrid extends PeekElement {
   static properties = {
@@ -74,7 +76,8 @@ export class PeekGrid extends PeekElement {
     viewMode: { type: String, attribute: 'view-mode', reflect: true },
     freeformLayout: { type: Object, attribute: false },
     freeformEditing: { type: Boolean, attribute: 'freeform-editing', reflect: true },
-    freeformSnap: { type: Number, attribute: 'freeform-snap' }
+    freeformSnap: { type: Number, attribute: 'freeform-snap' },
+    pushCards: { type: Boolean, attribute: 'push-cards' }
   };
 
   static styles = [
@@ -924,7 +927,10 @@ export class PeekGrid extends PeekElement {
       origLeft: parseFloat(child.style.left) || 0,
       origTop: parseFloat(child.style.top) || 0,
       origWidth: rect.width,
-      origHeight: rect.height
+      origHeight: rect.height,
+      // Every card's rectangle at gesture start, so pushes are computed from
+      // where cards were rather than accumulating across pointer moves.
+      startRects: this.pushCards ? this._readChildRects() : null
     };
 
     child.setPointerCapture(e.pointerId);
@@ -945,6 +951,7 @@ export class PeekGrid extends PeekElement {
     if (s.edge === 'move') {
       s.child.style.left = `${this._snap(s.origLeft + dx)}px`;
       s.child.style.top = `${this._snap(s.origTop + dy)}px`;
+      this._applyPush();
       return;
     }
 
@@ -969,6 +976,38 @@ export class PeekGrid extends PeekElement {
     s.child.style.top = `${this._snap(newTop)}px`;
     s.child.style.width = `${this._snap(newW)}px`;
     s.child.style.height = `${this._snap(newH)}px`;
+    this._applyPush();
+  }
+
+  /** Current bounds of every slotted child, in slot order. */
+  _readChildRects() {
+    return this._getSlottedChildren().map((el) => ({
+      x: parseFloat(el.style.left) || 0,
+      y: parseFloat(el.style.top) || 0,
+      w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
+      h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
+      ghost: el.hasAttribute('data-ghost')
+    }));
+  }
+
+  /** Move cards overlapped by the active card straight down (pushCards mode). */
+  _applyPush() {
+    const s = this._dragState;
+    if (!this.pushCards || !s?.startRects) return;
+    const children = this._getSlottedChildren();
+    const activeIndex = children.indexOf(s.child);
+    if (activeIndex < 0 || children.length !== s.startRects.length) return;
+    const active = {
+      x: parseFloat(s.child.style.left) || 0,
+      y: parseFloat(s.child.style.top) || 0,
+      w: parseFloat(s.child.style.width) || s.origWidth,
+      h: parseFloat(s.child.style.height) || s.origHeight
+    };
+    const rects = pushLayout(s.startRects, activeIndex, active);
+    children.forEach((el, i) => {
+      if (i !== activeIndex) el.style.top = `${rects[i].y}px`;
+    });
+    this._updateContainerHeight();
   }
 
   _onPointerUp(e) {
@@ -989,6 +1028,20 @@ export class PeekGrid extends PeekElement {
 
     if (id) {
       this.freeformLayout = { ...this.freeformLayout, [id]: bounds };
+    }
+
+    // Pushed cards persist where they were pushed.
+    if (this.pushCards && s.startRects) {
+      const children = this._getSlottedChildren();
+      const pushed = {};
+      children.forEach((el, i) => {
+        const cid = this._getChildId(el);
+        if (!cid || el === s.child || !s.startRects[i]) return;
+        const y = parseFloat(el.style.top) || 0;
+        if (y !== s.startRects[i].y) pushed[cid] = { ...s.startRects[i], y };
+      });
+      for (const b of Object.values(pushed)) delete b.ghost;
+      this.freeformLayout = { ...this.freeformLayout, ...pushed };
     }
 
     this.emit('freeform-layout-change', { layout: this.freeformLayout, itemId: id, bounds });
