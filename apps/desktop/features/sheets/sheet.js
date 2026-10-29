@@ -10,7 +10,7 @@ import { withSheetName } from './sheet-commands.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import { pushLayout } from 'peek://app/lib/push-layout.js';
-import { heightForRatio } from 'peek://app/lib/aspect-resize.js';
+import { heightForRatio, clearOfRects } from 'peek://app/lib/aspect-resize.js';
 import { createKeydownHandler, getCards } from 'peek://app/lib/grid-nav.js';
 import {
   MIN_CARD_W, MIN_CARD_H, isDrag, rectFromPoints, dragRectToGrid
@@ -75,6 +75,11 @@ const fitImageCard = (item, card, img) => {
   if (!bounds) return;
   const h = heightForRatio(bounds.w, item.aspect);
   if (Math.abs(h - bounds.h) <= 1) return;
+  // Snapping must not put the card on top of another; leave it as it is then.
+  const others = Object.entries(grid.freeformLayout)
+    .filter(([id]) => id !== item.id)
+    .map(([, r]) => r);
+  if (!clearOfRects({ ...bounds, h }, others)) return;
   item.height = h;
   grid.freeformLayout = { ...grid.freeformLayout, [item.id]: { ...bounds, h } };
   saveSheetConfig();

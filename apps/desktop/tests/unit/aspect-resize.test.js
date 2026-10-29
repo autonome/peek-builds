@@ -5,7 +5,25 @@
  */
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { lockAspectResize, heightForRatio } from '../../renderer/lib/aspect-resize.js';
+import { lockAspectResize, heightForRatio, clearOfRects } from '../../renderer/lib/aspect-resize.js';
+
+describe('clearOfRects', () => {
+  const card = { x: 0, y: 0, w: 100, h: 100 };
+  it('is clear with no other cards', () => {
+    assert.equal(clearOfRects(card, []), true);
+  });
+  it('is clear when cards only touch', () => {
+    assert.equal(clearOfRects(card, [{ x: 100, y: 0, w: 50, h: 50 }, { x: 0, y: 100, w: 50, h: 50 }]), true);
+  });
+  it('is not clear when a card overlaps', () => {
+    assert.equal(clearOfRects(card, [{ x: 50, y: 99, w: 50, h: 50 }]), false);
+  });
+  it('a taller snap collides with the card below', () => {
+    const below = { x: 0, y: 110, w: 100, h: 100 };
+    assert.equal(clearOfRects({ ...card, h: 100 }, [below]), true);
+    assert.equal(clearOfRects({ ...card, h: 150 }, [below]), false);
+  });
+});
 
 const orig = { x: 100, y: 50, w: 200, h: 100 }; // ratio 2
 

@@ -62,6 +62,18 @@ export function lockAspectResize({ edge, orig, w, h, ratio, minW = 0, minH = 0, 
   };
 }
 
+/**
+ * Whether `rect` overlaps none of `others` (touching edges do not overlap).
+ * Used to apply a ratio snap only when it would not put cards on top of each other.
+ * @param {{x:number,y:number,w:number,h:number}} rect
+ * @param {Array<{x:number,y:number,w:number,h:number}>} others
+ */
+export function clearOfRects(rect, others) {
+  return !others.some((o) =>
+    rect.x < o.x + o.w && o.x < rect.x + rect.w &&
+    rect.y < o.y + o.h && o.y < rect.y + rect.h);
+}
+
 /** Height that gives width `w` the ratio (width / height). */
 export function heightForRatio(w, ratio) {
   return Math.round(w / ratio);
