@@ -84,13 +84,17 @@ body.see-through .add-dialog-input {
 }
 
 /* The title sits on its own box so it stays readable over any sheet
-   background, including a busy image or the frosted look. */
+   background, including a busy image or the frosted look. It is sized
+   exactly like the header buttons (.btn) so the row reads as one strip. */
 .sheet-title {
-  font-size: 18px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 13px;
+  font-weight: normal;
+  line-height: normal;
+  font-family: inherit;
   color: var(--base05);
   cursor: text;
-  padding: 4px 12px;
+  padding: 6px 14px;
   border-radius: 6px;
   background: var(--base01);
   border: 1px solid var(--base02);

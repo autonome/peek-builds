@@ -41,15 +41,17 @@ export const resolveSheetOptions = (config) => {
  * A sheet is a transient window, like a peek: `role: 'quick-view'` with
  * `modal: true` makes it close when focus goes to any other window.
  *
- * The rest matches what peeks pass: `type: 'panel'` with `pageHost: true` opens
- * it as a transient page-host panel, which main treats as a user-gesture open,
- * so a hotkey press raises it over another frontmost app; `center` places it.
+ * `type: 'panel'` matches what peeks pass; main treats a transient panel as a
+ * user-gesture open, so a hotkey press raises it over another frontmost app.
+ * `center` places it. `pageHost` stays off: a page host gets no tile preload,
+ * so the sheet page would lose the tile API and could not read its saved
+ * sheets.
  *
- * @returns {{role: 'quick-view', modal: true, type: 'panel', pageHost: true, center: true, maximized?: true, maximize?: true, transparent?: true}}
+ * @returns {{role: 'quick-view', modal: true, type: 'panel', center: true, maximized?: true, maximize?: true, transparent?: true}}
  */
 export const windowParamsForSheet = (config) => {
   const { maximized, background } = resolveSheetOptions(config);
-  const params = { role: 'quick-view', modal: true, type: 'panel', pageHost: true, center: true };
+  const params = { role: 'quick-view', modal: true, type: 'panel', center: true };
   if (maximized) {
     params.maximized = true;
     params.maximize = true;

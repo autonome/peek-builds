@@ -69,7 +69,7 @@ describe('resolveSheetOptions', () => {
 });
 
 describe('windowParamsForSheet', () => {
-  const TRANSIENT = { role: 'quick-view', modal: true, type: 'panel', pageHost: true, center: true };
+  const TRANSIENT = { role: 'quick-view', modal: true, type: 'panel', center: true };
 
   it('is transient for a default sheet and adds nothing else', () => {
     assert.deepEqual(windowParamsForSheet({ items: [] }), TRANSIENT);
@@ -81,7 +81,7 @@ describe('windowParamsForSheet', () => {
       assert.equal(params.role, 'quick-view');
       assert.equal(params.modal, true);
       assert.equal(params.type, 'panel');
-      assert.equal(params.pageHost, true);
+      assert.equal('pageHost' in params, false);
       assert.equal(params.center, true);
     }
   });
