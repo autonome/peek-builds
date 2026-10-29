@@ -16,7 +16,7 @@ import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from 
 import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
 import { findClaimingCommand } from './input-claims.js';
-import { commandOpenUrls, withSwitchRows } from './open-window-commands.js';
+import { commandOpenUrls } from './open-window-commands.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -133,9 +133,7 @@ function matchesWithPairRows(typed) {
     .map(name => ({ name, params: state.commands[name].params, pairPriority: state.commands[name].pairPriority }));
   const pairs = pairRowsFor(typed, available, paramUsage, Date.now());
   pairRowTargets = new Map(pairs.map(p => [p.name, p]));
-  const withSwitch = withSwitchRows(withPairRows(commandMatches, pairs), state.commands, openWindowIds);
-  state.switchRows = withSwitch.rows;
-  return withSwitch.matches;
+  return withPairRows(commandMatches, pairs);
 }
 
 // The pair row's command and option, or null for a plain command row.
@@ -1660,8 +1658,24 @@ function renderUrlAction() {
   btn.setAttribute('aria-label', 'Switch to page');
 }
 
-// The marker on a Visited row whose page is open in a window (prior art:
-// Chrome's "Switch to this tab"). Picking such a row switches to the window.
+// The id of the window showing `address`, or null when none is open (or not yet asked).
+function openWindowIdFor(address) {
+  const id = isSwitchableUrl(address) ? openWindowIds.get(address) : undefined;
+  return typeof id === 'number' ? id : null;
+}
+
+// The address a results row stands for: a command's `opensUrl` for a command row,
+// the page for a Visited row; null for a row without one. `row` is a global
+// results-list index (commands first, then Visited rows).
+function rowAddress(row) {
+  if (row === null || row === undefined) return null;
+  if (row < state.matches.length) return state.commands[state.matches[row]]?.opensUrl || null;
+  return state.urlMatches[row - state.matches.length]?.content || null;
+}
+
+// The marker on any row whose address is open in a window (prior art: Chrome's
+// "Switch to this tab"). Clicking it switches to the window; picking the row
+// itself does the row's usual thing. Rows carry their address in `data-url`.
 function renderRowMarker(el, url) {
   const id = openWindowIds.get(url);
   const existing = el.querySelector('.url-open-marker');
@@ -1670,8 +1684,13 @@ function renderRowMarker(el, url) {
     if (!existing) {
       const marker = document.createElement('span');
       marker.className = 'url-open-marker';
+      marker.setAttribute('role', 'button');
       marker.textContent = 'Switch to window';
-      marker.title = 'This page is open in a window';
+      marker.title = 'Switch to the window showing this page (Cmd+Enter)';
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        machine.dispatch(Events.URL_ACTION, { url: el.dataset.url });
+      });
       el.appendChild(marker);
     }
   } else {
@@ -1687,27 +1706,9 @@ function applyOpenWindows() {
   const id = isSwitchableUrl(url) ? openWindowIds.get(url) : undefined;
   urlAction = typeof id === 'number' ? { url, action: 'switch', id } : null;
   renderUrlAction();
-  document.querySelectorAll('#results .url-result-item[data-url]').forEach((el) => {
+  document.querySelectorAll('#results [data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
   });
-  if (refreshSwitchRows()) updateResultsUI();
-}
-
-// Add or drop the "Switch to window" rows to match the windows now open. Returns
-// whether the rows changed, so the list needs drawing again. The highlighted row
-// stays highlighted when it survives.
-function refreshSwitchRows() {
-  const stateName = machine.getState();
-  if (stateName !== States.TYPING && stateName !== States.RESULTS_OPEN) return false;
-  const next = withSwitchRows(state.matches, state.commands, openWindowIds, state.switchRows);
-  const unchanged = next.matches.length === state.matches.length
-    && next.matches.every((name, i) => name === state.matches[i]);
-  state.switchRows = next.rows;
-  if (unchanged) return false;
-  const highlighted = state.matches[state.matchIndex];
-  state.matches = next.matches;
-  state.matchIndex = Math.max(0, next.matches.indexOf(highlighted));
-  return true;
 }
 
 // Every address the panel shows that could be open in a window.
@@ -2088,17 +2089,6 @@ function updateResultsUI() {
     nameSpan.textContent = match;
     item.appendChild(nameSpan);
 
-    // A row that switches to an open window carries the "Switch to window" marker
-    const switchRow = state.switchRows.get(match);
-    if (switchRow) {
-      renderRowMarker(item, switchRow.url);
-      item.addEventListener('click', () => {
-        machine.dispatch(Events.CLICK_RESULT, { index, commandName: match });
-      });
-      resultsContainer.appendChild(item);
-      return;
-    }
-
     if (cmd && cmd.description) {
       const descSpan = document.createElement('span');
       descSpan.className = 'cmd-desc';
@@ -2135,6 +2125,12 @@ function updateResultsUI() {
       if (badgesSpan.children.length > 0) {
         item.appendChild(badgesSpan);
       }
+    }
+
+    // A command that opens a window gets the "Switch to window" marker while that window is open
+    if (cmd && cmd.opensUrl) {
+      item.dataset.url = cmd.opensUrl;
+      renderRowMarker(item, cmd.opensUrl);
     }
 
     // Route clicks through state machine dispatch (bug fix #3)
@@ -2256,12 +2252,6 @@ function actionHandlers() {
     const item = state.urlMatches[urlIndex];
     if (!item || !item.content) return;
     const url = item.content;
-    // A row whose page is open in a window (it carries the marker) switches
-    // to that window; any other row opens its page.
-    if (isSwitchableUrl(url) && typeof openWindowIds.get(url) === 'number') {
-      runUrlAction(url, 'history-result');
-      return;
-    }
     log('cmd:panel', 'Opening URL history result:', url);
     state.lastExecuted = url;
     updateMatchCount(url);
@@ -2780,12 +2770,6 @@ function actionHandlers() {
       runUrlAction(payload?.url);
     },
 
-    // The picked row is a "Switch to window" row: bring that window forward.
-    switchToRowWindow(payload) {
-      const target = state.switchRows.get(payload?.commandName || state.matches[state.matchIndex]);
-      if (target) runUrlAction(target.url, 'command-window');
-    },
-
     // Enter on text no command name matches but a command claims (input-claims.js):
     // run that command with the typed text.
     executeClaimingCommand(payload) {
@@ -3189,6 +3173,17 @@ async function render() {
       e.preventDefault();
       machine.dispatch(Events.URL_ACTION, { url: urlAction.url });
       return;
+    }
+
+    // Cmd+Enter on the highlighted row (command or Visited) whose address is open
+    // in a window: switch to it.
+    if (cmdEnter) {
+      const rowUrl = rowAddress(selectedRow(machine.getState(), state));
+      if (openWindowIdFor(rowUrl) !== null) {
+        e.preventDefault();
+        machine.dispatch(Events.URL_ACTION, { url: rowUrl });
+        return;
+      }
     }
 
     if (e.key === 'Enter' && (cmdEnter || !hasModifier(e))) {

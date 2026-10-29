@@ -177,8 +177,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
 
     // UI flags
     urlMatches: [],   // url-history items matching typed text (parallel lane)
-    // Rows in `matches` that switch to an open window: row name -> { command, url }, mirrored by the panel
-    switchRows: new Map(),
     // Escape hid the auto-opened list for the current text; owned by this module.
     resultsDismissed: false,
 
@@ -274,16 +272,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
       return commandRowAutoSelect(data) !== null;
     },
-    // The row Enter is about to act on is a "Switch to window" row.
-    switchRowSelected: () => {
-      // In TYPING/IDLE Enter only acts on a row when one is auto-selected.
-      if (currentState === States.TYPING || currentState === States.IDLE) {
-        if (commandRowAutoSelect(data) === null) return false;
-      }
-      return data.switchRows.has(data.matches[data.matchIndex]);
-    },
-    // Same, for a clicked row (the click names its row).
-    clickedSwitchRow: (payload) => data.switchRows.has(payload?.commandName),
     // The auto-selected command came from a suggestion (not yet committed) AND
     // takes params → complete the name and enter param mode rather than
     // executing with empty params (previously the panel faked this by
@@ -491,12 +479,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'],
         },
         {
-          // A "Switch to window" row is selected → switch to that window.
-          guard: 'switchRowSelected',
-          target: States.CLOSING,
-          actions: ['switchToRowWindow', 'clearInput', 'shutdown'],
-        },
-        {
           // Strict-prefix suggestion that takes params → complete + param mode,
           // don't execute with empty params.
           guard: 'suggestedCommandNeedsParams',
@@ -540,11 +522,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
         { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
       ],
       [Events.CLICK_RESULT]: [
-        {
-          guard: 'clickedSwitchRow',
-          target: States.CLOSING,
-          actions: ['setMatchIndexFromClick', 'switchToRowWindow', 'clearInput', 'shutdown'],
-        },
         { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'] },
       ],
       [Events.CLICK_URL_RESULT]: [
@@ -606,12 +583,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       [Events.ENTER]: [
         { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
-          // The highlighted row is a "Switch to window" row → switch to that window.
-          guard: 'switchRowSelected',
-          target: States.CLOSING,
-          actions: ['switchToRowWindow', 'clearInput', 'shutdown'],
-        },
-        {
           // Explicit selected command match wins. Reaching RESULTS_OPEN means the
           // user navigated the results list (ArrowDown), so the highlighted row
           // (state.matchIndex) is an intentional selection — execute it. The
@@ -638,11 +609,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
         { guard: 'hasActionUrl', target: States.CLOSING, actions: ['runUrlAction', 'clearInput', 'shutdown'] },
       ],
       [Events.CLICK_RESULT]: [
-        {
-          guard: 'clickedSwitchRow',
-          target: States.CLOSING,
-          actions: ['setMatchIndexFromClick', 'switchToRowWindow', 'clearInput', 'shutdown'],
-        },
         {
           target: States.EXECUTING,
           actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],

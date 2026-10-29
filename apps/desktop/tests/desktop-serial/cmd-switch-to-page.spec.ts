@@ -16,7 +16,7 @@ import { waitForExtensionsReady, waitForAppReady, waitForPanelCommandsLoaded } f
  *
  * The button follows windows opening, closing and navigating while the panel
  * stays up. Every Visited suggestion row whose page is open in a window carries
- * a marker, and picking that row switches to the window.
+ * a marker, and clicking the marker switches to the window.
  *
  * Contract this spec pins: `button#url-action` inside `cmd/panel.html`, shown
  * with `data-action="switch"` and the label "Switch to" and a ⌘↵ hint only for an open page;
@@ -310,7 +310,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     await closePanel(panel);
   });
 
-  test('every Visited row whose page is open is marked, and picking it switches', async () => {
+  test('every Visited row whose page is open is marked, and clicking the marker switches', async () => {
     // Both addresses are in history; only ROW_OPEN_URL has a window.
     for (const url of [ROW_OPEN_URL, ROW_CLOSED_URL]) {
       const tracked = await bgWindow.evaluate(async (u: string) => {
@@ -344,7 +344,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
     await expect(closedRow.locator('.url-open-marker'), 'a newly opened page was not marked').toBeVisible({ timeout: 8000 });
     const [rowLaterId] = await liveWindowsAt(ROW_CLOSED_URL);
 
-    // Picking the marked row brings its window forward instead of opening one.
+    // Clicking the row's marker brings its window forward instead of opening one.
     await bgWindow.evaluate((url: string) => {
       const api = (window as any).app;
       (window as any).__rowTargetOpened = 0;
@@ -352,7 +352,7 @@ test.describe('Cmd panel switch-to-page action @desktop', () => {
         if ((msg?.url || '').startsWith(url)) (window as any).__rowTargetOpened++;
       });
     }, ROW_OPEN_URL);
-    await openRow.click();
+    await openRow.locator('.url-open-marker').click();
     if (!panel.isClosed()) await panel.waitForEvent('close', { timeout: 10000 }).catch(() => {});
     if (!process.env.HEADLESS) {
       await expect

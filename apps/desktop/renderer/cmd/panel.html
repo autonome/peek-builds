@@ -243,8 +243,9 @@
         white-space: nowrap;
       }
 
-      /* A Visited row whose page is open in a window: picking it switches. */
+      /* A row whose page is open in a window: clicking the marker switches. */
       .url-open-marker {
+        cursor: pointer;
         flex-shrink: 0;
         padding: 1px 6px;
         border-radius: 4px;
@@ -254,6 +255,9 @@
         background: rgba(0, 122, 255, 0.18);
         border: 1px solid rgba(0, 122, 255, 0.45);
         color: var(--theme-text, #333);
+      }
+      .url-open-marker:hover {
+        background: rgba(0, 122, 255, 0.3);
       }
 
       /* URL results separator in normal cmd mode */
